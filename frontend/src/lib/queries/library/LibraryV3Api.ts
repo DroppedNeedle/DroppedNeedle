@@ -102,6 +102,22 @@ export const LibraryV3Api = {
 			path: { album_id: albumId },
 			query: releaseMbid ? { release_mbid: releaseMbid } : {}
 		}),
+	// The edition's tags written to the files: queue a preview, read it,
+	// apply it, and plan its undo.
+	editionTags: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/tags', { path: { album_id: albumId } }),
+	editionTagWrite: (albumId: string, jobId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/tags/{job_id}', {
+			path: { album_id: albumId, job_id: jobId }
+		}),
+	editionTagWriteApply: (albumId: string, jobId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/tags/{job_id}/apply', {
+			path: { album_id: albumId, job_id: jobId }
+		}),
+	editionTagWriteUndo: (albumId: string, jobId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/tags/{job_id}/undo', {
+			path: { album_id: albumId, job_id: jobId }
+		}),
 	unconfirmed: (state: 'unconfirmed' | 'unmatched', limit: number, offset: number) =>
 		v3('/api/v3/library/unconfirmed', { query: { state, limit, offset } }),
 	managePreview: () => v3('/api/v3/library/manage/preview'),

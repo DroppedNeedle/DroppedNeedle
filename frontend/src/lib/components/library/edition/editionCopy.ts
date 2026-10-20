@@ -7,7 +7,10 @@ import { formatDuration } from '$lib/utils/formatting';
 
 type EditionStatus = components['schemas']['EditionStatusView'];
 type EditionPlan = components['schemas']['EditionPlanView'];
-type TagChange = components['schemas']['ManageTagChange'];
+type TagChange = components['schemas']['EditionTagChangeView'];
+type TagWriteFile = components['schemas']['EditionTagFileView'];
+type TagWriteStep = components['schemas']['EditionTagsStep'];
+type Reason = components['schemas']['ReasonView'];
 
 /** The facts an edition is named and described by, from any source. */
 export interface EditionFactsLike {
@@ -295,6 +298,34 @@ export function tagChange(change: TagChange): { label: string; from: string | nu
 	const to = change.to ?? 'removed';
 	if (change.field === 'musicbrainz_ids') return { label, from: null, to };
 	return { label, from: change.from ?? 'none', to };
+}
+
+/** What else a tag write does to a file: its cover art, files it adds, tags it removes. */
+export function fileExtras(file: TagWriteFile): { label: string; value: string }[] {
+	const extras: { label: string; value: string }[] = [];
+	if (file.artwork_changed) extras.push({ label: 'Cover art', value: 'replaced' });
+	if (file.added_files.length) {
+		extras.push({
+			label: 'Adds',
+			value: file.added_files.map((path) => path.slice(path.lastIndexOf('/') + 1)).join(', ')
+		});
+	}
+	if (file.removed_tags.length) {
+		extras.push({ label: 'Removes', value: file.removed_tags.join(', ') });
+	}
+	return extras;
+}
+
+/** A tag write that is not done yet: what it waits on. */
+export function tagWriteBusySentence(step: TagWriteStep, undo: boolean): string {
+	if (step === 'writing') return undo ? 'Putting the old tags back...' : 'Writing tags...';
+	if (step === 'planning') return 'Reading your files...';
+	return 'Waiting for other Library Management work to finish...';
+}
+
+/** A server reason with its suggested action. */
+export function reasonSentence(reason: Reason): string {
+	return reason.action ? `${reason.message} ${reason.action}` : reason.message;
 }
 
 export function alreadyTaggedSentence(n: number): string {

@@ -116,6 +116,15 @@ impl Management {
         Ok(settings)
     }
 
+    /// The stored settings as [`Self::settings`] gives them, or `None`
+    /// when they do not read (logged once per revision).
+    pub(super) fn readable_settings(&self) -> Option<LibraryManagement> {
+        let stored = self.setup.settings.management.read()?;
+        let mut settings = LibraryManagement::clone(&stored);
+        crate::management::settings::complete_fields(&mut settings);
+        Some(settings)
+    }
+
     pub(super) fn snapshot(&self, job_id: &str) -> Result<Snapshot, ManagementError> {
         self.setup.db.read_blocking("management.snapshot", |conn| {
             store::snapshot(conn, job_id)?.ok_or(ManagementError::NotFound(
@@ -254,6 +263,7 @@ impl Management {
                 && snapshot.linked_job_id.as_deref() == spec.linked_job_id
                 && snapshot.intent().tag_edit == spec.intent.tag_edit
                 && snapshot.intent().duplicate == spec.intent.duplicate
+                && snapshot.intent().edition == spec.intent.edition
                 && snapshot.job.requested_by_user_id.as_deref() == spec.actor;
             if !same {
                 return Err(stale(
@@ -335,8 +345,8 @@ impl Management {
             return Vec::new();
         }
         let mut found = Vec::new();
-        match self.settings() {
-            Ok(stored) => {
+        match self.readable_settings() {
+            Some(stored) => {
                 if crate::management::settings::settings_revision(&stored)
                     != snapshot.settings_revision
                 {
@@ -346,10 +356,7 @@ impl Management {
                     );
                 }
             }
-            Err(error) => {
-                tracing::warn!(%error, "management settings unreadable; preview treated as stale");
-                found.push("Library Management settings could not be read.".to_owned());
-            }
+            None => found.push("Library Management settings could not be read.".to_owned()),
         }
         if self.setup.live_registry().policy_revision() != snapshot.policy_revision {
             found.push(
@@ -1275,7 +1282,7 @@ impl Management {
         worker: &str,
     ) -> Result<Option<Summary>, ManagementError> {
         let pinned = Self::pinned(snapshot)?;
-        let intent = snapshot.intent();
+        let intent = planning_intent(snapshot)?;
         let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
         let scripts = CompiledScripts::new(&pinned);
         let sandbox = self.setup.publish_sandbox().map_err(|error| {
@@ -1358,8 +1365,15 @@ impl Management {
             } else {
                 Default::default()
             };
-            let mut items =
-                planner::plan_album(&ctx, scope, &tracks, bundle_ordinal as i64, ordinal, person)?;
+            let mut items = planner::plan_album(
+                &ctx,
+                scope,
+                &tracks,
+                bundle_ordinal as i64,
+                ordinal,
+                person,
+                intent.edition.as_ref(),
+            )?;
             if held {
                 self.hold_changed(&scope.album_id, &snapshot.job.id, &mut items, &before)?;
             }
@@ -2050,6 +2064,19 @@ impl Refused {
         }
         tracing::error!(%error, album = album_id, "{what} unreadable; album left alone");
         Self::Reason(reasons::write_failed())
+    }
+}
+
+/// The intent a preview plans with. One that does not read is the
+/// default, as v2 rows are, except for an edition's tag write: planning
+/// that without its edition could write another one, so the job fails.
+fn planning_intent(snapshot: &Snapshot) -> Result<JobIntent, ManagementError> {
+    match serde_json::from_str(&snapshot.intent_json) {
+        Ok(intent) => Ok(intent),
+        Err(error) if snapshot.intent_json.contains("\"edition\"") => Err(ManagementError::Store(
+            format!("edition tag write's intent unreadable: {error}"),
+        )),
+        Err(_) => Ok(JobIntent::default()),
     }
 }
 

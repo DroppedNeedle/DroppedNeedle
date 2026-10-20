@@ -12,7 +12,8 @@
 //! and plan SQL (the job rows go through [`crate::jobs`]),
 //! `reasons` the per-file reasons, and `service` the entry points the
 //! handlers and the worker call. The other kinds of job sit next to it:
-//! `tag_edit` (the tag editor), `restore` (back to the originals, and
+//! `tag_edit` (the tag editor), `edition_tags` (an edition's tags written
+//! from the edition sheet), `restore` (back to the originals, and
 //! purging them), `duplicates` (a file whose place is taken), `activation`
 //! (the dry run that turns automatic management on), `automatic` (runs
 //! after a scan or an import), `after_apply` (bookkeeping and media-server
@@ -26,6 +27,7 @@ pub mod after_apply;
 pub mod automatic;
 pub mod custom;
 pub mod duplicates;
+pub mod edition_tags;
 pub mod enrich;
 pub mod genre;
 pub mod models;

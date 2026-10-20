@@ -67,9 +67,12 @@ impl From<OperationError> for ApiError {
 }
 
 /// Run blocking operation work off the async workers.
-pub(super) async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, OperationError> + Send + 'static,
-) -> Result<T, ApiError> {
+pub(super) async fn blocking<T: Send + 'static, E: Send + 'static>(
+    work: impl FnOnce() -> Result<T, E> + Send + 'static,
+) -> Result<T, ApiError>
+where
+    ApiError: From<E>,
+{
     tokio::task::spawn_blocking(work)
         .await
         .map_err(ApiError::internal)?
@@ -460,7 +463,7 @@ pub async fn get_operation(
         } else {
             None
         };
-        Ok((detail, summary))
+        Ok::<_, OperationError>((detail, summary))
     })
     .await?;
     Ok(Json(OperationView {

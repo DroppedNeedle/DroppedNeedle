@@ -346,48 +346,101 @@ export function invalidateAlbumEdition(userId: EditionUserId, localId: string): 
 	invalidateEditionScope({ userId, localId });
 }
 
-// Writing the chosen edition's tags into the files it placed, in a folder
-// the app does not write by itself: a sealed retag preview the person
-// reads, then its apply, then, if they want, the undo of that write. The
-// write shows in Library Management's history.
-export type TagWritePreview = components['schemas']['ManagePreviewResponse'];
-export type TagWrite = components['schemas']['ManageApplyResponse'];
+// Writing the chosen edition's tags into its files, in a folder the app
+// does not write by itself, as the folder's Library Management profile
+// writes them: a preview job the person reads once it is planned, then its
+// apply, then, if they want, the undo of that write, planned and applied
+// the same way. The write shows in Library Management's history.
+export type TagWriteQueued = components['schemas']['EditionTagsQueuedView'];
+export type TagWriteJob = components['schemas']['EditionTagsJobView'];
+
+// A tag write still planning or writing is read again this often.
+const TAG_WRITE_POLL_MS = 1_000;
+
+function tagWriteMoving(job: TagWriteJob | null | undefined): boolean {
+	return !job || job.step === 'waiting' || job.step === 'planning' || job.step === 'writing';
+}
+
+export const getTagWriteQuery = (
+	getUserId: Getter<EditionUserId>,
+	getLocalId: Getter<string>,
+	getJobId: Getter<string | null>
+) =>
+	createQuery(() => {
+		const userId = getUserId();
+		const localId = getLocalId();
+		const jobId = getJobId() ?? '';
+		const queryKey = LibraryQueryKeyFactory.catalog.editionTagWrite(userId, localId, jobId);
+		return {
+			queryKey,
+			enabled: !!userId && !!localId && !!jobId,
+			staleTime: 0,
+			retry: false,
+			refetchInterval: (query: { state: { data?: TagWriteJob } }) =>
+				tagWriteMoving(query.state.data) ? TAG_WRITE_POLL_MS : false,
+			queryFn: ({ signal }: { signal: AbortSignal }): Promise<TagWriteJob> =>
+				api.global.v3.GET(LibraryV3Api.editionTagWrite(localId, jobId), { signal })
+		};
+	});
+
+/** A tag write or its undo finished: everything that shows the files is stale. */
+export function tagWriteFinished(target: EditionTarget): void {
+	invalidateHeldEditionScope(target);
+}
 
 export function previewEditionTags() {
 	return createMutation(() => ({
 		mutationFn: ({
 			localId,
 			rgMbid,
-			files
-		}: EditionTarget & { files: EditionChoice['retag_files'] }): Promise<TagWritePreview> => {
+			releaseMbid,
+			identityRevision
+		}: EditionTarget & {
+			releaseMbid: string;
+			identityRevision: number;
+		}): Promise<TagWriteQueued> => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.POST(LibraryV3Api.managePreview(), {
-				album_id: localId,
-				kind: 'retag',
-				items: files.map((file) => ({
-					root_id: file.root_id,
-					rel_path: file.rel_path,
-					managed_updates: {}
-				}))
+			return api.global.v3.POST(LibraryV3Api.editionTags(localId), {
+				release_mbid: releaseMbid,
+				expected_identity_revision: identityRevision
 			});
-		},
-		onSuccess: (_d, variables) => invalidateEditionScope(variables)
+		}
 	}));
 }
 
 export function writeEditionTags() {
 	return createMutation(() => ({
-		mutationFn: ({ previewToken }: EditionTarget & { previewToken: string }): Promise<TagWrite> =>
-			api.global.v3.POST(LibraryV3Api.manageApply(), { preview_token: previewToken }),
-		onSuccess: (_d, variables) => invalidateHeldEditionScope(variables)
+		mutationFn: ({
+			localId,
+			jobId,
+			previewToken,
+			rowRevision
+		}: EditionTarget & {
+			jobId: string;
+			previewToken: string;
+			rowRevision: number;
+		}): Promise<TagWriteJob> =>
+			api.global.v3.POST(LibraryV3Api.editionTagWriteApply(localId, jobId), {
+				preview_token: previewToken,
+				expected_row_revision: rowRevision,
+				idempotency_key: `apply-${jobId}`
+			}),
+		onSuccess: (_job, variables) => invalidateHeldEditionScope(variables)
 	}));
 }
 
 export function undoTagWrite() {
 	return createMutation(() => ({
-		mutationFn: ({ bundleId }: EditionTarget & { bundleId: string }) =>
-			api.global.v3.POST(LibraryV3Api.manageUndo(), { bundle_id: bundleId }),
-		onSuccess: (_d, variables) => invalidateHeldEditionScope(variables)
+		mutationFn: ({
+			localId,
+			jobId,
+			rowRevision
+		}: EditionTarget & { jobId: string; rowRevision: number }): Promise<TagWriteQueued> =>
+			api.global.v3.POST(LibraryV3Api.editionTagWriteUndo(localId, jobId), {
+				expected_row_revision: rowRevision,
+				idempotency_key: `undo-${jobId}`
+			}),
+		onSuccess: (_queued, variables) => invalidateHeldEditionScope(variables)
 	}));
 }
 

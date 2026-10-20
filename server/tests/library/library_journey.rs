@@ -1341,6 +1341,520 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
     rig.stop().await;
 }
 
+/// Read an edition's tag write until it is planned, written or failed.
+async fn settled_tag_write(app: &TestApp, headers: &[(&str, &str)], uri: &str) -> Value {
+    app.until("the tag write settles", || async move {
+        let (status, body) = app.call("GET", uri, headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        matches!(body["step"].as_str(), Some("ready" | "done" | "failed")).then_some(body)
+    })
+    .await
+}
+
+/// Apply a planned tag write as `headers` and wait until it is written.
+async fn write_planned(app: &TestApp, headers: &[(&str, &str)], uri: &str, token: &Value) {
+    let planned = settled_tag_write(app, headers, uri).await;
+    assert_eq!(planned["step"], json!("ready"), "{planned}");
+    assert_eq!(planned["ready_to_apply"], json!(true), "{planned}");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{uri}/apply"),
+            headers,
+            Some(json!({
+                "preview_token": token,
+                "expected_row_revision": planned["row_revision"],
+                "idempotency_key": format!("apply-{uri}"),
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let written = settled_tag_write(app, headers, uri).await;
+    assert_eq!(written["step"], json!("done"), "{written}");
+}
+
+/// Plan the undo of a written tag write as `headers`, apply it, and wait
+/// until the files are back.
+async fn undo_written(app: &TestApp, headers: &[(&str, &str)], tags: &str, job: &str) {
+    let uri = format!("{tags}/{job}");
+    let written = settled_tag_write(app, headers, &uri).await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{uri}/undo"),
+            headers,
+            Some(json!({
+                "expected_row_revision": written["row_revision"],
+                "idempotency_key": format!("undo-{job}"),
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let undo = format!("{tags}/{}", body["job_id"].as_str().expect("undo job"));
+    let planned = settled_tag_write(app, headers, &undo).await;
+    assert_eq!(planned["undo"], json!(true), "{planned}");
+    assert!(
+        planned["files"]
+            .as_array()
+            .expect("files")
+            .iter()
+            .all(|file| file["blocked"].is_null()),
+        "{planned}"
+    );
+    write_planned(app, headers, &undo, &body["preview_token"]).await;
+}
+
+/// "Write tags" on the edition sheet, by a trusted user in a folder the
+/// app does not write by itself: the preview lists what changes, and the
+/// write puts in what the folder's profile writes (its tagging script, the
+/// folder's own override, a file's saved override) without renaming
+/// anything, though the profile renames. The writer's undo puts every tag
+/// back and leaves no record a wider preview would read as a change made
+/// outside the app. Another trusted user is told none of it exists; an
+/// admin reaches all of it. A held album, a custom edition and an album
+/// still being placed are refused before any job is made.
+#[tokio::test]
+async fn an_editions_tags_are_written_as_the_folders_profile_says() {
+    use droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID as PICARD;
+    use droppedneedle_library::tags::save::read_document;
+    use droppedneedle_library::tags::{TagField, read_fields};
+    const SCRIPT: &str = "33333333-3333-4333-8333-333333333333";
+
+    let rig = Rig::start("lib-edition-tags").await;
+    let app = &rig.app;
+    let admin_auth = app.login_admin().await;
+    let admin = [("authorization", admin_auth.as_str())];
+    let mut curators = Vec::new();
+    for name in ["tris", "kit"] {
+        let login = app.login_user(name).await;
+        let (status, body) = app
+            .call(
+                "PUT",
+                &format!("/api/v3/admin/users/{}/role", login.user_id),
+                &admin,
+                Some(json!({"role": "trusted"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        curators.push(login.authorization);
+    }
+    let tris = [("authorization", curators[0].as_str())];
+    let kit = [("authorization", curators[1].as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let (album, fit, _) = identified_album(&rig, &music, "album-e").await;
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let tags = format!("{edition}/tags");
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &tris,
+            Some(json!({"release_mbid": fit.id})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.edition_settled(&album).await;
+    let files = [music.join("album-e/01.flac"), music.join("album-e/02.flac")];
+    let originals: Vec<String> = files.iter().map(|file| file_sha256(file)).collect();
+    // Every tag frame and picture of each file, as the file holds them.
+    let tags_now = || {
+        files
+            .iter()
+            .map(|file| {
+                let document = read_document(file).expect("tags read");
+                let pictures: Vec<Vec<u8>> = document
+                    .pictures
+                    .iter()
+                    .map(|picture| picture.data.clone())
+                    .collect();
+                (document.native, pictures)
+            })
+            .collect::<Vec<_>>()
+    };
+    let original_tags = tags_now();
+    let db = app.db();
+    let track = rig
+        .scan_store
+        .track_at("music", "album-e/01.flac")
+        .unwrap()
+        .expect("track indexed");
+
+    // The profile renames and has its tags off; the folder turns them on
+    // and runs a script; one file keeps a title saved for it.
+    let page = "/api/v3/settings/library-management";
+    let (status, saved) = app.call("GET", page, &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let mut settings = saved.clone();
+    settings
+        .as_object_mut()
+        .expect("settings")
+        .remove("settings_revision");
+    settings["tagging_scripts"]
+        .as_array_mut()
+        .expect("scripts")
+        .push(json!({
+            "id": SCRIPT,
+            "name": "Comment",
+            "source": "set comment = \"Tagged by the folder\"",
+        }));
+    for profile in settings["profiles"].as_array_mut().expect("profiles") {
+        if profile["id"] == json!(PICARD) {
+            assert_eq!(profile["organization"]["rename_enabled"], json!(true));
+            profile["metadata"]["enabled"] = json!(false);
+            profile["metadata"]["tagging_script_ids"] = json!([SCRIPT]);
+        }
+    }
+    settings["root_assignments"] = json!([{
+        "root_id": "music",
+        "profile_id": PICARD,
+        "enabled": false,
+        "overrides": {"metadata_enabled": true},
+    }]);
+    let (status, body) = app
+        .call(
+            "PUT",
+            page,
+            &admin,
+            Some(json!({
+                "settings": settings,
+                "expected_settings_revision": saved["settings_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    db.execute(
+        "INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
+         field_name, value_json, mode, subject_revision, created_at, updated_at) \
+         VALUES ('ov-title', 'track', ?1, 'title', '\"Kept Title\"', 'replace', 1, 1, 1)",
+        [&track],
+    )
+    .expect("override saved");
+
+    // Refused with a reason, and no job made: a stale revision, a held
+    // album, one still being placed, and a custom edition.
+    let jobs = || -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM library_operation_jobs WHERE kind = 'library_management'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("jobs counted")
+    };
+    let made = jobs();
+    let ask =
+        |revision: &Value| json!({"release_mbid": fit.id, "expected_identity_revision": revision});
+    let refused = |body: Value| {
+        let (tags, tris) = (&tags, &tris);
+        async move {
+            let (status, answer) = app.call("POST", tags, tris, Some(body)).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+            answer["error"]["code"].clone()
+        }
+    };
+    let revision = edition_status(app, &tris, &edition).await["identity_revision"].clone();
+    assert_eq!(refused(ask(&json!(999))).await, json!("STALE_REVISION"));
+    exclude_by_hand(&db, &album);
+    assert_eq!(refused(ask(&revision)).await, json!("EDITION_TAGS_HELD"));
+    db.execute(
+        "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("hold lifted");
+    db.execute(
+        "INSERT INTO library_edition_remap_queue \
+         (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
+         VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+        rusqlite::params![album, fit.id],
+    )
+    .expect("remap row queued");
+    assert_eq!(
+        refused(ask(&revision)).await,
+        json!("EDITION_REMAP_PENDING")
+    );
+    db.execute(
+        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("remap row removed");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{edition}/custom"),
+            &admin,
+            Some(ask(&revision)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        refused(ask(&body["identity_revision"])).await,
+        json!("EDITION_TAGS_CUSTOM")
+    );
+    let (status, body) = app
+        .call("POST", &format!("{edition}/undo"), &admin, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(jobs(), made, "no job for a refusal");
+    let revision = body["identity_revision"].clone();
+
+    // The preview lists the changes; nothing is written yet.
+    let (status, queued) = app.call("POST", &tags, &tris, Some(ask(&revision))).await;
+    assert_eq!(status, StatusCode::OK, "{queued}");
+    let job = queued["job_id"].as_str().expect("job id").to_owned();
+    let uri = format!("{tags}/{job}");
+    let planned = settled_tag_write(app, &tris, &uri).await;
+    assert_eq!(planned["step"], json!("ready"), "{planned}");
+    let first = planned["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| file["path"] == json!("album-e/01.flac"))
+        .expect("the first file is planned")
+        .clone();
+    let change = |field: &str| {
+        first["changes"]
+            .as_array()
+            .expect("changes")
+            .iter()
+            .find(|change| change["field"] == json!(field))
+            .map(|change| change["to"].clone())
+    };
+    assert_eq!(change("title"), Some(json!("Kept Title")), "{first}");
+    assert_eq!(
+        change("comment"),
+        Some(json!("Tagged by the folder")),
+        "{first}"
+    );
+    let unchanged: Vec<String> = files.iter().map(|file| file_sha256(file)).collect();
+    assert_eq!(unchanged, originals, "nothing is written by a preview");
+
+    // Another trusted user is told it does not exist; an admin reads it.
+    let (status, body) = app.call("GET", &uri, &kit, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{uri}/apply"),
+            &kit,
+            Some(json!({
+                "preview_token": queued["preview_token"],
+                "expected_row_revision": planned["row_revision"],
+                "idempotency_key": "kit-apply",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = app.call("GET", &uri, &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The write holds the profile's fields; no file is renamed or moved.
+    write_planned(app, &tris, &uri, &queued["preview_token"]).await;
+    let fields = read_fields(&files[0]).expect("fields read");
+    assert_eq!(fields[&TagField::Title], vec!["Kept Title".to_owned()]);
+    assert_eq!(
+        fields[&TagField::Comment],
+        vec!["Tagged by the folder".to_owned()]
+    );
+    assert_eq!(
+        fields[&TagField::MusicBrainzReleaseId],
+        vec![fit.id.clone()]
+    );
+    let mut names: Vec<String> = std::fs::read_dir(music.join("album-e"))
+        .expect("album folder reads")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names, ["01.flac", "02.flac"], "nothing renamed or moved");
+    assert_ne!(file_sha256(&files[0]), originals[0]);
+
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{uri}/undo"),
+            &kit,
+            Some(json!({"expected_row_revision": 0, "idempotency_key": "kit-undo"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    undo_written(app, &tris, &tags, &job).await;
+    assert_eq!(
+        tags_now(),
+        original_tags,
+        "the writer's undo puts every tag back"
+    );
+
+    // An admin applies and undoes a trusted user's write.
+    let (status, queued) = app.call("POST", &tags, &tris, Some(ask(&revision))).await;
+    assert_eq!(status, StatusCode::OK, "{queued}");
+    let job = queued["job_id"].as_str().expect("job id").to_owned();
+    write_planned(
+        app,
+        &admin,
+        &format!("{tags}/{job}"),
+        &queued["preview_token"],
+    )
+    .await;
+    assert_ne!(file_sha256(&files[0]), originals[0]);
+    undo_written(app, &admin, &tags, &job).await;
+    assert_eq!(
+        tags_now(),
+        original_tags,
+        "the admin's undo puts every tag back"
+    );
+
+    // A preview of this album and another does not read the undone write
+    // as a change made outside the app.
+    rig.identify.recall_from(ambiguous_from);
+    plant(&music, "other/01.flac", "management_full.flac");
+    app.scan_library().await;
+    app.until("identification settles", || {
+        let db = &db;
+        async move {
+            let open: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM library_identify_jobs \
+                     WHERE state IN ('queued', 'running')",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("identify queue reads");
+            (open == 0).then_some(())
+        }
+    })
+    .await;
+    let other_track = rig
+        .scan_store
+        .track_at("music", "other/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let other = rig
+        .scan_store
+        .album_for_track(&other_track)
+        .unwrap()
+        .expect("album");
+    assert_ne!(other, album);
+    let (status, management) = app.call("GET", page, &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{management}");
+    let (status, library) = app
+        .call("GET", "/api/v3/settings/library", &admin, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{library}");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/management/previews",
+            &admin,
+            Some(json!({
+                "selection": {"kind": "albums", "ids": [album, other]},
+                "profile_id": PICARD,
+                "expected_settings_revision": management["settings_revision"],
+                "expected_policy_revision": library["policy_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let preview = format!(
+        "/api/v3/library/management/previews/{}",
+        body["job_id"].as_str().expect("job id")
+    );
+    app.until("the wide preview is planned", || {
+        let (preview, admin) = (&preview, &admin);
+        async move {
+            let (status, body) = app.call("GET", preview, admin, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            (body["phase"] == json!("ready")).then_some(())
+        }
+    })
+    .await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("{preview}/items?album_id={album}"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().expect("items");
+    assert_eq!(items.len(), 2, "{body}");
+    for item in items {
+        assert_ne!(item["reason_code"], json!("CHANGED_OUTSIDE"), "{item}");
+    }
+    rig.stop().await;
+}
+
+/// A tag write asked for one edition writes nothing when another edition
+/// is chosen before the worker plans it: planning finds the album's
+/// identity moved on and blocks every file.
+#[tokio::test]
+async fn an_edition_tag_write_planned_after_another_choice_writes_nothing() {
+    use crate::common::auth::test_principal;
+    use droppedneedle_auth::Role;
+    use droppedneedle_auth::session::store::SessionKind;
+    use droppedneedle_library::management::models::ItemFilter;
+    use droppedneedle_library::management::service::ApplyRequest;
+
+    let managed = ManagedLibrary::start("lib-edition-tags-pin", |_| {}).await;
+    let (album, tracks) = managed.add_album("pinned", 1).await;
+    let file = managed.path(&tracks[0]);
+    let before = file_sha256(&file);
+    let identity = managed
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("identity reads")
+        .expect("identity");
+    let release = identity.release_mbid.clone().expect("an edition");
+    let other = if release == REL_1 { REL_2 } else { REL_1 };
+    let management = managed.management();
+    let handle = management
+        .create_edition_tags(
+            &album,
+            &release,
+            i64::try_from(identity.row_revision).expect("revision"),
+            &test_principal("admin", Role::Admin, "session-1", SessionKind::Standard),
+        )
+        .expect("tag write queued");
+    droppedneedle_library::operations::service::Operations::new(&managed.library)
+        .choose_edition(&album, other, Some("admin"))
+        .await
+        .expect("another edition chosen");
+
+    assert!(management_step(&managed.library).await, "planning runs");
+    let page = management
+        .items(&handle.job_id, -1, 100, &ItemFilter::default())
+        .expect("items page");
+    assert!(!page.items.is_empty());
+    for item in &page.items {
+        assert_eq!(
+            item.facts
+                .reason
+                .as_ref()
+                .map(|reason| reason.code.as_str()),
+            Some("EDITION_CHANGED"),
+            "{item:?}"
+        );
+    }
+    let detail = management.detail(&handle.job_id).expect("detail");
+    let applied = management.apply(
+        &handle.job_id,
+        ApplyRequest {
+            preview_token: handle.preview_token,
+            expected_row_revision: detail.job.row_revision,
+            idempotency_key: "apply-pinned".to_owned(),
+            confirmation: true,
+        },
+    );
+    assert!(applied.is_err(), "nothing can be written");
+    while management_step(&managed.library).await {}
+    assert_eq!(file_sha256(&file), before, "the file is as it was");
+}
+
 /// Library roots live in the settings, so a restart comes back with the
 /// same roots under the same ids, and the next scan finds nothing new.
 #[tokio::test]

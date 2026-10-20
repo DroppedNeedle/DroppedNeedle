@@ -9989,6 +9989,399 @@
         ]
       }
     },
+    "/api/v3/library/albums/{album_id}/edition/tags": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Preview the album's edition's tags in its files: the files placed on a\ntrack of the edition, with the tags the album folder's profile writes\n(its fields, scripts, overrides, artwork and lyrics). Nothing is\nrenamed or moved. Planning runs in the background; read the job until\nit is ready, then apply it.",
+        "operationId": "create_edition_tags",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditionTagsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The tag write, queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionTagsQueuedView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The folder's profile cannot be used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The edition changed (STALE_REVISION); the album has no edition from MusicBrainz, is left unmanaged, is still being placed, spans two folders or is written by itself; no file sits on the edition; the profile writes no tags; or the Library Management settings cannot be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/{album_id}/edition/tags/{job_id}": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "One of the album's tag writes, or the undo of one, that the caller\nmade; an admin reads any.",
+        "operationId": "get_edition_tags",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "The tag write's job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tag write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionTagsJobView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown tag write, or another curator's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/apply": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Write a planned tag write, or put an earlier one back with its undo.\nThe files are written in the background.",
+        "operationId": "apply_edition_tags",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "The tag write's job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditionTagsApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Writing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionTagsJobView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Wrong token or no request key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown tag write, or another curator's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Expired, changed since it was planned, or nothing to write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/undo": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Plan putting a written tag write back, as a job read and applied like\nthe write itself.",
+        "operationId": "undo_edition_tags",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "The written tag write's job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditionTagsUndoBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The undo, queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionTagsQueuedView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown tag write, or another curator's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not written, already undone, changed since the page loaded, or the Library Management settings cannot be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/albums/{album_id}/edition/undo": {
       "post": {
         "tags": [
@@ -43032,6 +43425,253 @@
           "writing": {
             "type": "boolean",
             "description": "That write is still to happen."
+          }
+        }
+      },
+      "EditionTagChangeView": {
+        "type": "object",
+        "description": "One tag that changes. Several values are joined with \"; \"; absent\nmeans the tag is not there.",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "Tag field name, or `musicbrainz_ids` for the MusicBrainz ids,\ncounted in `to`."
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "EditionTagFileView": {
+        "type": "object",
+        "description": "One file of a tag write and what it changes there.",
+        "required": [
+          "path",
+          "changes",
+          "removed_tags",
+          "artwork_changed",
+          "added_files"
+        ],
+        "properties": {
+          "added_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files written next to it (a cover, a lyrics file), by path."
+          },
+          "artwork_changed": {
+            "type": "boolean",
+            "description": "The embedded cover art changes."
+          },
+          "blocked": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReasonView",
+                "description": "Why the file is left alone, when it is."
+              }
+            ]
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionTagChangeView"
+            }
+          },
+          "path": {
+            "type": "string",
+            "description": "The file's path in its library folder."
+          },
+          "removed_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags outside the profile's fields that the write removes."
+          },
+          "track_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "EditionTagsApplyBody": {
+        "type": "object",
+        "description": "Apply a planned tag write, or its undo.",
+        "required": [
+          "preview_token",
+          "expected_row_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `row_revision` the job showed."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Makes a retried apply answer with the same job."
+          },
+          "preview_token": {
+            "type": "string"
+          }
+        }
+      },
+      "EditionTagsBody": {
+        "type": "object",
+        "description": "Preview the edition's tags in the album's files.",
+        "required": [
+          "release_mbid",
+          "expected_identity_revision"
+        ],
+        "properties": {
+          "expected_identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `identity_revision` the edition status showed."
+          },
+          "release_mbid": {
+            "type": "string",
+            "description": "The album's edition, as the edition status showed it."
+          }
+        }
+      },
+      "EditionTagsJobView": {
+        "type": "object",
+        "description": "A tag write as the edition sheet shows it.",
+        "required": [
+          "job_id",
+          "step",
+          "undo",
+          "undo_available",
+          "row_revision",
+          "ready_to_apply",
+          "expired",
+          "stale_reasons",
+          "files"
+        ],
+        "properties": {
+          "expired": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionTagFileView"
+            },
+            "description": "Every planned file, once planning is done."
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "ready_to_apply": {
+            "type": "boolean",
+            "description": "Planned, current and not expired."
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReasonView",
+                "description": "Why the job ended without writing, when it did."
+              }
+            ]
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echo this on apply and undo."
+          },
+          "stale_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why a planned write can no longer be applied, in words."
+          },
+          "step": {
+            "$ref": "#/components/schemas/EditionTagsStep"
+          },
+          "undo": {
+            "type": "boolean",
+            "description": "This job puts an earlier tag write back."
+          },
+          "undo_available": {
+            "type": "boolean",
+            "description": "A finished write, whole or partial, that `.../undo` can still put\nback."
+          }
+        }
+      },
+      "EditionTagsQueuedView": {
+        "type": "object",
+        "description": "A tag write or its undo, queued, and the token that applies it.",
+        "required": [
+          "job_id",
+          "preview_token",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "When the preview can no longer be applied (epoch seconds)."
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "Pass to `.../apply`; it is shown once."
+          }
+        }
+      },
+      "EditionTagsStep": {
+        "type": "string",
+        "description": "Where a tag write stands.",
+        "enum": [
+          "waiting",
+          "planning",
+          "ready",
+          "writing",
+          "done",
+          "failed"
+        ]
+      },
+      "EditionTagsUndoBody": {
+        "type": "object",
+        "description": "Plan putting a tag write back.",
+        "required": [
+          "expected_row_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `row_revision` the written job showed."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Makes a retried undo answer with the same job."
           }
         }
       },

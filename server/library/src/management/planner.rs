@@ -12,9 +12,9 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::models::{
-    ArtworkChoice, DesiredDocument, DesiredField, Eligibility, FieldMutation, ItemDiff, ItemFacts,
-    ManagementError, PinnedProfile, PlannedItem, SidecarMove, TagEditField, TagEditIntent,
-    TagEditMode,
+    ArtworkChoice, DesiredDocument, DesiredField, EditionPin, Eligibility, FieldMutation, ItemDiff,
+    ItemFacts, ManagementError, PinnedProfile, PlannedItem, SidecarMove, TagEditField,
+    TagEditIntent, TagEditMode,
 };
 use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
@@ -224,10 +224,44 @@ enum AlbumState {
     },
 }
 
+/// Why an edition's tag write leaves the album alone: its identity is no
+/// longer the edition the person asked for.
+fn edition_changed() -> ItemReason {
+    ItemReason {
+        code: "EDITION_CHANGED".to_owned(),
+        message: "This album's edition changed after these tags were asked for.".to_owned(),
+        action: "Open the album's edition again and preview its tags.".to_owned(),
+    }
+}
+
+/// Why an edition's tag write leaves the album alone: someone, or the app,
+/// stepped back from it after the write was asked for.
+fn edition_held() -> ItemReason {
+    ItemReason {
+        code: "EDITION_TAGS_HELD".to_owned(),
+        message: "This album is left unmanaged, so its files keep their tags.".to_owned(),
+        action: "Choose \"Manage it again\" on the album page first.".to_owned(),
+    }
+}
+
+/// Whether the album is left unmanaged, by a person or by the app.
+fn left_unmanaged(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    let excluded = conn
+        .query_row(
+            "SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1",
+            params![album_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    Ok(excluded || takeover::is_marked(conn, album_id)?)
+}
+
 fn album_state(
     ctx: &PlanContext<'_>,
     album_id: &str,
     person: bool,
+    edition: Option<&EditionPin>,
 ) -> Result<AlbumState, ManagementError> {
     let store = &ctx.setup.identify_store;
     let db = &ctx.setup.db;
@@ -262,6 +296,20 @@ fn album_state(
     let Some(identity) = store.album_identity(album_id)? else {
         return Ok(AlbumState::Blocked(reasons::identity_not_accepted()));
     };
+    if let Some(pin) = edition
+        && (pin.local_album_id != album_id
+            || identity.release_mbid.as_deref() != Some(pin.release_mbid.as_str())
+            || i64::try_from(identity.row_revision).ok() != Some(pin.identity_revision))
+    {
+        return Ok(AlbumState::Blocked(edition_changed()));
+    }
+    if edition.is_some()
+        && db.read_blocking("management.edition_held", |conn| {
+            Ok::<_, ManagementError>(left_unmanaged(conn, album_id)?)
+        })?
+    {
+        return Ok(AlbumState::Blocked(edition_held()));
+    }
     let gate = db
         .read_blocking("management.match_gate", |conn| {
             Ok::<_, ManagementError>(match_gate(conn, album_id, ctx.manage_unconfirmed)?)
@@ -1794,6 +1842,7 @@ fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
 /// Plan every selected file of one album, numbering items from
 /// `first_ordinal`. `person` is set when a person started the job, which
 /// holds back an album whose chosen edition is still being placed.
+/// `edition` blocks the album unless its identity is still that edition.
 pub fn plan_album(
     ctx: &PlanContext<'_>,
     scope: &AlbumScope,
@@ -1801,6 +1850,7 @@ pub fn plan_album(
     bundle_ordinal: i64,
     first_ordinal: i64,
     person: bool,
+    edition: Option<&EditionPin>,
 ) -> Result<Vec<PlannedItem>, ManagementError> {
     let mut items: Vec<PlannedItem> = tracks
         .iter()
@@ -1814,7 +1864,7 @@ pub fn plan_album(
         return Ok(items);
     }
     let (mut release, release_mbid, release_group_mbid, album_identity_revision) =
-        match album_state(ctx, &scope.album_id, person)? {
+        match album_state(ctx, &scope.album_id, person, edition)? {
             AlbumState::Blocked(reason) => {
                 for item in &mut items {
                     item.block(reason.clone());
@@ -1962,7 +2012,7 @@ pub fn plan_one(
 ) -> Result<PlannedItem, ManagementError> {
     let mut item = base_item(track, scope, ordinal, 0);
     // Duplicate resolution is not held back by an edition being placed.
-    match album_state(ctx, &scope.album_id, false)? {
+    match album_state(ctx, &scope.album_id, false, None)? {
         AlbumState::Blocked(reason) => item.block(reason),
         AlbumState::Ready {
             mut release,

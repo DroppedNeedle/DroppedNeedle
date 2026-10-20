@@ -3251,6 +3251,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/edition/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview the album's edition's tags in its files: the files placed on a
+         *     track of the edition, with the tags the album folder's profile writes
+         *     (its fields, scripts, overrides, artwork and lyrics). Nothing is
+         *     renamed or moved. Planning runs in the background; read the job until
+         *     it is ready, then apply it.
+         */
+        post: operations["create_edition_tags"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition/tags/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One of the album's tag writes, or the undo of one, that the caller
+         *     made; an admin reads any.
+         */
+        get: operations["get_edition_tags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Write a planned tag write, or put an earlier one back with its undo.
+         *     The files are written in the background.
+         */
+        post: operations["apply_edition_tags"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Plan putting a written tag write back, as a job read and applied like
+         *     the write itself.
+         */
+        post: operations["undo_edition_tags"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition/undo": {
         parameters: {
             query?: never;
@@ -13400,6 +13483,105 @@ export interface components {
             undo_available: boolean;
             /** @description That write is still to happen. */
             writing: boolean;
+        };
+        /**
+         * @description One tag that changes. Several values are joined with "; "; absent
+         *     means the tag is not there.
+         */
+        EditionTagChangeView: {
+            /**
+             * @description Tag field name, or `musicbrainz_ids` for the MusicBrainz ids,
+             *     counted in `to`.
+             */
+            field: string;
+            from?: string | null;
+            to?: string | null;
+        };
+        /** @description One file of a tag write and what it changes there. */
+        EditionTagFileView: {
+            /** @description Files written next to it (a cover, a lyrics file), by path. */
+            added_files: string[];
+            /** @description The embedded cover art changes. */
+            artwork_changed: boolean;
+            blocked?: null | components["schemas"]["ReasonView"];
+            changes: components["schemas"]["EditionTagChangeView"][];
+            /** @description The file's path in its library folder. */
+            path: string;
+            /** @description Tags outside the profile's fields that the write removes. */
+            removed_tags: string[];
+            track_id?: string | null;
+        };
+        /** @description Apply a planned tag write, or its undo. */
+        EditionTagsApplyBody: {
+            /**
+             * Format: int64
+             * @description The `row_revision` the job showed.
+             */
+            expected_row_revision: number;
+            /** @description Makes a retried apply answer with the same job. */
+            idempotency_key: string;
+            preview_token: string;
+        };
+        /** @description Preview the edition's tags in the album's files. */
+        EditionTagsBody: {
+            /**
+             * Format: int64
+             * @description The `identity_revision` the edition status showed.
+             */
+            expected_identity_revision: number;
+            /** @description The album's edition, as the edition status showed it. */
+            release_mbid: string;
+        };
+        /** @description A tag write as the edition sheet shows it. */
+        EditionTagsJobView: {
+            expired: boolean;
+            /** @description Every planned file, once planning is done. */
+            files: components["schemas"]["EditionTagFileView"][];
+            job_id: string;
+            /** @description Planned, current and not expired. */
+            ready_to_apply: boolean;
+            reason?: null | components["schemas"]["ReasonView"];
+            /**
+             * Format: int64
+             * @description Echo this on apply and undo.
+             */
+            row_revision: number;
+            /** @description Why a planned write can no longer be applied, in words. */
+            stale_reasons: string[];
+            step: components["schemas"]["EditionTagsStep"];
+            /** @description This job puts an earlier tag write back. */
+            undo: boolean;
+            /**
+             * @description A finished write, whole or partial, that `.../undo` can still put
+             *     back.
+             */
+            undo_available: boolean;
+        };
+        /** @description A tag write or its undo, queued, and the token that applies it. */
+        EditionTagsQueuedView: {
+            /**
+             * Format: double
+             * @description When the preview can no longer be applied (epoch seconds).
+             */
+            expires_at: number;
+            job_id: string;
+            /** @description Pass to `.../apply`; it is shown once. */
+            preview_token: string;
+        };
+        /**
+         * @description Where a tag write stands.
+         * @enum {string}
+         */
+        EditionTagsStep: "waiting" | "planning" | "ready" | "writing" | "done" | "failed";
+        /** @description Plan putting a tag write back. */
+        EditionTagsUndoBody: {
+            /**
+             * Format: int64
+             * @description The `row_revision` the written job showed.
+             */
+            expected_row_revision: number;
+            /** @description Makes a retried undo answer with the same job. */
+            idempotency_key: string;
         };
         /**
          * @description Standard or expanded editions.
@@ -29976,6 +30158,278 @@ export interface operations {
             };
             /** @description MusicBrainz is not answering */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_edition_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditionTagsBody"];
+            };
+        };
+        responses: {
+            /** @description The tag write, queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionTagsQueuedView"];
+                };
+            };
+            /** @description The folder's profile cannot be used */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The edition changed (STALE_REVISION); the album has no edition from MusicBrainz, is left unmanaged, is still being placed, spans two folders or is written by itself; no file sits on the edition; the profile writes no tags; or the Library Management settings cannot be read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_edition_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description The tag write's job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tag write */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionTagsJobView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown tag write, or another curator's */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    apply_edition_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description The tag write's job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditionTagsApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Writing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionTagsJobView"];
+                };
+            };
+            /** @description Wrong token or no request key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown tag write, or another curator's */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Expired, changed since it was planned, or nothing to write */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    undo_edition_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description The written tag write's job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditionTagsUndoBody"];
+            };
+        };
+        responses: {
+            /** @description The undo, queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionTagsQueuedView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown tag write, or another curator's */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not written, already undone, changed since the page loaded, or the Library Management settings cannot be read */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

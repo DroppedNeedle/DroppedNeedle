@@ -98,6 +98,9 @@ enum Owned {
     SpotifyJob,
     /// Drop-import jobs and items, owned by one of two trusted users.
     Drop,
+    /// An edition's tag write, a management job one of two trusted users
+    /// asked for.
+    TagWrite,
     /// A request still waiting, which a cancel can reach.
     LiveRequest,
     /// A held file of its own, which a download's verdict discard clears.
@@ -510,6 +513,28 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         404,
         ADMITTED,
     ),
+    // An edition's tag write, between two trusted users: writer or admin.
+    (
+        Owned::TagWrite,
+        "GET",
+        "/api/v3/library/albums/{album_id}/edition/tags/{job_id}",
+        404,
+        ADMITTED,
+    ),
+    (
+        Owned::TagWrite,
+        "POST",
+        "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/apply",
+        404,
+        ADMITTED,
+    ),
+    (
+        Owned::TagWrite,
+        "POST",
+        "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/undo",
+        404,
+        ADMITTED,
+    ),
 ];
 
 /// Caller-keyed operations with a path parameter that names no user: each
@@ -645,6 +670,11 @@ const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/v3/library/albums/{album_id}/edition/undo",
+        SHARED_ALBUM,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/edition/tags",
         SHARED_ALBUM,
     ),
     (
@@ -887,6 +917,15 @@ fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
             Some(json!({"expected_candidate_index": 0}))
         }
         ("POST", "/api/v3/downloads/search/{job_id}/pick") => Some(json!({"candidate_index": 0})),
+        ("POST", "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/apply") => Some(json!({
+            "preview_token": "not-the-token",
+            "expected_row_revision": 0,
+            "idempotency_key": format!("apply-{}", id("job_id")),
+        })),
+        ("POST", "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/undo") => Some(json!({
+            "expected_row_revision": 0,
+            "idempotency_key": format!("undo-{}", id("job_id")),
+        })),
         ("POST" | "PUT" | "PATCH", _) => Some(json!({})),
         _ => None,
     }
@@ -1170,6 +1209,13 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
             );
             ids.insert("id", spotify_id);
         }
+        Owned::TagWrite => {
+            let album = format!("tag-write-album-{n}");
+            let job = format!("tag-write-job-{n}");
+            seed_tag_write(app, owner, &album, &job);
+            ids.insert("album_id", album);
+            ids.insert("job_id", job);
+        }
         Owned::Drop => {
             let job = drop_upload(app, owner).await;
             ids.insert("job_id", job["id"].as_str().expect("job id").to_owned());
@@ -1183,6 +1229,59 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
         }
     }
     ids
+}
+
+/// A planned tag write of `album`'s edition that `owner` asked for, waiting
+/// to be applied, so the management worker leaves it as it is.
+fn seed_tag_write(app: &TestApp, owner: &Who, album: &str, job: &str) {
+    use droppedneedle_library::management::models::{
+        EditionPin, JobIntent, Origin, Revisions, Summary,
+    };
+    use droppedneedle_library::management::store::{NewJob, insert_job};
+    let mut db = app.db();
+    let tx = db.transaction().expect("transaction opens");
+    insert_job(
+        &tx,
+        &NewJob {
+            id: job,
+            requested_by: Some(&owner.id),
+            idempotency_key: None,
+            mode: "preview",
+            selection_json: r#"{"kind":"tracks","ids":[]}"#,
+            profile_snapshot_json: "{}",
+            revisions: &Revisions {
+                profile: String::new(),
+                settings: String::new(),
+                naming: String::new(),
+                policy: String::new(),
+                overrides: String::new(),
+            },
+            catalog_revision: 0,
+            token_hash: "",
+            now: 1.0,
+            expires_at: 1e12,
+            target_root_id: None,
+            linked_job_id: None,
+            summary: &Summary::default(),
+            origin: Origin::Manual,
+            intent: &JobIntent {
+                edition: Some(EditionPin {
+                    local_album_id: album.to_owned(),
+                    release_mbid: "00000000-0000-0000-0000-0000000000bb".to_owned(),
+                    identity_revision: 1,
+                }),
+                ..JobIntent::default()
+            },
+            proposed_settings_revision: None,
+        },
+    )
+    .expect("tag write seeds");
+    tx.execute_batch(&format!(
+        "UPDATE library_operation_jobs SET state = 'ready' WHERE id = '{job}'; \
+         UPDATE library_management_job_snapshots SET phase = 'ready' WHERE job_id = '{job}';"
+    ))
+    .expect("tag write is planned");
+    tx.commit().expect("tag write lands");
 }
 
 /// Upload one audio file to the drop import as `owner` and wait for the
@@ -1277,6 +1376,13 @@ async fn look(app: &TestApp, kind: Owned, owner: &Who, ids: &Ids) -> Value {
         Owned::SearchJob => read(fill("/api/v3/downloads/search/{job_id}", ids)).await,
         Owned::SpotifyJob => read(fill("/api/v3/acquire/spotify/jobs/{id}", ids)).await,
         Owned::Drop => read(fill("/api/v3/import/jobs/{job_id}", ids)).await,
+        Owned::TagWrite => {
+            read(fill(
+                "/api/v3/library/albums/{album_id}/edition/tags/{job_id}",
+                ids,
+            ))
+            .await
+        }
     }
 }
 
@@ -1321,10 +1427,11 @@ async fn another_users_resources_stay_out_of_reach() {
         Owned::SearchJob,
         Owned::SpotifyJob,
         Owned::Drop,
+        Owned::TagWrite,
     ];
     let mut wrong = Vec::new();
     for (n, kind) in (0u32..).step_by(2).zip(families) {
-        let (owner, other) = if kind == Owned::Drop {
+        let (owner, other) = if matches!(kind, Owned::Drop | Owned::TagWrite) {
             (&tia, &tom)
         } else {
             (&ada, &bob)

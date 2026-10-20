@@ -487,6 +487,24 @@ pub fn apply_choice(
     })
 }
 
+/// The album's indexed files placed on a track of `release_mbid`, the
+/// files writing that edition's tags reaches.
+pub(crate) fn mapped_track_ids(
+    conn: &Connection,
+    album_id: &str,
+    release_mbid: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut statement = conn.prepare(
+        "SELECT t.id FROM local_tracks t JOIN local_track_external_identities i \
+         ON i.local_track_id = t.id AND i.provider = ?3 \
+         WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
+         AND lower(i.release_mbid) = lower(?2) \
+         AND trim(COALESCE(i.release_track_mbid, '')) <> '' ORDER BY t.id",
+    )?;
+    let rows = statement.query_map(params![album_id, release_mbid, PROVIDER], |row| row.get(0))?;
+    rows.collect()
+}
+
 fn placed_files<'a>(
     conn: &Connection,
     placed: impl Iterator<Item = &'a str>,

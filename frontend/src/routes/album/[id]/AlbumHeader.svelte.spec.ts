@@ -34,6 +34,8 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	sealCustomEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	leaveAlbumUnmanaged: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	previewEditionTags: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	getTagWriteQuery: () => ({ data: undefined, refetch: vi.fn() }),
+	tagWriteFinished: vi.fn(),
 	writeEditionTags: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	undoTagWrite: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	editionsKey: (id: string) => ['editions', id],

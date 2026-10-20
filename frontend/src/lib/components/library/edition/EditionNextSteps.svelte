@@ -131,7 +131,10 @@
 					{#key choice}
 						<TagWritePreview
 							{album}
-							files={choice.retag_files}
+							edition={{
+								releaseMbid: (status ?? choice.status).release_mbid ?? choice.release_mbid,
+								identityRevision: (status ?? choice.status).identity_revision
+							}}
 							placing={Boolean(placing)}
 							placingSentenceId="edition-files-sentence"
 						/>

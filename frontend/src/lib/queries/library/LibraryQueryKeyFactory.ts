@@ -106,6 +106,16 @@ export const LibraryQueryKeyFactory = {
 		// A null release is the album's own edition, the plan the album page shows.
 		editionPlan: (userId: LibraryV3UserId, albumId: string, release: string | null) =>
 			[...LibraryQueryKeyFactory.catalog.editionPlanPrefix(userId, albumId), release] as const,
+		// One tag write of the edition's tags, or its undo, by job. Outside the
+		// edition prefix: a finished write refreshes that prefix, which must
+		// not cancel the read that saw it finish.
+		editionTagWrite: (userId: LibraryV3UserId, albumId: string, jobId: string) =>
+			[
+				...LibraryQueryKeyFactory.catalog.root(userId),
+				'edition-tag-write',
+				albumId,
+				jobId
+			] as const,
 		albumTracksPrefix: (userId: LibraryV3UserId, albumId: string) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-tracks', albumId] as const,
 		albumCopiesPrefix: (userId: LibraryV3UserId) =>

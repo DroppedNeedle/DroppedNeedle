@@ -198,6 +198,18 @@ pub struct JobIntent {
     /// For an activation dry run: the library folder it proves.
     pub activation_root_id: Option<String>,
     pub duplicate: Option<DuplicateIntent>,
+    /// For an edition's tag write: the edition the person saw.
+    pub edition: Option<EditionPin>,
+}
+
+/// The edition a tag write was asked for, with the identity revision the
+/// person saw. Planning writes nothing to an album whose identity moved
+/// on, since a re-made identity starts its revision again at 1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditionPin {
+    pub local_album_id: String,
+    pub release_mbid: String,
+    pub identity_revision: i64,
 }
 
 /// Whether a planned file will be written.

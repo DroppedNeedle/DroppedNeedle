@@ -92,6 +92,8 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	undoAlbumEdition: () => mutation(),
 	acquireEdition: () => mutation((...args: unknown[]) => h.acquire(...args)),
 	previewEditionTags: () => mutation(),
+	getTagWriteQuery: () => ({ data: undefined, refetch: vi.fn() }),
+	tagWriteFinished: vi.fn(),
 	writeEditionTags: () => mutation(),
 	undoTagWrite: () => mutation(),
 	removeEditionExtras: () => mutation(),

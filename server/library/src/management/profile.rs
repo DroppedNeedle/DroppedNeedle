@@ -98,6 +98,23 @@ pub fn tag_edit_profile(
     Ok(pinned)
 }
 
+/// The folder's own profile, with its folder overrides, that writes tags
+/// only: the profile's fields, scripts, overrides, artwork and lyrics, and
+/// never a rename or a move. The revision is worked out again, so the
+/// files never count as managed by the full profile.
+pub fn tags_only(
+    stored: &LibraryManagement,
+    root_id: &str,
+) -> Result<PinnedProfile, ManagementError> {
+    let mut pinned = pin_assignment(stored, &root_assignment(stored, root_id))?;
+    let organization = &mut pinned.profile.organization;
+    organization.rename_enabled = false;
+    organization.move_enabled = false;
+    organization.move_sidecars = false;
+    pinned.profile.revision = settings::profile_revision(&pinned.profile);
+    Ok(pinned)
+}
+
 /// Freeze the profile a library folder's assignment gives: its profile
 /// with the folder's overrides, and the scripts it names.
 pub fn pin_assignment(

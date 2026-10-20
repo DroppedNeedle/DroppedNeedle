@@ -19,6 +19,10 @@
 //!   to a track of the album's edition by hand.
 //! - `DELETE /library/albums/{id}/edition/files/{track_id}`: undo that
 //!   match.
+//! - `POST /library/albums/{id}/edition/tags`: preview the edition's tags
+//!   in the album's files, as the folder's profile writes them; then
+//!   `GET .../tags/{job_id}` to read it, `POST .../tags/{job_id}/apply` to
+//!   write it, and `POST .../tags/{job_id}/undo` to plan putting it back.
 //! - `GET /library/unconfirmed`: albums whose match waits for a look.
 //!
 //! Changing an edition is for curators (admins and trusted users), as
@@ -34,12 +38,15 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::error::refused;
 use super::models::PenaltyView;
 use super::operations::{ReasonView, blocking};
 use crate::identify::models::CandidateEvidence;
+use crate::jobs::{ManagementPhase, OperationState};
 use crate::management::automatic::AutomaticWrites;
-use crate::management::models::ManagementError;
-use crate::management::service::Management;
+use crate::management::edition_tags::{EditionTagsError, EditionTagsJob};
+use crate::management::models::{FieldMutation, ManagementError, PlannedItem, PreviewHandle};
+use crate::management::service::{ApplyRequest, Management};
 use crate::mutations::Mutations;
 use crate::operations::models::{EditionChoice, OperationError};
 use crate::operations::plan::{FileFate, PlanReading};
@@ -65,6 +72,10 @@ pub fn routes() -> Routes<LibrarySetup> {
         .curator(routes!(remove_extras))
         .curator(routes!(restore_extras))
         .curator(routes!(match_edition_file, unmatch_edition_file))
+        .curator(routes!(create_edition_tags))
+        .curator(routes!(get_edition_tags))
+        .curator(routes!(apply_edition_tags))
+        .curator(routes!(undo_edition_tags))
         .user(routes!(list_unconfirmed))
 }
 
@@ -956,4 +967,412 @@ pub async fn list_unconfirmed(
         limit,
         offset,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Writing the edition's tags.
+// ---------------------------------------------------------------------------
+
+impl From<EditionTagsError> for ApiError {
+    fn from(error: EditionTagsError) -> Self {
+        match error {
+            EditionTagsError::Refused(reason) => refused(axum::http::StatusCode::CONFLICT, reason),
+            EditionTagsError::Management(error) => error.into(),
+        }
+    }
+}
+
+/// Preview the edition's tags in the album's files.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct EditionTagsBody {
+    /// The album's edition, as the edition status showed it.
+    pub release_mbid: String,
+    /// The `identity_revision` the edition status showed.
+    pub expected_identity_revision: i64,
+}
+
+/// A tag write or its undo, queued, and the token that applies it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionTagsQueuedView {
+    pub job_id: String,
+    /// Pass to `.../apply`; it is shown once.
+    pub preview_token: String,
+    /// When the preview can no longer be applied (epoch seconds).
+    pub expires_at: f64,
+}
+
+impl From<PreviewHandle> for EditionTagsQueuedView {
+    fn from(handle: PreviewHandle) -> Self {
+        Self {
+            job_id: handle.job_id,
+            preview_token: handle.preview_token,
+            expires_at: handle.expires_at,
+        }
+    }
+}
+
+/// Where a tag write stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditionTagsStep {
+    /// Queued behind other Library Management work.
+    Waiting,
+    /// The files are being read and planned.
+    Planning,
+    /// Planned: the files list what changes.
+    Ready,
+    /// Being written.
+    Writing,
+    /// Written.
+    Done,
+    /// Ended without being written; `reason` says why.
+    Failed,
+}
+
+/// One tag that changes. Several values are joined with "; "; absent
+/// means the tag is not there.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionTagChangeView {
+    /// Tag field name, or `musicbrainz_ids` for the MusicBrainz ids,
+    /// counted in `to`.
+    pub field: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// One file of a tag write and what it changes there.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionTagFileView {
+    pub track_id: Option<String>,
+    /// The file's path in its library folder.
+    pub path: String,
+    pub changes: Vec<EditionTagChangeView>,
+    /// Tags outside the profile's fields that the write removes.
+    pub removed_tags: Vec<String>,
+    /// The embedded cover art changes.
+    pub artwork_changed: bool,
+    /// Files written next to it (a cover, a lyrics file), by path.
+    pub added_files: Vec<String>,
+    /// Why the file is left alone, when it is.
+    pub blocked: Option<ReasonView>,
+}
+
+/// A tag write as the edition sheet shows it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionTagsJobView {
+    pub job_id: String,
+    pub step: EditionTagsStep,
+    /// This job puts an earlier tag write back.
+    pub undo: bool,
+    /// A finished write, whole or partial, that `.../undo` can still put
+    /// back.
+    pub undo_available: bool,
+    /// Echo this on apply and undo.
+    pub row_revision: i64,
+    /// Planned, current and not expired.
+    pub ready_to_apply: bool,
+    pub expired: bool,
+    /// Why a planned write can no longer be applied, in words.
+    pub stale_reasons: Vec<String>,
+    /// Why the job ended without writing, when it did.
+    pub reason: Option<ReasonView>,
+    /// Every planned file, once planning is done.
+    pub files: Vec<EditionTagFileView>,
+}
+
+/// Fields shown first, in this order; the rest follow by name.
+const SHOWN_FIRST: [&str; 10] = [
+    "album",
+    "album_artist",
+    "title",
+    "artist",
+    "track_number",
+    "disc_number",
+    "date",
+    "label",
+    "catalog_number",
+    "barcode",
+];
+
+fn tag_text(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(text) => (!text.is_empty()).then(|| text.clone()),
+        serde_json::Value::Array(values) => {
+            let parts: Vec<String> = values.iter().filter_map(tag_text).collect();
+            (!parts.is_empty()).then(|| parts.join("; "))
+        }
+        other => Some(other.to_string()),
+    }
+}
+
+fn tag_changes(mutations: &[FieldMutation]) -> Vec<EditionTagChangeView> {
+    let rank = |name: &str| {
+        SHOWN_FIRST
+            .iter()
+            .position(|shown| *shown == name)
+            .unwrap_or(SHOWN_FIRST.len())
+    };
+    let (ids, mut shown): (Vec<&FieldMutation>, Vec<&FieldMutation>) = mutations
+        .iter()
+        .partition(|mutation| mutation.name.starts_with("musicbrainz_"));
+    shown.sort_by(|a, b| (rank(&a.name), &a.name).cmp(&(rank(&b.name), &b.name)));
+    let mut changes: Vec<EditionTagChangeView> = shown
+        .into_iter()
+        .map(|mutation| EditionTagChangeView {
+            field: mutation.name.clone(),
+            from: tag_text(&mutation.before),
+            to: tag_text(&mutation.after),
+        })
+        .collect();
+    if !ids.is_empty() {
+        changes.push(EditionTagChangeView {
+            field: "musicbrainz_ids".to_owned(),
+            from: None,
+            to: Some(format!("{} changed", ids.len())),
+        });
+    }
+    changes
+}
+
+impl From<PlannedItem> for EditionTagFileView {
+    fn from(item: PlannedItem) -> Self {
+        let blocked = if item.eligibility.writes() {
+            None
+        } else {
+            item.facts.reason.clone().map(|reason| ReasonView {
+                code: reason.code,
+                message: reason.message,
+                action: reason.action,
+            })
+        };
+        Self {
+            track_id: item.track_id,
+            path: item.source_rel,
+            changes: tag_changes(&item.diff.field_mutations),
+            removed_tags: item
+                .diff
+                .scrubbed_raw_tags
+                .into_iter()
+                .map(|tag| tag.key)
+                .collect(),
+            artwork_changed: item.diff.artwork_changed,
+            added_files: item
+                .diff
+                .generated
+                .into_iter()
+                .map(|file| file.destination_relative_path)
+                .collect(),
+            blocked,
+        }
+    }
+}
+
+impl From<EditionTagsJob> for EditionTagsJobView {
+    fn from(found: EditionTagsJob) -> Self {
+        let detail = found.detail;
+        let job = &detail.job;
+        let step = match (job.state, ManagementPhase::parse(&detail.phase)) {
+            (OperationState::Succeeded, _) => EditionTagsStep::Done,
+            (OperationState::Failed | OperationState::Cancelled | OperationState::Stopped, _) => {
+                EditionTagsStep::Failed
+            }
+            (OperationState::Running, Some(ManagementPhase::Planning)) => EditionTagsStep::Planning,
+            (_, Some(ManagementPhase::Ready)) => EditionTagsStep::Ready,
+            (
+                _,
+                Some(
+                    ManagementPhase::Applying
+                    | ManagementPhase::Undoing
+                    | ManagementPhase::Restoring
+                    | ManagementPhase::Complete,
+                ),
+            ) => EditionTagsStep::Writing,
+            _ => EditionTagsStep::Waiting,
+        };
+        Self {
+            job_id: job.id.clone(),
+            step,
+            undo: found.undo,
+            undo_available: found.undo_available,
+            row_revision: job.row_revision,
+            ready_to_apply: detail.ready_for_confirmation,
+            expired: detail.expired,
+            reason: job
+                .terminal_code
+                .as_deref()
+                .filter(|_| step == EditionTagsStep::Failed)
+                .map(|code| crate::operations::reasons::terminal(code).into()),
+            stale_reasons: detail.stale_reasons,
+            files: found.items.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Apply a planned tag write, or its undo.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct EditionTagsApplyBody {
+    pub preview_token: String,
+    /// The `row_revision` the job showed.
+    pub expected_row_revision: i64,
+    /// Makes a retried apply answer with the same job.
+    pub idempotency_key: String,
+}
+
+/// Plan putting a tag write back.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct EditionTagsUndoBody {
+    /// The `row_revision` the written job showed.
+    pub expected_row_revision: i64,
+    /// Makes a retried undo answer with the same job.
+    pub idempotency_key: String,
+}
+
+/// Preview the album's edition's tags in its files: the files placed on a
+/// track of the edition, with the tags the album folder's profile writes
+/// (its fields, scripts, overrides, artwork and lyrics). Nothing is
+/// renamed or moved. Planning runs in the background; read the job until
+/// it is ready, then apply it.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/edition/tags",
+    params(("album_id" = String, Path, description = "Local album id")),
+    request_body = EditionTagsBody,
+    responses(
+        (status = 200, description = "The tag write, queued", body = EditionTagsQueuedView),
+        (status = 400, description = "The folder's profile cannot be used"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album"),
+        (status = 409, description = "The edition changed (STALE_REVISION); the album has no edition from MusicBrainz, is left unmanaged, is still being placed, spans two folders or is written by itself; no file sits on the edition; the profile writes no tags; or the Library Management settings cannot be read"),
+    )
+)]
+pub async fn create_edition_tags(
+    State(state): State<LibrarySetup>,
+    caller: Curator,
+    Path(album_id): Path<String>,
+    ValidJson(body): ValidJson<EditionTagsBody>,
+) -> Result<Json<EditionTagsQueuedView>, ApiError> {
+    let management = Management::new(&state);
+    let caller = caller.into_principal();
+    let handle = blocking(move || {
+        management.create_edition_tags(
+            &album_id,
+            &body.release_mbid,
+            body.expected_identity_revision,
+            &caller,
+        )
+    })
+    .await?;
+    Ok(Json(handle.into()))
+}
+
+/// One of the album's tag writes, or the undo of one, that the caller
+/// made; an admin reads any.
+#[utoipa::path(
+    get,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/edition/tags/{job_id}",
+    params(
+        ("album_id" = String, Path, description = "Local album id"),
+        ("job_id" = String, Path, description = "The tag write's job id"),
+    ),
+    responses(
+        (status = 200, description = "The tag write", body = EditionTagsJobView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown tag write, or another curator's"),
+    )
+)]
+pub async fn get_edition_tags(
+    State(state): State<LibrarySetup>,
+    caller: Curator,
+    Path((album_id, job_id)): Path<(String, String)>,
+) -> Result<Json<EditionTagsJobView>, ApiError> {
+    let management = Management::new(&state);
+    let caller = caller.into_principal();
+    let found = blocking(move || management.edition_tags(&album_id, &job_id, &caller)).await?;
+    Ok(Json(found.into()))
+}
+
+/// Write a planned tag write, or put an earlier one back with its undo.
+/// The files are written in the background.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/apply",
+    params(
+        ("album_id" = String, Path, description = "Local album id"),
+        ("job_id" = String, Path, description = "The tag write's job id"),
+    ),
+    request_body = EditionTagsApplyBody,
+    responses(
+        (status = 200, description = "Writing", body = EditionTagsJobView),
+        (status = 400, description = "Wrong token or no request key"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown tag write, or another curator's"),
+        (status = 409, description = "Expired, changed since it was planned, or nothing to write"),
+    )
+)]
+pub async fn apply_edition_tags(
+    State(state): State<LibrarySetup>,
+    caller: Curator,
+    Path((album_id, job_id)): Path<(String, String)>,
+    ValidJson(body): ValidJson<EditionTagsApplyBody>,
+) -> Result<Json<EditionTagsJobView>, ApiError> {
+    let management = Management::new(&state);
+    let caller = caller.into_principal();
+    let request = ApplyRequest {
+        preview_token: body.preview_token,
+        expected_row_revision: body.expected_row_revision,
+        idempotency_key: body.idempotency_key,
+        confirmation: true,
+    };
+    let found =
+        blocking(move || management.apply_edition_tags(&album_id, &job_id, request, &caller))
+            .await?;
+    Ok(Json(found.into()))
+}
+
+/// Plan putting a written tag write back, as a job read and applied like
+/// the write itself.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/edition/tags/{job_id}/undo",
+    params(
+        ("album_id" = String, Path, description = "Local album id"),
+        ("job_id" = String, Path, description = "The written tag write's job id"),
+    ),
+    request_body = EditionTagsUndoBody,
+    responses(
+        (status = 200, description = "The undo, queued", body = EditionTagsQueuedView),
+        (status = 400, description = "Bad body"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown tag write, or another curator's"),
+        (status = 409, description = "Not written, already undone, changed since the page loaded, or the Library Management settings cannot be read"),
+    )
+)]
+pub async fn undo_edition_tags(
+    State(state): State<LibrarySetup>,
+    caller: Curator,
+    Path((album_id, job_id)): Path<(String, String)>,
+    ValidJson(body): ValidJson<EditionTagsUndoBody>,
+) -> Result<Json<EditionTagsQueuedView>, ApiError> {
+    let management = Management::new(&state);
+    let caller = caller.into_principal();
+    let handle = blocking(move || {
+        management.undo_edition_tags(
+            &album_id,
+            &job_id,
+            body.expected_row_revision,
+            &body.idempotency_key,
+            &caller,
+        )
+    })
+    .await?;
+    Ok(Json(handle.into()))
 }
