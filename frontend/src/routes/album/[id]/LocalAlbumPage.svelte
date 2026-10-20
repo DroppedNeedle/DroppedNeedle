@@ -197,6 +197,7 @@
 				alt={`Cover for ${album.title}`}
 				size="full"
 				requestSize={500}
+				priority
 				className="aspect-square w-full rounded-2xl shadow-xl"
 			/>
 			<div class="min-w-0">

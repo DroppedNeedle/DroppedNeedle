@@ -21,6 +21,8 @@
 		requestSize?: 250 | 500 | 1200;
 		responsiveSizes?: string;
 		lazy?: boolean;
+		/** Load at once and ahead of other images: for a page's main picture. */
+		priority?: boolean;
 		showPlaceholder?: boolean;
 		className?: string;
 		rounded?: 'none' | 'sm' | 'md' | 'lg' | 'xl' | 'full';
@@ -42,6 +44,7 @@
 		requestSize = undefined,
 		responsiveSizes = undefined,
 		lazy = true,
+		priority = false,
 		showPlaceholder = true,
 		className = '',
 		rounded = 'lg',
@@ -106,6 +109,11 @@
 		full: API_SIZES.FULL
 	};
 
+	const BLANK_GIF =
+		'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+	let eager = $derived(priority || !lazy);
+	let fetchPriority: 'high' | undefined = $derived(priority ? 'high' : undefined);
 	let requestedPixels = $derived(requestSize ?? apiSizes[size]);
 	let remoteRequestSize = $derived(
 		requestSize === 250 ? 'md' : requestSize === 500 ? 'lg' : requestSize === 1200 ? 'full' : size
@@ -296,31 +304,51 @@
 		/>
 	{/if}
 	{#if useRemoteUrl && resolvedRemoteUrl && !remoteError}
-		<img
-			data-testid={testId}
-			src={resolvedRemoteUrl}
-			srcset={displayCoverSrcset}
-			sizes={responsiveSizes}
-			{alt}
-			class="relative w-full h-full object-cover transition-opacity duration-300"
-			class:opacity-0={!imgLoaded}
-			referrerpolicy="no-referrer"
-			loading={lazy ? 'lazy' : 'eager'}
-			decoding="async"
-			onerror={onRemoteError}
-			onload={onImgLoad}
-		/>
-	{:else if hasSource && !imgError}
-		{#if lazy}
+		{#if eager}
 			<img
 				data-testid={testId}
-				src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+				src={resolvedRemoteUrl}
+				srcset={displayCoverSrcset}
+				sizes={responsiveSizes}
+				{alt}
+				class="relative w-full h-full object-cover transition-opacity duration-300"
+				class:opacity-0={!imgLoaded}
+				referrerpolicy="no-referrer"
+				loading="eager"
+				fetchpriority={fetchPriority}
+				decoding="async"
+				onerror={onRemoteError}
+				onload={onImgLoad}
+			/>
+		{:else}
+			{#key resolvedRemoteUrl}
+				<img
+					data-testid={testId}
+					src={BLANK_GIF}
+					data-src={resolvedRemoteUrl}
+					data-srcset={displayCoverSrcset}
+					sizes={responsiveSizes}
+					{alt}
+					class="relative w-full h-full object-cover transition-opacity duration-300"
+					class:opacity-0={!imgLoaded}
+					referrerpolicy="no-referrer"
+					decoding="async"
+					use:lazyImage
+					onerror={onRemoteError}
+					onload={onImgLoad}
+				/>
+			{/key}
+		{/if}
+	{:else if hasSource && !imgError}
+		{#if !eager}
+			<img
+				data-testid={testId}
+				src={BLANK_GIF}
 				data-src={displayCoverUrl}
 				data-srcset={displayCoverSrcset}
 				sizes={responsiveSizes}
 				{alt}
 				class="relative w-full h-full object-cover opacity-0 transition-opacity duration-300"
-				loading="lazy"
 				decoding="async"
 				use:lazyImage
 				use:bindImgElement
@@ -336,7 +364,8 @@
 				{alt}
 				class="relative w-full h-full object-cover transition-opacity duration-300"
 				class:opacity-0={!imgLoaded}
-				loading="lazy"
+				loading="eager"
+				fetchpriority={fetchPriority}
 				decoding="async"
 				onerror={onImgError}
 				onload={onImgLoad}

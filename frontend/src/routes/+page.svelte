@@ -249,13 +249,14 @@
 								{#snippet icon()}<TrendingUp class="w-3.5 h-3.5" />{/snippet}
 							</SectionDivider>
 							<div class="discover-section-enter space-y-2">
-								{#each whatsHotBlocks as block (block.key)}
+								{#each whatsHotBlocks as block, i (block.key)}
 									<div>
 										{#if block.kind === 'section'}
 											<HomeSection
 												section={block.section}
 												headerLink={block.link}
 												showPreview={block.showPreview}
+												eager={i < 2}
 											/>
 										{:else}
 											<WeeklyExploration section={block.section} />

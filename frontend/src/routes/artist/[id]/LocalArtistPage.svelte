@@ -79,6 +79,7 @@
 				alt={artist.name}
 				size="xl"
 				requestSize={250}
+				priority
 				className="shadow-xl"
 			/>
 			<div class="min-w-0 flex-1">

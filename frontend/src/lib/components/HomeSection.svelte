@@ -19,6 +19,7 @@
 	} from '$lib/utils/entityRoutes';
 	import { formatListenCount, formatListenedAt } from '$lib/utils/formatting';
 	import { libraryStore } from '$lib/stores/library';
+	import { EAGER_IMAGE_COUNT } from '$lib/utils/lazyImage';
 	import ArtistImage from './ArtistImage.svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import AlbumCardOverlay from './AlbumCardOverlay.svelte';
@@ -38,6 +39,8 @@
 		headerActions?: Snippet;
 		hideHeader?: boolean;
 		showPreview?: boolean;
+		/** The row is in the first screen: its first images load without waiting. */
+		eager?: boolean;
 	}
 
 	let {
@@ -46,8 +49,11 @@
 		headerLink = null,
 		headerActions,
 		hideHeader = false,
-		showPreview = true
+		showPreview = true,
+		eager = false
 	}: Props = $props();
+
+	const lazyAt = (i: number) => !eager || i >= EAGER_IMAGE_COUNT;
 
 	function getGenreHref(genre: HomeGenre): string {
 		return withBasePath(`/genre?name=${encodeURIComponent(genre.name)}`);
@@ -176,7 +182,7 @@
 							class="w-full {artistHref ? '' : 'cursor-default opacity-80'}"
 						>
 							<figure class="flex justify-center pt-4 relative">
-								<ArtistImage mbid={item.mbid ?? ''} alt={item.name} size="md" lazy={true} />
+								<ArtistImage mbid={item.mbid ?? ''} alt={item.name} size="md" lazy={lazyAt(i)} />
 								{#if !item.mbid}
 									<div
 										class="absolute top-2 left-2 badge badge-ghost badge-sm"
@@ -217,6 +223,7 @@
 									size="md"
 									rounded="none"
 									className="w-full h-full"
+									lazy={lazyAt(i)}
 									customUrl={item.image_url || null}
 								/>
 								{#if item.in_library}
@@ -295,6 +302,7 @@
 											size="full"
 											rounded="none"
 											className="w-full h-full"
+											lazy={lazyAt(i)}
 										/>
 									{:else}
 										<div class="relative w-full h-full overflow-hidden">

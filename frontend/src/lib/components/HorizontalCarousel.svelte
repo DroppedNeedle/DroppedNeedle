@@ -65,6 +65,7 @@
 
 	<div
 		bind:this={container}
+		data-lazy-strip
 		onscroll={updateArrows}
 		class="flex gap-4 overflow-x-auto overflow-y-hidden pb-8 -mb-8 scrollbar-hide snap-x snap-mandatory scroll-pl-4 [&>*]:snap-start {className}"
 	>

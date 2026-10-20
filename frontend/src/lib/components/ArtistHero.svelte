@@ -105,6 +105,7 @@
 								alt={artist.name}
 								size="hero"
 								rounded="none"
+								priority
 								onload={onHeroImageLoad}
 							/>
 						</div>

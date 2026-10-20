@@ -210,7 +210,7 @@
 				remoteUrl={album.album_thumb_url ?? null}
 				alt={album.title}
 				size="hero"
-				lazy={false}
+				priority
 				rounded="xl"
 				className="w-full aspect-square shadow-2xl"
 			/>

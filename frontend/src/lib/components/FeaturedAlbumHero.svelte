@@ -95,6 +95,7 @@
 							size="full"
 							requestSize={250}
 							rounded="none"
+							priority
 							className="h-full w-full"
 						/>
 					</div>
@@ -117,6 +118,7 @@
 
 		{#if thumbnails.length > 0}
 			<div
+				data-lazy-strip
 				class="-mt-5 flex gap-3 overflow-x-auto px-6 pb-4 pt-5 scrollbar-hide [mask-image:linear-gradient(to_bottom,transparent,black_30%)]"
 			>
 				{#each thumbnails as album (getId(album))}

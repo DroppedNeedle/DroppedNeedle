@@ -8,6 +8,7 @@
 		requestSize?: 250 | 500 | 1200;
 		responsiveSizes?: string;
 		lazy?: boolean;
+		priority?: boolean;
 		showPlaceholder?: boolean;
 		className?: string;
 		rounded?: 'none' | 'sm' | 'md' | 'lg' | 'xl' | 'full';
@@ -25,6 +26,7 @@
 		requestSize = undefined,
 		responsiveSizes = undefined,
 		lazy = true,
+		priority = false,
 		showPlaceholder = true,
 		className = '',
 		rounded = 'full',
@@ -43,6 +45,7 @@
 	{requestSize}
 	{responsiveSizes}
 	{lazy}
+	{priority}
 	{showPlaceholder}
 	{className}
 	{rounded}
