@@ -33,6 +33,7 @@ mod providers_audio;
 mod providers_catalog;
 mod providers_core;
 mod providers_events;
+mod providers_gate;
 mod providers_musicbrainz;
 mod route_gate;
 mod route_walk;
