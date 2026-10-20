@@ -173,6 +173,11 @@ pub const CATALOG: &[Reason] = &[
         "Fix the import naming script in Settings, Library, then retry import.",
     ),
     reason(
+        "library_changed",
+        "Something in the library changed while these files were going in, so nothing was changed.",
+        "Nothing to do: DroppedNeedle tries again by itself.",
+    ),
+    reason(
         "local_fault",
         "Something on this server stopped the import (for example a full disk or a folder it cannot write).",
         "Check free space and folder permissions, then retry import.",

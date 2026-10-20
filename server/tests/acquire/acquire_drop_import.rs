@@ -349,6 +349,72 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
     assert!(!shelf.join("0101 Mysterons.mp3").exists(), "recycled");
 }
 
+/// A better copy whose library copy can't go to the recycle bin (the
+/// folder's `.recycle` links back into the library) changes nothing in
+/// the library, and the upload is kept as a review item that still exists
+/// on disk: it is never thrown away.
+#[tokio::test]
+async fn an_upgrade_the_bin_cannot_take_keeps_the_upload() {
+    let (db, library, dir, _auth) = bundles().await;
+    let music = dir.join("music");
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
+    std::fs::create_dir_all(music.join("Elsewhere")).expect("folder");
+    std::os::unix::fs::symlink(music.join("Elsewhere"), music.join(".recycle")).expect("bin link");
+    let mysterons_mp3 = tagged(&work, "mp3_full_01.mp3", "Dummy", "Mysterons", 1);
+    let mysterons = tagged(&work, "flac_full_01.flac", "Dummy", "Mysterons", 1);
+    let acquire = acquire_over(
+        &db,
+        Arc::new(LibraryLanding::new(
+            library.clone(),
+            Arc::new(OneRelease(release(&["Mysterons"], &[None]))),
+            db.pool().clone(),
+        )),
+    );
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    drop_zip(
+        &acquire,
+        &curator,
+        "upload-mp3",
+        &[("Dummy/01 - Mysterons.mp3", &mysterons_mp3)],
+    )
+    .await;
+    let shelf = music.join("Portishead/Dummy");
+    let old = std::fs::read(shelf.join("0101 Mysterons.mp3")).expect("library copy");
+
+    let job = drop_zip(
+        &acquire,
+        &curator,
+        "upload-flac",
+        &[("Dummy/01 - Mysterons.flac", &mysterons)],
+    )
+    .await;
+    assert_eq!(
+        std::fs::read(shelf.join("0101 Mysterons.mp3")).expect("library copy"),
+        old,
+        "the library copy stays"
+    );
+    assert!(!shelf.join("0101 Mysterons.flac").exists());
+    let kept = job
+        .items
+        .iter()
+        .find(|item| {
+            item.reason_code.as_deref() == Some("upgrade_blocked") && !item.staging_paths.is_empty()
+        })
+        .unwrap_or_else(|| panic!("a review item keeps the upload: {:?}", job.items));
+    assert_eq!(kept.status, "needs_review", "{:?}", kept.detail);
+    for path in &kept.staging_paths {
+        assert_eq!(
+            std::fs::read(path).expect("the upload is on disk"),
+            mysterons,
+            "{path}"
+        );
+    }
+}
+
 /// MusicBrainz knowing large release groups: the search finds nothing,
 /// the release index lists a group by page.
 struct LargeGroups(Vec<Release>);

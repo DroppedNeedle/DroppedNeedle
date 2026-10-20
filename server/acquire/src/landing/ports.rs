@@ -30,6 +30,9 @@ pub struct ImportFile {
     pub path: PathBuf,
     /// Index into [`ImportRequest::release`]'s tracks.
     pub track: usize,
+    /// Library tracks it replaces. Their files go to the recycle bin in
+    /// the same publish, and only if this file is placed.
+    pub replaces: Vec<String>,
 }
 
 pub use droppedneedle_library::import::ImportOrigin;
@@ -67,9 +70,6 @@ pub struct VersionRow {
     pub tier: &'static str,
 }
 
-/// Files moved into the recycle bin, as (where it was, where it is now).
-pub use droppedneedle_library::mutations::Recycled;
-
 /// A verified download to publish into the library.
 #[derive(Debug, Clone)]
 pub struct ImportRequest {
@@ -87,6 +87,8 @@ pub struct ImportRequest {
     /// Files filed with the album that are none of its tracks; their
     /// request indexes follow `files`.
     pub extras: Vec<ExtraFile>,
+    /// The user the removal of replaced tracks is recorded for.
+    pub actor: String,
 }
 
 /// What the library did with an import.
@@ -102,6 +104,10 @@ pub struct ImportReceipt {
     /// reason: two files bound for one destination, or a destination
     /// already occupied. They are held; the rest imported.
     pub skipped: Vec<(usize, String)>,
+    /// Request files not taken because a library track they replace could
+    /// not be moved to the recycle bin, by index, with the reason. Their
+    /// old copies stay.
+    pub blocked: Vec<(usize, String)>,
 }
 
 /// Why an import did not happen.
@@ -188,19 +194,6 @@ pub trait LandingLibrary: Send + Sync {
         planned: &'a crate::downloads::manifest::PlannedAlbum,
         release: &'a Release,
     ) -> BoxFuture<'a, Option<VersionRow>>;
-
-    /// Move library tracks' files into the recycle bin and take them out
-    /// of the catalog, all or nothing. `actor` is the user the change is
-    /// recorded for. Answers the moves, or a plain sentence on failure.
-    fn recycle(
-        &self,
-        track_ids: Vec<String>,
-        actor: String,
-    ) -> BoxFuture<'_, Result<Recycled, String>>;
-
-    /// Undo [`Self::recycle`]: put the files back and rescan their
-    /// folders. False when a file could not be put back.
-    fn put_back(&self, moved: Recycled, actor: String) -> BoxFuture<'_, bool>;
 
     /// AcoustID recordings heard in each file, by the caller's key. Empty
     /// when no AcoustID key is set or nothing could be looked up.

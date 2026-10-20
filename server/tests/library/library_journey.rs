@@ -3778,7 +3778,7 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
     drain_scans(&library).await;
 
     let removed = Mutations::new(&library)
-        .remove_track(&track, true, "admin")
+        .remove_track_now(&track, true, "admin")
         .expect("track removed");
     assert_eq!(removed.track_ids, vec![track.clone()]);
     assert!(!first.exists(), "the file left the album folder");
@@ -3809,6 +3809,152 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
             .reenable_management(&album, 1, "admin")
             .expect("re-enable answers"),
         "an album that was never excluded reports false"
+    );
+}
+
+/// An upgrade of three tracks where two new files are held, one because
+/// another file sits where it would go and one because a file whose name
+/// differs only in case sits beside it: the imported file's old copy goes
+/// to the recycle bin, and each held file's old copy stays where it is,
+/// still listed.
+#[tokio::test]
+async fn an_upgrade_held_for_one_file_keeps_that_files_old_copy() {
+    use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
+
+    let (scratch, library, music) = bare_library("lib-upgrade-held").await;
+    std::fs::create_dir_all(&music).expect("music folder");
+    add_music_root(&library, &music).await;
+    let track = |n: u32| ReleaseTrack {
+        id: format!("{n}0000000-0000-4000-8000-00000000000b"),
+        recording_id: format!("{n}0000000-0000-4000-8000-00000000000c"),
+        title: format!("Song {n}"),
+        disc: 1,
+        position: n,
+        absolute_position: n,
+        ..ReleaseTrack::default()
+    };
+    let release = Release {
+        id: "10000000-0000-4000-8000-00000000000d".to_owned(),
+        release_group_id: "10000000-0000-4000-8000-00000000000e".to_owned(),
+        title: "Upgraded".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "10000000-0000-4000-8000-00000000000a".to_owned(),
+            name: "The Band".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: vec![track(1), track(2), track(3)],
+        ..Release::default()
+    };
+    let import = |task: &str, fixture: &str, replaces: [Vec<String>; 3]| {
+        let files = replaces
+            .into_iter()
+            .enumerate()
+            .map(|(index, replaces)| {
+                let source = scratch
+                    .to_path_buf()
+                    .join(format!("incoming/{task}/{index}-{fixture}"));
+                std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+                std::fs::copy(fixtures_dir().join(fixture), &source).expect("download planted");
+                ImportSource {
+                    path: source,
+                    track: index,
+                    replaces,
+                }
+            })
+            .collect();
+        library
+            .import_download(&DownloadImport {
+                task_id: task.to_owned(),
+                origin: ImportOrigin::Download,
+                staging: None,
+                release: release.clone(),
+                files,
+                extras: Vec::new(),
+                actor: None,
+            })
+            .expect("imported")
+    };
+    let relative = |path: &Path| {
+        path.strip_prefix(&music)
+            .expect("under the root")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let first = import(
+        "task-mp3",
+        "management_full.mp3",
+        [Vec::new(), Vec::new(), Vec::new()],
+    );
+    let old_a = relative(&first.paths[0]);
+    let old_b = relative(&first.paths[1]);
+    let old_c = relative(&first.paths[2]);
+    let (track_a, track_b, track_c) = (
+        indexed_at(&library, &old_a),
+        indexed_at(&library, &old_b),
+        indexed_at(&library, &old_c),
+    );
+    let old_b_bytes = std::fs::read(music.join(&old_b)).expect("old copy");
+    let old_c_bytes = std::fs::read(music.join(&old_c)).expect("old copy");
+    // Another file already sits where B's new file would go, and one whose
+    // name differs only in case sits beside where C's would go.
+    let taken = music.join(old_b.replace(".mp3", ".flac"));
+    std::fs::write(&taken, b"someone else's file").expect("planted");
+    let c_new = music.join(old_c.replace(".mp3", ".flac"));
+    let folded = c_new.with_file_name(
+        c_new
+            .file_name()
+            .expect("a name")
+            .to_string_lossy()
+            .to_uppercase(),
+    );
+    std::fs::write(&folded, b"someone else's file").expect("planted");
+
+    let second = import(
+        "task-flac",
+        "flac_full_02.flac",
+        [
+            vec![track_a.clone()],
+            vec![track_b.clone()],
+            vec![track_c.clone()],
+        ],
+    );
+    let held: Vec<usize> = second.skipped.iter().map(|(index, _)| *index).collect();
+    assert_eq!(held, [1, 2], "{:?}", second.skipped);
+    assert!(second.blocked.is_empty(), "{:?}", second.blocked);
+    let db = scratch_db(&scratch);
+    let availability = |id: &str| -> String {
+        db.query_row(
+            "SELECT availability FROM local_tracks WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .expect("track row")
+    };
+    assert!(!music.join(&old_a).exists(), "A's old copy left");
+    assert_eq!(availability(&track_a), "missing");
+    assert_eq!(
+        std::fs::read(music.join(&old_b)).expect("B's old copy"),
+        old_b_bytes,
+        "the held file's old copy stays"
+    );
+    assert_eq!(availability(&track_b), "indexed");
+    assert_eq!(
+        std::fs::read(music.join(&old_c)).expect("C's old copy"),
+        old_c_bytes,
+        "the held file's old copy stays"
+    );
+    assert_eq!(availability(&track_c), "indexed");
+    assert!(!c_new.exists(), "C's new file is not placed");
+    assert_eq!(
+        std::fs::read(&taken).expect("the file in the way"),
+        b"someone else's file"
+    );
+    let binned: Vec<PathBuf> = walk_files(&music.join(".recycle"));
+    assert_eq!(
+        binned.len(),
+        1,
+        "only A's old copy is in the bin: {binned:?}"
     );
 }
 
@@ -10904,8 +11050,10 @@ async fn an_import_in_place_of_a_missing_track_marks_nothing() {
             files: vec![ImportSource {
                 path: source,
                 track: 1,
+                replaces: Vec::new(),
             }],
             extras: Vec::new(),
+            actor: None,
         })
         .expect("imported");
     rescan(&managed.library).await;
@@ -10953,6 +11101,7 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
                 ImportSource {
                     path: source,
                     track,
+                    replaces: Vec::new(),
                 }
             })
             .collect();
@@ -10964,6 +11113,7 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
                 release: release.clone(),
                 files,
                 extras: Vec::new(),
+                actor: None,
             })
             .expect("imported")
     };
@@ -11156,8 +11306,10 @@ async fn import_and_management_name_a_file_alike() {
                 files: vec![ImportSource {
                     path: source,
                     track: 0,
+                    replaces: Vec::new(),
                 }],
                 extras: Vec::new(),
+                actor: None,
             })
             .expect("imported");
         let placed = imported.paths[0]
@@ -14846,6 +14998,7 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
                 ImportSource {
                     path: source,
                     track,
+                    replaces: Vec::new(),
                 }
             })
             .collect();
@@ -14857,6 +15010,7 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
                 release: release.clone(),
                 files,
                 extras: Vec::new(),
+                actor: None,
             })
             .expect("imported")
     };

@@ -10,8 +10,7 @@ use futures_util::future::BoxFuture;
 use sqlx::SqlitePool;
 
 use super::ports::{
-    ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, OwnedCopy, OwnedTracks, Recycled,
-    VersionRow,
+    ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, OwnedCopy, OwnedTracks, VersionRow,
 };
 use crate::downloads::manifest::PlannedAlbum;
 use droppedneedle_library::identify::sources::{
@@ -20,7 +19,6 @@ use droppedneedle_library::identify::sources::{
 use droppedneedle_library::import::{DownloadImport, ImportError, ImportSource};
 use droppedneedle_library::management::service::Management;
 use droppedneedle_library::matching::Release;
-use droppedneedle_library::mutations::{MutationError, Mutations};
 use droppedneedle_library::wiring::LibrarySetup;
 
 /// Indexed library tracks with their album's identity and their own,
@@ -331,57 +329,6 @@ impl LandingLibrary for LibraryLanding {
         })
     }
 
-    fn recycle(
-        &self,
-        track_ids: Vec<String>,
-        actor: String,
-    ) -> BoxFuture<'_, Result<Recycled, String>> {
-        Box::pin(async move {
-            let library = self.library.clone();
-            tokio::task::spawn_blocking(move || {
-                let mutations = Mutations::new(&library);
-                let mut moved: Recycled = Vec::new();
-                for track_id in &track_ids {
-                    match mutations.remove_track(track_id, true, &actor) {
-                        Ok(removed) => moved.extend(removed.recycled),
-                        Err(error) => {
-                            let message = match error {
-                                MutationError::NotFound(reason)
-                                | MutationError::Conflict(reason)
-                                | MutationError::Files(reason) => reason.message.to_owned(),
-                                MutationError::Store(cause) | MutationError::Busy(cause) => {
-                                    tracing::error!(%cause, "recycle for an upgrade failed");
-                                    "The library database could not be updated.".to_owned()
-                                }
-                            };
-                            if !moved.is_empty() && !mutations.put_back(&moved, &actor) {
-                                tracing::error!(
-                                    "an upgrade's recycled files could not all be put back"
-                                );
-                            }
-                            return Err(message);
-                        }
-                    }
-                }
-                Ok(moved)
-            })
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "recycle task did not run");
-                "The old files could not be moved to the recycle bin.".to_owned()
-            })?
-        })
-    }
-
-    fn put_back(&self, moved: Recycled, actor: String) -> BoxFuture<'_, bool> {
-        Box::pin(async move {
-            let library = self.library.clone();
-            tokio::task::spawn_blocking(move || Mutations::new(&library).put_back(&moved, &actor))
-                .await
-                .unwrap_or(false)
-        })
-    }
-
     fn fingerprints(
         &self,
         files: Vec<(String, PathBuf)>,
@@ -446,8 +393,10 @@ impl LandingLibrary for LibraryLanding {
                     .map(|file| ImportSource {
                         path: file.path,
                         track: file.track,
+                        replaces: file.replaces,
                     })
                     .collect(),
+                actor: Some(request.actor),
             };
             let join = request.join;
             let done =
@@ -462,6 +411,7 @@ impl LandingLibrary for LibraryLanding {
                     album_id: album.album_id,
                     paths: album.paths,
                     skipped: album.skipped,
+                    blocked: album.blocked,
                 }),
                 Err(ImportError::LocalFault(detail)) => Err(ImportFailure::LocalFault(detail)),
                 Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),

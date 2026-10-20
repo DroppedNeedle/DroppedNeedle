@@ -286,7 +286,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/drop_import/mod.rs", 1, DROP_IMPORT),
     ("acquire/src/imports/jobs.rs", 1, SPOTIFY_IMPORT),
     ("acquire/src/landing/hold.rs", 1, AWAITED),
-    ("acquire/src/landing/library.rs", 4, AWAITED),
+    ("acquire/src/landing/library.rs", 2, AWAITED),
     ("acquire/src/landing/mod.rs", 3, AWAITED),
     ("acquire/src/library_removal.rs", 1, AWAITED),
     ("acquire/src/probes.rs", 1, AWAITED),

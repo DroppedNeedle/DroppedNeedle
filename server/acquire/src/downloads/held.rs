@@ -7,7 +7,7 @@
 //! library chose for the album, so a held file lands exactly where an
 //! automatic import would have put it. For an upgrade, the library's copy
 //! is replaced only by a strictly better file and goes to the recycle bin
-//! first, never deleted.
+//! once the new file is in, never deleted.
 //!
 //! Holds the library side caused (a taken destination, an old copy that
 //! could not be recycled) can also be retried or discarded for a whole
@@ -395,8 +395,9 @@ impl HeldImports {
         let release_track = &release.tracks[track];
 
         // An upgrade replaces the library's copy only with a better file;
-        // the old copy goes to the recycle bin before the new one lands.
-        let mut recycled = None;
+        // the old copy goes to the recycle bin in the publish that places
+        // the new one, and stays when the new one is not placed.
+        let mut replaces = Vec::new();
         if row.origin == "upgrade" {
             let copies = library
                 .owned_copies(
@@ -423,18 +424,7 @@ impl HeldImports {
                     self.settle_task(&library, row, &release).await;
                     return Ok(Placed::KeptExisting);
                 }
-                let moved = library
-                    .recycle(
-                        copies.into_iter().map(|copy| copy.track_id).collect(),
-                        actor.to_owned(),
-                    )
-                    .await
-                    .map_err(|detail| {
-                        tracing::warn!(held_id = row.id, %detail, "upgrade recycle failed");
-                        let reason = explain("upgrade_blocked");
-                        HeldError::Refused(format!("{} {}", reason.message, reason.action))
-                    })?;
-                recycled = Some(moved);
+                replaces = copies.into_iter().map(|copy| copy.track_id).collect();
             }
         }
 
@@ -451,37 +441,38 @@ impl HeldImports {
             files: vec![ImportFile {
                 path: source.clone(),
                 track,
+                replaces,
             }],
+            actor: actor.to_owned(),
         };
         let outcome = library.import(request).await;
         let failed = match &outcome {
-            Ok(receipt) if receipt.skipped.is_empty() => None,
-            Ok(receipt) => Some(
-                receipt
-                    .skipped
-                    .first()
-                    .map(|(_, detail)| ImportFailure::Occupied(detail.clone()))
-                    .unwrap_or_else(|| ImportFailure::Occupied(String::new())),
-            ),
-            Err(failure) => Some(failure.clone()),
+            Ok(receipt) => receipt
+                .blocked
+                .first()
+                .map(|(_, detail)| (explain("upgrade_blocked"), detail.clone()))
+                .or_else(|| {
+                    receipt
+                        .skipped
+                        .first()
+                        .map(|(_, detail)| (explain("target_occupied"), detail.clone()))
+                }),
+            Err(failure) => Some((
+                match failure {
+                    ImportFailure::Occupied(_) => explain("target_occupied"),
+                    ImportFailure::LocalFault(_) => explain("local_fault"),
+                    ImportFailure::NamingScript(_) => explain(NAMING_SCRIPT_FAILED),
+                },
+                failure.detail().to_owned(),
+            )),
         };
-        if let Some(failure) = failed {
-            let restored = match recycled {
-                Some(moved) => library.put_back(moved, actor.to_owned()).await,
-                None => true,
-            };
+        if let Some((reason, detail)) = failed {
             tracing::warn!(
                 held_id = row.id,
-                detail = failure.detail(),
-                restored,
+                detail,
+                code = reason.code,
                 "held import refused"
             );
-            let reason = match failure {
-                _ if !restored => explain("upgrade_restore_failed"),
-                ImportFailure::Occupied(_) => explain("target_occupied"),
-                ImportFailure::LocalFault(_) => explain("local_fault"),
-                ImportFailure::NamingScript(_) => explain(NAMING_SCRIPT_FAILED),
-            };
             return Err(HeldError::Refused(format!(
                 "{} {}",
                 reason.message, reason.action

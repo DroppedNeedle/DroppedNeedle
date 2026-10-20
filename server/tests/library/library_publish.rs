@@ -2669,6 +2669,203 @@ fn a_removal_unwind_that_stopped_after_a_file_went_home_unwinds() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+// --- Upgrade briefs: the old file and the new one in one bundle. ---
+
+/// One upgrade bundle: track-a's file (staged at `staging/a.flac`) is
+/// placed at `dest` while track-b's file (`staging/b.flac`, the old copy)
+/// is taken to the bin. `dest` is the old copy's own path or a new one.
+/// Answers the bundle and the old copy's bytes.
+fn upgrade_bundle(
+    fix: &Fixture,
+    dest: &str,
+) -> (PlanBundle, BTreeMap<String, TagDocument>, Vec<u8>) {
+    let fp_a = write_fixture_source(fix, "music", "staging/a.flac", "management_full.flac");
+    write_fixture_source(fix, "music", "staging/b.flac", "flac_full_01.flac");
+    let old = std::fs::read(fix.sandbox.resolve("music", "staging/b.flac").unwrap()).unwrap();
+    let target = remove::Target {
+        track_id: "track-b".to_string(),
+        root_id: "music".to_string(),
+        relative_path: "staging/b.flac".to_string(),
+        probe: remove::probe(
+            fix.sandbox.removal_root_dir("music").unwrap(),
+            &fix.sandbox
+                .resolve_removal("music", "staging/b.flac")
+                .unwrap(),
+        )
+        .unwrap(),
+        expect_sha256: None,
+    };
+    let removal = remove::plan(
+        &restart(fix),
+        &fix.sandbox,
+        "bundle-u",
+        &[target],
+        "FILE_RECYCLED",
+        None,
+        None,
+        std::time::SystemTime::now(),
+    )
+    .unwrap();
+    let bundle = PlanBundle {
+        id: "bundle-u".to_string(),
+        items: vec![plan_item(
+            "track-a",
+            "staging/a.flac",
+            dest,
+            fp_a,
+            PlanKind::Move,
+        )],
+        profile_revision: 7,
+        naming_revision: 3,
+        policy_revision: 5,
+        removal: Some(removal),
+    };
+    let mut docs = BTreeMap::new();
+    docs.insert("track-a".to_string(), TagDocument::empty());
+    (bundle, docs, old)
+}
+
+/// How an upgrade bundle ended once recovery ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ended {
+    /// The new file is at its destination and listed; the old copy is in
+    /// the bin and its track missing.
+    Upgraded,
+    /// The old copy is at its path and listed; the new file never landed.
+    OldInPlace,
+}
+
+fn assert_ended(fix: &Fixture, dest: &str, old: &[u8], ended: Ended, case: &str) {
+    let conn = open_db(fix);
+    let old_path = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    let binned: Vec<PathBuf> = files_under(&fix.dir.join("bin"));
+    match ended {
+        Ended::Upgraded => {
+            assert_staged(&fix.sandbox.resolve("music", dest).unwrap(), "track-a");
+            assert_eq!(
+                track_row(&conn, "track-a").0,
+                dest,
+                "{case}: the new file is listed at its destination"
+            );
+            assert_eq!(track_row(&conn, "track-a").1, "indexed", "{case}");
+            assert_eq!(track_row(&conn, "track-b").1, "missing", "{case}");
+            assert_eq!(binned.len(), 1, "{case}: the old copy is in the bin");
+            assert_eq!(std::fs::read(&binned[0]).unwrap(), old, "{case}");
+            if dest != "staging/b.flac" {
+                assert!(!old_path.exists(), "{case}: the old copy left its path");
+            }
+        }
+        Ended::OldInPlace => {
+            assert_eq!(
+                std::fs::read(&old_path).unwrap(),
+                old,
+                "{case}: the old copy is home"
+            );
+            assert_eq!(
+                track_row(&conn, "track-b"),
+                ("staging/b.flac".to_string(), "indexed".to_string(), None),
+                "{case}"
+            );
+            assert_eq!(track_row(&conn, "track-a").0, "staging/a.flac", "{case}");
+            assert!(binned.is_empty(), "{case}: nothing in the bin");
+        }
+    }
+    assert!(
+        hidden_leftovers(&fix.dir).is_empty(),
+        "{case}: no hidden file is left"
+    );
+}
+
+/// An upgrade publishes its new file and takes its old copy away in one
+/// bundle. Stopped at any step and recovered, the new file is in place and
+/// the old copy in the bin, or the old copy is in place and the new file
+/// never landed: never neither. The new file goes to a path of its own or
+/// to the old copy's own path. A resume whose commit is refused unwinds:
+/// the new file comes off before the old copy goes home.
+#[test]
+fn an_upgrade_stopped_at_any_step_keeps_one_copy() {
+    let resumed = CrashPoint::all()
+        .into_iter()
+        .map(|point| (point, Ended::Upgraded));
+    let unwound = [
+        (CrashPoint::AfterFirstFileStaged, Ended::OldInPlace),
+        (CrashPoint::AfterTempWritten, Ended::OldInPlace),
+    ];
+    for dest in ["organized/a.flac", "staging/b.flac"] {
+        for (point, ended) in resumed.clone().chain(unwound) {
+            let case = format!("{dest} {}", point.as_str());
+            let fix = fixture(&format!("upgrade-{}-{}", dest.len(), point.as_str()));
+            let (bundle, docs, old) = upgrade_bundle(&fix, dest);
+            let (sealed, live) = seal(&bundle);
+            let mut publisher = open_publisher(&fix);
+            publisher.set_crash_point(Some(point));
+            let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+            assert!(
+                matches!(err, PublishError::InjectedCrash(_)),
+                "{case}: {err:?}"
+            );
+            drop(publisher);
+            reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+            assert_ended(&fix, dest, &old, ended, &case);
+        }
+
+        // Stopped with both files moved, then the old copy's row changed:
+        // the resumed commit is refused and the bundle unwinds.
+        let case = format!("{dest} refused resume");
+        let fix = fixture(&format!("upgrade-{}-refused", dest.len()));
+        let (bundle, docs, old) = upgrade_bundle(&fix, dest);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
+        assert!(publisher.publish(&sealed, &live, &docs).is_err(), "{case}");
+        drop(publisher);
+        open_db(&fix)
+            .execute(
+                "UPDATE local_tracks SET stat_revision = '1:1' WHERE id = 'track-b'",
+                [],
+            )
+            .unwrap();
+        reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+        let conn = open_db(&fix);
+        assert_eq!(
+            std::fs::read(fix.sandbox.resolve("music", "staging/b.flac").unwrap()).unwrap(),
+            old,
+            "{case}: the old copy is home"
+        );
+        assert_eq!(track_row(&conn, "track-b").1, "indexed", "{case}");
+        assert_eq!(track_row(&conn, "track-a").0, "staging/a.flac", "{case}");
+        assert!(files_under(&fix.dir.join("bin")).is_empty(), "{case}");
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{case}");
+    }
+
+    // A placement refused by a file that turned up at the new path, and
+    // the unwind stopped after its first row: recovery finishes it, and
+    // the old copy and the file in the way both stay.
+    let fix = fixture("upgrade-first-unwind");
+    let (bundle, docs, old) = upgrade_bundle(&fix, "organized/a.flac");
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_before_place(Some(Box::new(|dest| {
+        std::fs::write(dest, b"someone else's file").unwrap();
+    })));
+    publisher.set_crash_point(Some(CrashPoint::AfterFirstUnwind));
+    assert!(publisher.publish(&sealed, &live, &docs).is_err());
+    drop(publisher);
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+    let conn = open_db(&fix);
+    assert_eq!(
+        std::fs::read(fix.sandbox.resolve("music", "staging/b.flac").unwrap()).unwrap(),
+        old
+    );
+    assert_eq!(track_row(&conn, "track-b").1, "indexed");
+    assert_eq!(
+        std::fs::read(fix.sandbox.resolve("music", "organized/a.flac").unwrap()).unwrap(),
+        b"someone else's file"
+    );
+    assert!(files_under(&fix.dir.join("bin")).is_empty());
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
 /// Rewrite `path` in place with other bytes of the same length and put its
 /// modified time back, as a tag editor that keeps timestamps does.
 fn edit_keeping_size_and_mtime(path: &std::path::Path) {

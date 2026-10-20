@@ -87,11 +87,12 @@ pub const SAMPLES: Reason = reason(
     "These look like sample clips or previews, not full tracks.",
     "Discard them, or use Match if they really are full tracks.",
 );
-/// An upgrade's old copy could not be put back after the new file failed.
-pub const RESTORE_FAILED: Reason = reason(
-    "restore_failed",
-    "This better copy couldn't be placed, and the old copy couldn't be put back from the recycle bin. The upload is kept so nothing is lost.",
-    "Move the old file back from the recycle bin by hand, then use Match on this item again or discard it.",
+/// An upload better than the library's copy whose old copy could not be
+/// taken to the recycle bin, so the library is left as it was.
+pub const UPGRADE_BLOCKED: Reason = reason(
+    "upgrade_blocked",
+    "Your library copy couldn't be moved to the recycle bin, so this better copy wasn't added. The upload is kept.",
+    "Check that the recycle bin folder can be written, then use Match on this item again or discard it.",
 );
 /// Every track is already in the library.
 pub const ALREADY_OWNED: Reason = reason(

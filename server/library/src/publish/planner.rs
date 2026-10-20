@@ -659,9 +659,24 @@ impl CollisionGate {
     pub fn check_bundle(sandbox: &Sandbox, bundle: &PlanBundle) -> Result<(), PublishError> {
         let mut seen: HashSet<CollisionKey> = HashSet::new();
         let mut blockers: Vec<CollisionEvidence> = Vec::new();
+        // Files the bundle takes away are set aside before anything is
+        // placed, so their paths are free by then. A file that changed
+        // since the plan read it refuses at its set-aside.
+        let freed: HashSet<std::path::PathBuf> = bundle
+            .removal
+            .iter()
+            .flat_map(|removal| &removal.items)
+            .filter(|item| item.file.is_some())
+            .filter_map(|item| {
+                sandbox
+                    .resolve_removal(&item.seal.root_id, &item.seal.relative_path)
+                    .ok()
+            })
+            .collect();
         for item in bundle.items.iter() {
             Self::check_output(
                 sandbox,
+                &freed,
                 &mut seen,
                 &mut blockers,
                 "audio",
@@ -672,6 +687,7 @@ impl CollisionGate {
             for sidecar in item.sidecars.iter() {
                 Self::check_output(
                     sandbox,
+                    &freed,
                     &mut seen,
                     &mut blockers,
                     "sidecar",
@@ -683,6 +699,7 @@ impl CollisionGate {
             for output in item.outputs.iter() {
                 Self::check_output(
                     sandbox,
+                    &freed,
                     &mut seen,
                     &mut blockers,
                     &output.kind,
@@ -711,8 +728,10 @@ impl CollisionGate {
         )))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_output(
         sandbox: &Sandbox,
+        freed: &HashSet<std::path::PathBuf>,
         seen: &mut HashSet<CollisionKey>,
         blockers: &mut Vec<CollisionEvidence>,
         subject: &str,
@@ -738,7 +757,8 @@ impl CollisionGate {
                         "destination is a symlink: {dest_root}:{dest_rel}"
                     )));
                 }
-                if same_path_self.is_self_destination(dest_root, dest_rel)
+                if freed.contains(&dest)
+                    || same_path_self.is_self_destination(dest_root, dest_rel)
                     || same_path_self.is_own_source(sandbox, dest_root, dest_rel, &dest)
                     || same_path_self.is_replaced(&dest)
                 {
@@ -756,6 +776,7 @@ impl CollisionGate {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 Self::check_fold_siblings(
                     sandbox,
+                    freed,
                     blockers,
                     subject,
                     dest_root,
@@ -773,6 +794,7 @@ impl CollisionGate {
     /// side on any filesystem.
     fn check_fold_siblings(
         sandbox: &Sandbox,
+        freed: &HashSet<std::path::PathBuf>,
         blockers: &mut Vec<CollisionEvidence>,
         subject: &str,
         dest_root: &str,
@@ -803,6 +825,7 @@ impl CollisionGate {
             // A case-only rename folds onto its own source, which is
             // leaving: that is the file itself, not a collision.
             if text == wanted
+                || freed.contains(&parent.join(text))
                 || same_path_self.is_own_source(sandbox, dest_root, dest_rel, &parent.join(text))
             {
                 continue;

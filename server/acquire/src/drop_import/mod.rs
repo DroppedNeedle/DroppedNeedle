@@ -36,7 +36,7 @@ use crate::flows::seams::{FlowEvent, TickSink};
 use crate::landing::canonical_dirs;
 use crate::landing::matching::{MatchSummary, plan};
 use crate::landing::ports::{
-    ExtraFile, ImportFailure, ImportFile, ImportOrigin, ImportRequest, LandingLibrary, Recycled,
+    ExtraFile, ImportFailure, ImportFile, ImportOrigin, ImportRequest, LandingLibrary,
 };
 use crate::landing::probe::{Landing, probe};
 use crate::landing::specs::Target;
@@ -94,6 +94,9 @@ struct Organised {
     bonus: usize,
     owned: usize,
     occupied: usize,
+    /// Better copies kept for review because the library's copy could not
+    /// go to the recycle bin.
+    blocked: usize,
     /// Files that wait for review, grouped by why.
     leftovers: Vec<(Reason, Vec<PathBuf>)>,
     /// Release tracks now in the library, out of the edition's tracks.
@@ -740,26 +743,18 @@ impl DropImports {
             }
         }
 
-        // The old copies go to the recycle bin before the new files are
-        // placed (they usually take the same path). A copy that cannot be
-        // moved keeps its place and the upload counts as already owned.
-        let mut recycled: HashMap<usize, Recycled> = HashMap::new();
+        // Each upgrade's old copies go in the publish that places it: the
+        // library takes them to the recycle bin only once the upload is
+        // in, and an upload it does not take keeps them where they are.
         let mut upgrades: Vec<(usize, usize, Vec<String>)> = replaces
             .into_iter()
             .map(|(file, (track, old))| (file, track, old))
             .collect();
         upgrades.sort_by_key(|(file, _, _)| *file);
+        let mut replaced: HashMap<usize, Vec<String>> = HashMap::new();
         for (file, track, old) in upgrades {
-            match library.recycle(old, job.user_id.clone()).await {
-                Ok(moved) => {
-                    recycled.insert(file, moved);
-                    import.push((file, track));
-                }
-                Err(detail) => {
-                    tracing::warn!(item_id = item.id, %detail, "library copy not recycled; upgrade skipped");
-                    owned_files.push(file);
-                }
-            }
+            replaced.insert(file, old);
+            import.push((file, track));
         }
         let import = import;
         // Files the release does not account for go with the album (v2
@@ -776,10 +771,11 @@ impl DropImports {
             .iter()
             .map(|index| landing.audio[*index].path.clone())
             .collect();
-        let mut stranded: Vec<PathBuf> = Vec::new();
-        // Uploads whose place in the library is taken are kept for review,
-        // never deleted.
+        // Uploads whose place in the library is taken, and upgrades whose
+        // old copy could not be taken away, are kept for review, never
+        // deleted.
         let mut occupied: Vec<PathBuf> = Vec::new();
+        let mut blocked: Vec<PathBuf> = Vec::new();
         if !import.is_empty() || !extras.is_empty() {
             let request = ImportRequest {
                 task_id: format!("drop-{}", item.id),
@@ -792,8 +788,10 @@ impl DropImports {
                     .map(|(file, track)| ImportFile {
                         path: landing.audio[*file].path.clone(),
                         track: *track,
+                        replaces: replaced.get(file).cloned().unwrap_or_default(),
                     })
                     .collect(),
+                actor: job.user_id.clone(),
                 extras: extras
                     .iter()
                     .map(|index| extra_file(&landing.audio[*index]))
@@ -803,29 +801,32 @@ impl DropImports {
                 Ok(receipt) => {
                     let skipped: HashSet<usize> =
                         receipt.skipped.iter().map(|(index, _)| *index).collect();
+                    let refused: HashMap<usize, &str> = receipt
+                        .blocked
+                        .iter()
+                        .map(|(index, detail)| (*index, detail.as_str()))
+                        .collect();
                     for (index, (file, track)) in import.iter().enumerate() {
                         let path = landing.audio[*file].path.clone();
+                        if let Some(detail) = refused.get(&index) {
+                            tracing::warn!(
+                                item_id = item.id,
+                                detail,
+                                "library copy not taken away; the upgrade waits for review"
+                            );
+                            done.blocked += 1;
+                            blocked.push(path);
+                            continue;
+                        }
                         if !skipped.contains(&index) {
                             done.imported += 1;
-                            done.upgraded += usize::from(recycled.contains_key(file));
+                            done.upgraded += usize::from(replaced.contains_key(file));
                             imported_tracks.insert(*track);
                             consumed.push(path);
                             continue;
                         }
                         done.occupied += 1;
-                        let restored = match recycled.remove(file) {
-                            Some(moved) => library.put_back(moved, job.user_id.clone()).await,
-                            None => true,
-                        };
-                        if restored {
-                            occupied.push(path);
-                        } else {
-                            tracing::error!(
-                                item_id = item.id,
-                                "old copy not put back; the upload waits for review"
-                            );
-                            stranded.push(path);
-                        }
+                        occupied.push(path);
                     }
                     for (offset, file) in extras.iter().enumerate() {
                         let path = landing.audio[*file].path.clone();
@@ -838,46 +839,30 @@ impl DropImports {
                         }
                     }
                 }
-                Err(failure) => {
-                    let mut restored = true;
-                    for (file, moved) in recycled.drain() {
-                        if !library.put_back(moved, job.user_id.clone()).await {
-                            restored = false;
-                            stranded.push(landing.audio[file].path.clone());
-                        }
-                    }
-                    if !restored {
-                        tracing::error!(
-                            item_id = item.id,
-                            "old copies not put back after a failed drop import"
+                Err(failure) => match &failure {
+                    ImportFailure::Occupied(detail) => {
+                        tracing::info!(item_id = item.id, %detail, "drop import destination taken");
+                        done.occupied = import.len() + extras.len();
+                        occupied.extend(
+                            import
+                                .iter()
+                                .map(|(file, _)| *file)
+                                .chain(extras.iter().copied())
+                                .map(|file| landing.audio[file].path.clone()),
                         );
                     }
-                    match &failure {
-                        ImportFailure::Occupied(detail) => {
-                            tracing::info!(item_id = item.id, %detail, "drop import destination taken");
-                            done.occupied = import.len() + extras.len();
-                            occupied.extend(
-                                import
-                                    .iter()
-                                    .map(|(file, _)| *file)
-                                    .chain(extras.iter().copied())
-                                    .map(|file| landing.audio[file].path.clone())
-                                    .filter(|path| !stranded.contains(path)),
-                            );
-                        }
-                        ImportFailure::LocalFault(detail) | ImportFailure::NamingScript(detail) => {
-                            tracing::warn!(item_id = item.id, %detail, "library could not take a drop import");
-                            let reason = if matches!(failure, ImportFailure::NamingScript(_)) {
-                                reasons::NAMING_SCRIPT_FAILED
-                            } else {
-                                reasons::LIBRARY_UNAVAILABLE
-                            };
-                            self.save(&settled(item, item_status::NEEDS_REVIEW, reason, None))
-                                .await;
-                            return Ok(());
-                        }
+                    ImportFailure::LocalFault(detail) | ImportFailure::NamingScript(detail) => {
+                        tracing::warn!(item_id = item.id, %detail, "library could not take a drop import");
+                        let reason = if matches!(failure, ImportFailure::NamingScript(_)) {
+                            reasons::NAMING_SCRIPT_FAILED
+                        } else {
+                            reasons::LIBRARY_UNAVAILABLE
+                        };
+                        self.save(&settled(item, item_status::NEEDS_REVIEW, reason, None))
+                            .await;
+                        return Ok(());
                     }
-                }
+                },
             }
         }
         let owned_tracks: HashSet<usize> = found
@@ -907,7 +892,7 @@ impl DropImports {
             (reasons::LEFTOVER_FILES, paths(&held)),
             (reasons::FINGERPRINT_MISMATCH, paths(&misheard)),
             (reasons::SAMPLES, landing.samples.clone()),
-            (reasons::RESTORE_FAILED, stranded),
+            (reasons::UPGRADE_BLOCKED, blocked),
             (reasons::TARGET_OCCUPIED, occupied),
         ] {
             let files: Vec<PathBuf> = files
@@ -925,7 +910,8 @@ impl DropImports {
             && done.covered == done.expected
             && done.expected > 0
             && unreadable == 0
-            && done.occupied == 0;
+            && done.occupied == 0
+            && done.blocked == 0;
         item.release_group_mbid = Some(release.release_group_id.clone());
         item.album_title = Some(release.title.clone());
         item.artist_name = Some(release.artist_text());
@@ -940,9 +926,11 @@ impl DropImports {
                 reason_action: None,
                 ..item
             }
-        } else if done.occupied > 0 || done.owned > 0 {
+        } else if done.occupied > 0 || done.blocked > 0 || done.owned > 0 {
             let reason = if done.occupied > 0 {
                 reasons::TARGET_OCCUPIED
+            } else if done.blocked > 0 {
+                reasons::UPGRADE_BLOCKED
             } else {
                 reasons::ALREADY_OWNED
             };
@@ -1243,6 +1231,12 @@ fn describe(done: &Organised, unreadable: usize, complete: bool) -> String {
         parts.push(format!(
             "{} skipped because a file is already in their place",
             plural(done.occupied, "file", "files")
+        ));
+    }
+    if done.blocked > 0 {
+        parts.push(format!(
+            "{} kept because your copy couldn't go to the recycle bin",
+            plural(done.blocked, "better file", "better files")
         ));
     }
     let waiting: usize = done.leftovers.iter().map(|(_, files)| files.len()).sum();

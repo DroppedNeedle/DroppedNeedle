@@ -46,7 +46,7 @@ use self::confine::{Place, place};
 use self::decision::{Decision, Outcome, check_files, decide};
 use self::hold::HoldItem;
 use self::matching::{FilePlan, FoundRelease, MatchSummary, find};
-use self::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary, Recycled};
+use self::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary};
 use self::probe::{LandedFile, Landing};
 use self::specs::{Check, Disposition, QualityPolicy, Rejection, Target, Verdict};
 use super::dispatch::Journal;
@@ -66,9 +66,15 @@ pub const UPGRADE_PENDING: &str = "upgrade_pending";
 /// recycle bin, so the old file stays and the new one waits.
 pub const UPGRADE_BLOCKED: &str = "upgrade_blocked";
 
-/// Hold code for a better file that could not be placed when its old copy
-/// could not be put back either: the old copy is in the recycle bin.
+/// Hold code earlier versions wrote for a better file that could not be
+/// placed after its old copy was recycled. Landings no longer write it;
+/// stored holds still carry it.
 pub const UPGRADE_RESTORE_FAILED: &str = "upgrade_restore_failed";
+
+/// Rejection code for a landing whose publish met a library that changed
+/// under it (a file appeared at a destination, an old copy changed): it
+/// waits for the next pass, which decides file by file again.
+pub const LIBRARY_CHANGED: &str = "library_changed";
 
 /// Rejection code for a landing whose download settings cannot be read:
 /// it waits for them to be saved again, and the source is not blamed.
@@ -171,8 +177,9 @@ struct Versions {
     handled: HashSet<usize>,
     /// Handled tracks whose file was dropped: they count as owned.
     dropped: HashSet<usize>,
-    /// Files whose old version goes to the recycle bin first, with it.
-    recycle: Vec<(usize, String)>,
+    /// Files whose old version they replace, which goes to the recycle bin
+    /// in the same publish.
+    replace: Vec<(usize, String)>,
     /// `(release track, old track)` for every file imported to replace one.
     replaced: Vec<(String, String)>,
 }
@@ -505,7 +512,7 @@ impl LandingService {
         let versions = self
             .replace_versions(target, found, landing, &mut plan, &mut held, library)
             .await;
-        for (file, old) in &versions.recycle {
+        for (file, old) in &versions.replace {
             replaces.insert(*file, vec![old.clone()]);
         }
         // An upgrade replaces the library's copy of a track only when the
@@ -577,31 +584,9 @@ impl LandingService {
             .await;
         decision.checks.extend(heard_check);
 
-        // The old copies go to the recycle bin before the new files are
-        // placed (they usually take the same path). A copy that cannot be
-        // moved keeps its file, and the better one is held instead.
-        let mut recycled: HashMap<usize, Recycled> = HashMap::new();
-        let mut kept = Vec::with_capacity(plan.import.len());
-        for (file, track) in plan.import.drain(..) {
-            let Some(old) = replaces.remove(&file) else {
-                kept.push((file, track));
-                continue;
-            };
-            match library.recycle(old, task.user_id.clone()).await {
-                Ok(moved) => {
-                    recycled.insert(file, moved);
-                    kept.push((file, track));
-                }
-                Err(detail) => held.push(Held {
-                    file: &landing.audio[file],
-                    track: Some(track),
-                    code: UPGRADE_BLOCKED,
-                    detail,
-                }),
-            }
-        }
-        plan.import = kept;
-
+        // Each file's old copies go in the same publish as the file: the
+        // library takes them to the recycle bin only once the file is in,
+        // and a file it holds keeps them where they are.
         let mut imported_tracks: Vec<usize> = Vec::new();
         let mut imported_sources = Vec::new();
         if !plan.import.is_empty() {
@@ -618,32 +603,28 @@ impl LandingService {
                     .map(|(file, track)| ImportFile {
                         path: landing.audio[*file].path.clone(),
                         track: *track,
+                        replaces: replaces.remove(file).unwrap_or_default(),
                     })
                     .collect(),
+                actor: task.user_id.clone(),
             };
             match library.import(request).await {
                 Ok(receipt) => {
                     let skipped: HashMap<usize, String> = receipt.skipped.into_iter().collect();
+                    let blocked: HashMap<usize, String> = receipt.blocked.into_iter().collect();
                     for (index, (file, track)) in plan.import.iter().enumerate() {
-                        match skipped.get(&index) {
-                            Some(detail) => {
-                                let restored = match recycled.remove(file) {
-                                    Some(moved) => {
-                                        library.put_back(moved, task.user_id.clone()).await
-                                    }
-                                    None => true,
-                                };
-                                held.push(Held {
-                                    file: &landing.audio[*file],
-                                    track: Some(*track),
-                                    code: if restored {
-                                        "target_occupied"
-                                    } else {
-                                        UPGRADE_RESTORE_FAILED
-                                    },
-                                    detail: detail.clone(),
-                                });
-                            }
+                        let refused = match (skipped.get(&index), blocked.get(&index)) {
+                            (Some(detail), _) => Some(("target_occupied", detail)),
+                            (None, Some(detail)) => Some((UPGRADE_BLOCKED, detail)),
+                            (None, None) => None,
+                        };
+                        match refused {
+                            Some((code, detail)) => held.push(Held {
+                                file: &landing.audio[*file],
+                                track: Some(*track),
+                                code,
+                                detail: detail.clone(),
+                            }),
                             None => {
                                 imported_tracks.push(*track);
                                 imported_sources.push(landing.audio[*file].path.clone());
@@ -659,56 +640,27 @@ impl LandingService {
                     );
                 }
                 Err(failure @ (ImportFailure::LocalFault(_) | ImportFailure::NamingScript(_))) => {
-                    // A better file whose old copy could not be put back is
-                    // held, so neither copy is lost from view; the rest of
-                    // the landing fails as a local fault.
-                    let mut stranded = Vec::new();
-                    for (file, moved) in recycled.drain() {
-                        if !library.put_back(moved, task.user_id.clone()).await {
-                            stranded.push(file);
-                        }
-                    }
                     let detail = failure.detail().to_owned();
-                    if stranded.is_empty() {
-                        decision.outcome = Outcome::Reject(match failure {
-                            ImportFailure::NamingScript(_) => Rejection {
-                                code: NAMING_SCRIPT_FAILED,
-                                ..local_fault(detail)
-                            },
-                            _ => local_fault(detail),
-                        });
-                        return Acted::decided(decision, 0);
-                    }
-                    for (file, track) in &plan.import {
-                        if stranded.contains(file) {
-                            held.push(Held {
-                                file: &landing.audio[*file],
-                                track: Some(*track),
-                                code: UPGRADE_RESTORE_FAILED,
-                                detail: detail.clone(),
-                            });
-                        }
-                    }
+                    decision.outcome = Outcome::Reject(match failure {
+                        ImportFailure::NamingScript(_) => Rejection {
+                            code: NAMING_SCRIPT_FAILED,
+                            ..local_fault(detail)
+                        },
+                        _ => local_fault(detail),
+                    });
+                    return Acted::decided(decision, 0);
                 }
                 Err(ImportFailure::Occupied(detail)) => {
-                    let mut stranded = HashSet::new();
-                    for (file, moved) in recycled.drain() {
-                        if !library.put_back(moved, task.user_id.clone()).await {
-                            stranded.insert(file);
-                        }
-                    }
-                    for (file, track) in &plan.import {
-                        held.push(Held {
-                            file: &landing.audio[*file],
-                            track: Some(*track),
-                            code: if stranded.contains(file) {
-                                UPGRADE_RESTORE_FAILED
-                            } else {
-                                "target_occupied"
-                            },
-                            detail: detail.clone(),
-                        });
-                    }
+                    // The library changed between the import's own checks
+                    // and the publish, which put everything back. The next
+                    // pass decides file by file again.
+                    decision.outcome = Outcome::Reject(Rejection {
+                        code: LIBRARY_CHANGED,
+                        disposition: Disposition::Temporary,
+                        quarantine: None,
+                        detail,
+                    });
+                    return Acted::decided(decision, 0);
                 }
             }
         }
@@ -878,7 +830,7 @@ impl LandingService {
             }
             if old.availability == "indexed" {
                 versions
-                    .recycle
+                    .replace
                     .push((file, version.local_track_id.clone()));
             }
             versions.replaced.push((

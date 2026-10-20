@@ -1016,8 +1016,10 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
             files: vec![ImportFile {
                 path: file,
                 track: 0,
+                replaces: Vec::new(),
             }],
             extras: Vec::new(),
+            actor: "u-ada".to_owned(),
         })
         .await
         .expect("import publishes");
@@ -2298,8 +2300,10 @@ async fn a_held_release_track_is_not_given_away() {
         files: vec![ImportFile {
             path: file,
             track: 1,
+            replaces: Vec::new(),
         }],
         extras: Vec::new(),
+        actor: "u-ada".to_owned(),
     })
     .await
     .expect("import publishes");
@@ -2581,29 +2585,78 @@ async fn a_version_at_its_own_path_keeps_its_override() {
     assert_eq!(rig.overrides_follow(&v.old).await, 0);
 }
 
-// Stopped before the catalog commit and recovered as boot does: the new
-// file is placed and the history is on it. The old copy is removed first,
-// in a publish of its own, so the crash is armed for the import's publish
-// only; once both steps share one publish this arms that one.
+// A version swap stopped part way and recovered as boot does: the new
+// file is placed, the history is on it and O's file is in the recycle
+// bin. The new file goes to a path of its own, stopped before the catalog
+// commit, or to O's own path, stopped before O was set aside, so recovery
+// sets O aside before it places the new file.
 #[tokio::test]
 async fn a_version_replacement_recovers_after_a_crash() {
-    let v = VersionCase::new(15, 1, true, "02 Sour Times.flac").await;
+    use droppedneedle_library::publish::CrashPoint;
+    for (s, o_name, point) in [
+        (15u16, "02 Sour Times.flac", CrashPoint::BeforeCatalogCommit),
+        (18, SOUR_TIMES, CrashPoint::AfterStage),
+    ] {
+        let v = VersionCase::new(s, 1, true, o_name).await;
+        let rig = &v.rig;
+        v.ask("t-version").await;
+        rig.library.arm_publish_crash(Some(point));
+        v.land_directly("t-version", v.sour("t-version")).await;
+        rig.library.arm_publish_crash(None);
+        rig.library.publish_tick().expect("recovery runs");
+        let (new, on, _, _, availability) = rig.row_at(&copy_rel(s, SOUR_TIMES)).await;
+        assert_eq!(
+            (on.as_str(), availability.as_str()),
+            (v.album.as_str(), "indexed"),
+            "{s}"
+        );
+        assert_ne!(new, v.old, "{s}");
+        assert_eq!(
+            rig.identity(&new).await,
+            Some(placed_on(&v.e.new, 1)),
+            "{s}"
+        );
+        assert_eq!(
+            rig.version_history(&v.old).await,
+            (new.clone(), new.clone(), new.clone(), v.old.clone()),
+            "{s}"
+        );
+        assert_eq!(rig.alias_of(&v.old).await, Some(new), "{s}");
+        assert!(rig.in_recycle_bin(o_name), "{s}: O's file is recycled");
+        assert_eq!(rig.availability(&v.old).await, "missing", "{s}");
+    }
+}
+
+// A version swap that stopped before its old copy could leave, unwound by
+// recovery, leaves O where it was: a worse version arriving next is held
+// and O, still in place, is the version that stays.
+#[tokio::test]
+async fn a_worse_version_after_a_stopped_swap_finds_yours_in_place() {
+    let v = VersionCase::new(19, 0, false, "01 Mysterons.flac").await;
     let rig = &v.rig;
+    let o_path = rig.music.join(copy_rel(19, &v.o_name));
+    let o_bytes = std::fs::read(&o_path).expect("O's file");
     v.ask("t-version").await;
-    rig.library.arm_publish_crash_for_writes(Some(
-        droppedneedle_library::publish::CrashPoint::BeforeCatalogCommit,
+    rig.library.arm_publish_crash(Some(
+        droppedneedle_library::publish::CrashPoint::AfterFirstFileStaged,
     ));
-    v.land_directly("t-version", v.sour("t-version")).await;
+    let better = rig.landed("t-version", &v.e.new, 0, FIXTURES[0]);
+    v.land_directly("t-version", better).await;
     rig.library.arm_publish_crash(None);
     rig.library.publish_tick().expect("recovery runs");
-    let (new, on, _, _, _) = rig.row_at(&copy_rel(15, SOUR_TIMES)).await;
-    assert_eq!(on, v.album);
-    assert_eq!(rig.identity(&new).await, Some(placed_on(&v.e.new, 1)));
-    assert_eq!(
-        rig.version_history(&v.old).await,
-        (new.clone(), new.clone(), new.clone(), v.old.clone())
+    assert_eq!(std::fs::read(&o_path).expect("O's file"), o_bytes);
+    assert!(!rig.in_recycle_bin(&v.o_name), "nothing went to the bin");
+    assert_eq!(rig.availability(&v.old).await, "indexed");
+
+    let worse = rig.landed("t-version", &v.e.new, 0, "mp3_full_01.mp3");
+    let report = v.land_directly("t-version", worse).await;
+    assert!(
+        matches!(&report.result, LandingResult::Held { code, .. } if code == "version_lower_quality"),
+        "{:?}",
+        report.result
     );
-    assert_eq!(rig.alias_of(&v.old).await, Some(new));
+    assert_eq!(std::fs::read(&o_path).expect("O's file"), o_bytes);
+    assert_eq!(rig.availability(&v.old).await, "indexed");
 }
 
 // After the ask the copy moved to another edition, or the app stepped

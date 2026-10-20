@@ -676,10 +676,6 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     space: P,
     gate: CapabilityGate,
     injector: Option<CrashPoint>,
-    /// The armed crash point leaves removal bundles alone.
-    crash_spares_removals: bool,
-    /// The bundle being published is a removal.
-    publishing_removal: bool,
     place_seams: super::place::Seams,
     /// Seams for the move of a replaced file into its bin, so a test can
     /// give the bin a filesystem the library does not share.
@@ -765,8 +761,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             space,
             gate: CapabilityGate::production(),
             injector: None,
-            crash_spares_removals: false,
-            publishing_removal: false,
             place_seams: super::place::Seams::default(),
             bin_seams: super::place::Seams::default(),
             before_place: None,
@@ -790,15 +784,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_crash_point(&mut self, point: Option<CrashPoint>) {
         self.injector = point;
-        self.crash_spares_removals = false;
-    }
-
-    /// Arm one crash-injection point for every bundle but a removal.
-    /// Tests only; production never calls this.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_crash_point_for_writes(&mut self, point: Option<CrashPoint>) {
-        self.injector = point;
-        self.crash_spares_removals = true;
     }
 
     /// Make placement behave like a filesystem without one of its steps.
@@ -858,7 +843,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         applied_by: Option<&str>,
     ) -> Result<PublishOutcome, PublishError> {
         let bundle = &sealed.bundle;
-        self.publishing_removal = bundle.removal.is_some();
         self.now_ms = (self.clock)();
         self.today_day = day_of(self.now_ms);
         self.run_pregates(sealed, live)?;
@@ -907,13 +891,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// is staged until all pass.
     fn run_pregates(&self, sealed: &SealedPreview, live: &SealRecheck) -> Result<(), PublishError> {
         let removal = sealed.bundle.removal.as_ref();
-        // A removal publishes alone: the rules for a bundle that also places
-        // files on the paths it frees are not written yet.
-        if removal.is_some() && !sealed.bundle.items.is_empty() {
-            return Err(PublishError::Journal(
-                "a removal is published on its own".into(),
-            ));
-        }
         sealed.recheck(live).map_err(|err| match err {
             SealError::StaleFile(text) | SealError::StaleIdentity(text) => {
                 PublishError::Validation(text)
@@ -1047,7 +1024,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 .collect();
             for (count, (index, item, file)) in files.iter().enumerate() {
                 self.prepare_remove(bundle, *index, item, file)?;
-                if count == 0 && files.len() > 1 {
+                if count == 0 && (files.len() > 1 || !bundle.items.is_empty()) {
                     self.maybe_crash(CrashPoint::AfterFirstFileStaged)?;
                 }
             }
@@ -1477,8 +1454,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 probe_root(&self.sandbox, journal)?;
             }
         }
+        // Every file the bundle takes away is set aside before any file is
+        // placed: an upgrade often places its new file on the old one's path.
         let mut first = true;
-        for journal in journals.iter() {
+        for journal in super::recovery::removals_first(&journals) {
             self.publish_one(bundle, staged, journal)?;
             if first {
                 first = false;
@@ -1930,6 +1909,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
             JournalStore::new(conn).bundle(&bundle.id)
         })?;
+        let journals: Vec<FileJournal> = super::recovery::placements_first(&journals)
+            .into_iter()
+            .cloned()
+            .collect();
         let rows = if self.armed() == Some(CrashPoint::AfterFirstUnwind) {
             &journals[..journals.len().min(1)]
         } else {
@@ -1958,9 +1941,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
 
     /// The crash point armed for the bundle being published.
     fn armed(&self) -> Option<CrashPoint> {
-        if self.crash_spares_removals && self.publishing_removal {
-            return None;
-        }
         self.injector
     }
 

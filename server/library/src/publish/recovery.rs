@@ -562,6 +562,27 @@ fn inspect_bundle(
 ) -> Result<BundleEvidence, PublishError> {
     let mut any_committed = false;
     let mut resumeable = true;
+    // A file the bundle takes away that is still at its path, not yet set
+    // aside (or under both names, a set-aside stopped between its link and
+    // its unlink): an upgrade's new file may be bound for that same path.
+    let not_yet_removed: Vec<(&str, &str, &str)> = journals
+        .iter()
+        .filter(|journal| {
+            journal.kind == JournalKind::Remove
+                && journal.state == JournalState::Staged
+                && (std::fs::symlink_metadata(&journal.staged).is_err()
+                    || sandbox
+                        .resolve_removal(&journal.dest_root, &journal.dest_rel)
+                        .is_ok_and(|dest| paths::same_file(Path::new(&journal.staged), &dest)))
+        })
+        .map(|journal| {
+            (
+                journal.dest_root.as_str(),
+                journal.dest_rel.as_str(),
+                journal.staged_sha256.as_str(),
+            )
+        })
+        .collect();
     for journal in journals {
         if journal.state.is_terminal() {
             continue;
@@ -676,7 +697,18 @@ fn inspect_bundle(
                 journal.id
             )));
         }
-        if dest_bytes.is_some() && !dest_match && !dest_holds_source && !dest_holds_replaced {
+        let dest_holds_removed = dest_bytes.as_deref().is_some_and(|bytes| {
+            let sha = sha256_hex(bytes);
+            not_yet_removed.iter().any(|(root, rel, removed)| {
+                *root == journal.dest_root && *rel == journal.dest_rel && *removed == sha
+            })
+        });
+        if dest_bytes.is_some()
+            && !dest_match
+            && !dest_holds_source
+            && !dest_holds_replaced
+            && !dest_holds_removed
+        {
             return Ok(BundleEvidence::Ambiguous(format!(
                 "journal {} destination holds foreign bytes",
                 journal.id
@@ -825,7 +857,7 @@ fn resume_precommit<C: Catalog>(
     seams: Seams,
 ) -> Result<Option<String>, PublishError> {
     let bundle_id = recorded.id.as_str();
-    for journal in journals {
+    for journal in removals_first(journals) {
         if journal.state.is_terminal()
             || matches!(
                 journal.state,
@@ -1365,6 +1397,25 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
     Ok(())
 }
 
+/// A bundle's rows in the order a publish or resume steps through them:
+/// every file the bundle takes away first, so a file it then places finds
+/// its path free.
+pub(super) fn removals_first(journals: &[FileJournal]) -> Vec<&FileJournal> {
+    let (removals, rest): (Vec<_>, Vec<_>) = journals
+        .iter()
+        .partition(|journal| journal.kind == JournalKind::Remove);
+    removals.into_iter().chain(rest).collect()
+}
+
+/// A bundle's rows in the order an unwind steps through them: every
+/// placed file comes off before a file the bundle took away goes home.
+pub(super) fn placements_first(journals: &[FileJournal]) -> Vec<&FileJournal> {
+    let (removals, rest): (Vec<_>, Vec<_>) = journals
+        .iter()
+        .partition(|journal| journal.kind == JournalKind::Remove);
+    rest.into_iter().chain(removals).collect()
+}
+
 /// Compensate a pre-commit bundle, for the publisher after a failed
 /// publish and for recovery: unwind every journal by byte comparison and
 /// mark it compensated.
@@ -1382,7 +1433,8 @@ pub(super) fn compensate_bundle(
     seams: Seams,
 ) -> Result<Option<String>, PublishError> {
     let mut attention = None;
-    for (index, journal) in journals.iter().enumerate() {
+    let journals = placements_first(journals);
+    for (index, journal) in journals.iter().copied().enumerate() {
         if journal.state.is_terminal()
             || matches!(
                 journal.state,
@@ -1403,7 +1455,11 @@ pub(super) fn compensate_bundle(
                 JournalState::NeedsAttention
             }
             Unwound::NoSafeMethod(reason) => {
-                flag_attention(db, &journals[index..])?;
+                let rest: Vec<FileJournal> = journals[index..]
+                    .iter()
+                    .map(|journal| (*journal).clone())
+                    .collect();
+                flag_attention(db, &rest)?;
                 return Ok(Some(reason));
             }
         };

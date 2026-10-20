@@ -20,6 +20,14 @@
 //!    the match, unless a person decided them, and the release document is
 //!    kept for later retags.
 //!
+//! A file that replaces library tracks (an upgrade, or another version of
+//! its track) takes their files away in the same bundle: every old file is
+//! set aside before any new file is placed, the commit marks the old
+//! tracks missing before it adds the new ones, and only then does each old
+//! file move into the recycle bin. A stop at any point leaves the old file
+//! or the new one in place. A file held for any reason keeps its old
+//! copies where they are.
+//!
 //! Files fetched for a library copy (an [`ImportJoin`]: "Get missing
 //! tracks", or an upgrade of that copy's files) join that copy instead of
 //! being filed by their tags, which may name another edition. Under the
@@ -47,18 +55,21 @@ pub mod naming;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, UNIX_EPOCH};
 
-use super::clock::today_day;
+use super::clock::{now_ms, today_day};
 use super::identify::sqlite::{ImportSeal, ImportTrack};
 use super::matching::Release;
 use super::publish::planner::{
     AlbumJoin, Capability, FileFingerprint, JoinedTrack, PlanBundle, PlanItem, PlanKind,
-    ReleaseIdentity, SealRecheck, SealedPreview,
+    ReleaseIdentity, Removal, RemoveItem, SealRecheck, SealedPreview,
 };
 use super::publish::publisher::{JoinedAlbum, joined_album};
+use super::publish::remove::{self, Probe, Refusal, Target};
 use super::publish::snapshots::sha256_hex;
 use super::publish::{HIDDEN_PREFIX, PublishError};
 use super::scan::models::EffectivePolicy;
+use super::scan::roots::RootRegistry;
 use super::wiring::LibrarySetup;
 
 /// Revisions the seal pins while profiles and naming have no store (the
@@ -71,6 +82,10 @@ pub struct ImportSource {
     pub path: PathBuf,
     /// Index into the release's tracks.
     pub track: usize,
+    /// Library tracks this file replaces (an upgrade, or another version
+    /// of its track). Their files go to the recycle bin in the bundle that
+    /// places this one, and only when this one is placed.
+    pub replaces: Vec<String>,
 }
 
 /// A file that came with an album but is none of the release's tracks (a
@@ -118,6 +133,8 @@ pub struct DownloadImport {
     pub files: Vec<ImportSource>,
     /// Extra files, after `files` in request order.
     pub extras: Vec<ExtraSource>,
+    /// The user the removal of replaced tracks is recorded for.
+    pub actor: Option<String>,
 }
 
 /// The library album a download was fetched for, and its release as that
@@ -143,6 +160,9 @@ pub struct ImportedAlbum {
     /// Files not taken, by request index, with the reason: a second file
     /// bound for the same destination, or a destination already occupied.
     pub skipped: Vec<(usize, String)>,
+    /// Files not taken because a track they replace could not be taken
+    /// away, by request index, with the reason. Their old copies stay.
+    pub blocked: Vec<(usize, String)>,
 }
 
 /// Why an import did not happen.
@@ -170,6 +190,9 @@ struct Placement {
     tags: BTreeMap<String, Vec<String>>,
     /// The track id the plan pins, set under the publish lock.
     track_id: String,
+    /// The tracks this file replaces, read before the publish lock, or
+    /// why one of them cannot be taken away.
+    replaces: Result<Vec<Target>, String>,
 }
 
 impl LibrarySetup {
@@ -213,7 +236,7 @@ impl LibrarySetup {
             let track = import.release.tracks.get(file.track).ok_or_else(|| {
                 fault("a file names a track the release does not have".to_owned())
             })?;
-            sources.push((&file.path, track.clone()));
+            sources.push((&file.path, track.clone(), file.replaces.as_slice()));
         }
         for extra in &import.extras {
             sources.push((
@@ -224,10 +247,17 @@ impl LibrarySetup {
                     position: extra.position,
                     ..super::matching::ReleaseTrack::default()
                 },
+                &[],
             ));
         }
+        let old_copies: Vec<Result<Vec<Target>, String>> = sources
+            .iter()
+            .map(|(_, _, replaces)| self.old_copies(&registry, replaces))
+            .collect::<Result<_, _>>()?;
         let mut placements = Vec::with_capacity(sources.len());
-        for (ordinal, (path, track)) in sources.into_iter().enumerate() {
+        for (ordinal, ((path, track, _), replaces)) in
+            sources.into_iter().zip(old_copies).enumerate()
+        {
             let track = &track;
             let format = super::tags::format_for_path(path)
                 .map_err(|error| fault(format!("unsupported file: {error}")))?
@@ -264,6 +294,7 @@ impl LibrarySetup {
                 format,
                 tags,
                 track_id: String::new(),
+                replaces,
             });
         }
 
@@ -334,19 +365,64 @@ impl LibrarySetup {
                 placement.dest_rel = format!("{folder}/{}", name.to_string_lossy());
             }
         }
+        let bundle_id = self.ids.new_id();
+        // A replaced track that left the catalog since it was read has no
+        // file to take away.
+        let wanted: Vec<String> = placements
+            .iter()
+            .filter_map(|placement| placement.replaces.as_ref().ok())
+            .flatten()
+            .map(|target| target.track_id.clone())
+            .collect();
+        let still_indexed = self
+            .db
+            .read_blocking("import.replaced_indexed", |conn| {
+                Ok::<_, PublishError>(indexed_among(conn, &wanted)?)
+            })
+            .map_err(|error| fault(error.to_string()))?;
         // Files bound for a taken destination are held on their own (the
         // first of two files bound for one path keeps it); the rest import.
+        // A file whose replaced tracks cannot be taken away is held too,
+        // and its old copies stay where they are.
         let mut skipped = Vec::new();
+        let mut blocked = Vec::new();
+        let mut removals: Vec<RemoveItem> = Vec::new();
         let mut claimed = std::collections::HashSet::new();
+        let mut claimed_tracks = std::collections::HashSet::new();
         let mut kept = Vec::with_capacity(placements.len());
         for mut placement in placements {
+            let targets: Vec<Target> = match &placement.replaces {
+                Ok(targets) => targets
+                    .iter()
+                    .filter(|target| still_indexed.contains(&target.track_id))
+                    .cloned()
+                    .collect(),
+                Err(reason) => {
+                    blocked.push((placement.index, reason.clone()));
+                    continue;
+                }
+            };
             let key = super::publish::collision_key(&root.id, &placement.dest_rel);
+            // The file's own old copies leave first, so the paths they hold
+            // are not taken. Anything else at the destination, or under a
+            // name that folds to it, is.
+            let leaving: Vec<&Path> = targets
+                .iter()
+                .filter_map(|target| match &target.probe {
+                    Probe::File { path, .. } => Some(path.as_path()),
+                    Probe::Gone => None,
+                })
+                .collect();
             let occupied = open
                 .sandbox
                 .resolve_no_symlink(&root.id, &placement.dest_rel)
-                .map(|dest| std::fs::symlink_metadata(dest).is_ok())
+                .map(|dest| taken(&root.id, &dest, &leaving))
                 .unwrap_or(true);
-            let reason = if !claimed.insert(key) {
+            let freed: Vec<String> = targets
+                .iter()
+                .map(|target| target.track_id.clone())
+                .collect();
+            let reason = if !claimed.insert(key.clone()) {
                 Some(format!(
                     "another file of this download goes to {}",
                     placement.dest_rel
@@ -364,6 +440,7 @@ impl LibrarySetup {
                             join.is_some(),
                             joined.as_ref(),
                             &replaced,
+                            &freed,
                         )?)
                     })
                     .map_err(|error| fault(error.to_string()))?
@@ -375,10 +452,45 @@ impl LibrarySetup {
                     Err(reason) => Some(reason),
                 }
             };
-            match reason {
-                Some(reason) => skipped.push((placement.index, reason)),
-                None => kept.push(placement),
+            if let Some(reason) = reason {
+                skipped.push((placement.index, reason));
+                continue;
             }
+            // Only a file that imports takes its old copies away.
+            let targets: Vec<Target> = targets
+                .into_iter()
+                .filter(|target| !claimed_tracks.contains(&target.track_id))
+                .collect();
+            if !targets.is_empty() {
+                match remove::plan(
+                    &self.db,
+                    &open.sandbox,
+                    &bundle_id,
+                    &targets,
+                    "FILE_RECYCLED",
+                    import.actor.as_deref(),
+                    None,
+                    UNIX_EPOCH + Duration::from_millis(now_ms()),
+                ) {
+                    Ok(removal) => {
+                        claimed_tracks.extend(targets.iter().map(|target| target.track_id.clone()));
+                        removals.extend(removal.items);
+                    }
+                    Err(Refusal::Publish {
+                        error:
+                            error @ (PublishError::Store(_)
+                            | PublishError::Interrupted(_)
+                            | PublishError::TimedOut(_)),
+                        ..
+                    }) => return Err(fault(error.to_string())),
+                    Err(refusal) => {
+                        claimed.remove(&key);
+                        blocked.push((placement.index, blocked_reason(&refusal)));
+                        continue;
+                    }
+                }
+            }
+            kept.push(placement);
         }
         let placements = kept;
         if placements.is_empty() {
@@ -387,6 +499,7 @@ impl LibrarySetup {
                 album_id: String::new(),
                 paths: Vec::new(),
                 skipped,
+                blocked,
             });
         }
         // Where a file sits on the join's release, when the import matched
@@ -417,7 +530,6 @@ impl LibrarySetup {
             join: join.clone(),
             track: None,
         };
-        let bundle_id = self.ids.new_id();
         let result = (|| {
             let mut items = Vec::with_capacity(placements.len());
             for placement in &placements {
@@ -473,7 +585,12 @@ impl LibrarySetup {
                 profile_revision: PINNED_REVISION,
                 naming_revision: PINNED_REVISION,
                 policy_revision: super::manage::policy_revision_u64(&registry),
-                removal: None,
+                removal: (!removals.is_empty()).then(|| Removal {
+                    reason_code: "FILE_RECYCLED".to_owned(),
+                    actor: import.actor.clone(),
+                    items: removals,
+                    extras_action: None,
+                }),
             };
             let token_hash = sha256_hex(bundle.id.as_bytes());
             let live = SealRecheck {
@@ -548,6 +665,7 @@ impl LibrarySetup {
             album_id,
             paths,
             skipped,
+            blocked,
         })
     }
 
@@ -560,7 +678,9 @@ impl LibrarySetup {
     /// occupied destination. A row the file replaces as another version
     /// (`replaced`) is never taken: it keeps what describes its own
     /// recording. The file then takes the stable id, or a new one when
-    /// that is taken.
+    /// that is taken. A track the file replaces (`freed`) leaves the
+    /// catalog in the same commit, so it never counts as still listed.
+    #[allow(clippy::too_many_arguments)]
     fn planned_track_id(
         &self,
         conn: &rusqlite::Connection,
@@ -569,6 +689,7 @@ impl LibrarySetup {
         join: bool,
         joined: Option<&JoinedAlbum>,
         replaced: &[(String, String)],
+        freed: &[String],
     ) -> rusqlite::Result<Result<String, String>> {
         use rusqlite::OptionalExtension as _;
         if !join {
@@ -592,7 +713,7 @@ impl LibrarySetup {
             {
                 return Ok(Ok(id));
             }
-            if availability == "indexed" {
+            if availability == "indexed" && !freed.contains(&id) {
                 return Ok(Err(format!(
                     "a track of another album is still listed at {dest_rel}"
                 )));
@@ -602,6 +723,68 @@ impl LibrarySetup {
             conn, root_id, dest_rel, false,
         )?
         .unwrap_or_else(|| self.ids.new_id())))
+    }
+
+    /// The files of the indexed tracks in `replaces`, each read once before
+    /// the publish lock (see [`remove::probe`]), or why one of them cannot
+    /// be taken away. A track no longer indexed has no file to take away.
+    fn old_copies(
+        &self,
+        registry: &RootRegistry,
+        replaces: &[String],
+    ) -> Result<Result<Vec<Target>, String>, ImportError> {
+        use rusqlite::OptionalExtension as _;
+        if replaces.is_empty() {
+            return Ok(Ok(Vec::new()));
+        }
+        let rows = self
+            .db
+            .read_blocking("import.replaced_rows", |conn| {
+                let mut statement = conn.prepare_cached(
+                    "SELECT root_id, relative_path FROM local_tracks \
+                     WHERE id = ?1 AND availability = 'indexed'",
+                )?;
+                let mut rows = Vec::with_capacity(replaces.len());
+                for id in replaces {
+                    if let Some((root, rel)) = statement
+                        .query_row([id], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                        })
+                        .optional()?
+                    {
+                        rows.push((id.clone(), root, rel));
+                    }
+                }
+                Ok::<_, PublishError>(rows)
+            })
+            .map_err(|error| ImportError::LocalFault(error.to_string()))?;
+        let mut targets = Vec::with_capacity(rows.len());
+        for (track_id, root_id, relative_path) in rows {
+            let path = registry.resolve(&root_id).and_then(|root| {
+                super::mutations::join_inside(&root.path, &relative_path).map(|path| (root, path))
+            });
+            let Some((root, path)) = path else {
+                return Ok(Err(
+                    "the copy it replaces is not in a library folder".to_owned()
+                ));
+            };
+            match remove::probe(&root.path, &path) {
+                Ok(probe) => targets.push(Target {
+                    track_id,
+                    root_id,
+                    relative_path,
+                    probe,
+                    expect_sha256: None,
+                }),
+                Err(error) => {
+                    tracing::warn!(%error, track_id, "the copy an imported file replaces could not be read");
+                    return Ok(Err(format!(
+                        "the copy it replaces could not be read: {error}"
+                    )));
+                }
+            }
+        }
+        Ok(Ok(targets))
     }
 
     /// The match is the identity: seal the album and its tracks as an
@@ -649,6 +832,67 @@ impl LibrarySetup {
                 album = album_id,
                 "the imported album could not be offered to identification"
             );
+        }
+    }
+}
+
+/// Whether something other than the files in `leaving` sits at `dest`, or
+/// beside it under a name that folds to the same one (case or Unicode), as
+/// the publisher's collision gate judges it. A path that cannot be read
+/// counts as taken.
+fn taken(root_id: &str, dest: &Path, leaving: &[&Path]) -> bool {
+    if std::fs::symlink_metadata(dest).is_ok() && !leaving.contains(&dest) {
+        return true;
+    }
+    let (Some(parent), Some(wanted)) = (dest.parent(), dest.file_name().and_then(|n| n.to_str()))
+    else {
+        return true;
+    };
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(_) => return true,
+    };
+    let wanted_key = super::publish::collision_key(root_id, wanted);
+    entries.flatten().any(|entry| {
+        let name = entry.file_name();
+        let Some(text) = name.to_str() else {
+            return false;
+        };
+        text != wanted
+            && super::publish::collision_key(root_id, text) == wanted_key
+            && !leaving.contains(&parent.join(text).as_path())
+    })
+}
+
+/// The tracks among `ids` the catalog lists as indexed.
+fn indexed_among(
+    conn: &rusqlite::Connection,
+    ids: &[String],
+) -> rusqlite::Result<std::collections::HashSet<String>> {
+    let mut statement = conn
+        .prepare_cached("SELECT 1 FROM local_tracks WHERE id = ?1 AND availability = 'indexed'")?;
+    let mut indexed = std::collections::HashSet::new();
+    for id in ids {
+        if statement.exists([id])? {
+            indexed.insert(id.clone());
+        }
+    }
+    Ok(indexed)
+}
+
+/// Why a file is held when a track it replaces cannot be taken away.
+fn blocked_reason(refusal: &Refusal) -> String {
+    match refusal {
+        Refusal::Busy => "another write holds the copy it replaces".to_owned(),
+        Refusal::Changed => "the copy it replaces changed while it was read".to_owned(),
+        Refusal::OutsideRoot => "the copy it replaces is not in a library folder".to_owned(),
+        Refusal::BinsUnknown(cause) => format!("no recycle bin is known while {cause}"),
+        Refusal::NoBin(_) => {
+            "the library folder of the copy it replaces has no usable recycle bin".to_owned()
+        }
+        Refusal::Publish { error, .. } => {
+            format!("the copy it replaces could not be taken away: {error}")
         }
     }
 }

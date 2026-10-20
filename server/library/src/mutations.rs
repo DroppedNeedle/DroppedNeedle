@@ -315,19 +315,8 @@ impl<'a> Mutations<'a> {
     }
 
     /// Remove one track, moving its file into the recycle bin when
-    /// `delete_file` is set. Background work: it waits for a write in
-    /// flight instead of answering busy.
-    pub fn remove_track(
-        &self,
-        track_id: &str,
-        delete_file: bool,
-        actor: &str,
-    ) -> Result<Removed, MutationError> {
-        self.remove_track_with(track_id, delete_file, actor, RemovalEntry::Wait)
-    }
-
-    /// [`Self::remove_track`] for a person waiting on the answer: a write
-    /// in flight answers busy at once.
+    /// `delete_file` is set. A person waits on the answer: a write in
+    /// flight answers busy at once.
     pub fn remove_track_now(
         &self,
         track_id: &str,
@@ -546,8 +535,8 @@ impl<'a> Mutations<'a> {
         ))
     }
 
-    /// Undo recycle moves (an upgrade whose new file could not be placed):
-    /// each file goes back where it was, then the folders are rescanned so
+    /// Undo recycle moves (Remove extras' put back): each file goes back
+    /// where it was, then the folders are rescanned so
     /// the catalog lists them again. Answers false when a file could not
     /// be put back, or another file now sits at its old path; it stays in
     /// the recycle bin and the error is logged.
@@ -876,7 +865,7 @@ fn rescan_scopes(album_id: &str, tracks: &[TrackFile], registry: &RootRegistry) 
 
 /// Join a stored relative path under its root, refusing anything that
 /// could step outside it.
-fn join_inside(root: &Path, relative: &str) -> Option<PathBuf> {
+pub(crate) fn join_inside(root: &Path, relative: &str) -> Option<PathBuf> {
     let relative = Path::new(relative);
     if relative.as_os_str().is_empty()
         || relative
