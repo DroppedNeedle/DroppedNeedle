@@ -33,6 +33,14 @@ use droppedneedle_kernel::db::fold_text;
 /// Artist. Neither is ever proven to be an artist.
 pub(crate) const SENTINEL_ARTIST_IDS: [&str; 2] = [VARIOUS_ARTISTS_ID, UNKNOWN_ARTIST_ID];
 
+/// What `local_artists.converged_mbid` holds for a row the app merged by
+/// name alone (a retag that changed only its sort name or capitals,
+/// `corrections::artist_convergence`). It is not a MusicBrainz id: the
+/// nil UUID fits the column's id check and tells the resolver no id
+/// proved the merge, so a later file with an id reaches the survivor only
+/// when nothing says the survivor is another artist.
+pub(crate) const NAME_MERGE_MARK: &str = "00000000-0000-0000-0000-000000000000";
+
 /// One artist credit as the catalog stores it.
 pub(super) struct Credit {
     pub name: String,
@@ -345,14 +353,19 @@ impl Resolver<'_> {
                 !self.says_other(&base.live, mbid)?
             } else {
                 // Reached through a merge: a person's merge stands; the
-                // app's own merge holds only for the id that proved it.
+                // app's own merge holds only for the id that proved it,
+                // and its merge by name only as a name row would.
                 let converged: Option<String> = self
                     .tx
                     .prepare_cached("SELECT converged_mbid FROM local_artists WHERE id = ?1")?
                     .query_row(params![base.keyed], |row| row.get(0))
                     .optional()?
                     .flatten();
-                converged.is_none_or(|converged| converged == mbid)
+                match converged {
+                    None => true,
+                    Some(mark) if mark == NAME_MERGE_MARK => !self.says_other(&base.live, mbid)?,
+                    Some(converged) => converged == mbid,
+                }
             };
             let row = if fits {
                 base.live

@@ -31,18 +31,30 @@
 //! an open merge candidate and is looked at again at each run end and in
 //! each sweep ([`follow_waiting`]).
 //!
+//! A row a retag emptied with no proof at all follows its credits by name
+//! ([`follow_renamed`]), the one merge here that names alone decide. The
+//! scan records each credit it moves to another row ([`record_move`]).
+//! At the run end, a row left with no credits merges into the row they
+//! went to when every move went by name (no id in the file on either side,
+//! no proof at the old credit) to that one row, the row has no link and no
+//! proof, the two names differ only in sort name, capitals or spacing, the
+//! play guard holds and no administrator marked them distinct. Any other
+//! row a scan emptied stays, and the duplicate artists list offers it.
+//!
 //! The app's links among a run end's candidates are settled first, so a
 //! link whose support is gone does not lead a group.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
+use unicode_normalization::UnicodeNormalization as _;
 
 use super::artists::{CREDITS_MOVED, retire_artist};
+pub(crate) use super::artists::{MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID};
 use crate::catalog_revision::bump_catalog;
 use crate::identify::artist_links::{CURRENT_PROOF, MovedProof, settle};
 use crate::operations::decisions::{ArtistAction, record_artist_action};
-use crate::scan::sqlite_store::artists::{SENTINEL_ARTIST_IDS, proven_rows};
+use crate::scan::sqlite_store::artists::{NAME_MERGE_MARK, SENTINEL_ARTIST_IDS, proven_rows};
 use droppedneedle_kernel::db::savepoint;
 
 /// The reason the duplicate artists list explains an automatic merge by.
@@ -98,9 +110,9 @@ fn with_current(sql: &str) -> String {
 }
 
 /// Merge every group of live rows proven to be one MusicBrainz artist,
-/// then the rows waiting to follow their credits that now can. A group
-/// the store fails on is rolled back and logged, and the next run end
-/// tries it again.
+/// then the rows waiting to follow their credits that now can, then the
+/// rows a retag emptied by name. A group the store fails on is rolled
+/// back and logged, and the next run end tries it again.
 pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
     match candidate_ids(tx) {
         Ok(ids) => {
@@ -111,7 +123,8 @@ pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Resu
             tracing::warn!(%error, "artist convergence could not list its candidates");
         }
     }
-    follow_waiting(tx, now)
+    follow_waiting(tx, now)?;
+    follow_renamed(tx, now)
 }
 
 /// Settle the app's links to any of `ids` before their groups are judged.
@@ -199,7 +212,7 @@ pub(crate) fn converge_ids(tx: &Transaction<'_>, ids: &[String], now: f64) -> ru
             continue;
         }
         match savepoint(tx, "artist_convergence", || {
-            merge_group(tx, &survivor.id, &retire, mbid, now)
+            merge_group(tx, &survivor.id, &retire, Proved::Id(mbid), now)
         })? {
             Ok(()) => {
                 merged += 1;
@@ -463,7 +476,7 @@ fn follow_one(
     }
     let retire = [from.to_owned()];
     match savepoint(tx, "artist_follow_credits", || {
-        merge_group(tx, &survivor, &retire, mbid, now)
+        merge_group(tx, &survivor, &retire, Proved::Id(mbid), now)
     })? {
         Ok(()) => {
             tracing::info!(
@@ -597,20 +610,34 @@ fn marked_distinct(tx: &Transaction<'_>, ids: &[&str]) -> rusqlite::Result<bool>
     .query_row(params![ids], |row| row.get(0))
 }
 
+/// What a merge rests on.
+#[derive(Clone, Copy)]
+enum Proved<'a> {
+    /// MusicBrainz proved the rows to be this artist.
+    Id(&'a str),
+    /// A retag moved every credit by name to a row of the same name
+    /// ([`follow_renamed`]).
+    Name,
+}
+
 /// Retire each row into the survivor, mark what proved it, and write one
 /// audit row for the group.
 fn merge_group(
     tx: &Transaction<'_>,
     survivor: &str,
     retire: &[String],
-    mbid: &str,
+    proved: Proved<'_>,
     now: f64,
 ) -> rusqlite::Result<()> {
+    let (mark, provider_mbid, reason) = match proved {
+        Proved::Id(mbid) => (mbid, Some(mbid), REASON),
+        Proved::Name => (NAME_MERGE_MARK, None, MERGED_BY_NAME),
+    };
     for artist in retire {
         retire_artist(tx, artist, survivor, now)?;
         tx.execute(
             "UPDATE local_artists SET converged_mbid = ?2 WHERE id = ?1",
-            params![artist, mbid],
+            params![artist, mark],
         )?;
     }
     tx.execute(
@@ -628,12 +655,196 @@ fn merge_group(
                 "kind": "artist_convergence",
                 "surviving_artist_id": survivor,
                 "retired_artist_ids": retire,
-                "provider_artist_mbid": mbid,
+                "provider_artist_mbid": provider_mbid,
                 "filesystem_writes": 0,
             }),
-            reason: REASON,
+            reason,
         },
         now,
     )?;
     Ok(())
+}
+
+/// Record that a scan moved a credit from row `from` to row `to`, by name
+/// alone or (`with_id`) where an id or a proof was involved, as an open
+/// merge candidate [`follow_renamed`] and the duplicate artists list read.
+/// One row per pair and kind; a move to or from Various Artists or Unknown
+/// Artist is not recorded.
+pub(crate) fn record_move(
+    tx: &Connection,
+    from: &str,
+    to: &str,
+    with_id: bool,
+    now: f64,
+) -> rusqlite::Result<()> {
+    if from == to || SENTINEL_ARTIST_IDS.contains(&from) || SENTINEL_ARTIST_IDS.contains(&to) {
+        return Ok(());
+    }
+    let (reason, kind) = if with_id {
+        (MOVED_WITH_ID, "moved-with-id")
+    } else {
+        (MOVED_BY_NAME, "moved-by-name")
+    };
+    tx.prepare_cached(
+        "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
+         right_artist_id, reason_code, created_at, updated_at) \
+         SELECT ?1, ?2, ?3, ?4, ?5, ?5 WHERE NOT EXISTS (SELECT 1 FROM local_artists \
+          WHERE id IN (?2, ?3) AND kind = 'various_artists')",
+    )?
+    .execute(params![
+        format!("{kind}:{from}:{to}"),
+        from,
+        to,
+        reason,
+        now
+    ])?;
+    Ok(())
+}
+
+/// A name as [`follow_renamed`] compares it: composed, case-folded and
+/// with its spacing collapsed. Accents and other marks are kept, so a
+/// name that differs by one is another name.
+fn name_key(name: &str) -> String {
+    let composed: String = name.nfc().collect();
+    caseless::default_case_fold_str(&composed)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The display name of live row `artist` when it is an ordinary row:
+/// neither a sentinel nor a Various Artists row.
+fn ordinary_name(tx: &Transaction<'_>, artist: &str) -> rusqlite::Result<Option<String>> {
+    tx.prepare_cached(
+        "SELECT display_name FROM local_artists WHERE id = ?1 \
+         AND retired_into_artist_id IS NULL AND kind <> 'various_artists' AND id NOT IN (?2, ?3)",
+    )?
+    .query_row(
+        params![artist, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// Merge each row a scan left with no credits into the one row its
+/// credits went to by name, when only the sort name, capitals or spacing
+/// of the name changed ([`record_move`]; the rule is in the module docs).
+/// A row that does not qualify keeps its open records, which the
+/// duplicate artists list reads; a merge resolves them.
+pub(crate) fn follow_renamed(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
+    let rows: Vec<(String, String, String)> = tx
+        .prepare_cached(
+            "SELECT m.left_artist_id, m.right_artist_id, m.reason_code \
+             FROM local_artist_merge_candidates m \
+             WHERE m.reason_code IN (?1, ?2) AND m.state = 'open' \
+             AND NOT EXISTS (SELECT 1 FROM local_album_artists \
+              WHERE local_artist_id = m.left_artist_id) \
+             AND NOT EXISTS (SELECT 1 FROM local_track_artists \
+              WHERE local_artist_id = m.left_artist_id) \
+             AND NOT EXISTS (SELECT 1 FROM local_albums \
+              WHERE album_artist_id = m.left_artist_id) \
+             ORDER BY m.left_artist_id, m.right_artist_id",
+        )?
+        .query_map(params![MOVED_BY_NAME, MOVED_WITH_ID], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut moves: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for (from, to, reason) in rows {
+        moves.entry(from).or_default().push((to, reason));
+    }
+    let mut merged = 0;
+    for (from, went) in moves {
+        if went.iter().any(|(_, reason)| reason == MOVED_WITH_ID) {
+            continue;
+        }
+        let mut into = BTreeSet::new();
+        for (to, _) in &went {
+            if let Some(live) = live_row(tx, to)?
+                && live != from
+            {
+                into.insert(live);
+            }
+        }
+        let mut into = into.into_iter();
+        let (Some(survivor), None) = (into.next(), into.next()) else {
+            continue;
+        };
+        if follow_by_name(tx, &from, &survivor, now)? {
+            merged += 1;
+        }
+    }
+    if merged > 0 {
+        bump_catalog(tx)?;
+    }
+    Ok(())
+}
+
+/// Merge emptied row `from` into `survivor`, the one row its credits went
+/// to by name, when the rest of the rule holds. True when it merged.
+fn follow_by_name(
+    tx: &Transaction<'_>,
+    from: &str,
+    survivor: &str,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    // No link, no proof row naming any id (the column is never empty),
+    // and the play guard.
+    let held: bool = tx.prepare_cached(HELD_BACK)?.query_row(
+        params![
+            from,
+            survivor,
+            "",
+            SENTINEL_ARTIST_IDS[0],
+            SENTINEL_ARTIST_IDS[1]
+        ],
+        |row| row.get(0),
+    )?;
+    if held {
+        return Ok(false);
+    }
+    let (Some(old), Some(new)) = (ordinary_name(tx, from)?, ordinary_name(tx, survivor)?) else {
+        return Ok(false);
+    };
+    if name_key(&old) != name_key(&new) || marked_distinct(tx, &[from, survivor])? {
+        return Ok(false);
+    }
+    let retire = [from.to_owned()];
+    match savepoint(tx, "artist_follow_name", || {
+        merge_group(tx, survivor, &retire, Proved::Name, now)
+    })? {
+        Ok(()) => {
+            tracing::info!(
+                surviving_artist_id = survivor,
+                retired_artist_id = from,
+                "artist row a retag left empty merged into the row of the same name"
+            );
+            Ok(true)
+        }
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                surviving_artist_id = survivor,
+                retired_artist_id = from,
+                "artist row a retag left empty could not be merged; it stays as it is"
+            );
+            Ok(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::name_key;
+
+    /// Names that differ only in capitals or spacing merge by name; one
+    /// accent or other mark makes another name. The sort name is never
+    /// part of the key, so a sort change alone always matches.
+    #[test]
+    fn a_name_merge_keeps_marks_apart() {
+        assert_eq!(name_key("The  Oh"), name_key("the oh"));
+        assert_eq!(name_key(" BEYONCÉ"), name_key("Beyoncé"));
+        assert_ne!(name_key("Beyonce"), name_key("Beyoncé"));
+        assert_ne!(name_key("ガゼット"), name_key("カセット"));
+    }
 }

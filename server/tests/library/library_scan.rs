@@ -6648,6 +6648,231 @@ async fn a_name_change_without_ids_makes_a_new_row() {
     assert_eq!(rig.album_artist("G/01.flac"), (new.clone(), new));
 }
 
+/// One side of a file naming `name` with this sort name and no id.
+fn sorted(name: &'static [&'static str], sort: &'static str) -> Side<'static> {
+    Side {
+        names: name,
+        ids: &[],
+        sort: Some(sort),
+        listed: false,
+    }
+}
+
+/// The duplicate artists list's open groups, each with its state, its
+/// sorted member ids and the record it recommends keeping.
+fn open_groups(rig: &ArtistRig) -> Vec<(&'static str, Vec<String>, Option<String>)> {
+    use droppedneedle_library::reconcile::groups::build;
+    use droppedneedle_library::reconcile::models::GroupState;
+    use droppedneedle_library::reconcile::store::inputs;
+    build(&inputs(&rig.db()).expect("groups read"))
+        .into_iter()
+        .filter(|group| group.state != GroupState::ResolvedAutomatically)
+        .map(|group| {
+            let mut ids: Vec<String> = group.members.into_iter().map(|m| m.id).collect();
+            ids.sort_unstable();
+            (group.state.as_str(), ids, group.recommended_survivor_id)
+        })
+        .collect()
+}
+
+fn sorted_ids(ids: &[&str]) -> Vec<String> {
+    let mut ids: Vec<String> = ids.iter().map(|id| (*id).to_owned()).collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// A retag that changes only an artist's sort name, with no ids and no
+/// match, moves its credits to a new row; at the run end the old row
+/// merges into it with its favorite and play, its id kept as an alias,
+/// and the duplicate artists list shows the merge as resolved. A later
+/// file under the old name and sort with another artist's id does not
+/// land on the survivor once that is linked to someone else.
+#[tokio::test]
+async fn a_sort_name_change_carries_the_old_row_over() {
+    use droppedneedle_library::reconcile::groups::build;
+    use droppedneedle_library::reconcile::models::GroupState;
+    use droppedneedle_library::reconcile::store::inputs;
+
+    let rig = ArtistRig::new("artist-follow-sort");
+    let tag = |sort: &'static str| {
+        for file in ["A/01.flac", "A/02.flac"] {
+            rig.put(
+                file,
+                "Album A",
+                sorted(&["Oh"], sort),
+                sorted(&["Oh"], sort),
+            );
+        }
+    };
+    tag("Oh, The");
+    rig.scan().await;
+    let old = rig.track_artist("A/01.flac", 0);
+    rig.listen("listener", &old);
+
+    tag("Oh Band");
+    rig.scan().await;
+    let new = rig.track_artist("A/01.flac", 0);
+    assert_ne!(new, old, "the new sort name keys another row");
+    assert_eq!(rig.retired_into(&old), Some(new.clone()));
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'artist' \
+             AND item_id = '{new}'"
+        )),
+        1
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = '{new}'"
+        )),
+        1
+    );
+    assert_eq!(
+        rig.text(&format!(
+            "SELECT local_artist_id || ' ' || kind FROM local_artist_aliases \
+             WHERE alias = '{old}'"
+        )),
+        Some(format!("{new} merged_artist"))
+    );
+    let resolved: Vec<_> = build(&inputs(&rig.db()).expect("groups read"))
+        .into_iter()
+        .filter(|group| group.state == GroupState::ResolvedAutomatically)
+        .collect();
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0].reason_code, "AUTOMATIC_SAME_NAME_CREDITS_MOVED");
+    assert!(resolved[0].provider_mbids.is_empty());
+
+    rig.link(&new, MBID_X);
+    let other = Side {
+        names: &["Oh"],
+        ids: &[MBID_Y],
+        sort: Some("Oh, The"),
+        listed: true,
+    };
+    rig.put("C/01.flac", "Album C", other, other);
+    rig.scan().await;
+    assert_ne!(
+        rig.track_artist("C/01.flac", 0),
+        new,
+        "an id the survivor's link contradicts keeps off it"
+    );
+}
+
+/// A retag that renames an artist, with no ids, leaves the old row and
+/// its favorite where they are and offers the two rows in the duplicate
+/// artists list, the new one as the record to keep.
+#[tokio::test]
+async fn a_renamed_artist_is_offered_not_merged() {
+    let rig = ArtistRig::new("artist-follow-rename");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.scan().await;
+    let old = rig.track_artist("A/01.flac", 0);
+    rig.listen("listener", &old);
+
+    rig.put("A/01.flac", "Album A", plain(&["Ox"]), plain(&["Ox"]));
+    rig.scan().await;
+    let new = rig.track_artist("A/01.flac", 0);
+    assert_ne!(new, old);
+    assert_eq!(rig.retired_into(&old), None);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{old}'"
+        )),
+        1
+    );
+    assert_eq!(
+        open_groups(&rig),
+        vec![(
+            "credits_moved",
+            sorted_ids(&[&old, &new]),
+            Some(new.clone()),
+        )]
+    );
+}
+
+/// Moves of one pair recorded both by name and with an id are still one
+/// destination: the list offers the two rows once, the new one to keep.
+#[tokio::test]
+async fn a_pair_moved_by_name_and_by_id_is_one_destination() {
+    let rig = ArtistRig::new("artist-follow-both-kinds");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.scan().await;
+    let old = rig.track_artist("A/01.flac", 0);
+    rig.listen("listener", &old);
+    rig.put("A/01.flac", "Album A", plain(&["Ox"]), plain(&["Ox"]));
+    rig.scan().await;
+    let new = rig.track_artist("A/01.flac", 0);
+    rig.run(&format!(
+        "INSERT INTO local_artist_merge_candidates (id, left_artist_id, right_artist_id, \
+         reason_code, created_at, updated_at) \
+         VALUES ('moved-with-id:{old}:{new}', '{old}', '{new}', 'CREDITS_MOVED_WITH_ID', 1, 1)"
+    ));
+
+    assert_eq!(
+        open_groups(&rig),
+        vec![(
+            "credits_moved",
+            sorted_ids(&[&old, &new]),
+            Some(new.clone()),
+        )]
+    );
+}
+
+/// A retag that splits an artist's albums between two sort names leaves
+/// the old row unmerged, and the list offers it with both new rows as one
+/// group.
+#[tokio::test]
+async fn credits_split_across_two_rows_are_offered_as_one_group() {
+    let rig = ArtistRig::new("artist-follow-split");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.put("B/01.flac", "Album B", plain(&["Oh"]), plain(&["Oh"]));
+    rig.scan().await;
+    let old = rig.track_artist("A/01.flac", 0);
+    rig.listen("listener", &old);
+
+    let one = sorted(&["Oh"], "Oh, The");
+    let two = sorted(&["Oh"], "Oh Band");
+    rig.put("A/01.flac", "Album A", one, one);
+    rig.put("B/01.flac", "Album B", two, two);
+    rig.scan().await;
+    let first = rig.track_artist("A/01.flac", 0);
+    let second = rig.track_artist("B/01.flac", 0);
+    assert_ne!(first, second);
+    assert_eq!(rig.retired_into(&old), None);
+    let groups = open_groups(&rig);
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    assert_eq!(groups[0].1, sorted_ids(&[&old, &first, &second]));
+}
+
+/// A sort-name change of a row a person linked is not merged by name;
+/// the list offers the old row with the new one.
+#[tokio::test]
+async fn a_linked_row_left_empty_by_a_sort_change_is_offered() {
+    let rig = ArtistRig::new("artist-follow-linked");
+    let tag = |sort: &'static str| {
+        rig.put(
+            "A/01.flac",
+            "Album A",
+            sorted(&["Oh"], sort),
+            sorted(&["Oh"], sort),
+        );
+    };
+    tag("Oh, The");
+    rig.scan().await;
+    let old = rig.track_artist("A/01.flac", 0);
+    rig.listen("listener", &old);
+    rig.link(&old, MBID_X);
+
+    tag("Oh Band");
+    rig.scan().await;
+    let new = rig.track_artist("A/01.flac", 0);
+    assert_ne!(new, old);
+    assert_eq!(rig.retired_into(&old), None);
+    let groups = open_groups(&rig);
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    assert_eq!(groups[0].1, sorted_ids(&[&old, &new]));
+}
+
 /// Two artists who share a name but not their MusicBrainz id get a row
 /// each.
 #[tokio::test]

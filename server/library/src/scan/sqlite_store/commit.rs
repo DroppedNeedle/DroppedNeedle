@@ -36,7 +36,7 @@ use super::held_scopes::{self, held_back};
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::catalog_revision::bump_catalog;
-use crate::corrections::artist_convergence::converge_artists;
+use crate::corrections::artist_convergence::{converge_artists, record_move};
 use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::placement::place_scanned;
 use crate::corrections::release_join::join_replaced;
@@ -656,6 +656,46 @@ fn credit_rows(
         .collect()
 }
 
+/// Record each credit of `subject` that moved to another artist row
+/// ([`record_move`]): the same position on another row, the old row no
+/// longer on the subject at all. Lists of different lengths record
+/// nothing, so a credit dropped or split in two is never read as a move.
+/// A move involves an id when the file held one before or after, or a
+/// proof sat at the old credit.
+fn record_moves(
+    tx: &Connection,
+    side: CreditSide,
+    subject: &str,
+    before: &[CreditRow],
+    after: &[CreditRow],
+    now: f64,
+) -> rusqlite::Result<()> {
+    if before.len() != after.len() {
+        return Ok(());
+    }
+    let kind = match side {
+        CreditSide::Album => "album",
+        CreditSide::Track => "track",
+    };
+    for ((position, from, _, from_mbid), (to_position, to, _, to_mbid)) in before.iter().zip(after)
+    {
+        if position != to_position || from == to || after.iter().any(|row| &row.1 == from) {
+            continue;
+        }
+        let with_id = from_mbid.is_some()
+            || to_mbid.is_some()
+            || tx
+                .prepare_cached(
+                    "SELECT EXISTS (SELECT 1 FROM library_artist_credit_proofs \
+                     WHERE subject_kind = ?1 AND subject_id = ?2 AND credit_position = ?3 \
+                     AND source_local_artist_id = ?4)",
+                )?
+                .query_row(params![kind, subject, position, from], |row| row.get(0))?;
+        record_move(tx, from, to, with_id, now)?;
+    }
+    Ok(())
+}
+
 /// Insert or refresh the album row and its artist credits from one file.
 fn write_album(
     tx: &Connection,
@@ -734,8 +774,17 @@ fn write_album(
             credit.mbid,
         ])?;
     }
-    if credit_rows(tx, CreditSide::Album, album_id)? != rows_before {
+    let rows_after = credit_rows(tx, CreditSide::Album, album_id)?;
+    if rows_after != rows_before {
         mark_stale(tx, album_id)?;
+        record_moves(
+            tx,
+            CreditSide::Album,
+            album_id,
+            &rows_before,
+            &rows_after,
+            now,
+        )?;
     }
 
     Ok(())
@@ -1222,11 +1271,20 @@ fn write_item(
             credit.mbid,
         ])?;
     }
-    if credit_rows(tx, CreditSide::Track, &track_id)? != rows_before {
+    let rows_after = credit_rows(tx, CreditSide::Track, &track_id)?;
+    if rows_after != rows_before {
         let album: String = tx
             .prepare_cached("SELECT local_album_id FROM local_tracks WHERE id = ?1")?
             .query_row(params![track_id], |row| row.get(0))?;
         mark_stale(tx, &album)?;
+        record_moves(
+            tx,
+            CreditSide::Track,
+            &track_id,
+            &rows_before,
+            &rows_after,
+            now,
+        )?;
     }
     tx.prepare_cached(
         "DELETE FROM local_track_genres WHERE local_track_id = ?1 AND source = 'local'",
@@ -1810,7 +1868,8 @@ pub(super) fn albums_left(conn: &Connection, run_id: &str) -> rusqlite::Result<V
 ///    by their own ids ([`place_scanned`]);
 /// 6. missing tracks continue into the tracks that took their place
 ///    ([`continue_tracks`]);
-/// 7. artist rows MusicBrainz proves to be one artist are merged
+/// 7. artist rows MusicBrainz proves to be one artist are merged, and a
+///    row a retag emptied follows its credits where the rule allows
 ///    ([`converge_artists`]);
 /// 8. new files that took the place of a hands-off album's are left
 ///    alone ([`hold_replacements`]);

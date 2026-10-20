@@ -237,6 +237,20 @@ fn reference_counts(
 /// follow its proven credits to another row (`artist_convergence`).
 pub(super) const CREDITS_MOVED: &str = "CREDITS_MOVED_TO_PROVEN_ROW";
 
+/// The reason of an open merge candidate recording that a scan moved a
+/// credit from its left row to its right one by name alone: no id in the
+/// file on either side and no proof at the old credit.
+pub(crate) const MOVED_BY_NAME: &str = "CREDITS_MOVED_BY_NAME";
+
+/// As [`MOVED_BY_NAME`], for a move where the file held an id on either
+/// side or a proof sat at the old credit.
+pub(crate) const MOVED_WITH_ID: &str = "CREDITS_MOVED_WITH_ID";
+
+/// The audit reason of a row merged into the one a retag moved all its
+/// credits to, where the two names differ only in sort name, capitals or
+/// spacing (`artist_convergence`).
+pub(crate) const MERGED_BY_NAME: &str = "AUTOMATIC_SAME_NAME_CREDITS_MOVED";
+
 /// Point every reference of `artist` at `survivor` and retire it.
 pub(super) fn retire_artist(
     tx: &Transaction<'_>,
@@ -244,16 +258,23 @@ pub(super) fn retire_artist(
     survivor: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
-    // A row waiting to follow its credits to `artist` follows them on to
-    // the survivor; every other open candidate naming `artist` is resolved
-    // below.
+    // A row waiting to follow its credits to `artist`, or whose credits a
+    // scan moved to it, follows them on to the survivor; every other open
+    // candidate naming `artist` is resolved below.
     tx.prepare_cached(
         "UPDATE OR IGNORE local_artist_merge_candidates SET right_artist_id = ?2, \
          updated_at = ?3, row_revision = row_revision + 1 \
-         WHERE reason_code = ?4 AND state = 'open' AND right_artist_id = ?1 \
+         WHERE reason_code IN (?4, ?5, ?6) AND state = 'open' AND right_artist_id = ?1 \
          AND left_artist_id <> ?2",
     )?
-    .execute(params![artist, survivor, now, CREDITS_MOVED])?;
+    .execute(params![
+        artist,
+        survivor,
+        now,
+        CREDITS_MOVED,
+        MOVED_BY_NAME,
+        MOVED_WITH_ID
+    ])?;
     let moves = [
         "UPDATE local_album_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
          WHERE local_artist_id = ?1",

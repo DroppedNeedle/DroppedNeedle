@@ -3,6 +3,12 @@
 //! An album counts while it is not retired and still has an indexed file;
 //! a track counts while it is indexed. Credits on anything else do not keep
 //! a duplicate group open.
+//!
+//! A record a scan left with no credits at all, holding something a person
+//! made, counts too while a recorded move of its credits is open
+//! (`corrections::artist_convergence::record_move`): when every row its
+//! credits went to shares its folded name, it joins their same-name group;
+//! otherwise it heads a group of its own with those rows.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,10 +19,51 @@ use super::models::{
     OwnedReference, ReconcileError, ReconcileJob, ReferenceCounts,
 };
 use super::reasons;
+use crate::corrections::artist_convergence::{MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID};
 
-/// Catalog action reasons that record an automatic artist merge (v2).
-const MERGE_REASONS: &str = "('AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE', \
-     'AUTOMATIC_PROVIDER_ANCHORED_ARTIST_CONVERGENCE')";
+/// Catalog action reasons that record an automatic artist merge: v2's
+/// two, and the merge of a row a retag emptied by name.
+fn merge_reasons() -> String {
+    format!(
+        "('AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE', \
+         'AUTOMATIC_PROVIDER_ANCHORED_ARTIST_CONVERGENCE', '{MERGED_BY_NAME}')"
+    )
+}
+
+/// The open moves of artist `{id}`'s credits a scan recorded.
+fn open_moves(id: &str) -> String {
+    format!(
+        "SELECT 1 FROM local_artist_merge_candidates moved WHERE moved.left_artist_id = {id} \
+         AND moved.reason_code IN ('{MOVED_BY_NAME}', '{MOVED_WITH_ID}') AND moved.state = 'open'"
+    )
+}
+
+/// SQL true when live artist `{id}` has no credit at all and holds
+/// something a person made, with an open recorded move of its credits.
+fn emptied_with_history(id: &str) -> String {
+    let moves = open_moves(id);
+    format!(
+        "(EXISTS ({moves}) \
+         AND NOT EXISTS (SELECT 1 FROM local_album_artists c WHERE c.local_artist_id = {id}) \
+         AND NOT EXISTS (SELECT 1 FROM local_track_artists c WHERE c.local_artist_id = {id}) \
+         AND NOT EXISTS (SELECT 1 FROM local_albums a WHERE a.album_artist_id = {id}) \
+         AND (EXISTS (SELECT 1 FROM library_user_favorites f \
+               WHERE f.item_kind = 'artist' AND f.item_id = {id}) \
+          OR EXISTS (SELECT 1 FROM library_user_ratings r \
+               WHERE r.item_kind = 'artist' AND r.item_id = {id}) \
+          OR EXISTS (SELECT 1 FROM library_play_history h WHERE h.local_artist_id = {id})))"
+    )
+}
+
+/// SQL true when an open move took a credit of artist `{id}`, folded as
+/// `{folded}`, to a row of another folded name.
+fn moved_to_other_name(id: &str, folded: &str) -> String {
+    let moves = open_moves(id);
+    format!(
+        "EXISTS ({moves} AND EXISTS (SELECT 1 FROM local_artists dest \
+         WHERE dest.id = moved.right_artist_id AND dest.folded_name IS NOT {folded}))"
+    )
+}
 
 /// `album` still has an indexed file and was not merged away.
 const ACTIVE_ALBUM: &str = "album.retired_into_album_id IS NULL AND EXISTS (SELECT 1 \
@@ -48,6 +95,7 @@ fn placeholders(n: usize) -> String {
 /// Everything the grouping rules read.
 pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
     let candidates = candidates(conn)?;
+    let moved = moved_groups(conn)?;
     let dismissals = conn
         .prepare(
             "SELECT left_artist_id, right_artist_id, left_artist_revision, \
@@ -79,6 +127,7 @@ pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
     let (merged_artists, merged_reference_totals) = merged_artists(conn, &merged_ids)?;
     Ok(GroupInputs {
         candidates,
+        moved,
         dismissals,
         ambiguous_artist_ids,
         merges,
@@ -87,23 +136,11 @@ pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
     })
 }
 
-/// Current artist records with indexed credits whose folded name another
-/// such record shares, with their reference counts and proof artists.
-fn candidates(conn: &Connection) -> Result<Vec<Candidate>, ReconcileError> {
-    let sql = format!(
-        "WITH active_artists AS ( \
-           SELECT credit.local_artist_id id FROM local_album_artists credit \
-           JOIN local_albums album ON album.id = credit.local_album_id WHERE {ACTIVE_ALBUM} \
-           UNION SELECT credit.local_artist_id FROM local_track_artists credit \
-           JOIN local_tracks track ON track.id = credit.local_track_id \
-           JOIN local_albums album ON album.id = track.local_album_id \
-           WHERE album.retired_into_album_id IS NULL AND track.availability = 'indexed'), \
-         current_artists AS ( \
-           SELECT artist.* FROM local_artists artist JOIN active_artists a ON a.id = artist.id \
-           WHERE artist.retired_into_artist_id IS NULL), \
-         duplicate_names AS ( \
-           SELECT folded_name FROM current_artists GROUP BY folded_name HAVING COUNT(*) > 1) \
-         SELECT artist.id, artist.display_name, artist.sort_name, artist.row_revision, \
+/// The columns [`candidate_row`] reads for artist `artist`, joined to its
+/// MusicBrainz link as `identity`.
+fn candidate_columns() -> String {
+    format!(
+        "artist.id, artist.display_name, artist.sort_name, artist.row_revision, \
            identity.provider_artist_id, artist.folded_name, artist.created_at, \
            (SELECT COUNT(*) FROM local_album_artists credit \
               JOIN local_albums album ON album.id = credit.local_album_id \
@@ -117,41 +154,123 @@ fn candidates(conn: &Connection) -> Result<Vec<Candidate>, ReconcileError> {
               WHERE album.album_artist_id = artist.id AND {ACTIVE_ALBUM}), \
            (SELECT COUNT(*) FROM library_user_favorites \
               WHERE item_kind = 'artist' AND item_id = artist.id), \
-           (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id) \
-         FROM current_artists artist \
-         LEFT JOIN local_artist_external_identities identity \
-           ON identity.local_artist_id = artist.id AND identity.provider = 'musicbrainz' \
+           (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id)"
+    )
+}
+
+/// The join that gives [`candidate_columns`] its `identity`.
+const IDENTITY_JOIN: &str = "LEFT JOIN local_artist_external_identities identity \
+     ON identity.local_artist_id = artist.id AND identity.provider = 'musicbrainz'";
+
+fn candidate_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Candidate> {
+    Ok(Candidate {
+        member: Member {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            sort_name: row.get(2)?,
+            row_revision: row.get(3)?,
+            provider_mbid: row.get(4)?,
+            counts: ReferenceCounts {
+                album_credits: row.get(7)?,
+                track_credits: row.get(8)?,
+                primary_albums: row.get(9)?,
+                favorites: row.get(10)?,
+                playlist_snapshots: 0,
+                history: row.get(11)?,
+                compatibility_ids: 0,
+                proven_credits: 0,
+            },
+        },
+        folded_name: row.get(5)?,
+        created_at: row.get(6)?,
+        proof_mbids: Vec::new(),
+    })
+}
+
+/// Current artist records with indexed credits, or emptied by a scan
+/// with every credit moved to a row of the same folded name (module
+/// docs), whose folded name another such record shares, with their
+/// reference counts and proof artists.
+fn candidates(conn: &Connection) -> Result<Vec<Candidate>, ReconcileError> {
+    let columns = candidate_columns();
+    let emptied = emptied_with_history("artist.id");
+    let elsewhere = moved_to_other_name("artist.id", "artist.folded_name");
+    let sql = format!(
+        "WITH active_artists AS ( \
+           SELECT credit.local_artist_id id FROM local_album_artists credit \
+           JOIN local_albums album ON album.id = credit.local_album_id WHERE {ACTIVE_ALBUM} \
+           UNION SELECT credit.local_artist_id FROM local_track_artists credit \
+           JOIN local_tracks track ON track.id = credit.local_track_id \
+           JOIN local_albums album ON album.id = track.local_album_id \
+           WHERE album.retired_into_album_id IS NULL AND track.availability = 'indexed' \
+           UNION SELECT artist.id FROM local_artists artist \
+           WHERE {emptied} AND NOT {elsewhere}), \
+         current_artists AS ( \
+           SELECT artist.* FROM local_artists artist JOIN active_artists a ON a.id = artist.id \
+           WHERE artist.retired_into_artist_id IS NULL), \
+         duplicate_names AS ( \
+           SELECT folded_name FROM current_artists GROUP BY folded_name HAVING COUNT(*) > 1) \
+         SELECT {columns} FROM current_artists artist {IDENTITY_JOIN} \
          WHERE artist.folded_name IN (SELECT folded_name FROM duplicate_names) \
          ORDER BY artist.folded_name, artist.created_at, artist.id"
     );
     let mut rows: Vec<Candidate> = conn
         .prepare(&sql)?
-        .query_map([], |row| {
-            Ok(Candidate {
-                member: Member {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    sort_name: row.get(2)?,
-                    row_revision: row.get(3)?,
-                    provider_mbid: row.get(4)?,
-                    counts: ReferenceCounts {
-                        album_credits: row.get(7)?,
-                        track_credits: row.get(8)?,
-                        primary_albums: row.get(9)?,
-                        favorites: row.get(10)?,
-                        playlist_snapshots: 0,
-                        history: row.get(11)?,
-                        compatibility_ids: 0,
-                        proven_credits: 0,
-                    },
-                },
-                folded_name: row.get(5)?,
-                created_at: row.get(6)?,
-                proof_mbids: Vec::new(),
-            })
+        .query_map([], candidate_row)?
+        .collect::<rusqlite::Result<_>>()?;
+    with_proofs(conn, &mut rows)?;
+    Ok(rows)
+}
+
+/// Each live record a scan emptied whose credits went, at least in part,
+/// to a row of another folded name (module docs), first in its group,
+/// followed by the live rows its credits went to.
+fn moved_groups(conn: &Connection) -> Result<Vec<Vec<Candidate>>, ReconcileError> {
+    let emptied = emptied_with_history("artist.id");
+    let elsewhere = moved_to_other_name("artist.id", "artist.folded_name");
+    // A pair moved both by name and with an id has a record of each kind:
+    // DISTINCT lists its destination once.
+    let pairs: Vec<(String, String)> = conn
+        .prepare(&format!(
+            "SELECT DISTINCT pair.left_artist_id, pair.right_artist_id, dest.created_at \
+             FROM local_artist_merge_candidates pair \
+             JOIN local_artists artist ON artist.id = pair.left_artist_id \
+              AND artist.retired_into_artist_id IS NULL \
+             JOIN local_artists dest ON dest.id = pair.right_artist_id \
+              AND dest.retired_into_artist_id IS NULL \
+             WHERE pair.reason_code IN (?1, ?2) AND pair.state = 'open' \
+             AND {emptied} AND {elsewhere} \
+             ORDER BY pair.left_artist_id, dest.created_at, pair.right_artist_id"
+        ))?
+        .query_map(params![MOVED_BY_NAME, MOVED_WITH_ID], |row| {
+            Ok((row.get(0)?, row.get(1)?))
         })?
         .collect::<rusqlite::Result<_>>()?;
+    let mut ids: Vec<(String, Vec<String>)> = Vec::new();
+    for (from, to) in pairs {
+        match ids.last_mut() {
+            Some((last, dests)) if *last == from => dests.push(to),
+            _ => ids.push((from, vec![to])),
+        }
+    }
+    let mut member = conn.prepare(&format!(
+        "SELECT {} FROM local_artists artist {IDENTITY_JOIN} WHERE artist.id = ?1",
+        candidate_columns()
+    ))?;
+    let mut groups = Vec::with_capacity(ids.len());
+    for (from, dests) in ids {
+        let mut rows = Vec::with_capacity(dests.len() + 1);
+        for id in std::iter::once(&from).chain(&dests) {
+            rows.push(member.query_row(params![id], candidate_row)?);
+        }
+        with_proofs(conn, &mut rows)?;
+        groups.push(rows);
+    }
+    Ok(groups)
+}
 
+/// Fill in each record's proof artists and proven credit count.
+fn with_proofs(conn: &Connection, rows: &mut [Candidate]) -> Result<(), ReconcileError> {
     let mut proof_mbids = conn.prepare(&format!(
         "SELECT DISTINCT proof.artist_mbid FROM library_artist_credit_proofs proof {PROOF_JOINS} \
          WHERE proof.source_local_artist_id = ?1 AND {ACTIVE_ALBUM} AND ({CURRENT_PROOF}) \
@@ -193,14 +312,14 @@ fn candidates(conn: &Connection) -> Result<Vec<Candidate>, ReconcileError> {
               WHERE credit.local_artist_id = ?1 \
                 AND album.retired_into_album_id IS NULL AND track.availability = 'indexed')"
     ))?;
-    for row in &mut rows {
+    for row in rows.iter_mut() {
         let id = row.member.id.clone();
         row.proof_mbids = proof_mbids
             .query_map(params![id], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         row.member.counts.proven_credits = proven.query_row(params![id], |r| r.get(0))?;
     }
-    Ok(rows)
+    Ok(())
 }
 
 /// Automatic merges from the catalog action log, newest first. Rows whose
@@ -209,7 +328,8 @@ fn merges(conn: &Connection) -> Result<Vec<MergeAction>, ReconcileError> {
     let rows: Vec<(String, String, Option<String>, f64)> = conn
         .prepare(&format!(
             "SELECT id, after_json, reason_code, created_at FROM library_catalog_actions \
-             WHERE reason_code IN {MERGE_REASONS} ORDER BY created_at DESC, id DESC"
+             WHERE reason_code IN {} ORDER BY created_at DESC, id DESC",
+            merge_reasons()
         ))?
         .query_map([], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -331,7 +451,8 @@ pub fn progress(conn: &Connection) -> Result<(Option<ReconcileJob>, i64), Reconc
         &format!(
             "SELECT COALESCE(SUM(json_array_length(json_extract(after_json, \
              '$.retired_artist_ids'))), 0) FROM library_catalog_actions \
-             WHERE reason_code IN {MERGE_REASONS} AND json_valid(after_json)"
+             WHERE reason_code IN {} AND json_valid(after_json)",
+            merge_reasons()
         ),
         [],
         |row| row.get(0),

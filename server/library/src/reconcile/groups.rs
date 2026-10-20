@@ -49,6 +49,7 @@ pub fn build(inputs: &GroupInputs) -> Vec<Group> {
         }
         groups.push(open_group(&members, &ambiguous));
     }
+    groups.extend(inputs.moved.iter().filter_map(|rows| moved_group(rows)));
     groups.extend(inputs.merges.iter().filter_map(|merge| {
         let ids = std::iter::once(&merge.survivor_id).chain(&merge.retired_ids);
         let members: Vec<Member> = ids
@@ -177,6 +178,40 @@ fn open_group(members: &[&Candidate], ambiguous: &HashSet<&str>) -> Group {
         reason,
         resolved_at: None,
     }
+}
+
+/// The group of a record a retag emptied (first in `rows`) and the
+/// records its credits went to. The one record they all went to is the
+/// recommended survivor; credits split across records leave the choice to
+/// the administrator.
+fn moved_group(rows: &[Candidate]) -> Option<Group> {
+    let (emptied, into) = rows.split_first()?;
+    if into.is_empty() {
+        return None;
+    }
+    let members: Vec<Member> = rows.iter().map(|c| c.member.clone()).collect();
+    let provider_mbids: BTreeSet<String> = rows
+        .iter()
+        .flat_map(|c| c.member.provider_mbid.iter().chain(&c.proof_mbids))
+        .filter(|mbid| !mbid.is_empty())
+        .cloned()
+        .collect();
+    let reason = reasons::CREDITS_MOVED;
+    Some(Group {
+        id: group_id(&members),
+        display_name: emptied.member.name.clone(),
+        state: GroupState::CreditsMoved,
+        affected_reference_count: members.iter().map(|m| m.counts.affected()).sum(),
+        provider_mbids: provider_mbids.into_iter().collect(),
+        recommended_survivor_id: match into {
+            [only] => Some(only.member.id.clone()),
+            _ => None,
+        },
+        members,
+        reason_code: reason.code.to_owned(),
+        reason,
+        resolved_at: None,
+    })
 }
 
 /// A stable id from the member ids, so the same records give the same

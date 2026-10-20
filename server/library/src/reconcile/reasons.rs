@@ -32,6 +32,16 @@ pub const NAME_MATCH_WITHOUT_PROVIDER_PROOF: Reason = reason(
     "These records only share a name; none of them is matched to MusicBrainz.",
     "Identify their albums, or mark the records as distinct if they are different people.",
 );
+pub const CREDITS_MOVED: Reason = reason(
+    "CREDITS_MOVED_WITHOUT_PROOF",
+    "A tag edit moved this record's songs to another record.",
+    "Merge them if it is one artist, or mark them as distinct.",
+);
+pub const RESOLVED_BY_NAME: Reason = reason(
+    crate::corrections::artist_convergence::MERGED_BY_NAME,
+    "A tag edit changed only how this artist's name is written or sorted, so the records were merged.",
+    "Nothing to do.",
+);
 pub const RESOLVED_AUTOMATICALLY: Reason = reason(
     "AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE",
     "These records were merged automatically because MusicBrainz proved they are one artist.",
@@ -73,6 +83,8 @@ pub fn for_code(code: &str) -> Reason {
         "AMBIGUOUS_CREDIT_STRUCTURE" => AMBIGUOUS_CREDIT_STRUCTURE,
         "INCOMPLETE_PROVIDER_PROOF" => INCOMPLETE_PROVIDER_PROOF,
         "NAME_MATCH_WITHOUT_PROVIDER_PROOF" => NAME_MATCH_WITHOUT_PROVIDER_PROOF,
+        "CREDITS_MOVED_WITHOUT_PROOF" => CREDITS_MOVED,
+        code if code == RESOLVED_BY_NAME.code => RESOLVED_BY_NAME,
         _ => RESOLVED_AUTOMATICALLY,
     }
 }

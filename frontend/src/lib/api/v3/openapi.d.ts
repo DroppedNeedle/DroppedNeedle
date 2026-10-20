@@ -10611,7 +10611,7 @@ export interface components {
          * @description What kind of duplicate group this is.
          * @enum {string}
          */
-        ArtistGroupState: "waiting_for_identity" | "provider_conflict" | "ambiguous_credit_structure" | "same_name_only" | "resolved_automatically";
+        ArtistGroupState: "waiting_for_identity" | "provider_conflict" | "ambiguous_credit_structure" | "same_name_only" | "credits_moved" | "resolved_automatically";
         /** @description Artist images from TheAudioDB. Every field is optional. */
         ArtistImages: {
             /** @description Banner. */

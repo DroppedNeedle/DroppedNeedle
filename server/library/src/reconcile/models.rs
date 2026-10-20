@@ -11,6 +11,8 @@ pub enum GroupState {
     ProviderConflict,
     AmbiguousCreditStructure,
     SameNameOnly,
+    /// A retag moved a record's credits to records of another name.
+    CreditsMoved,
     ResolvedAutomatically,
 }
 
@@ -21,6 +23,7 @@ impl GroupState {
             Self::ProviderConflict => "provider_conflict",
             Self::AmbiguousCreditStructure => "ambiguous_credit_structure",
             Self::SameNameOnly => "same_name_only",
+            Self::CreditsMoved => "credits_moved",
             Self::ResolvedAutomatically => "resolved_automatically",
         }
     }
@@ -29,7 +32,10 @@ impl GroupState {
     pub fn needs_review(self) -> bool {
         matches!(
             self,
-            Self::ProviderConflict | Self::AmbiguousCreditStructure | Self::SameNameOnly
+            Self::ProviderConflict
+                | Self::AmbiguousCreditStructure
+                | Self::SameNameOnly
+                | Self::CreditsMoved
         )
     }
 }
@@ -110,6 +116,9 @@ pub struct MergeAction {
 #[derive(Debug, Clone, Default)]
 pub struct GroupInputs {
     pub candidates: Vec<Candidate>,
+    /// Records a retag emptied into records of another name, each first
+    /// in its list, followed by the records its credits went to.
+    pub moved: Vec<Vec<Candidate>>,
     pub dismissals: Vec<Dismissal>,
     /// Album artists of albums whose credit could not be split cleanly.
     pub ambiguous_artist_ids: Vec<String>,

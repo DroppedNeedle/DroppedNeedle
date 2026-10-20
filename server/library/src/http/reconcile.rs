@@ -70,6 +70,8 @@ pub enum ArtistGroupState {
     AmbiguousCreditStructure,
     /// Same name, no MusicBrainz evidence at all.
     SameNameOnly,
+    /// A tag edit moved a record's songs to records of another name.
+    CreditsMoved,
     /// Merged automatically already.
     ResolvedAutomatically,
 }
@@ -81,6 +83,7 @@ impl From<GroupState> for ArtistGroupState {
             GroupState::ProviderConflict => Self::ProviderConflict,
             GroupState::AmbiguousCreditStructure => Self::AmbiguousCreditStructure,
             GroupState::SameNameOnly => Self::SameNameOnly,
+            GroupState::CreditsMoved => Self::CreditsMoved,
             GroupState::ResolvedAutomatically => Self::ResolvedAutomatically,
         }
     }
@@ -93,6 +96,7 @@ impl From<ArtistGroupState> for GroupState {
             ArtistGroupState::ProviderConflict => Self::ProviderConflict,
             ArtistGroupState::AmbiguousCreditStructure => Self::AmbiguousCreditStructure,
             ArtistGroupState::SameNameOnly => Self::SameNameOnly,
+            ArtistGroupState::CreditsMoved => Self::CreditsMoved,
             ArtistGroupState::ResolvedAutomatically => Self::ResolvedAutomatically,
         }
     }

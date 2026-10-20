@@ -141,7 +141,7 @@ Pre-releases are published to the same image under their own version tag, for ex
 | Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, an album-by-album discover queue, and a weekly mix that can queue up to five missing albums |
 | Live events | Ticketmaster and Skiddle gig alerts for artists you follow, each user with their own cities |
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |
-| Library | Browse, filter, rate, download, rescan, and remove albums (ratings are shared with Subsonic apps); albums DroppedNeedle isn't sure of are listed as unconfirmed, without blocking anything. Admins see artists that appear twice under the same name, with the MusicBrainz evidence for each, and can mark them as different people |
+| Library | Browse, filter, rate, download, rescan, and remove albums (ratings are shared with Subsonic apps); albums DroppedNeedle isn't sure of are listed as unconfirmed, without blocking anything. Admins see artists that appear twice under the same name, or whose songs a tag edit moved to a new name, with the MusicBrainz evidence for each, and can merge them or mark them as different people |
 | Drop imports | Drag in a zip or loose files from anywhere you buy music; identified, tagged, and shelved, or held for a manual match |
 | Playlists | Mix Jellyfin, Navidrome, Plex, local, YouTube, and Spotify imports in one place, share read-only with one toggle |
 | YouTube links | Find an album or its tracks on YouTube from the album page and play them there. Paste your own links on the YouTube library page. Each search spends one unit of the daily quota set under Settings > YouTube; a saved link never searches again |

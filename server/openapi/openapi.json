@@ -36909,6 +36909,7 @@
           "provider_conflict",
           "ambiguous_credit_structure",
           "same_name_only",
+          "credits_moved",
           "resolved_automatically"
         ]
       },
