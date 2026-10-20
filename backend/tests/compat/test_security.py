@@ -188,6 +188,13 @@ def test_subsonic_reject_renders_failed_envelope():
     assert resp.headers["Retry-After"] == "3"
 
 
+def test_subsonic_binary_reject_is_429_without_body():
+    resp = reject_subsonic("json", None, 3, binary=True)
+    assert resp.status_code == 429
+    assert resp.headers["Retry-After"] == "3"
+    assert resp.body == b""
+
+
 def test_jellyfin_reject_is_429():
     resp = reject_jellyfin(4)
     assert resp.status_code == 429

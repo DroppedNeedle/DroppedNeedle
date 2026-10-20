@@ -206,7 +206,10 @@ def reject_subsonic(
     *,
     server_name: str = "DroppedNeedle",
     server_version: str = "dev",
+    binary: bool = False,
 ) -> Response:
+    if binary:
+        return Response(status_code=429, headers={"Retry-After": str(retry_after)})
     response = render_error(
         0,
         "Rate limit exceeded",

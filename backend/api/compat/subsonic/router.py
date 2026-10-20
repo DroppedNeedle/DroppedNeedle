@@ -220,6 +220,7 @@ async def _dispatch(
                     retry_after,
                     server_name=settings.advertise_server_name,
                     server_version=server_version,
+                    binary=is_binary,
                 )
         else:
             retry_after = compat_rate_limits.auth_failure_retry_after(client_ip)
@@ -230,6 +231,7 @@ async def _dispatch(
                     retry_after,
                     server_name=settings.advertise_server_name,
                     server_version=server_version,
+                    binary=is_binary,
                 )
             try:
                 user = await resolve_subsonic_user(params, services.app_passwords)
@@ -243,6 +245,7 @@ async def _dispatch(
                             retry_after,
                             server_name=settings.advertise_server_name,
                             server_version=server_version,
+                            binary=is_binary,
                         )
                 raise
             if not is_media_request(path):
@@ -257,6 +260,7 @@ async def _dispatch(
                         retry_after,
                         server_name=settings.advertise_server_name,
                         server_version=server_version,
+                        binary=is_binary,
                     )
         ctx = Ctx(
             request=request,

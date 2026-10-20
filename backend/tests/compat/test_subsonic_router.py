@@ -176,3 +176,20 @@ async def test_contradictory_password_and_token_auth_is_rejected(compat_env):
     body = _sub(r)
     assert body["status"] == "failed"
     assert body["error"]["code"] == 10
+
+
+@_aio
+async def test_locked_out_binary_requests_get_429_instead_of_an_envelope(compat_env):
+    from api.compat.common.ratelimit import compat_rate_limits
+
+    for _ in range(5):
+        compat_rate_limits.record_auth_failure("testclient")
+    q = {"f": "json", "apiKey": compat_env.secret, "id": encode("track", "9f8c")}
+    for endpoint in ("stream", "download", "getCoverArt"):
+        r = compat_env.client.get(f"/subsonic/rest/{endpoint}", params=q)
+        assert r.status_code == 429
+        assert int(r.headers["Retry-After"]) > 0
+        assert r.content == b""
+    r = compat_env.client.get("/subsonic/rest/ping", params=q)
+    assert r.status_code == 200
+    assert _sub(r)["error"]["message"] == "Rate limit exceeded"
