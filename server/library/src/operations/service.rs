@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use rusqlite::OptionalExtension as _;
+use rusqlite::{Connection, OptionalExtension as _};
 
 use super::decisions::indexed_track_ids;
 use super::models::{
@@ -91,29 +91,8 @@ impl Operations {
     /// One job with its results and, for a re-identification, its
     /// candidates. Blocking.
     pub fn get(&self, job_id: &str) -> Result<OperationDetail, OperationError> {
-        self.db.read_blocking("operations.get", |conn| {
-            let job = jobs::job(conn, job_id)?
-                .ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
-            let (results, results_truncated) = store::work_results(conn, job_id)?;
-            let (candidates, selected_candidate_key) = if job.is_reidentification() {
-                match store::snapshot(conn, job_id)? {
-                    Some(snap) => (
-                        snap.evaluation.map(|e| e.candidates).unwrap_or_default(),
-                        snap.selected_candidate_key,
-                    ),
-                    None => (Vec::new(), None),
-                }
-            } else {
-                (Vec::new(), None)
-            };
-            Ok(OperationDetail {
-                job,
-                results,
-                results_truncated,
-                candidates,
-                selected_candidate_key,
-            })
-        })
+        self.db
+            .read_blocking("operations.get", |conn| job_detail(conn, job_id))
     }
 
     /// Pause, resume, or stop a job. Blocking.
@@ -1038,6 +1017,36 @@ impl Operations {
                 Ok(store::hand_over(tx, &job.id, worker, now)?)
             })
     }
+}
+
+/// One job with its results and, for a re-identification, its candidates,
+/// read on `conn`. Callers that read other rows too do it in the same read,
+/// so every row comes from one commit.
+pub(crate) fn job_detail(
+    conn: &Connection,
+    job_id: &str,
+) -> Result<OperationDetail, OperationError> {
+    let job =
+        jobs::job(conn, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
+    let (results, results_truncated) = store::work_results(conn, job_id)?;
+    let (candidates, selected_candidate_key) = if job.is_reidentification() {
+        match store::snapshot(conn, job_id)? {
+            Some(snap) => (
+                snap.evaluation.map(|e| e.candidates).unwrap_or_default(),
+                snap.selected_candidate_key,
+            ),
+            None => (Vec::new(), None),
+        }
+    } else {
+        (Vec::new(), None)
+    };
+    Ok(OperationDetail {
+        job,
+        results,
+        results_truncated,
+        candidates,
+        selected_candidate_key,
+    })
 }
 
 /// A MusicBrainz release id, hyphenated and lowercase.

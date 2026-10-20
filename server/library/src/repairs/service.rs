@@ -31,7 +31,7 @@ use crate::operations::models::{
     ReidentificationCandidate,
 };
 use crate::operations::reidentify::evaluation;
-use crate::operations::service::Operations;
+use crate::operations::service::{Operations, job_detail};
 use crate::scan::watcher::WorkWakeups;
 use crate::wiring::{LibrarySetup, ScanCoordinator};
 use droppedneedle_kernel::db::{Db, Lane};
@@ -233,12 +233,14 @@ impl Repairs {
     /// One repair job with its summary; not found when it is not a job of
     /// `purpose`.
     pub fn get(&self, job_id: &str, purpose: Purpose) -> Result<RepairDetail, OperationError> {
-        let (_, snap) = self.db.read_blocking("repairs.get", |conn| {
-            store::repair_job(conn, job_id, purpose)
-        })?;
-        Ok(RepairDetail {
-            detail: self.ops.get(job_id)?,
-            summary: snap.summary,
+        // The job and its summary come from one read: read apart, a commit
+        // between them shows a ready job with no summary.
+        self.db.read_blocking("repairs.get", |conn| {
+            let (_, snap) = store::repair_job(conn, job_id, purpose)?;
+            Ok(RepairDetail {
+                detail: job_detail(conn, job_id)?,
+                summary: snap.summary,
+            })
         })
     }
 
