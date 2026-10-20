@@ -1,9 +1,9 @@
 //! iTunes Search API: the "Get it" purchase-link fallback.
 //!
-//! A Rust port of v2's iTunes repository plus the
-//! ranking quirk in `ITUNES_API_NOTES.md` (verified live 2026-07-10). The
-//! keyless Search API ranks by popularity, not relevance, so a result is
-//! only trusted when its artist fuzzy-matches the requested one.
+//! A Rust port of v2's iTunes repository. The keyless Search API returns hits
+//! by other artists and tribute albums too, so a result is only trusted when
+//! its artist fuzzy-matches the requested one. The wire shapes, and the dates
+//! they were verified on, are in `itunes/models.rs`.
 //!
 //! Requests go through the executor at the `itunes` row (about 20 calls a
 //! minute), which purchase links and the iTunes preview leg share.
@@ -18,7 +18,11 @@ use crate::client::{decode, parse_base, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
-/// Live Search API endpoint (ITUNES_API_NOTES.md).
+pub(crate) mod models;
+
+use self::models::{AlbumHit, AlbumSearch};
+
+/// The Search API endpoint the client sends to.
 pub const SEARCH_URL: &str = "https://itunes.apple.com/search";
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "itunes";
@@ -42,38 +46,6 @@ pub const SEARCH_LIMIT: u32 = 10;
 /// hit's artist. Below this the hit is assumed to be a tribute or cover
 /// album that outranked the real record.
 pub const ARTIST_MATCH_THRESHOLD: f64 = 80.0;
-
-// ---------------------------------------------------------------------------
-// Wire models (default-tolerant; unknown fields are ignored by serde)
-// ---------------------------------------------------------------------------
-
-/// One album hit on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireAlbum {
-    /// Result kind; only `"collection"` rows are albums.
-    #[serde(default, rename = "wrapperType")]
-    pub wrapper_type: String,
-    /// Album title.
-    #[serde(default, rename = "collectionName")]
-    pub collection_name: String,
-    /// Album artist.
-    #[serde(default, rename = "artistName")]
-    pub artist_name: String,
-    /// Store page for the album.
-    #[serde(default, rename = "collectionViewUrl")]
-    pub collection_view_url: String,
-}
-
-/// A Search API page on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireSearchResponse {
-    /// Hit count.
-    #[serde(default, rename = "resultCount")]
-    pub result_count: i64,
-    /// Raw hits.
-    #[serde(default)]
-    pub results: Vec<WireAlbum>,
-}
 
 // ---------------------------------------------------------------------------
 // Normalized model
@@ -187,7 +159,7 @@ pub fn token_set_ratio(a: &str, b: &str) -> f64 {
 /// fuzzy-match the requested one. The collection name falls back to the
 /// requested album title when the wire omits it.
 pub fn select_album(
-    results: &[WireAlbum],
+    results: &[AlbumHit],
     artist_name: &str,
     album_title: &str,
 ) -> Option<AlbumResult> {
@@ -270,7 +242,7 @@ impl ITunesClient {
         else {
             return Ok(None);
         };
-        let page: WireSearchResponse = decode(&reply)?;
+        let page: AlbumSearch = decode(&reply)?;
         Ok(select_album(&page.results, artist_name, album_title))
     }
 

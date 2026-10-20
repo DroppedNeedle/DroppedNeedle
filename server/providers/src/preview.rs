@@ -4,7 +4,8 @@
 //! matches better (field-scoped query syntax, ordered album track lists);
 //! iTunes results are verified against the requested artist because its top
 //! hit can be a cover. The Deezer wire shapes, and the dates they were
-//! verified on, are in `preview/models.rs`.
+//! verified on, are in `preview/models.rs`; the iTunes ones are in
+//! `itunes/models.rs`.
 //!
 //! Expiry warning, carried over from the v2 module docs: Deezer preview URLs
 //! carry an `hdnea` expiry token. Callers must resolve them just-in-time and
@@ -26,6 +27,7 @@ use crate::client::{decode, parse_base, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, ProviderError};
 use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 use crate::itunes::ITunesClient;
+use crate::itunes::models::SongSearch;
 
 mod models;
 
@@ -81,44 +83,6 @@ fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
             status,
         },
     })
-}
-
-// ---------------------------------------------------------------------------
-// Wire models (default-tolerant; unknown fields are ignored by serde)
-// ---------------------------------------------------------------------------
-
-/// An iTunes song hit on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ITunesTrack {
-    /// Song artist.
-    #[serde(default, rename = "artistName")]
-    pub artist_name: String,
-    /// Song title.
-    #[serde(default, rename = "trackName")]
-    pub track_name: String,
-    /// Album title.
-    #[serde(default, rename = "collectionName")]
-    pub collection_name: String,
-    /// 30s AAC preview URL.
-    #[serde(default, rename = "previewUrl")]
-    pub preview_url: String,
-    /// Full-track duration in milliseconds.
-    #[serde(default, rename = "trackTimeMillis")]
-    pub track_time_millis: Option<i64>,
-    /// Position within the album.
-    #[serde(default, rename = "trackNumber")]
-    pub track_number: Option<i64>,
-}
-
-/// An iTunes song-search page on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ITunesSearchResponse {
-    /// Hit count.
-    #[serde(default, rename = "resultCount")]
-    pub result_count: i64,
-    /// Raw hits.
-    #[serde(default)]
-    pub results: Vec<ITunesTrack>,
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +313,7 @@ impl PreviewClient {
         term: &str,
         limit: &str,
         priority: RequestPriority,
-    ) -> Result<Option<ITunesSearchResponse>, ProviderError> {
+    ) -> Result<Option<SongSearch>, ProviderError> {
         let Some(reply) = self
             .itunes
             .search(

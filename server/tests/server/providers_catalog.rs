@@ -227,49 +227,25 @@ async fn discogs_degradation_500_transport_bad_json_unusable() {
 // iTunes
 // ---------------------------------------------------------------------------
 
+/// Verified against itunes.apple.com/search on 2026-10-20: tests/fixtures/itunes/search_album.json.
+const ITUNES_ALBUMS: &str = include_str!("../fixtures/itunes/search_album.json");
+
 #[tokio::test]
 async fn itunes_contract_tolerates_unknown_fields() {
-    let body = r#"{"resultCount": 1, "future": true, "results": [
-        {"wrapperType": "collection", "collectionType": "Album",
-         "artistName": "Nirvana", "collectionName": "Nevermind",
-         "collectionViewUrl": "https://music.apple.com/x?uo=4",
-         "collectionPrice": 9.99, "currency": "USD", "extra": {"a": 1}}
-    ]}"#;
-    let wire = scripted(ITUNES, &[(200, &[], body)]);
+    // The recorded answer has many fields the client does not read. Its rows by
+    // other artists, tribute albums included, fail the artist gate.
+    let wire = scripted(ITUNES, &[(200, &[], ITUNES_ALBUMS)]);
     let found = catalog_providers(&wire)
         .itunes
         .find_album("Nirvana", "Nevermind", "US", PRIORITY)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(found.url, "https://music.apple.com/x?uo=4");
-    assert_eq!(found.collection_name, "Nevermind");
     assert_eq!(found.artist_name, "Nirvana");
+    assert!(found.url.starts_with("https://music.apple.com/us/album/"));
     let sent = wire.sent();
     assert_eq!(sent[0].query("term").as_deref(), Some("Nirvana Nevermind"));
     assert_eq!(sent[0].query("country").as_deref(), Some("US"));
-}
-
-#[tokio::test]
-async fn itunes_quirk_tribute_album_rejected_real_album_kept() {
-    // Live ranking puts tributes above the real record (ITUNES_API_NOTES.md);
-    // the fuzzy artist gate must skip them.
-    let body = r#"{"resultCount": 2, "results": [
-        {"wrapperType": "collection", "artistName": "Piano Tribute Players",
-         "collectionName": "Piano Tribute to Nirvana",
-         "collectionViewUrl": "https://music.apple.com/tribute"},
-        {"wrapperType": "collection", "artistName": "Nirvana",
-         "collectionName": "Nevermind",
-         "collectionViewUrl": "https://music.apple.com/real"}
-    ]}"#;
-    let wire = scripted(ITUNES, &[(200, &[], body)]);
-    let found = catalog_providers(&wire)
-        .itunes
-        .find_album("Nirvana", "Nevermind", "US", PRIORITY)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(found.url, "https://music.apple.com/real");
 
     assert!(itunes::token_set_ratio("Nirvana", "Piano Tribute Players") < 80.0);
     assert!(itunes::token_set_ratio("Nirvana", "Nirvana") >= 80.0);
@@ -349,10 +325,8 @@ fn deezer_search() -> String {
     format!("{DEEZER}/search")
 }
 
-const ITUNES_SONG: &str = r#"{"resultCount": 1, "results": [
-    {"artistName": "A", "trackName": "T", "collectionName": "C",
-     "previewUrl": "https://audio/t.m4a"}
-]}"#;
+/// Verified against itunes.apple.com/search on 2026-10-20: tests/fixtures/itunes/search_track.json.
+const ITUNES_SONG: &str = include_str!("../fixtures/itunes/search_track.json");
 
 #[tokio::test]
 async fn preview_contract_tolerant_decode() {
@@ -370,19 +344,14 @@ async fn preview_contract_tolerant_decode() {
     );
     assert_eq!(found.duration_s, Some(30));
 
-    let body = r#"{"resultCount": 1, "results": [
-        {"artistName": "A", "trackName": "T", "collectionName": "C",
-         "previewUrl": "https://audio/x.m4a", "trackTimeMillis": 30000,
-         "trackNumber": 4, "primaryGenreName": "Rock", "futureField": {"n": 1}}
-    ]}"#;
-    let wire = scripted(ITUNES, &[(200, &[], body)]);
+    let wire = scripted(ITUNES, &[(200, &[], ITUNES_SONG)]);
     let found = catalog_providers(&wire)
         .previews
-        .itunes_track_preview("A", "T", PRIORITY)
+        .itunes_track_preview("Nirvana", "Smells Like Teen Spirit", PRIORITY)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(found.title, "T");
+    assert_eq!(found.title, "Smells Like Teen Spirit");
     assert_eq!(found.duration_s, Some(30));
 }
 
@@ -446,9 +415,9 @@ async fn preview_quirk_track_fallback_chain() {
     wire.answer(ITUNES, 200, &[], ITUNES_SONG);
     let (found, provider) = catalog_providers(&wire)
         .previews
-        .get_track_preview("A", "T", PRIORITY)
+        .get_track_preview("Nirvana", "Smells Like Teen Spirit", PRIORITY)
         .await;
-    assert_eq!(found.unwrap().preview_url, "https://audio/t.m4a");
+    assert_eq!(found.unwrap().title, "Smells Like Teen Spirit");
     assert_eq!(provider, Some("itunes"));
 
     // Deezer error still falls through to iTunes.
@@ -456,7 +425,7 @@ async fn preview_quirk_track_fallback_chain() {
     wire.answer(ITUNES, 200, &[], ITUNES_SONG);
     let (found, provider) = catalog_providers(&wire)
         .previews
-        .get_track_preview("A", "T", PRIORITY)
+        .get_track_preview("Nirvana", "Smells Like Teen Spirit", PRIORITY)
         .await;
     assert!(found.is_some());
     assert_eq!(provider, Some("itunes"));
@@ -470,7 +439,7 @@ async fn preview_quirk_track_fallback_chain() {
     );
     let (found, provider) = catalog_providers(&wire)
         .previews
-        .get_track_preview("A", "T", PRIORITY)
+        .get_track_preview("Nirvana", "Smells Like Teen Spirit", PRIORITY)
         .await;
     assert_eq!(found, None);
     assert_eq!(provider, None);

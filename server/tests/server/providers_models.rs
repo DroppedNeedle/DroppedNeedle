@@ -21,6 +21,9 @@ enum Provider {
     DeezerTrack,
     DeezerAlbumSearch,
     DeezerAlbumTracks,
+    ItunesAlbum,
+    ItunesTrack,
+    ItunesAlbumTracks,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -75,6 +78,24 @@ const ROWS: &[Row] = &[
         provider: Provider::DeezerAlbumTracks,
         body: DEEZER_ALBUM_TRACKS_BODY,
         identity: "/data/0/id",
+    },
+    Row {
+        name: "itunes /search album, collection id",
+        provider: Provider::ItunesAlbum,
+        body: include_str!("../fixtures/itunes/search_album.json"),
+        identity: "/results/0/collectionId",
+    },
+    Row {
+        name: "itunes /search song, track id",
+        provider: Provider::ItunesTrack,
+        body: include_str!("../fixtures/itunes/search_track.json"),
+        identity: "/results/0/trackId",
+    },
+    Row {
+        name: "itunes /search song, album tracks, track id",
+        provider: Provider::ItunesAlbumTracks,
+        body: include_str!("../fixtures/itunes/search_album_tracks.json"),
+        identity: "/results/0/trackId",
     },
 ];
 
@@ -160,6 +181,27 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .await?;
             Ok(!tracks.is_empty())
         }
+        Provider::ItunesAlbum => {
+            let found = itunes(body)
+                .itunes
+                .find_album("Nirvana", "Nevermind", "US", PRIORITY)
+                .await?;
+            Ok(found.is_some())
+        }
+        Provider::ItunesTrack => {
+            let found = itunes(body)
+                .previews
+                .itunes_track_preview("Nirvana", "Smells Like Teen Spirit", PRIORITY)
+                .await?;
+            Ok(found.is_some())
+        }
+        Provider::ItunesAlbumTracks => {
+            let tracks = itunes(body)
+                .previews
+                .itunes_album_tracks("Nirvana", "Nevermind", 4, PRIORITY)
+                .await?;
+            Ok(!tracks.is_empty())
+        }
     }
 }
 
@@ -179,6 +221,25 @@ fn deezer(answers: &[(&str, &str)]) -> Providers {
         wire,
         ProviderEndpoints {
             deezer: "http://fake/deezer".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    )
+}
+
+/// Serves `body` from the iTunes search address and returns the providers that
+/// read it.
+fn itunes(body: &str) -> Providers {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        "http://fake/itunes/search",
+        200,
+        &[],
+        body.as_bytes().to_vec(),
+    );
+    Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            itunes: "http://fake/itunes/search".to_owned(),
             ..ProviderEndpoints::closed()
         },
     )
