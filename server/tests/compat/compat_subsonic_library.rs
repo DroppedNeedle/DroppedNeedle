@@ -1101,14 +1101,31 @@ async fn cover_art_buckets_caching_and_misses() {
         Some("private, max-age=3600")
     );
     assert_eq!(playlist.content_type(), "image/png");
-    // A known album without art gets the placeholder; unknown ids 404 text.
-    let bare = Ids::read(&client).await.album("Achtung Baby");
-    let placeholder = client.get("getCoverArt", &[("id", &bare)]).await;
-    assert_eq!(placeholder.content_type(), "image/webp");
-    assert_eq!(
-        placeholder.header("cache-control"),
-        Some("public, max-age=86400")
-    );
+    // A known album without art gets a WebP placeholder drawn from its id:
+    // the same id always gets the same bytes, another album other colours.
+    // Unknown ids 404 text.
+    let ids = Ids::read(&client).await;
+    let mut drawn = Vec::new();
+    for id in [
+        ids.album("Achtung Baby"),
+        ids.album("Achtung Baby"),
+        ids.album("OK Computer"),
+    ] {
+        let placeholder = client.get("getCoverArt", &[("id", &id)]).await;
+        assert_eq!(
+            (placeholder.status, placeholder.content_type()),
+            (StatusCode::OK, "image/webp"),
+            "{id}"
+        );
+        assert_eq!(
+            placeholder.header("cache-control"),
+            Some("public, max-age=86400"),
+            "{id}"
+        );
+        drawn.push(placeholder.body);
+    }
+    assert_eq!(drawn[0], drawn[1], "one album, one placeholder");
+    assert_ne!(drawn[0], drawn[2], "two albums, two placeholders");
     for id in ["al-nope", "xx-1"] {
         let answer = client.get("getCoverArt", &[("id", id)]).await;
         assert_eq!(

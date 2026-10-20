@@ -258,10 +258,86 @@ pub fn cover_bucket(size: Option<i64>) -> &'static str {
     }
 }
 
-/// Gray record placeholder served on art misses, 500 pixels square. It is
-/// WebP, as Navidrome's is (0.62.0 recording): many phone apps cannot draw
-/// SVG.
-pub const PLACEHOLDER_COVER: &[u8] = include_bytes!("assets/placeholder.webp");
+/// Side of the placeholder cover in pixels. A smooth gradient scales up
+/// cleanly, so one small size serves every bucket.
+const PLACEHOLDER_SIDE: u32 = 128;
+
+/// The web UI's placeholder palette, in its order, as the default (dark)
+/// theme draws it. These mirror the theme tokens `--color-primary`,
+/// `-secondary`, `-accent`, `-info`, `-success`, `-warning` and `-error`:
+/// primary and accent are set in `frontend/src/theme.css`, the rest are
+/// daisyUI 5's stock dark values, converted from oklch to sRGB. Keep them
+/// in step with those tokens.
+const PLACEHOLDER_PALETTE: [[u8; 3]; 7] = [
+    [174, 213, 242],
+    [244, 48, 152],
+    [187, 219, 155],
+    [0, 186, 254],
+    [0, 211, 144],
+    [252, 183, 0],
+    [255, 98, 125],
+];
+/// The pair an empty seed gets: `--color-base-300` (from `theme.css`) to
+/// `--color-neutral` (daisyUI's dark), at 135 degrees.
+const PLACEHOLDER_NEUTRAL: ([u8; 3], [u8; 3], u32) = ([31, 39, 27], [9, 9, 11], 135);
+const PLACEHOLDER_ANGLES: [u32; 4] = [45, 135, 225, 315];
+
+/// FNV-1a over UTF-16 code units, then the murmur3 finaliser: the same
+/// hash as the web UI's, so a seed picks the same colours in both.
+fn placeholder_hash(text: &str) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for unit in text.encode_utf16() {
+        h = (h ^ u32::from(unit)).wrapping_mul(0x0100_0193);
+    }
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^= h >> 16;
+    h
+}
+
+/// The two colours and the CSS gradient angle for a seed, picked as the
+/// web UI's `coverPlaceholder` picks them.
+fn placeholder_look(seed: &str) -> ([u8; 3], [u8; 3], u32) {
+    let text = seed.trim().to_lowercase();
+    if text.is_empty() {
+        return PLACEHOLDER_NEUTRAL;
+    }
+    let h = placeholder_hash(&text) as usize;
+    let count = PLACEHOLDER_PALETTE.len();
+    let from = h % count;
+    let to = (from + 1 + (h / count) % (count - 1)) % count;
+    let angle = PLACEHOLDER_ANGLES[(h / (count * (count - 1))) % PLACEHOLDER_ANGLES.len()];
+    (PLACEHOLDER_PALETTE[from], PLACEHOLDER_PALETTE[to], angle)
+}
+
+/// Placeholder cover for an item with no picture, as WebP (many phone apps
+/// cannot draw SVG): a two-colour diagonal gradient worked out from the
+/// seed (the item's MusicBrainz id, or its name), drawn like CSS
+/// `linear-gradient(<angle>deg, from, to)` so it matches the web UI.
+/// `None` only if encoding fails, which is logged.
+pub fn placeholder_cover(seed: &str) -> Option<Vec<u8>> {
+    let (from, to, angle) = placeholder_look(seed);
+    let side = PLACEHOLDER_SIDE as f32;
+    let (sin, cos) = (angle as f32).to_radians().sin_cos();
+    // CSS angles point up at 0 and turn clockwise; image rows run down.
+    let (dx, dy) = (sin, -cos);
+    let length = side * (sin.abs() + cos.abs());
+    let picture = image::RgbImage::from_fn(PLACEHOLDER_SIDE, PLACEHOLDER_SIDE, |x, y| {
+        let along = (x as f32 + 0.5 - side / 2.0) * dx + (y as f32 + 0.5 - side / 2.0) * dy;
+        let t = (0.5 + along / length).clamp(0.0, 1.0);
+        image::Rgb(std::array::from_fn(|i| {
+            (f32::from(from[i]) + (f32::from(to[i]) - f32::from(from[i])) * t).round() as u8
+        }))
+    });
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    if let Err(err) = picture.write_to(&mut bytes, image::ImageFormat::WebP) {
+        tracing::warn!(error = %err, "placeholder cover failed to encode");
+        return None;
+    }
+    Some(bytes.into_inner())
+}
 
 /// Audio facts the backend reports for one file id.
 #[derive(Debug, Clone)]

@@ -9,11 +9,12 @@ use super::models::{Render, SStreamDetails, STranscodeDecision};
 use super::picture::PictureKind;
 use super::store::{ClientInfo, Store};
 use super::stream::{
-    AudioBackend, AudioBody, MAX_OFFSET_SECONDS, PLACEHOLDER_COVER, ServeError, ServedAudio,
-    StreamPlan, cover_bucket, decide, download_filename, estimate_transcode_length, serve_original,
+    AudioBackend, AudioBody, MAX_OFFSET_SECONDS, ServeError, ServedAudio, StreamPlan, cover_bucket,
+    decide, download_filename, estimate_transcode_length, placeholder_cover, serve_original,
     transcode_hint,
 };
 use super::{AVATAR_FORBIDDEN_MESSAGE, Ctx, Outcome};
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// Audio as a binary outcome: bytes in memory, or a live stream.
 fn audio_outcome(
@@ -66,17 +67,24 @@ pub fn serve_outcome(served: Result<ServedAudio, ServeError>) -> Result<Outcome,
     }
 }
 
-/// The gray placeholder every art miss gets.
-fn placeholder() -> Outcome {
-    Outcome::Binary {
+/// The placeholder an art miss gets, coloured from `seed` (see
+/// [`placeholder_seed`]). `None` only if it could not be drawn.
+fn placeholder(seed: &str) -> Option<Outcome> {
+    Some(Outcome::Binary {
         status: 200,
         content_type: "image/webp".to_owned(),
         headers: vec![(
             "Cache-Control".to_owned(),
             "public, max-age=86400".to_owned(),
         )],
-        body: PLACEHOLDER_COVER.to_vec(),
-    }
+        body: placeholder_cover(seed)?,
+    })
+}
+
+/// What a placeholder is coloured from, as the web UI picks it: the
+/// MusicBrainz id when the item has one, otherwise its name.
+fn placeholder_seed<'a>(id: Option<&'a str>, name: &'a str) -> &'a str {
+    id.filter(|id| is_valid_mbid(id)).unwrap_or(name)
 }
 
 /// Library art found, with the long-lived cache headers it has always had.
@@ -102,32 +110,38 @@ pub async fn library_picture<S: Store>(
     internal: &str,
     bucket: &str,
 ) -> Result<Option<Outcome>, S::Error> {
-    let art = match kind {
+    let (art, name) = match kind {
         PictureKind::Album => {
-            if store.get_album(internal).await?.is_none() {
+            let Some(album) = store.get_album(internal).await? else {
                 return Ok(None);
-            }
-            store.release_group_cover(internal, bucket).await?
+            };
+            (
+                store.release_group_cover(internal, bucket).await?,
+                album.title,
+            )
         }
         PictureKind::Artist => {
-            if store.get_artist_with_albums(internal).await?.is_none() {
+            let Some((artist, _)) = store.get_artist_with_albums(internal).await? else {
                 return Ok(None);
-            }
-            store
-                .artist_image(internal, bucket.parse::<i64>().ok())
-                .await?
+            };
+            (
+                store
+                    .artist_image(internal, bucket.parse::<i64>().ok())
+                    .await?,
+                artist.name,
+            )
         }
     };
-    Ok(Some(
-        art.map(|(body, content_type)| immutable(body, content_type))
-            .unwrap_or_else(placeholder),
-    ))
+    Ok(match art {
+        Some((body, content_type)) => Some(immutable(body, content_type)),
+        None => placeholder(placeholder_seed(Some(internal), &name)),
+    })
 }
 
 /// Cover art: album/track -> release-group art, artist -> artist image,
 /// playlist -> its uploaded cover (Feishin #287) or one made from its
-/// tracks. Misses serve the gray WebP placeholder; non-playlist hits
-/// carry immutable cache headers; `size` buckets to 250/500/1200. HEAD is
+/// tracks. Misses serve a WebP placeholder coloured from the item;
+/// non-playlist hits carry immutable cache headers; `size` buckets to 250/500/1200. HEAD is
 /// served by the HTTP layer (which strips bodies); only the playlist
 /// branch needs explicit headers.
 pub async fn cover_art<P: Principal, S: Store, B: AudioBackend>(
@@ -151,16 +165,21 @@ pub async fn cover_art<P: Principal, S: Store, B: AudioBackend>(
                 .map_err(Ctx::<P, S, B>::store_err)?
                 .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Song not found"))?;
             let mut art = None;
-            if let Some(rg) = track.rg_mbid {
+            if let Some(rg) = &track.rg_mbid {
                 art = ctx
                     .store
-                    .release_group_cover(&rg, bucket)
+                    .release_group_cover(rg, bucket)
                     .await
                     .map_err(Ctx::<P, S, B>::store_err)?;
             }
-            Ok(art
-                .map(|(body, content_type)| immutable(body, content_type))
-                .unwrap_or_else(placeholder))
+            match art {
+                Some((body, content_type)) => Ok(immutable(body, content_type)),
+                None => placeholder(placeholder_seed(
+                    track.rg_mbid.as_deref(),
+                    track.album_title.as_deref().unwrap_or(&track.title),
+                ))
+                .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Song not found")),
+            }
         }
         IdKind::Artist => library_picture(ctx.store, PictureKind::Artist, &internal, bucket)
             .await
@@ -174,7 +193,9 @@ pub async fn cover_art<P: Principal, S: Store, B: AudioBackend>(
                 .await
                 .map_err(Ctx::<P, S, B>::store_err)?;
             match art {
-                None => Ok(placeholder()),
+                // Playlists without a cover get the neutral pair, as on the web.
+                None => placeholder("")
+                    .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Playlist not found")),
                 Some((body, content_type)) => {
                     let headers = vec![
                         ("Content-Length".to_owned(), body.len().to_string()),
