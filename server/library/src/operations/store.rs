@@ -1,80 +1,37 @@
 //! Durable operation state over the 0001 tables.
 //!
-//! Jobs live in `library_operation_jobs` with one row per work item in
-//! `library_operation_work`. A re-identification also keeps a snapshot in
+//! A job is a `library_operation_jobs` row with one row per work item in
+//! `library_operation_work`, both written through [`crate::jobs`]. A
+//! re-identification also keeps a snapshot in
 //! `library_reidentification_snapshots`: the album, input, and identity
 //! revisions it was started against and whether a Local metadata lookup
 //! was confirmed. Its worker hands the album to the identification queue
-//! and finishes, so no re-identification waits on a choice. Every write
-//! takes the job's `row_revision` forward.
+//! and finishes, so no re-identification waits on a choice.
 //!
 //! The functions here are plain SQL on a caller's connection or
 //! transaction; [`super::service`] owns the transactions. The catalog
 //! decisions a person makes on an album live in [`super::decisions`].
 
+use droppedneedle_kernel::db::DbError;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use sha2::{Digest as _, Sha256};
 
 use super::control::{ControlPlan, Requeue, plan};
 use super::models::{
-    Control, ControlRequest, Evaluation, OperationError, OperationJob, OperationKind,
-    OperationState, WorkResult,
+    Control, Evaluation, OperationError, OperationJob, OperationKind, OperationState, WorkResult,
 };
 use super::reasons;
 use crate::identify::sqlite::{album_identity_row, album_input_revision, decision_from};
+use crate::jobs::{self, ControlChange, NewJob, NewWork, Tally, WorkState};
 use crate::management::profile::root_assignment;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
-/// How long a worker holds a claimed job before recovery requeues it.
-pub const LEASE_SECS: f64 = 60.0;
+pub use crate::jobs::{checkpoint, claim_work, holds, job};
+
 /// Work results a job detail shows; the rest are counted, not listed.
 const RESULTS_SHOWN: usize = 100;
 pub(super) const PROVIDER: &str = "musicbrainz";
-
-const JOB_COLUMNS: &str = "id, kind, state, requested_by_user_id, expected_work_count, \
-     completed_count, succeeded_count, failed_count, skipped_count, control_request, \
-     terminal_code, reidentification_attempt_count, row_revision, event_revision, created_at, \
-     updated_at";
-
-fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<OperationJob> {
-    Ok(OperationJob {
-        id: row.get(0)?,
-        kind: row.get(1)?,
-        state: OperationState::parse(&row.get::<_, String>(2)?).unwrap_or(OperationState::Failed),
-        requested_by_user_id: row.get(3)?,
-        expected_work_count: row.get(4)?,
-        completed_count: row.get(5)?,
-        succeeded_count: row.get(6)?,
-        failed_count: row.get(7)?,
-        skipped_count: row.get(8)?,
-        control_request: ControlRequest::parse(&row.get::<_, String>(9)?),
-        terminal_code: row.get(10)?,
-        reidentification_attempt_count: row.get(11)?,
-        row_revision: row.get(12)?,
-        event_revision: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
-    })
-}
-
-pub fn job(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<OperationJob>> {
-    conn.query_row(
-        &format!("SELECT {JOB_COLUMNS} FROM library_operation_jobs WHERE id = ?1"),
-        params![job_id],
-        map_job,
-    )
-    .optional()
-}
-
-fn job_by_key(conn: &Connection, key: &str) -> rusqlite::Result<Option<OperationJob>> {
-    conn.query_row(
-        &format!("SELECT {JOB_COLUMNS} FROM library_operation_jobs WHERE idempotency_key = ?1"),
-        params![key],
-        map_job,
-    )
-    .optional()
-}
 
 /// The job after a write that must have found it.
 pub(crate) fn job_after(conn: &Connection, job_id: &str) -> Result<OperationJob, OperationError> {
@@ -344,7 +301,7 @@ pub fn create_reidentification(
         .as_ref()
         .map(|key| format!("{key}:reidentification"));
     if let Some(key) = &key
-        && let Some(existing) = job_by_key(tx, key)?
+        && let Some(existing) = jobs::job_by_key(tx, key)?
     {
         return Ok(existing);
     }
@@ -359,17 +316,17 @@ pub fn create_reidentification(
     {
         return Ok(existing);
     }
-    tx.execute(
-        "INSERT INTO library_operation_jobs (id, kind, state, requested_by_user_id, \
-         expected_work_count, idempotency_key, created_at, updated_at) \
-         VALUES (?1, ?2, 'queued', ?3, 1, ?4, ?5, ?5)",
-        params![
-            new.job_id,
-            OperationKind::ExplicitReidentification.as_str(),
-            new.requested_by_user_id,
-            key,
+    jobs::insert(
+        tx,
+        &NewJob {
+            id: &new.job_id,
+            kind: OperationKind::ExplicitReidentification,
+            requested_by: Some(&new.requested_by_user_id),
+            idempotency_key: key.as_deref(),
+            catalog_revision: None,
+            expected_work_count: 1,
             now,
-        ],
+        },
     )?;
     tx.execute(
         "INSERT INTO library_reidentification_snapshots (job_id, local_album_id, \
@@ -387,18 +344,19 @@ pub fn create_reidentification(
             now,
         ],
     )?;
-    tx.execute(
-        "INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
-         expected_subject_revision, expected_input_revision, action, idempotency_key, \
-         updated_at) VALUES (?1, 0, ?2, ?3, ?4, 'reidentify', ?5, ?6)",
-        params![
-            new.job_id,
-            new.local_album_id,
-            revisions.album_revision,
-            revisions.input_revision,
-            format!("{}:{}", new.job_id, new.local_album_id),
+    jobs::insert_work(
+        tx,
+        &NewWork {
+            job_id: &new.job_id,
+            ordinal: 0,
+            local_album_id: Some(&new.local_album_id),
+            local_track_id: None,
+            expected_subject_revision: revisions.album_revision,
+            expected_input_revision: &revisions.input_revision,
+            action: "reidentify",
+            idempotency_key: &format!("{}:{}", new.job_id, new.local_album_id),
             now,
-        ],
+        },
     )?;
     job_after(tx, &new.job_id)
 }
@@ -408,17 +366,25 @@ fn live_reidentification(
     conn: &Connection,
     album_id: &str,
 ) -> rusqlite::Result<Option<OperationJob>> {
-    conn.query_row(
-        &format!(
-            "SELECT {JOB_COLUMNS} FROM library_operation_jobs \
-             WHERE kind = ?1 AND state IN ('queued','running') AND id IN \
+    let id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM library_operation_jobs \
+             WHERE kind = ?1 AND state IN (?3, ?4) AND id IN \
              (SELECT job_id FROM library_reidentification_snapshots WHERE local_album_id = ?2) \
-             ORDER BY created_at LIMIT 1"
-        ),
-        params![OperationKind::ExplicitReidentification.as_str(), album_id],
-        map_job,
-    )
-    .optional()
+             ORDER BY created_at LIMIT 1",
+            params![
+                OperationKind::ExplicitReidentification,
+                album_id,
+                OperationState::Queued,
+                OperationState::Running,
+            ],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match id {
+        Some(id) => job(conn, &id),
+        None => Ok(None),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -465,56 +431,22 @@ pub fn request_control(
             params![key, job_id, control.as_str(), now],
         )?;
     }
-    let assignments = match plan(&current, control) {
+    let change = match plan(&current, control) {
         ControlPlan::Unchanged => return Ok(current),
-        ControlPlan::Request(request) => format!("control_request = '{}'", request.as_str()),
-        ControlPlan::StopNow => format!(
-            "state = 'stopped', control_request = 'none', terminal_code = 'STOPPED', \
-             terminal_at = {now}, lease_owner = NULL, lease_expires_at = NULL, \
-             heartbeat_at = NULL"
-        ),
+        ControlPlan::Request(request) => ControlChange::Request(request),
+        ControlPlan::StopNow => ControlChange::StopNow,
         ControlPlan::Requeue(Requeue::Restart) => {
-            tx.execute(
-                "UPDATE library_operation_work SET state = 'pending', failure_code = NULL, \
-                 result_json = NULL, updated_at = ?2, row_revision = row_revision + 1 \
-                 WHERE job_id = ?1",
-                params![job_id, now],
-            )?;
             tx.execute(
                 "UPDATE library_reidentification_snapshots SET result_json = NULL, \
                  selected_candidate_key = NULL WHERE job_id = ?1",
                 params![job_id],
             )?;
-            "state = 'queued', control_request = 'none', terminal_code = NULL, \
-             terminal_at = NULL, next_attempt_at = NULL, completed_count = 0, \
-             succeeded_count = 0, failed_count = 0, skipped_count = 0"
-                .to_owned()
+            ControlChange::Restart
         }
-        ControlPlan::Requeue(Requeue::RetryFailed) => {
-            tx.execute(
-                "UPDATE library_operation_work SET state = 'pending', failure_code = NULL, \
-                 result_json = NULL, updated_at = ?2, row_revision = row_revision + 1 \
-                 WHERE job_id = ?1 AND state IN ('failed','running')",
-                params![job_id, now],
-            )?;
-            "state = 'queued', control_request = 'none', terminal_code = NULL, \
-             terminal_at = NULL, next_attempt_at = NULL, reidentification_attempt_count = 0, \
-             completed_count = 0, failed_count = 0"
-                .to_owned()
-        }
-        ControlPlan::Requeue(Requeue::Continue) => "state = 'queued', control_request = 'none', \
-             terminal_code = NULL, terminal_at = NULL"
-            .to_owned(),
+        ControlPlan::Requeue(Requeue::RetryFailed) => ControlChange::RetryFailed,
+        ControlPlan::Requeue(Requeue::Continue) => ControlChange::Continue,
     };
-    let changed = tx.execute(
-        &format!(
-            "UPDATE library_operation_jobs SET {assignments}, updated_at = ?1, \
-             row_revision = row_revision + 1, event_revision = event_revision + 1 \
-             WHERE id = ?2 AND row_revision = ?3"
-        ),
-        params![now, job_id, expected_row_revision],
-    )?;
-    if changed != 1 {
+    if !jobs::control(tx, job_id, change, expected_row_revision, now)? {
         return Err(OperationError::Conflict(reasons::OPERATION_CHANGED));
     }
     job_after(tx, job_id)
@@ -524,121 +456,20 @@ pub fn request_control(
 // The worker side.
 // ---------------------------------------------------------------------------
 
-/// Put jobs whose worker vanished (its lease ran out) back in the queue.
-pub fn recover_expired(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<usize> {
-    tx.execute(
-        "UPDATE library_operation_work SET state = 'pending', updated_at = ?1, \
-         row_revision = row_revision + 1 WHERE state = 'running' AND job_id IN \
-         (SELECT id FROM library_operation_jobs WHERE state = 'running' \
-         AND lease_expires_at < ?1)",
-        params![now],
-    )?;
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'queued', lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE state = 'running' AND lease_expires_at < ?1",
-        params![now],
-    )
+/// Requeue the repair jobs whose lease ran out.
+pub fn recover_expired(tx: &Transaction<'_>, now: f64) -> Result<u64, DbError> {
+    jobs::recover_expired(tx, OperationKind::Repair, now)
 }
 
-/// Claim the next due re-identification for `worker`.
-pub fn claim_reidentification(
-    tx: &Transaction<'_>,
-    worker: &str,
-    now: f64,
-) -> rusqlite::Result<Option<OperationJob>> {
-    claim_kind(tx, OperationKind::ExplicitReidentification, worker, now)
-}
-
-/// Claim the next due job of `kind` for `worker`.
+/// Requeue the jobs of `kind` whose lease ran out, then claim the next
+/// due one for `worker`.
 pub fn claim_kind(
     tx: &Transaction<'_>,
     kind: OperationKind,
     worker: &str,
     now: f64,
-) -> rusqlite::Result<Option<OperationJob>> {
-    let candidate: Option<String> = tx
-        .query_row(
-            "SELECT id FROM library_operation_jobs WHERE state = 'queued' AND kind = ?1 \
-             AND (next_attempt_at IS NULL OR next_attempt_at <= ?2) \
-             ORDER BY updated_at, created_at, id LIMIT 1",
-            params![kind.as_str(), now],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(job_id) = candidate else {
-        return Ok(None);
-    };
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'running', \
-         started_at = COALESCE(started_at, ?1), lease_owner = ?2, lease_expires_at = ?3, \
-         heartbeat_at = ?1, updated_at = ?1, next_attempt_at = NULL, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?4 AND state = 'queued'",
-        params![now, worker, now + LEASE_SECS, job_id],
-    )?;
-    job(tx, &job_id)
-}
-
-/// Claim the job's next pending work item: `(ordinal, row_revision)`.
-pub fn claim_work(tx: &Transaction<'_>, job_id: &str, now: f64) -> rusqlite::Result<Option<i64>> {
-    let ordinal: Option<i64> = tx
-        .query_row(
-            "SELECT ordinal FROM library_operation_work WHERE job_id = ?1 \
-             AND state = 'pending' ORDER BY ordinal LIMIT 1",
-            params![job_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(ordinal) = ordinal {
-        tx.execute(
-            "UPDATE library_operation_work SET state = 'running', updated_at = ?3, \
-             row_revision = row_revision + 1 WHERE job_id = ?1 AND ordinal = ?2",
-            params![job_id, ordinal, now],
-        )?;
-    }
-    Ok(ordinal)
-}
-
-/// Honor a pause or stop the worker has not seen yet. `Some(job)` when the
-/// job left `running`; the running work item goes back to pending.
-pub fn checkpoint(
-    tx: &Transaction<'_>,
-    job_id: &str,
-    worker: &str,
-    now: f64,
-) -> rusqlite::Result<Option<OperationJob>> {
-    let request: Option<String> = tx
-        .query_row(
-            "SELECT control_request FROM library_operation_jobs WHERE id = ?1 \
-             AND state = 'running' AND lease_owner = ?2",
-            params![job_id, worker],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let (state, code) = match request.as_deref().map(ControlRequest::parse) {
-        Some(ControlRequest::Pause) => ("paused", "PAUSED"),
-        Some(ControlRequest::Stop) => ("stopped", "STOPPED"),
-        // Still running and nobody asked, or no longer ours.
-        Some(ControlRequest::None) => return Ok(None),
-        None => return job(tx, job_id),
-    };
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = ?2, control_request = 'none', \
-         terminal_code = COALESCE(terminal_code, ?3), lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?4, \
-         terminal_at = CASE WHEN ?2 = 'stopped' THEN ?4 ELSE terminal_at END, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1",
-        params![job_id, state, code, now],
-    )?;
-    tx.execute(
-        "UPDATE library_operation_work SET state = 'pending', updated_at = ?2, \
-         row_revision = row_revision + 1 WHERE job_id = ?1 AND state = 'running'",
-        params![job_id, now],
-    )?;
-    job(tx, job_id)
+) -> Result<Option<OperationJob>, DbError> {
+    jobs::claim(tx, kind, worker, now)
 }
 
 /// Keep holding a running job: push its lease forward. False when the
@@ -648,22 +479,8 @@ pub fn extend_lease(
     job_id: &str,
     worker: &str,
     now: f64,
-) -> rusqlite::Result<bool> {
-    Ok(tx.execute(
-        "UPDATE library_operation_jobs SET lease_expires_at = ?3, heartbeat_at = ?4 \
-         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
-        params![job_id, worker, now + LEASE_SECS, now],
-    )? == 1)
-}
-
-/// True while `worker` holds the running job's lease.
-pub fn holds(tx: &Transaction<'_>, job_id: &str, worker: &str) -> rusqlite::Result<bool> {
-    tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE id = ?1 \
-         AND state = 'running' AND lease_owner = ?2)",
-        params![job_id, worker],
-        |row| row.get(0),
-    )
+) -> Result<bool, DbError> {
+    jobs::heartbeat(tx, job_id, worker, now)
 }
 
 /// End a running job with no evaluation (the album went away or moved).
@@ -674,24 +491,18 @@ pub fn fail(
     code: &str,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
-    if !holds(tx, job_id, worker)? {
-        return job(tx, job_id);
+    if holds(tx, job_id, worker)? {
+        jobs::finish_running_work(tx, job_id, WorkState::Failed, Some(code), None, now)?;
+        jobs::finish(
+            tx,
+            job_id,
+            worker,
+            OperationState::Failed,
+            code,
+            Tally::AllFailed,
+            now,
+        )?;
     }
-    tx.execute(
-        "UPDATE library_operation_work SET state = 'failed', failure_code = ?2, \
-         updated_at = ?3, row_revision = row_revision + 1 \
-         WHERE job_id = ?1 AND state = 'running'",
-        params![job_id, code, now],
-    )?;
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'failed', terminal_code = ?3, \
-         terminal_at = ?4, updated_at = ?4, completed_count = expected_work_count, \
-         failed_count = expected_work_count, lease_owner = NULL, lease_expires_at = NULL, \
-         heartbeat_at = NULL, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 \
-         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
-        params![job_id, worker, code, now],
-    )?;
     job(tx, job_id)
 }
 
@@ -702,23 +513,9 @@ pub fn requeue_for_scan(
     job_id: &str,
     worker: &str,
     now: f64,
-) -> rusqlite::Result<Option<OperationJob>> {
-    if !holds(tx, job_id, worker)? {
-        return job(tx, job_id);
-    }
-    tx.execute(
-        "UPDATE library_operation_work SET state = 'pending', updated_at = ?2, \
-         row_revision = row_revision + 1 WHERE job_id = ?1 AND state = 'running'",
-        params![job_id, now],
-    )?;
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'queued', lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?3, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
-        params![job_id, worker, now],
-    )?;
-    job(tx, job_id)
+) -> Result<Option<OperationJob>, DbError> {
+    jobs::release(tx, job_id, worker, now)?;
+    Ok(job(tx, job_id)?)
 }
 
 /// End a running re-identification whose album went to the
@@ -729,24 +526,24 @@ pub fn hand_over(
     worker: &str,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
-    if !holds(tx, job_id, worker)? {
-        return job(tx, job_id);
+    if holds(tx, job_id, worker)? {
+        jobs::finish_running_work(
+            tx,
+            job_id,
+            WorkState::Succeeded,
+            None,
+            Some(r#"{"outcome":"handed_to_identification"}"#),
+            now,
+        )?;
+        jobs::finish(
+            tx,
+            job_id,
+            worker,
+            OperationState::Succeeded,
+            "HANDED_TO_IDENTIFICATION",
+            Tally::AllSucceeded,
+            now,
+        )?;
     }
-    tx.execute(
-        "UPDATE library_operation_work SET state = 'succeeded', \
-         result_json = '{\"outcome\":\"handed_to_identification\"}', failure_code = NULL, \
-         updated_at = ?2, row_revision = row_revision + 1 \
-         WHERE job_id = ?1 AND state = 'running'",
-        params![job_id, now],
-    )?;
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'succeeded', \
-         terminal_code = 'HANDED_TO_IDENTIFICATION', completed_count = 1, \
-         succeeded_count = 1, terminal_at = ?3, updated_at = ?3, lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 \
-         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
-        params![job_id, worker, now],
-    )?;
     job(tx, job_id)
 }

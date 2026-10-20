@@ -200,41 +200,6 @@ pub struct JobIntent {
     pub duplicate: Option<DuplicateIntent>,
 }
 
-/// Where a job is in its life.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    Planning,
-    Ready,
-    Applying,
-    Undoing,
-    Complete,
-}
-
-impl Phase {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Planning => "planning",
-            Self::Ready => "ready",
-            Self::Applying => "applying",
-            Self::Undoing => "undoing",
-            Self::Complete => "complete",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "planning" => Some(Self::Planning),
-            "ready" => Some(Self::Ready),
-            "applying" => Some(Self::Applying),
-            "undoing" => Some(Self::Undoing),
-            "complete" => Some(Self::Complete),
-            // v2 baseline restores and other phases this version does not
-            // run read as finished history.
-            _ => None,
-        }
-    }
-}
-
 /// Whether a planned file will be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

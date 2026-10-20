@@ -21,9 +21,9 @@ use super::selection;
 use super::store::{self, NewJob, Snapshot};
 use super::takeover;
 use crate::clock::{now_unix, today_day};
+use crate::jobs::{self, ManagementPhase, OperationKind, OperationState};
 use crate::manage::SealPins;
 use crate::operations::models::OperationJob;
-use crate::operations::store as ops;
 use crate::publish::publisher::Catalog as _;
 use crate::publish::{JournalStore, SqliteCatalog, snapshots::sha256_hex};
 use crate::scan::roots::RootRegistry;
@@ -319,6 +319,7 @@ impl Management {
                     },
                 )
             })?;
+        jobs::wake(&self.setup.wakeups, OperationKind::LibraryManagement);
         Ok(PreviewHandle {
             job_id,
             preview_token: token,
@@ -364,7 +365,8 @@ impl Management {
         let snapshot = self.snapshot(job_id)?;
         let now = now_unix();
         let expired = snapshot.preview_expires_at.is_none_or(|at| at <= now);
-        let ready = snapshot.phase == "ready" && snapshot.job.state.as_str() == "ready";
+        let ready =
+            snapshot.phase == ManagementPhase::Ready && snapshot.job.state == OperationState::Ready;
         let stale_reasons = if ready {
             self.stale_reasons(&snapshot)
         } else {
@@ -389,7 +391,7 @@ impl Management {
                 Ok::<_, ManagementError>(store::external_refreshes(conn, job_id)?)
             })?;
         let (profile_id, profile_name) = snapshot.profile_label();
-        let worker_stalled = snapshot.job.state.as_str() == "running"
+        let worker_stalled = snapshot.job.state == OperationState::Running
             && snapshot.lease_expires_at.is_none_or(|at| at <= now);
         Ok(JobDetail {
             ready_for_confirmation: ready && !expired && stale_reasons.is_empty(),
@@ -397,7 +399,7 @@ impl Management {
             selection: serde_json::from_str(&snapshot.selection_json).unwrap_or_default(),
             mode: snapshot.mode,
             origin: snapshot.origin,
-            phase: snapshot.phase,
+            phase: snapshot.phase.as_str().to_owned(),
             profile_id,
             profile_name,
             profile_revision: snapshot.profile_revision,
@@ -599,7 +601,7 @@ impl Management {
             == Some(request.idempotency_key.as_str())
         {
             return self.setup.db.read_blocking("management.apply_job", |conn| {
-                ops::job(conn, job_id)?.ok_or(ManagementError::NotFound(
+                jobs::job(conn, job_id)?.ok_or(ManagementError::NotFound(
                     "This management job does not exist.",
                 ))
             });
@@ -637,7 +639,7 @@ impl Management {
                     |tx| {
                         store::complete_without_work(tx, job_id, "DUPLICATE_RECYCLED", now_unix())?;
                         store::record_apply_key(tx, job_id, &request.idempotency_key)?;
-                        ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
+                        jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                             "This management job does not exist.",
                         ))
                     },
@@ -661,9 +663,9 @@ impl Management {
         idempotency_key: &str,
     ) -> Result<OperationJob, ManagementError> {
         let phase = match mode {
-            JobMode::Undo => "undoing",
-            JobMode::BaselineRestore => "restoring",
-            _ => "applying",
+            JobMode::Undo => ManagementPhase::Undoing,
+            JobMode::BaselineRestore => ManagementPhase::Restoring,
+            _ => ManagementPhase::Applying,
         };
         let now = now_unix();
         // An automatic apply is the worker's; anything else is a request.
@@ -673,7 +675,7 @@ impl Management {
             Lane::Foreground
         };
         let job = self.setup.db.write_blocking(lane, "management.begin", |tx| {
-            let current = ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
+            let current = jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                 "This management job does not exist.",
             ))?;
             if current.row_revision != expected_row_revision {
@@ -689,7 +691,7 @@ impl Management {
                 // Keeping both files: the decision is the whole job.
                 store::complete_without_work(tx, job_id, "DUPLICATE_KEPT", now)?;
                 store::record_apply_key(tx, job_id, idempotency_key)?;
-                return ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
+                return jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                     "This management job does not exist.",
                 ));
             }
@@ -708,7 +710,7 @@ impl Management {
                 )?;
                 store::complete_without_work(tx, job_id, "TAG_EDIT_SAVED", now)?;
                 store::record_apply_key(tx, job_id, idempotency_key)?;
-                return ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
+                return jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                     "This management job does not exist.",
                 ));
             }
@@ -736,10 +738,11 @@ impl Management {
                 }
                 other => other.into(),
             })?;
-            ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
+            jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                 "This management job does not exist.",
             ))
         })?;
+        jobs::wake(&self.setup.wakeups, OperationKind::LibraryManagement);
         Ok(job)
     }
 
@@ -757,8 +760,10 @@ impl Management {
                 "This operation changed since the page loaded. Reload the page and try again.",
             ));
         }
-        if !matches!(source.mode.as_str(), "apply" | "automatic_apply")
-            || source.phase != "complete"
+        if !matches!(
+            source.job_mode(),
+            Some(JobMode::Apply | JobMode::AutomaticApply)
+        ) || source.phase != ManagementPhase::Complete
         {
             return Err(stale("Only a finished apply can be undone."));
         }
@@ -820,10 +825,9 @@ impl Management {
             .read_blocking("management.live_undos", |conn| {
                 Ok::<_, ManagementError>(store::live_undos(conn, job_id, now)?)
             })?;
-        if undos
-            .iter()
-            .any(|(state, phase)| state == "succeeded" && phase == "complete")
-        {
+        if undos.iter().any(|(state, phase)| {
+            *state == OperationState::Succeeded && *phase == ManagementPhase::Complete
+        }) {
             return Err(stale(
                 "This operation was already undone, so there is nothing left to undo.",
             ));
@@ -873,6 +877,7 @@ impl Management {
                 )
             },
         )?;
+        jobs::wake(&self.setup.wakeups, OperationKind::LibraryManagement);
         Ok(PreviewHandle {
             job_id: new_id,
             preview_token: token,
@@ -902,8 +907,24 @@ impl Management {
     // The worker.
     // -----------------------------------------------------------------
 
-    /// Claim and run the next queued management job, never while a scan
-    /// runs. True when a job was worked on. Blocking.
+    /// Requeue every management job an earlier process left running, with
+    /// the album it was writing. The loop's first turn calls this.
+    /// Blocking.
+    pub fn recover_at_start(&self) -> Result<u64, ManagementError> {
+        self.setup
+            .db
+            .write_blocking(Lane::Background, "management.recover_at_start", |tx| {
+                Ok::<_, ManagementError>(jobs::recover_at_start(
+                    tx,
+                    OperationKind::LibraryManagement,
+                    now_unix(),
+                )?)
+            })
+    }
+
+    /// Requeue the management jobs whose worker vanished, then claim and
+    /// run the next queued one under `worker`, never while a scan runs.
+    /// True when a job was worked on. Blocking.
     pub fn run_next(&self, worker: &str) -> Result<bool, ManagementError> {
         if !self.setup.coordinator.current().is_empty() {
             return Ok(false);
@@ -913,13 +934,18 @@ impl Management {
             self.setup
                 .db
                 .write_blocking(Lane::Background, "management.claim", |tx| {
-                    Ok::<_, ManagementError>(store::claim(tx, worker, now)?)
+                    let Some(job) = jobs::claim(tx, OperationKind::LibraryManagement, worker, now)?
+                    else {
+                        return Ok::<_, ManagementError>(None);
+                    };
+                    let phase = store::phase(tx, &job.id)?;
+                    Ok(Some((job.id, phase)))
                 })?
         else {
             return Ok(false);
         };
-        let outcome = match phase.as_str() {
-            "planning" => self.plan(&job_id, worker),
+        let outcome = match phase {
+            Some(ManagementPhase::Planning) => self.plan(&job_id, worker),
             _ => self.apply_work(&job_id, worker),
         };
         match outcome {
@@ -934,7 +960,7 @@ impl Management {
                     self.setup
                         .db
                         .write_blocking(Lane::Background, "management.release", |tx| {
-                            Ok::<_, ManagementError>(store::release(
+                            Ok::<_, ManagementError>(jobs::release(
                                 tx,
                                 &job_id,
                                 worker,
@@ -975,14 +1001,14 @@ impl Management {
             self.setup
                 .db
                 .write_blocking(Lane::Background, "management.release", |tx| {
-                    Ok::<_, ManagementError>(store::release(tx, job_id, worker, now_unix())?)
+                    Ok::<_, ManagementError>(jobs::release(tx, job_id, worker, now_unix())?)
                 })?;
             return Ok(true);
         }
         self.setup
             .db
             .write_blocking(Lane::Background, "management.checkpoint", |tx| {
-                Ok(ops::checkpoint(tx, job_id, worker, now_unix())?.is_some())
+                Ok(jobs::checkpoint(tx, job_id, worker, now_unix())?.is_some())
             })
     }
 
@@ -990,7 +1016,7 @@ impl Management {
         self.setup
             .db
             .write_blocking(Lane::Background, "management.heartbeat", |conn| {
-                Ok(store::heartbeat(conn, job_id, worker, now_unix())?)
+                Ok(jobs::heartbeat(conn, job_id, worker, now_unix())?)
             })
     }
 
@@ -1164,7 +1190,7 @@ impl Management {
             .setup
             .db
             .read_blocking("management.apply_automatic", |conn| {
-                Ok(ops::job(conn, job_id)?)
+                Ok(jobs::job(conn, job_id)?)
             })
             .and_then(|job| {
                 let job = job.ok_or(ManagementError::NotFound(
@@ -1662,7 +1688,7 @@ impl Management {
                 self.setup.db.write_blocking(
                     Lane::Background,
                     "management.apply_work_release",
-                    |tx| Ok::<_, ManagementError>(store::release(tx, job_id, worker, now_unix())?),
+                    |tx| Ok::<_, ManagementError>(jobs::release(tx, job_id, worker, now_unix())?),
                 )?;
                 return Ok(());
             }
@@ -1671,7 +1697,7 @@ impl Management {
                 self.setup
                     .db
                     .write_blocking(Lane::Background, "management.claim_work", |tx| {
-                        Ok::<_, ManagementError>(ops::claim_work(tx, job_id, now)?)
+                        Ok::<_, ManagementError>(jobs::claim_work(tx, job_id, now)?)
                     })?
             else {
                 let finished = self.setup.db.write_blocking(
@@ -1698,7 +1724,7 @@ impl Management {
                 self.setup.db.write_blocking(
                     Lane::Background,
                     "management.apply_work_yield",
-                    |tx| Ok::<_, ManagementError>(store::release(tx, job_id, worker, now_unix())?),
+                    |tx| Ok::<_, ManagementError>(jobs::release(tx, job_id, worker, now_unix())?),
                 )?;
                 return Ok(());
             };
@@ -1753,14 +1779,10 @@ impl Management {
             self.setup
                 .db
                 .write_blocking(Lane::Background, "management.finish_work", |tx| {
-                    Ok::<_, ManagementError>(store::finish_work(
-                        tx,
-                        job_id,
-                        ordinal,
-                        failure.as_ref(),
-                        &result,
-                        now_unix(),
-                    )?)
+                    let now = now_unix();
+                    store::finish_work(tx, job_id, ordinal, failure.as_ref(), &result, now)?;
+                    jobs::heartbeat(tx, job_id, worker, now)?;
+                    Ok::<_, ManagementError>(())
                 })?;
         }
     }

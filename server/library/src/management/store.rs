@@ -4,9 +4,10 @@
 //! plus a `library_management_job_snapshots` row with what it pinned.
 //! Planned files live in `library_management_plan_items`; applying adds
 //! one `library_operation_work` row per album (`ordinal` is the album's
-//! bundle ordinal, as in v2). Migrated v2 history reads through the same
-//! queries. Plain SQL on a caller's connection; the service owns the
-//! transactions.
+//! bundle ordinal, as in v2). The job and work rows are written through
+//! [`crate::jobs`]; this file holds the snapshot and plan SQL. Migrated v2
+//! history reads through the same queries. Plain SQL on a caller's
+//! connection; the service owns the transactions.
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
@@ -15,12 +16,15 @@ use super::models::{
     ItemPage, JobIntent, JobMode, Origin, PlannedItem, ResultItem, ResultPage, Revisions, Summary,
 };
 use super::reasons::{self, ItemReason};
-use crate::operations::models::OperationJob;
-use crate::operations::store as ops;
-use crate::operations::store::LEASE_SECS;
+use crate::jobs::{
+    self, ManagementPhase, NewJob as NewJobRow, NewWork, OperationJob, OperationKind,
+    OperationState, WorkState,
+};
 use crate::publish::snapshots::sha256_hex;
 
-pub const KIND: &str = "library_management";
+pub use crate::jobs::live_job_sql;
+
+pub const KIND: &str = OperationKind::LibraryManagement.as_str();
 
 /// A job's snapshot row with its operation.
 #[derive(Debug, Clone)]
@@ -28,7 +32,7 @@ pub struct Snapshot {
     pub job: OperationJob,
     pub mode: String,
     pub origin: String,
-    pub phase: String,
+    pub phase: ManagementPhase,
     pub selection_json: String,
     pub profile_revision: String,
     pub settings_revision: String,
@@ -87,7 +91,7 @@ const SNAPSHOT_COLUMNS: &str = "s.mode, s.origin, s.phase, s.selection_json, s.p
 
 fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Snapshot>> {
     let job_id: String = row.get(20)?;
-    let Some(job) = ops::job(conn, &job_id)? else {
+    let Some(job) = jobs::job(conn, &job_id)? else {
         return Ok(None);
     };
     Ok(Some(Snapshot {
@@ -131,12 +135,7 @@ pub fn snapshot(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<Snap
 
 /// The job an idempotency key already made, if any.
 pub fn job_for_key(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT id FROM library_operation_jobs WHERE idempotency_key = ?1",
-        params![key],
-        |row| row.get(0),
-    )
-    .optional()
+    Ok(jobs::job_by_key(conn, key)?.map(|job| job.id))
 }
 
 /// A job to create.
@@ -165,18 +164,17 @@ pub fn insert_job(
     tx: &Transaction<'_>,
     job: &NewJob<'_>,
 ) -> Result<(), super::models::ManagementError> {
-    tx.execute(
-        "INSERT INTO library_operation_jobs (id, kind, state, requested_by_user_id, \
-         input_catalog_revision, idempotency_key, created_at, updated_at) \
-         VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6, ?6)",
-        params![
-            job.id,
-            KIND,
-            job.requested_by,
-            job.catalog_revision,
-            job.idempotency_key,
-            job.now
-        ],
+    jobs::insert(
+        tx,
+        &NewJobRow {
+            id: job.id,
+            kind: OperationKind::LibraryManagement,
+            requested_by: job.requested_by,
+            idempotency_key: job.idempotency_key,
+            catalog_revision: Some(job.catalog_revision),
+            expected_work_count: 0,
+            now: job.now,
+        },
     )?;
     tx.execute(
         "INSERT INTO library_management_job_snapshots (job_id, mode, origin, phase, \
@@ -184,7 +182,7 @@ pub fn insert_job(
          catalog_revision, profile_snapshot_json, preview_token_hash, preview_created_at, \
          preview_expires_at, target_root_id, linked_operation_job_id, intent_json, summary_json, \
          created_at, updated_at, proposed_settings_revision) \
-         VALUES (?1, ?2, ?17, 'planning', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
+         VALUES (?1, ?2, ?17, ?19, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
          ?14, ?15, ?16, ?11, ?11, ?18)",
         params![
             job.id,
@@ -208,55 +206,35 @@ pub fn insert_job(
             serde_json::to_string(job.summary)?,
             job.origin.as_str(),
             job.proposed_settings_revision,
+            ManagementPhase::Planning,
         ],
     )?;
     Ok(())
 }
 
-/// Claim the next queued management job for `worker`: its id and phase.
-pub fn claim(
-    tx: &Transaction<'_>,
-    worker: &str,
-    now: f64,
-) -> rusqlite::Result<Option<(String, String)>> {
-    let candidate: Option<(String, String)> = tx
-        .query_row(
-            "SELECT j.id, s.phase FROM library_operation_jobs j \
-             JOIN library_management_job_snapshots s ON s.job_id = j.id \
-             WHERE j.kind = ?1 AND j.state = 'queued' \
-             AND s.phase IN ('planning', 'applying', 'undoing', 'restoring') \
-             ORDER BY j.updated_at, j.created_at, j.id LIMIT 1",
-            params![KIND],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    let Some((job_id, phase)) = candidate else {
-        return Ok(None);
-    };
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'running', \
-         started_at = COALESCE(started_at, ?1), lease_owner = ?2, lease_expires_at = ?3, \
-         heartbeat_at = ?1, updated_at = ?1, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 WHERE id = ?4 AND state = 'queued'",
-        params![now, worker, now + LEASE_SECS, job_id],
-    )?;
-    Ok(Some((job_id, phase)))
+/// A job's phase, or `None` when the id names no management job.
+pub fn phase(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<ManagementPhase>> {
+    conn.query_row(
+        "SELECT phase FROM library_management_job_snapshots WHERE job_id = ?1",
+        params![job_id],
+        |row| row.get(0),
+    )
+    .optional()
 }
 
-/// Keep the lease while a long step runs. False when the job is no longer
-/// this worker's.
-pub fn heartbeat(
-    conn: &Connection,
+/// Move a job to `phase`.
+fn set_phase(
+    tx: &Transaction<'_>,
     job_id: &str,
-    worker: &str,
+    phase: ManagementPhase,
     now: f64,
-) -> rusqlite::Result<bool> {
-    let changed = conn.execute(
-        "UPDATE library_operation_jobs SET heartbeat_at = ?3, lease_expires_at = ?4 \
-         WHERE id = ?1 AND lease_owner = ?2 AND state = 'running'",
-        params![job_id, worker, now, now + LEASE_SECS],
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "UPDATE library_management_job_snapshots SET phase = ?2, updated_at = ?3, \
+         row_revision = row_revision + 1 WHERE job_id = ?1",
+        params![job_id, phase, now],
     )?;
-    Ok(changed == 1)
+    Ok(())
 }
 
 /// Drop planned files before (re)planning.
@@ -334,21 +312,18 @@ pub fn finish_planning(
     summary: &Summary,
     now: f64,
 ) -> Result<bool, super::models::ManagementError> {
-    let changed = tx.execute(
-        "UPDATE library_operation_jobs SET state = 'ready', lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?3, \
-         expected_work_count = 0, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 \
-         WHERE id = ?1 AND lease_owner = ?2 AND state = 'running'",
-        params![job_id, worker, now],
-    )?;
-    if changed == 0 {
+    if !jobs::park_ready(tx, job_id, worker, now)? {
         return Ok(false);
     }
     tx.execute(
-        "UPDATE library_management_job_snapshots SET phase = 'ready', summary_json = ?2, \
+        "UPDATE library_management_job_snapshots SET phase = ?4, summary_json = ?2, \
          updated_at = ?3, row_revision = row_revision + 1 WHERE job_id = ?1",
-        params![job_id, serde_json::to_string(summary)?, now],
+        params![
+            job_id,
+            serde_json::to_string(summary)?,
+            now,
+            ManagementPhase::Ready
+        ],
     )?;
     Ok(true)
 }
@@ -483,26 +458,26 @@ pub fn begin_apply(
     tx: &Transaction<'_>,
     job_id: &str,
     mode: &str,
-    phase: &str,
+    phase: ManagementPhase,
     idempotency_key: &str,
     bundles: &[(i64, String, i64)],
     now: f64,
 ) -> rusqlite::Result<()> {
     let input = sha256_hex(job_id.as_bytes());
     for (ordinal, album_id, revision) in bundles {
-        tx.execute(
-            "INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
-             expected_subject_revision, expected_input_revision, action, idempotency_key, \
-             state, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 'manage_album', ?6, 'pending', ?7)",
-            params![
+        jobs::insert_work(
+            tx,
+            &NewWork {
                 job_id,
-                ordinal,
-                album_id,
-                revision,
-                input,
-                format!("management:{job_id}:{ordinal}"),
-                now
-            ],
+                ordinal: *ordinal,
+                local_album_id: Some(album_id),
+                local_track_id: None,
+                expected_subject_revision: *revision,
+                expected_input_revision: &input,
+                action: "manage_album",
+                idempotency_key: &format!("management:{job_id}:{ordinal}"),
+                now,
+            },
         )?;
     }
     tx.execute(
@@ -511,14 +486,7 @@ pub fn begin_apply(
          WHERE job_id = ?1",
         params![job_id, mode, phase, idempotency_key, now],
     )?;
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'queued', expected_work_count = ?2, \
-         completed_count = 0, succeeded_count = 0, failed_count = 0, skipped_count = 0, \
-         terminal_code = NULL, updated_at = ?3, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 WHERE id = ?1",
-        params![job_id, bundles.len() as i64, now],
-    )?;
-    Ok(())
+    jobs::queue_work(tx, job_id, bundles.len() as i64, now)
 }
 
 /// Record one album's outcome and count it.
@@ -531,70 +499,40 @@ pub fn finish_work(
     now: f64,
 ) -> rusqlite::Result<()> {
     let state = if failure.is_some() {
-        "failed"
+        WorkState::Failed
     } else {
-        "succeeded"
+        WorkState::Succeeded
     };
-    tx.execute(
-        "UPDATE library_operation_work SET state = ?3, failure_code = ?4, result_json = ?5, \
-         updated_at = ?6, row_revision = row_revision + 1 WHERE job_id = ?1 AND ordinal = ?2",
-        params![
-            job_id,
-            ordinal,
-            state,
-            failure.map(|reason| reason.code.clone()),
-            result.to_string(),
-            now
-        ],
-    )?;
-    let column = if failure.is_some() {
-        "failed_count"
-    } else {
-        "succeeded_count"
-    };
-    tx.execute(
-        &format!(
-            "UPDATE library_operation_jobs SET completed_count = completed_count + 1, \
-             {column} = {column} + 1, heartbeat_at = ?2, lease_expires_at = ?3, updated_at = ?2, \
-             row_revision = row_revision + 1, event_revision = event_revision + 1 WHERE id = ?1"
-        ),
-        params![job_id, now, now + LEASE_SECS],
-    )?;
-    Ok(())
+    jobs::finish_work(
+        tx,
+        job_id,
+        ordinal,
+        state,
+        failure.map(|reason| reason.code.as_str()),
+        &result.to_string(),
+        now,
+    )
 }
 
-/// All work is done: the job ends, failed when any album failed.
+/// All work is done: the job ends, failed when any album failed. False
+/// when `worker` no longer held it.
 pub fn finish_apply(
     tx: &Transaction<'_>,
     job_id: &str,
     worker: &str,
     now: f64,
 ) -> rusqlite::Result<bool> {
-    let failed: i64 = tx.query_row(
-        "SELECT failed_count FROM library_operation_jobs WHERE id = ?1",
-        params![job_id],
-        |row| row.get(0),
-    )?;
-    let (state, code) = if failed > 0 {
-        ("failed", "MANAGEMENT_PARTIAL")
+    let failed = jobs::job(tx, job_id)?.is_some_and(|job| job.failed_count > 0);
+    let (state, code) = if failed {
+        (OperationState::Failed, "MANAGEMENT_PARTIAL")
     } else {
-        ("succeeded", "MANAGEMENT_APPLIED")
+        (OperationState::Succeeded, "MANAGEMENT_APPLIED")
     };
-    let changed = tx.execute(
-        "UPDATE library_operation_jobs SET state = ?3, terminal_code = ?4, terminal_at = ?5, \
-         lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?5, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1 AND lease_owner = ?2 AND state = 'running'",
-        params![job_id, worker, state, code, now],
-    )?;
-    if changed == 1 {
-        tx.execute(
-            "UPDATE library_management_job_snapshots SET phase = 'complete', updated_at = ?2, \
-             row_revision = row_revision + 1 WHERE job_id = ?1",
-            params![job_id, now],
-        )?;
+    let finished = jobs::finish(tx, job_id, worker, state, code, jobs::Tally::AsCounted, now)?;
+    if finished {
+        set_phase(tx, job_id, ManagementPhase::Complete, now)?;
     }
-    Ok(changed == 1)
+    Ok(finished)
 }
 
 /// The request key a job was applied with, if any.
@@ -645,39 +583,11 @@ pub fn complete_without_work(
     code: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'succeeded', terminal_code = ?2, \
-         terminal_at = ?3, expected_work_count = 0, updated_at = ?3, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1 AND state = 'ready'",
-        params![job_id, code, now],
-    )?;
-    tx.execute(
-        "UPDATE library_management_job_snapshots SET phase = 'complete', updated_at = ?2, \
-         row_revision = row_revision + 1 WHERE job_id = ?1",
-        params![job_id, now],
-    )?;
-    Ok(())
+    jobs::complete_ready(tx, job_id, code, now)?;
+    set_phase(tx, job_id, ManagementPhase::Complete, now)
 }
 
-/// Hand a running job back to the queue (the server is stopping).
-pub fn release(tx: &Transaction<'_>, job_id: &str, worker: &str, now: f64) -> rusqlite::Result<()> {
-    tx.execute(
-        "UPDATE library_operation_work SET state = 'pending', updated_at = ?2, \
-         row_revision = row_revision + 1 WHERE job_id = ?1 AND state = 'running'",
-        params![job_id, now],
-    )?;
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'queued', lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?3, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1 AND lease_owner = ?2 AND state = 'running'",
-        params![job_id, worker, now],
-    )?;
-    Ok(())
-}
-
-/// End a running job that cannot go on.
+/// End `worker`'s running job: it cannot go on.
 pub fn fail_job(
     tx: &Transaction<'_>,
     job_id: &str,
@@ -685,30 +595,16 @@ pub fn fail_job(
     code: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'failed', terminal_code = ?3, terminal_at = ?4, \
-         lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?4, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1 AND lease_owner = ?2 AND state = 'running'",
-        params![job_id, worker, code, now],
-    )?;
-    Ok(())
-}
-
-/// A condition on `job` (a `library_operation_jobs` row) that holds while
-/// the job still has work coming on its albums: queued, running, paused,
-/// or ready and not past its expiry. A ready preview past its expiry can
-/// never be applied, so it holds nothing back; one with no expiry stored
-/// still does. A dry run for turning automatic management on is never
-/// applied either, so it holds nothing back while ready. `now` is the SQL
-/// parameter holding the current time in seconds.
-pub fn live_job_sql(now: &str) -> String {
-    format!(
-        "(job.state IN ('queued','running','paused') OR (job.state = 'ready' \
-         AND NOT EXISTS(SELECT 1 FROM library_management_job_snapshots expiry \
-         WHERE expiry.job_id = job.id AND (expiry.preview_expires_at <= {now} \
-         OR expiry.proposed_settings_revision IS NOT NULL))))"
+    jobs::finish(
+        tx,
+        job_id,
+        worker,
+        OperationState::Failed,
+        code,
+        jobs::Tally::AsCounted,
+        now,
     )
+    .map(drop)
 }
 
 /// Set a ready preview aside. Only a ready preview can be discarded.
@@ -718,17 +614,7 @@ pub fn discard(
     expected_revision: i64,
     now: f64,
 ) -> rusqlite::Result<bool> {
-    let changed = tx.execute(
-        "UPDATE library_operation_jobs SET state = 'cancelled', terminal_code = 'DISCARDED', \
-         terminal_at = ?3, updated_at = ?3, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 \
-         WHERE id = ?1 AND kind = 'library_management' AND row_revision = ?2 \
-         AND state IN ('ready', 'queued', 'paused', 'stopped', 'failed') \
-         AND id IN (SELECT job_id FROM library_management_job_snapshots \
-         WHERE phase IN ('planning', 'ready'))",
-        params![job_id, expected_revision, now],
-    )?;
-    Ok(changed == 1)
+    jobs::discard_preview(tx, job_id, expected_revision, now)
 }
 
 /// Replace the preview token (a lost browser tab asks for a new one).
@@ -874,21 +760,31 @@ pub fn album_state(
 }
 
 /// Undo jobs made for `job_id` that still count: not failed, discarded,
-/// stopped, or a preview left to expire. (state, phase).
+/// stopped, or a preview left to expire.
 pub fn live_undos(
     conn: &Connection,
     job_id: &str,
     now: f64,
-) -> rusqlite::Result<Vec<(String, String)>> {
+) -> rusqlite::Result<Vec<(OperationState, ManagementPhase)>> {
     let mut statement = conn.prepare(
         "SELECT j.state, s.phase FROM library_management_job_snapshots s \
          JOIN library_operation_jobs j ON j.id = s.job_id \
          WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' \
-         AND j.state NOT IN ('failed', 'cancelled', 'stopped') \
-         AND NOT (s.phase IN ('planning', 'ready') \
-           AND COALESCE(s.preview_expires_at, 0) <= ?2)",
+         AND j.state NOT IN (?3, ?4, ?5) \
+         AND NOT (s.phase IN (?6, ?7) AND COALESCE(s.preview_expires_at, 0) <= ?2)",
     )?;
-    let rows = statement.query_map(params![job_id, now], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let rows = statement.query_map(
+        params![
+            job_id,
+            now,
+            OperationState::Failed,
+            OperationState::Cancelled,
+            OperationState::Stopped,
+            ManagementPhase::Planning,
+            ManagementPhase::Ready,
+        ],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
     rows.collect()
 }
 
@@ -900,9 +796,9 @@ pub fn undone_ordinals(
     let mut statement = conn.prepare(
         "SELECT w.ordinal FROM library_operation_work w \
          JOIN library_management_job_snapshots s ON s.job_id = w.job_id \
-         WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' AND w.state = 'succeeded'",
+         WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' AND w.state = ?2",
     )?;
-    let rows = statement.query_map(params![job_id], |row| row.get(0))?;
+    let rows = statement.query_map(params![job_id, WorkState::Succeeded], |row| row.get(0))?;
     rows.collect()
 }
 
@@ -913,12 +809,14 @@ pub fn applied_bundles(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<
     let mut statement = conn.prepare(
         "SELECT ordinal, json_extract(result_json, '$.bundle_id') FROM library_operation_work \
          WHERE job_id = ?1 AND json_extract(result_json, '$.bundle_id') IS NOT NULL \
-         AND (state = 'succeeded' OR json_extract(result_json, '$.bundle_id') IN \
+         AND (state = ?2 OR json_extract(result_json, '$.bundle_id') IN \
            (SELECT bundle_id FROM library_publish_journal \
             WHERE state IN ('committed', 'cleanup_pending', 'cleaned'))) \
          ORDER BY ordinal",
     )?;
-    let rows = statement.query_map(params![job_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let rows = statement.query_map(params![job_id, WorkState::Succeeded], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?;
     rows.collect()
 }
 
@@ -939,7 +837,7 @@ pub fn undo_counts(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Res
         "WITH bundles AS (SELECT json_extract(result_json, '$.bundle_id') AS bundle_id \
            FROM library_operation_work WHERE job_id = ?1 \
            AND json_extract(result_json, '$.bundle_id') IS NOT NULL \
-           AND (state = 'succeeded' OR json_extract(result_json, '$.bundle_id') IN \
+           AND (state = ?3 OR json_extract(result_json, '$.bundle_id') IN \
              (SELECT bundle_id FROM library_publish_journal \
               WHERE state IN ('committed', 'cleanup_pending', 'cleaned')))), \
          written AS (SELECT DISTINCT j.bundle_id, j.track_id FROM library_publish_journal j \
@@ -954,7 +852,7 @@ pub fn undo_counts(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Res
              AND s.track_id = w.track_id AND s.expires_day > ?2)), \
            (SELECT MIN(s.expires_day) FROM library_publish_snapshots s JOIN bundles b \
              ON b.bundle_id = s.bundle_id WHERE s.expires_day > ?2)",
-        params![job_id, today],
+        params![job_id, today, WorkState::Succeeded],
         |row| {
             Ok(UndoCounts {
                 available: row.get(0)?,
@@ -1044,7 +942,7 @@ pub fn history(
             selection: serde_json::from_str(&snapshot.selection_json).unwrap_or_default(),
             mode: snapshot.mode,
             origin: snapshot.origin,
-            phase: snapshot.phase,
+            phase: snapshot.phase.as_str().to_owned(),
             profile_id,
             profile_name,
             profile_revision: snapshot.profile_revision,

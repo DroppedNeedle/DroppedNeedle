@@ -5158,6 +5158,211 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
     runtime.shutdown().await;
 }
 
+/// A management job whose worker died mid-run, its lease run out, is
+/// requeued and finished by the management worker alone: no other
+/// feature's loop has to notice it.
+#[tokio::test]
+async fn a_management_job_whose_worker_died_is_finished_by_its_own_worker() {
+    use droppedneedle_library::management::models::{Selection, SelectionKind};
+    use droppedneedle_library::management::service::{Management, PreviewRequest};
+    use droppedneedle_library::management::settings as lm;
+
+    let (_scratch, library, music) = bare_library("lib-management-dead-worker").await;
+    plant(&music, "incoming/dead.flac", "management_full.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "incoming/dead.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    let settings = library
+        .settings
+        .store()
+        .save_blocking(lm::initial_settings(""))
+        .expect("settings saved");
+    let management = Management::new(&library);
+    let handle = management
+        .create_preview(
+            PreviewRequest {
+                selection: Selection {
+                    kind: SelectionKind::Albums,
+                    ids: vec![album],
+                    catalog_filter: None,
+                },
+                profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+                expected_settings_revision: lm::settings_revision(&settings),
+                expected_policy_revision: library.policy_revision().expect("policy revision"),
+                idempotency_key: Some("preview-dead-worker".to_owned()),
+                target_root_id: None,
+                overrides: None,
+            },
+            "admin",
+        )
+        .expect("preview queued");
+
+    // A worker took the job and died: the row says running, under a
+    // lease that ran out a minute ago.
+    library
+        .scan_store
+        .db()
+        .run_sql(&format!(
+            "UPDATE library_operation_jobs SET state = 'running', lease_owner = 'gone', \
+             lease_expires_at = unixepoch('now') - 60, heartbeat_at = unixepoch('now') - 120 \
+             WHERE id = '{}'",
+            handle.job_id
+        ))
+        .expect("job held by a dead worker");
+
+    assert!(management_step(&library).await, "the job is taken again");
+    let job = management.detail(&handle.job_id).expect("detail").job;
+    assert_eq!(job.state.as_str(), "ready", "planning finished");
+}
+
+/// The management worker on its own loop: its first turn requeues and
+/// runs a job a stopped process left running, and a job queued later
+/// starts on the wakeup its queueing sent. No other library loop runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
+    use droppedneedle_library::jobs::MANAGEMENT_WAKEUP;
+    use droppedneedle_library::management::models::{Selection, SelectionKind};
+    use droppedneedle_library::management::service::{Management, PreviewRequest};
+    use droppedneedle_library::management::settings as lm;
+
+    let scratch = Scratch {
+        dir: ScratchDir::new("lib-management-loop"),
+        identify: Arc::new(FakeProviders::default()),
+        enrichment: None,
+    };
+    crate::common::migrated_db(&scratch.join("app.db"));
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+        .expect("database opens");
+    let platform = crate::common::TestPlatform::on(&db, &scratch)
+        .settings(Arc::new(
+            ConfigStore::scratch(
+                &scratch,
+                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+            )
+            .expect("config opens"),
+        ))
+        .build()
+        .await;
+    let library = library_with(&platform, scratch.identify.clone(), None);
+    let music = scratch.join("music");
+    plant(&music, "incoming/loop.flac", "management_full.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "incoming/loop.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    db.run_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+    )
+    .expect("admin row");
+    let settings = library
+        .settings
+        .store()
+        .save_blocking(lm::initial_settings(""))
+        .expect("settings saved");
+    let management = Management::new(&library);
+    let preview = |key: &str| {
+        management
+            .create_preview(
+                PreviewRequest {
+                    selection: Selection {
+                        kind: SelectionKind::Albums,
+                        ids: vec![album.clone()],
+                        catalog_filter: None,
+                    },
+                    profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+                    expected_settings_revision: lm::settings_revision(&settings),
+                    expected_policy_revision: library.policy_revision().expect("policy revision"),
+                    idempotency_key: Some(key.to_owned()),
+                    target_root_id: None,
+                    overrides: None,
+                },
+                "admin",
+            )
+            .expect("preview queued")
+            .job_id
+    };
+    // Waits on the job's own state, woken by each commit; the bound only
+    // stops a hang.
+    let settled = |job_id: String| {
+        let (management, mut commits) = (management.clone(), db.commits());
+        async move {
+            let wait = async {
+                loop {
+                    let job_id = job_id.clone();
+                    let step = management.clone();
+                    let state = tokio::task::spawn_blocking(move || {
+                        step.detail(&job_id).expect("detail").job.state
+                    })
+                    .await
+                    .expect("detail joins");
+                    if state.as_str() == "ready" {
+                        return;
+                    }
+                    commits.changed().await.expect("database open");
+                }
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(60), wait)
+                .await
+                .expect("the job reached ready");
+        }
+    };
+
+    // A process held the job and stopped before its lease ran out.
+    let interrupted = preview("preview-interrupted");
+    db.run_sql(&format!(
+        "UPDATE library_operation_jobs SET state = 'running', lease_owner = 'stopped', \
+         lease_expires_at = unixepoch('now') + 600, heartbeat_at = unixepoch('now') \
+         WHERE id = '{interrupted}'"
+    ))
+    .expect("job held by a stopped process");
+
+    droppedneedle_library::management::start(&library, &platform.supervisor)
+        .expect("management loop starts");
+    settled(interrupted).await;
+
+    let woken_at = library.wakeups.revision(MANAGEMENT_WAKEUP);
+    let queued = preview("preview-queued");
+    assert_ne!(
+        library.wakeups.revision(MANAGEMENT_WAKEUP),
+        woken_at,
+        "queueing the job woke the worker"
+    );
+    settled(queued).await;
+
+    assert_eq!(
+        platform.supervisor.running_names(),
+        vec![droppedneedle_library::management::JOB_NAME.to_owned()]
+    );
+    platform
+        .supervisor
+        .shutdown(std::time::Duration::from_secs(5))
+        .await;
+}
+
 /// A Library Management job end to end:
 /// - an album whose edition is a best guess is left alone with its reason;
 /// - once confirmed, picking one file still plans (and moves) the whole

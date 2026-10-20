@@ -8,7 +8,8 @@
 //!
 //! Layout: `selection` turns a scope into albums and files, `profile`
 //! turns a profile into tags and paths, `script` is the naming and
-//! tagging language, `planner` plans one album, `store` is the job SQL,
+//! tagging language, `planner` plans one album, `store` is the snapshot
+//! and plan SQL (the job rows go through [`crate::jobs`]),
 //! `reasons` the per-file reasons, and `service` the entry points the
 //! handlers and the worker call. The other kinds of job sit next to it:
 //! `tag_edit` (the tag editor), `restore` (back to the originals, and
@@ -44,17 +45,21 @@ pub mod takeover;
 
 use std::time::Duration;
 
+use droppedneedle_kernel::jobs::queue::lease::Owner;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, CancellationToken, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
 
+use crate::jobs::MANAGEMENT_WAKEUP;
 use crate::wiring::LibrarySetup;
 use models::ManagementError;
 use service::Management;
 
-/// How often the management worker looks for work when idle.
-const POLL: Duration = Duration::from_secs(2);
+/// How long the worker waits for a wakeup before it looks anyway: a
+/// queued job wakes it, while automatic management and media-server
+/// refreshes come due with time.
+const IDLE_CEILING: Duration = Duration::from_secs(2);
 
 /// After a step the database was too busy for, the worker waits this
 /// long, plus up to as much again.
@@ -74,14 +79,20 @@ pub const JOB_NAME: &str = "library-management";
 
 /// Start the management worker: plans and applies jobs, starts automatic
 /// management, and tells media servers to rescan. It has its own loop so
-/// a long preview never holds up re-identification jobs.
-pub(crate) fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
-    supervisor.periodic(
+/// a long preview never holds up re-identification jobs. Its first turn
+/// runs at once and requeues the jobs an earlier process left running;
+/// after that a queued job wakes it.
+pub fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+    let mut wake = setup.wakeups.subscribe(MANAGEMENT_WAKEUP);
+    wake.mark_changed();
+    supervisor.on_wakeup(
         JOB_NAME,
-        Schedule::new(POLL),
+        wake,
+        Schedule::new(IDLE_CEILING),
         ManagementTick {
             setup: setup.clone(),
-            worker: uuid::Uuid::new_v4().to_string(),
+            owners: Owner::new(),
+            recovered: false,
             settle: automatic::Settle::default(),
             rng: SplitMix64::new(SplitMix64::seed_from_time()),
         },
@@ -92,20 +103,26 @@ pub(crate) fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(),
 /// seconds and is not a failed turn.
 struct ManagementTick {
     setup: LibrarySetup,
-    worker: String,
+    /// Each step claims under an owner never used before.
+    owners: Owner,
+    /// Whether start recovery ran.
+    recovered: bool,
     settle: automatic::Settle,
     rng: SplitMix64,
 }
 
 impl Tick for ManagementTick {
     async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        if !self.recovered {
+            self.recovered = recover_at_start(&self.setup).await;
+        }
         while !ctx.token().is_cancelled() {
-            let mut step = tick(&self.setup, &self.worker, ctx.token()).await;
+            let mut step = tick(&self.setup, &self.owners.mint(), ctx.token()).await;
             if step == Step::Idle {
                 step = automatic_tick(&self.setup, &mut self.settle).await;
             }
             if step == Step::Idle {
-                step = refresh_tick(&self.setup, &self.worker).await;
+                step = refresh_tick(&self.setup, &self.owners.mint()).await;
             }
             match step {
                 Step::Worked => {}
@@ -119,6 +136,21 @@ impl Tick for ManagementTick {
         }
         Ok(Next::Continue)
     }
+}
+
+/// Requeue the jobs an earlier process left running. False when it did
+/// not run; the next turn tries again.
+async fn recover_at_start(setup: &LibrarySetup) -> bool {
+    let management = Management::new(setup);
+    let step = blocking("management start recovery", move || {
+        let requeued = management.recover_at_start()?;
+        if requeued > 0 {
+            tracing::info!(requeued, "management jobs from the previous run requeued");
+        }
+        Ok(true)
+    })
+    .await;
+    step == Step::Worked
 }
 
 /// One worker step on a blocking thread: plan or apply the next queued

@@ -31,6 +31,7 @@ pub mod edition_prefs;
 pub mod http;
 pub mod identify;
 pub mod import;
+pub mod jobs;
 mod loops;
 pub use loops::{LEFTOVERS_JOB, LOOPS};
 pub mod manage;
@@ -59,5 +60,6 @@ pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFi
         contrib::sql::registered(),
         publish::sql::registered(),
         catalog_revision::sql::registered(),
+        jobs::sql::registered(),
     ]
 }

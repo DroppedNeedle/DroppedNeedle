@@ -26,7 +26,9 @@ use crate::identify::service::IdentifyService;
 use crate::identify::sources::EditionQuery;
 use crate::identify::sqlite::SqliteIdentifyStore;
 use crate::identify::sqlite::{album_identity_row, queue_retry};
+use crate::jobs::{self, OperationKind};
 use crate::matching::model::Release;
+use crate::scan::watcher::WorkWakeups;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
 use droppedneedle_kernel::ids::IdGenerator;
@@ -47,6 +49,7 @@ pub struct Operations {
     identify: Arc<IdentifyService>,
     ids: Arc<dyn IdGenerator>,
     management: Live<LibraryManagement>,
+    wakeups: WorkWakeups,
 }
 
 impl Operations {
@@ -57,6 +60,7 @@ impl Operations {
             identify: setup.identify.clone(),
             ids: setup.ids.clone(),
             management: setup.settings.management.clone(),
+            wakeups: setup.wakeups.clone(),
         }
     }
 
@@ -120,7 +124,8 @@ impl Operations {
         expected_row_revision: i64,
         idempotency_key: Option<&str>,
     ) -> Result<OperationJob, OperationError> {
-        self.db
+        let job = self
+            .db
             .write_blocking(Lane::Foreground, "operations.control", |tx| {
                 store::request_control(
                     tx,
@@ -130,7 +135,11 @@ impl Operations {
                     idempotency_key,
                     now_unix(),
                 )
-            })
+            })?;
+        if let Some(kind) = OperationKind::parse(&job.kind) {
+            jobs::wake(&self.wakeups, kind);
+        }
+        Ok(job)
     }
 
     /// A re-identification of one album.
@@ -203,7 +212,8 @@ impl Operations {
             idempotency_key,
             one_off_local_metadata,
         );
-        self.db
+        let job = self
+            .db
             .write_blocking(Lane::Foreground, "operations.retry_review", |tx| {
                 if !reviews::mark(
                     tx,
@@ -215,7 +225,9 @@ impl Operations {
                     return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
                 }
                 store::create_reidentification(tx, &self.management, &new, now_unix())
-            })
+            })?;
+        jobs::wake(&self.wakeups, OperationKind::ExplicitReidentification);
+        Ok(job)
     }
 
     /// Start identification again for every pending review `filter`
@@ -966,23 +978,37 @@ impl Operations {
         })
     }
 
-    /// Requeue jobs whose worker vanished, then claim the next due
-    /// re-identification and hand its album to the identification queue,
+    /// Requeue every re-identification an earlier process left running.
+    /// The loop's first turn calls this. Blocking.
+    pub fn recover_at_start(&self) -> Result<u64, OperationError> {
+        self.db
+            .write_blocking(Lane::Background, "operations.recover_at_start", |tx| {
+                Ok::<_, OperationError>(jobs::recover_at_start(
+                    tx,
+                    OperationKind::ExplicitReidentification,
+                    now_unix(),
+                )?)
+            })
+    }
+
+    /// Requeue the re-identifications whose worker vanished, then claim
+    /// the next due one and hand its album to the identification queue,
     /// all in one write. Returns the job as it was left, or `None` when
     /// nothing was due. Blocking.
     pub fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
         self.db
             .write_blocking(Lane::Background, "operations.run_next", |tx| {
                 let now = now_unix();
-                store::recover_expired(tx, now)?;
-                let Some(job) = store::claim_reidentification(tx, worker, now)? else {
+                let claimed =
+                    jobs::claim(tx, OperationKind::ExplicitReidentification, worker, now)?;
+                let Some(job) = claimed else {
                     return Ok(None);
                 };
-                if store::claim_work(tx, &job.id, now)?.is_none() {
+                if jobs::claim_work(tx, &job.id, now)?.is_none() {
                     return Ok(store::fail(tx, &job.id, worker, "MISSING_WORK", now)?);
                 }
                 // A pause or stop asked for while the job was queued wins.
-                if let Some(halted) = store::checkpoint(tx, &job.id, worker, now)? {
+                if let Some(halted) = jobs::checkpoint(tx, &job.id, worker, now)? {
                     return Ok(Some(halted));
                 }
                 let Some(snap) = store::snapshot(tx, &job.id)? else {

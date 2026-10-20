@@ -1,114 +1,12 @@
-//! Operation job types: what `library_operation_jobs` rows hold, the
-//! controls an administrator sends, and the re-identification candidates a
-//! job offers.
+//! Operation job types: the controls an administrator sends, what a job's
+//! work items report, and the re-identification candidates a job offers.
+//! The job row and its states live in [`crate::jobs`].
 
 use serde::{Deserialize, Serialize};
 
 use super::reasons::Reason;
 use crate::identify::models::{CandidateEvidence, EvidenceClass};
-
-/// What kind of work a job carries. Only explicit re-identification has a
-/// worker today; the other kinds come from v2 data and still answer to
-/// reads and controls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationKind {
-    BulkReviewApply,
-    Repair,
-    ExplicitReidentification,
-    LibraryManagement,
-}
-
-impl OperationKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::BulkReviewApply => "bulk_review_apply",
-            Self::Repair => "repair",
-            Self::ExplicitReidentification => "explicit_reidentification",
-            Self::LibraryManagement => "library_management",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "bulk_review_apply" => Some(Self::BulkReviewApply),
-            "repair" => Some(Self::Repair),
-            "explicit_reidentification" => Some(Self::ExplicitReidentification),
-            "library_management" => Some(Self::LibraryManagement),
-            _ => None,
-        }
-    }
-}
-
-/// Where a job is in its life.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationState {
-    Queued,
-    Running,
-    Paused,
-    /// Evaluated and waiting on an administrator's choice.
-    Ready,
-    Succeeded,
-    Failed,
-    Cancelled,
-    Stopped,
-}
-
-impl OperationState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Running => "running",
-            Self::Paused => "paused",
-            Self::Ready => "ready",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-            Self::Stopped => "stopped",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "queued" => Some(Self::Queued),
-            "running" => Some(Self::Running),
-            "paused" => Some(Self::Paused),
-            "ready" => Some(Self::Ready),
-            "succeeded" => Some(Self::Succeeded),
-            "failed" => Some(Self::Failed),
-            "cancelled" => Some(Self::Cancelled),
-            "stopped" => Some(Self::Stopped),
-            _ => None,
-        }
-    }
-}
-
-/// A control the running worker has not acted on yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlRequest {
-    None,
-    Pause,
-    Stop,
-}
-
-impl ControlRequest {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Pause => "pause",
-            Self::Stop => "stop",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Self {
-        match raw {
-            "pause" => Self::Pause,
-            "stop" => Self::Stop,
-            _ => Self::None,
-        }
-    }
-}
+pub use crate::jobs::{ControlRequest, OperationJob, OperationKind, OperationState};
 
 /// What an administrator asks of a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,34 +23,6 @@ impl Control {
             Self::Resume => "resume",
             Self::Stop => "stop",
         }
-    }
-}
-
-/// One `library_operation_jobs` row.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OperationJob {
-    pub id: String,
-    /// The stored kind, kept as text so a row from a newer kind still reads.
-    pub kind: String,
-    pub state: OperationState,
-    pub requested_by_user_id: Option<String>,
-    pub expected_work_count: i64,
-    pub completed_count: i64,
-    pub succeeded_count: i64,
-    pub failed_count: i64,
-    pub skipped_count: i64,
-    pub control_request: ControlRequest,
-    pub terminal_code: Option<String>,
-    pub reidentification_attempt_count: i64,
-    pub row_revision: i64,
-    pub event_revision: i64,
-    pub created_at: f64,
-    pub updated_at: f64,
-}
-
-impl OperationJob {
-    pub fn is_reidentification(&self) -> bool {
-        self.kind == OperationKind::ExplicitReidentification.as_str()
     }
 }
 
