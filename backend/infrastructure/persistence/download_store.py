@@ -3173,6 +3173,58 @@ class DownloadStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def list_exhausted_album_tasks(self, max_retry_count: int) -> list[DownloadTask]:
+        """Album tasks the auto-retry sweep will never touch again: the newest task per
+        target (same shape as ``list_retryable_tasks``) when it is a terminal
+        ``failed``/``partial`` AT OR ABOVE the ``retry_count`` ceiling. They stay
+        'Failed · out of retries' forever unless something re-evaluates them."""
+
+        def operation(conn: sqlite3.Connection) -> list[DownloadTask]:
+            rows = conn.execute(
+                """SELECT * FROM download_tasks t
+                   WHERE t.status IN ('failed', 'partial')
+                     AND t.download_type = 'album'
+                     AND t.release_group_mbid IS NOT NULL
+                     AND t.origin != 'upgrade'
+                     AND t.retry_count >= ?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM download_tasks n
+                         WHERE n.user_id = t.user_id
+                           AND n.download_type = t.download_type
+                           AND n.release_group_mbid = t.release_group_mbid
+                           AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '')
+                           AND n.origin != 'upgrade'
+                           AND (n.created_at > t.created_at
+                                OR (n.created_at = t.created_at AND n.rowid > t.rowid))
+                     )
+                   ORDER BY t.completed_at ASC NULLS LAST""",
+                (max_retry_count,),
+            ).fetchall()
+            return [t for t in (_row_to_task(r) for r in rows) if t is not None]
+
+        return await self._read(operation)
+
+    async def list_failed_album_tasks(
+        self, release_group_mbid: str, *, exclude_task_id: str | None = None
+    ) -> list[DownloadTask]:
+        """Every terminal ``failed``/``partial`` album task for one release group,
+        across users (the library is shared), oldest first. Used to settle the
+        stragglers once a sibling task has delivered the album."""
+
+        def operation(conn: sqlite3.Connection) -> list[DownloadTask]:
+            sql = (
+                "SELECT * FROM download_tasks WHERE release_group_mbid = ? "
+                "AND download_type = 'album' AND status IN ('failed', 'partial')"
+            )
+            params: list[Any] = [release_group_mbid]
+            if exclude_task_id is not None:
+                sql += " AND id != ?"
+                params.append(exclude_task_id)
+            rows = conn.execute(sql + " ORDER BY created_at ASC", tuple(params)).fetchall()
+            return [t for t in (_row_to_task(r) for r in rows) if t is not None]
+
+        return await self._read(operation)
+
     async def list_tasks_by_status(
         self, user_id: str | None, user_role: str | None, statuses: list[str]
     ) -> list[DownloadTask]:

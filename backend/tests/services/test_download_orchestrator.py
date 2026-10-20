@@ -5245,3 +5245,85 @@ async def test_collision_does_not_quarantine_through_import(tmp_path: Path):
 
     assert (await store.get_task(task.id)).status == "failed"
     assert await store.load_quarantine_set() == set()
+
+
+@pytest.mark.asyncio
+async def test_completed_album_settles_its_failed_siblings(tmp_path: Path):
+    """Older failed/partial tasks for the same album are satisfied the moment any
+    task delivers it. Left alone they sit as 'Failed · out of retries' (Clear skips
+    them) and keep re-running the coverage check on their own schedule."""
+    client = _StubClient()
+    store, orch, fp, lib = _build(
+        tmp_path, client=client, scorer_result=[_candidate(0.9)]
+    )
+    _coupled_fp(fp, lib)
+    old_a = await _new_task(store)
+    old_b = await _new_task(store)
+    other = await _new_task(store, release_group_mbid="rg-other")
+    for stale in (old_a, old_b, other):
+        await store.finalize_task_and_attempt(
+            stale.id,
+            DownloadStatus.FAILED,
+            task_fields={"completed_at": _t.time(), "error_message": "gave up"},
+            attempt_id=None,
+            disposition=None,
+        )
+    fresh = await _new_task(store)
+
+    await orch.process_task(fresh.id)
+
+    assert (await store.get_task(fresh.id)).status == "completed"
+    for settled in (old_a, old_b):
+        row = await store.get_task(settled.id)
+        assert row.status == "completed"
+        assert row.error_message is None
+    assert (await store.get_task(other.id)).status == "failed"  # a different album
+
+
+@pytest.mark.asyncio
+async def test_sweep_settles_exhausted_failure_when_library_covers(tmp_path: Path):
+    """A failure past the retry ceiling is outside ``list_retryable_tasks`` and was
+    never re-evaluated: once the library covers the album (any source, a hand import)
+    the sweep must settle it instead of leaving it 'out of retries' forever."""
+    store, orch, _fp, _lib = _build(
+        tmp_path,
+        album_service=_StubAlbumService(_edition_tracks()),
+        imported_rows=_covered_rows(),
+        auto_retry_max_attempts=0,  # every failure is already exhausted
+    )
+    task = await _new_task(store, track_count=2, release_mbid="rel-1")
+    await store.finalize_task_and_attempt(
+        task.id,
+        DownloadStatus.FAILED,
+        task_fields={"completed_at": _t.time()},
+        attempt_id=None,
+        disposition=None,
+    )
+    assert await store.list_retryable_tasks(orch.auto_retry_max) == []
+
+    await orch.retry_failed_tasks()
+
+    assert (await store.get_task(task.id)).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_sweep_leaves_exhausted_failure_when_library_does_not_cover(tmp_path: Path):
+    """No library rows for the album: nothing is fetched or dispatched, the row stays."""
+    store, orch, _fp, _lib = _build(
+        tmp_path,
+        album_service=_StubAlbumService(_edition_tracks()),
+        imported_rows=[],
+        auto_retry_max_attempts=0,
+    )
+    task = await _new_task(store, track_count=2, release_mbid="rel-1")
+    await store.finalize_task_and_attempt(
+        task.id,
+        DownloadStatus.FAILED,
+        task_fields={"completed_at": _t.time()},
+        attempt_id=None,
+        disposition=None,
+    )
+
+    await orch.retry_failed_tasks()
+
+    assert (await store.get_task(task.id)).status == "failed"
