@@ -16,6 +16,7 @@ use super::models::{
     ItemPage, JobIntent, JobMode, Origin, PlannedItem, ResultItem, ResultPage, Revisions, Summary,
 };
 use super::reasons::{self, ItemReason};
+use super::sql;
 use crate::jobs::{
     self, ManagementPhase, NewJob as NewJobRow, NewWork, OperationJob, OperationKind,
     OperationState, WorkState,
@@ -632,6 +633,9 @@ pub fn rotate_token(
     Ok(())
 }
 
+/// One album's work row: state, failure code, result and bundle id.
+type WorkRow = (String, Option<String>, Option<String>, Option<String>);
+
 /// Result rows of an applied job, with each album's work outcome.
 pub fn results(
     conn: &Connection,
@@ -640,23 +644,29 @@ pub fn results(
     limit: i64,
 ) -> rusqlite::Result<ResultPage> {
     let page = items_page(conn, job_id, after_ordinal, limit, &ItemFilter::default())?;
-    let mut work = conn.prepare_cached(
-        "SELECT state, failure_code, result_json FROM library_operation_work \
-         WHERE job_id = ?1 AND ordinal = ?2",
-    )?;
+    let mut work = conn.prepare_cached(sql::WORK_RESULT.text())?;
     let mut items = Vec::with_capacity(page.items.len());
     for plan in page.items {
-        let row: Option<(String, Option<String>, Option<String>)> = work
+        let row: Option<WorkRow> = work
             .query_row(params![job_id, plan.bundle_ordinal], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             })
             .optional()?;
         let (work_state, failure, result) = match row {
-            Some((state, code, result)) => {
-                let result: serde_json::Value = result
+            Some((state, code, result, bundle_id)) => {
+                let mut result: serde_json::Value = result
                     .as_deref()
                     .and_then(|text| serde_json::from_str(text).ok())
                     .unwrap_or(serde_json::Value::Null);
+                // The bundle is shown with the album's outcome.
+                if let Some(bundle_id) = bundle_id {
+                    if result.is_null() {
+                        result = serde_json::json!({});
+                    }
+                    if let Some(object) = result.as_object_mut() {
+                        object.insert("bundle_id".to_owned(), bundle_id.into());
+                    }
+                }
                 let failure = result
                     .get("reason")
                     .and_then(|value| serde_json::from_value::<ItemReason>(value.clone()).ok())
@@ -690,40 +700,6 @@ pub fn results(
         next_after_ordinal: page.next_after_ordinal,
         has_more: page.has_more,
     })
-}
-
-/// The bundle id an album's work row recorded before publishing, if any.
-pub fn work_bundle(
-    conn: &Connection,
-    job_id: &str,
-    ordinal: i64,
-) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT json_extract(result_json, '$.bundle_id') FROM library_operation_work \
-         WHERE job_id = ?1 AND ordinal = ?2",
-        params![job_id, ordinal],
-        |row| row.get(0),
-    )
-    .optional()
-    .map(Option::flatten)
-}
-
-/// Record the bundle id an album is about to publish under.
-pub fn set_work_bundle(
-    conn: &Connection,
-    job_id: &str,
-    ordinal: i64,
-    bundle_id: &str,
-) -> rusqlite::Result<()> {
-    // Other keys (a recycled file to put back) survive a new bundle id.
-    conn.execute(
-        "UPDATE library_operation_work SET result_json = json_set(CASE \
-         WHEN json_valid(result_json) AND json_type(result_json) = 'object' THEN result_json \
-         ELSE '{}' END, '$.bundle_id', ?3), row_revision = row_revision + 1 \
-         WHERE job_id = ?1 AND ordinal = ?2",
-        params![job_id, ordinal, bundle_id],
-    )?;
-    Ok(())
 }
 
 /// Where in the recycle bin the files a bundle replaced went (or go,
@@ -806,14 +782,7 @@ pub fn undone_ordinals(
 /// An album whose publish recovery finished after the job stopped (a
 /// crash, then a stop) counts too: its bundle committed.
 pub fn applied_bundles(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(i64, String)>> {
-    let mut statement = conn.prepare(
-        "SELECT ordinal, json_extract(result_json, '$.bundle_id') FROM library_operation_work \
-         WHERE job_id = ?1 AND json_extract(result_json, '$.bundle_id') IS NOT NULL \
-         AND (state = ?2 OR json_extract(result_json, '$.bundle_id') IN \
-           (SELECT bundle_id FROM library_publish_journal \
-            WHERE state IN ('committed', 'cleanup_pending', 'cleaned'))) \
-         ORDER BY ordinal",
-    )?;
+    let mut statement = conn.prepare(sql::APPLIED_BUNDLES.text())?;
     let rows = statement.query_map(params![job_id, WorkState::Succeeded], |row| {
         Ok((row.get(0)?, row.get(1)?))
     })?;
@@ -834,24 +803,7 @@ pub struct UndoCounts {
 /// next one runs out.
 pub fn undo_counts(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Result<UndoCounts> {
     conn.query_row(
-        "WITH bundles AS (SELECT json_extract(result_json, '$.bundle_id') AS bundle_id \
-           FROM library_operation_work WHERE job_id = ?1 \
-           AND json_extract(result_json, '$.bundle_id') IS NOT NULL \
-           AND (state = ?3 OR json_extract(result_json, '$.bundle_id') IN \
-             (SELECT bundle_id FROM library_publish_journal \
-              WHERE state IN ('committed', 'cleanup_pending', 'cleaned')))), \
-         written AS (SELECT DISTINCT j.bundle_id, j.track_id FROM library_publish_journal j \
-           JOIN bundles b ON b.bundle_id = j.bundle_id \
-           WHERE j.kind = 'audio' AND j.track_id IS NOT NULL \
-           AND j.state IN ('committed', 'cleaned', 'cleanup_pending')) \
-         SELECT \
-           (SELECT COUNT(*) FROM library_publish_snapshots s JOIN bundles b \
-             ON b.bundle_id = s.bundle_id WHERE s.expires_day > ?2), \
-           (SELECT COUNT(*) FROM written w WHERE NOT EXISTS (SELECT 1 \
-             FROM library_publish_snapshots s WHERE s.bundle_id = w.bundle_id \
-             AND s.track_id = w.track_id AND s.expires_day > ?2)), \
-           (SELECT MIN(s.expires_day) FROM library_publish_snapshots s JOIN bundles b \
-             ON b.bundle_id = s.bundle_id WHERE s.expires_day > ?2)",
+        sql::UNDO_COUNTS.text(),
         params![job_id, today, WorkState::Succeeded],
         |row| {
             Ok(UndoCounts {

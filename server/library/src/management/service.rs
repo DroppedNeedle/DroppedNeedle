@@ -1717,7 +1717,8 @@ impl Management {
                 }
                 return Ok(());
             };
-            let Some((failure, result)) = self.apply_album(&snapshot, ordinal, undo, organizes)?
+            let Some((failure, bundle_id, mut result)) =
+                self.apply_album(&snapshot, ordinal, undo, organizes)?
             else {
                 // The album's earlier publish is not settled yet: wait for
                 // recovery rather than publish it a second time.
@@ -1728,14 +1729,12 @@ impl Management {
                 )?;
                 return Ok(());
             };
-            let mut result = result;
             if failure.is_none()
-                && let Some(bundle_id) = result.get("bundle_id").and_then(|id| id.as_str())
                 && let Ok(recycled) = self
                     .setup
                     .db
                     .read_blocking("management.replaced_files", |conn| {
-                        Ok::<_, ManagementError>(store::replaced_files(conn, bundle_id)?)
+                        Ok::<_, ManagementError>(store::replaced_files(conn, &bundle_id)?)
                     })
                 && !recycled.is_empty()
                 && let Some(result) = result.as_object_mut()
@@ -1749,15 +1748,8 @@ impl Management {
             {
                 result.extend(extra);
             }
-            let bundle_id = result
-                .get("bundle_id")
-                .and_then(|id| id.as_str())
-                .map(str::to_owned);
-            if failure.is_none()
-                && whole_profile
-                && let Some(bundle_id) = &bundle_id
-            {
-                let before = self.record_applied(job_id, ordinal, bundle_id)?;
+            if failure.is_none() && whole_profile {
+                let before = self.record_applied(job_id, ordinal, &bundle_id)?;
                 if !before.is_empty()
                     && let Some(result) = result.as_object_mut()
                 {
@@ -1837,34 +1829,34 @@ impl Management {
             })
     }
 
-    /// Apply one album: its outcome and the result to record, or `None`
-    /// when an earlier attempt's publish is still unsettled. The bundle id
-    /// is recorded on the work row before anything is written, so an album
-    /// the publisher committed is never lost to a crash or a late error:
-    /// recovery runs first, and a committed album counts as written and
-    /// can be undone. A saved bundle id is never replaced while its
-    /// journals are unsettled.
+    /// Apply one album: its outcome, its bundle id and the result to
+    /// record, or `None` when an earlier attempt's publish is still
+    /// unsettled. The bundle id is recorded on the work row before
+    /// anything is written, so an album the publisher committed is never
+    /// lost to a crash or a late error: recovery runs first, and a
+    /// committed album counts as written and can be undone. A saved bundle
+    /// id is never replaced while its journals are unsettled.
     fn apply_album(
         &self,
         snapshot: &Snapshot,
         ordinal: i64,
         undo: bool,
         organizes: bool,
-    ) -> Result<Option<(Option<ItemReason>, serde_json::Value)>, ManagementError> {
+    ) -> Result<Option<(Option<ItemReason>, String, serde_json::Value)>, ManagementError> {
         let job_id = snapshot.job.id.as_str();
-        let written = |bundle_id: &str, outcome: &str| serde_json::json!({ "bundle_id": bundle_id, "outcome": outcome });
+        let written = |outcome: &str| serde_json::json!({ "outcome": outcome });
         if let Some(earlier) = self
             .setup
             .db
             .read_blocking("management.work_bundle", |conn| {
-                Ok::<_, ManagementError>(store::work_bundle(conn, job_id, ordinal)?)
+                Ok::<_, ManagementError>(jobs::work_bundle(conn, job_id, ordinal)?)
             })?
         {
             if let Err(error) = self.setup.settle_publishes() {
                 tracing::warn!(%error, bundle_id = earlier, "publish recovery did not finish");
             }
             if self.committed(&earlier) {
-                return Ok(Some((None, written(&earlier, "committed"))));
+                return Ok(Some((None, earlier, written("committed"))));
             }
             let unsettled = self
                 .setup
@@ -1886,7 +1878,7 @@ impl Management {
         self.setup
             .db
             .write_blocking(Lane::Background, "management.set_work_bundle", |conn| {
-                Ok::<_, ManagementError>(store::set_work_bundle(conn, job_id, ordinal, &bundle_id)?)
+                Ok::<_, ManagementError>(jobs::set_work_bundle(conn, job_id, ordinal, &bundle_id)?)
             })?;
         let items = self
             .setup
@@ -1896,12 +1888,12 @@ impl Management {
             })?;
         Ok(Some(
             match self.publish_album(snapshot, &items, undo, organizes, &bundle_id) {
-                Ok(applied) => (None, written(&applied.bundle_id, applied.outcome.as_str())),
+                Ok(applied) => (None, applied.bundle_id, written(applied.outcome.as_str())),
                 // The database was busy: the job goes back to the queue. The
                 // next pass finds this bundle empty and starts afresh, or
                 // finds the publish it stopped and waits for recovery.
                 Err(Refused::Busy(error)) => return Err(error),
-                Err(_) if self.committed(&bundle_id) => (None, written(&bundle_id, "committed")),
+                Err(_) if self.committed(&bundle_id) => (None, bundle_id, written("committed")),
                 // A publish that stopped part way (the journal still holds
                 // it) is settled by recovery, which finishes or unwinds it;
                 // the album waits for that instead of failing now.
@@ -1919,8 +1911,8 @@ impl Management {
                     return Ok(None);
                 }
                 Err(Refused::Reason(reason)) => {
-                    let result = serde_json::json!({ "bundle_id": bundle_id, "reason": reason });
-                    (Some(reason), result)
+                    let result = serde_json::json!({ "reason": reason });
+                    (Some(reason), bundle_id, result)
                 }
             },
         ))

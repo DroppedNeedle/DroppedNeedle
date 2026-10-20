@@ -4439,3 +4439,66 @@ async fn removed_settings_leave_the_stored_rows() {
         ]
     );
 }
+
+/// Migration 0074 copies the bundle id a work row kept inside its result
+/// into the new `bundle_id` column. A row with no bundle in its result,
+/// no result, or a result that is not JSON gets NULL; the result itself
+/// is left as it was, and the column is indexed.
+#[tokio::test]
+async fn work_bundle_ids_move_into_a_column() {
+    let pool = scratch_pool().await;
+    migrator_through(73).run(&pool).await.unwrap();
+    let applied = r#"{"bundle_id":"bundle-1","outcome":"committed","recycled_to":["a.flac"]}"#;
+    // The rows stand alone: no job or album behind them.
+    sqlx::raw_sql(&format!(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
+             expected_subject_revision, expected_input_revision, action, idempotency_key, \
+             state, result_json, updated_at) \
+         VALUES ('j', 0, 'a0', 1, 'r', 'apply', 'k0', 'succeeded', '{applied}', 1.0), \
+                ('j', 1, 'a1', 1, 'r', 'apply', 'k1', 'failed', \
+                 '{{\"reason\":{{\"code\":\"PROFILE_CHANGED\"}}}}', 1.0), \
+                ('j', 2, 'a2', 1, 'r', 'apply', 'k2', 'pending', NULL, 1.0), \
+                ('j', 3, 'a3', 1, 'r', 'apply', 'k3', 'failed', 'not json', 1.0);"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let rows: Vec<(i64, Option<String>)> =
+        sqlx::query_as("SELECT ordinal, bundle_id FROM library_operation_work ORDER BY ordinal")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (0, Some("bundle-1".to_owned())),
+            (1, None),
+            (2, None),
+            (3, None)
+        ]
+    );
+    let kept: String =
+        sqlx::query_scalar("SELECT result_json FROM library_operation_work WHERE ordinal = 0")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, applied);
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' \
+         AND name = 'idx_library_operation_work_bundle_id'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        index
+            .as_deref()
+            .is_some_and(|sql| sql.contains("library_operation_work(bundle_id)")),
+        "the bundle id is indexed: {index:?}"
+    );
+}

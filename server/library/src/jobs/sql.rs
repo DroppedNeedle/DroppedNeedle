@@ -193,13 +193,15 @@ droppedneedle_kernel::sql! {
              updated_at = :now, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 \
              WHERE id = :id AND row_revision = :revision";
-    /// Every work item of a job back to pending, its outcome cleared.
+    /// Every work item of a job back to pending, its outcome and bundle
+    /// cleared.
     pub(super) WORK_RESET_ALL = "UPDATE library_operation_work SET state = 'pending', \
-             failure_code = NULL, result_json = NULL, updated_at = :now, \
+             failure_code = NULL, result_json = NULL, bundle_id = NULL, updated_at = :now, \
              row_revision = row_revision + 1 WHERE job_id = :job";
-    /// A job's failed and running work back to pending, its outcome cleared.
+    /// A job's failed and running work back to pending, its outcome and
+    /// bundle cleared.
     pub(super) WORK_RESET_FAILED = "UPDATE library_operation_work SET state = 'pending', \
-             failure_code = NULL, result_json = NULL, updated_at = :now, \
+             failure_code = NULL, result_json = NULL, bundle_id = NULL, updated_at = :now, \
              row_revision = row_revision + 1 \
              WHERE job_id = :job AND state IN ('failed', 'running')";
 
@@ -227,4 +229,14 @@ droppedneedle_kernel::sql! {
              failure_code = :code, result_json = COALESCE(:result, result_json), \
              updated_at = :now, row_revision = row_revision + 1 \
              WHERE job_id = :job AND state = 'running'";
+
+    /// The publish bundle a work item writes under, once it has one.
+    pub(super) WORK_BUNDLE = "SELECT bundle_id FROM library_operation_work \
+             WHERE job_id = :job AND ordinal = :ordinal";
+    /// Record the publish bundle a work item is about to write under.
+    pub(super) SET_WORK_BUNDLE = "UPDATE library_operation_work SET bundle_id = :bundle, \
+             row_revision = row_revision + 1 WHERE job_id = :job AND ordinal = :ordinal";
+    /// The work item (job, ordinal) that wrote under a bundle.
+    pub(super) WORK_OF_BUNDLE = "SELECT job_id, ordinal FROM library_operation_work \
+             WHERE bundle_id = :bundle";
 }

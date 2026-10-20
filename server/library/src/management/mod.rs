@@ -39,6 +39,7 @@ pub mod script;
 pub mod selection;
 pub mod service;
 pub mod settings;
+pub(crate) mod sql;
 pub mod store;
 pub mod tag_edit;
 pub mod takeover;

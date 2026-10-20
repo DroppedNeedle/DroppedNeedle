@@ -61,5 +61,6 @@ pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFi
         publish::sql::registered(),
         catalog_revision::sql::registered(),
         jobs::sql::registered(),
+        management::sql::registered(),
     ]
 }

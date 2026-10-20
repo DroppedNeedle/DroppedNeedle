@@ -636,6 +636,45 @@ pub fn finish_running_work(
         .map(drop)
 }
 
+/// The publish bundle a work item writes under, if it has one yet.
+pub fn work_bundle(
+    conn: &Connection,
+    job_id: &str,
+    ordinal: i64,
+) -> rusqlite::Result<Option<String>> {
+    conn.prepare_cached(sql::WORK_BUNDLE.text())?
+        .query_row(
+            named_params! { ":job": job_id, ":ordinal": ordinal },
+            |row| row.get(0),
+        )
+        .optional()
+        .map(Option::flatten)
+}
+
+/// Record the publish bundle a work item is about to write under.
+pub fn set_work_bundle(
+    conn: &Connection,
+    job_id: &str,
+    ordinal: i64,
+    bundle_id: &str,
+) -> rusqlite::Result<()> {
+    conn.prepare_cached(sql::SET_WORK_BUNDLE.text())?
+        .execute(named_params! { ":job": job_id, ":ordinal": ordinal, ":bundle": bundle_id })
+        .map(drop)
+}
+
+/// The work item (job id, ordinal) that wrote under `bundle_id`.
+pub fn work_of_bundle(
+    conn: &Connection,
+    bundle_id: &str,
+) -> rusqlite::Result<Option<(String, i64)>> {
+    conn.prepare_cached(sql::WORK_OF_BUNDLE.text())?
+        .query_row(named_params! { ":bundle": bundle_id }, |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()
+}
+
 /// A condition on `job` (a `library_operation_jobs` row) that holds while
 /// the job still has work coming on its albums: queued, running, paused,
 /// or ready and not past its expiry. A ready preview past its expiry can

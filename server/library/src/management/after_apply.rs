@@ -4,13 +4,13 @@
 //! ends.
 
 use droppedneedle_kernel::db::Lane;
-use rusqlite::OptionalExtension as _;
 
 use super::models::{JobMode, ManagementError};
 use super::service::Management;
 use super::store::{self, ManagedMark, Snapshot};
 use super::takeover;
 use crate::clock::now_unix;
+use crate::jobs;
 
 impl Management {
     /// Bookkeeping for one album the job just wrote. The files are
@@ -217,20 +217,12 @@ impl Management {
     /// The same for one bundle undone on its own, outside a job (the
     /// route that undoes a single bundle). Blocking.
     pub fn bundle_undone(&self, bundle_id: &str) -> Result<(), ManagementError> {
-        let found: Option<(String, i64)> =
-            self.setup
-                .db
-                .read_blocking("management.undone_bundle", |conn| {
-                    Ok::<_, ManagementError>(
-                        conn.query_row(
-                            "SELECT job_id, ordinal FROM library_operation_work \
-                     WHERE json_extract(result_json, '$.bundle_id') = ?1",
-                            [bundle_id],
-                            |row| Ok((row.get(0)?, row.get(1)?)),
-                        )
-                        .optional()?,
-                    )
-                })?;
+        let found: Option<(String, i64)> = self
+            .setup
+            .db
+            .read_blocking("management.undone_bundle", |conn| {
+                Ok::<_, ManagementError>(jobs::work_of_bundle(conn, bundle_id)?)
+            })?;
         let Some((source_id, ordinal)) = found else {
             return Ok(());
         };

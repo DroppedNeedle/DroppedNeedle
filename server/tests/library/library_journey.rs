@@ -8734,10 +8734,9 @@ async fn an_undone_bundle_is_not_done_again() {
     let bundle: String = managed
         .db()
         .query_row(
-            "SELECT json_extract(w.result_json, '$.bundle_id') FROM library_operation_work w \
+            "SELECT w.bundle_id FROM library_operation_work w \
              JOIN library_management_job_snapshots s ON s.job_id = w.job_id \
-             WHERE s.origin = 'scan_discovered' \
-             AND json_extract(w.result_json, '$.bundle_id') IS NOT NULL",
+             WHERE s.origin = 'scan_discovered' AND w.bundle_id IS NOT NULL",
             [],
             |row| row.get(0),
         )
