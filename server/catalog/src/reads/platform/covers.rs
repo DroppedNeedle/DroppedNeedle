@@ -12,7 +12,9 @@
 //! carries (no hashing per request), `immutable` is sent only when the
 //! request names the art's current version (`?v=`), and misses are never
 //! cached, so art that turns up later shows at once.
-//! Unversioned art keeps v2's five-minute window, then revalidates.
+//! Art keyed by a MusicBrainz id is kept for a day (`PRIVATE_DAY_CACHE`).
+//! Album art requested without a version keeps v2's five-minute window, then
+//! revalidates.
 //!
 //! Bytes come from the [`CoverArt`] port; production runs
 //! [`ArtworkService`](super::artwork::ArtworkService).
@@ -38,8 +40,10 @@ const DEFAULT_SIZE: &str = "500";
 /// Misses and warming answers are never stored, so a cover that turns up
 /// later shows on the next view.
 const NO_STORE: &str = "no-store";
-/// Unversioned art: v2's five-minute window, then revalidation by ETag.
-const SHORT_CACHE: &str = "public, max-age=300";
+/// Art keyed by a MusicBrainz id. A warm grid draws from the browser cache
+/// with no revalidation trips. `private` because the routes need a session;
+/// a changed cover shows within a day.
+const PRIVATE_DAY_CACHE: &str = "private, max-age=86400, stale-while-revalidate=604800";
 /// The request named an older version: revalidate every time.
 const REVALIDATE_CACHE: &str = "private, no-cache";
 /// An album's own art at its current version, per user like v2.
@@ -378,7 +382,7 @@ fn art_response(art: CoverBytes, headers: &HeaderMap, cache: &'static str) -> Re
 
 fn lookup_response(lookup: CoverLookup, headers: &HeaderMap) -> Response {
     match lookup {
-        CoverLookup::Found(art) => art_response(art, headers, SHORT_CACHE),
+        CoverLookup::Found(art) => art_response(art, headers, PRIVATE_DAY_CACHE),
         CoverLookup::Warming => warming_response(),
         CoverLookup::Missing => missing_response(),
     }

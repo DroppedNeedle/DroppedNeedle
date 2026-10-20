@@ -156,7 +156,7 @@ async fn release_group_cover_hit_serves_bytes_and_revalidates() {
     );
     assert_eq!(
         header(&headers, "cache-control"),
-        Some("public, max-age=300")
+        Some("private, max-age=86400, stale-while-revalidate=604800")
     );
     let etag = header(&headers, "etag").unwrap().to_owned();
     for candidate in [etag.clone(), format!("W/{etag}"), "*".to_owned()] {
