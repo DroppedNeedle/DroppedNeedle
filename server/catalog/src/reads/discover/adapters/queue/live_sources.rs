@@ -24,7 +24,7 @@ use super::sources::{
 };
 use crate::reads::catalog::mapping::should_include_release;
 use crate::reads::catalog::upstream::{CatalogLastFm, UNREADABLE_NAMESPACE, Upstream, user_lastfm};
-use crate::reads::discover::ports::BoxFuture;
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolveError};
 use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
 use droppedneedle_media::remotes::models::SourceName;
@@ -120,7 +120,7 @@ impl LiveSources {
         &self,
         result: Result<T, ProviderError>,
     ) -> SourceResult<T> {
-        result.map_err(|error| error.to_string())
+        result.map_err(ProviderFailure::Provider)
     }
 
     /// [`listenbrainz_result`](Self::listenbrainz_result) for a popularity
@@ -171,7 +171,7 @@ impl LiveSources {
 pub(in crate::reads::discover::adapters) fn lastfm_result<T>(
     result: Result<T, ProviderError>,
 ) -> SourceResult<T> {
-    result.map_err(|error| error.to_string())
+    result.map_err(ProviderFailure::Provider)
 }
 
 /// A MusicBrainz lookup answer: a malformed or refused id is a definite
@@ -184,7 +184,7 @@ fn musicbrainz_option<T>(result: Result<Option<T>, ProviderError>) -> SourceResu
             | ProviderError::NotFound { .. }
             | ProviderError::Invalid { .. },
         ) => Ok(None),
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(ProviderFailure::Provider(error)),
     }
 }
 
@@ -713,7 +713,7 @@ impl QueueSources for LiveSources {
             let resolved = match self.jellyfin.resolve(user_id, SourceName::Jellyfin).await {
                 Ok(resolved) => resolved,
                 Err(ResolveError::NotConfigured) => return Ok(Vec::new()),
-                Err(error) => return Err(error.to_string()),
+                Err(error) => return Err(ProviderFailure::failed(error.to_string())),
             };
             let adapter = JellyfinAdapter::new(
                 self.http.clone(),
@@ -728,7 +728,7 @@ impl QueueSources for LiveSources {
                     .await
                     .map(|favorites| favorites.artists),
             }
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| ProviderFailure::failed(error.to_string()))?;
             Ok(artists
                 .into_iter()
                 .map(|artist| ArtistRow {
@@ -760,7 +760,7 @@ impl QueueSources for LiveSources {
                     .musicbrainz(priority)
                     .search_release_groups_by_tag(tag, asked, 0, Criticality::BestEffort)
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(ProviderFailure::Provider)?;
                 let mut seen = std::collections::HashSet::new();
                 Ok(page
                     .items
@@ -954,7 +954,7 @@ impl QueueSources for LiveSources {
                 .wikidata()
                 .get_bio_extract(url, "en", RequestPriority::UserInitiated)
                 .await
-                .map_err(|error| format!("wikipedia: {error}"))
+                .map_err(ProviderFailure::Provider)
         })
     }
 }

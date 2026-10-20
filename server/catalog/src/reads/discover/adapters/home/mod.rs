@@ -66,9 +66,9 @@ fn now_secs() -> f64 {
 
 /// Run one read under the bound; a failure empties its shelf with a log
 /// line.
-async fn bounded<T: Default>(
+async fn bounded<T: Default, E: std::fmt::Display>(
     what: &str,
-    read: impl std::future::Future<Output = Result<T, String>>,
+    read: impl std::future::Future<Output = Result<T, E>>,
 ) -> T {
     match tokio::time::timeout(READ_TIMEOUT, read).await {
         Ok(Ok(value)) => value,

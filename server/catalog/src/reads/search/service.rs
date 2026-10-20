@@ -642,7 +642,7 @@ pub async fn enrich_with_degradation(
                 source: EnrichmentSource::None,
                 degradations: vec![Degradation {
                     source: error.source,
-                    code: "ENRICHMENT_UNAVAILABLE".to_owned(),
+                    code: droppedneedle_kernel::error::PROVIDER_UNAVAILABLE.to_owned(),
                     message: "Enrichment temporarily unavailable".to_owned(),
                 }],
             }

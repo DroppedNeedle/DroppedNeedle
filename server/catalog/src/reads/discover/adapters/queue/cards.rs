@@ -194,8 +194,7 @@ pub async fn preview(
 ) -> Result<DiscoverQueuePreview, ProviderFailure> {
     let facts = sources
         .musicbrainz_release_group(release_group_mbid, RequestPriority::UserInitiated)
-        .await
-        .map_err(ProviderFailure::failed)?;
+        .await?;
     let Some(facts) = facts else {
         return Ok(DiscoverQueuePreview {
             status: "not_found".to_owned(),

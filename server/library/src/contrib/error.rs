@@ -5,6 +5,7 @@
 //! what to do next. Handlers map the kind to an HTTP status; nothing here
 //! knows about HTTP.
 
+use droppedneedle_providers::ProviderError;
 use thiserror::Error;
 
 /// Service/worker failures. Messages match v2's call-site strings so the UI
@@ -39,9 +40,9 @@ pub enum ContribError {
     #[error("{0}")]
     Data(String),
     #[error("MusicBrainz is temporarily unavailable.")]
-    ProviderUnavailable,
+    ProviderUnavailable(ProviderError),
     #[error("Discogs is temporarily unavailable.")]
-    DiscogsUnavailable,
+    DiscogsUnavailable(ProviderError),
     #[error("Discogs sent release data DroppedNeedle could not read.")]
     DiscogsUnusable,
     #[error("The server could not create a secure one-time token.")]
@@ -94,8 +95,8 @@ impl ContribError {
             Self::ExactDuplicate(_) => "MUSICBRAINZ_RELEASE_EXISTS",
             Self::ResultMismatch(_) => "MUSICBRAINZ_RESULT_MISMATCH",
             Self::Data(_) => "CONTRIBUTION_DATA_UNREADABLE",
-            Self::ProviderUnavailable => "MUSICBRAINZ_UNAVAILABLE",
-            Self::DiscogsUnavailable => "DISCOGS_UNAVAILABLE",
+            Self::ProviderUnavailable(_) => "MUSICBRAINZ_UNAVAILABLE",
+            Self::DiscogsUnavailable(_) => "DISCOGS_UNAVAILABLE",
             Self::DiscogsUnusable => "DISCOGS_DATA_UNUSABLE",
             Self::TokenUnavailable => "CONTRIBUTION_TOKEN_FAILED",
             Self::ProviderUnmappable => "PROVIDER_DATA_UNREADABLE",
@@ -130,8 +131,8 @@ impl ContribError {
             Self::Data(_) | Self::Storage(_) | Self::Busy(_) => {
                 "Try again. If it keeps failing, check the server log and report it."
             }
-            Self::ProviderUnavailable => "Wait a minute and try again.",
-            Self::DiscogsUnavailable => "Wait a minute and try again.",
+            Self::ProviderUnavailable(_) => "Wait a minute and try again.",
+            Self::DiscogsUnavailable(_) => "Wait a minute and try again.",
             Self::DiscogsUnusable => {
                 "Pick another Discogs release, or continue without a Discogs source."
             }

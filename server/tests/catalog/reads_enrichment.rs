@@ -15,6 +15,7 @@ use droppedneedle_catalog::reads::search::models::{
     AlbumEnrichmentRequest, ArtistEnrichmentRequest, EnrichmentBatchRequest, EnrichmentSource,
 };
 use droppedneedle_catalog::reads::search::ports::EnrichmentPort;
+use droppedneedle_providers::TransportKind;
 
 // ---------------------------------------------------------------------------
 // Scripted providers
@@ -35,10 +36,10 @@ impl MusicBrainzClient for ScriptedMb {
     > {
         Box::pin(async move {
             if self.fail {
-                return Err(ProviderError::new(
-                    ProviderSource::MusicBrainz.name(),
-                    "connection refused".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::MusicBrainz.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(ReleaseGroupCore {
                 mbid: mbid.to_owned(),
@@ -58,10 +59,10 @@ impl MusicBrainzClient for ScriptedMb {
     {
         Box::pin(async move {
             if self.fail {
-                return Err(ProviderError::new(
-                    ProviderSource::MusicBrainz.name(),
-                    "connection refused".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::MusicBrainz.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(ArtistCore {
                 mbid: mbid.to_owned(),
@@ -111,10 +112,10 @@ impl ListenBrainzClient for ScriptedLb {
     > {
         Box::pin(async move {
             if self.fail_artists.contains(mbid) {
-                return Err(ProviderError::new(
-                    ProviderSource::ListenBrainz.name(),
-                    "timeout".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::ListenBrainz.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(vec![
                 TopRelease {
@@ -144,10 +145,10 @@ impl ListenBrainzClient for ScriptedLb {
                 *calls += 1;
             }
             if self.fail_batch {
-                return Err(ProviderError::new(
-                    ProviderSource::ListenBrainz.name(),
-                    "500 from upstream".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::ListenBrainz.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(mbids
                 .iter()
@@ -178,10 +179,10 @@ impl LastFmClient for ScriptedLfm {
     > {
         Box::pin(async move {
             if self.fail {
-                return Err(ProviderError::new(
-                    ProviderSource::LastFm.name(),
-                    "timeout".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::LastFm.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(Some(LastFmArtistInfo {
                 bio_summary: Some(format!("{name} are a band.")),
@@ -205,10 +206,10 @@ impl LastFmClient for ScriptedLfm {
     > {
         Box::pin(async move {
             if self.fail {
-                return Err(ProviderError::new(
-                    ProviderSource::LastFm.name(),
-                    "timeout".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::LastFm.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(Some(LastFmAlbumInfo {
                 summary: Some("A landmark record.".to_owned()),
@@ -239,10 +240,10 @@ impl LyricsClient for ScriptedLyrics {
                 seen.push(format!("{} - {}", query.artist, query.title));
             }
             if self.fail {
-                return Err(ProviderError::new(
-                    ProviderSource::Lrclib.name(),
-                    "connection reset".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::Lrclib.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(LyricsLookup {
                 found: self.lookup.found,
@@ -270,10 +271,10 @@ impl EventsClient for ScriptedEvents {
     > {
         Box::pin(async move {
             if self.fail {
-                return Err(ProviderError::new(
-                    ProviderSource::EventsFeed.name(),
-                    "feed unavailable".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::EventsFeed.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(self.concerts.clone())
         })
@@ -288,10 +289,10 @@ impl EventsClient for ScriptedEvents {
     > {
         Box::pin(async move {
             if self.fail {
-                return Err(ProviderError::new(
-                    ProviderSource::EventsFeed.name(),
-                    "feed unavailable".to_owned(),
-                ));
+                return Err(ProviderError::Transport {
+                    provider: ProviderSource::EventsFeed.name(),
+                    kind: TransportKind::Connect,
+                });
             }
             Ok(self.cities.clone())
         })
@@ -372,7 +373,7 @@ async fn album_page_completes_with_one_provider_down() {
     assert!(page.tags.is_empty());
     assert_eq!(page.degradations.len(), 1);
     assert_eq!(page.degradations[0].source, "lastfm");
-    assert_eq!(page.degradations[0].code, "ENRICHMENT_UNAVAILABLE");
+    assert_eq!(page.degradations[0].code, "PROVIDER_UNAVAILABLE");
 }
 
 #[tokio::test]

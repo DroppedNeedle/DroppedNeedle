@@ -85,6 +85,11 @@ const CLOSED_LIST: &[(&str, u16, &str)] = &[
         "GitHub is rate limiting this server, try again later",
     ),
     ("UPSTREAM_ERROR", 502, "GitHub could not be reached"),
+    (
+        "PROVIDER_UNAVAILABLE",
+        503,
+        "An outside service is not answering. Try again later.",
+    ),
 ];
 
 #[tokio::test]
@@ -97,6 +102,10 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
             retry_after: Some(42),
         },
         Unavailable::UpstreamError,
+        Unavailable::Provider {
+            provider: "listenbrainz",
+            retry_after: Some(30),
+        },
     ];
     // Written out by hand, never read from the kit: a new variant fails to
     // compile here, and once listed above it needs its row in the table.
@@ -106,6 +115,7 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
             None
         }
         Unavailable::UpstreamRateLimited { .. } => Some("42"),
+        Unavailable::Provider { .. } => Some("30"),
     };
     let kit: Vec<(&str, u16, &str)> = variants
         .iter()
@@ -141,6 +151,10 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
         let mut details = json!({"error_id": request_id});
         if code == "UPSTREAM_RATE_LIMITED" {
             details["retry_after"] = json!(42);
+        }
+        if code == "PROVIDER_UNAVAILABLE" {
+            details["retry_after"] = json!(30);
+            details["provider"] = json!("listenbrainz");
         }
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&text).unwrap(),

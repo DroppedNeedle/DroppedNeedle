@@ -778,7 +778,8 @@ async fn musicbrainz_outage_falls_back_to_the_library() {
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["error"]["message"], "Internal server error");
+    assert_eq!(body["error"]["code"], "PROVIDER_UNAVAILABLE");
+    assert_eq!(body["error"]["details"]["provider"], "musicbrainz");
     assert_eq!(
         body["error"]["details"]["error_id"],
         headers["x-request-id"].to_str().unwrap()

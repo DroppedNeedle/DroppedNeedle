@@ -66,6 +66,7 @@ impl LiveYouTube {
             YoutubeError::QuotaExhausted => ProviderFailure::Exhausted(
                 "Today's YouTube search quota is used up; it resets at midnight UTC.".to_owned(),
             ),
+            YoutubeError::Provider(error) => ProviderFailure::Provider(error),
             other => ProviderFailure::failed(other.to_string()),
         })
     }

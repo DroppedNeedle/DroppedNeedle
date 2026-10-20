@@ -18,7 +18,7 @@ use super::models::{
     BrainzmashPendingProposal, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
     MusicBrainzSettingsView, MusicBrainzVerifyRequest,
 };
-use super::verify::{VerifyProbes, require_service_url};
+use super::verify::{ProbeVerdict, VerifyProbes, require_service_url};
 use crate::bootstrap::Outbound;
 use droppedneedle_kernel::db::DurableLane;
 use droppedneedle_kernel::runtime_config::sections::is_mb_rate_policy_public_host;
@@ -534,9 +534,7 @@ impl MusicBrainzLifecycle {
                 };
                 let verdict = probes.musicbrainz(&source).await;
                 if !verdict.valid {
-                    return Err(SettingsError::Upstream {
-                        cause: verdict.message,
-                    });
+                    return Err(verify_failed(verdict));
                 }
                 if !self.proposal_is_current(binding) {
                     return Err(SettingsError::Conflict {
@@ -577,12 +575,25 @@ impl MusicBrainzLifecycle {
                 };
                 let verdict = probes.musicbrainz(&source).await;
                 if !verdict.valid {
-                    return Err(SettingsError::Upstream {
-                        cause: verdict.message,
-                    });
+                    return Err(verify_failed(verdict));
                 }
                 self.get()
             }
         }
+    }
+}
+
+/// A failed MusicBrainz probe: an outage answers as the service being
+/// down, with its wait; any other failure keeps the fixed 502.
+fn verify_failed(verdict: ProbeVerdict) -> SettingsError {
+    match verdict.error {
+        Some(error) if error.is_retriable() => SettingsError::ProviderUnavailable {
+            provider: error.source(),
+            retry_after: error.retry_after_secs(),
+            cause: verdict.message,
+        },
+        _ => SettingsError::Upstream {
+            cause: verdict.message,
+        },
     }
 }

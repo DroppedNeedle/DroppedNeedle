@@ -10,6 +10,7 @@ use crate::reads::collections::db::StoreError;
 use crate::reads::discover::ports::{ProviderFailure, YouTubeSource};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_providers::ProviderError;
 use droppedneedle_providers::youtube::utc_date;
 
 use super::models::{
@@ -46,7 +47,10 @@ pub enum LinkError {
     /// Today's search budget is spent. The text is for the user.
     #[error("{0}")]
     Exhausted(String),
-    /// YouTube failed. The text goes to the log only.
+    /// YouTube failed, answered by its kind.
+    #[error("youtube search failed: {0}")]
+    Provider(ProviderError),
+    /// Another source failed. The text goes to the log only.
     #[error("youtube search failed: {0}")]
     Upstream(String),
     /// The database failed.
@@ -57,6 +61,7 @@ pub enum LinkError {
 impl From<ProviderFailure> for LinkError {
     fn from(failure: ProviderFailure) -> Self {
         match failure {
+            ProviderFailure::Provider(error) => Self::Provider(error),
             ProviderFailure::Failed(cause) => Self::Upstream(cause),
             ProviderFailure::NotConfigured(sentence) | ProviderFailure::NotBuilt(sentence) => {
                 Self::NotConfigured(sentence)
@@ -308,7 +313,7 @@ impl YouTubeLinks {
                     video_id,
                 }),
                 Ok(None) => failed.push(failure(&track, NO_VIDEO_FOUND)),
-                Err(ProviderFailure::Failed(cause)) => {
+                Err(cause @ (ProviderFailure::Provider(_) | ProviderFailure::Failed(_))) => {
                     tracing::warn!(%cause, album_id, "youtube track search failed");
                     failed.push(failure(&track, SEARCH_FAILED));
                 }

@@ -3,7 +3,7 @@
 //!
 //! Every route is a plain signed-in-user route that takes `User`.
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, extract::State};
 
 use super::models::{
     CitySearchQuery, CitySearchResponse, ConcertsResponse, EventCitiesResponse, EventCitiesUpdate,
@@ -19,10 +19,7 @@ impl From<ConcertsError> for ApiError {
     fn from(error: ConcertsError) -> Self {
         match error {
             ConcertsError::InvalidInput(message) => ApiError::invalid_input(message),
-            ConcertsError::SearchUnavailable(cause) => ApiError::fault(
-                StatusCode::SERVICE_UNAVAILABLE,
-                format_args!("city search failed: {cause}"),
-            ),
+            ConcertsError::SearchUnavailable(error) => error.into(),
             ConcertsError::Busy(operation) => {
                 ApiError::unavailable(Unavailable::ServerBusy, operation)
             }

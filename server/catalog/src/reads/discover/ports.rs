@@ -4,14 +4,15 @@
 //! ListenBrainz charts, Deezer/iTunes previews, YouTube search, and honest
 //! empty or "not available" answers for the shelves whose builders are not
 //! ported yet. Tests run the fakes. Every fallible method returns a
-//! [`ProviderFailure`]: provider detail stays in the log, never on the
-//! wire.
+//! [`ProviderFailure`]: a provider's typed error, or a local cause that
+//! stays in the log.
 
 use std::collections::HashMap;
 
 pub use futures_util::future::BoxFuture;
 
 use droppedneedle_auth::Principal;
+use droppedneedle_providers::ProviderError;
 
 use crate::reads::discover::models::{
     ChartRange, ChartSection, ChartSource, DiscoverActivityResponse, DiscoverQueuePreview,
@@ -29,7 +30,11 @@ use crate::reads::discover::models::{
 /// Why a port could not answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderFailure {
-    /// A provider or store failed. The string is a log-only cause.
+    /// An outside service failed. It answers by its kind: an outage names
+    /// the service and its wait.
+    Provider(ProviderError),
+    /// A store or another local read failed. The string is a log-only
+    /// cause.
     Failed(String),
     /// The feature needs setup first (a key, an account). The string is a
     /// full sentence for the user.
@@ -43,7 +48,7 @@ pub enum ProviderFailure {
 }
 
 impl ProviderFailure {
-    /// A provider or store failure with a log-only cause.
+    /// A local failure with a log-only cause.
     pub fn failed(cause: impl Into<String>) -> Self {
         Self::Failed(cause.into())
     }
@@ -62,6 +67,7 @@ impl ProviderFailure {
 impl std::fmt::Display for ProviderFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Provider(error) => write!(f, "{error}"),
             Self::Failed(cause) => f.write_str(cause),
             Self::NotConfigured(sentence)
             | Self::NotBuilt(sentence)

@@ -1,11 +1,12 @@
 //! Domain logic over the discover ports: clamping, validation, and
 //! assembly. Services return typed domain failures; handlers map them to
-//! HTTP. Provider causes stay strings so nothing internal leaks.
+//! HTTP. Provider failures stay typed; other causes are log-only strings.
 
 use std::sync::Arc;
 
 use droppedneedle_auth::Principal;
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_providers::ProviderError;
 
 use crate::reads::discover::{
     models::{
@@ -62,7 +63,9 @@ pub enum ServiceError {
     NotFound,
     /// Bad input with a user-facing reason.
     InvalidInput(String),
-    /// A provider failed; the cause is log-only.
+    /// An outside service failed, answered by its kind.
+    Provider(ProviderError),
+    /// Another source failed; the cause is log-only.
     Upstream(String),
     /// The store failed; the cause is log-only.
     Internal(String),
@@ -79,6 +82,7 @@ pub enum ServiceError {
 impl From<ProviderFailure> for ServiceError {
     fn from(failure: ProviderFailure) -> Self {
         match failure {
+            ProviderFailure::Provider(error) => Self::Provider(error),
             ProviderFailure::Failed(cause) => Self::Upstream(cause),
             other => owned_store_failure(other),
         }
@@ -89,6 +93,7 @@ impl From<ProviderFailure> for ServiceError {
 /// fault (500), not a provider fault (502).
 fn owned_store_failure(failure: ProviderFailure) -> ServiceError {
     match failure {
+        ProviderFailure::Provider(error) => ServiceError::Provider(error),
         ProviderFailure::Failed(cause) => ServiceError::Internal(cause),
         ProviderFailure::NotConfigured(sentence) => ServiceError::NotConfigured(sentence),
         ProviderFailure::NotBuilt(sentence) => ServiceError::NotBuilt(sentence),

@@ -260,7 +260,7 @@ fn mb_error(error: ProviderError) -> CatalogError {
         ProviderError::BadRequest { status: 400, .. } => {
             CatalogError::Invalid("MusicBrainz does not accept this id".to_owned())
         }
-        other => CatalogError::Unavailable(other.to_string()),
+        other => CatalogError::Unavailable(other),
     }
 }
 
@@ -268,7 +268,7 @@ fn mb_error(error: ProviderError) -> CatalogError {
 /// rejected query is not an id the caller got wrong, so every failure means
 /// MusicBrainz could not answer.
 fn mb_search_error(error: ProviderError) -> CatalogError {
-    CatalogError::Unavailable(error.to_string())
+    CatalogError::Unavailable(error)
 }
 
 /// Record a MusicBrainz outage in the request's degradation context.

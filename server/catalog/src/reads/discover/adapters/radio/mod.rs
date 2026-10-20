@@ -209,6 +209,9 @@ fn catalog_failure(error: CatalogError) -> RadioFailure {
     match error {
         CatalogError::NotFound => RadioFailure::NotFound,
         CatalogError::Invalid(message) => RadioFailure::Invalid(message),
+        CatalogError::Unavailable(error) => {
+            RadioFailure::Provider(ProviderFailure::Provider(error))
+        }
         other => RadioFailure::Provider(ProviderFailure::failed(format!("radio catalog: {other}"))),
     }
 }

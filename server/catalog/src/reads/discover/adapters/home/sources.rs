@@ -21,7 +21,7 @@ use crate::reads::discover::adapters::queue::sources::{
     ArtistRow, QueueSources, SourceResult, StatsRange, UserMusic,
 };
 use crate::reads::discover::models::WeeklyExploration;
-use crate::reads::discover::ports::BoxFuture;
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::Criticality;
 
@@ -309,7 +309,7 @@ impl HomeSources for LiveSources {
                     .musicbrainz(RequestPriority::UserInitiated)
                     .search_artists_by_tag_from(tag, limit, offset, Criticality::BestEffort)
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(ProviderFailure::Provider)?;
                 let mut seen = std::collections::HashSet::new();
                 Ok(page
                     .items
@@ -347,7 +347,7 @@ impl HomeSources for LiveSources {
                     .musicbrainz(RequestPriority::UserInitiated)
                     .search_release_groups_by_tag(tag, asked, offset, Criticality::BestEffort)
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(ProviderFailure::Provider)?;
                 let mut seen = std::collections::HashSet::new();
                 Ok(page
                     .items

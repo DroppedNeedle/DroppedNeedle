@@ -53,8 +53,11 @@ impl From<OperationError> for ApiError {
             OperationError::NotFound(reason) => refused(StatusCode::NOT_FOUND, reason),
             OperationError::Invalid(reason) => refused(StatusCode::BAD_REQUEST, reason),
             OperationError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
-            OperationError::Unavailable(cause) => ApiError::fault(
-                StatusCode::SERVICE_UNAVAILABLE,
+            OperationError::Unavailable(cause) => ApiError::unavailable(
+                Unavailable::Provider {
+                    provider: "musicbrainz",
+                    retry_after: None,
+                },
                 format!("MusicBrainz release search failed: {cause}"),
             ),
             OperationError::Store(cause) => ApiError::internal(cause),

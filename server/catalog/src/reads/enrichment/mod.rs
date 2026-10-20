@@ -42,7 +42,9 @@ use crate::reads::search::models::{
     EnrichmentSource,
 };
 use crate::reads::search::ports::{EnrichmentPort, MAX_ENRICHMENT_PER_BUCKET};
+use droppedneedle_kernel::error::PROVIDER_UNAVAILABLE;
 use droppedneedle_library::tags::lyrics;
+use droppedneedle_providers::TransportKind;
 use droppedneedle_providers::degradation::{IntegrationStatus as CoreStatus, record_current};
 
 // ---------------------------------------------------------------------------
@@ -156,28 +158,9 @@ pub fn routing(operation: Operation, source: ProviderSource) -> Routing {
 /// Boxed future for dyn-compatible client methods.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// A provider-side failure. The message is for the log only; the wire gets
-/// fixed degradation notes.
-#[derive(Debug, Clone)]
-pub struct ProviderError {
-    /// Source that failed.
-    pub source: &'static str,
-    /// Internal cause, logged, never rendered.
-    pub message: String,
-}
-
-impl ProviderError {
-    /// Build a provider failure from its source and cause.
-    pub fn new(source: &'static str, message: String) -> Self {
-        Self { source, message }
-    }
-}
-
-impl std::fmt::Display for ProviderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} provider failed: {}", self.source, self.message)
-    }
-}
+/// A failed leg: the provider's own typed failure. It is logged; the wire
+/// gets fixed degradation notes.
+pub use droppedneedle_providers::ProviderError;
 
 /// Release-group identity from MusicBrainz.
 #[derive(Debug, Clone)]
@@ -451,10 +434,10 @@ pub async fn with_budget<T>(
 ) -> Result<T, ProviderError> {
     match tokio::time::timeout(budget, leg).await {
         Ok(outcome) => outcome,
-        Err(_) => Err(ProviderError::new(
-            source,
-            format!("exceeded {}s budget", budget.as_secs()),
-        )),
+        Err(_) => Err(ProviderError::Transport {
+            provider: source,
+            kind: TransportKind::Timeout,
+        }),
     }
 }
 
@@ -484,10 +467,13 @@ where
     for handle in handles {
         match handle.await {
             Ok(outcome) => outcomes.push(outcome),
-            Err(join_error) => outcomes.push(Err(ProviderError::new(
-                source,
-                format!("batch leg ended early: {join_error}"),
-            ))),
+            Err(join_error) => {
+                tracing::warn!(source, %join_error, "batch leg ended early");
+                outcomes.push(Err(ProviderError::Transport {
+                    provider: source,
+                    kind: TransportKind::Other,
+                }));
+            }
         }
     }
     outcomes
@@ -507,18 +493,16 @@ pub enum PreferredCounts {
     LastFm,
 }
 
-/// Fixed machine code for a degraded enrichment source.
-const ENRICHMENT_UNAVAILABLE_CODE: &str = "ENRICHMENT_UNAVAILABLE";
 /// Fixed human message for a degraded enrichment source.
-const ENRICHMENT_UNAVAILABLE_MESSAGE: &str = "Enrichment temporarily unavailable";
+const DEGRADED_MESSAGE: &str = "Enrichment temporarily unavailable";
 
 /// One degradation note for a source. Provider detail never reaches the
 /// wire: the code and message are fixed, only the source varies.
 fn degradation_note(source: &str) -> Degradation {
     Degradation {
         source: source.to_owned(),
-        code: ENRICHMENT_UNAVAILABLE_CODE.to_owned(),
-        message: ENRICHMENT_UNAVAILABLE_MESSAGE.to_owned(),
+        code: PROVIDER_UNAVAILABLE.to_owned(),
+        message: DEGRADED_MESSAGE.to_owned(),
     }
 }
 
@@ -682,8 +666,8 @@ impl EnrichmentAggregator {
                 }),
                 Err(error) => {
                     tracing::debug!(
-                        source = error.source,
-                        cause = %error.message,
+                        source = error.source(),
+                        cause = %error,
                         "artist popularity degraded",
                     );
                     record_once(degradations, ProviderSource::ListenBrainz.name());
@@ -763,8 +747,8 @@ impl EnrichmentAggregator {
                 }),
                 Some(Err(error)) => {
                     tracing::debug!(
-                        source = error.source,
-                        cause = %error.message,
+                        source = error.source(),
+                        cause = %error,
                         "artist popularity degraded",
                     );
                     record_once(degradations, ProviderSource::LastFm.name());
@@ -806,8 +790,8 @@ impl EnrichmentAggregator {
             Ok(counts) => counts,
             Err(error) => {
                 tracing::debug!(
-                    source = error.source,
-                    cause = %error.message,
+                    source = error.source(),
+                    cause = %error,
                     "album popularity degraded",
                 );
                 record_once(degradations, ProviderSource::ListenBrainz.name());
@@ -893,8 +877,8 @@ impl EnrichmentAggregator {
                 }),
                 Some(Err(error)) => {
                     tracing::debug!(
-                        source = error.source,
-                        cause = %error.message,
+                        source = error.source(),
+                        cause = %error,
                         "album popularity degraded",
                     );
                     record_once(degradations, ProviderSource::LastFm.name());
@@ -974,8 +958,8 @@ impl EnrichmentAggregator {
                     Routing::IdentityCritical
                 );
                 tracing::debug!(
-                    source = error.source,
-                    cause = %error.message,
+                    source = error.source(),
+                    cause = %error,
                     "album identity unavailable",
                 );
                 return Err(AlbumPageError::IdentityUnavailable {
@@ -989,8 +973,8 @@ impl EnrichmentAggregator {
             Ok(counts) => counts.get(&input.rg_mbid).copied(),
             Err(error) => {
                 tracing::debug!(
-                    source = error.source,
-                    cause = %error.message,
+                    source = error.source(),
+                    cause = %error,
                     "album popularity degraded",
                 );
                 record_once(&mut degradations, ProviderSource::ListenBrainz.name());
@@ -1003,8 +987,8 @@ impl EnrichmentAggregator {
             Some(Ok(None)) => (None, Vec::new()),
             Some(Err(error)) => {
                 tracing::debug!(
-                    source = error.source,
-                    cause = %error.message,
+                    source = error.source(),
+                    cause = %error,
                     "album prose degraded",
                 );
                 record_once(&mut degradations, ProviderSource::LastFm.name());
@@ -1036,8 +1020,8 @@ impl EnrichmentAggregator {
             Ok(lookup) => lookup,
             Err(error) => {
                 tracing::debug!(
-                    source = error.source,
-                    cause = %error.message,
+                    source = error.source(),
+                    cause = %error,
                     "lyrics degraded",
                 );
                 return LyricsOutcome {
@@ -1081,8 +1065,8 @@ impl EnrichmentAggregator {
             Ok(cities) => cities,
             Err(error) => {
                 tracing::debug!(
-                    source = error.source,
-                    cause = %error.message,
+                    source = error.source(),
+                    cause = %error,
                     "events degraded",
                 );
                 return EventsOutcome {
@@ -1107,8 +1091,8 @@ impl EnrichmentAggregator {
             Ok(concerts) => concerts,
             Err(error) => {
                 tracing::debug!(
-                    source = error.source,
-                    cause = %error.message,
+                    source = error.source(),
+                    cause = %error,
                     "events degraded",
                 );
                 return EventsOutcome {
@@ -1423,8 +1407,8 @@ impl LyricsPort for ProviderLyrics {
                 Ok(lookup) => lookup,
                 Err(error) => {
                     tracing::debug!(
-                        source = error.source,
-                        cause = %error.message,
+                        source = error.source(),
+                        cause = %error,
                         "provider lyrics degraded to absence",
                     );
                     record_current(ProviderSource::Lrclib.name(), CoreStatus::Error, false);

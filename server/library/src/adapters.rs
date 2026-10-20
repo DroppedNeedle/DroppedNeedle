@@ -503,7 +503,7 @@ fn mb_contrib_error(error: ProviderError) -> ContribError {
     match error {
         error if mb_unanswered(&error) => {
             tracing::warn!(%error, "MusicBrainz contribution read failed");
-            ContribError::ProviderUnavailable
+            ContribError::ProviderUnavailable(error)
         }
         other => {
             tracing::warn!(error = %other, "MusicBrainz contribution payload unusable");
@@ -817,10 +817,14 @@ impl LiveDiscogsContrib {
     /// The priority to send at, or "unavailable" when a display read would
     /// have to wait.
     fn turn(&self, priority: RequestPriority) -> Result<RequestPriority, ContribError> {
-        if priority == RequestPriority::PrefetchVisible
-            && !self.client.limiter().retry_after(1).is_zero()
-        {
-            return Err(ContribError::DiscogsUnavailable);
+        let wait = self.client.limiter().retry_after(1);
+        if priority == RequestPriority::PrefetchVisible && !wait.is_zero() {
+            return Err(ContribError::DiscogsUnavailable(
+                ProviderError::RateLimited {
+                    provider: "discogs",
+                    retry_after: Some(wait),
+                },
+            ));
         }
         Ok(RequestPriority::UserInitiated)
     }
@@ -832,7 +836,7 @@ impl LiveDiscogsContrib {
 fn discogs_error(error: ProviderError) -> ContribError {
     if error.is_retriable() {
         tracing::warn!(%error, "Discogs unavailable");
-        ContribError::DiscogsUnavailable
+        ContribError::DiscogsUnavailable(error)
     } else {
         tracing::warn!(%error, "Discogs answered with data it could not use");
         ContribError::DiscogsUnusable

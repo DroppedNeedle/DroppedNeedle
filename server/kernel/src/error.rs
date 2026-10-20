@@ -48,8 +48,14 @@ pub const REMOTE_UNAVAILABLE: &str = "REMOTE_UNAVAILABLE";
 pub const UPSTREAM_REFUSED: &str = "UPSTREAM_REFUSED";
 /// GitHub is rate limiting plugin installs from this server.
 pub const UPSTREAM_RATE_LIMITED: &str = "UPSTREAM_RATE_LIMITED";
-/// A downstream service failed. Body is fixed; the cause stays in the log.
+/// GitHub could not be reached during a plugin install or update.
 pub const UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
+/// An outside service (MusicBrainz, Last.fm, ...) is down, rate limiting
+/// or unreachable. `details.provider` names it.
+pub const PROVIDER_UNAVAILABLE: &str = "PROVIDER_UNAVAILABLE";
+/// An outside service needs a key or account first, or refused the one
+/// saved (409). `details.provider` names it.
+pub const PROVIDER_NOT_CONFIGURED: &str = "PROVIDER_NOT_CONFIGURED";
 
 /// User-facing 404 message, kept from v2.
 pub const NOT_FOUND_MESSAGE: &str = "Not found";
@@ -98,6 +104,13 @@ pub enum Unavailable {
     },
     /// GitHub could not be reached during a plugin install or update.
     UpstreamError,
+    /// An outside service is down, rate limiting or unreachable.
+    Provider {
+        /// The service's lowercase key (`musicbrainz`, `lastfm`, ...).
+        provider: &'static str,
+        /// Seconds until it takes requests again, when it said.
+        retry_after: Option<u64>,
+    },
 }
 
 /// What one [`Unavailable`] answers: everything the boundary writes.
@@ -113,11 +126,17 @@ pub struct UnavailableAnswer {
     pub retry_after: Option<u64>,
     /// Whether `retry_after` is also repeated in `details.retry_after`.
     pub retry_after_in_details: bool,
+    /// The outside service named in `details.provider`, when there is one.
+    pub provider: Option<&'static str>,
 }
 
 impl Unavailable {
     /// Status, code, sentence and headers of this answer.
     pub fn answer(&self) -> UnavailableAnswer {
+        let provider = match *self {
+            Self::Provider { provider, .. } => Some(provider),
+            _ => None,
+        };
         let (status, code, sentence, retry_after, retry_after_in_details) = match *self {
             Self::ServerBusy => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -154,6 +173,13 @@ impl Unavailable {
                 None,
                 false,
             ),
+            Self::Provider { retry_after, .. } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                PROVIDER_UNAVAILABLE,
+                "An outside service is not answering. Try again later.",
+                retry_after,
+                true,
+            ),
         };
         UnavailableAnswer {
             status,
@@ -161,6 +187,7 @@ impl Unavailable {
             sentence,
             retry_after,
             retry_after_in_details,
+            provider,
         }
     }
 }
@@ -171,6 +198,9 @@ impl UnavailableAnswer {
         let mut details = serde_json::Map::new();
         if let Some(error_id) = error_id {
             details.insert("error_id".to_owned(), json!(error_id));
+        }
+        if let Some(provider) = self.provider {
+            details.insert("provider".to_owned(), json!(provider));
         }
         if self.retry_after_in_details
             && let Some(seconds) = self.retry_after
@@ -264,6 +294,13 @@ impl ApiError {
     /// 409 `CONFLICT`. The message is shown to the user.
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, CONFLICT, message)
+    }
+
+    /// 409 `PROVIDER_NOT_CONFIGURED`, naming the outside service in
+    /// `details.provider`. The message is shown to the user.
+    pub fn provider_not_configured(provider: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, PROVIDER_NOT_CONFIGURED, message)
+            .with_details(json!({ "provider": provider }))
     }
 
     /// 403 `FORBIDDEN`.

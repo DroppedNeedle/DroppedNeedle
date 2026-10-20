@@ -321,6 +321,7 @@ impl From<LinkError> for ApiError {
             LinkError::Exhausted(message) => {
                 ApiError::new(StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED, message)
             }
+            LinkError::Provider(error) => error.into(),
             LinkError::Upstream(cause) => ApiError::fault(StatusCode::BAD_GATEWAY, cause),
             LinkError::Store(StoreError::Busy(operation)) => {
                 ApiError::unavailable(Unavailable::ServerBusy, operation)

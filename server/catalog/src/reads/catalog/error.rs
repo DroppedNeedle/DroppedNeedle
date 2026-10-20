@@ -1,13 +1,14 @@
 //! Catalog errors and their one mapping onto [`ApiError`].
 //!
 //! [`CatalogError`] is the service-layer error; its `From` impl is the only
-//! place it becomes a status. Client faults carry a safe message; server
-//! and upstream faults keep their status with the fixed body, the cause
-//! going to the log only.
+//! place it becomes a status. Client faults carry a safe message; a
+//! MusicBrainz failure answers by its kind; server faults keep their status
+//! with the fixed body, the cause going to the log only.
 
 use axum::http::StatusCode;
 
 use droppedneedle_kernel::error::{ApiError, NOT_FOUND};
+use droppedneedle_providers::ProviderError;
 
 /// What can go wrong building a catalog page.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -22,9 +23,10 @@ pub enum CatalogError {
     /// what.
     #[error("missing: {0}")]
     Missing(String),
-    /// MusicBrainz could not answer and the library has no copy to show.
+    /// MusicBrainz failed and the library has no copy to show. It answers
+    /// by its kind: an outage is 503 `PROVIDER_UNAVAILABLE`.
     #[error("musicbrainz unavailable: {0}")]
-    Unavailable(String),
+    Unavailable(ProviderError),
     /// A local read failed.
     #[error("internal: {0}")]
     Internal(String),
@@ -45,9 +47,7 @@ impl From<CatalogError> for ApiError {
             CatalogError::Missing(message) => {
                 ApiError::new(StatusCode::NOT_FOUND, NOT_FOUND, message)
             }
-            CatalogError::Unavailable(cause) => {
-                ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
-            }
+            CatalogError::Unavailable(error) => error.into(),
             CatalogError::Internal(cause) => ApiError::internal(cause),
         }
     }

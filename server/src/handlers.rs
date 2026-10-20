@@ -94,7 +94,8 @@ pub mod test_hooks {
     }
 
     /// One closed-list answer, picked by its code, with the leak markers in
-    /// its cause. The GitHub rate limit says 42 seconds.
+    /// its cause. The GitHub rate limit says 42 seconds, the provider
+    /// outage 30.
     pub async fn unavailable(Path(code): Path<String>) -> ApiError {
         let variant = match code.as_str() {
             "SERVER_BUSY" => Unavailable::ServerBusy,
@@ -104,6 +105,10 @@ pub mod test_hooks {
                 retry_after: Some(42),
             },
             "UPSTREAM_ERROR" => Unavailable::UpstreamError,
+            "PROVIDER_UNAVAILABLE" => Unavailable::Provider {
+                provider: "listenbrainz",
+                retry_after: Some(30),
+            },
             _ => return ApiError::not_found(),
         };
         ApiError::unavailable(variant, leaky_cause())

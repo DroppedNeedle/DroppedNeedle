@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Lane;
+use droppedneedle_providers::ProviderError;
 use droppedneedle_providers::slots::RequestPriority;
 use sha2::{Digest as _, Sha256};
 
@@ -1269,7 +1270,13 @@ fn map_draft_error(error: DraftError) -> ContribError {
 
 fn provider_failure_to_contrib(failure: ProviderFailure) -> ContribError {
     match failure {
-        ProviderFailure::Unavailable { .. } => ContribError::ProviderUnavailable,
+        ProviderFailure::Unavailable {
+            retry_after_seconds,
+        } => ContribError::ProviderUnavailable(ProviderError::Unavailable {
+            provider: "musicbrainz",
+            retry_after: retry_after_seconds
+                .and_then(|seconds| std::time::Duration::try_from_secs_f64(seconds).ok()),
+        }),
         ProviderFailure::Unmappable => ContribError::ProviderUnmappable,
     }
 }

@@ -2,9 +2,8 @@
 //! aggregator traits, live where credentials and persistence allow and
 //! unconfigured stubs that report the gap elsewhere.
 //!
-//! The `From` impls map
-//! core provider failures and statuses onto the enrichment leg types; the
-//! aggregator keeps its own leg error and converts at the boundary.
+//! A failed leg is the provider's own [`ProviderError`]; the `From`
+//! impls here only translate integration statuses.
 
 use std::sync::Arc;
 
@@ -15,18 +14,10 @@ use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
 use droppedneedle_providers::{
     Providers, RequestPriority,
     degradation::IntegrationStatus as CoreStatus,
-    error::ProviderError as CoreError,
+    error::ProviderError,
     listenbrainz::{ListenBrainzClient, ListenBrainzCredentials},
     lrclib::LrclibClient,
 };
-
-impl From<CoreError> for enrich::ProviderError {
-    /// Translate a typed core failure into an enrichment leg failure,
-    /// keeping the source key and the human-readable cause.
-    fn from(error: CoreError) -> Self {
-        Self::new(error.source(), error.to_string())
-    }
-}
 
 impl From<CoreStatus> for enrich::IntegrationStatus {
     fn from(status: CoreStatus) -> Self {
@@ -118,9 +109,10 @@ impl LiveListenBrainz {
         self.settings.as_ref().is_none_or(listenbrainz_on)
     }
 
-    fn switched_off(&self) -> Option<enrich::ProviderError> {
-        (!self.enabled()).then(|| {
-            enrich::ProviderError::new("listenbrainz", "listenbrainz is switched off".to_owned())
+    fn switched_off(&self) -> Option<ProviderError> {
+        (!self.enabled()).then(|| ProviderError::Disabled {
+            provider: "listenbrainz",
+            message: "switched off in Settings".to_owned(),
         })
     }
 }
@@ -134,7 +126,7 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
         &'a self,
         mbid: &'a str,
         count: usize,
-    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::TopRelease>, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::TopRelease>, ProviderError>> {
         Box::pin(async move {
             if let Some(off) = self.switched_off() {
                 return Err(off);
@@ -157,17 +149,15 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
     fn release_group_popularity_batch<'a>(
         &'a self,
         mbids: &'a [String],
-    ) -> enrich::BoxFuture<'a, Result<std::collections::HashMap<String, i64>, enrich::ProviderError>>
-    {
+    ) -> enrich::BoxFuture<'a, Result<std::collections::HashMap<String, i64>, ProviderError>> {
         Box::pin(async move {
             if let Some(off) = self.switched_off() {
                 return Err(off);
             }
             let creds = ListenBrainzCredentials::default();
-            Ok(self
-                .client
+            self.client
                 .release_group_popularity(mbids, &creds, RequestPriority::UserInitiated)
-                .await?)
+                .await
         })
     }
 }
@@ -194,7 +184,7 @@ impl enrich::LyricsClient for LiveLrclib {
     fn exact_lyrics<'a>(
         &'a self,
         query: &'a enrich::LyricsQuery,
-    ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, ProviderError>> {
         Box::pin(async move {
             let duration = query
                 .duration_secs
@@ -237,7 +227,7 @@ impl enrich::LyricsClient for LiveLrclib {
                         synced,
                     })
                 }
-                Err(error) => Err(error.into()),
+                Err(error) => Err(error),
             }
         })
     }
@@ -258,25 +248,24 @@ impl enrich::ListenBrainzClient for UnconfiguredListenBrainz {
         &'a self,
         _mbid: &'a str,
         _count: usize,
-    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::TopRelease>, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::TopRelease>, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "listenbrainz",
-                "listenbrainz is not configured".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "listenbrainz",
+                message: "no connection is set up".to_owned(),
+            })
         })
     }
 
     fn release_group_popularity_batch<'a>(
         &'a self,
         _mbids: &'a [String],
-    ) -> enrich::BoxFuture<'a, Result<std::collections::HashMap<String, i64>, enrich::ProviderError>>
-    {
+    ) -> enrich::BoxFuture<'a, Result<std::collections::HashMap<String, i64>, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "listenbrainz",
-                "listenbrainz is not configured".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "listenbrainz",
+                message: "no connection is set up".to_owned(),
+            })
         })
     }
 }
@@ -297,13 +286,12 @@ impl enrich::LastFmClient for UnconfiguredLastFm {
         &'a self,
         _name: &'a str,
         _mbid: &'a str,
-    ) -> enrich::BoxFuture<'a, Result<Option<enrich::LastFmArtistInfo>, enrich::ProviderError>>
-    {
+    ) -> enrich::BoxFuture<'a, Result<Option<enrich::LastFmArtistInfo>, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "lastfm",
-                "lastfm needs per-user credentials the port cannot supply".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "lastfm",
+                message: "it needs per-user credentials the port cannot supply".to_owned(),
+            })
         })
     }
 
@@ -312,12 +300,12 @@ impl enrich::LastFmClient for UnconfiguredLastFm {
         _artist: &'a str,
         _album: &'a str,
         _mbid: Option<&'a str>,
-    ) -> enrich::BoxFuture<'a, Result<Option<enrich::LastFmAlbumInfo>, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<Option<enrich::LastFmAlbumInfo>, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "lastfm",
-                "lastfm needs per-user credentials the port cannot supply".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "lastfm",
+                message: "it needs per-user credentials the port cannot supply".to_owned(),
+            })
         })
     }
 }
@@ -333,24 +321,24 @@ impl enrich::MusicBrainzClient for UnconfiguredMusicBrainz {
     fn release_group<'a>(
         &'a self,
         _mbid: &'a str,
-    ) -> enrich::BoxFuture<'a, Result<enrich::ReleaseGroupCore, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<enrich::ReleaseGroupCore, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "musicbrainz",
-                "musicbrainz identity is not wired to a route".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "musicbrainz",
+                message: "identity reads are not wired to a route".to_owned(),
+            })
         })
     }
 
     fn artist_core<'a>(
         &'a self,
         _mbid: &'a str,
-    ) -> enrich::BoxFuture<'a, Result<enrich::ArtistCore, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<enrich::ArtistCore, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "musicbrainz",
-                "musicbrainz identity is not wired to a route".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "musicbrainz",
+                message: "identity reads are not wired to a route".to_owned(),
+            })
         })
     }
 }
@@ -366,24 +354,24 @@ impl enrich::EventsClient for UnconfiguredEvents {
     fn concerts_for_user<'a>(
         &'a self,
         _user_id: &'a str,
-    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::UserConcert>, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::UserConcert>, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "events",
-                "events feed has no persistence behind it".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "events",
+                message: "the feed has no persistence behind it".to_owned(),
+            })
         })
     }
 
     fn cities<'a>(
         &'a self,
         _user_id: &'a str,
-    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::EventCity>, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::EventCity>, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "events",
-                "events feed has no persistence behind it".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "events",
+                message: "the feed has no persistence behind it".to_owned(),
+            })
         })
     }
 }
@@ -419,7 +407,7 @@ impl enrich::LyricsClient for SwitchedLyrics {
     fn exact_lyrics<'a>(
         &'a self,
         query: &'a enrich::LyricsQuery,
-    ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, ProviderError>> {
         if lyrics_on(&self.settings) {
             self.live.exact_lyrics(query)
         } else {
@@ -438,12 +426,12 @@ impl enrich::LyricsClient for UnconfiguredLyrics {
     fn exact_lyrics<'a>(
         &'a self,
         _query: &'a enrich::LyricsQuery,
-    ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, enrich::ProviderError>> {
+    ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, ProviderError>> {
         Box::pin(async move {
-            Err(enrich::ProviderError::new(
-                "lrclib",
-                "lrclib is not configured".to_owned(),
-            ))
+            Err(ProviderError::NotConfigured {
+                provider: "lrclib",
+                message: "lyrics are switched off in Settings".to_owned(),
+            })
         })
     }
 }
@@ -524,17 +512,6 @@ mod tests {
     }
 
     #[test]
-    fn core_error_maps_to_a_leg_error_with_its_source() {
-        let leg: enrich::ProviderError = CoreError::NotFound { provider: "lastfm" }.into();
-        assert_eq!(leg.source, "lastfm");
-        assert!(
-            leg.message.contains("404"),
-            "cause survives: {}",
-            leg.message
-        );
-    }
-
-    #[test]
     fn statuses_translate_both_ways() {
         assert_eq!(
             enrich::IntegrationStatus::from(CoreStatus::Degraded),
@@ -562,22 +539,22 @@ mod tests {
             .artist_top_release_groups("mbid", 1)
             .await
             .expect_err("unconfigured popularity errors");
-        assert_eq!(error.source, "listenbrainz");
+        assert_eq!(error.source(), "listenbrainz");
         let error = UnconfiguredLastFm
             .artist_info("name", "mbid")
             .await
             .expect_err("unconfigured lastfm errors");
-        assert_eq!(error.source, "lastfm");
+        assert_eq!(error.source(), "lastfm");
         let error = UnconfiguredMusicBrainz
             .release_group("mbid")
             .await
             .expect_err("unconfigured identity errors");
-        assert_eq!(error.source, "musicbrainz");
+        assert_eq!(error.source(), "musicbrainz");
         let error = UnconfiguredEvents
             .cities("user")
             .await
             .expect_err("unconfigured feed errors");
-        assert_eq!(error.source, "events");
+        assert_eq!(error.source(), "events");
     }
 
     #[tokio::test]
@@ -675,7 +652,7 @@ mod tests {
             .artist_top_release_groups("artist-mbid", 5)
             .await
             .expect_err("dead upstream errors");
-        assert_eq!(error.source, "listenbrainz");
+        assert_eq!(error.source(), "listenbrainz");
     }
 
     #[tokio::test]
@@ -741,14 +718,14 @@ mod tests {
             duration_secs: Some(284.0),
         };
         let off = role.exact_lyrics(&query).await.unwrap_err();
-        assert_eq!(off.message, "lrclib is not configured");
+        assert!(matches!(off, ProviderError::NotConfigured { .. }), "{off}");
         store
             .save_blocking(LyricsSettings { enabled: true })
             .unwrap();
         let on = role.exact_lyrics(&query).await.unwrap_err();
-        assert_ne!(
-            on.message, "lrclib is not configured",
-            "switching on dials out"
+        assert!(
+            !matches!(on, ProviderError::NotConfigured { .. }),
+            "switching on dials out: {on}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

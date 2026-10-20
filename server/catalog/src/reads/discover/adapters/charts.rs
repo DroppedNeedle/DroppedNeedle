@@ -304,7 +304,7 @@ fn lastfm_period(range: ChartRange) -> &'static str {
 
 /// The rows, or the provider failure.
 fn rows<T>(result: Result<Vec<T>, ProviderError>) -> Result<Vec<T>, ProviderFailure> {
-    result.map_err(|error| ProviderFailure::failed(error.to_string()))
+    result.map_err(ProviderFailure::Provider)
 }
 
 /// The Last.fm counterpart of [`rows`], skipping the earlier pages.

@@ -40,6 +40,8 @@ pub struct ProbeVerdict {
     pub valid: bool,
     /// Human summary.
     pub message: String,
+    /// The provider's own failure, when a provider call failed.
+    pub error: Option<ProviderError>,
 }
 
 impl ProbeVerdict {
@@ -48,6 +50,7 @@ impl ProbeVerdict {
         Self {
             valid: true,
             message: message.into(),
+            error: None,
         }
     }
 
@@ -56,6 +59,15 @@ impl ProbeVerdict {
         Self {
             valid: false,
             message: message.into(),
+            error: None,
+        }
+    }
+
+    /// Failing verdict from a provider call that failed with `error`.
+    pub fn provider_failed(message: impl Into<String>, error: ProviderError) -> Self {
+        Self {
+            error: Some(error),
+            ..Self::failed(message)
         }
     }
 }
@@ -787,7 +799,7 @@ impl VerifyProbes for LiveProbes {
                 .await;
             match checked {
                 Ok(()) => ProbeVerdict::ok("Connected to MusicBrainz."),
-                Err(error) => ProbeVerdict::failed(
+                Err(error) => ProbeVerdict::provider_failed(
                     asked_to_wait("MusicBrainz", &error)
                         .or_else(|| {
                             status_of(&error).map(|status| {
@@ -795,6 +807,7 @@ impl VerifyProbes for LiveProbes {
                             })
                         })
                         .unwrap_or_else(|| "Could not connect to MusicBrainz.".to_owned()),
+                    error,
                 ),
             }
         })

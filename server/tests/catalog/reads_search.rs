@@ -384,7 +384,7 @@ async fn enrich_failure_degrades_inside_a_200() {
         response["degradations"],
         serde_json::json!([{
             "source": "listenbrainz",
-            "code": "ENRICHMENT_UNAVAILABLE",
+            "code": "PROVIDER_UNAVAILABLE",
             "message": "Enrichment temporarily unavailable",
         }])
     );

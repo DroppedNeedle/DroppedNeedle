@@ -53,6 +53,16 @@ pub enum SettingsError {
         /// What went wrong, for the log only.
         cause: String,
     },
+    /// An outside service is down, rate limiting or unreachable (503
+    /// `PROVIDER_UNAVAILABLE`).
+    ProviderUnavailable {
+        /// The service's lowercase key.
+        provider: &'static str,
+        /// Seconds until it takes requests again, when it said.
+        retry_after: Option<u64>,
+        /// What went wrong, for the log only.
+        cause: String,
+    },
     /// A backend this route needs is unwired (503).
     Unavailable {
         /// Which backend is missing, for the log only.
@@ -108,6 +118,7 @@ impl std::fmt::Display for SettingsError {
             | Self::Dropped { message }
             | Self::RateLimited { message } => f.write_str(message),
             Self::Upstream { cause }
+            | Self::ProviderUnavailable { cause, .. }
             | Self::Unavailable { cause }
             | Self::Busy { cause }
             | Self::Internal { cause } => f.write_str(cause),
@@ -130,6 +141,17 @@ impl From<SettingsError> for ApiError {
                 ApiError::new(StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED, message)
             }
             SettingsError::Upstream { cause } => ApiError::fault(StatusCode::BAD_GATEWAY, cause),
+            SettingsError::ProviderUnavailable {
+                provider,
+                retry_after,
+                cause,
+            } => ApiError::unavailable(
+                Unavailable::Provider {
+                    provider,
+                    retry_after,
+                },
+                cause,
+            ),
             SettingsError::Unavailable { cause } => {
                 ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
             }

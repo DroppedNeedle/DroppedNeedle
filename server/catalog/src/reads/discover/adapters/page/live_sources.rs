@@ -21,7 +21,7 @@ use crate::reads::discover::adapters::queue::live_sources::{
 use crate::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistRow, QueueSources, SourceResult, StatsRange,
 };
-use crate::reads::discover::ports::BoxFuture;
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use droppedneedle_media::remotes::connections::ResolveError;
 use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
 use droppedneedle_media::remotes::models::SourceName;
@@ -502,7 +502,7 @@ impl PageSources for LiveSources {
                     .musicbrainz(RequestPriority::BackgroundSync)
                     .search_artists_by_tag(tag, limit, Criticality::BestEffort)
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(ProviderFailure::Provider)?;
                 Ok(page
                     .items
                     .into_iter()
@@ -528,7 +528,7 @@ impl PageSources for LiveSources {
             let resolved = match self.jellyfin.resolve(user_id, SourceName::Jellyfin).await {
                 Ok(resolved) => resolved,
                 Err(ResolveError::NotConfigured) => return Ok(Vec::new()),
-                Err(error) => return Err(error.to_string()),
+                Err(error) => return Err(ProviderFailure::failed(error.to_string())),
             };
             let adapter = JellyfinAdapter::new(
                 self.http.clone(),
@@ -539,7 +539,7 @@ impl PageSources for LiveSources {
             let rows = adapter
                 .most_played_artist_plays(i64::from(limit))
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| ProviderFailure::failed(error.to_string()))?;
             Ok(rows
                 .into_iter()
                 .map(|row| PlayedArtist {

@@ -6,9 +6,16 @@
 //! and transport failures may be retried; everything else is the same on
 //! every attempt. Payload failures and intended switch-offs never count as
 //! an outage: the service answered.
+//!
+//! A handler answers a provider failure through `From<ProviderError> for
+//! ApiError`, the one place it meets a status: an outage is 503
+//! `PROVIDER_UNAVAILABLE` naming the service and its wait, a missing or
+//! refused key 409 `PROVIDER_NOT_CONFIGURED`, a 404 is absence, and
+//! anything else is our fault, the fixed internal error.
 
 use std::time::Duration;
 
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use thiserror::Error;
 
 /// The longest wait most providers may ask for; a provider's spec names
@@ -238,6 +245,15 @@ impl ProviderError {
         }
     }
 
+    /// [`retry_after`](Self::retry_after) in whole seconds for a
+    /// `Retry-After` header: rounded up and at least one, so a client never
+    /// asks early.
+    #[must_use]
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        self.retry_after()
+            .map(|wait| (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1))
+    }
+
     /// Whether this failure counts against the provider's shared circuit
     /// breaker. Deterministic failures (payload shape, intended switch-off,
     /// bad request shape, auth, absence, missing configuration) never trip
@@ -255,6 +271,68 @@ impl ProviderError {
             self,
             Self::Payload { .. } | Self::Disabled { .. } | Self::Invalid { .. }
         )
+    }
+}
+
+/// The name a person knows a provider by, for messages.
+#[must_use]
+pub fn display_name(provider: &'static str) -> &'static str {
+    match provider {
+        "musicbrainz" => "MusicBrainz",
+        "brainzmash" => "BrainzMash",
+        "listenbrainz" => "ListenBrainz",
+        "lastfm" => "Last.fm",
+        "coverartarchive" => "Cover Art Archive",
+        "audiodb" => "TheAudioDB",
+        "acoustid" => "AcoustID",
+        "discogs" => "Discogs",
+        "itunes" => "iTunes",
+        "deezer" => "Deezer",
+        "lrclib" => "LRCLIB",
+        "wikidata" => "Wikidata",
+        "youtube" => "YouTube",
+        "ticketmaster" => "Ticketmaster",
+        "skiddle" => "Skiddle",
+        "geocoding" => "Open-Meteo",
+        "github" => "GitHub",
+        other => other,
+    }
+}
+
+impl From<ProviderError> for ApiError {
+    fn from(error: ProviderError) -> Self {
+        let provider = error.source();
+        match error {
+            ProviderError::RateLimited { .. }
+            | ProviderError::Unavailable { .. }
+            | ProviderError::Server { .. }
+            | ProviderError::Transport { .. }
+            | ProviderError::Disabled { .. } => {
+                let retry_after = error.retry_after_secs();
+                ApiError::unavailable(
+                    Unavailable::Provider {
+                        provider,
+                        retry_after,
+                    },
+                    error,
+                )
+            }
+            ProviderError::NotConfigured { .. } => ApiError::provider_not_configured(
+                provider,
+                format!("{} is not set up.", display_name(provider)),
+            ),
+            ProviderError::Unauthorized { .. } | ProviderError::Forbidden { .. } => {
+                ApiError::provider_not_configured(
+                    provider,
+                    format!("{} refused the saved key.", display_name(provider)),
+                )
+            }
+            ProviderError::NotFound { .. } => ApiError::not_found(),
+            ProviderError::BadRequest { .. }
+            | ProviderError::Redirect { .. }
+            | ProviderError::Payload { .. }
+            | ProviderError::Invalid { .. } => ApiError::internal(error),
+        }
     }
 }
 

@@ -84,9 +84,9 @@ pub(in crate::reads::discover::adapters) fn is_various_artists(mbid: Option<&str
 }
 
 /// Log a failed read and carry on with an empty answer.
-pub(in crate::reads::discover::adapters) fn or_empty<T: Default>(
+pub(in crate::reads::discover::adapters) fn or_empty<T: Default, E: std::fmt::Display>(
     what: &str,
-    result: SourceResult<T>,
+    result: Result<T, E>,
 ) -> T {
     result.unwrap_or_else(|cause| {
         tracing::warn!(read = what, %cause, "discover queue read failed; skipping it");

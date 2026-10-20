@@ -123,9 +123,14 @@ pub struct MusicBrainzCallbackQuery {
 
 impl From<ContribError> for ApiError {
     fn from(error: ContribError) -> Self {
-        if let ContribError::Busy(cause) = &error {
-            return ApiError::unavailable(Unavailable::ServerBusy, cause);
-        }
+        let error = match error {
+            ContribError::Busy(cause) => {
+                return ApiError::unavailable(Unavailable::ServerBusy, cause);
+            }
+            ContribError::ProviderUnavailable(provider)
+            | ContribError::DiscogsUnavailable(provider) => return provider.into(),
+            other => other,
+        };
         let status = match &error {
             ContribError::ContributionNotFound
             | ContribError::AlbumNotFound
@@ -137,8 +142,8 @@ impl From<ContribError> for ApiError {
             | ContribError::DuplicateCheckRequired(_)
             | ContribError::ExactDuplicate(_)
             | ContribError::ResultMismatch(_) => StatusCode::CONFLICT,
-            ContribError::ProviderUnavailable
-            | ContribError::DiscogsUnavailable
+            ContribError::ProviderUnavailable(_)
+            | ContribError::DiscogsUnavailable(_)
             | ContribError::Busy(_) => StatusCode::SERVICE_UNAVAILABLE,
             ContribError::ProviderUnmappable | ContribError::DiscogsUnusable => {
                 StatusCode::BAD_GATEWAY

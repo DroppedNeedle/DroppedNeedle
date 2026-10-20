@@ -10,10 +10,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::reads::discover::ports::BoxFuture;
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 
-/// A read that can fail with a log-only cause.
-pub type SourceResult<T> = Result<T, String>;
+/// A read that can fail: a provider's own error, or a log-only cause.
+pub type SourceResult<T> = Result<T, ProviderFailure>;
 
 /// Which listening service a user's discovery follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

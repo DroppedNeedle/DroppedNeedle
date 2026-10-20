@@ -117,17 +117,17 @@ struct Tracker {
 
 impl Tracker {
     /// Run one read under the task bound. `None` when it failed.
-    async fn run<T>(
+    async fn run<T, E: std::fmt::Display>(
         &self,
         key: &'static str,
-        read: impl Future<Output = Result<T, String>>,
+        read: impl Future<Output = Result<T, E>>,
     ) -> Option<T> {
         if let Ok(mut attempted) = self.attempted.lock() {
             attempted.push(key);
         }
         let outcome = match tokio::time::timeout(TASK_TIMEOUT, read).await {
             Ok(Ok(value)) => return Some(value),
-            Ok(Err(cause)) => cause,
+            Ok(Err(cause)) => cause.to_string(),
             Err(_) => "timed out".to_owned(),
         };
         tracing::warn!(task = key, cause = %outcome, "discover read failed; its shelves stay empty");

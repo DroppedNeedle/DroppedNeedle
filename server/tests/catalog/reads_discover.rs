@@ -322,6 +322,62 @@ async fn failing_providers_keep_their_status_with_the_fixed_body() {
     }
 }
 
+/// Start a stand-in for every outside service that answers each call 503
+/// with `Retry-After: 30` and the leak markers in its body.
+async fn outage_stub() -> (String, tokio::task::JoinHandle<()>) {
+    let stub = Router::new().fallback(|| async {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [("retry-after", "30")],
+            leak_cause(),
+        )
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+    (origin, server)
+}
+
+#[tokio::test]
+async fn a_provider_outage_names_the_service_and_its_wait() {
+    // Through the full app: ListenBrainz answers the trending chart 503
+    // with Retry-After: 30. The client hears which service is down and how
+    // long to wait, with the request id and nothing of the provider's body.
+    let (origin, server) = outage_stub().await;
+    let app =
+        TestApp::start_with("reads-discover-outage", crate::common::outbound_at(&origin)).await;
+    let user = app.login_user("outage").await;
+    let (status, headers, bytes) = app
+        .raw(
+            "GET",
+            "/api/v3/home/trending/artists?source=listenbrainz",
+            &[
+                ("authorization", user.authorization.as_str()),
+                ("x-request-id", "outage-1"),
+            ],
+            None,
+        )
+        .await;
+    let text = String::from_utf8(bytes).unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert_eq!(headers["retry-after"], "30");
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap(),
+        json!({"error": {
+            "code": "PROVIDER_UNAVAILABLE",
+            "message": "An outside service is not answering. Try again later.",
+            "details": {"error_id": "outage-1", "provider": "listenbrainz", "retry_after": 30},
+        }}),
+    );
+    for marker in LEAK_MARKERS {
+        assert!(!text.contains(marker), "leaked {marker}");
+    }
+    app.stop().await;
+    server.abort();
+}
+
 /// Your-top charts are fetched for the calling user only.
 #[tokio::test]
 async fn your_top_is_per_user() {
