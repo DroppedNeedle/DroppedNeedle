@@ -100,23 +100,17 @@ const SEARCH: &str = "youtube/youtube/v3/search";
 // Geocoding
 // ---------------------------------------------------------------------------
 
-/// Live-verified 2026-07-06 shape: `?name=Liverpool` returns Liverpool GB
-/// first with float coordinates, `country_code`, and `admin1`. Unknown
-/// fields (`id`, `population`) decode past silently.
+/// The recorded Liverpool answer: the first match is Liverpool, GB, and the
+/// fields the client does not read (`id`, `population`, `postcodes`) decode
+/// past silently.
 #[tokio::test]
-async fn geocoding_search_decodes_live_shape_and_tolerates_unknown_fields() {
+async fn geocoding_search_decodes_recorded_answer() {
     let (wire, providers) = scripted();
-    json_answer(
-        &wire,
-        "geocoding",
-        json!({
-            "results": [{
-                "id": 2644210, "name": "Liverpool",
-                "latitude": 53.41058, "longitude": -2.97794,
-                "country_code": "GB", "country": "United Kingdom",
-                "admin1": "England", "population": 496770,
-            }],
-        }),
+    wire.answer(
+        &url("geocoding"),
+        200,
+        &[],
+        include_str!("../fixtures/geocoding/search_liverpool.json"),
     );
 
     let cities = providers
@@ -125,7 +119,7 @@ async fn geocoding_search_decodes_live_shape_and_tolerates_unknown_fields() {
         .await
         .unwrap();
 
-    assert_eq!(cities.len(), 1);
+    assert_eq!(cities.len(), 8);
     let city = &cities[0];
     assert_eq!(city.name, "Liverpool");
     assert!((city.latitude - 53.41058).abs() < 1e-9);
@@ -158,30 +152,45 @@ async fn geocoding_429_maps_to_rate_limited() {
     ));
 }
 
-/// City rows are all-defaulted (the v2 struct shape): a name-only row
-/// decodes with zeroed coordinates rather than failing, and there is no
-/// skip-and-continue: one mistyped identity field fails the whole decode.
+/// The geocoder knows no such place: the answer has no `results` key, which
+/// is absence, not a failure.
 #[tokio::test]
-async fn geocoding_name_only_row_decodes_mistyped_identity_fails() {
+async fn geocoding_answer_without_results_is_absence() {
     let (wire, providers) = scripted();
-    json_answer(&wire, "geocoding", json!({"results": [{"name": "X"}]}));
-    json_answer(&wire, "geocoding", json!({"results": [{"name": 123}]}));
+    wire.answer(
+        &url("geocoding"),
+        200,
+        &[],
+        include_str!("../fixtures/geocoding/search_no_results.json"),
+    );
 
     let cities = providers
         .geocoding
-        .search_cities("X", 8, USER)
+        .search_cities("No Such Place For A Probe", DEFAULT_CITY_COUNT, USER)
         .await
         .unwrap();
-    assert_eq!(cities.len(), 1);
-    assert_eq!(cities[0].name, "X");
-    assert_eq!(cities[0].latitude, 0.0);
-    assert_eq!(cities[0].country_code, None);
+    assert!(cities.is_empty());
+}
+
+/// A refused request answers HTTP 400 with `error` and `reason` and no
+/// `results` key. It is a typed failure, never the empty list that means no
+/// such place.
+#[tokio::test]
+async fn geocoding_refused_request_is_a_failure_not_absence() {
+    let (wire, providers) = scripted();
+    wire.answer(
+        &url("geocoding"),
+        400,
+        &[],
+        include_str!("../fixtures/geocoding/search_bad_count.json"),
+    );
+
     assert!(matches!(
-        providers.geocoding.search_cities("bad", 8, USER).await,
-        Err(ProviderError::Payload {
-            kind: PayloadKind::Decode,
-            ..
-        })
+        providers
+            .geocoding
+            .search_cities("Liverpool", DEFAULT_CITY_COUNT, USER)
+            .await,
+        Err(ProviderError::BadRequest { .. })
     ));
 }
 

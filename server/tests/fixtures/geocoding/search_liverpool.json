@@ -1,0 +1,169 @@
+{
+  "results": [
+    {
+      "id": 2644210,
+      "name": "Liverpool",
+      "latitude": 53.41058,
+      "longitude": -2.97794,
+      "elevation": 30.0,
+      "feature_code": "PPLA2",
+      "country_code": "GB",
+      "admin1_id": 6269131,
+      "admin2_id": 3333167,
+      "timezone": "Europe/London",
+      "population": 496770,
+      "country_id": 2635167,
+      "country": "United Kingdom",
+      "admin1": "England",
+      "admin2": "Liverpool"
+    },
+    {
+      "id": 4266586,
+      "name": "Washington",
+      "latitude": 38.65922,
+      "longitude": -87.17279,
+      "elevation": 153.0,
+      "feature_code": "PPLA2",
+      "country_code": "US",
+      "admin1_id": 4921868,
+      "admin2_id": 4256468,
+      "admin3_id": 4266612,
+      "timezone": "America/Indiana/Vincennes",
+      "population": 12078,
+      "postcodes": [
+        "47501"
+      ],
+      "country_id": 6252001,
+      "country": "United States",
+      "admin1": "Indiana",
+      "admin2": "Daviess",
+      "admin3": "Washington Township"
+    },
+    {
+      "id": 2159851,
+      "name": "Liverpool",
+      "latitude": -33.91938,
+      "longitude": 150.92587,
+      "elevation": 22.0,
+      "feature_code": "PPLA2",
+      "country_code": "AU",
+      "admin1_id": 2155400,
+      "admin2_id": 7839360,
+      "timezone": "Australia/Sydney",
+      "population": 31078,
+      "country_id": 2077456,
+      "country": "Australia",
+      "admin1": "New South Wales",
+      "admin2": "Fairfield"
+    },
+    {
+      "id": 5124925,
+      "name": "Liverpool",
+      "latitude": 43.10646,
+      "longitude": -76.2177,
+      "elevation": 128.0,
+      "feature_code": "PPL",
+      "country_code": "US",
+      "admin1_id": 5128638,
+      "admin2_id": 5129867,
+      "admin3_id": 5136105,
+      "timezone": "America/New_York",
+      "population": 2294,
+      "postcodes": [
+        "13088",
+        "13089",
+        "13090"
+      ],
+      "country_id": 6252001,
+      "country": "United States",
+      "admin1": "New York",
+      "admin2": "Onondaga",
+      "admin3": "Town of Salina"
+    },
+    {
+      "id": 4425435,
+      "name": "Edwards",
+      "latitude": 32.33015,
+      "longitude": -90.60565,
+      "elevation": 73.0,
+      "feature_code": "PPL",
+      "country_code": "US",
+      "admin1_id": 4436296,
+      "admin2_id": 4429877,
+      "timezone": "America/Chicago",
+      "population": 1019,
+      "postcodes": [
+        "39066"
+      ],
+      "country_id": 6252001,
+      "country": "United States",
+      "admin1": "Mississippi",
+      "admin2": "Hinds"
+    },
+    {
+      "id": 5198596,
+      "name": "Liverpool",
+      "latitude": 40.57481,
+      "longitude": -76.98915,
+      "elevation": 122.0,
+      "feature_code": "PPL",
+      "country_code": "US",
+      "admin1_id": 6254927,
+      "admin2_id": 5205669,
+      "admin3_id": 5198597,
+      "timezone": "America/New_York",
+      "population": 962,
+      "postcodes": [
+        "17045"
+      ],
+      "country_id": 6252001,
+      "country": "United States",
+      "admin1": "Pennsylvania",
+      "admin2": "Perry County",
+      "admin3": "Borough of Liverpool"
+    },
+    {
+      "id": 4707158,
+      "name": "Liverpool",
+      "latitude": 29.29496,
+      "longitude": -95.27882,
+      "elevation": 6.0,
+      "feature_code": "PPL",
+      "country_code": "US",
+      "admin1_id": 4736286,
+      "admin2_id": 4676137,
+      "timezone": "America/Chicago",
+      "population": 501,
+      "postcodes": [
+        "77577"
+      ],
+      "country_id": 6252001,
+      "country": "United States",
+      "admin1": "Texas",
+      "admin2": "Brazoria"
+    },
+    {
+      "id": 4900207,
+      "name": "Liverpool",
+      "latitude": 40.39171,
+      "longitude": -90.00095,
+      "elevation": 137.0,
+      "feature_code": "PPL",
+      "country_code": "US",
+      "admin1_id": 4896861,
+      "admin2_id": 4893313,
+      "admin3_id": 4900211,
+      "timezone": "America/Chicago",
+      "population": 124,
+      "postcodes": [
+        "61543"
+      ],
+      "country_id": 6252001,
+      "country": "United States",
+      "admin1": "Illinois",
+      "admin2": "Fulton",
+      "admin3": "Liverpool Township"
+    }
+  ],
+  "generationtime_ms": 0.19717216
+}

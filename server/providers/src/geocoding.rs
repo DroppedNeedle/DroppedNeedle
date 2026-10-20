@@ -5,21 +5,20 @@
 //! route answers 503) so the UI can say "geocoding unavailable". A silent
 //! `[]` would read as "no such city", so `[]` only ever means the geocoder
 //! knows no such place. Every request goes through the executor at the
-//! `open-meteo` rate row.
-//!
-//! Live-verified 2026-07-06: `geocoding-api.open-meteo.com/v1/search?name=…`
-//! needs no API key; `?name=Liverpool` returns Liverpool GB first with float
-//! coordinates, `country_code`, and `admin1` region. Open-Meteo omits the
-//! `results` key entirely for unknown places.
+//! `open-meteo` rate row. The wire shapes, and the answers they were
+//! verified against, are in `geocoding/models.rs`.
+
+mod models;
 
 use std::time::Duration;
-
-use serde::Deserialize;
 
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, ProviderError};
 use crate::executor::{Backoff, Executor, Request, Spec, Url, standard_classify};
+
+pub use models::GeoCity;
+use models::SearchAnswer;
 
 /// Provider key used in [ProviderError] and logs.
 pub const SOURCE: &str = "geocoding";
@@ -43,38 +42,6 @@ pub static SPEC: Spec = Spec {
     retry_after_cap: MAX_RETRY_AFTER,
     classify: standard_classify,
 };
-
-/// One matching city. Every field past the name tolerates absence, mirroring
-/// the v2 struct's all-defaulted shape.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct GeoCity {
-    /// City name, empty when the wire omits it.
-    #[serde(default)]
-    pub name: String,
-    /// Latitude in degrees, 0.0 when absent.
-    #[serde(default)]
-    pub latitude: f64,
-    /// Longitude in degrees, 0.0 when absent.
-    #[serde(default)]
-    pub longitude: f64,
-    /// ISO country code such as "GB".
-    #[serde(default)]
-    pub country_code: Option<String>,
-    /// Full country name.
-    #[serde(default)]
-    pub country: Option<String>,
-    /// First-level region such as "England".
-    #[serde(default)]
-    pub admin1: Option<String>,
-}
-
-/// Top-level geocoding payload. `results` is missing (not empty) for unknown
-/// places, hence the default.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-struct GeocodingResponse {
-    #[serde(default)]
-    results: Vec<GeoCity>,
-}
 
 /// The city picker client, built once with the providers.
 #[derive(Debug, Clone)]
@@ -119,7 +86,7 @@ impl GeocodingClient {
         )
         .map_err(|_| unusable_base(SOURCE))?;
         let reply = self.executor.send(request, priority).await?;
-        let decoded: GeocodingResponse = decode(&reply)?;
-        Ok(decoded.results)
+        let answer: SearchAnswer = decode(&reply)?;
+        Ok(answer.results)
     }
 }
