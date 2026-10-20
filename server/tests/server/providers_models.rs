@@ -32,6 +32,7 @@ enum Provider {
     WikipediaExtract,
     CommonsImage,
     WikidataRedirect,
+    GithubReleases,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -48,6 +49,8 @@ const WIKIPEDIA_EXTRACT_URL: &str = "http://fake/en.wiki/w/api.php";
 const COMMONS_IMAGE_URL: &str = "http://fake/commons/w/api.php";
 /// A merged item, asked for by its own id: the answer holds its target, Q1.
 const WIKIDATA_REDIRECT_URL: &str = "http://fake/wikidata/wiki/Special:EntityData/Q13165295.json";
+/// The GitHub releases list the release check reads.
+const GITHUB_RELEASES_URL: &str = "http://fake/github/releases";
 
 /// One recorded answer.
 struct Row {
@@ -168,6 +171,12 @@ const ROWS: &[Row] = &[
         provider: Provider::WikidataRedirect,
         body: include_str!("../fixtures/wikidata/entity_redirect.json"),
         identity: "/entities/Q1",
+    },
+    Row {
+        name: "github /repos/{owner}/{repo}/releases, tag name",
+        provider: Provider::GithubReleases,
+        body: include_str!("../fixtures/github/releases_list.json"),
+        identity: "/0/tag_name",
     },
 ];
 
@@ -337,6 +346,19 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .wikipedia_title_from_wikidata("Q13165295", "en", PRIORITY)
                 .await?;
             Ok(title.is_some())
+        }
+        Provider::GithubReleases => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer(GITHUB_RELEASES_URL, 200, &[], body.as_bytes().to_vec());
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    github_releases: GITHUB_RELEASES_URL.to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let releases = providers.github.fetch(PRIORITY).await?;
+            Ok(!releases.is_empty())
         }
     }
 }

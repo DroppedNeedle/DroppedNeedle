@@ -709,41 +709,42 @@ async fn youtube_two_instances_share_last_slot() {
 // GitHub
 // ---------------------------------------------------------------------------
 
+const GITHUB_RELEASES: &str = include_str!("../fixtures/github/releases_list.json");
+const GITHUB_NOT_FOUND: &str = include_str!("../fixtures/github/releases_not_found.json");
+
 fn releases_payload() -> serde_json::Value {
-    json!([
-        {"tag_name": "v3.1.0", "name": "Sneak peek",
-         "body": "notes", "published_at": "2026-09-01T00:00:00Z",
-         "html_url": "https://example.com/1", "prerelease": true, "draft": false,
-         "futureField": {"n": 1}},
-        {"tag_name": "v3.0.0",
-         "published_at": "2026-08-01T00:00:00Z",
-         "html_url": "https://example.com/0", "prerelease": false, "draft": false},
-        {"tag_name": "v3.2.0-draft",
-         "published_at": "2026-09-02T00:00:00Z",
-         "html_url": "https://example.com/2", "prerelease": false, "draft": true},
-    ])
+    serde_json::from_str(GITHUB_RELEASES).expect("the recorded list parses")
 }
 
-/// Drafts filter out, prereleases stay, and missing name/body fall back to
-/// the tag and `""`. The GitHub media type header goes out on the call.
+/// The recorded list decodes in full. A missing name or body falls back to
+/// the tag and `""`, a draft is filtered out, and the GitHub media type
+/// header goes out on the call.
 #[tokio::test]
 async fn github_releases_decode_filter_and_fall_back() {
     let (wire, providers) = scripted();
-    json_answer(&wire, "releases", releases_payload());
+    let mut payload = releases_payload();
+    payload[0]["name"] = serde_json::Value::Null;
+    payload[1]
+        .as_object_mut()
+        .expect("a release is an object")
+        .remove("body");
+    payload[2]["draft"] = json!(true);
+    json_answer(&wire, "releases", payload);
 
     let releases = providers.github.fetch_releases(USER).await;
 
-    assert_eq!(releases.len(), 2);
-    assert_eq!(releases[0].tag_name, "v3.1.0");
-    assert_eq!(releases[0].name, "Sneak peek");
-    assert_eq!(releases[0].body, "notes");
-    assert_eq!(releases[0].published_at, "2026-09-01T00:00:00Z");
-    assert_eq!(releases[0].html_url, "https://example.com/1");
-    assert!(releases[0].prerelease);
-    assert_eq!(releases[1].tag_name, "v3.0.0");
-    assert_eq!(releases[1].name, "v3.0.0");
+    assert_eq!(releases.len(), 29);
+    assert_eq!(releases[0].tag_name, "v2.15.0");
+    assert_eq!(releases[0].name, "v2.15.0");
+    assert_eq!(releases[0].published_at, "2026-09-20T01:49:51Z");
+    assert_eq!(
+        releases[0].html_url,
+        "https://github.com/DroppedNeedle/DroppedNeedle/releases/tag/v2.15.0"
+    );
+    assert!(!releases[0].prerelease);
+    assert_eq!(releases[1].tag_name, "v2.14.1");
     assert_eq!(releases[1].body, "");
-    assert!(!releases[1].prerelease);
+    assert_eq!(releases[2].tag_name, "v2.13.0");
     let calls = sent_to(&wire, "releases");
     assert_eq!(
         calls[0].headers,
@@ -760,7 +761,7 @@ async fn github_releases_decode_filter_and_fall_back() {
 #[tokio::test]
 async fn github_failures_degrade_to_empty_and_are_not_kept() {
     let (wire, providers) = scripted();
-    wire.answer(&url("releases"), 404, &[], "{}");
+    wire.answer(&url("releases"), 404, &[], GITHUB_NOT_FOUND);
     json_answer(&wire, "releases", releases_payload());
 
     assert_eq!(providers.github.fetch_releases(USER).await, vec![]);
@@ -770,9 +771,9 @@ async fn github_failures_degrade_to_empty_and_are_not_kept() {
             .fetch_latest_release(USER)
             .await
             .map(|release| release.tag_name),
-        Some("v3.0.0".to_owned())
+        Some("v2.15.0".to_owned())
     );
-    assert_eq!(providers.github.fetch_releases(USER).await.len(), 2);
+    assert_eq!(providers.github.fetch_releases(USER).await.len(), 30);
     assert_eq!(sent_to(&wire, "releases").len(), 2);
 }
 
