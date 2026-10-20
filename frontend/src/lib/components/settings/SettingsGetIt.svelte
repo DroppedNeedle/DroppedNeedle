@@ -1,22 +1,19 @@
 <script lang="ts">
-	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
-	import { onDestroy, onMount } from 'svelte';
 	import { Coffee, ExternalLink, ShoppingBag } from 'lucide-svelte';
 	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
-	import type { GetItSettings } from '$lib/types';
-	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
+	import {
+		createSaveGetItSettingsMutation,
+		getGetItSettingsQuery
+	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
-	const form = createSettingsForm<GetItSettings>({
-		loadEndpoint: SETTINGS_ENDPOINTS.getIt(),
-		saveEndpoint: SETTINGS_ENDPOINTS.getIt()
-	});
-
-	onMount(() => form.load());
-	onDestroy(() => form.cleanup());
+	const section = createSettingsSection(getGetItSettingsQuery(), createSaveGetItSettingsMutation());
 
 	// storefronts the iTunes fallback can target; extend freely
 	const regions = [
@@ -45,32 +42,21 @@
 		fallback when MusicBrainz has no links.
 	</p>
 
-	{#if form.loading}
-		<div class="space-y-3 pt-2">
-			<div class="skeleton h-12 w-full rounded-xl"></div>
-		</div>
-	{:else if form.data}
-		<div class="max-w-xs pt-2">
-			<SelectField
-				label="Store region"
-				bind:value={form.data.store_region}
-				options={regions.map((region) => ({ value: region.code, label: region.label }))}
-				help="The storefront iTunes links point to."
-			/>
-		</div>
-
-		<div class="flex justify-end pt-2">
-			<Button variant="primary" size="sm" onclick={() => form.save()} disabled={form.saving}>
-				{form.saving ? 'Saving…' : 'Save'}
-			</Button>
-		</div>
-
-		{#if form.message}
-			<p class="text-sm {form.messageType === 'error' ? 'text-error' : 'text-success'}">
-				{form.message}
-			</p>
-		{/if}
-	{/if}
+	<QueryBoundary query={section} what="the buy link settings">
+		{#snippet children(draft)}
+			<div class="flex flex-col gap-4 pt-2">
+				<div class="max-w-xs">
+					<SelectField
+						label="Store region"
+						bind:value={draft.store_region}
+						options={regions.map((region) => ({ value: region.code, label: region.label }))}
+						help="The storefront iTunes links point to."
+					/>
+				</div>
+				<SaveBar {...section.bar} />
+			</div>
+		{/snippet}
+	</QueryBoundary>
 
 	<div class="mt-2 border-t border-base-content/10 pt-4">
 		<p class="text-sm font-medium">Support development</p>

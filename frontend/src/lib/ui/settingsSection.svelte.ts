@@ -63,6 +63,8 @@ export interface SettingsSectionOptions<T> {
 	explain?: (error: ApiError) => string | undefined;
 	/** Re-reads which integrations are connected after a save (the sidebar dots). */
 	refreshIntegration?: boolean;
+	/** Replaces "Saved." after a save. */
+	savedMessage?: string;
 }
 
 const SAVED_CLEARS_AFTER_MS = 5000;
@@ -200,7 +202,7 @@ export function createSettingsSection<T extends object>(
 			const stored = await mutation.mutateAsync(tidy($state.snapshot(draft) as T));
 			saved = stored;
 			draft = structuredClone(stored);
-			setStatus({ tone: 'success', message: 'Saved.' }, true);
+			setStatus({ tone: 'success', message: options.savedMessage ?? 'Saved.' }, true);
 			if (options.refreshIntegration) await refreshIntegration();
 		} catch (error) {
 			setStatus({

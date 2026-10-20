@@ -3,17 +3,21 @@
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { api } from '$lib/api/client';
 	import { SPOTIFY_ENDPOINTS } from '$lib/queries/spotify/endpoints';
-	import type { SpotifySettings } from '$lib/types';
+	import {
+		createSaveSpotifySettingsMutation,
+		getSpotifySettingsQuery
+	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { Copy, ExternalLink } from 'lucide-svelte';
-	import { onMount, onDestroy } from 'svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
 	let redirectUri = $state('');
 	let copied = $state(false);
@@ -30,15 +34,15 @@
 			});
 	}
 
-	const form = createSettingsForm<SpotifySettings>({
-		loadEndpoint: SPOTIFY_ENDPOINTS.settings(),
-		saveEndpoint: SPOTIFY_ENDPOINTS.settings()
-	});
+	const section = createSettingsSection(
+		getSpotifySettingsQuery(),
+		createSaveSpotifySettingsMutation()
+	);
 
 	// The server builds the address from the request when no origin is saved,
 	// so behind a proxy it does not know about it can name the wrong one.
 	const addressIsElsewhere = $derived.by(() => {
-		if (!redirectUri || form.data?.spotify_redirect_origin.trim()) return false;
+		if (!redirectUri || section.saved?.spotify_redirect_origin.trim()) return false;
 		try {
 			return new URL(redirectUri).origin !== window.location.origin;
 		} catch {
@@ -58,15 +62,12 @@
 		}
 	}
 
-	async function save() {
-		if (await form.save()) await loadRedirectUri();
-	}
-
-	onMount(() => {
-		form.load();
+	// The address follows the saved origin: read it again whenever that changes.
+	$effect(() => {
+		if (section.saved === undefined) return;
+		void section.saved.spotify_redirect_origin;
 		void loadRedirectUri();
 	});
-	onDestroy(() => form.cleanup());
 </script>
 
 <Card variant="bordered">
@@ -110,91 +111,75 @@
 			</p>
 		</div>
 
-		{#if form.loading}
-			<div class="flex justify-center py-10">
-				<span class="loading loading-spinner loading-lg"></span>
-			</div>
-		{:else if form.data}
-			<TextField
-				label="Client ID"
-				placeholder="Spotify Client ID"
-				bind:value={form.data.client_id}
-			/>
+		<QueryBoundary query={section} what="the Spotify settings">
+			{#snippet children(draft)}
+				<div class="flex flex-col gap-4">
+					<TextField
+						label="Client ID"
+						placeholder="Spotify Client ID"
+						bind:value={draft.client_id}
+					/>
 
-			<SecretField
-				label="Client Secret"
-				mask={SECRET_MASK}
-				placeholder="Spotify Client Secret"
-				bind:value={form.data.client_secret}
-			/>
+					<SecretField
+						label="Client Secret"
+						mask={SECRET_MASK}
+						placeholder="Spotify Client Secret"
+						bind:value={draft.client_secret}
+					/>
 
-			<TextField
-				label="Redirect Origin (optional)"
-				placeholder="https://music.example.com"
-				help="Leave this empty and DroppedNeedle uses the address it works out for itself. That is right when you reach it directly, or through a reverse proxy that is listed in TRUSTED_PROXY_IPS and sends X-Forwarded-Proto. Fill it in (no path) when the redirect URI below does not start with the address in your browser's address bar."
-				bind:value={form.data.spotify_redirect_origin}
-			/>
+					<TextField
+						label="Redirect Origin (optional)"
+						placeholder="https://music.example.com"
+						help="Leave this empty and DroppedNeedle uses the address it works out for itself. That is right when you reach it directly, or through a reverse proxy that is listed in TRUSTED_PROXY_IPS and sends X-Forwarded-Proto. Fill it in (no path) when the redirect URI below does not start with the address in your browser's address bar."
+						bind:value={draft.spotify_redirect_origin}
+					/>
 
-			<ToggleRow label="Enable Spotify integration" bind:checked={form.data.enabled} />
+					<ToggleRow label="Enable Spotify integration" bind:checked={draft.enabled} />
 
-			<Card variant="bordered" padding="sm">
-				<div>
-					<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/50">
-						Redirect URI: add this in your Spotify app dashboard
-					</p>
-					<div class="flex items-center gap-2">
-						<code
-							class="flex-1 truncate rounded-lg bg-base-100/60 px-2.5 py-1.5 text-xs text-base-content/80"
-						>
-							{redirectUri}
-						</code>
-						<Button
-							variant="ghost"
-							size="xs"
-							pill
-							icon={copied ? undefined : Copy}
-							class="shrink-0"
-							aria-label="Copy redirect URI"
-							onclick={copyRedirectUri}
-						>
-							{#if copied}Copied!{/if}
-						</Button>
-					</div>
-					{#if addressIsElsewhere}
-						<p class="mt-2 text-xs text-warning">
-							This is not the address you are on. Put {window.location.origin} in Redirect Origin and
-							save.
-						</p>
-					{/if}
+					<Card variant="bordered" padding="sm">
+						<div>
+							<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/50">
+								Redirect URI: add this in your Spotify app dashboard
+							</p>
+							<div class="flex items-center gap-2">
+								<code
+									class="flex-1 truncate rounded-lg bg-base-100/60 px-2.5 py-1.5 text-xs text-base-content/80"
+								>
+									{redirectUri}
+								</code>
+								<Button
+									variant="ghost"
+									size="xs"
+									pill
+									icon={copied ? undefined : Copy}
+									class="shrink-0"
+									aria-label="Copy redirect URI"
+									onclick={copyRedirectUri}
+								>
+									{#if copied}Copied!{/if}
+								</Button>
+							</div>
+							{#if addressIsElsewhere}
+								<p class="mt-2 text-xs text-warning">
+									This is not the address you are on. Put {window.location.origin} in Redirect Origin
+									and save.
+								</p>
+							{/if}
+						</div>
+					</Card>
+
+					<a
+						href="https://developer.spotify.com/dashboard"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+					>
+						<ExternalLink class="h-3 w-3" /> Create a Spotify app to get Client ID + Secret
+					</a>
+
+					<SaveBar {...section.bar} saveLabel="Save credentials" />
 				</div>
-			</Card>
-
-			<a
-				href="https://developer.spotify.com/dashboard"
-				target="_blank"
-				rel="noopener noreferrer"
-				class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
-			>
-				<ExternalLink class="h-3 w-3" /> Create a Spotify app to get Client ID + Secret
-			</a>
-
-			{#if form.message}
-				<div
-					class="alert"
-					class:alert-success={form.messageType === 'success'}
-					class:alert-error={form.messageType === 'error'}
-				>
-					<span>{form.message}</span>
-				</div>
-			{/if}
-
-			<div class="flex justify-end pt-1">
-				<Button variant="primary" pill loading={form.saving} onclick={() => void save()}>
-					Save credentials
-				</Button>
-			</div>
-		{:else if form.message}
-			<div class="alert alert-error"><span>{form.message}</span></div>
-		{/if}
+			{/snippet}
+		</QueryBoundary>
 	</div>
 </Card>

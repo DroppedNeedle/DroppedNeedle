@@ -1,32 +1,30 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
-	import type { WrappedSettingsResponse } from '$lib/types';
-	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
+	import {
+		createSaveWrappedSettingsMutation,
+		getWrappedSettingsQuery,
+		type WrappedSettings
+	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
 	import { Gift } from 'lucide-svelte';
-	import { onMount, onDestroy } from 'svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
-	const form = createSettingsForm<WrappedSettingsResponse>({
-		loadEndpoint: SETTINGS_ENDPOINTS.wrapped(),
-		saveEndpoint: SETTINGS_ENDPOINTS.wrapped()
-	});
+	const section = createSettingsSection(
+		getWrappedSettingsQuery(),
+		createSaveWrappedSettingsMutation()
+	);
 
-	function generateKey() {
+	function generateKey(draft: WrappedSettings) {
 		const bytes = crypto.getRandomValues(new Uint8Array(32));
-		const key = Array.from(bytes)
+		draft.api_key = Array.from(bytes)
 			.map((b) => b.toString(16).padStart(2, '0'))
 			.join('');
-		if (form.data) form.data.api_key = key;
 	}
-
-	onMount(() => {
-		form.load();
-	});
-	onDestroy(() => form.cleanup());
 </script>
 
 <Card variant="bordered">
@@ -55,39 +53,23 @@
 			this is empty.
 		</div>
 
-		{#if form.loading}
-			<div class="flex justify-center py-10">
-				<span class="loading loading-spinner loading-lg"></span>
-			</div>
-		{:else if form.data}
-			<SecretField
-				label="API key"
-				mask={SECRET_MASK}
-				placeholder="No key set"
-				bind:value={form.data.api_key}
-			/>
+		<QueryBoundary query={section} what="the Wrapped API key">
+			{#snippet children(draft)}
+				<div class="flex flex-col gap-4">
+					<SecretField
+						label="API key"
+						mask={SECRET_MASK}
+						placeholder="No key set"
+						bind:value={draft.api_key}
+					/>
 
-			<Button variant="outline" size="sm" pill class="w-fit" onclick={generateKey}>
-				Generate new key
-			</Button>
+					<Button variant="outline" size="sm" pill class="w-fit" onclick={() => generateKey(draft)}>
+						Generate new key
+					</Button>
 
-			{#if form.message}
-				<div
-					class="alert"
-					class:alert-success={form.messageType === 'success'}
-					class:alert-error={form.messageType === 'error'}
-				>
-					<span>{form.message}</span>
+					<SaveBar {...section.bar} saveLabel="Save key" />
 				</div>
-			{/if}
-
-			<div class="flex justify-end pt-1">
-				<Button variant="primary" pill loading={form.saving} onclick={() => void form.save()}>
-					Save key
-				</Button>
-			</div>
-		{:else if form.message}
-			<div class="alert alert-error"><span>{form.message}</span></div>
-		{/if}
+			{/snippet}
+		</QueryBoundary>
 	</div>
 </Card>

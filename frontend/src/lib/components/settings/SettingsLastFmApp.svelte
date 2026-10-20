@@ -1,31 +1,28 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
-	import type { LastFmConnectionSettingsResponse } from '$lib/types';
+	import {
+		createSaveLastFmSettingsMutation,
+		getLastFmSettingsQuery
+	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { Radio, ExternalLink } from 'lucide-svelte';
-	import { onMount, onDestroy } from 'svelte';
-	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
 	// The instance switch and the server's Last.fm app key pair. Users link
 	// their own account and pick scrobble toggles in the profile's "Scrobbling
 	// & Discovery" card. A user's own key pair, when saved, wins over this one
 	// for that user. The secrets come back masked; saving the mask keeps the
 	// stored value.
-	const form = createSettingsForm<LastFmConnectionSettingsResponse>({
-		loadEndpoint: SETTINGS_ENDPOINTS.lastfm(),
-		saveEndpoint: SETTINGS_ENDPOINTS.lastfm()
-	});
-
-	onMount(() => {
-		form.load();
-	});
-	onDestroy(() => form.cleanup());
+	const section = createSettingsSection(
+		getLastFmSettingsQuery(),
+		createSaveLastFmSettingsMutation()
+	);
 </script>
 
 <Card variant="bordered">
@@ -52,53 +49,37 @@
 			one.
 		</div>
 
-		{#if form.loading}
-			<div class="flex justify-center py-10">
-				<span class="loading loading-spinner loading-lg"></span>
-			</div>
-		{:else if form.data}
-			<ToggleRow label="Allow Last.fm scrobbling and linking" bind:checked={form.data.enabled} />
+		<QueryBoundary query={section} what="the Last.fm settings">
+			{#snippet children(draft)}
+				<div class="flex flex-col gap-4">
+					<ToggleRow label="Allow Last.fm scrobbling and linking" bind:checked={draft.enabled} />
 
-			<SecretField
-				label="API key"
-				mask={SECRET_MASK}
-				placeholder="Last.fm API key"
-				bind:value={form.data.api_key}
-			/>
+					<SecretField
+						label="API key"
+						mask={SECRET_MASK}
+						placeholder="Last.fm API key"
+						bind:value={draft.api_key}
+					/>
 
-			<SecretField
-				label="Shared secret"
-				mask={SECRET_MASK}
-				placeholder="Shared secret"
-				bind:value={form.data.shared_secret}
-			/>
+					<SecretField
+						label="Shared secret"
+						mask={SECRET_MASK}
+						placeholder="Shared secret"
+						bind:value={draft.shared_secret}
+					/>
 
-			<a
-				href="https://www.last.fm/api/account/create"
-				target="_blank"
-				rel="noopener noreferrer"
-				class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
-			>
-				<ExternalLink class="h-3 w-3" /> Register an app to get a key and secret
-			</a>
+					<a
+						href="https://www.last.fm/api/account/create"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+					>
+						<ExternalLink class="h-3 w-3" /> Register an app to get a key and secret
+					</a>
 
-			{#if form.message}
-				<div
-					class="alert"
-					class:alert-success={form.messageType === 'success'}
-					class:alert-error={form.messageType === 'error'}
-				>
-					<span>{form.message}</span>
+					<SaveBar {...section.bar} />
 				</div>
-			{/if}
-
-			<div class="flex justify-end pt-1">
-				<Button variant="primary" pill loading={form.saving} onclick={() => void form.save()}>
-					Save
-				</Button>
-			</div>
-		{:else if form.message}
-			<div class="alert alert-error"><span>{form.message}</span></div>
-		{/if}
+			{/snippet}
+		</QueryBoundary>
 	</div>
 </Card>
