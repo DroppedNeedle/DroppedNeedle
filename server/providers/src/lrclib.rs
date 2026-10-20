@@ -32,8 +32,7 @@ pub const MAX_LYRICS_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_LYRICS_CHARACTERS: usize = 1_000_000;
 
 /// LRCLIB on the wire: the standard rules. A 429 that names no wait rests
-/// two seconds, and no wait past thirty seconds is honoured (v2
-/// `_retry_after`).
+/// two seconds, and no wait past thirty seconds is honoured.
 pub static SPEC: Spec = Spec {
     source: SOURCE,
     health_key: SOURCE,
@@ -127,10 +126,10 @@ impl LyricsLookup {
 // Pure normalization
 // ---------------------------------------------------------------------------
 
-/// Fold one exact-signature field (v2 `lyrics_projection_service._normalized`,
-/// honoring the 2026-08-05 reverify note): NFKC, typographic apostrophes to
-/// ASCII `'`, collapse whitespace, then casefold. Only the apostrophe forms
-/// are relaxed; every other text and duration gate stays strict.
+/// Fold one exact-signature field, as reverified on 2026-08-05: NFKC,
+/// typographic apostrophes to ASCII `'`, collapse whitespace, then casefold.
+/// Only the apostrophe forms are relaxed; every other text and duration
+/// gate stays strict.
 pub fn signature_text(value: &str) -> String {
     use caseless::default_case_fold_str;
     use unicode_normalization::UnicodeNormalization;
@@ -150,12 +149,12 @@ pub fn signature_matches(left: &str, right: &str) -> bool {
     signature_text(left) == signature_text(right)
 }
 
-/// SHA-256 hex of the raw body, the provider revision (v2 `_request_exact`).
+/// SHA-256 hex of the raw body, the provider revision.
 pub fn provider_revision(body: &[u8]) -> String {
     format!("{:x}", Sha256::digest(body))
 }
 
-/// Normalize one exact-lookup body (v2 `_request_exact`): reject oversized
+/// Normalize one exact-lookup body: reject oversized
 /// bodies, decode, enforce the completeness gate (positive id, non-blank
 /// track/artist/album, positive duration), reject oversized lyrics text,
 /// and treat "no lyrics and not instrumental" as not found rather than an

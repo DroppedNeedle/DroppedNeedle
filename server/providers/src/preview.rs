@@ -184,8 +184,8 @@ pub struct PreviewTrack {
 // Pure matching (ports of the v2 module-level helpers)
 // ---------------------------------------------------------------------------
 
-/// Loose comparison form: lowercase, ASCII alphanumerics only (v2 `_norm`:
-/// casefold, then strip everything outside `a-z0-9`).
+/// Loose comparison form: lowercase, ASCII alphanumerics only (casefold,
+/// then strip everything outside `a-z0-9`).
 pub fn norm(value: &str) -> String {
     value
         .chars()
@@ -194,7 +194,7 @@ pub fn norm(value: &str) -> String {
         .collect()
 }
 
-/// Loose name match (v2 `_names_match`): both names must be non-empty, and
+/// Loose name match: both names must be non-empty, and
 /// either normalized form must contain the other. Note the faithful edge:
 /// when the wanted name normalizes to something non-empty but the got name
 /// normalizes to nothing, the empty string is "contained" and the match
@@ -261,8 +261,8 @@ impl PreviewClient {
         }
     }
 
-    /// One track preview via Deezer's field-scoped search (v2
-    /// `_deezer_track_preview`). The first hit carrying a preview URL wins.
+    /// One track preview via Deezer's field-scoped search.
+    /// The first hit carrying a preview URL wins.
     ///
     /// # Errors
     ///
@@ -302,7 +302,7 @@ impl PreviewClient {
             }))
     }
 
-    /// Ordered album previews via Deezer (v2 `_deezer_album_tracks`). The
+    /// Ordered album previews via Deezer. The
     /// album whose artist loosely matches wins; when no artist matches but
     /// hits exist, the top hit is used (the artist field is sometimes
     /// missing or odd). Tracks without previews are skipped, positions fall
@@ -400,7 +400,7 @@ impl PreviewClient {
         decode(&reply).map(Some)
     }
 
-    /// One track preview via iTunes (v2 `_itunes_track_preview`). iTunes'
+    /// One track preview via iTunes. iTunes'
     /// top hit can be a cover, so the artist is verified with the loose
     /// name match before a hit is trusted.
     ///
@@ -430,7 +430,7 @@ impl PreviewClient {
             }))
     }
 
-    /// Ordered album previews via iTunes (v2 `_itunes_album_tracks`). Both
+    /// Ordered album previews via iTunes. Both
     /// the artist and the collection must loosely match, positions fall
     /// back to list order, and the results sort by position.
     ///
@@ -475,8 +475,8 @@ impl PreviewClient {
         Ok(results)
     }
 
-    /// An artist's popular tracks via Deezer search (v2
-    /// `get_artist_top_tracks`). The search over-fetches (`max(limit * 2,
+    /// An artist's popular tracks via Deezer search.
+    /// The search over-fetches (`max(limit * 2,
     /// 10)`), non-matching artists are filtered out, and titles dedupe
     /// case-insensitively. Any failure is absence.
     pub async fn get_artist_top_tracks(
@@ -545,8 +545,8 @@ impl PreviewClient {
         Ok(results)
     }
 
-    /// A single 30s preview with Deezer-to-iTunes fallback (v2
-    /// `get_track_preview`). Any failure on a leg falls through to the next;
+    /// A single 30s preview with Deezer-to-iTunes fallback.
+    /// Any failure on a leg falls through to the next;
     /// when both legs fail the lookup is absence. Each leg's failure is
     /// recorded by the call that met it.
     pub async fn get_track_preview(
@@ -565,7 +565,7 @@ impl PreviewClient {
     }
 
     /// Ordered 30s samples of an album's first tracks with Deezer-to-iTunes
-    /// fallback (v2 `get_album_preview_tracks`).
+    /// fallback.
     pub async fn get_album_preview_tracks(
         &self,
         artist: &str,

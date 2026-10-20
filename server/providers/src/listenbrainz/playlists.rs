@@ -1,12 +1,11 @@
 //! ListenBrainz recommendation playlists: the "Created for you" list and
 //! one playlist's tracks.
 //!
-//! Ports v2's `get_recommendation_playlists` and `get_playlist_tracks`. Both
-//! answer 404 for "nothing here yet" (a user with no recommendations, a
-//! playlist that was replaced), which reads as an empty answer, not a
-//! failure. Playlists come back as JSPF; the algorithm that made each one
-//! sits in the MusicBrainz playlist extension as `source_patch`
-//! (`weekly-jams`, `weekly-exploration`, ...).
+//! Both endpoints answer 404 for "nothing here yet" (a user with no
+//! recommendations, a playlist that was replaced), which reads as an empty
+//! answer, not a failure. Playlists come back as JSPF; the algorithm that
+//! made each one sits in the MusicBrainz playlist extension as
+//! `source_patch` (`weekly-jams`, `weekly-exploration`, ...).
 
 use super::{ListenBrainzClient, ListenBrainzCredentials};
 use crate::{ProviderError, RequestPriority};
@@ -181,7 +180,7 @@ fn parse_playlist_header(playlist: &serde_json::Value) -> Option<RecommendationP
     })
 }
 
-/// One JSPF track (v2 `parse_recommendation_track`).
+/// One JSPF track.
 fn parse_track(track: &serde_json::Value) -> Option<RecommendationTrack> {
     let text = |key: &str| {
         track

@@ -31,7 +31,7 @@ pub const SOURCE: &str = "discogs";
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Discogs on the wire: the standard rules, and a 429 that names no wait
-/// rests a minute (v2 `_retry_after`).
+/// rests a minute.
 pub static SPEC: Spec = Spec {
     source: SOURCE,
     health_key: SOURCE,
@@ -382,7 +382,7 @@ pub struct IncompleteRelease;
 // Pure normalization (ports of the v2 module-level helpers)
 // ---------------------------------------------------------------------------
 
-/// Parse a "M:SS" or "H:MM:SS" duration (v2 `_duration_seconds`). Seconds,
+/// Parse a "M:SS" or "H:MM:SS" duration. Seconds,
 /// and minutes in the long form, must be below 60; anything else is not a
 /// duration and yields `None` rather than a guess.
 pub fn duration_seconds(value: &str) -> Option<f64> {
@@ -415,13 +415,13 @@ pub fn duration_seconds(value: &str) -> Option<f64> {
     Some((numbers[0] * 60 + numbers[1]) as f64)
 }
 
-/// True for heading/index rows (v2 `_normalize_media`: `type_` casefolded
+/// True for heading/index rows (`type_` casefolded
 /// against `"track"`).
 pub fn is_heading(type_: &str) -> bool {
     !type_.eq_ignore_ascii_case("track")
 }
 
-/// Split a printed position into (medium, number) (v2 `_position`):
+/// Split a printed position into (medium, number):
 /// "2-3"/"2.3" name disc 2 track 3, a bare number is a track on medium 1,
 /// and a vinyl side letter maps pairs of sides onto one medium (A/B to
 /// medium 1, C/D to medium 2, ...). Anything else keeps medium 1 with no
@@ -463,8 +463,7 @@ pub fn parse_position(value: &str, fallback: u32) -> (u32, Option<u32>) {
     (1, None)
 }
 
-/// Flatten index sub-tracks depth-first, keeping parents before children
-/// (v2 `_flatten_tracks`).
+/// Flatten index sub-tracks depth-first, keeping parents before children.
 pub fn flatten_tracks(rows: &[WireTrack]) -> Vec<&WireTrack> {
     let mut flat = Vec::new();
     for row in rows {
@@ -474,7 +473,7 @@ pub fn flatten_tracks(rows: &[WireTrack]) -> Vec<&WireTrack> {
     flat
 }
 
-/// Normalize one artist credit (v2 `_artist_credit`).
+/// Normalize one artist credit.
 pub fn artist_credit(artist: &WireArtist) -> ArtistCredit {
     let artist_id = artist.id.map(|id| id.to_string());
     let name = if artist.name.is_empty() {
@@ -495,7 +494,7 @@ pub fn artist_credit(artist: &WireArtist) -> ArtistCredit {
     }
 }
 
-/// Group flattened rows into media (v2 `_normalize_media`). The fallback
+/// Group flattened rows into media. The fallback
 /// number always counts medium 1 (`counters[1] + 1`), even for rows that
 /// land on later media; only real tracks claim the per-medium counter.
 pub fn normalize_media(tracks: &[WireTrack], formats: &[Format]) -> Vec<Medium> {
@@ -536,7 +535,7 @@ pub fn normalize_media(tracks: &[WireTrack], formats: &[Format]) -> Vec<Medium> 
 }
 
 /// Normalize format rows; a non-numeric `qty` becomes `None` rather than
-/// failing the release (v2 `_normalized_formats`).
+/// failing the release.
 pub fn normalize_formats(release: &WireRelease) -> Vec<Format> {
     release
         .formats
@@ -558,7 +557,7 @@ pub fn normalize_formats(release: &WireRelease) -> Vec<Format> {
         .collect()
 }
 
-/// Normalize one release (v2 `normalize_release`). A payload without an id
+/// Normalize one release. A payload without an id
 /// or title is incomplete, never an empty release.
 pub fn normalize_release(
     release: &WireRelease,
@@ -583,7 +582,7 @@ pub fn normalize_release(
         })
         .collect();
     // Quirk: the barcode is the first barcode identifier with spaces and
-    // dashes stripped (v2 `normalize_release`).
+    // dashes stripped.
     let barcode = identifiers
         .iter()
         .find(|item| item.kind.eq_ignore_ascii_case("barcode"))
@@ -645,14 +644,14 @@ pub fn normalize_release(
 }
 
 /// Normalize the search query the way v2 does: collapse whitespace and cap
-/// at 200 characters (v2 `search_releases`).
+/// at 200 characters.
 pub fn normalize_query(query: &str) -> String {
     let collapsed = query.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(200).collect()
 }
 
-/// Normalize one search hit, skipping hits without an identity (v2
-/// `search_releases`). The display title splits on the first " - " into
+/// Normalize one search hit, skipping hits without an identity.
+/// The display title splits on the first " - " into
 /// artist and title; without a separator the whole string is the title and
 /// the artist stays empty. The format summary prefers the flat `format`
 /// list and falls back to the structured rows.
@@ -748,7 +747,7 @@ impl DiscogsClient {
     }
 
     /// Fetch one release. A 404 is absence (`Ok(None)`); a release without
-    /// an identity is a payload failure (v2 `_request`).
+    /// an identity is a payload failure.
     ///
     /// # Errors
     ///
@@ -774,8 +773,7 @@ impl DiscogsClient {
             })
     }
 
-    /// Search releases. The limit clamps to 1..=10 and 404 is an empty page
-    /// (v2 `search_releases`).
+    /// Search releases. The limit clamps to 1..=10 and 404 is an empty page.
     ///
     /// # Errors
     ///

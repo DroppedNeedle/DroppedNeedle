@@ -19,15 +19,14 @@ pub struct RedirectHop {
     pub to_mbid: String,
 }
 
-/// Entities whose lookup redirects persist (v2 `_MB_REDIRECT_ENTITY_KINDS`).
+/// Entities whose lookup redirects persist.
 const REDIRECT_ENTITY_KINDS: [&str; 4] = ["artist", "release", "release-group", "recording"];
 
 /// Validate one followed hop as an entity/from/to triple. Only
 /// lookup-shaped paths persist: exactly two segments, an allowlisted entity
 /// on both ends, the same entity on each end, both MBIDs valid. A 301 on a
 /// browse path such as `/release-group?artist=` is never persisted, since
-/// the only MBID in play there belongs to another entity (v2
-/// `_lookup_redirect_pair`).
+/// the only MBID in play there belongs to another entity.
 pub fn lookup_redirect_pair(from_path: &str, hop_path: &str) -> Option<RedirectHop> {
     let from_segments: Vec<&str> = from_path
         .split('?')
@@ -112,8 +111,8 @@ fn resolve_location(request_url: &str, location: &str) -> Option<String> {
 
 /// Best-effort parse of an official-mode 3xx Location into a hop triple:
 /// resolve against the request URL, same-origin check against the
-/// attempt's source, then entity/UUID validation (v2
-/// `_official_redirect_pair`). Unparseable input returns `None` and the
+/// attempt's source, then entity/UUID validation.
+/// Unparseable input returns `None` and the
 /// 3xx raises as usual.
 pub fn official_redirect_hop(
     request_url: &str,
@@ -135,8 +134,7 @@ pub fn official_redirect_hop(
 /// BrainzMash host allowlist: exactly this hostname, nothing else.
 pub const BRAINZMASH_HOST: &str = "api.brainzmash.cc";
 
-/// Entity paths the application uses on BrainzMash (v2
-/// `_BRAINZMASH_ENTITY_PATHS`).
+/// Entity paths the application uses on BrainzMash.
 const BRAINZMASH_ENTITY_PATHS: [&str; 6] = [
     "artist",
     "release-group",
@@ -146,8 +144,8 @@ const BRAINZMASH_ENTITY_PATHS: [&str; 6] = [
     "url",
 ];
 
-/// Allow only the MusicBrainz WS/2 entity paths this application uses (v2
-/// `validate_brainzmash_path`): one or two segments, allowlisted entity,
+/// Allow only the MusicBrainz WS/2 entity paths this application uses:
+/// one or two segments, allowlisted entity,
 /// and an ASCII-alphanumeric-and-dash second segment (MBIDs qualify).
 pub fn validate_brainzmash_path(path: &str) -> Result<String, ProviderError> {
     let rejected = || ProviderError::Invalid {
@@ -176,8 +174,8 @@ pub fn validate_brainzmash_path(path: &str) -> Result<String, ProviderError> {
     Ok(format!("/{}", segments.join("/")))
 }
 
-/// Reject request authority/path changes before a BrainzMash wire attempt
-/// (v2 `validate_brainzmash_request_url`): the approved origin, no port or
+/// Reject request authority/path changes before a BrainzMash wire attempt:
+/// the approved origin, no port or
 /// credentials, no fragment, and a `/ws/2/` path. The query string (v2
 /// validates `urlsplit(...).path`, so `?fmt=json` Locations pass) is
 /// ignored for path validation.
@@ -205,7 +203,7 @@ pub fn validate_brainzmash_request_url(url: &str) -> Result<(), ProviderError> {
 /// Probed live 2026-09-12 against api.brainzmash.cc: fetching merged
 /// release `77a698a8-...` answers 301 with a same-origin
 /// `/ws/2/release/<survivor>?fmt=json` Location, and that hop answers 200
-/// with the surviving release (v2 `_validated_brainzmash_redirect_path`).
+/// with the surviving release.
 /// The Location resolves against the approved origin before validation, so
 /// a foreign host, scheme downgrade, port shift, or off-`/ws/2` path still
 /// returns `None` and the 3xx falls through to rejection.

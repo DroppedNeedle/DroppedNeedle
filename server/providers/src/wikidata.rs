@@ -200,7 +200,7 @@ pub struct WireCommonsResponse {
 // Pure helpers (ports of the v2 static helpers)
 // ---------------------------------------------------------------------------
 
-/// Pull a `Q...` id out of a Wikidata URL (v2 `_extract_wikidata_id`: the
+/// Pull a `Q...` id out of a Wikidata URL (the
 /// `/wiki/(Q\d+)` pattern).
 pub fn extract_wikidata_id(url: &str) -> Option<String> {
     let marker = "/wiki/";
@@ -228,9 +228,9 @@ fn wikidata_id_at(rest: &str) -> Option<String> {
     }
 }
 
-/// Pull a page title out of a Wikipedia URL (v2 `_extract_wikipedia_title`:
-/// the `/wiki/(.+)$` pattern), percent-decoded: it goes out again as a
-/// query value, which encodes it once.
+/// Pull a page title out of a Wikipedia URL (the `/wiki/(.+)$` pattern),
+/// percent-decoded: it goes out again as a query value, which encodes it
+/// once.
 pub fn extract_wikipedia_title(url: &str) -> Option<String> {
     url.find("/wiki/").and_then(|pos| {
         let title = &url[pos + "/wiki/".len()..];
@@ -263,7 +263,7 @@ fn is_language(value: &str) -> bool {
 }
 
 /// Read the `{lang}wiki` sitelink title for one entity, or `None` when the
-/// entity or sitelink is missing (v2 `_get_wikipedia_title_from_wikidata`).
+/// entity or sitelink is missing.
 pub fn sitelink_title(page: &WireEntityResponse, entity_id: &str, lang: &str) -> Option<String> {
     page.entities
         .get(entity_id)
@@ -272,8 +272,8 @@ pub fn sitelink_title(page: &WireEntityResponse, entity_id: &str, lang: &str) ->
         .filter(|title| !title.is_empty())
 }
 
-/// Read the first usable extract from a Wikipedia answer (v2
-/// `_fetch_wikipedia_extract`): a missing page (absent or negative id) ends
+/// Read the first usable extract from a Wikipedia answer:
+/// a missing page (absent or negative id) ends
 /// the lookup as absent, and the first non-empty extract wins.
 pub fn select_extract(page: &WireQueryResponse) -> Option<String> {
     let pages = page.query.as_ref().map(|query| &query.pages)?;
@@ -294,8 +294,8 @@ pub fn select_extract(page: &WireQueryResponse) -> Option<String> {
     None
 }
 
-/// Read the first usable Commons file URL (v2
-/// `_load_artist_image_from_wikidata`): the first page carrying image info
+/// Read the first usable Commons file URL:
+/// the first page carrying image info
 /// decides, and an empty URL there ends the lookup as absent.
 pub fn select_commons_url(page: &WireCommonsResponse) -> Option<String> {
     let pages = page.query.as_ref().map(|query| &query.pages)?;
@@ -382,8 +382,8 @@ impl WikidataClient {
         }
     }
 
-    /// Resolve a Wikidata id to its Wikipedia title in one language (v2
-    /// `_get_wikipedia_title_from_wikidata`). An id that is not an item id
+    /// Resolve a Wikidata id to its Wikipedia title in one language.
+    /// An id that is not an item id
     /// is never sent and reads as absence.
     ///
     /// # Errors
@@ -414,7 +414,7 @@ impl WikidataClient {
         Ok(sitelink_title(&page, wikidata_id, lang))
     }
 
-    /// Fetch one plain-text intro extract (v2 `_fetch_wikipedia_extract`).
+    /// Fetch one plain-text intro extract.
     ///
     /// # Errors
     ///

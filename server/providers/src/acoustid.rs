@@ -25,11 +25,9 @@ use crate::executor::{Answer, Backoff, Executor, Request, Spec, Url, standard_cl
 
 /// Default AcoustID host. Tests point the client at a scripted fake instead.
 pub const DEFAULT_BASE_URL: &str = "https://api.acoustid.org";
-/// A best result under this score is not a confident match
-/// (v2 `_ACOUSTID_MIN_SCORE`).
+/// A best result under this score is not a confident match.
 pub const MIN_SCORE: f64 = 0.70;
-/// Metadata the lookup asks AcoustID to attach
-/// (v2 `meta="recordings releasegroups"`).
+/// Metadata the lookup asks AcoustID to attach.
 pub const LOOKUP_META: &str = "recordings releasegroups";
 /// The provider name errors carry, and the AcoustID rate row.
 pub const SOURCE: &str = "acoustid";
@@ -40,7 +38,7 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// AcoustID on the wire. A 4xx whose body names error code 4 is a bad key
 /// ([`ProviderError::Unauthorized`]); any other 4xx stays a rejection. A
 /// 200 whose `status` is not `ok` is [`ProviderError::Unavailable`]. A 429
-/// that names no wait rests a minute (v2 `_retry_after_seconds`, "the
+/// that names no wait rests a minute ("the
 /// historical 60s window"). The error body was recorded from the live
 /// service on 2026-10-15 (`server/tests/fixtures/acoustid/`).
 pub static SPEC: Spec = Spec {
@@ -90,10 +88,9 @@ pub fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
 /// A confident fingerprint match keyed on a MusicBrainz recording id.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FingerprintMatch {
-    /// First valid recording MBID (v2 `recording_id`).
+    /// First valid recording MBID.
     pub recording_id: String,
-    /// Every valid recording MBID, case-insensitively deduped (v2
-    /// `recording_ids`).
+    /// Every valid recording MBID, case-insensitively deduped.
     pub recording_ids: Vec<String>,
     /// AcoustID score of the best result (always `>= MIN_SCORE`).
     pub score: f64,
@@ -104,7 +101,7 @@ pub struct FingerprintMatch {
     /// Recording duration in seconds, when the payload carried a usable one.
     pub duration_secs: Option<i64>,
     /// Release-group MBIDs merged from the recording and result level,
-    /// deduped with order preserved (v2 `_extract_release_group_ids`).
+    /// deduped with order preserved.
     pub release_group_ids: Vec<String>,
 }
 
@@ -129,16 +126,15 @@ impl AcoustIdClient {
         Self { executor, base }
     }
 
-    /// Look one fingerprint up. `api_key` arrives per call (v2 reads it
-    /// fresh from settings on every lookup); an empty key means "not
-    /// configured" and answers `None` without touching the wire, exactly
-    /// like v2's `DISABLED` result.
+    /// Look one fingerprint up. `api_key` arrives per call, read fresh from
+    /// settings on every lookup; an empty key means "not configured" and
+    /// answers `None` without touching the wire.
     ///
     /// # Errors
     ///
     /// The typed failure of the call, or a payload failure for an answer
     /// that does not decode or a confident match with no recording id to
-    /// key on (v2 `FAIL`, which must never read as "no match").
+    /// key on (which must never read as "no match").
     pub async fn lookup(
         &self,
         api_key: &str,
@@ -280,8 +276,7 @@ fn malformed() -> ProviderError {
     }
 }
 
-/// Fold a lookup payload into a match, following v2 `_parse_response`
-/// branch for branch.
+/// Fold a lookup payload into a match.
 fn parse_lookup(payload: &serde_json::Value) -> Result<Option<FingerprintMatch>, ProviderError> {
     let Some(body) = payload.as_object() else {
         return Err(malformed());
@@ -576,7 +571,7 @@ fn recording_duration_secs(recording: &serde_json::Map<String, serde_json::Value
 }
 
 /// Merge release-group MBIDs from the recording level and the result level,
-/// deduped with order preserved (v2 `_extract_release_group_ids`, used by
+/// deduped with order preserved (used by
 /// the download-verify release-group check). Unlike recording ids, these
 /// compare case-sensitively, exactly as v2 does.
 fn release_group_ids(
@@ -633,8 +628,8 @@ pub enum FpCalcError {
     BadDuration(String),
 }
 
-/// Parse `fpcalc` output the way v2 `_run_fpcalc` + `_parse_fpcalc_output`
-/// do. `exit_success` is fpcalc's exit status and `stderr` its error text.
+/// Parse `fpcalc` output. `exit_success` is fpcalc's exit status and
+/// `stderr` its error text.
 ///
 /// Two quirks matter here. First, fpcalc exits non-zero ("Error decoding
 /// audio frame (End of file)") on tracks shorter than its 120s window, but

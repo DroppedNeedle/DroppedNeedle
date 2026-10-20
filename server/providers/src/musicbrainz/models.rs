@@ -539,8 +539,8 @@ pub struct MbRecording {
 
 /// Release search hit. The search index carries release-group,
 /// artist-credit, label-info, and medium facets without any `inc`
-/// parameter; optional fields stay absent on many releases (live 2026-08-11,
-/// `musicbrainz_release_search_models.py`).
+/// parameter; optional fields stay absent on many releases (live
+/// 2026-08-11).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ReleaseSearchHit {
     /// Release MBID: required identity.

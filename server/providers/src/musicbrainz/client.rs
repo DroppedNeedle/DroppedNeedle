@@ -51,8 +51,8 @@ pub static OFFICIAL: Spec = Spec {
 };
 
 /// BrainzMash. A 429 rests the bucket for the wait it names, or backs off
-/// from one second to a minute while 429s keep naming none (v2
-/// `_BrainzMashScheduler`). A 503 is a dead mirror, not a rate signal, so
+/// from one second to a minute while 429s keep naming none.
+/// A 503 is a dead mirror, not a rate signal, so
 /// it sets no cooldown. Failures count toward the mirror's own health
 /// entry.
 pub static BRAINZMASH: Spec = Spec {
@@ -295,7 +295,7 @@ impl MusicBrainzView {
     }
 
     /// One page of releases by title and artist, for a curator choosing
-    /// an exact edition (v2 `search_release_editions`).
+    /// an exact edition.
     pub async fn search_release_editions(
         &self,
         title: &str,
@@ -324,8 +324,8 @@ impl MusicBrainzView {
             .await
     }
 
-    /// Search release groups carrying one tag (v2
-    /// `search_release_groups_by_tag`), spelling variants included.
+    /// Search release groups carrying one tag,
+    /// spelling variants included.
     pub async fn search_release_groups_by_tag(
         &self,
         tag: &str,
@@ -345,7 +345,7 @@ impl MusicBrainzView {
         .await
     }
 
-    /// Search artists carrying one tag (v2 `search_artists_by_tag`),
+    /// Search artists carrying one tag,
     /// spelling variants included.
     pub async fn search_artists_by_tag(
         &self,
@@ -423,9 +423,8 @@ impl MusicBrainzView {
         }
     }
 
-    /// Resolve a release MBID to its release-group MBID (v2
-    /// `MusicBrainzIdResolver`: tags carry the release id, the library
-    /// keys on the group id).
+    /// Resolve a release MBID to its release-group MBID (tags carry the release
+    /// id, the library keys on the group id).
     pub async fn resolve_release_to_release_group(
         &self,
         release_mbid: &str,

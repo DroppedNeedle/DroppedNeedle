@@ -4,8 +4,8 @@
 //! fanning out the same artist lookup, a stampede after a cache sweep),
 //! [`Singleflight`] runs the fetch once and shares the result. Followers get
 //! a clone of the leader's `Arc`'d value or error; a new key, or a key whose
-//! flight already landed, starts a fresh flight. Ports v2's
-//! `RequestDeduplicator`, including `clear()` for endpoint changes.
+//! flight already landed, starts a fresh flight. `clear()` drops every
+//! flight for endpoint changes.
 //!
 //! Cancellation is safe: if the leader's future drops, followers keep
 //! driving the shared flight to completion instead of inheriting a

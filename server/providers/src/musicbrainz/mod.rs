@@ -1,9 +1,8 @@
 //! MusicBrainz provider client: search, browse, lookups, and the BrainzMash
 //! mirror.
 //!
-//! This module ports the v2 `musicbrainz_*` repositories plus the BrainzMash
-//! transport. Every behavior first observed against the live service keeps
-//! its citation inline. Tolerant where the wire is sparse (unknown fields
+//! Every behavior first observed against the live service keeps its
+//! citation inline. Tolerant where the wire is sparse (unknown fields
 //! ignored, display fields optional), strict where identity is at stake
 //! (missing entity ids fail decoding; a retired MBID counts as its target
 //! only after a lookup proves the redirect).
@@ -36,11 +35,11 @@ pub const SOURCE: &str = "musicbrainz";
 
 /// Official MusicBrainz web-service root.
 pub const MB_API_BASE: &str = "https://musicbrainz.org/ws/2";
-/// The one server-owned BrainzMash origin (v2 `BRAINZMASH_ENDPOINT`).
+/// The one server-owned BrainzMash origin.
 pub const BRAINZMASH_API_BASE: &str = "https://api.brainzmash.cc/ws/2";
-/// Redirect follows per logical lookup (v2 `_BRAINZMASH_MAX_REDIRECTS`).
+/// Redirect follows per logical lookup.
 pub const MAX_REDIRECT_HOPS: usize = 2;
-/// BrainzMash cooldown ceiling (v2 `_BRAINZMASH_MAX_COOLDOWN_SECONDS`).
+/// BrainzMash cooldown ceiling.
 pub const BRAINZMASH_MAX_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(60);
 /// Largest MusicBrainz answer read. A box-set release with every medium,
 /// track and credit comes back whole and can pass 4 MiB.
@@ -186,8 +185,8 @@ pub enum Criticality {
     BestEffort,
 }
 
-/// True for the `8-4-4-4-12` hex MBID shape (v2 `is_valid_mbid` rejects
-/// `unknown_*` sentinels the same way: not this shape, not valid).
+/// True for the `8-4-4-4-12` hex MBID shape. `unknown_*` sentinels are not
+/// this shape, so they are not valid.
 pub fn is_valid_mbid(value: &str) -> bool {
     let trimmed = value.trim();
     if trimmed.len() != 36 {
@@ -205,13 +204,12 @@ pub fn is_valid_mbid(value: &str) -> bool {
     true
 }
 
-/// Lowercase-and-trim identity key for MBIDs (v2 `normalize_mb_id`).
+/// Lowercase-and-trim identity key for MBIDs.
 pub fn normalize_mb_id(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-/// Escape user text before placing it inside a Lucene field phrase (v2
-/// `escape_lucene_phrase`).
+/// Escape user text before placing it inside a Lucene field phrase.
 pub fn escape_lucene_phrase(value: &str) -> String {
     const RESERVED: [char; 19] = [
         '+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', ':', '\\',
@@ -227,8 +225,7 @@ pub fn escape_lucene_phrase(value: &str) -> String {
     escaped
 }
 
-/// Release query, live-verified against MusicBrainz WS/2 on 2026-08-13 (v2
-/// `build_release_search_query`).
+/// Release query, live-verified against MusicBrainz WS/2 on 2026-08-13.
 pub fn build_release_search_query(title: &str, artist: &str) -> String {
     let mut query = format!(r#"release:"{}""#, escape_lucene_phrase(title));
     if !artist.is_empty() {
@@ -269,7 +266,7 @@ pub fn build_release_match_query(
     )
 }
 
-/// Release-group tag query (v2 `build_musicbrainz_tag_query`): the tag as
+/// Release-group tag query: the tag as
 /// written, boosted, OR'd with its common spelling variants (hyphen and
 /// space swapped, `&` and `and` swapped), each a quoted `tag:` phrase.
 pub fn build_tag_query(tag: &str) -> String {
@@ -313,14 +310,14 @@ pub fn build_tag_query(tag: &str) -> String {
         .join(" OR ")
 }
 
-/// Search-result score from either observed key (v2 `get_score`):
+/// Search-result score from either observed key:
 /// `score` first, then `ext:score`, defaulting to zero.
 pub fn hit_score(score: Option<i64>, ext_score: Option<i64>) -> i64 {
     score.or(ext_score).unwrap_or(0)
 }
 
 /// First artist-credit display name: credited name, then the artist's
-/// canonical name (v2 `extract_artist_name`).
+/// canonical name.
 pub fn credit_display_name(credit: &[ArtistCreditName]) -> Option<&str> {
     credit.first().and_then(|entry| {
         if !entry.name.is_empty() {
@@ -333,7 +330,7 @@ pub fn credit_display_name(credit: &[ArtistCreditName]) -> Option<&str> {
     })
 }
 
-/// Leading year of an MB date, tolerating partial dates (v2 `parse_year`).
+/// Leading year of an MB date, tolerating partial dates.
 pub fn parse_year(date: Option<&str>) -> Option<i32> {
     let year = date?.split('-').next()?;
     if !year.is_empty() && year.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -349,8 +346,7 @@ pub fn parse_year(date: Option<&str>) -> Option<i32> {
 // attached to that recording (live 2026-07-20, `musicbrainz_API_NOTES.md`).
 // ---------------------------------------------------------------------------
 
-/// Secondary types that change the version enough to deprioritize (v2
-/// `_VERSION_CHANGING_TYPES`).
+/// Secondary types that change the version enough to deprioritize.
 const VERSION_CHANGING_TYPES: [&str; 5] = ["live", "remix", "dj-mix", "mixtape/street", "demo"];
 
 /// Same-recording release-group rank, lower winning: Official flag,
@@ -358,8 +354,8 @@ const VERSION_CHANGING_TYPES: [&str; 5] = ["live", "remix", "dj-mix", "mixtape/s
 /// then MBID for determinism.
 pub type ReleaseGroupRank = (u8, u8, u8, u8, String, String);
 
-/// Stable same-recording rank where lower values win (v2
-/// `recording_release_group_rank`): Official first, then version-keeping,
+/// Stable same-recording rank where lower values win:
+/// Official first, then version-keeping,
 /// then Album > EP > Single > other, then type-less, then earliest date,
 /// then MBID for determinism.
 pub fn recording_release_group_rank(

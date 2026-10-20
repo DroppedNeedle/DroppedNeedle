@@ -1,12 +1,10 @@
 //! Cover Art Archive provider client: metadata listing, downloads and
 //! front covers.
 //!
-//! This module ports the v2 CAA stack (`coverart_repository.py` management
-//! path plus `coverart_album.py` front-fetch shapes). The live provider
-//! boundary was probed on 2026-07-21 against coverartarchive.org and is
-//! recorded in `coverart_MANAGEMENT_API_NOTES.md`; every handler below
-//! cites it. Image bytes pass through untouched: originals may be PNG, so
-//! the client never assumes JPEG.
+//! The live provider boundary was probed on 2026-07-21 against
+//! coverartarchive.org and is recorded in `coverart_MANAGEMENT_API_NOTES.md`;
+//! every handler below cites it. Image bytes pass through untouched:
+//! originals may be PNG, so the client never assumes JPEG.
 //!
 //! Every request goes through the archive's [`Executor`], which paces at
 //! the `coverartarchive` row of the rate table and the caller's priority.
@@ -29,11 +27,10 @@ use crate::musicbrainz::is_valid_mbid;
 pub const COVER_ART_ARCHIVE_BASE: &str = "https://coverartarchive.org";
 /// The provider name errors carry, and the archive's rate row.
 pub const SOURCE: &str = "coverartarchive";
-/// Metadata documents larger than this are refused (v2
-/// `MANAGEMENT_ARTWORK_METADATA_MAX_BYTES`, 5 MiB).
+/// Metadata documents larger than this are refused (5 MiB).
 pub const METADATA_MAX_BYTES: usize = 5 * 1024 * 1024;
 /// Largest body read from the archive: the biggest cap any caller applies
-/// (artwork bytes, v2 `MAX_DELIVERY_IMAGE_BYTES`). A larger body is never
+/// (artwork bytes). A larger body is never
 /// buffered whole.
 pub const TRANSPORT_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 /// Redirect hops followed for one request before giving up.
@@ -251,8 +248,8 @@ pub struct ArtworkBytes {
     pub content_type: String,
 }
 
-/// Validate an archive artwork URL and upgrade it to https (v2
-/// `_management_artwork_url`): only `coverartarchive.org` over http/https,
+/// Validate an archive artwork URL and upgrade it to https:
+/// only `coverartarchive.org` over http/https,
 /// no credentials, default ports only, absolute path. Query strings
 /// survive; fragments do not. Anything else is `None`, since response
 /// image URLs arrive with an `http` scheme (live 2026-07-21) and only
@@ -333,7 +330,7 @@ fn split_artwork_url(url: &str) -> Option<(&str, &str, &str)> {
 }
 
 /// Normalize image types from the archive's labels plus its front/back
-/// flags (v2 `_management_image_types`): casefolded, `front` prepended and
+/// flags: casefolded, `front` prepended and
 /// `back` appended from the flags, known labels kept, anything else (or an
 /// empty list) becoming `Other`, order-preserved and deduplicated.
 pub fn classify_image_types(types: &[String], front: bool, back: bool) -> Vec<ImageType> {
@@ -372,7 +369,7 @@ pub fn classify_image_types(types: &[String], front: bool, back: bool) -> Vec<Im
 }
 
 /// Raster image MIME from magic bytes, or `None` for anything this client
-/// will not serve mislabeled (v2 `_sniff_image_content_type`): embedded
+/// will not serve mislabeled: embedded
 /// declarations are often wrong, and a blob could be SVG or junk, so bytes
 /// decide. Needs at least 12 bytes.
 pub fn sniff_image_content_type(data: &[u8]) -> Option<&'static str> {

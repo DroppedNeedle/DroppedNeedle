@@ -14,8 +14,8 @@
 //!
 //! Every call sends `Accept: application/json`, plus
 //! `Authorization: Token <token>` whenever a token is given, and every
-//! token is header-safety checked before it goes near the wire (v2
-//! `_is_header_safe_listenbrainz_token`). A token that fails the check is
+//! token is header-safety checked before it goes near the wire.
+//! A token that fails the check is
 //! refused before sending.
 //!
 //! Failures are typed [`ProviderError`]s. An empty answer (204, or a body
@@ -33,7 +33,7 @@ use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, stan
 pub mod playlists;
 pub mod stats;
 
-/// Default API host (v2 `LISTENBRAINZ_API_URL`).
+/// Default API host.
 pub const DEFAULT_BASE_URL: &str = "https://api.listenbrainz.org";
 /// Local ceiling on release-group ids per metadata GET. The notes stress this
 /// is a local safety bound, not an upstream claim (v2 batches of 25).
@@ -42,8 +42,7 @@ pub const RELEASE_GROUP_BATCH: usize = 25;
 pub const RECORDING_BATCH: usize = 50;
 /// Local ceiling on ids per genre-batch call (v2 raises past 500).
 pub const MAX_GENRE_IDS: usize = 500;
-/// Longest token accepted for a header (v2
-/// `_MAX_LISTENBRAINZ_TOKEN_LENGTH`).
+/// Longest token accepted for a header.
 pub const MAX_TOKEN_LEN: usize = 1024;
 /// The provider name errors carry, and the ListenBrainz rate row.
 pub const SOURCE: &str = "listenbrainz";
@@ -52,8 +51,8 @@ const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// ListenBrainz on the wire. A policy block is [`ProviderError::Disabled`];
 /// a 429 waits for `X-RateLimit-Reset-In`, else `Retry-After`, else two
-/// seconds (v2 `_RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS`), and never more than
-/// an hour (v2 `_RATE_LIMIT_MAX_DELAY_SECONDS`). The rate-limit headers are
+/// seconds, and never more than
+/// an hour. The rate-limit headers are
 /// described at
 /// https://listenbrainz.readthedocs.io/en/latest/users/api/index.html (read
 /// 2026-10-18).
@@ -87,7 +86,7 @@ fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
 }
 
 /// Whether this answer is a deterministic upstream policy block rather
-/// than an ordinary error (v2 `_is_upstream_policy_block`): the popularity
+/// than an ordinary error: the popularity
 /// feature-flag 500, and the anti-scraper 401 added in 2026-07 when
 /// ListenBrainz began gating anonymous popularity calls.
 fn is_policy_block(status: u16, body: &str) -> bool {
@@ -114,7 +113,7 @@ pub struct ListenBrainzCredentials {
     pub user_token: Option<String>,
 }
 
-/// One listen (v2 `ListenBrainzListen`). Track and artist names are required;
+/// One listen. Track and artist names are required;
 /// a payload missing them fails decode instead of yielding placeholder
 /// text. (v2 defaults those to `"Unknown"`; this client treats names as
 /// identity and skips nameless items, so placeholder text can never flow
@@ -149,7 +148,7 @@ pub struct GenreTag {
     pub genre_mbid: Option<String>,
 }
 
-/// Release-group metadata (v2 `LbManagementReleaseGroupMetadata`). Only the
+/// Release-group metadata. Only the
 /// tag half is projected here; the artist/release summaries ride along in
 /// the tolerant decode so the shape stays faithful to the live response.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -160,11 +159,10 @@ pub struct ReleaseGroupMetadata {
     pub release_group_tags: Vec<GenreTag>,
 }
 
-/// One top release-group row behind an artist popularity sum (v2
-/// `ListenBrainzReleaseGroup`, trimmed to the popularity fields). The MBID
-/// is identity and required; the count is required too (a zero count is a
-/// real answer, a non-integer count is malformed and skipped); the display
-/// name tolerates absence rather than placeholder text.
+/// One top release-group row behind an artist popularity sum (trimmed to the
+/// popularity fields). The MBID is identity and required; the count is required
+/// too (a zero count is a real answer, a non-integer count is malformed and
+/// skipped); the display name tolerates absence rather than placeholder text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopReleaseGroup {
     /// Release-group MBID.
@@ -177,7 +175,7 @@ pub struct TopReleaseGroup {
     pub listen_count: i64,
 }
 
-/// One of an artist's most played recordings (v2 `ListenBrainzRecording`).
+/// One of an artist's most played recordings.
 /// The display fields tolerate absence; a row without a usable title is
 /// skipped rather than shown as "Unknown".
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,7 +194,7 @@ pub struct TopRecording {
     pub release_mbid: Option<String>,
 }
 
-/// One similar artist from LB Radio (v2 `ListenBrainzSimilarArtist`). The
+/// One similar artist from LB Radio. The
 /// MBID keys the row; the listen count sums the sample recordings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimilarArtist {
@@ -366,8 +364,7 @@ impl ListenBrainzClient {
                     creds,
                 )?
                 .trailing_slash();
-            // No payload at all is an upstream failure, not an empty answer
-            // (v2 raises `ExternalServiceError` here).
+            // No payload at all is an upstream failure, not an empty answer.
             let Some(payload) = self
                 .read(request, priority)
                 .await?
@@ -816,7 +813,7 @@ fn invalid(reason: &'static str) -> ProviderError {
 }
 
 /// Whether a token may ride in a header: non-empty, at most 1024 chars, all
-/// printable ASCII (v2 `_is_header_safe_listenbrainz_token`).
+/// printable ASCII.
 fn header_safe_token(token: &str) -> bool {
     if token.is_empty() || token.len() > MAX_TOKEN_LEN {
         return false;
@@ -849,7 +846,7 @@ fn optional_text(value: Option<&serde_json::Value>) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Parse one listen (v2 `parse_listen`). Recording and release MBIDs prefer
+/// Parse one listen. Recording and release MBIDs prefer
 /// the MBID mapping and fall back to the additional info.
 fn parse_listen(item: &serde_json::Value) -> Option<Listen> {
     let meta = item.get("track_metadata")?.as_object()?;
@@ -954,8 +951,8 @@ fn parse_genre_tag(item: &serde_json::Value) -> Option<GenreTag> {
     })
 }
 
-/// Parse the release-group metadata object (v2
-/// `LbManagementReleaseGroupMetadata`). `tag` holds `artist` and
+/// Parse the release-group metadata object.
+/// `tag` holds `artist` and
 /// `release_group` arrays; `release` is an object with the same summary
 /// shape, not a list (live notes). Unknown members are ignored.
 fn parse_release_group_metadata(entry: &serde_json::Value) -> ReleaseGroupMetadata {

@@ -48,11 +48,10 @@ static HOPS: RedirectRule = RedirectRule {
     next: |_, next| check_image_url(next.as_str()),
 };
 
-/// Validate a third-party image URL: https on the default port, no
-/// credentials, and a host TheAudioDB or Wikimedia serves images from (v2
-/// `validate_audiodb_image_url`, widened to Wikimedia for the Wikidata
-/// portraits). The URLs come from upstream data, so this keeps the server
-/// from being pointed anywhere else.
+/// Validate a third-party image URL: https on the default port, no credentials,
+/// and a host TheAudioDB or Wikimedia serves images from (widened to Wikimedia
+/// for the Wikidata portraits). The URLs come from upstream data, so this keeps
+/// the server from being pointed anywhere else.
 #[must_use]
 pub fn check_image_url(raw: &str) -> Option<Url> {
     let url = Url::parse(raw.trim()).ok()?;

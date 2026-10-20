@@ -27,14 +27,14 @@ use crate::executor::{
     Answer, Backoff, Executor, Reply, Request, Spec, Url, short, standard_classify,
 };
 
-/// Default API host (v2 `LASTFM_API_URL`).
+/// Default API host.
 pub const DEFAULT_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
-/// Last.fm's documented rate-limit error code (v2 `LASTFM_ERROR_MAP[29]`).
+/// Last.fm's documented rate-limit error code.
 /// The management notes call out that this code was never provoked live on
 /// purpose; it is decoded from the documented envelope and covered by a
 /// scripted fake instead.
 pub const ERROR_RATE_LIMITED: i64 = 29;
-/// The rest after error 29 (v2 `retry_after_seconds=1.0`).
+/// The rest after error 29.
 pub const RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
 /// The provider name errors carry, and the Last.fm rate row.
 pub const SOURCE: &str = "lastfm";
@@ -133,8 +133,8 @@ pub struct AuthToken {
     pub token: String,
 }
 
-/// A session reply from `auth.getSession`. Name and key are both required
-/// (v2 `parse_session` raises when either is absent).
+/// A session reply from `auth.getSession`. Name and key are both required:
+/// an answer missing either is a failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     /// Linked Last.fm username.
@@ -145,7 +145,7 @@ pub struct Session {
     pub subscriber: i64,
 }
 
-/// A plain tag (v2 `LastFmTag`).
+/// A plain tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tag {
     /// Tag name.
@@ -154,7 +154,7 @@ pub struct Tag {
     pub url: String,
 }
 
-/// A weighted tag from the genre surface (v2 `LastFmManagementTag`).
+/// A weighted tag from the genre surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeightedTag {
     /// Tag name (never blank; v2 filters blank names before projecting).
@@ -163,8 +163,7 @@ pub struct WeightedTag {
     pub weight: i64,
 }
 
-/// Artist metadata (v2 `LastFmArtistInfo`). The name is required; counts and
-/// artwork stay lenient the way v2's `_safe_int` parsing is.
+/// Artist metadata. The name is required; counts and artwork stay lenient.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArtistInfo {
     /// Artist name.
@@ -187,7 +186,7 @@ pub struct ArtistInfo {
     pub similar: Vec<SimilarArtist>,
 }
 
-/// Album metadata (v2 `LastFmAlbumInfo`). The title is required.
+/// Album metadata. The title is required.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlbumInfo {
     /// Album title.
@@ -212,7 +211,7 @@ pub struct AlbumInfo {
     pub tracks: Vec<AlbumTrack>,
 }
 
-/// One album track (v2 `LastFmAlbumTrack`).
+/// One album track.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlbumTrack {
     /// Track title.
@@ -225,7 +224,7 @@ pub struct AlbumTrack {
     pub url: String,
 }
 
-/// A similar artist (v2 `LastFmSimilarArtist`).
+/// A similar artist.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimilarArtist {
     /// Artist name.
@@ -239,8 +238,8 @@ pub struct SimilarArtist {
 }
 
 /// One row of a top list: an artist's top tracks or albums, a user's top
-/// albums, or the sitewide artist chart (v2 `LastFmTrack` / `LastFmAlbum` /
-/// `LastFmArtist`). The name is required; counts are lenient.
+/// albums, or the sitewide artist chart. The name is required; counts are
+/// lenient.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopItem {
     /// Track, album or (on the artist chart) artist name.
@@ -255,7 +254,7 @@ pub struct TopItem {
     pub image_url: String,
 }
 
-/// One scrobble from a user's recent tracks (v2 `LastFmRecentTrack`).
+/// One scrobble from a user's recent tracks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentTrack {
     /// Track title.
@@ -522,8 +521,8 @@ impl LastFmClient {
         .await
     }
 
-    /// `chart.getTopArtists`: the sitewide artist chart, most played first
-    /// (v2 `get_global_top_artists`). Each row's `name` is the artist.
+    /// `chart.getTopArtists`: the sitewide artist chart, most played first.
+    /// Each row's `name` is the artist.
     ///
     /// # Errors
     ///
@@ -545,8 +544,7 @@ impl LastFmClient {
     }
 
     /// `user.getTopAlbums` for one Last.fm user over `period` (`7day`,
-    /// `1month`, `12month` or `overall`), most played first (v2
-    /// `get_user_top_albums`).
+    /// `1month`, `12month` or `overall`), most played first.
     ///
     /// # Errors
     ///
@@ -574,7 +572,7 @@ impl LastFmClient {
     }
 
     /// `user.getTopArtists` for one Last.fm user over `period`, most played
-    /// first (v2 `get_user_top_artists`). Each row's `name` is the artist.
+    /// first. Each row's `name` is the artist.
     ///
     /// # Errors
     ///
@@ -602,7 +600,7 @@ impl LastFmClient {
     }
 
     /// `user.getWeeklyArtistChart`: the user's artists this week, most
-    /// played first (v2 `get_user_weekly_artist_chart`).
+    /// played first.
     ///
     /// # Errors
     ///
@@ -623,7 +621,7 @@ impl LastFmClient {
     }
 
     /// `user.getWeeklyAlbumChart`: the user's albums this week, most played
-    /// first (v2 `get_user_weekly_album_chart`). Album MBIDs name releases.
+    /// first. Album MBIDs name releases.
     ///
     /// # Errors
     ///
@@ -643,8 +641,7 @@ impl LastFmClient {
         .await
     }
 
-    /// `tag.getTopArtists`: the most played artists carrying one tag (v2
-    /// `get_tag_top_artists`).
+    /// `tag.getTopArtists`: the most played artists carrying one tag.
     ///
     /// # Errors
     ///
@@ -667,7 +664,7 @@ impl LastFmClient {
     }
 
     /// `user.getLovedTracks`: the tracks one Last.fm user loved, newest
-    /// first (v2 `get_user_loved_tracks`). Each row's `name` is the track.
+    /// first. Each row's `name` is the track.
     ///
     /// # Errors
     ///
@@ -689,8 +686,7 @@ impl LastFmClient {
         .await
     }
 
-    /// `user.getRecentTracks`: the user's latest scrobbles, newest first
-    /// (v2 `get_user_recent_tracks`).
+    /// `user.getRecentTracks`: the user's latest scrobbles, newest first.
     ///
     /// # Errors
     ///
@@ -803,7 +799,7 @@ impl LastFmClient {
 
     /// Build one call. Signed calls sort their parameters (excluding
     /// `format` and `callback`), concatenate key plus value, append the
-    /// shared secret, and MD5 the result (v2 `_build_api_sig`); the session
+    /// shared secret, and MD5 the result; the session
     /// key rides along as `sk` when one is linked. Reads are GETs, posts
     /// are forms; both go to the API root with its trailing slash.
     fn call(
@@ -911,7 +907,7 @@ fn artist_params<'a>(
 
 /// Decode the `toptags.tag` list into weighted tags. A missing `toptags`
 /// object reads as empty (v2's tolerant structs default it); blank names
-/// are filtered before projecting (v2 `_management_genre_candidates`).
+/// are filtered before projecting.
 fn top_tags(payload: &serde_json::Value) -> Vec<WeightedTag> {
     let tags = match payload
         .get("toptags")
@@ -976,7 +972,7 @@ fn unusable_base() -> ProviderError {
 
 /// Build the call signature: sort parameters excluding `format` and
 /// `callback`, concatenate key plus value, append the shared secret, MD5 the
-/// result (v2 `_build_api_sig`).
+/// result.
 pub fn api_sig(params: &[(String, String)], shared_secret: &str) -> String {
     let mut filtered: Vec<(&str, &str)> = params
         .iter()
@@ -993,7 +989,7 @@ pub fn api_sig(params: &[(String, String)], shared_secret: &str) -> String {
     format!("{:x}", md5::compute(signed.as_bytes()))
 }
 
-/// Parse a string-or-number count the way v2 `_safe_int` does: integers pass
+/// Parse a string-or-number count leniently: integers pass
 /// through, numeric strings parse, floats truncate, and anything else reads
 /// as zero. Counts are telemetry, not identity, so leniency here is
 /// intended.
@@ -1009,7 +1005,7 @@ fn lenient_int(value: Option<&serde_json::Value>) -> i64 {
     }
 }
 
-/// Parse a string-or-number score the way v2 `_safe_float` does.
+/// Parse a string-or-number score the same lenient way.
 fn lenient_float(value: Option<&serde_json::Value>) -> f64 {
     match value {
         None | Some(serde_json::Value::Null) => 0.0,
@@ -1019,8 +1015,7 @@ fn lenient_float(value: Option<&serde_json::Value>) -> f64 {
     }
 }
 
-/// Pick the artwork URL: `extralarge` wins, otherwise the last image wins
-/// (v2 `_extract_image`).
+/// Pick the artwork URL: `extralarge` wins, otherwise the last image wins.
 fn pick_image(images: Option<&serde_json::Value>) -> String {
     let images = match images.and_then(serde_json::Value::as_array) {
         Some(images) if !images.is_empty() => images,
@@ -1055,7 +1050,7 @@ fn mbid_or_none(value: Option<&serde_json::Value>) -> Option<String> {
         .map(|id| id.to_ascii_lowercase())
 }
 
-/// A blank-or-missing MusicBrainz id reads as absent (v2 `or None`).
+/// A blank-or-missing MusicBrainz id reads as absent.
 fn blank_to_none(value: Option<&serde_json::Value>) -> Option<String> {
     value
         .and_then(serde_json::Value::as_str)
@@ -1090,7 +1085,7 @@ fn parse_tags(entity: &serde_json::Map<String, serde_json::Value>) -> Vec<Tag> {
         .collect()
 }
 
-/// Parse `artist.getInfo` (v2 `parse_artist_info`). The artist name is
+/// Parse `artist.getInfo`. The artist name is
 /// required; a payload missing it fails instead of yielding an empty
 /// success.
 fn parse_artist_info(payload: &serde_json::Value) -> Option<ArtistInfo> {
@@ -1134,7 +1129,7 @@ fn parse_artist_info(payload: &serde_json::Value) -> Option<ArtistInfo> {
     })
 }
 
-/// Parse `album.getInfo` (v2 `parse_album_info`). The title is required.
+/// Parse `album.getInfo`. The title is required.
 fn parse_album_info(payload: &serde_json::Value) -> Option<AlbumInfo> {
     let album = payload.get("album")?.as_object()?;
     let name = album.get("name")?.as_str()?;
@@ -1192,9 +1187,7 @@ fn parse_album_info(payload: &serde_json::Value) -> Option<AlbumInfo> {
     })
 }
 
-/// Parse one similar artist (v2 `parse_similar_artist`).
-/// Parse one top-tracks or top-albums row (v2 `parse_top_track` /
-/// `parse_top_album`). A blank name skips the row.
+/// Parse one top-tracks or top-albums row. A blank name skips the row.
 fn parse_top_item(item: &serde_json::Value) -> Option<TopItem> {
     let item = item.as_object()?;
     let name = item.get("name")?.as_str()?.trim();

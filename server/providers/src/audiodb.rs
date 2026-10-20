@@ -18,9 +18,9 @@ use crate::degradation::{IntegrationStatus, record_current};
 use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Backoff, Executor, Request, Spec, Url, short, standard_classify};
 
-/// Default API host (v2 `AUDIODB_API_URL`, without the key segment).
+/// Default API host (without the key segment).
 pub const DEFAULT_BASE_URL: &str = "https://www.theaudiodb.com/api/v1/json";
-/// Free key, used when no settings key is configured (v2 `AUDIODB_FREE_KEY`).
+/// Free key, used when no settings key is configured.
 pub const FREE_API_KEY: &str = "123";
 /// The provider name errors carry, and the free key's rate row.
 pub const SOURCE: &str = "audiodb";
@@ -42,7 +42,7 @@ pub static SPEC: Spec = Spec {
     classify: standard_classify,
 };
 
-/// Artist artwork (v2 `AudioDBArtistResponse`). The two identity fields are
+/// Artist artwork. The two identity fields are
 /// required, so a payload missing them fails decode instead of yielding an
 /// empty success; every artwork URL stays optional, and unknown fields are
 /// ignored exactly like v2's tolerant structs.
@@ -89,7 +89,7 @@ pub struct AudioDbArtist {
     pub clearart: Option<String>,
 }
 
-/// Album artwork (v2 `AudioDBAlbumResponse`). Identity required, artwork
+/// Album artwork. Identity required, artwork
 /// optional, unknown fields ignored, just like the artist shape.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AudioDbAlbum {
@@ -253,8 +253,8 @@ impl AudioDbClient {
         .await
     }
 
-    /// One GET, and the first entry of `list` in its answer (v2
-    /// `_extract_first`): a 404, or a missing, null, empty or non-list
+    /// One GET, and the first entry of `list` in its answer:
+    /// a 404, or a missing, null, empty or non-list
     /// member, means "no match", never an error. An entry that does not
     /// decode is a payload failure, noted for the request.
     async fn first<T: serde::de::DeserializeOwned>(

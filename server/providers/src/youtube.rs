@@ -408,8 +408,7 @@ impl YouTubeClient {
         self.lock_cache().contains(&key)
     }
 
-    /// Cached flags for track pairs, keyed `artist|track` lowercased, kept
-    /// from v2's `are_cached`.
+    /// Cached flags for track pairs, keyed `artist|track` lowercased.
     pub fn are_cached(&self, pairs: &[(&str, &str)]) -> HashMap<String, bool> {
         pairs
             .iter()

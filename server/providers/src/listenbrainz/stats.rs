@@ -17,7 +17,7 @@ use serde::Deserialize;
 use super::{ListenBrainzClient, ListenBrainzCredentials};
 use crate::{ProviderError, RequestPriority};
 
-/// Ranges the stats endpoints accept (v2 `ALLOWED_STATS_RANGE`, the
+/// Ranges the stats endpoints accept (the
 /// spellings the charts use).
 pub const STATS_RANGES: [&str; 4] = ["this_week", "this_month", "this_year", "all_time"];
 /// Largest page the stats endpoints serve (v2 clamps `count` to 100).
@@ -84,8 +84,7 @@ pub struct FreshRelease {
     pub artist_mbids: Vec<String>,
 }
 
-/// One loved recording with the names to show it (v2
-/// `ListenBrainzFeedbackRecording`).
+/// One loved recording with the names to show it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LovedRecording {
     /// Track title.
@@ -402,8 +401,8 @@ impl ListenBrainzClient {
     }
 
     /// The first artist MBID of each recording the user loved, in feedback
-    /// order (`/1/feedback/user/{user}/get-feedback?score=1&metadata=true`,
-    /// v2 `get_user_loved_recordings`). Recordings without a mapped artist
+    /// order (`/1/feedback/user/{user}/get-feedback?score=1&metadata=true`).
+    /// Recordings without a mapped artist
     /// are skipped; repeats stay so the caller decides how to dedupe.
     ///
     /// # Errors
@@ -419,9 +418,8 @@ impl ListenBrainzClient {
         Ok(rows.iter().filter_map(loved_artist_mbid).collect())
     }
 
-    /// The user's loved recordings with their names, newest first (v2
-    /// `get_user_loved_recordings`, the home "Your Favorites" shelf).
-    /// Rows without a track title are skipped.
+    /// The user's loved recordings with their names, newest first (the home
+    /// "Your Favorites" shelf). Rows without a track title are skipped.
     ///
     /// # Errors
     ///

@@ -1,11 +1,10 @@
 //! Priority-queue slots for provider work.
 //!
-//! Three lanes keep user-facing lookups fast while background jobs still make
-//! progress: a wide user lane, a wide image lane (page loads fan out dozens
-//! of cover fetches), and a narrow background lane that additionally waits
-//! out user activity before admitting anything. Ports v2's
-//! `PriorityQueueManager` caps (20 user / 24 image / 5 background) and its
-//! 2s user-quiet window.
+//! Three lanes: a wide user lane, a wide image lane, and a narrow
+//! background lane that also waits out user activity before admitting
+//! anything (20 user / 24 image / 5 background, 2 s user-quiet window).
+//! No provider call takes a slot any more: the executor paces through the
+//! rate table's limiters. The lanes only feed the admin view's numbers.
 //!
 //! Callers name their lane with [`RequestPriority`] at every call site.
 //! Background jobs pass [`RequestPriority::BackgroundSync`] (or

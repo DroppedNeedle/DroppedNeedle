@@ -40,7 +40,7 @@ pub static SPEC: Spec = Spec {
 pub const SEARCH_LIMIT: u32 = 10;
 /// Minimum token-set score (0-100) between the requested artist and the
 /// hit's artist. Below this the hit is assumed to be a tribute or cover
-/// album that outranked the real record (v2 `_ARTIST_MATCH_THRESHOLD`).
+/// album that outranked the real record.
 pub const ARTIST_MATCH_THRESHOLD: f64 = 80.0;
 
 // ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ pub fn token_set_ratio(a: &str, b: &str) -> f64 {
         .max(similarity(&full_a, &full_b))
 }
 
-/// Pick the first trustworthy album hit (v2 `find_album`): the row must be
+/// Pick the first trustworthy album hit: the row must be
 /// a `collection` with a store URL and an artist, and the artist must
 /// fuzzy-match the requested one. The collection name falls back to the
 /// requested album title when the wire omits it.
@@ -239,7 +239,7 @@ impl ITunesClient {
     }
 
     /// The store page for an album, or `Ok(None)` when no trustworthy hit
-    /// exists. A blank term makes no request at all (v2 `find_album`).
+    /// exists. A blank term makes no request at all.
     ///
     /// # Errors
     ///
