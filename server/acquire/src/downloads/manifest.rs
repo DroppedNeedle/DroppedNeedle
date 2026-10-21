@@ -227,7 +227,7 @@ impl DownloadManifest {
             && let Some(username) = self.source_username.clone()
         {
             self.handle = Some(TaskHandle {
-                source: "soulseek".to_string(),
+                source: super::source_tag::SourceTag::Soulseek.to_string(),
                 username,
                 filenames: self
                     .target_files

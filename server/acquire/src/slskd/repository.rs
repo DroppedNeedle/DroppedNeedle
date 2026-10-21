@@ -38,7 +38,7 @@ impl TaskHandle {
     #[must_use]
     pub fn new(username: &str, filenames: Vec<String>) -> Self {
         Self {
-            source: "soulseek".to_owned(),
+            source: crate::downloads::source_tag::SourceTag::Soulseek.to_string(),
             username: username.to_owned(),
             filenames,
         }

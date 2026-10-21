@@ -1,33 +1,12 @@
 //! Seams behind the acquisition flows: the outside services they reach.
 //!
-//! Provider and indexer search and the release pages live elsewhere (the
-//! search fan-out, the MusicBrainz client). The flows reach them only
-//! through the traits here. Every fallible method returns a plain string
+//! The release pages live elsewhere (the MusicBrainz client); the flows
+//! reach them only through the traits here. The wanted watcher searches
+//! the download sources themselves. Every fallible method returns a plain string
 //! cause: provider detail stays in the log, never on the wire. Downloads
 //! start through the concrete [`crate::dispatch::DownloadDispatch`].
 
 use futures_util::future::BoxFuture;
-
-/// One provider/indexer candidate for a wanted album.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Candidate {
-    /// Release title as the provider reports it.
-    pub title: String,
-    /// Provider or indexer name.
-    pub source: String,
-}
-
-/// Provider/indexer search seam, implemented by the search fan-out.
-/// Async like the downloads `DownloadSource` seam: production fans out to
-/// slskd and the Usenet indexers over HTTP.
-pub trait CandidateSearch: Send + Sync {
-    /// Search providers for an album's candidates.
-    fn search_album<'a>(
-        &'a self,
-        artist: &'a str,
-        title: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>>;
-}
 
 /// One release row observed on a provider page for a followed artist.
 #[derive(Debug, Clone, PartialEq, Eq)]

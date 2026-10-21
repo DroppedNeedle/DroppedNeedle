@@ -14,7 +14,7 @@ use std::time::{Instant, SystemTime};
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
-use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
+use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, WorkerConfig};
 use droppedneedle_providers::health::ServiceHealth;
 
 use crate::common::bundles::quiet_ticks;
@@ -892,7 +892,7 @@ async fn failing_cleanup_shows_on_service_health_until_it_clears() {
     let health = Arc::new(ServiceHealth::new());
     let worker = Arc::new(DownloadWorker::fixed(
         journal,
-        vec![Source::Fixed(source.clone())],
+        vec![crate::as_source(source.clone())],
         WorkerConfig {
             staging_root: staging,
             ..WorkerConfig::default()

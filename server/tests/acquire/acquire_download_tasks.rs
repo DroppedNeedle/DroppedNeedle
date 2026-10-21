@@ -22,7 +22,7 @@ use droppedneedle_acquire::downloads::{
 };
 use droppedneedle_acquire::landing::LandingService;
 use droppedneedle_acquire::worker::{
-    DownloadWorker, FixedSource, Source, WorkerConfig, run_startup_recovery,
+    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
 };
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
@@ -540,7 +540,7 @@ async fn unreadable_history_never_fails_a_partly_imported_task() {
     let source = Arc::new(FixedSource::new(staging.join("downloads"), Vec::new()));
     let worker = Arc::new(DownloadWorker::fixed(
         journal.clone(),
-        vec![Source::Fixed(source)],
+        vec![crate::as_source(source)],
         WorkerConfig {
             staging_root: staging,
             ..WorkerConfig::default()

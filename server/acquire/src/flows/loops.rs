@@ -21,7 +21,7 @@ use droppedneedle_kernel::jobs::{
     AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
 };
 
-use super::seams::{CandidateSearch, FlowEvent, ObservedRelease, ReleasePoll, TickSink};
+use super::seams::{FlowEvent, ObservedRelease, ReleasePoll, TickSink};
 use super::stores::{AdminDirectory, CutoffList, LibraryPresence, UpgradePolicy};
 use crate::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
@@ -137,8 +137,9 @@ pub struct WantedDeps {
     pub watches: WantedStore,
     /// Request ledger for enrolment.
     pub ledger: RequestStore,
-    /// Candidate search.
-    pub search: Arc<dyn CandidateSearch>,
+    /// The download sources a watch searches: those turned on, plugin
+    /// sources included.
+    pub sources: crate::worker::SourceList,
     /// Download dispatch.
     pub downloads: Arc<DownloadDispatch>,
     /// Library presence for satisfaction checks.
@@ -217,12 +218,14 @@ async fn check_watch(
         ))
         .unwrap_or(0)
     };
-    match deps
-        .search
-        .search_album(&watch.artist_name, &watch.album_title)
-        .await
-    {
-        Ok(candidates) if !candidates.is_empty() => {
+    match search_watch(deps, watch).await {
+        Ok(None) => {
+            // No source is on, or the download settings do not read: the
+            // watch stays due, unrecorded, and is checked once that
+            // changes.
+            tracing::debug!(key = %watch.key, "wanted check waits for a download source");
+        }
+        Ok(Some(candidates)) if !candidates.is_empty() => {
             if !settings.auto_download_on_find {
                 deps.watches
                     .record_check(
@@ -290,7 +293,7 @@ async fn check_watch(
                 }
             }
         }
-        Ok(_) => {
+        Ok(Some(_)) => {
             let streak = watch.quiet_streak.saturating_add(1);
             deps.watches
                 .record_check(&watch.key, streak, next(streak), at, "quiet")
@@ -307,6 +310,32 @@ async fn check_watch(
         }
     }
     Ok(())
+}
+
+/// Ask every source that is on for the watch's album, through the same
+/// search (and gates) as a manual search. `None` when no source is on or
+/// the download settings do not read; an error when every source failed.
+async fn search_watch(
+    deps: &WantedDeps,
+    watch: &WantedWatch,
+) -> Result<Option<Vec<crate::search_jobs::candidates::Candidate>>, String> {
+    let Some(sources) = deps.sources.current().filter(|sources| !sources.is_empty()) else {
+        return Ok(None);
+    };
+    let target = crate::target::SearchTarget {
+        artist: watch.artist_name.clone(),
+        album_title: watch.album_title.clone(),
+        year: None,
+        tracklist: Vec::new(),
+        wanted: Vec::new(),
+        track: None,
+    };
+    let (candidates, failed) =
+        crate::search_jobs::search_sources(&sources, &target, &watch.key).await;
+    if candidates.is_empty() && failed > 0 && failed == sources.len() {
+        return Err("every download source failed".to_owned());
+    }
+    Ok(Some(candidates))
 }
 
 /// Tell the watch's owner what the watcher did (v2 `_publish`).

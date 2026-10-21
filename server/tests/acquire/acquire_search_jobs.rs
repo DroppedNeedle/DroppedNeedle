@@ -24,7 +24,7 @@ use droppedneedle_acquire::slskd::{
 use droppedneedle_acquire::sources::SlskdSource;
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
-use droppedneedle_acquire::worker::{DownloadWorker, Source, WorkerConfig};
+use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::events::EventHub;
@@ -122,7 +122,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     let events = EventHub::new();
     let mut worker = DownloadWorker::fixed(
         journal.clone(),
-        vec![Source::Slskd(Arc::new(source))],
+        vec![crate::as_source(Arc::new(source))],
         WorkerConfig {
             staging_root: staging.to_path_buf(),
             ..WorkerConfig::default()
@@ -236,7 +236,10 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     worker.run_once(1).await;
     assert_eq!(mock.search_texts().len(), searches_before);
     let handles = journal
-        .read_source_handles(&task_id, "soulseek")
+        .read_source_handles(
+            &task_id,
+            &droppedneedle_acquire::downloads::SourceTag::Soulseek,
+        )
         .await
         .expect("handles read");
     assert_eq!(handles.len(), 1, "one enqueue: {handles:?}");
@@ -334,7 +337,10 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
     );
     assert!(
         rig.journal
-            .read_source_handles(task_id, "soulseek")
+            .read_source_handles(
+                task_id,
+                &droppedneedle_acquire::downloads::SourceTag::Soulseek
+            )
             .await
             .expect("handles read")
             .is_empty()
@@ -357,7 +363,10 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
     rig.worker.run_once(3).await;
     let handles = rig
         .journal
-        .read_source_handles(task_id, "soulseek")
+        .read_source_handles(
+            task_id,
+            &droppedneedle_acquire::downloads::SourceTag::Soulseek,
+        )
         .await
         .expect("handles read");
     assert_eq!(handles.len(), 1, "one enqueue: {handles:?}");

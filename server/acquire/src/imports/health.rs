@@ -120,7 +120,7 @@ pub fn smoke(probes: &HealthProbes) -> AcquireHealth {
         ready_via.push("slskd".to_owned());
     }
     if usenet_ready {
-        ready_via.push("usenet".to_owned());
+        ready_via.push(crate::downloads::source_tag::SourceTag::Usenet.to_string());
     }
     let ready = !ready_via.is_empty();
 

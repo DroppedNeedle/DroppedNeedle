@@ -17,6 +17,8 @@
 
 use std::path::{Path, PathBuf};
 
+use super::source_tag::SourceTag;
+
 /// Blocklist entry lifetime: 7 days.
 pub const QUARANTINE_TTL_SECONDS: f64 = 7.0 * 24.0 * 3600.0;
 
@@ -99,13 +101,13 @@ pub fn canonical_soulseek_identity(identity: &str) -> String {
 /// failover walk; the handle does not carry the release identity yet.
 /// Empty handles yield no identities and are never recorded.
 pub fn failover_identities(
-    source: &str,
+    source: &SourceTag,
     username: &str,
     filenames: &[String],
     job_name: &str,
 ) -> Vec<String> {
     match source {
-        "soulseek" => {
+        SourceTag::Soulseek => {
             if username.is_empty() {
                 return Vec::new();
             }
@@ -115,14 +117,14 @@ pub fn failover_identities(
                 .map(|file| canonical_soulseek_identity(&format!("{username}/{file}")))
                 .collect()
         }
-        "usenet" => {
+        SourceTag::Usenet => {
             if job_name.is_empty() {
                 Vec::new()
             } else {
                 vec![job_name.to_owned()]
             }
         }
-        _ => Vec::new(),
+        SourceTag::Plugin(_) => Vec::new(),
     }
 }
 
@@ -131,7 +133,7 @@ pub fn failover_identities(
 pub fn soulseek_hit_quarantined(username: &str, filename: &str, live: &[(String, String)]) -> bool {
     let identity = canonical_soulseek_identity(&format!("{username}/{filename}"));
     live.iter()
-        .any(|(source, blocked)| source == "soulseek" && *blocked == identity)
+        .any(|(source, blocked)| SourceTag::Soulseek == *source && *blocked == identity)
 }
 
 /// A sandboxed directory for quarantined files.

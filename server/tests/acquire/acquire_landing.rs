@@ -19,7 +19,7 @@ use droppedneedle_acquire::landing::specs::{Disposition, Rejection};
 use droppedneedle_acquire::landing::{
     Landed, LandingReport, LandingResult, OUTSIDE_DOWNLOADS, Reported,
 };
-use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
+use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, WorkerConfig};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::ids::UuidGenerator;
@@ -259,7 +259,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         Arc::new(
             DownloadWorker::fixed(
                 acquire.journal.clone(),
-                vec![Source::Fixed(Arc::new(FixedSource::new(
+                vec![crate::as_source(Arc::new(FixedSource::new(
                     downloads.clone(),
                     paths,
                 )))],
@@ -492,7 +492,7 @@ async fn held_files_import_as_upgrades_or_discard() {
         Arc::new(
             DownloadWorker::fixed(
                 acquire.journal.clone(),
-                vec![Source::Fixed(Arc::new(FixedSource::new(
+                vec![crate::as_source(Arc::new(FixedSource::new(
                     dir.join("downloads"),
                     paths,
                 )))],
@@ -876,7 +876,7 @@ async fn a_wait_after_an_import_does_not_hide_it() {
 /// the plugin itself names.
 #[tokio::test]
 async fn a_plugin_download_is_confined_to_the_plugins_folders() {
-    use droppedneedle_acquire::downloads::SourceHandle;
+    use droppedneedle_acquire::downloads::{DownloadSource, SourceHandle, SourceTag};
     use droppedneedle_acquire::plugin_source::{PluginDownloadSource, ReleasePolicy};
     use droppedneedle_acquire::usenet::policy::UsenetPolicy;
     use droppedneedle_plugins::fakes::FakeLauncher;
@@ -955,10 +955,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
             required_terms: Vec::new(),
         },
     );
-    let handle = SourceHandle {
-        source: "plugin:toy".to_owned(),
-        ..SourceHandle::default()
-    };
+    let handle = SourceHandle::new(SourceTag::plugin("toy"));
 
     // The plugin names a workspace of its own choosing, and a file in it.
     let outside = dir.join("elsewhere");
@@ -971,7 +968,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
             "file_paths": [secret],
         })),
     );
-    let landed = source.landed_paths(&handle).await.expect("inspect");
+    let landed = source.landed(&handle).await.expect("inspect");
     assert_eq!(
         rejection_code(&acquire, "t-plugin-out", landed).await,
         Some(OUTSIDE_DOWNLOADS)
@@ -993,7 +990,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
             "file_paths": [inside],
         })),
     );
-    let landed = source.landed_paths(&handle).await.expect("inspect");
+    let landed = source.landed(&handle).await.expect("inspect");
     assert_eq!(
         rejection_code(&acquire, "t-plugin-in", landed).await,
         Some("local_fault")
@@ -1117,10 +1114,13 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     let worker = Arc::new(
         DownloadWorker::fixed(
             acquire.journal.clone(),
-            vec![Source::Sab(Arc::new(source))],
+            vec![crate::as_source(Arc::new(source))],
             WorkerConfig {
                 staging_root: acquire.staging_root.clone(),
-                orphan_roots: vec![("usenet".to_owned(), complete.clone())],
+                orphan_roots: vec![(
+                    droppedneedle_acquire::downloads::SourceTag::Usenet,
+                    complete.clone(),
+                )],
                 ..WorkerConfig::default()
             },
             droppedneedle_kernel::events::EventHub::new(),
@@ -1635,7 +1635,7 @@ impl JoinRig {
         Arc::new(
             DownloadWorker::fixed(
                 self.acquire.journal.clone(),
-                vec![Source::Fixed(Arc::new(FixedSource::new(
+                vec![crate::as_source(Arc::new(FixedSource::new(
                     self.downloads.clone(),
                     paths,
                 )))],
@@ -2906,7 +2906,7 @@ async fn a_failed_request_follows_its_retry_to_imported() {
     let worker = Arc::new(
         DownloadWorker::fixed(
             journal.clone(),
-            vec![Source::Fixed(Arc::new(FixedSource::new(
+            vec![crate::as_source(Arc::new(FixedSource::new(
                 downloads.clone(),
                 good.clone(),
             )))],

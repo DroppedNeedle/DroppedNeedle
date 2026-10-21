@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::downloads::source_tag::SourceTag;
 use crate::plugin_source::{Band, ScoredRelease, release_identity};
 use crate::slskd::SearchResult;
 use crate::slskd::folders::FolderPick;
@@ -200,7 +201,7 @@ impl Candidate {
         Self {
             view: SearchCandidateView {
                 candidate_index: 0,
-                source: "soulseek".to_owned(),
+                source: SourceTag::Soulseek.to_string(),
                 title,
                 tier,
                 note,
@@ -252,7 +253,7 @@ impl Candidate {
         Self {
             view: SearchCandidateView {
                 candidate_index: 0,
-                source: "usenet".to_owned(),
+                source: SourceTag::Usenet.to_string(),
                 title: release.title.clone(),
                 tier,
                 note,
@@ -280,7 +281,7 @@ impl Candidate {
     }
 
     /// A plugin release, judged by the plugin's own score.
-    pub fn from_plugin(source: &str, scored: ScoredRelease) -> Self {
+    pub fn from_plugin(source: &SourceTag, scored: ScoredRelease) -> Self {
         let (tier, note) = if scored.band == Band::Auto {
             (
                 CandidateTier::Recommended,
@@ -319,7 +320,7 @@ impl Candidate {
             },
             view: SearchCandidateView {
                 candidate_index: 0,
-                source: source.to_owned(),
+                source: source.to_string(),
                 title: release.title.clone(),
                 tier,
                 note,

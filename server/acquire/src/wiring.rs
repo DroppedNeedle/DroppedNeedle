@@ -15,11 +15,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
-use futures_util::future::BoxFuture;
 
 use super::db::AcquireDb;
 use super::dispatch::DownloadDispatch;
 use super::downloads::journal::Journal;
+use super::downloads::source_tag::SourceTag;
+use super::downloads::sources::DownloadSource;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::drop_import::DropImports;
 use super::drop_import::store::DropStore;
@@ -29,7 +30,7 @@ use super::flows::loops::{
     spawn_wanted_loop,
 };
 use super::flows::seams::ReleasePoll;
-use super::flows::seams::{Candidate, CandidateSearch, TickSink};
+use super::flows::seams::TickSink;
 use super::flows::stores::{AdminDirectory, LibraryPresence, UpgradeWorklist};
 use super::follows::Follows;
 use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
@@ -48,7 +49,6 @@ use super::requests::error::RequestsError;
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::{RequestStore, WantedStore};
 use super::requests::state::{AcquireReadiness, RequestsState};
-use super::search::FanoutSearch;
 use super::search_jobs::SearchJobs;
 use super::search_jobs::store::JobStore;
 use super::settings::{
@@ -62,7 +62,7 @@ use super::usenet::newznab::{NewznabClient, NewznabIndexer, NewznabIndexerEntry}
 use super::usenet::policy::{QualityTier, UsenetPolicy};
 use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
-use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup_recovery};
+use super::worker::{DownloadWorker, SourceList, SourceSet, WorkerConfig, run_startup_recovery};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::store::Stores as CollectionsStores;
 use droppedneedle_kernel::events::EventHub;
@@ -211,9 +211,6 @@ struct ClientSettings {
 
 /// One built set of clients for the current settings.
 pub struct ClientSet {
-    /// Candidate search for the flows loops; `None` while the download
-    /// policy does not read.
-    pub search: Option<Arc<FanoutSearch>>,
     /// Download sources for the worker.
     pub sources: SourceSet,
     /// Health probe inputs.
@@ -285,9 +282,9 @@ impl LiveClients {
             ignored_terms: policy.ignored_terms.clone(),
             required_terms: policy.required_terms.clone(),
         };
-        let mut sources: Vec<Source> = built.iter().cloned().collect();
+        let mut sources: Vec<Arc<dyn DownloadSource>> = built.iter().cloned().collect();
         for key in keys {
-            sources.push(Source::Plugin(Arc::new(
+            sources.push(Arc::new(
                 super::plugin_source::PluginDownloadSource::new(
                     Arc::clone(host),
                     key,
@@ -295,7 +292,7 @@ impl LiveClients {
                     release_policy.clone(),
                 )
                 .with_targets(self.targets.clone()),
-            )));
+            ));
         }
         Arc::new(sources)
     }
@@ -335,29 +332,20 @@ impl LiveClients {
         let sab_queue = sabnzbd_queue(http, &settings.sabnzbd, &usenet_policy);
         let newznab = Arc::new(newznab_indexer(http, &settings.indexers));
         let prowlarr = Arc::new(prowlarr_indexer(http, &settings.prowlarr));
-        let search = readable.then(|| {
-            Arc::new(FanoutSearch::new(
-                slskd_repo.clone(),
-                newznab.clone(),
-                prowlarr.clone(),
-                settings.backend,
-                usenet_policy.indexer_timeout,
-            ))
-        });
-        let mut sources = Vec::new();
+        let mut sources: Vec<Arc<dyn DownloadSource>> = Vec::new();
         if let Some(repo) = slskd_repo.clone()
             && readable
             && settings.slskd.enabled
         {
-            sources.push(Source::Slskd(Arc::new(
+            sources.push(Arc::new(
                 SlskdSource::new(repo, self.journal.clone()).with_targets(self.targets.clone()),
-            )));
+            ));
         }
         if let Some(queue) = sab_queue.clone()
             && readable
             && settings.sabnzbd.sabnzbd.enabled
         {
-            sources.push(Source::Sab(Arc::new(
+            sources.push(Arc::new(
                 SabnzbdSource::new(
                     queue,
                     newznab.clone(),
@@ -370,7 +358,7 @@ impl LiveClients {
                 )
                 .with_plugins(self.plugins.clone())
                 .with_targets(self.targets.clone()),
-            )));
+            ));
         }
         let probe_inputs = Arc::new(ProbeInputs {
             slskd: slskd_repo,
@@ -388,30 +376,9 @@ impl LiveClients {
             lidarr_section: settings.lidarr.clone(),
         });
         ClientSet {
-            search,
             sources: Arc::new(sources),
             probe_inputs,
         }
-    }
-}
-
-/// Candidate search over the live client set.
-struct LiveSearch {
-    clients: Arc<LiveClients>,
-}
-
-impl CandidateSearch for LiveSearch {
-    fn search_album<'a>(
-        &'a self,
-        artist: &'a str,
-        title: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
-        Box::pin(async move {
-            let Some(search) = self.clients.current().search.clone() else {
-                return Err("the download settings cannot be read".to_owned());
-            };
-            search.search_album(artist, title).await
-        })
     }
 }
 
@@ -613,7 +580,7 @@ fn core(
     staging_root: &Path,
     settings: &ConfigStore,
     quota: Arc<QuotaLedger>,
-    search: Arc<dyn CandidateSearch>,
+    sources: SourceList,
     ports: CorePorts,
     events: EventHub,
 ) -> Core {
@@ -652,7 +619,7 @@ fn core(
     let flows = Arc::new(flows_bundle(
         db,
         &requests,
-        search,
+        sources,
         dispatch.clone(),
         settings,
         ticks,
@@ -702,9 +669,6 @@ impl AcquireSetup {
             )),
             Some(ports.plugins.clone()),
         ));
-        let search: Arc<dyn CandidateSearch> = Arc::new(LiveSearch {
-            clients: clients.clone(),
-        });
         let events = platform.events.clone();
         let search_quota = quota.clone();
         let worker_settings = Arc::new(WorkerSettings::new(
@@ -722,7 +686,7 @@ impl AcquireSetup {
             &staging_root,
             &config_store,
             quota,
-            search,
+            SourceList::Live(worker_settings.clone()),
             CorePorts {
                 plugins: Some(ports.plugins.clone()),
                 edition_plans: Some(ports.edition_plans),
@@ -894,9 +858,11 @@ impl AcquireSetup {
             &staging_root,
             &settings,
             Arc::new(QuotaLedger::unlimited(db.clone())),
-            Arc::new(LiveSearch {
-                clients: clients.clone(),
-            }),
+            SourceList::Live(Arc::new(WorkerSettings::new(
+                &settings,
+                clients.clone(),
+                staging_root.clone(),
+            ))),
             CorePorts {
                 plugins: None,
                 edition_plans: None,
@@ -1110,7 +1076,7 @@ impl AcquireSetup {
 fn flows_bundle(
     db: &AcquireDb,
     requests: &RequestsState,
-    search: Arc<dyn CandidateSearch>,
+    sources: SourceList,
     dispatch: Arc<DownloadDispatch>,
     settings: &ConfigStore,
     ticks: Arc<dyn TickSink>,
@@ -1126,7 +1092,7 @@ fn flows_bundle(
         settings: settings.live(),
         watches: watches.clone(),
         ledger: ledger.clone(),
-        search,
+        sources,
         downloads: dispatch.clone(),
         library: library.clone(),
         ticks: ticks.clone(),
@@ -1433,19 +1399,16 @@ fn worker_config(
     staging_root: &Path,
     sab_mount: Option<PathBuf>,
 ) -> WorkerConfig {
-    let mut source_order: Vec<String> = source_priority
+    let mut source_order: Vec<SourceTag> = source_priority
         .0
         .iter()
-        .filter(|source| {
-            *source == "soulseek" || *source == "usenet" || source.starts_with("plugin:")
-        })
-        .cloned()
+        .filter_map(|source| source.parse().ok())
         .collect();
     if source_order.is_empty() {
-        source_order = vec!["soulseek".to_owned(), "usenet".to_owned()];
+        source_order = vec![SourceTag::Soulseek, SourceTag::Usenet];
     }
     let orphan_roots = sab_mount
-        .map(|mount| vec![("usenet".to_owned(), mount)])
+        .map(|mount| vec![(SourceTag::Usenet, mount)])
         .unwrap_or_default();
     WorkerConfig {
         max_concurrent_downloads: clamp_usize(policy.max_concurrent_downloads).max(1),

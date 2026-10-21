@@ -959,7 +959,7 @@ impl SabnzbdQueue {
                     return Err(SabnzbdError::RejectedNzbUrl);
                 };
                 return Ok(TaskHandle {
-                    source: "usenet".to_owned(),
+                    source: crate::downloads::source_tag::SourceTag::Usenet.to_string(),
                     job_name,
                     nzo_id: nzo_id.clone(),
                 });
@@ -997,7 +997,7 @@ impl SabnzbdQueue {
             return Err(SabnzbdError::RejectedNzb);
         };
         Ok(TaskHandle {
-            source: "usenet".to_owned(),
+            source: crate::downloads::source_tag::SourceTag::Usenet.to_string(),
             job_name,
             nzo_id: nzo_id.clone(),
         })

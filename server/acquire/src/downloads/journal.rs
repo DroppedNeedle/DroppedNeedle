@@ -8,6 +8,7 @@ use droppedneedle_kernel::db::Lane;
 
 use super::held_rows::HeldRow;
 use super::queue_rows::{ActivitySummary, ListFilter, QueueTask, TaskFacts, Viewer};
+use super::source_tag::SourceTag;
 use super::state::TaskStatus;
 use super::store::{
     AttemptRow, DownloadStore, QuarantineRow, RetryAnchor, StoreError, TaskDetails, TaskRow,
@@ -164,9 +165,9 @@ impl Journal {
     pub async fn read_source_handles(
         &self,
         task_id: &str,
-        source: &str,
+        source: &SourceTag,
     ) -> Result<Vec<String>, StoreError> {
-        let (task_id, source) = (task_id.to_owned(), source.to_owned());
+        let (task_id, source) = (task_id.to_owned(), source.to_string());
         self.read("downloads.source_handles", move |store| {
             store.source_handles(&task_id, &source)
         })

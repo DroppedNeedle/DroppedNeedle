@@ -15,9 +15,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::{Attempt, DownloadWorker, Pass, Source, handled_count, now_unix_f64, read_manifest};
+use super::{Attempt, DownloadWorker, Pass, handled_count, now_unix_f64, read_manifest};
 use crate::downloads::quarantine::QuarantineReason;
-use crate::downloads::sources::SourceHandle;
+use crate::downloads::sources::{DownloadSource, SourceHandle};
 use crate::downloads::state::{AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, TaskRow};
 use crate::landing::reasons::explain;
@@ -102,7 +102,7 @@ impl DownloadWorker {
         self: &Arc<Self>,
         task: &TaskRow,
         attempt: &AttemptRow,
-        source: &Source,
+        source: &Arc<dyn DownloadSource>,
         handle: &SourceHandle,
         now: f64,
     ) {
@@ -177,7 +177,7 @@ impl DownloadWorker {
         slot: InFlight,
         task: TaskRow,
         attempt: AttemptRow,
-        source: Source,
+        source: Arc<dyn DownloadSource>,
         handle: SourceHandle,
         origin: Origin,
     ) {
@@ -202,7 +202,7 @@ impl DownloadWorker {
         &self,
         task: &TaskRow,
         attempt: &AttemptRow,
-        source: &Source,
+        source: &Arc<dyn DownloadSource>,
         handle: &SourceHandle,
         origin: Origin,
     ) {
@@ -210,7 +210,7 @@ impl DownloadWorker {
             return;
         };
         let now = now_unix_f64();
-        let landed = match source.landed_paths(handle).await {
+        let landed = match source.landed(handle).await {
             Ok(landed) => landed,
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "download client could not list the landed files");
@@ -241,7 +241,7 @@ impl DownloadWorker {
         &self,
         task: &TaskRow,
         attempt: &AttemptRow,
-        source: &Source,
+        source: &Arc<dyn DownloadSource>,
         handle: &SourceHandle,
         report: LandingReport,
         origin: Origin,
@@ -561,7 +561,7 @@ impl DownloadWorker {
             .inputs
             .sources()
             .iter()
-            .find(|source| source.journal_source() == attempt.row.source)
+            .find(|source| source.tag() == attempt.row.source)
             .cloned()
         else {
             return Err(ReimportError::Unavailable(format!(

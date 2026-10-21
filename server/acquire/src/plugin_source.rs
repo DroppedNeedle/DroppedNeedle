@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use super::downloads::journal::Journal;
 use super::downloads::quarantine::QUARANTINE_TTL_SECONDS;
+use super::downloads::source_tag::SourceTag;
 use super::downloads::sources::{
     DownloadSource, Materialization, SourceError, SourceHandle, TransferProgress,
 };
@@ -33,6 +34,7 @@ use droppedneedle_plugins::capabilities::acquisition::{
 };
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::runtime::CallError;
+use futures_util::future::BoxFuture;
 
 /// Score at or above which a release downloads without a person.
 pub const AUTO_ACCEPT: f64 = 0.70;
@@ -166,6 +168,7 @@ pub fn rank_plugin_releases(
 pub struct PluginDownloadSource {
     host: Arc<PluginHost>,
     key: String,
+    tag: SourceTag,
     journal: Arc<Journal>,
     policy: ReleasePolicy,
     targets: Option<Arc<Targets>>,
@@ -179,9 +182,11 @@ impl PluginDownloadSource {
         journal: Arc<Journal>,
         policy: ReleasePolicy,
     ) -> Self {
+        let tag = SourceTag::plugin(&key);
         Self {
             host,
             key,
+            tag,
             journal,
             policy,
             targets: None,
@@ -193,11 +198,6 @@ impl PluginDownloadSource {
     pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
         self.targets = Some(targets);
         self
-    }
-
-    /// The source key (`plugin:<name>`).
-    pub fn key(&self) -> &str {
-        &self.key
     }
 
     /// Blocklisted release identities for this source.
@@ -212,7 +212,7 @@ impl PluginDownloadSource {
             .await
             .map_err(|error| SourceError::LocalFault(error.to_string()))?
             .into_iter()
-            .filter(|(source, _)| *source == self.key)
+            .filter(|(source, _)| self.tag == *source)
             .map(|(_, identity)| identity)
             .collect())
     }
@@ -252,7 +252,7 @@ impl PluginDownloadSource {
             .await
             .map_err(source_error)?;
         Ok(SourceHandle {
-            source: self.key.clone(),
+            source: self.tag.clone(),
             username: handle.username,
             filenames: handle.filenames,
             job_name: handle.job_name,
@@ -264,10 +264,7 @@ impl PluginDownloadSource {
 
     /// A manual search: the album's releases, ranked and gated, with the
     /// ones a person must judge (the plugin's weaker matches) included.
-    pub async fn search_candidates(
-        &self,
-        target: &SearchTarget,
-    ) -> Result<Vec<Candidate>, SourceError> {
+    async fn search_album(&self, target: &SearchTarget) -> Result<Vec<Candidate>, SourceError> {
         if !target.has_album() {
             return Ok(Vec::new());
         }
@@ -279,13 +276,13 @@ impl PluginDownloadSource {
         )
         .into_iter()
         .take(MAX_PER_SOURCE)
-        .map(|scored| Candidate::from_plugin(&self.key, scored))
+        .map(|scored| Candidate::from_plugin(&self.tag, scored))
         .collect())
     }
 
     fn plugin_handle(handle: &SourceHandle) -> PluginTaskHandle {
         PluginTaskHandle {
-            source: handle.source.clone(),
+            source: handle.source.to_string(),
             username: handle.username.clone(),
             filenames: handle.filenames.clone(),
             job_name: handle.job_name.clone(),
@@ -305,7 +302,59 @@ fn source_error(error: CallError) -> SourceError {
 }
 
 impl DownloadSource for PluginDownloadSource {
-    async fn enqueue(
+    fn tag(&self) -> SourceTag {
+        self.tag.clone()
+    }
+
+    fn search<'a>(
+        &'a self,
+        target: &'a SearchTarget,
+    ) -> BoxFuture<'a, Result<Vec<Candidate>, SourceError>> {
+        Box::pin(self.search_album(target))
+    }
+
+    fn enqueue<'a>(
+        &'a self,
+        task_id: &'a str,
+        candidate_index: i64,
+    ) -> BoxFuture<'a, Result<SourceHandle, SourceError>> {
+        Box::pin(self.enqueue_pick(task_id, candidate_index))
+    }
+
+    fn poll<'a>(
+        &'a self,
+        handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<TransferProgress, SourceError>> {
+        Box::pin(self.progress(handle))
+    }
+
+    fn landed<'a>(
+        &'a self,
+        handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<crate::landing::Landed, SourceError>> {
+        Box::pin(self.landed_paths(handle))
+    }
+
+    fn discard<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>> {
+        Box::pin(self.discard_records(handle))
+    }
+
+    fn abort<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>> {
+        Box::pin(self.abort_job(handle))
+    }
+
+    fn mount_healthy<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Option<bool>> {
+        Box::pin(async move {
+            self.inspect(handle)
+                .await
+                .map(|seen| seen.mount_healthy)
+                .ok()
+        })
+    }
+}
+
+impl PluginDownloadSource {
+    async fn enqueue_pick(
         &self,
         task_id: &str,
         candidate_index: i64,
@@ -320,7 +369,7 @@ impl DownloadSource for PluginDownloadSource {
         let quarantined = self.quarantined().await?;
         let index = candidate_index.max(0) as usize;
         if let Some(Pin::Release { identity }) =
-            pinned(&self.journal, &task, &self.key, candidate_index).await
+            pinned(&self.journal, &task, &self.tag, candidate_index).await
         {
             // The release a person picked from a manual search, found
             // again by its identity (any band: they judged it).
@@ -384,7 +433,7 @@ impl DownloadSource for PluginDownloadSource {
         self.enqueue_release(&task, &pick.release, index).await
     }
 
-    async fn poll(&self, handle: &SourceHandle) -> Result<TransferProgress, SourceError> {
+    async fn progress(&self, handle: &SourceHandle) -> Result<TransferProgress, SourceError> {
         let status = self
             .host
             .download_status(&Self::plugin_handle(handle))
@@ -405,6 +454,7 @@ impl DownloadSource for PluginDownloadSource {
         })
     }
 
+    /// Current client state and exact local evidence.
     async fn inspect(&self, handle: &SourceHandle) -> Result<Materialization, SourceError> {
         let seen = self
             .host
@@ -422,21 +472,11 @@ impl DownloadSource for PluginDownloadSource {
         })
     }
 
-    async fn discard(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
-        self.discard_records(handle).await
-    }
-
-    async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
-        self.abort_job(handle).await
-    }
-}
-
-impl PluginDownloadSource {
     /// The files a finished plugin download produced, for import, with
     /// the folders the plugin may download into. Plugins are trusted code,
     /// but what they report is still confined: the landing refuses a path
     /// outside those folders, whatever workspace the plugin names.
-    pub async fn landed_paths(
+    async fn landed_paths(
         &self,
         handle: &SourceHandle,
     ) -> Result<crate::landing::Landed, SourceError> {

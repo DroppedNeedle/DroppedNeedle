@@ -8,6 +8,7 @@ use std::sync::Arc;
 use super::{DownloadWorker, Pass, handled_count, live_attempt, now_unix_f64, successor_row};
 use crate::downloads::queue_rows::ProgressColumns;
 use crate::downloads::reasons::NEXT_SOURCE_NOTE;
+use crate::downloads::source_tag::SourceTag;
 use crate::downloads::sources::TransferProgress;
 use crate::downloads::state::TaskStatus;
 use crate::downloads::store::TaskRow;
@@ -194,7 +195,7 @@ impl DownloadWorker {
                 "The download has already moved to another source.",
             ));
         }
-        if task.source != "soulseek" || task.status != TaskStatus::Downloading {
+        if SourceTag::Soulseek != task.source || task.status != TaskStatus::Downloading {
             return Err(NextSourceError::Conflict(
                 "The download is not waiting in a Soulseek queue.",
             ));

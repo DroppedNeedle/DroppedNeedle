@@ -16,6 +16,7 @@ use std::cell::RefCell;
 
 use rusqlite::{Connection, OptionalExtension, Row};
 
+use super::source_tag::SourceTag;
 use super::sql;
 use super::state::{AttemptState, TaskStatus};
 use crate::requests::settle::{Fulfilled, on_task_settled};
@@ -202,8 +203,8 @@ pub struct AttemptRow {
     /// Owning task id (no FK by design: deleting queue rows must not
     /// erase cleanup debt).
     pub task_id: String,
-    /// `soulseek`, `usenet`, or `plugin:<key>`.
-    pub source: String,
+    /// The source the attempt ran on.
+    pub source: SourceTag,
     /// Candidate position within the task.
     pub candidate_index: i64,
     /// Client job name (unsuffixed; SABnzbd may add `.<N>` on disk).

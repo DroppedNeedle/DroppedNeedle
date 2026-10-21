@@ -23,7 +23,7 @@ use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::target::lookup::{
     AlbumRelease, AlbumTrack, FixedAlbums, ReleaseCandidate,
 };
-use droppedneedle_acquire::worker::{DownloadWorker, Source, WorkerConfig};
+use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
@@ -197,7 +197,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
     let source = SlskdSource::new(Arc::new(repo), journal.clone()).with_targets(targets);
     let worker = Arc::new(DownloadWorker::fixed(
         journal.clone(),
-        vec![Source::Slskd(Arc::new(source))],
+        vec![crate::as_source(Arc::new(source))],
         WorkerConfig {
             staging_root: staging.to_path_buf(),
             ..WorkerConfig::default()
@@ -217,7 +217,10 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
     // One attempt: the album folder's peer, and only the wanted file.
     let lookup = task_id.clone();
     let handles = journal
-        .read_source_handles(&lookup, "soulseek")
+        .read_source_handles(
+            &lookup,
+            &droppedneedle_acquire::downloads::SourceTag::Soulseek,
+        )
         .await
         .expect("handles read");
     assert_eq!(handles.len(), 1, "one enqueue: {handles:?}");

@@ -15,7 +15,8 @@
 //! - [`recovery`] startup classification and orchestrator failover.
 //! - [`quarantine`] release blocklist with TTL and prune-on-write.
 //! - [`orphans`] fail-closed orphan reconcile.
-//! - [`sources`] the per-source fetch seam (slskd/usenet live elsewhere).
+//! - [`sources`] the per-source fetch seam (slskd/usenet live elsewhere),
+//!   with [`source_tag`] naming each source.
 //! - [`landing_rows`] held files and per-landing import decisions.
 //! - [`queue`] the queue view and its actions, over [`queue_rows`].
 //! - [`reasons`] why a task sits where it does, in plain words.
@@ -40,6 +41,7 @@ pub mod queue;
 pub mod queue_rows;
 pub mod reasons;
 pub mod recovery;
+pub mod source_tag;
 pub mod sources;
 pub(crate) mod sql;
 pub mod state;
@@ -57,6 +59,7 @@ pub use manifest::{
 pub use orphans::{OrphanDecision, OrphanEvidence, OrphanPolicy, evaluate_orphan, job_name_parts};
 pub use quarantine::{QUARANTINE_TTL_SECONDS, QuarantineDir, canonical_soulseek_identity};
 pub use recovery::{RetrySpawn, StartupAction, classify_startup, plan_retry};
+pub use source_tag::{SourceTag, UnknownSource};
 pub use sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };

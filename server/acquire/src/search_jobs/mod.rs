@@ -34,6 +34,8 @@ use self::store::{
 use super::db::now_epoch;
 use super::dispatch::DispatchOrigin;
 use super::downloads::journal::Journal;
+use super::downloads::source_tag::SourceTag;
+use super::downloads::sources::DownloadSource;
 use super::downloads::store::{NewTask, TaskDetails, TaskRow};
 use super::edition::library_holds;
 use super::requests::error::RequestsError;
@@ -41,7 +43,7 @@ use super::requests::ledger::{WantedWatch, WatchState};
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::WantedStore;
 use super::target::{SearchTarget, Targets};
-use super::worker::{DownloadWorker, Source};
+use super::worker::DownloadWorker;
 use droppedneedle_auth::Principal;
 use droppedneedle_kernel::events::{EventHub, SearchJobUpdated, UserNotice, new_event_id};
 
@@ -314,8 +316,7 @@ impl SearchJobs {
             track: None,
         };
         let sources = self.worker.sources_now();
-        let (candidates, failed) =
-            search_sources(&sources.iter().collect::<Vec<_>>(), &target, &job.id).await;
+        let (candidates, failed) = search_sources(&sources, &target, &job.id).await;
         let count = candidates.len();
         let (status, reason) = if count == 0 && failed > 0 && failed == sources.len() {
             (FAILED, Some(SearchReason::SourcesFailed.code()))
@@ -417,7 +418,7 @@ impl SearchJobs {
             .worker
             .sources_now()
             .iter()
-            .any(|live| live.journal_source() == source)
+            .any(|live| live.tag() == source)
         {
             return Err(SearchJobError::Conflict(format!(
                 "{} is turned off now. Turn it back on in Settings, or pick a candidate from another source.",
@@ -586,13 +587,13 @@ impl SearchJobs {
 /// how many sources failed or timed out; a failing source only drops its
 /// own group.
 pub async fn search_sources(
-    sources: &[&Source],
+    sources: &[Arc<dyn DownloadSource>],
     target: &SearchTarget,
     job_id: &str,
 ) -> (Vec<Candidate>, usize) {
     let searches = sources.iter().map(|source| async move {
-        let found = tokio::time::timeout(SOURCE_TIMEOUT, source.search_candidates(target)).await;
-        (source.journal_source().to_owned(), found)
+        let found = tokio::time::timeout(SOURCE_TIMEOUT, source.search(target)).await;
+        (source.tag().to_string(), found)
     });
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut failed = 0;
@@ -625,13 +626,11 @@ fn not_open(status: &str) -> String {
     }
 }
 
-/// A source tag as people know it.
+/// A stored source tag as people know it.
 fn source_label(source: &str) -> String {
-    match source {
-        "soulseek" => "Soulseek".to_owned(),
-        "usenet" => "Usenet".to_owned(),
-        other => other.strip_prefix("plugin:").unwrap_or(other).to_owned(),
-    }
+    source
+        .parse::<SourceTag>()
+        .map_or_else(|_| source.to_owned(), |tag| tag.label().to_owned())
 }
 
 /// The candidate a person picked for this task, when `source` is about to
@@ -640,7 +639,7 @@ fn source_label(source: &str) -> String {
 pub async fn pinned(
     journal: &Journal,
     task: &TaskRow,
-    source: &str,
+    source: &SourceTag,
     source_index: i64,
 ) -> Option<Pin> {
     if source_index != 0 {
@@ -669,6 +668,6 @@ pub async fn pinned(
         .candidates
         .into_iter()
         .nth(index)
-        .filter(|candidate| candidate.view.source == source)
+        .filter(|candidate| *source == candidate.view.source)
         .map(|candidate| candidate.pin)
 }

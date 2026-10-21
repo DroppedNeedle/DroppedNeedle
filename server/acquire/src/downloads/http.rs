@@ -26,6 +26,7 @@ use super::held_http::{self, ReviewState};
 use super::journal::Journal;
 use super::queue::{DownloadQueue, QueueError, TaskFile, TaskView};
 use super::queue_rows::{ListFilter, Viewer};
+use super::source_tag::SourceTag;
 use super::state::TaskStatus;
 use super::store::QuarantineRow;
 use super::upgrades::Upgrades;
@@ -368,14 +369,14 @@ pub struct QuarantineEntry {
 
 impl From<QuarantineRow> for QuarantineEntry {
     fn from(row: QuarantineRow) -> Self {
-        let (username, filename) = match (row.source.as_str(), row.identity.split_once('/')) {
-            ("soulseek", Some((user, file))) => (user.to_owned(), file.to_owned()),
+        let tag = row.source.parse::<SourceTag>().ok();
+        let (username, filename) = match (&tag, row.identity.split_once('/')) {
+            (Some(SourceTag::Soulseek), Some((user, file))) => (user.to_owned(), file.to_owned()),
             _ => (String::new(), row.identity.clone()),
         };
-        let client_id = match row.source.as_str() {
-            "soulseek" => "slskd".to_owned(),
-            "usenet" => "sabnzbd".to_owned(),
-            other => other.to_owned(),
+        let client_id = match &tag {
+            Some(tag @ (SourceTag::Soulseek | SourceTag::Usenet)) => tag.client().to_owned(),
+            _ => row.source.clone(),
         };
         Self {
             id: row.id,

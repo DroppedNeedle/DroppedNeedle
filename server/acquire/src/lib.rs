@@ -23,9 +23,9 @@
 //! The `db`, `dispatch`, `search`, `sources`, `settings`, `probes`,
 //! `worker`, and `wiring` modules unify the per-area seams onto one
 //! production spelling each (one [`dispatch::DownloadDispatch`] starts
-//! every download, one [`search::FanoutSearch`] serves the candidate
-//! seam, and so on) and
-//! assemble the [`wiring::AcquireSetup`] bundle the app mounts.
+//! every download, every source is one
+//! [`downloads::sources::DownloadSource`] in the worker's list, and so on)
+//! and assemble the [`wiring::AcquireSetup`] bundle the app mounts.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]

@@ -1,22 +1,29 @@
 //! Per-source fetch seam: the minimal traits the durable core needs.
 //!
 //! The slskd and usenet clients live in their own modules. This one defines
-//! only the narrow surface downloads depend on (enqueue, poll, inspect,
-//! discard), ported from v2's download-client protocol. Source adapters implement
+//! only the narrow surface downloads depend on (search, enqueue, poll,
+//! landed, discard, abort), ported from v2's download-client protocol. Source adapters implement
 //! [`DownloadSource`]; the watchdog, recovery, and orphan logic below
 //! never touch a client directly.
 
 use std::future::Future;
 use std::path::PathBuf;
 
+use futures_util::future::BoxFuture;
+
+use super::source_tag::SourceTag;
+use crate::landing::Landed;
+use crate::search_jobs::candidates::Candidate;
+use crate::target::SearchTarget;
+
 /// Client correlation handle. Mirrors v2's `TaskHandle`: soulseek fills
 /// username plus filenames (no batch id); usenet fills the job name before
 /// enqueue so a crash between enqueue and journaling stays recoverable.
 /// Serializes into the attempt journal's `handle_json` at enqueue time.
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SourceHandle {
-    /// `soulseek`, `usenet`, or `plugin:<key>`.
-    pub source: String,
+    /// The source that holds the job.
+    pub source: SourceTag,
     /// Soulseek peer username.
     pub username: String,
     /// Exact enqueued filenames.
@@ -37,6 +44,21 @@ pub struct SourceHandle {
     /// the source does not advertise sizes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sizes: Vec<i64>,
+}
+
+impl SourceHandle {
+    /// An empty handle on `source`, for the caller to fill in.
+    pub fn new(source: SourceTag) -> Self {
+        Self {
+            source,
+            username: String::new(),
+            filenames: Vec::new(),
+            job_name: String::new(),
+            nzo_id: String::new(),
+            plugin_token: String::new(),
+            sizes: Vec::new(),
+        }
+    }
 }
 
 /// One poll's view of a transfer batch.
@@ -93,41 +115,59 @@ pub enum SourceError {
     Rejected(String),
 }
 
-/// Minimal per-source fetch surface. Object-safe and sync-friendly: each
-/// method returns an opaque future so adapters can be async without this
-/// module depending on an executor.
+/// One download source: a client that searches, fetches and reports.
+/// The worker holds every enabled source as `Arc<dyn DownloadSource>` in
+/// the configured try order; manual search, the worker's look before a
+/// grab and the wanted watcher all search through [`Self::search`].
 pub trait DownloadSource: Send + Sync {
-    /// Enqueue a candidate; returns the correlation handle.
-    fn enqueue(
-        &self,
-        task_id: &str,
+    /// Which source this is, as journaled on attempts and handles.
+    fn tag(&self) -> SourceTag;
+
+    /// The target album's candidates on this source, ranked and gated by
+    /// the download policy (blocklist, quality, size, retention).
+    fn search<'a>(
+        &'a self,
+        target: &'a SearchTarget,
+    ) -> BoxFuture<'a, Result<Vec<Candidate>, SourceError>>;
+
+    /// Enqueue the task's `candidate_index`-th pick on this source (the
+    /// source picks; a manual pick goes first); returns the correlation
+    /// handle.
+    fn enqueue<'a>(
+        &'a self,
+        task_id: &'a str,
         candidate_index: i64,
-    ) -> impl Future<Output = Result<SourceHandle, SourceError>> + Send;
+    ) -> BoxFuture<'a, Result<SourceHandle, SourceError>>;
 
     /// Poll current progress for a handle.
-    fn poll(
-        &self,
-        handle: &SourceHandle,
-    ) -> impl Future<Output = Result<TransferProgress, SourceError>> + Send;
+    fn poll<'a>(
+        &'a self,
+        handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<TransferProgress, SourceError>>;
 
-    /// Resolve current client state and exact local evidence.
-    fn inspect(
-        &self,
-        handle: &SourceHandle,
-    ) -> impl Future<Output = Result<Materialization, SourceError>> + Send;
+    /// The files (or job folder) a finished handle produced, with the
+    /// client's downloads folders the landing confines them to.
+    fn landed<'a>(&'a self, handle: &'a SourceHandle)
+    -> BoxFuture<'a, Result<Landed, SourceError>>;
 
     /// Remove transfer/history records after local cleanup is durable.
     /// Best-effort: callers log and continue on failure.
-    fn discard(
-        &self,
-        handle: &SourceHandle,
-    ) -> impl Future<Output = Result<bool, SourceError>> + Send;
+    fn discard<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>>;
 
     /// Abort a live batch. Returns false when nothing was running.
-    fn abort(
-        &self,
-        handle: &SourceHandle,
-    ) -> impl Future<Output = Result<bool, SourceError>> + Send;
+    fn abort<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>>;
+
+    /// Whether the client still owns one job (orphan evidence). `None`
+    /// means the source cannot tell, and the folder stays.
+    fn job_active<'a>(&'a self, _handle: &'a SourceHandle) -> BoxFuture<'a, Option<bool>> {
+        Box::pin(async { None })
+    }
+
+    /// Client-side mount health for orphan evidence. `None` fails closed
+    /// (the folder stays).
+    fn mount_healthy<'a>(&'a self, _handle: &'a SourceHandle) -> BoxFuture<'a, Option<bool>> {
+        Box::pin(async { None })
+    }
 }
 
 /// Ownership lookups the orphan reconciler needs. Kept as a trait (rather
@@ -148,7 +188,7 @@ pub trait OrphanOwnership: Send + Sync {
         task_id: &str,
     ) -> impl Future<Output = Result<Option<String>, SourceError>> + Send;
 
-    /// True when every publisher bundle for the task completed (or none
+    /// True when every publisher bundle for the task settled (or none
     /// exist). Any other bundle state keeps the folder.
     fn bundles_settled(
         &self,

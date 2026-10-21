@@ -35,21 +35,23 @@ use super::downloads::recovery::{
     FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx, classify_startup,
     plan_retry,
 };
+use super::downloads::source_tag::SourceTag;
 use super::downloads::sources::OrphanOwnership;
 use super::downloads::sources::{DownloadSource, SourceError, SourceHandle};
 use super::downloads::state::{AttemptState, TaskStatus};
 use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskRow};
 use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
 use super::landing::LandingService;
-use super::plugin_source::PluginDownloadSource;
 use super::search_jobs::review::ReviewMode;
-use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
+use super::sources::JournalOwnership;
 use super::target::Targets;
 use super::target::reasons::TrackReason;
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
 use droppedneedle_providers::health::ServiceHealth;
+#[cfg(any(test, feature = "test-support"))]
+use futures_util::future::BoxFuture;
 
 mod controls;
 mod landings;
@@ -233,23 +235,9 @@ async fn read_manifest(staging_root: &Path, task_id: &str) -> Option<DownloadMan
     ManifestCodec.decode(&bytes).ok()
 }
 
-/// One download source behind the fetch seam. Cheap to clone, so each
-/// pass can add the plugin sources enabled right now to the built-in ones.
-#[derive(Clone)]
-pub enum Source {
-    /// Soulseek via slskd.
-    Slskd(Arc<SlskdSource>),
-    /// Usenet via SABnzbd.
-    Sab(Arc<SabnzbdSource>),
-    /// A plugin's download client (`plugin:<name>`).
-    Plugin(Arc<PluginDownloadSource>),
-    /// Files already on disk, finished at once (tests only).
-    #[cfg(any(test, feature = "test-support"))]
-    Fixed(Arc<FixedSource>),
-}
-
 /// A test source whose every download is finished at once and landed at
-/// fixed paths, so journeys can drive the worker end to end.
+/// fixed paths, so journeys can drive the worker end to end. It answers
+/// as the plugin source `fixed`.
 #[cfg(any(test, feature = "test-support"))]
 pub struct FixedSource {
     mount: PathBuf,
@@ -282,164 +270,84 @@ impl FixedSource {
     }
 }
 
-impl Source {
-    fn name(&self) -> &str {
-        match self {
-            Self::Slskd(_) => "slskd",
-            Self::Sab(_) => "sabnzbd",
-            Self::Plugin(source) => source.key(),
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(_) => "fixed",
-        }
+#[cfg(any(test, feature = "test-support"))]
+impl DownloadSource for FixedSource {
+    fn tag(&self) -> SourceTag {
+        SourceTag::Plugin("fixed".to_owned())
     }
 
-    /// A manual search on this source: its ranked candidates for the
-    /// target's album.
-    pub async fn search_candidates(
-        &self,
-        target: &super::target::SearchTarget,
-    ) -> Result<Vec<super::search_jobs::candidates::Candidate>, SourceError> {
-        match self {
-            Self::Slskd(source) => source.search_candidates(target).await,
-            Self::Sab(source) => Ok(source.search_candidates(target).await),
-            Self::Plugin(source) => source.search_candidates(target).await,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(_) => Ok(Vec::new()),
-        }
+    fn search<'a>(
+        &'a self,
+        _target: &'a super::target::SearchTarget,
+    ) -> BoxFuture<'a, Result<Vec<super::search_jobs::candidates::Candidate>, SourceError>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 
-    /// Journal source tag (`soulseek`, `usenet`, `plugin:<name>`).
-    pub fn journal_source(&self) -> &str {
-        match self {
-            Self::Slskd(_) => "soulseek",
-            Self::Sab(_) => "usenet",
-            Self::Plugin(source) => source.key(),
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(_) => "plugin:fixed",
-        }
-    }
-
-    async fn enqueue(
-        &self,
-        task_id: &str,
+    fn enqueue<'a>(
+        &'a self,
+        task_id: &'a str,
         candidate_index: i64,
-    ) -> Result<SourceHandle, SourceError> {
-        match self {
-            Self::Slskd(source) => source.enqueue(task_id, candidate_index).await,
-            Self::Sab(source) => source.enqueue(task_id, candidate_index).await,
-            Self::Plugin(source) => source.enqueue(task_id, candidate_index).await,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(source) => Ok(SourceHandle {
-                source: "plugin:fixed".to_owned(),
-                filenames: source.names(),
+    ) -> BoxFuture<'a, Result<SourceHandle, SourceError>> {
+        Box::pin(async move {
+            Ok(SourceHandle {
+                filenames: self.names(),
                 job_name: format!("fixed-{task_id}-{candidate_index}"),
-                ..SourceHandle::default()
-            }),
-        }
+                ..SourceHandle::new(self.tag())
+            })
+        })
     }
 
-    async fn poll(
-        &self,
-        handle: &SourceHandle,
-    ) -> Result<super::downloads::sources::TransferProgress, SourceError> {
-        match self {
-            Self::Slskd(source) => source.poll(handle).await,
-            Self::Sab(source) => source.poll(handle).await,
-            Self::Plugin(source) => source.poll(handle).await,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(source) => Ok(super::downloads::sources::TransferProgress {
+    fn poll<'a>(
+        &'a self,
+        _handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<super::downloads::sources::TransferProgress, SourceError>> {
+        Box::pin(async move {
+            Ok(super::downloads::sources::TransferProgress {
                 all_terminal: true,
                 all_succeeded: true,
                 has_active_transfer: false,
                 downloaded_bytes: 1,
-                succeeded_filenames: source.names(),
+                succeeded_filenames: self.names(),
                 ..Default::default()
-            }),
-        }
+            })
+        })
     }
 
-    async fn discard(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
-        match self {
-            Self::Slskd(source) => source.discard(handle).await,
-            Self::Sab(source) => source.discard(handle).await,
-            Self::Plugin(source) => source.discard(handle).await,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(source) => {
-                if source
-                    .discard_fails
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    Err(SourceError::LocalFault("discard refused".to_owned()))
-                } else {
-                    Ok(true)
-                }
-            }
-        }
-    }
-
-    async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
-        match self {
-            Self::Slskd(source) => source.abort(handle).await,
-            Self::Sab(source) => source.abort(handle).await,
-            Self::Plugin(source) => source.abort(handle).await,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(_) => Ok(true),
-        }
-    }
-
-    /// The landed files (or job folder) for a finished handle, with the
-    /// downloads folders the landing confines them to.
-    async fn landed_paths(
-        &self,
-        handle: &SourceHandle,
-    ) -> Result<crate::landing::Landed, SourceError> {
-        match self {
-            Self::Slskd(source) => source.landed(handle).await,
-            Self::Sab(source) => source.landed(handle).await,
-            Self::Plugin(source) => source.landed_paths(handle).await,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(source) => Ok(crate::landing::Landed {
-                mounts: vec![source.mount.clone()],
-                files: source
+    fn landed<'a>(
+        &'a self,
+        _handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<crate::landing::Landed, SourceError>> {
+        Box::pin(async move {
+            Ok(crate::landing::Landed {
+                mounts: vec![self.mount.clone()],
+                files: self
                     .paths
                     .iter()
                     .cloned()
                     .map(crate::landing::Reported::path)
                     .collect(),
-            }),
-        }
+            })
+        })
     }
 
-    /// Whether the client still owns one job (orphan evidence). `None`
-    /// means the lookup failed and the folder must stay.
-    async fn job_active(&self, handle: &SourceHandle) -> Option<bool> {
-        match self {
-            Self::Slskd(_) | Self::Plugin(_) => None,
-            Self::Sab(source) => source.job_present(handle).await.ok(),
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(_) => None,
-        }
+    fn discard<'a>(
+        &'a self,
+        _handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<bool, SourceError>> {
+        Box::pin(async move {
+            if self
+                .discard_fails
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                Err(SourceError::LocalFault("discard refused".to_owned()))
+            } else {
+                Ok(true)
+            }
+        })
     }
 
-    /// Client-side mount health for orphan evidence. `None` fails closed
-    /// (the folder stays). Soulseek has no cheap mount probe and its
-    /// folders always keep anyway, so it answers `None`.
-    async fn mount_healthy(&self, handle: &SourceHandle) -> Option<bool> {
-        match self {
-            Self::Slskd(_) => None,
-            Self::Sab(source) => source
-                .inspect(handle)
-                .await
-                .map(|seen| seen.mount_healthy)
-                .ok(),
-            Self::Plugin(source) => source
-                .inspect(handle)
-                .await
-                .map(|seen| seen.mount_healthy)
-                .ok(),
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(_) => None,
-        }
+    fn abort<'a>(&'a self, _handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>> {
+        Box::pin(async { Ok(true) })
     }
 }
 
@@ -454,12 +362,12 @@ pub struct WorkerConfig {
     pub retry: RetryPolicy,
     /// Watchdog timing.
     pub watchdog: WatchdogConfig,
-    /// Journal source tags in try order (`soulseek`, `usenet`).
-    pub source_order: Vec<String>,
+    /// Sources in try order.
+    pub source_order: Vec<SourceTag>,
     /// Per-task staging root (manifests live beneath it).
     pub staging_root: PathBuf,
     /// Complete dirs to walk as `(journal source, dir)`.
-    pub orphan_roots: Vec<(String, PathBuf)>,
+    pub orphan_roots: Vec<(SourceTag, PathBuf)>,
     /// Lease owner name for cleanup claims.
     pub worker_id: String,
     /// When an album waits for a hand pick instead of the best guess.
@@ -473,7 +381,7 @@ impl Default for WorkerConfig {
             max_failover_attempts: 3,
             retry: RetryPolicy::default(),
             watchdog: WatchdogConfig::default(),
-            source_order: vec!["soulseek".to_owned(), "usenet".to_owned()],
+            source_order: vec![SourceTag::Soulseek, SourceTag::Usenet],
             staging_root: PathBuf::from("staging"),
             orphan_roots: Vec::new(),
             worker_id: "download-worker".to_owned(),
@@ -483,7 +391,28 @@ impl Default for WorkerConfig {
 }
 
 /// The configured sources for one pass.
-pub type SourceSet = Arc<Vec<Source>>;
+pub type SourceSet = Arc<Vec<Arc<dyn DownloadSource>>>;
+
+/// The sources turned on right now, for work outside the worker's passes
+/// (the wanted watcher's search).
+#[derive(Clone)]
+pub enum SourceList {
+    /// The sources the saved settings turn on, plugin sources included.
+    Live(Arc<super::wiring::WorkerSettings>),
+    /// A fixed set, for tests that script the sources.
+    Fixed(SourceSet),
+}
+
+impl SourceList {
+    /// The sources on now, or `None` while the download settings do not
+    /// read.
+    pub fn current(&self) -> Option<SourceSet> {
+        match self {
+            Self::Live(settings) => settings.readable().then(|| settings.sources()),
+            Self::Fixed(sources) => Some(sources.clone()),
+        }
+    }
+}
 
 /// Where the worker's sources and tuning come from, read once per pass.
 enum Inputs {
@@ -538,25 +467,26 @@ struct Pass {
 
 impl Pass {
     /// Sources in configured try order.
-    fn ordered_sources(&self) -> Vec<&Source> {
+    fn ordered_sources(&self) -> Vec<&Arc<dyn DownloadSource>> {
         in_try_order(&self.sources, &self.config.source_order)
     }
 
-    /// The adapter for one journal source tag.
-    fn source_for(&self, tag: &str) -> Option<&Source> {
-        self.sources
-            .iter()
-            .find(|source| source.journal_source() == tag)
+    /// The adapter for one source.
+    fn source_for(&self, tag: &SourceTag) -> Option<&Arc<dyn DownloadSource>> {
+        self.sources.iter().find(|source| source.tag() == *tag)
     }
 }
 
 /// Sources in the configured try order; any the order does not name
 /// come last.
-fn in_try_order<'a>(sources: &'a [Source], order: &[String]) -> Vec<&'a Source> {
+fn in_try_order<'a>(
+    sources: &'a [Arc<dyn DownloadSource>],
+    order: &[SourceTag],
+) -> Vec<&'a Arc<dyn DownloadSource>> {
     let mut ordered = Vec::with_capacity(sources.len());
     for wanted in order {
         for source in sources {
-            if source.journal_source() == wanted {
+            if source.tag() == *wanted {
                 ordered.push(source);
             }
         }
@@ -684,7 +614,7 @@ impl DownloadWorker {
     }
 
     /// The sources turned on right now, in the configured try order.
-    pub fn sources_now(&self) -> Vec<Source> {
+    pub fn sources_now(&self) -> Vec<Arc<dyn DownloadSource>> {
         let Some(config) = self.inputs.config() else {
             return Vec::new();
         };
@@ -728,7 +658,7 @@ impl DownloadWorker {
     /// Worker over a fixed source list and fixed tuning.
     pub fn fixed(
         journal: Arc<Journal>,
-        sources: Vec<Source>,
+        sources: Vec<Arc<dyn DownloadSource>>,
         config: WorkerConfig,
         events: droppedneedle_kernel::events::EventHub,
         health: Arc<ServiceHealth>,
@@ -954,7 +884,7 @@ impl DownloadWorker {
             && task.candidate_index.is_some()
             && let Some(at) = sources
                 .iter()
-                .position(|source| source.journal_source() == task.source)
+                .position(|source| source.tag() == task.source)
         {
             let picked = sources.remove(at);
             sources.insert(0, picked);
@@ -962,7 +892,7 @@ impl DownloadWorker {
         for source in sources {
             // Each source walks its own candidate list: the index is the
             // number of attempts this source already handled.
-            let source_index = handled_count(&attempts, Some(source.journal_source()));
+            let source_index = handled_count(&attempts, Some(&source.tag()));
             match source.enqueue(&task.id, source_index).await {
                 Ok(handle) => {
                     self.journal_enqueued(pass, task, source, handled, source_index, &handle)
@@ -988,7 +918,7 @@ impl DownloadWorker {
                     }
                     tracing::warn!(
                         task_id = %task.id,
-                        source = source.name(),
+                        source = %source.tag(),
                         %error,
                         "enqueue failed; trying the next source"
                     );
@@ -1077,7 +1007,7 @@ impl DownloadWorker {
         &self,
         pass: &Pass,
         task: &TaskRow,
-        source: &Source,
+        source: &Arc<dyn DownloadSource>,
         attempt_number: i64,
         source_index: i64,
         handle: &SourceHandle,
@@ -1092,7 +1022,7 @@ impl DownloadWorker {
         };
         let attempt_id = format!("{}-a{attempt_number}", task.id);
         let task_id = task.id.clone();
-        let journal_source = source.journal_source().to_owned();
+        let journal_source = source.tag().to_string();
         let job_name = handle.job_name.clone();
         let row_id = attempt_id.clone();
         let journaled = self
@@ -1122,7 +1052,7 @@ impl DownloadWorker {
             &self.plugins,
             droppedneedle_plugins::runtime::EventKind::DownloadStarted,
             task,
-            source.journal_source(),
+            &source.tag().to_string(),
             "started",
         );
         if let Ok(mut cache) = self.poll_cache.lock() {
@@ -1172,7 +1102,7 @@ impl DownloadWorker {
                 planned_album: None,
             });
         manifest.handle = Some(super::downloads::manifest::TaskHandle {
-            source: handle.source.clone(),
+            source: handle.source.to_string(),
             username: handle.username.clone(),
             filenames: handle.filenames.clone(),
             job_name: handle.job_name.clone(),
@@ -1360,7 +1290,7 @@ impl DownloadWorker {
         pass: &Pass,
         task: &TaskRow,
         attempt: &AttemptRow,
-        source: &Source,
+        source: &Arc<dyn DownloadSource>,
         handle: &SourceHandle,
         progress: super::downloads::sources::TransferProgress,
         sample: PollSample,
@@ -1397,7 +1327,7 @@ impl DownloadWorker {
                     &self.plugins,
                     droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
                     task,
-                    source.journal_source(),
+                    &source.tag().to_string(),
                     "completed",
                 );
                 return;
@@ -1435,7 +1365,7 @@ impl DownloadWorker {
         now: f64,
         task: &TaskRow,
         attempt: &AttemptRow,
-        source: &Source,
+        source: &Arc<dyn DownloadSource>,
         handle: &SourceHandle,
         reason: &str,
         quarantine: Option<QuarantineReason>,
@@ -1498,7 +1428,7 @@ impl DownloadWorker {
         if identities.is_empty() {
             return;
         }
-        let source = attempt.source.clone();
+        let source = attempt.source.to_string();
         let scope = if task.release_group_mbid.is_empty() {
             None
         } else {
@@ -1661,14 +1591,9 @@ impl DownloadWorker {
                 None
             }
         });
-        let handle: SourceHandle = decoded.unwrap_or(SourceHandle {
-            source: attempt.source.clone(),
-            username: String::new(),
-            filenames: Vec::new(),
+        let handle: SourceHandle = decoded.unwrap_or_else(|| SourceHandle {
             job_name: attempt.job_name.clone(),
-            nzo_id: String::new(),
-            plugin_token: String::new(),
-            sizes: Vec::new(),
+            ..SourceHandle::new(attempt.source.clone())
         });
         let Some(source) = pass.source_for(&attempt.source) else {
             // No adapter for this source: defer with backoff rather than
@@ -1729,7 +1654,7 @@ impl DownloadWorker {
     }
 
     /// Reconcile one complete dir.
-    async fn orphan_root(&self, pass: &Pass, source_tag: &str, root: &Path) {
+    async fn orphan_root(&self, pass: &Pass, source_tag: &SourceTag, root: &Path) {
         let mut entries = match tokio::fs::read_dir(root).await {
             Ok(entries) => entries,
             Err(error) => {
@@ -1756,7 +1681,7 @@ impl DownloadWorker {
                 continue;
             };
             let evidence = self
-                .orphan_evidence(pass, source_tag, &task_id, &job_name, root, &entry.path())
+                .orphan_evidence(pass, source_tag, &task_id, &job_name, &entry.path())
                 .await;
             match evaluate_orphan(&name, is_symlink, evidence) {
                 OrphanDecision::Remove => {
@@ -1773,15 +1698,14 @@ impl DownloadWorker {
     async fn orphan_evidence(
         &self,
         pass: &Pass,
-        source_tag: &str,
+        source_tag: &SourceTag,
         task_id: &str,
         job_name: &str,
-        root: &Path,
         path: &Path,
     ) -> Option<OrphanEvidence> {
         let has_cleanup_debt = self
             .ownership
-            .has_cleanup_debt(source_tag, task_id, job_name)
+            .has_cleanup_debt(&source_tag.to_string(), task_id, job_name)
             .await
             .ok()?;
         let task_status = self.ownership.task_status(task_id).await.ok()?;
@@ -1791,34 +1715,13 @@ impl DownloadWorker {
         let bundles_settled = self.ownership.bundles_settled(task_id).await.ok()?;
         let source = pass.source_for(source_tag)?;
         let handle = SourceHandle {
-            source: source_tag.to_owned(),
-            username: String::new(),
-            filenames: Vec::new(),
             job_name: job_name.to_owned(),
-            nzo_id: String::new(),
-            plugin_token: String::new(),
-            sizes: Vec::new(),
+            ..SourceHandle::new(source_tag.clone())
         };
-        // Soulseek handles need the peer plus filenames, which the folder
-        // name does not carry: without them the client check cannot run,
-        // so slskd folders always keep (fail closed). Mount health still
-        // comes from a real readability probe, failing closed on error.
-        let client_job_active = if source_tag == "soulseek" {
-            let root_readable = tokio::fs::read_dir(root).await.is_ok();
-            if !root_readable {
-                return None;
-            }
-            return Some(OrphanEvidence {
-                has_cleanup_debt,
-                task_active,
-                bundles_settled,
-                mount_healthy: true,
-                client_job_active: true,
-                age_seconds: 0.0,
-            });
-        } else {
-            source.job_active(&handle).await?
-        };
+        // A source that cannot tell whether it still owns the job (slskd:
+        // the folder name carries no peer or filenames) answers `None`,
+        // and the folder stays.
+        let client_job_active = source.job_active(&handle).await?;
         // Real client-side mount truth; a lookup error fails closed.
         let mount_healthy = source.mount_healthy(&handle).await?;
         let age_seconds = tokio::fs::metadata(path)
@@ -1845,7 +1748,7 @@ impl DownloadWorker {
     async fn remove_orphan(
         &self,
         pass: &Pass,
-        source_tag: &str,
+        source_tag: &SourceTag,
         task_id: &str,
         job_name: &str,
         root: &Path,
@@ -1863,13 +1766,8 @@ impl DownloadWorker {
             return;
         };
         let handle = SourceHandle {
-            source: source_tag.to_owned(),
-            username: String::new(),
-            filenames: Vec::new(),
             job_name: job_name.to_owned(),
-            nzo_id: String::new(),
-            plugin_token: String::new(),
-            sizes: Vec::new(),
+            ..SourceHandle::new(source_tag.clone())
         };
         if let Err(error) = source.discard(&handle).await {
             tracing::warn!(task_id, %error, "orphan client discard failed; folder kept");
@@ -1895,11 +1793,11 @@ fn live_attempt(attempts: &[Attempt]) -> Option<&Attempt> {
 
 /// Attempts with a client handle, optionally for one source only.
 /// Handle-less rows never reached the client and do not consume a slot.
-fn handled_count(attempts: &[Attempt], source: Option<&str>) -> i64 {
+fn handled_count(attempts: &[Attempt], source: Option<&SourceTag>) -> i64 {
     attempts
         .iter()
         .filter(|attempt| attempt.handle.is_some())
-        .filter(|attempt| source.is_none_or(|tag| attempt.row.source == tag))
+        .filter(|attempt| source.is_none_or(|tag| attempt.row.source == *tag))
         .count() as i64
 }
 

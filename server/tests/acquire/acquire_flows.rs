@@ -3,9 +3,10 @@
 //!
 //! Ticks take an explicit `now`; the loop test runs on paused tokio time
 //! and bounds its waits in wall-clock time. Stores sit on a scratch
-//! database and downloads go into the real journal on it. Candidate search
-//! asks the slskd mock, the follow poll reads MusicBrainz pages from a
-//! scripted wire, and flow notices go to a real event hub.
+//! database and downloads go into the real journal on it. The wanted
+//! watcher searches the sources the saved settings turn on (the slskd
+//! mock), the follow poll reads MusicBrainz pages from a scripted wire,
+//! and flow notices go to a real event hub.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,7 +25,7 @@ use droppedneedle_acquire::flows::{
         WantedDeps, follow_tick, interval_seconds, prune_tick, spawn_sync_loop, sweep_tick,
         sync_tick, wanted_tick,
     },
-    seams::{CandidateSearch, TickSink},
+    seams::TickSink,
     stores::{AdminDirectory, LibraryPresence, UpgradeWorklist},
 };
 use droppedneedle_acquire::follows::Follows;
@@ -39,7 +40,8 @@ use droppedneedle_acquire::requests::{
 };
 use droppedneedle_acquire::search_jobs::store::JobStore;
 use droppedneedle_acquire::target::Targets;
-use droppedneedle_acquire::wiring::{ClientLives, LiveClients};
+use droppedneedle_acquire::wiring::{ClientLives, LiveClients, WorkerSettings};
+use droppedneedle_acquire::worker::SourceList;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::db::{DbRuntime, JobState};
 use droppedneedle_kernel::events::EventHub;
@@ -207,15 +209,17 @@ struct Wanted {
     _slskd: MockSlskd,
 }
 
-/// The candidate search the saved settings build, over the slskd mock.
-async fn search_over(
+/// The sources the saved settings turn on, over the slskd mock, with
+/// slskd turned on or off.
+async fn sources_over(
     db: &AcquireDb,
     settings: &ConfigStore,
-) -> (Arc<dyn CandidateSearch>, MockSlskd) {
+    enabled: bool,
+) -> (SourceList, MockSlskd) {
     let slskd = MockSlskd::start().await.expect("mock slskd starts");
     settings
         .save_secret_blocking(SlskdConnection {
-            enabled: true,
+            enabled,
             url: slskd.base_url(),
             api_key: MOCK_API_KEY.into(),
             ..SlskdConnection::default()
@@ -227,19 +231,27 @@ async fn search_over(
         .expect("http client factory")
         .shared()
         .clone();
-    let clients = LiveClients::new(
+    let clients = Arc::new(LiveClients::new(
         http,
         ClientLives::new(settings),
         dir.join("slskd"),
         journal.clone(),
         Arc::new(Targets::new(journal, dir.join("staging"), None)),
         None,
-    );
-    let search = clients.current().search.clone().expect("the policy reads");
-    (search, slskd)
+    ));
+    let sources = SourceList::Live(Arc::new(WorkerSettings::new(
+        settings,
+        clients,
+        dir.join("staging"),
+    )));
+    (sources, slskd)
 }
 
 async fn wanted(db: &AcquireDb) -> Wanted {
+    wanted_with_slskd(db, true).await
+}
+
+async fn wanted_with_slskd(db: &AcquireDb, slskd_on: bool) -> Wanted {
     db.add_user("user-1", "Owner", "user").await.unwrap();
     let settings = settings(db);
     settings
@@ -250,7 +262,7 @@ async fn wanted(db: &AcquireDb) -> Wanted {
             auto_download_on_find: true,
         })
         .expect("watcher settings save");
-    let (search, slskd) = search_over(db, &settings).await;
+    let (sources, slskd) = sources_over(db, &settings, slskd_on).await;
     let library = Arc::new(LibraryPresence::new());
     let events = EventHub::new();
     Wanted {
@@ -258,7 +270,7 @@ async fn wanted(db: &AcquireDb) -> Wanted {
             settings: settings.live(),
             watches: WantedStore::new(db.clone()),
             ledger: RequestStore::new(db.clone()),
-            search,
+            sources,
             downloads: dispatch(db, &settings),
             library: library.clone(),
             ticks: ticks(&events),
@@ -309,6 +321,39 @@ async fn wanted_enrols_then_auto_downloads() {
         notices(&rig.events, "user-1").await,
         [names::WANTED_AUTO_DISPATCHED]
     );
+}
+
+// The watcher asks only the sources that are turned on. With slskd set up
+// but turned off there is no source to ask: the watch waits, still due,
+// neither rescheduled nor counted quiet, and nothing starts.
+#[tokio::test]
+async fn wanted_waits_while_no_source_is_turned_on() {
+    let db = AcquireDb::scratch().unwrap();
+    let mut rig = wanted_with_slskd(&db, false).await;
+    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
+    wanted_tick(NOW, &rig.deps).await;
+    let before = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    let due = before.next_check_at as i64;
+    let checked = wanted_tick(due, &rig.deps).await;
+    assert_eq!((checked.checked, checked.dispatched), (1, 0));
+    let after = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    assert_eq!(after.next_check_at, before.next_check_at, "still due");
+    assert_eq!(after.quiet_streak, 0, "not counted quiet");
+    assert_eq!(after.check_count, before.check_count, "no check recorded");
+    assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
+
+    // Download settings that do not read hold the watch the same way,
+    // even with slskd turned on.
+    let dir = db.path().parent().unwrap().join("broken-settings");
+    let broken = crate::acquire_requests::unreadable_policy_store(&dir);
+    let (sources, _slskd) = sources_over(&db, &broken, true).await;
+    rig.deps.sources = sources;
+    wanted_tick(due, &rig.deps).await;
+    let held = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    assert_eq!(held.next_check_at, before.next_check_at, "still due");
+    assert_eq!(held.quiet_streak, 0, "not counted quiet");
+    assert_eq!(held.check_count, before.check_count, "no check recorded");
+    assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
 }
 
 // A watch the library now holds is fulfilled and its request imported.

@@ -104,7 +104,7 @@ impl DownloadWorker {
         &self,
         mode: ReviewMode,
         sources: &SourceSet,
-        order: &[String],
+        order: &[crate::downloads::source_tag::SourceTag],
         task: &TaskRow,
     ) -> Reviewed {
         let Some(targets) = &self.targets else {
@@ -135,7 +135,7 @@ impl DownloadWorker {
             }
         };
         let job_id = uuid::Uuid::new_v4().simple().to_string();
-        let ordered = in_try_order(sources, order);
+        let ordered: Vec<_> = in_try_order(sources, order).into_iter().cloned().collect();
         let (candidates, _failed) = search_sources(&ordered, &target, &job_id).await;
         let outcome = match verdict(mode, &candidates) {
             Verdict::Nothing => return Reviewed::Search,

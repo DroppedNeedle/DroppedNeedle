@@ -24,9 +24,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures_util::future::BoxFuture;
+
 use super::downloads::TrackPosition;
 use super::downloads::journal::Journal;
 use super::downloads::quarantine::{QUARANTINE_TTL_SECONDS, soulseek_hit_quarantined};
+use super::downloads::source_tag::SourceTag;
 use super::downloads::sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };
@@ -130,7 +133,7 @@ impl SlskdSource {
     }
 
     /// The handle's files, with the mount they must sit in.
-    pub async fn landed(
+    async fn landed_on_mount(
         &self,
         handle: &SourceHandle,
     ) -> Result<crate::landing::Landed, SourceError> {
@@ -179,10 +182,7 @@ impl SlskdSource {
     /// A manual search: the album's folders, ranked against the edition's
     /// tracklist the same way the automatic path ranks them. Blocklisted
     /// files are left out.
-    pub async fn search_candidates(
-        &self,
-        target: &SearchTarget,
-    ) -> Result<Vec<Candidate>, SourceError> {
+    async fn search_album(&self, target: &SearchTarget) -> Result<Vec<Candidate>, SourceError> {
         if !self.repo.is_configured() {
             return Ok(Vec::new());
         }
@@ -212,8 +212,8 @@ impl SlskdSource {
     }
 }
 
-impl DownloadSource for SlskdSource {
-    async fn enqueue(
+impl SlskdSource {
+    async fn enqueue_pick(
         &self,
         task_id: &str,
         candidate_index: i64,
@@ -235,7 +235,7 @@ impl DownloadSource for SlskdSource {
         let mut tried = Vec::new();
         for json in self
             .journal
-            .read_source_handles(task_id, "soulseek")
+            .read_source_handles(task_id, &SourceTag::Soulseek)
             .await
             .map_err(|error| SourceError::LocalFault(error.to_string()))?
         {
@@ -282,7 +282,8 @@ impl DownloadSource for SlskdSource {
         }
         // The folder a person picked from a manual search goes first,
         // minus any file blocklisted since.
-        let picked = match pinned(&self.journal, &task, "soulseek", candidate_index).await {
+        let picked = match pinned(&self.journal, &task, &SourceTag::Soulseek, candidate_index).await
+        {
             Some(Pin::Soulseek {
                 username, files, ..
             }) => files
@@ -345,7 +346,7 @@ impl DownloadSource for SlskdSource {
             .collect();
         Ok(SourceHandle {
             sizes,
-            source: "soulseek".to_owned(),
+            source: SourceTag::Soulseek,
             username: handle.username,
             filenames: handle.filenames,
             job_name: String::new(),
@@ -354,7 +355,7 @@ impl DownloadSource for SlskdSource {
         })
     }
 
-    async fn poll(&self, handle: &SourceHandle) -> Result<TransferProgress, SourceError> {
+    async fn progress(&self, handle: &SourceHandle) -> Result<TransferProgress, SourceError> {
         let repo_handle =
             super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
         let status = self
@@ -378,36 +379,7 @@ impl DownloadSource for SlskdSource {
         })
     }
 
-    async fn inspect(&self, handle: &SourceHandle) -> Result<Materialization, SourceError> {
-        let repo_handle =
-            super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
-        let status = self
-            .repo
-            .get_status(&repo_handle)
-            .await
-            .map_err(slskd_error)?;
-        let mut paths = Vec::new();
-        for filename in &status.succeeded_filenames {
-            match self.repo.get_file_path(&repo_handle, filename, None).await {
-                Ok(Some(path)) => paths.push(path),
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::warn!(%error, "slskd inspect path failed");
-                }
-            }
-        }
-        Ok(Materialization {
-            mount_healthy: true,
-            state: if status.status == "completed" {
-                "completed".to_owned()
-            } else {
-                "active".to_owned()
-            },
-            paths,
-        })
-    }
-
-    async fn discard(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+    async fn discard_records(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
         let repo_handle =
             super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
         self.repo
@@ -416,17 +388,60 @@ impl DownloadSource for SlskdSource {
             .map_err(slskd_error)
     }
 
-    async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+    async fn abort_job(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
         let repo_handle =
             super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
         self.repo.abort(&repo_handle).await.map_err(slskd_error)
     }
 }
 
+impl DownloadSource for SlskdSource {
+    fn tag(&self) -> SourceTag {
+        SourceTag::Soulseek
+    }
+
+    fn search<'a>(
+        &'a self,
+        target: &'a SearchTarget,
+    ) -> BoxFuture<'a, Result<Vec<Candidate>, SourceError>> {
+        Box::pin(self.search_album(target))
+    }
+
+    fn enqueue<'a>(
+        &'a self,
+        task_id: &'a str,
+        candidate_index: i64,
+    ) -> BoxFuture<'a, Result<SourceHandle, SourceError>> {
+        Box::pin(self.enqueue_pick(task_id, candidate_index))
+    }
+
+    fn poll<'a>(
+        &'a self,
+        handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<TransferProgress, SourceError>> {
+        Box::pin(self.progress(handle))
+    }
+
+    fn landed<'a>(
+        &'a self,
+        handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<crate::landing::Landed, SourceError>> {
+        Box::pin(self.landed_on_mount(handle))
+    }
+
+    fn discard<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>> {
+        Box::pin(self.discard_records(handle))
+    }
+
+    fn abort<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>> {
+        Box::pin(self.abort_job(handle))
+    }
+}
+
 /// The queue's correlation handle for one journaled handle.
 fn queue_handle(handle: &SourceHandle) -> super::usenet::sabnzbd::TaskHandle {
     super::usenet::sabnzbd::TaskHandle {
-        source: "usenet".to_owned(),
+        source: SourceTag::Usenet.to_string(),
         job_name: handle.job_name.clone(),
         nzo_id: handle.nzo_id.clone(),
     }
@@ -495,13 +510,13 @@ impl SabnzbdSource {
         let Some(host) = &self.plugins else {
             return Vec::new();
         };
+        // Plugin indexers name the source they feed by its stored text.
+        let usenet = SourceTag::Usenet.to_string();
         let found = match query {
-            Query::Track { artist, title } => {
-                host.search_track("usenet", artist, title, None).await
-            }
+            Query::Track { artist, title } => host.search_track(&usenet, artist, title, None).await,
             Query::Album(target) => {
                 host.search_album(
-                    "usenet",
+                    &usenet,
                     &target.artist,
                     &target.album_title,
                     target.year.map(i64::from),
@@ -516,7 +531,7 @@ impl SabnzbdSource {
             .into_iter()
             .filter(|hit| hit.nzb_url.starts_with("https://") || hit.nzb_url.starts_with("http://"))
             .map(|hit| IndexerResult {
-                source: "usenet".to_owned(),
+                source: SourceTag::Usenet.to_string(),
                 usenet: super::usenet::newznab::UsenetRelease {
                     indexer_id: "plugin".to_owned(),
                     indexer_name: "plugin".to_owned(),
@@ -644,7 +659,7 @@ enum Query<'a> {
 
 impl SabnzbdSource {
     /// The finished job's folder, with the mount it must sit in.
-    pub async fn landed(
+    async fn landed_in_mount(
         &self,
         handle: &SourceHandle,
     ) -> Result<crate::landing::Landed, SourceError> {
@@ -662,7 +677,7 @@ impl SabnzbdSource {
     /// A manual search: the album's releases from the active indexers
     /// (and usenet-targeting plugin indexers), gated and ordered as the
     /// automatic path orders them.
-    pub async fn search_candidates(&self, target: &SearchTarget) -> Vec<Candidate> {
+    async fn search_album(&self, target: &SearchTarget) -> Vec<Candidate> {
         if !self.queue.is_configured() || !target.has_album() {
             return Vec::new();
         }
@@ -676,7 +691,7 @@ impl SabnzbdSource {
 
     /// Whether SABnzbd still lists the job in its queue or history (orphan
     /// evidence). A job in neither is gone.
-    pub async fn job_present(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+    async fn job_present(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
         let status = self
             .queue
             .get_status(&queue_handle(handle))
@@ -688,8 +703,8 @@ impl SabnzbdSource {
     }
 }
 
-impl DownloadSource for SabnzbdSource {
-    async fn enqueue(
+impl SabnzbdSource {
+    async fn enqueue_pick(
         &self,
         task_id: &str,
         candidate_index: i64,
@@ -707,7 +722,7 @@ impl DownloadSource for SabnzbdSource {
         // job instead of adding a twin.
         let job_name = format!("droppedneedle-{task_id}-{index}");
         let probe = super::usenet::sabnzbd::TaskHandle {
-            source: "usenet".to_owned(),
+            source: SourceTag::Usenet.to_string(),
             job_name: job_name.clone(),
             nzo_id: String::new(),
         };
@@ -720,13 +735,9 @@ impl DownloadSource for SabnzbdSource {
                     .map(|seen| seen.nzo_id)
                     .unwrap_or_default();
                 return Ok(SourceHandle {
-                    source: "usenet".to_owned(),
-                    username: String::new(),
-                    filenames: Vec::new(),
                     job_name,
                     nzo_id,
-                    plugin_token: String::new(),
-                    sizes: Vec::new(),
+                    ..SourceHandle::new(SourceTag::Usenet)
                 });
             }
             Ok(_) => {}
@@ -738,7 +749,7 @@ impl DownloadSource for SabnzbdSource {
             Err(error) => return Err(sab_error(error)),
         }
         let target = resolve_target(self.targets.as_ref(), &task).await?;
-        let pick = match pinned(&self.journal, &task, "usenet", candidate_index).await {
+        let pick = match pinned(&self.journal, &task, &SourceTag::Usenet, candidate_index).await {
             // The release a person picked, found again by its identity: the
             // NZB link is never stored.
             Some(Pin::Release { identity }) => self
@@ -786,17 +797,13 @@ impl DownloadSource for SabnzbdSource {
         }
         .map_err(sab_error)?;
         Ok(SourceHandle {
-            source: "usenet".to_owned(),
-            username: String::new(),
-            filenames: Vec::new(),
             job_name: handle.job_name,
             nzo_id: handle.nzo_id,
-            plugin_token: String::new(),
-            sizes: Vec::new(),
+            ..SourceHandle::new(SourceTag::Usenet)
         })
     }
 
-    async fn poll(&self, handle: &SourceHandle) -> Result<TransferProgress, SourceError> {
+    async fn progress(&self, handle: &SourceHandle) -> Result<TransferProgress, SourceError> {
         let queue_handle = queue_handle(handle);
         let status = self
             .queue
@@ -842,7 +849,7 @@ impl DownloadSource for SabnzbdSource {
         })
     }
 
-    async fn discard(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+    async fn discard_records(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
         let queue_handle = queue_handle(handle);
         self.queue
             .discard_client_artifacts(&queue_handle)
@@ -850,9 +857,65 @@ impl DownloadSource for SabnzbdSource {
             .map_err(sab_error)
     }
 
-    async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+    async fn abort_job(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
         let queue_handle = queue_handle(handle);
         self.queue.abort(&queue_handle).await.map_err(sab_error)
+    }
+}
+
+impl DownloadSource for SabnzbdSource {
+    fn tag(&self) -> SourceTag {
+        SourceTag::Usenet
+    }
+
+    fn search<'a>(
+        &'a self,
+        target: &'a SearchTarget,
+    ) -> BoxFuture<'a, Result<Vec<Candidate>, SourceError>> {
+        Box::pin(async move { Ok(self.search_album(target).await) })
+    }
+
+    fn enqueue<'a>(
+        &'a self,
+        task_id: &'a str,
+        candidate_index: i64,
+    ) -> BoxFuture<'a, Result<SourceHandle, SourceError>> {
+        Box::pin(self.enqueue_pick(task_id, candidate_index))
+    }
+
+    fn poll<'a>(
+        &'a self,
+        handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<TransferProgress, SourceError>> {
+        Box::pin(self.progress(handle))
+    }
+
+    fn landed<'a>(
+        &'a self,
+        handle: &'a SourceHandle,
+    ) -> BoxFuture<'a, Result<crate::landing::Landed, SourceError>> {
+        Box::pin(self.landed_in_mount(handle))
+    }
+
+    fn discard<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>> {
+        Box::pin(self.discard_records(handle))
+    }
+
+    fn abort<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>> {
+        Box::pin(self.abort_job(handle))
+    }
+
+    fn job_active<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Option<bool>> {
+        Box::pin(async move { self.job_present(handle).await.ok() })
+    }
+
+    fn mount_healthy<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Option<bool>> {
+        Box::pin(async move {
+            self.inspect(handle)
+                .await
+                .map(|seen| seen.mount_healthy)
+                .ok()
+        })
     }
 }
 
