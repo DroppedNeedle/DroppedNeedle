@@ -105,7 +105,13 @@ impl RequestsState {
             .to_path_buf();
         let settings = crate::settings::scratch_settings(&dir.join("settings"))?;
         let dispatch = Arc::new(DownloadDispatch::new(
-            Arc::new(Journal::new(db.clone())),
+            Arc::new(Journal::new(
+                db.clone(),
+                Arc::new(crate::plugin_events::FlowTicks::new(
+                    None,
+                    droppedneedle_kernel::events::EventHub::new(),
+                )),
+            )),
             Arc::new(droppedneedle_kernel::ids::UuidGenerator),
             dir.join("staging"),
             settings.live(),

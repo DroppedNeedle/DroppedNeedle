@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::common::bundles::quiet_ticks;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
@@ -117,7 +118,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
     let staging = crate::common::ScratchDir::new("track-album-staging");
-    let journal = Arc::new(Journal::new(db));
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
     let settings_dir = journal
         .db()
         .path()

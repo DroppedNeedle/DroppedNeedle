@@ -140,21 +140,24 @@ sql_text!(RequestStatus);
 pub fn can_request_transition(from: RequestStatus, to: RequestStatus) -> bool {
     use RequestStatus as S;
     let settles = matches!(to, S::Cancelled | S::Failed | S::Imported | S::Incomplete);
+    let restarts = matches!(to, S::Pending | S::AwaitingApproval | S::Queued);
     match from {
-        // Live rows follow their task, and their owner may cancel.
-        S::Pending | S::Queued => settles || matches!(to, S::Downloading | S::Cancelling),
+        // Live rows follow their task, and their owner may cancel. An
+        // approval whose dispatch could not start goes back to waiting.
+        S::Pending => settles || matches!(to, S::Downloading | S::Cancelling | S::AwaitingApproval),
+        S::Queued => settles || matches!(to, S::Downloading | S::Cancelling),
         S::Downloading => settles || to == S::Cancelling,
-        // An admin decides; the owner may withdraw.
-        S::AwaitingApproval => matches!(to, S::Pending | S::Rejected | S::Cancelled),
+        // An admin decides; the owner may withdraw; an album the library
+        // already holds leaves nothing to approve.
+        S::AwaitingApproval => matches!(to, S::Pending | S::Rejected | S::Cancelled | S::Imported),
         // A cancel lands, or a failed one puts the row back.
         S::Cancelling => matches!(to, S::Cancelled | S::Pending | S::Queued | S::Downloading),
-        // Finished rows start again through a new ask or a retry; one the
-        // library already holds settles as imported.
-        S::Failed | S::Cancelled | S::Incomplete => matches!(
-            to,
-            S::Pending | S::AwaitingApproval | S::Queued | S::Imported
-        ),
-        S::Imported | S::Rejected => matches!(to, S::Pending | S::AwaitingApproval | S::Queued),
+        // Finished rows start again through a new ask or a retry, and
+        // follow a new download of their album. A failed or short one the
+        // library now holds settles as imported.
+        S::Failed | S::Incomplete => restarts || matches!(to, S::Downloading | S::Imported),
+        S::Cancelled => restarts || to == S::Downloading,
+        S::Imported | S::Rejected => restarts,
     }
 }
 
@@ -557,19 +560,23 @@ mod tests {
                 allowed.push((from, to));
             }
         }
+        allowed.push((Pending, AwaitingApproval));
         for to in live_settles.into_iter().chain([Cancelling]) {
             allowed.push((Downloading, to));
         }
-        for to in [Pending, Rejected, Cancelled] {
+        for to in [Pending, Rejected, Cancelled, Imported] {
             allowed.push((AwaitingApproval, to));
         }
         for to in [Cancelled, Pending, Queued, Downloading] {
             allowed.push((Cancelling, to));
         }
         for from in [Failed, Cancelled, Incomplete] {
-            for to in [Pending, AwaitingApproval, Queued, Imported] {
+            for to in [Pending, AwaitingApproval, Queued, Downloading] {
                 allowed.push((from, to));
             }
+        }
+        for from in [Failed, Incomplete] {
+            allowed.push((from, Imported));
         }
         for from in [Imported, Rejected] {
             for to in [Pending, AwaitingApproval, Queued] {

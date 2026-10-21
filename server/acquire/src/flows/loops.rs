@@ -1,5 +1,5 @@
 //! The acquire flow loops: wanted watcher, follow poll, upgrade sweep,
-//! request-status sync and store prune.
+//! request-status sweep and store prune.
 //!
 //! Each loop is a `*_tick` function that runs one pass at an explicit
 //! `now`, so tests call it directly, plus a `spawn_*` function that runs it
@@ -29,11 +29,13 @@ use super::stores::{
 use crate::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
 };
+use crate::downloads::journal::Journal;
 use crate::downloads::state::TaskStatus;
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::{RequestRecord, RequestStatus, WantedWatch, WatchState};
+use crate::requests::ledger::{RequestStatus, WantedWatch, WatchState};
 use crate::requests::models::RequestKind;
 use crate::requests::quota::QuotaLedger;
+use crate::requests::settle::announce_fulfilled;
 use crate::requests::sqlite::{RequestStore, WantedStore};
 use crate::search_jobs::store::JobStore;
 use droppedneedle_auth::Principal;
@@ -64,9 +66,9 @@ pub const FOLLOW_ARTIST_REPOLL: Duration = Duration::from_secs(86_400);
 pub const FOLLOW_ARTIST_RETRY: Duration = Duration::from_secs(3_600);
 /// Upgrade-scan startup delay in seconds (v2 `scan_for_upgrades_periodically`).
 pub const UPGRADE_INITIAL_DELAY: Duration = Duration::from_secs(900);
-/// Request-status-sync cadence in seconds (v2 `_REQUEST_SYNC_INTERVAL`).
+/// Request-status-sweep cadence in seconds (v2 `_REQUEST_SYNC_INTERVAL`).
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(60);
-/// Status-sync startup delay in seconds (v2 `_REQUEST_SYNC_INITIAL_DELAY`).
+/// Status-sweep startup delay in seconds (v2 `_REQUEST_SYNC_INITIAL_DELAY`).
 pub const SYNC_INITIAL_DELAY: Duration = Duration::from_secs(15);
 
 /// Registry name for the wanted-watcher loop (v2 `TaskRegistry` key).
@@ -75,7 +77,7 @@ pub const WANTED_JOB: &str = "wanted-watcher";
 pub const FOLLOW_JOB: &str = "follow-new-release-poll";
 /// Registry name for the background upgrade scan (v2 `TaskRegistry` key).
 pub const UPGRADE_JOB: &str = "background-upgrade-scan";
-/// Registry name for the request-status sync (v2 `TaskRegistry` key).
+/// Registry name for the request-status sweep (v2 `TaskRegistry` key).
 pub const SYNC_JOB: &str = "request-status-sync";
 /// Registry name for the store prune (v2 `TaskRegistry` key).
 pub const PRUNE_JOB: &str = "store-prune";
@@ -200,28 +202,11 @@ async fn check_watch(
 ) -> Result<(), RequestsError> {
     let at = epoch(now);
     if deps.library.contains(&watch.key).await {
-        deps.watches
-            .mark_fulfilled(&watch.key, "in_library", at)
+        let fulfilled = deps
+            .ledger
+            .settle_in_library(&watch.key, "in_library", at)
             .await?;
-        deps.ledger
-            .update_status(
-                RequestKind::Album,
-                &watch.key,
-                RequestStatus::Imported,
-                Some(at),
-                None,
-            )
-            .await?;
-        deps.ticks.emit(
-            "request_fulfilled",
-            &format!("wanted {} satisfied from the library", watch.key),
-            now,
-        );
-        deps.ticks.announce(FlowEvent::RequestFulfilled {
-            request_id: watch.key.clone(),
-            user_id: watch.user_id.clone(),
-            release_group_mbid: watch.key.clone(),
-        });
+        announce_fulfilled(deps.ticks.as_ref(), fulfilled, now);
         notify_wanted(deps, watch, UserNotice::WantedFulfilled, |_| {});
         summary.fulfilled += 1;
         return Ok(());
@@ -961,12 +946,12 @@ pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
     summary
 }
 
-/// What one status-sync pass accomplished.
+/// What one status-sweep pass accomplished.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncSummary {
-    /// Rows reconciled (status moved).
-    pub reconciled: usize,
-    /// Rows that reached `imported`.
+    /// Finished tasks whose requests were settled.
+    pub settled: usize,
+    /// Album requests imported because the library holds the album.
     pub imported: usize,
     /// Rows that errored (each isolated).
     pub errors: usize,
@@ -1047,199 +1032,87 @@ pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, Requ
     })
 }
 
-/// Status-sync dependencies.
+/// Status-sweep dependencies.
 pub struct SyncDeps {
     /// Request ledger.
     pub ledger: RequestStore,
-    /// Download dispatch for task lookups.
-    pub downloads: Arc<DownloadDispatch>,
-    /// Library presence for the album fallback.
+    /// The download journal: a missed settle is written through it.
+    pub journal: Arc<Journal>,
+    /// Library presence for album rows no task can settle.
     pub library: Arc<LibraryPresence>,
     /// Durable ticks.
     pub ticks: Arc<dyn TickSink>,
 }
 
-/// Map a download task status onto a request status (v2
-/// `_TASK_TO_REQUEST_STATUS`, `requests_page_service.py`).
-pub fn map_task_status(task_status: TaskStatus) -> RequestStatus {
-    match task_status {
-        TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing => {
-            RequestStatus::Downloading
-        }
-        TaskStatus::Completed => RequestStatus::Imported,
-        TaskStatus::Partial => RequestStatus::Incomplete,
-        TaskStatus::Failed => RequestStatus::Failed,
-        TaskStatus::Cancelled => RequestStatus::Cancelled,
-    }
-}
-
-/// Run one request-status-sync pass: reconcile every active row
-/// with its native download task. Track rows resolve only through their
-/// linked task id (a recording MBID is not a library key), while album
-/// rows without a task fall back to library presence (v2 `_reconcile_request`
-/// quirk). Terminal moves stamp `completed_at`; a won race to `imported`
-/// ticks the notify. One bad row never stops the sweep.
+/// Run one status sweep, the safety net behind the journal: requests
+/// normally follow their task in the transaction that settles it. A
+/// finished task whose linked requests did not follow (a link made after
+/// the settle, a write outside the journal) settles them now through the
+/// journal; an album request with no task left to follow, or a failed one
+/// whose task is gone, is imported when the library holds the album.
+/// With nothing to do the sweep writes nothing.
 pub async fn sync_tick(now: i64, deps: &SyncDeps) -> SyncSummary {
     let mut summary = SyncSummary::default();
-    let rows = match deps.ledger.active(None, None).await {
-        Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(?error, "status sync could not read live requests");
-            summary.errors += 1;
-            return summary;
-        }
-    };
-    for row in rows {
-        if let Err(cause) = sync_one(now, deps, &row, &mut summary).await {
-            tracing::warn!(key = %row.key, %cause, "status sync failed for one request");
-            summary.errors += 1;
-        }
-    }
-    summary
-}
-
-/// Resolve the requests one settled download served, right away instead
-/// of on the next sync pass (v2 `_sync_request_on_terminal`): each live
-/// request linked to the task takes the status the task maps to, and a
-/// completed album also settles its wanted watch.
-pub async fn settle_task(
-    now: i64,
-    deps: &SyncDeps,
-    watches: &WantedStore,
-    task_id: &str,
-    completed_album: Option<&str>,
-) -> SyncSummary {
-    let mut summary = SyncSummary::default();
-    if let Some(key) = completed_album.filter(|key| !key.is_empty())
-        && let Err(error) = watches.mark_fulfilled(key, "imported", epoch(now)).await
-    {
-        tracing::warn!(key, ?error, "wanted watch not settled after import");
-    }
-    let rows = match deps.ledger.active(None, None).await {
-        Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(
-                task_id,
-                ?error,
-                "requests for a settled download unreadable"
-            );
-            summary.errors += 1;
-            return summary;
-        }
-    };
-    for row in rows
-        .iter()
-        .filter(|row| row.task_id.as_deref() == Some(task_id))
-    {
-        if let Err(cause) = sync_one(now, deps, row, &mut summary).await {
-            tracing::warn!(key = %row.key, %cause, "request not settled after import");
-            summary.errors += 1;
-        }
-    }
-    summary
-}
-
-/// The plugin event for one request that reached the library.
-fn fulfilled(row: &RequestRecord) -> FlowEvent {
-    let release_group_mbid = match row.kind {
-        RequestKind::Album => row.key.clone(),
-        _ => row.track_release_group_mbid.clone().unwrap_or_default(),
-    };
-    FlowEvent::RequestFulfilled {
-        request_id: row.key.clone(),
-        user_id: row.user_id.clone().unwrap_or_default(),
-        release_group_mbid,
-    }
-}
-
-/// Reconcile one live request row.
-async fn sync_one(
-    now: i64,
-    deps: &SyncDeps,
-    row: &RequestRecord,
-    summary: &mut SyncSummary,
-) -> Result<(), String> {
-    let at = epoch(now);
-    let mut task_status = None;
-    if let Some(task_id) = row.task_id.as_deref() {
-        task_status = deps
-            .downloads
-            .task(task_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .map(|task| task.status);
-    }
-    if task_status.is_none() && row.kind == RequestKind::Album {
-        task_status = deps
-            .downloads
-            .active_task_for_album(&row.key)
-            .await
-            .map_err(|error| error.to_string())?
-            .map(|task| task.status);
-    }
-    if let Some(task_status) = task_status {
-        let mapped = map_task_status(task_status);
-        if mapped == row.status {
-            return Ok(());
-        }
-        let terminal = matches!(
-            mapped,
-            RequestStatus::Imported | RequestStatus::Failed | RequestStatus::Cancelled
-        );
-        let won = deps
-            .ledger
-            .update_status(
-                row.kind,
-                &row.key,
-                mapped,
-                terminal.then_some(at),
-                Some(row.generation),
-            )
-            .await
-            .map_err(|error| format!("{error:?}"))?;
-        if won {
-            summary.reconciled += 1;
-            if mapped == RequestStatus::Imported {
-                summary.imported += 1;
-                deps.ticks.emit(
-                    "request_fulfilled",
-                    &format!(
-                        "request {} imported (task {})",
-                        row.key,
-                        task_status.as_str()
-                    ),
-                    now,
-                );
-                deps.ticks.announce(fulfilled(row));
+    match deps.ledger.unsettled_tasks().await {
+        Ok(tasks) => {
+            let tasks: Vec<(String, TaskStatus)> = tasks
+                .into_iter()
+                .filter_map(|(id, status)| TaskStatus::parse(&status).map(|status| (id, status)))
+                .collect();
+            if !tasks.is_empty() {
+                let count = tasks.len();
+                let at = now as f64;
+                let settled = deps
+                    .journal
+                    .run("requests.sweep", move |store| {
+                        for (task_id, status) in &tasks {
+                            store.settle_requests(task_id, *status, at)?;
+                        }
+                        Ok(())
+                    })
+                    .await;
+                match settled {
+                    Ok(()) => summary.settled += count,
+                    Err(error) => {
+                        tracing::warn!(%error, "status sweep could not settle finished tasks");
+                        summary.errors += 1;
+                    }
+                }
             }
         }
-        return Ok(());
+        Err(error) => {
+            tracing::warn!(?error, "status sweep could not read finished tasks");
+            summary.errors += 1;
+        }
     }
-    if row.kind == RequestKind::Track || !deps.library.contains(&row.key).await {
-        return Ok(());
+    let albums = match deps.ledger.albums_without_task().await {
+        Ok(albums) => albums,
+        Err(error) => {
+            tracing::warn!(?error, "status sweep could not read taskless requests");
+            summary.errors += 1;
+            return summary;
+        }
+    };
+    for key in albums {
+        if !deps.library.contains(&key).await {
+            continue;
+        }
+        match deps
+            .ledger
+            .settle_in_library(&key, "in_library", epoch(now))
+            .await
+        {
+            Ok(fulfilled) => {
+                summary.imported += fulfilled.len();
+                announce_fulfilled(deps.ticks.as_ref(), fulfilled, now);
+            }
+            Err(error) => {
+                tracing::warn!(%key, ?error, "status sweep could not settle a held album");
+                summary.errors += 1;
+            }
+        }
     }
-    let won = deps
-        .ledger
-        .update_status(
-            row.kind,
-            &row.key,
-            RequestStatus::Imported,
-            Some(at),
-            Some(row.generation),
-        )
-        .await
-        .map_err(|error| format!("{error:?}"))?;
-    if won {
-        summary.reconciled += 1;
-        summary.imported += 1;
-        deps.ticks.emit(
-            "request_fulfilled",
-            &format!("request {} imported (library presence)", row.key),
-            now,
-        );
-        deps.ticks.announce(fulfilled(row));
-    }
-    Ok(())
+    summary
 }
 
 /// Waits of 0.8 to 1.2 times `base`, drawn fresh each time (v2
@@ -1392,7 +1265,7 @@ pub fn spawn_sweep_loop(
     )
 }
 
-/// Run the request-status sync: a startup delay, then a plain 1-minute
+/// Run the request-status sweep: a startup delay, then a plain 1-minute
 /// cadence.
 pub fn spawn_sync_loop(supervisor: &Supervisor, deps: Arc<SyncDeps>) -> Result<(), AlreadyRunning> {
     supervisor.periodic(
@@ -1401,7 +1274,7 @@ pub fn spawn_sync_loop(supervisor: &Supervisor, deps: Arc<SyncDeps>) -> Result<(
         pass_tick(supervisor, deps, |now, deps| async move {
             let summary = sync_tick(now, &deps).await;
             if summary.errors > 0 {
-                tracing::warn!(?summary, "status sync finished with errors");
+                tracing::warn!(?summary, "status sweep finished with errors");
             }
         }),
     )

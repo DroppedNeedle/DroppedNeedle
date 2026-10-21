@@ -292,7 +292,15 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let artwork = droppedneedle_catalog::reads::artwork(p, &reads_inputs, catalog.clone());
     let collections_db = CollectionsDb::new(db.clone());
     let collections = Stores::new(&collections_db);
-    let acquire_stores = AcquireStores::open(db);
+    // Flow outcomes (fulfilled requests among them) go to plugins and the
+    // event stream.
+    let acquire_stores = AcquireStores::open(
+        db,
+        Arc::new(droppedneedle_acquire::plugin_events::FlowTicks::new(
+            Some(plugin_host.clone()),
+            p.events.clone(),
+        )),
+    );
     let album_cleanup = Arc::new(AcquireAlbumCleanup::new(&acquire_stores));
     // Read live, so a source switch in Settings reaches the long-lived
     // clients without a restart.

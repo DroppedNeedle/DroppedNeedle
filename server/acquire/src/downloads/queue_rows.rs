@@ -15,6 +15,7 @@ use rusqlite::{OptionalExtension as _, Row, params};
 use super::sql;
 use super::state::TaskStatus;
 use super::store::{DownloadStore, NewTask, StoreError, TaskRow};
+use crate::requests::settle::relink;
 
 /// Who is looking at the queue.
 #[derive(Debug, Clone)]
@@ -202,7 +203,9 @@ impl DownloadStore<'_> {
 
     /// Insert a retry successor of `source` unless it already exists. The
     /// edition pin and track identity ride along, so a retried edition
-    /// keeps its pinned release. Answers whether a row was created.
+    /// keeps its pinned release, and the requests that followed `source`
+    /// follow the successor and read downloading again. Answers whether a
+    /// row was created.
     pub fn spawn_successor(
         &self,
         source: &TaskRow,
@@ -220,18 +223,8 @@ impl DownloadStore<'_> {
             self.insert_task(successor, now)?;
         }
         self.set_task_details(&successor.id, &details, now)?;
+        relink(self.conn, &source.id, &successor.id)?;
         Ok(true)
-    }
-
-    /// Point the request linked to `from` at `to`, so the request card
-    /// follows the retry instead of showing the old failure.
-    pub fn relink_request(&self, from: &str, to: &str) -> Result<(), StoreError> {
-        self.conn.execute(
-            "UPDATE request_history SET download_task_id = ?2, generation = generation + 1 \
-             WHERE download_task_id = ?1",
-            params![from, to],
-        )?;
-        Ok(())
     }
 
     /// Delete finished (completed and cancelled) tasks, for one owner or,

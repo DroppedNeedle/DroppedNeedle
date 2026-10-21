@@ -32,6 +32,7 @@ use serde_json::Value;
 use tower::ServiceExt as _;
 
 use crate::common::auth::{test_principal, with_test_principal};
+use crate::common::bundles::quiet_ticks;
 
 /// A signed-in caller: user id and role.
 type Who = (&'static str, Role);
@@ -64,7 +65,7 @@ fn now_f64() -> f64 {
 async fn journal() -> Arc<Journal> {
     let db = AcquireDb::scratch().unwrap();
     db.add_user("u-ada", "Ada", "user").await.unwrap();
-    let journal = Arc::new(Journal::new(db));
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
     journal
         .run("test.seed", |store| {
             let now = now_f64();
@@ -243,7 +244,7 @@ async fn task_count(db: &AcquireDb) -> i64 {
 #[tokio::test]
 async fn failed_dispatch_keeps_no_key() {
     let db = AcquireDb::scratch().unwrap();
-    let journal = Arc::new(Journal::new(db.clone()));
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let dispatch = dispatch_over(journal.clone());
     let request = DispatchRequest {
         user_id: "u-new".to_owned(),
@@ -315,7 +316,7 @@ async fn cancel_hands_the_transfer_to_cleanup() {
 async fn failed_retry_insert_retries_next_pass() {
     let db = AcquireDb::scratch().unwrap();
     db.add_user("u-ada", "Ada", "user").await.unwrap();
-    let journal = Arc::new(Journal::new(db.clone()));
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     journal
         .run("test.seed", |store| {
             store.insert_task(&task("t-failed"), 1_000.0)?;
@@ -386,7 +387,7 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
     let db = AcquireDb::scratch().unwrap();
     db.add_user("u-ada", "Ada", "user").await.unwrap();
     db.add_user("u-bob", "Bob", "user").await.unwrap();
-    let journal = Arc::new(Journal::new(db));
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
     journal
         .run("test.seed", |store| {
             let now = now_f64();
@@ -504,7 +505,7 @@ async fn journal_reads_do_not_wait_for_a_held_write() {
 async fn unreadable_history_never_fails_a_partly_imported_task() {
     let db = AcquireDb::scratch().unwrap();
     db.add_user("u-ada", "Ada", "user").await.unwrap();
-    let journal = Arc::new(Journal::new(db.clone()));
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     journal
         .run("test.seed", |store| {
             store.insert_task(&task("t-short"), 1_000.0)?;

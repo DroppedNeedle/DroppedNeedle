@@ -24,7 +24,7 @@ use super::models::{
     ApprovalBatchListResponse, AutoDownloadApprovalItem, AutoDownloadApprovalsResponse,
     BatchCancelResponse, BatchIntake, BatchIntakeResponse, ClearHistoryResponse, HistoryQuery,
     HistoryResponse, IntakeResponse, PersonalMixApprovalItem, PersonalMixApprovalsResponse,
-    RefreshResponse, RequestItem, RequestKind, SyncResponse, TrackIntake, TrackIntakeResponse,
+    RefreshResponse, RequestItem, RequestKind, TrackIntake, TrackIntakeResponse,
     WantedActionResponse, WantedItem, WantedResponse, WantedRetryingItem,
 };
 use super::quota::QuotaLedger;
@@ -837,14 +837,7 @@ impl RequestsService {
             });
         }
         if !self
-            .store
-            .update_status(
-                kind,
-                &mbid,
-                RequestStatus::Cancelled,
-                Some(now),
-                Some(record.generation),
-            )
+            .land_admin_cancel(kind, &mbid, record.task_id.as_deref(), now, false)
             .await?
         {
             return Ok(ActionResponse {
@@ -856,6 +849,46 @@ impl RequestsService {
             success: true,
             message: format!("Cancelled download of {}", record_title(&record)),
         })
+    }
+
+    /// After an admin stopped a row's download, make the row read
+    /// cancelled. Stopping the download already settles a linked live row
+    /// as cancelled in the same write; a row it did not reach is cancelled
+    /// here at its current generation, if it may still be (`waiting` lets
+    /// a row awaiting approval through) and still follows the download that
+    /// was stopped (`stopped`). Answers whether the row reads cancelled.
+    async fn land_admin_cancel(
+        &self,
+        kind: RequestKind,
+        mbid: &str,
+        stopped: Option<&str>,
+        now: u64,
+        waiting: bool,
+    ) -> Result<bool, RequestsError> {
+        let Some(current) = self.store.get(kind, mbid).await? else {
+            return Ok(false);
+        };
+        if current.status == RequestStatus::Cancelled {
+            return Ok(true);
+        }
+        // Linked to a new download meanwhile: that one keeps running.
+        if current.task_id.as_deref() != stopped {
+            return Ok(false);
+        }
+        let open = current.status.is_cancellable()
+            || (waiting && current.status == RequestStatus::AwaitingApproval);
+        if !open {
+            return Ok(false);
+        }
+        self.store
+            .update_status(
+                kind,
+                mbid,
+                RequestStatus::Cancelled,
+                Some(now),
+                Some(current.generation),
+            )
+            .await
     }
 
     /// Retry one terminal ask (v2 `retry_request`). An ordinary user may only
@@ -1012,13 +1045,12 @@ impl RequestsService {
     }
 
     /// Live rows. Admins see every row; anyone else sees their own (v2
-    /// `user_id=None`-for-admin quirk). Rows reconcile against their linked
-    /// tasks on the way out (v2 checks completion inside the read).
+    /// `user_id=None`-for-admin quirk). A read never writes: rows follow
+    /// their tasks when the tasks settle.
     pub async fn active(
         &self,
         principal: &Principal,
     ) -> Result<ActiveRequestsResponse, RequestsError> {
-        self.sync_request_statuses().await?;
         let owner = (!principal.is_admin()).then_some(principal.user_id());
         let rows = self.store.active(owner, None).await?;
         let items = self.to_items(&rows).await;
@@ -1033,7 +1065,6 @@ impl RequestsService {
         &self,
         principal: &Principal,
     ) -> Result<ActiveCountResponse, RequestsError> {
-        self.sync_request_statuses().await?;
         let owner = (!principal.is_admin()).then_some(principal.user_id());
         Ok(ActiveCountResponse {
             count: self.store.active(owner, None).await?.len() as u32,
@@ -1047,7 +1078,6 @@ impl RequestsService {
         principal: &Principal,
         query: &HistoryQuery,
     ) -> Result<HistoryResponse, RequestsError> {
-        self.sync_request_statuses().await?;
         let page = query.page.unwrap_or(1).max(1);
         let page_size = query.page_size.unwrap_or(20);
         if page_size == 0 || page_size > HISTORY_MAX_PAGE_SIZE {
@@ -1653,24 +1683,6 @@ impl RequestsService {
         Ok(report)
     }
 
-    /// Reconcile live rows with their linked tasks (v2
-    /// `sync_request_statuses`). One bad row never stops the sweep.
-    pub async fn sync_request_statuses(&self) -> Result<SyncResponse, RequestsError> {
-        let rows = self.store.active(None, None).await?;
-        let now = now_epoch();
-        let mut reconciled = 0_u32;
-        for record in rows {
-            match self.reconcile_one(&record, now).await {
-                Ok(true) => reconciled = reconciled.saturating_add(1),
-                Ok(false) => {}
-                Err(error) => {
-                    tracing::warn!(key = %record.key, ?error, "request reconcile failed; row skipped");
-                }
-            }
-        }
-        Ok(SyncResponse { reconciled })
-    }
-
     /// Attach a duplicate album ask to its live row and report the row's own
     /// status (v2: the duplicate reply mirrors the winner, including the
     /// awaiting-approval message).
@@ -1885,14 +1897,7 @@ impl RequestsService {
             return Ok(false);
         }
         if !self
-            .store
-            .update_status(
-                kind,
-                mbid,
-                RequestStatus::Cancelled,
-                Some(now),
-                Some(record.generation),
-            )
+            .land_admin_cancel(kind, mbid, record.task_id.as_deref(), now, true)
             .await?
         {
             return Ok(false);
@@ -2095,51 +2100,6 @@ impl RequestsService {
             }
         }
         item
-    }
-
-    /// Reconcile one live row against its linked task. Waiting rows have no
-    /// task and never move here; taskless dispatch rows keep their status
-    /// (v2 falls back to library presence, which intake cannot see).
-    async fn reconcile_one(&self, record: &RequestRecord, now: u64) -> Result<bool, RequestsError> {
-        let Some(task_id) = record.task_id.as_deref() else {
-            return Ok(false);
-        };
-        let task = self.dispatch.task(task_id).await.map_err(dispatch_fault)?;
-        let mapped = match task.map(|task| task.status) {
-            Some(TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing) => {
-                if record.status == RequestStatus::Pending || record.status == RequestStatus::Queued
-                {
-                    Some(RequestStatus::Downloading)
-                } else {
-                    None
-                }
-            }
-            Some(TaskStatus::Completed) => Some(RequestStatus::Imported),
-            Some(TaskStatus::Partial) => Some(RequestStatus::Incomplete),
-            Some(TaskStatus::Failed) => Some(RequestStatus::Failed),
-            Some(TaskStatus::Cancelled) => Some(RequestStatus::Cancelled),
-            None => None,
-        };
-        let Some(next) = mapped else {
-            return Ok(false);
-        };
-        if next == record.status {
-            return Ok(false);
-        }
-        let completed = matches!(
-            next,
-            RequestStatus::Imported | RequestStatus::Failed | RequestStatus::Cancelled
-        )
-        .then_some(now);
-        self.store
-            .update_status(
-                record.kind,
-                &record.key,
-                next,
-                completed,
-                Some(record.generation),
-            )
-            .await
     }
 }
 

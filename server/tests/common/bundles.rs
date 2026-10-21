@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use droppedneedle_acquire::AcquireSetup;
+use droppedneedle_acquire::flows::seams::{FlowEvent, TickSink};
 use droppedneedle_acquire::landing::library::LibraryLanding;
+use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests;
 use droppedneedle_acquire::wiring::{AcquirePorts, AcquireStores};
 use droppedneedle_auth::{Admin, Principal, users::UsersDeps};
@@ -26,6 +28,39 @@ use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::stream::local_files::LibraryFiles;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;
+
+/// Flow outcomes sent nowhere but the event hub, for rigs that build the
+/// download journal or the acquisition stores by hand.
+pub fn quiet_ticks() -> Arc<dyn TickSink> {
+    Arc::new(FlowTicks::new(
+        None,
+        droppedneedle_kernel::events::EventHub::new(),
+    ))
+}
+
+/// A tick sink that keeps the key of every request announced as having
+/// reached the library, in order.
+#[derive(Default)]
+pub struct FulfilledTicks {
+    keys: std::sync::Mutex<Vec<String>>,
+}
+
+impl FulfilledTicks {
+    /// The keys announced so far.
+    pub fn keys(&self) -> Vec<String> {
+        self.keys.lock().expect("fulfilled keys").clone()
+    }
+}
+
+impl TickSink for FulfilledTicks {
+    fn emit(&self, _kind: &str, _detail: &str, _at: i64) {}
+
+    fn announce(&self, event: FlowEvent) {
+        if let FlowEvent::RequestFulfilled { request_id, .. } = event {
+            self.keys.lock().expect("fulfilled keys").push(request_id);
+        }
+    }
+}
 
 /// A plugin host over the platform's plugins folder that launches nothing.
 pub fn idle_host(platform: &Platform, fs: FsCoordinator) -> Arc<PluginHost> {
@@ -53,10 +88,15 @@ pub fn acquire_at(
         droppedneedle_kernel::db::cache::CacheDb::scratch(),
     ));
     let mb_source = providers.musicbrainz.live_source(platform.settings.live());
+    let plugins = idle_host(platform, library.fs.clone());
+    let ticks = Arc::new(FlowTicks::new(
+        Some(plugins.clone()),
+        platform.events.clone(),
+    ));
     AcquireSetup::build(
         platform,
         users,
-        AcquireStores::open(&platform.db),
+        AcquireStores::open(&platform.db, ticks),
         AcquirePorts {
             library: Arc::new(LibraryLanding::new(
                 library.clone(),
@@ -73,7 +113,7 @@ pub fn acquire_at(
             release_poll: Arc::new(droppedneedle_acquire::search::live_release_poll(
                 &providers, mb_source,
             )),
-            plugins: idle_host(platform, library.fs.clone()),
+            plugins,
             collections: collections.clone(),
             providers,
         },

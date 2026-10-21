@@ -47,7 +47,6 @@ export const REQUESTS_ENDPOINTS = {
 	requestTrack: () => v3('/api/v3/requests/tracks'),
 	requestBatch: () => v3('/api/v3/requests/batches'),
 	batchCancel: () => v3('/api/v3/requests/batches/cancel'),
-	sync: () => v3('/api/v3/requests/sync'),
 	approvals: () => v3('/api/v3/requests/approvals'),
 	approvalsCount: () => v3('/api/v3/requests/approvals/count'),
 	approve: (musicbrainzId: string, kind: RequestKind = 'album') =>

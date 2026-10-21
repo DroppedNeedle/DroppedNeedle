@@ -447,8 +447,8 @@ impl DownloadWorker {
         .await;
     }
 
-    /// Finalize one landed task and its attempt, announce it, and resolve
-    /// its requests.
+    /// Finalize one landed task, its attempt and its requests, and
+    /// announce it.
     async fn settle(
         &self,
         task: &TaskRow,
@@ -479,7 +479,8 @@ impl DownloadWorker {
         }
     }
 
-    /// Announce a settled landing and resolve its requests.
+    /// Announce a settled landing to plugins. Its requests settled in the
+    /// same write as the task.
     async fn announce_settled(&self, task: &TaskRow, status: TaskStatus) {
         let (kind, outcome) = match status {
             TaskStatus::Completed => (
@@ -496,13 +497,10 @@ impl DownloadWorker {
             ),
         };
         crate::plugin_events::download_event(&self.plugins, kind, task, &task.source, outcome);
-        if let Some(hook) = &self.settled {
-            hook(task.clone(), status).await;
-        }
     }
 
     /// A task a person completed by hand (its last held files imported):
-    /// announce it and resolve its requests like a landing would.
+    /// announce it like a landing would.
     pub async fn announce_completed(&self, task: &TaskRow) {
         crate::plugin_events::download_event(
             &self.plugins,
@@ -511,9 +509,6 @@ impl DownloadWorker {
             &task.source,
             "completed",
         );
-        if let Some(hook) = &self.settled {
-            hook(task.clone(), TaskStatus::Completed).await;
-        }
     }
 
     /// Drop a task's poll memory and landing waits.

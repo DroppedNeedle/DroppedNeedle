@@ -6,6 +6,7 @@ use rusqlite::{OptionalExtension as _, Row, params};
 
 use super::queue_rows::Viewer;
 use super::sql;
+use super::state::TaskStatus;
 use super::store::{DownloadStore, StoreError};
 
 /// One held file as the review shows it.
@@ -147,6 +148,9 @@ impl DownloadStore<'_> {
              WHERE id = ?2 AND status IN ('failed', 'partial')",
             params![now, task_id],
         )?;
+        if changed > 0 {
+            self.settle_requests(task_id, TaskStatus::Completed, now)?;
+        }
         Ok(changed > 0)
     }
 }

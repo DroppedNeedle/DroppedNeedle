@@ -2,6 +2,8 @@
 //! shared writer lane, both through [`DownloadStore`] and failing with
 //! [`StoreError`].
 
+use std::sync::Arc;
+
 use droppedneedle_kernel::db::Lane;
 
 use super::held_rows::HeldRow;
@@ -11,20 +13,26 @@ use super::store::{
     AttemptRow, DownloadStore, QuarantineRow, RetryAnchor, StoreError, TaskDetails, TaskRow,
 };
 use crate::db::AcquireDb;
+use crate::flows::seams::TickSink;
+use crate::requests::settle::announce_fulfilled;
 
 /// The download journal. Every write is one transaction on the shared
 /// writer lane, so multi-statement steps (claim a key and insert its task,
-/// settle a task and its attempt) commit together or not at all. Every
-/// read runs on the read pool and never waits for a write.
+/// settle a task and its attempt and the requests it served) commit
+/// together or not at all. Every read runs on the read pool and never
+/// waits for a write. Requests a write brought to the library are
+/// announced on `ticks` once it commits.
 #[derive(Clone)]
 pub struct Journal {
     db: AcquireDb,
+    ticks: Arc<dyn TickSink>,
 }
 
 impl Journal {
-    /// Journal over the application database.
-    pub fn new(db: AcquireDb) -> Self {
-        Self { db }
+    /// Journal over the application database, announcing fulfilled
+    /// requests on `ticks`.
+    pub fn new(db: AcquireDb, ticks: Arc<dyn TickSink>) -> Self {
+        Self { db, ticks }
     }
 
     /// The database, for the stores beside the journal that share it.
@@ -56,10 +64,21 @@ impl Journal {
         R: Send + 'static,
         F: for<'a, 'b> FnOnce(&'a DownloadStore<'b>) -> Result<R, StoreError> + Send + 'static,
     {
-        self.db
+        let (result, fulfilled) = self
+            .db
             .db()
-            .write(lane, name, move |tx| op(&DownloadStore::new(tx)))
-            .await
+            .write(lane, name, move |tx| {
+                let store = DownloadStore::new(tx);
+                let result = op(&store)?;
+                Ok::<_, StoreError>((result, store.take_fulfilled()))
+            })
+            .await?;
+        announce_fulfilled(
+            self.ticks.as_ref(),
+            fulfilled,
+            crate::db::to_i64(crate::db::now_epoch()),
+        );
+        Ok(result)
     }
 
     /// Run one closure against the download store on a read-pool

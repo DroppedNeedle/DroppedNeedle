@@ -24,7 +24,8 @@ impl FollowApprovalStore {
         Self { db }
     }
 
-    /// File (or refresh) one pending approval (v2 `upsert_approval`).
+    /// File (or refresh) one pending approval (v2 `upsert_approval`). An
+    /// approved row stays approved: an admin's yes lasts until revoked.
     pub async fn file_pending(
         &self,
         user_id: &str,
@@ -46,7 +47,8 @@ impl FollowApprovalStore {
                      ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
                      artist_name = excluded.artist_name, state = excluded.state, \
                      requested_at = excluded.requested_at, reviewed_by_id = NULL, \
-                     reviewed_by_name = NULL, reviewed_at = NULL, batch_id = NULL",
+                     reviewed_by_name = NULL, reviewed_at = NULL, batch_id = NULL \
+                     WHERE auto_download_approvals.state <> 'approved'",
                     params![
                         user_id,
                         artist_mbid,

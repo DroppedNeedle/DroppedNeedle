@@ -15,4 +15,3 @@ export type BatchIntake = components['schemas']['BatchIntake'];
 export type BatchIntakeResponse = components['schemas']['BatchIntakeResponse'];
 export type BatchCancelBody = components['schemas']['BatchCancelBody'];
 export type BatchCancelResponse = components['schemas']['BatchCancelResponse'];
-export type SyncResponse = components['schemas']['SyncResponse'];

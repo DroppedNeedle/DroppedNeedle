@@ -596,7 +596,6 @@ pub struct DownloadWorker {
     plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
     landing: Option<Arc<LandingService>>,
     landing_waits: Mutex<HashMap<String, u32>>,
-    settled: Option<SettledHook>,
     /// Tasks whose landing runs right now, off the pass. The poll and
     /// enqueue passes leave them alone.
     in_flight: Arc<Mutex<HashSet<String>>>,
@@ -614,11 +613,6 @@ pub struct DownloadWorker {
     /// Where the cleanup warning is shown.
     health: Arc<ServiceHealth>,
 }
-
-/// Called after a landing settles a task, so its requests and wanted
-/// watches resolve right away instead of on the next status sync.
-pub type SettledHook =
-    Arc<dyn Fn(TaskRow, TaskStatus) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
 
 impl DownloadWorker {
     /// Wire the worker over the shared journal and the saved settings,
@@ -650,7 +644,6 @@ impl DownloadWorker {
             plugins: None,
             landing: None,
             landing_waits: Mutex::new(HashMap::new()),
-            settled: None,
             in_flight: Arc::new(Mutex::new(HashSet::new())),
             landing_tasks: Mutex::new(Vec::new()),
             events,
@@ -720,12 +713,6 @@ impl DownloadWorker {
     /// The landing, when imports are wired.
     pub fn landing(&self) -> Option<&Arc<LandingService>> {
         self.landing.as_ref()
-    }
-
-    /// Resolve requests as soon as a landing settles a task.
-    pub fn with_settled(mut self, hook: SettledHook) -> Self {
-        self.settled = Some(hook);
-        self
     }
 
     /// Announce download starts, completions and failures to `subscriber`
@@ -1079,9 +1066,6 @@ impl DownloadWorker {
             )
         };
         super::plugin_events::download_event(&self.plugins, kind, task, &task.source, outcome);
-        if let Some(hook) = &self.settled {
-            hook(task.clone(), status).await;
-        }
     }
 
     /// Journal one successful enqueue: the attempt row plus the
@@ -1577,11 +1561,7 @@ impl DownloadWorker {
                         return Ok(false);
                     }
                     // The request follows its download onto the retry.
-                    let created = store.spawn_successor(&source, &row, now)?;
-                    if created {
-                        store.relink_request(&source.id, &row.id)?;
-                    }
-                    Ok(created)
+                    store.spawn_successor(&source, &row, now)
                 })
                 .await;
             if spawned == Some(true) {

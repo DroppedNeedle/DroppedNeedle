@@ -504,7 +504,7 @@ pub struct FlowsBundle {
     pub follow_deps: Arc<FollowDeps>,
     /// Upgrade-sweep deps.
     pub sweep_deps: Arc<SweepDeps>,
-    /// Status-sync deps.
+    /// Status-sweep deps.
     pub sync_deps: Arc<SyncDeps>,
 }
 
@@ -524,30 +524,7 @@ fn drop_imports(
         events.clone(),
         flows.ticks.clone(),
         flows.ledger.clone(),
-        flows.watches.clone(),
     ))
-}
-
-/// After a landing settles a task, resolve its requests and wanted watch
-/// right away through the status-sync rules.
-pub fn settled_hook(flows: Arc<FlowsBundle>) -> super::worker::SettledHook {
-    Arc::new(move |task, status| {
-        let flows = flows.clone();
-        Box::pin(async move {
-            let now = super::db::to_i64(super::db::now_epoch());
-            let completed_album = (status == super::downloads::state::TaskStatus::Completed
-                && task.download_type == "album")
-                .then_some(task.release_group_mbid.as_str());
-            super::flows::loops::settle_task(
-                now,
-                &flows.sync_deps,
-                &flows.watches,
-                &task.id,
-                completed_album,
-            )
-            .await;
-        })
-    })
 }
 
 /// The acquisition stores, opened once over the platform's database. The
@@ -561,19 +538,24 @@ pub struct AcquireStores {
     pub journal: Arc<Journal>,
     /// Wanted watches.
     pub wanted: WantedStore,
+    /// Where flow outcomes go: plugin events, user notices and the flow
+    /// log. The journal announces fulfilled requests on it.
+    pub ticks: Arc<dyn TickSink>,
 }
 
 impl AcquireStores {
-    /// The stores over the platform's database.
-    pub fn open(db: &droppedneedle_kernel::db::Db) -> Self {
-        Self::over(AcquireDb::new(db.clone()))
+    /// The stores over the platform's database, announcing flow outcomes
+    /// on `ticks`.
+    pub fn open(db: &droppedneedle_kernel::db::Db, ticks: Arc<dyn TickSink>) -> Self {
+        Self::over(AcquireDb::new(db.clone()), ticks)
     }
 
-    fn over(db: AcquireDb) -> Self {
+    fn over(db: AcquireDb, ticks: Arc<dyn TickSink>) -> Self {
         Self {
-            journal: Arc::new(Journal::new(db.clone())),
+            journal: Arc::new(Journal::new(db.clone(), ticks.clone())),
             wanted: WantedStore::new(db.clone()),
             db,
+            ticks,
         }
     }
 }
@@ -673,8 +655,7 @@ fn core(
         )
     });
     let requests = RequestsState { mixer, ..intake };
-    let ticks: Arc<dyn TickSink> =
-        Arc::new(super::plugin_events::FlowTicks::new(ports.plugins, events));
+    let ticks = stores.ticks.clone();
     let flows = Arc::new(flows_bundle(
         db,
         &requests,
@@ -846,8 +827,7 @@ impl AcquireSetup {
             )
             .with_plugin_events(ports.plugins)
             .with_targets(clients.targets().clone())
-            .with_landing(landing.clone())
-            .with_settled(settled_hook(core.flows.clone())),
+            .with_landing(landing.clone()),
         );
         let search_jobs = Arc::new(SearchJobs::new(
             JobStore::new(db.clone()),
@@ -907,7 +887,10 @@ impl AcquireSetup {
         use droppedneedle_catalog::reads::collections::store::PlaylistStore;
         use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
-        let stores = AcquireStores::over(db.clone());
+        let stores = AcquireStores::over(
+            db.clone(),
+            Arc::new(super::plugin_events::FlowTicks::new(None, events.clone())),
+        );
         // Under the scratch database's directory, so it goes with it.
         let staging_root = db
             .path()
@@ -1028,8 +1011,7 @@ impl AcquireSetup {
                 events.clone(),
                 Default::default(),
             )
-            .with_landing(landing.clone())
-            .with_settled(settled_hook(core.flows.clone())),
+            .with_landing(landing.clone()),
         );
         let search_jobs = Arc::new(SearchJobs::new(
             JobStore::new(db.clone()),
@@ -1203,7 +1185,7 @@ fn flows_bundle(
     });
     let sync_deps = Arc::new(SyncDeps {
         ledger: ledger.clone(),
-        downloads: dispatch,
+        journal: dispatch.journal().clone(),
         library: library.clone(),
         ticks: ticks.clone(),
     });

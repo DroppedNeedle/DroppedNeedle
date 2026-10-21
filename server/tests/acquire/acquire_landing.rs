@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::downloads::store::NewTask;
@@ -18,7 +19,6 @@ use droppedneedle_acquire::landing::specs::{Disposition, Rejection};
 use droppedneedle_acquire::landing::{
     Landed, LandingReport, LandingResult, OUTSIDE_DOWNLOADS, Reported,
 };
-use droppedneedle_acquire::wiring::settled_hook;
 use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
@@ -270,8 +270,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
                 droppedneedle_kernel::events::EventHub::new(),
                 Default::default(),
             )
-            .with_landing(acquire.landing.clone())
-            .with_settled(settled_hook(acquire.flows.clone())),
+            .with_landing(acquire.landing.clone()),
         )
     };
 
@@ -2808,4 +2807,147 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
     let manifest = rig.manifest("t-other");
     assert_eq!(manifest["release_mbid"], serde_json::json!(e.new2.id));
     assert!(manifest.get("planned_album").is_none(), "{manifest}");
+}
+
+// A request that failed follows its automatic retry: the successor's
+// landing imports the album, the request reads imported and linked to the
+// successor, and it is announced once, however often it settles again.
+#[tokio::test]
+async fn a_failed_request_follows_its_retry_to_imported() {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let downloads = dir.join("downloads");
+    let good = vec![
+        land_file(
+            &downloads.join("good"),
+            "01 - Mysterons.flac",
+            "flac_full_01.flac",
+            "Mysterons",
+            1,
+        ),
+        land_file(
+            &downloads.join("good"),
+            "02 - Sour Times.flac",
+            "flac_full_02.flac",
+            "Sour Times",
+            2,
+        ),
+    ];
+    let lengths: Vec<Option<u64>> = good.iter().map(|path| length_ms(path)).collect();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons", "Sour Times"],
+        &lengths,
+    )]));
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            releases,
+            pool,
+        ))),
+    );
+    // The first attempt failed and its request says so.
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t-first", GOOD_GROUP), 1.0)?;
+            store.transition_task("t-first", TaskStatus::Failed, 1.0, Some("no peers"))
+        })
+        .await
+        .expect("task");
+    acquire
+        .db
+        .write("test.request", |tx| {
+            tx.execute(
+                "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+                 album_title, requested_at, completed_at, status, user_id, download_task_id, \
+                 request_kind) VALUES (?1, ?1, 'Portishead', 'Dummy', 1700000000000, \
+                 1700000000000, 'failed', 'u-ada', 't-first', 'album')",
+                [GOOD_GROUP],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("request");
+    let recorded = Arc::new(crate::common::bundles::FulfilledTicks::default());
+    let journal = Arc::new(Journal::new(acquire.db.clone(), recorded.clone()));
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            journal.clone(),
+            vec![Source::Fixed(Arc::new(FixedSource::new(
+                downloads.clone(),
+                good.clone(),
+            )))],
+            WorkerConfig {
+                staging_root: acquire.staging_root.clone(),
+                ..WorkerConfig::default()
+            },
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    worker.run_once(1).await;
+    worker.run_once(2).await;
+    worker.wait_for_landings().await;
+    worker.run_once(3).await;
+    worker.wait_for_landings().await;
+
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, status FROM download_tasks ORDER BY retry_count")
+            .fetch_all(acquire.db.pool())
+            .await
+            .expect("tasks");
+    let (status, linked): (String, Option<String>) = sqlx::query_as(
+        "SELECT status, download_task_id FROM request_history WHERE musicbrainz_id_lower = ?1",
+    )
+    .bind(GOOD_GROUP)
+    .fetch_one(acquire.db.pool())
+    .await
+    .expect("request row");
+    assert_eq!(rows.len(), 2, "one retry successor");
+    assert_eq!(rows[1].1, "completed", "the successor imported");
+    assert_eq!(
+        linked.as_deref(),
+        Some(rows[1].0.as_str()),
+        "the request follows the retry"
+    );
+    assert_eq!(status, "imported", "the request reads imported");
+    assert_eq!(recorded.keys(), [GOOD_GROUP], "announced once");
+
+    // The status sweep finds nothing left to settle.
+    let summary = droppedneedle_acquire::flows::loops::sync_tick(
+        0,
+        &droppedneedle_acquire::flows::loops::SyncDeps {
+            ledger: acquire.flows.ledger.clone(),
+            journal,
+            library: acquire.flows.library.clone(),
+            ticks: recorded.clone(),
+        },
+    )
+    .await;
+    assert_eq!((summary.settled, summary.imported), (0, 0));
+    assert_eq!(recorded.keys().len(), 1, "nothing is announced twice");
 }

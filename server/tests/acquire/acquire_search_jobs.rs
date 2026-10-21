@@ -32,6 +32,7 @@ use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
 
 use crate::common::auth::test_principal;
+use crate::common::bundles::quiet_ticks;
 
 const RELEASE: &str = "22222222-2222-4222-8222-222222222222";
 const GROUP: &str = "33333333-3333-4333-8333-333333333333";
@@ -96,7 +97,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     db.add_user("u1", "U", "user").await.expect("user seeds");
     db.add_user("u2", "V", "user").await.expect("user seeds");
     let staging = crate::common::ScratchDir::new("search-jobs-staging");
-    let journal = Arc::new(Journal::new(db.clone()));
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let mut albums = FixedAlbums::default();
     albums.releases.insert(RELEASE.to_owned(), album());
     let targets = Arc::new(Targets::new(
@@ -400,7 +401,7 @@ async fn pick_is_refused_while_the_album_downloads() {
         .expect("job finishes");
     assert!(finished);
     let running = task("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    Journal::new(db.clone())
+    Journal::new(db.clone(), quiet_ticks())
         .run("test.seed", move |store| {
             store.insert_task(&running, 1_000.0)
         })

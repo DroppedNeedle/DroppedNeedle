@@ -17,6 +17,7 @@ use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
 use droppedneedle_providers::health::ServiceHealth;
 
+use crate::common::bundles::quiet_ticks;
 use downloads::quarantine::{QuarantineReason, is_local_fault};
 use downloads::recovery::{
     FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx,
@@ -867,7 +868,7 @@ fn reimport_starts_tasks_whose_files_remain() {
 async fn failing_cleanup_shows_on_service_health_until_it_clears() {
     let db = AcquireDb::scratch().unwrap();
     db.add_user("u1", "brief", "user").await.unwrap();
-    let journal = Arc::new(Journal::new(db.clone()));
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     journal
         .run("test.seed", |store| {
             store.insert_task(&new_task("t1"), 1_000.0)?;

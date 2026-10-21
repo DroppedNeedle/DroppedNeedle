@@ -152,7 +152,6 @@ impl DownloadWorker {
                     store.delete_quarantine_for_album(&source.release_group_mbid)?;
                 }
                 store.spawn_successor(&source, &row, now)?;
-                store.relink_request(&source.id, &row.id)?;
                 Ok(Some((row.id, true)))
             })
             .await

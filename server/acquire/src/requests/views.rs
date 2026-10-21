@@ -19,7 +19,7 @@ use super::error::RequestsError;
 use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, ApprovalBatchListResponse,
     AutoDownloadApprovalsResponse, HistoryQuery, HistoryResponse, KindQuery,
-    PersonalMixApprovalsResponse, RefreshResponse, RequestKind, SyncResponse, WantedActionResponse,
+    PersonalMixApprovalsResponse, RefreshResponse, RequestKind, WantedActionResponse,
     WantedResponse,
 };
 use super::service::RequestsService;
@@ -509,22 +509,5 @@ pub async fn refresh_mix_handler(
         RequestsService::new(&state)
             .refresh_personal_mix(&principal)
             .await?,
-    ))
-}
-
-/// Reconcile live rows with their linked tasks.
-/// `POST /api/v3/requests/sync`. One bad row never stops the sweep.
-#[utoipa::path(
-    post,
-    tag = "requests",
-    path = "/api/v3/requests/sync",
-    responses((status = 200, body = SyncResponse))
-)]
-pub async fn sync_handler(
-    State(state): State<RequestsState>,
-    _admin: Admin,
-) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
-        RequestsService::new(&state).sync_request_statuses().await?,
     ))
 }

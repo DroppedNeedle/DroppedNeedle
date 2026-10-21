@@ -8,6 +8,8 @@ use std::{path::Path, time::Duration};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
+use droppedneedle_acquire::downloads::state::TaskStatus;
+
 use crate::common::TestApp;
 
 const RG_MBID: &str = "123e4567-e89b-12d3-a456-426614174000";
@@ -98,25 +100,17 @@ async fn acquire_request_approve_land() {
     assert!(manifest.is_file(), "dispatch writes the manifest skeleton");
 
     // The worker lands the download (simulated through the journal: the
-    // loop would write exactly these columns, then the scan picks them
-    // up later).
-    rusqlite::Connection::open(&db_path)
-        .expect("journal opens")
-        .execute(
-            "UPDATE download_tasks SET status = 'completed', completed_at = 1.0 WHERE id = ?",
-            [task_id],
-        )
+    // loop settles the task the same way, and the scan picks the files up
+    // later). The request follows in the same write.
+    let landed = task_id.clone();
+    app.state()
+        .acquire
+        .journal
+        .run("test.land", move |store| {
+            store.transition_task(&landed, TaskStatus::Completed, 1.0, None)
+        })
+        .await
         .expect("task completes");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/requests/sync",
-            &[("authorization", admin.as_str())],
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body["reconciled"].as_u64().unwrap_or(0) >= 1);
 
     // Molly's history shows the ask imported.
     let (status, body) = app

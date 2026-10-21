@@ -12,10 +12,13 @@
 
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::db::statement::ListLen;
+use std::cell::RefCell;
+
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use super::sql;
 use super::state::{AttemptState, TaskStatus};
+use crate::requests::settle::{Fulfilled, on_task_settled};
 
 /// Journal failures: the database's own, or a lifecycle write the journal
 /// refuses. A write closure over the journal fails with this type, so a
@@ -292,14 +295,44 @@ pub struct RetryAnchor {
 }
 
 /// The download journal over one SQLite connection.
+///
+/// A write that settles a task also settles the requests linked to it, in
+/// the same transaction; the requests that reached the library are kept
+/// here until the transaction commits (see [`Self::take_fulfilled`]).
 pub struct DownloadStore<'conn> {
     pub(super) conn: &'conn Connection,
+    fulfilled: RefCell<Vec<Fulfilled>>,
 }
 
 impl<'conn> DownloadStore<'conn> {
     /// Borrow a connection as a download journal.
     pub fn new(conn: &'conn Connection) -> Self {
-        Self { conn }
+        Self {
+            conn,
+            fulfilled: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The requests this store's writes brought to the library, to be
+    /// announced once the transaction commits.
+    pub(crate) fn take_fulfilled(&self) -> Vec<Fulfilled> {
+        self.fulfilled.take()
+    }
+
+    /// Settle the requests linked to `task_id`, which settled as `status`
+    /// at `now` (epoch seconds). The journal's own terminal writes call
+    /// this; the status sweep calls it for a task whose requests did not
+    /// follow it.
+    pub fn settle_requests(
+        &self,
+        task_id: &str,
+        status: TaskStatus,
+        now: f64,
+    ) -> Result<(), StoreError> {
+        let at_ms = (now * 1000.0).round() as i64;
+        let moved = on_task_settled(self.conn, task_id, status, at_ms)?;
+        self.fulfilled.borrow_mut().extend(moved);
+        Ok(())
     }
 
     /// Rows of one prepared statement, decoded by `map`.
@@ -358,8 +391,7 @@ impl<'conn> DownloadStore<'conn> {
         Ok(())
     }
 
-    /// Newest still-active task for one album, for the status-sync album-row
-    /// fallback. Queued rows count as active: a queued task is a live
+    /// Newest still-active task for one album. Queued rows count as active: a queued task is a live
     /// download-in-progress from the request's view.
     pub fn newest_active_for_album(
         &self,
@@ -488,6 +520,9 @@ impl<'conn> DownloadStore<'conn> {
             sql::TRANSITION_TASK.text(),
             rusqlite::params![status.as_str(), error, now, status.is_terminal(), task_id,],
         )?;
+        if changed > 0 && status.is_terminal() {
+            self.settle_requests(task_id, status, now)?;
+        }
         if changed == 0
             && self
                 .get_task(task_id)?
@@ -874,6 +909,7 @@ impl<'conn> DownloadStore<'conn> {
         }
         self.conn
             .execute(sql::CANCEL_ATTEMPTS.text(), rusqlite::params![now, task_id])?;
+        self.settle_requests(task_id, TaskStatus::Cancelled, now)?;
         Ok(true)
     }
 

@@ -23,6 +23,8 @@ pub mod mix_sources;
 pub mod models;
 pub mod quota;
 pub mod service;
+pub mod settle;
+pub(crate) mod sql;
 pub mod sqlite;
 pub mod state;
 pub mod views;
@@ -62,7 +64,6 @@ pub fn routes() -> Routes<RequestsState> {
         .user(routes!(retry_one_handler))
         .user(routes!(history_handler))
         .user(routes!(clear_history_handler))
-        .admin(routes!(sync_handler))
         .user(routes!(wanted_handler))
         .user(routes!(wanted_stop_handler))
         .user(routes!(wanted_resume_handler))

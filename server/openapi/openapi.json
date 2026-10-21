@@ -28421,34 +28421,6 @@
         ]
       }
     },
-    "/api/v3/requests/sync": {
-      "post": {
-        "tags": [
-          "requests"
-        ],
-        "summary": "Reconcile live rows with their linked tasks.\n`POST /api/v3/requests/sync`. One bad row never stops the sweep.",
-        "operationId": "sync_handler",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/requests/tracks": {
       "post": {
         "tags": [
@@ -62628,21 +62600,6 @@
               "$ref": "#/components/schemas/SuggestionTrack"
             },
             "description": "Reason-tagged tracks, pools interleaved."
-          }
-        }
-      },
-      "SyncResponse": {
-        "type": "object",
-        "description": "Status-sync outcome.",
-        "required": [
-          "reconciled"
-        ],
-        "properties": {
-          "reconciled": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Rows reconciled.",
-            "minimum": 0
           }
         }
       },

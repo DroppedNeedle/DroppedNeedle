@@ -576,10 +576,3 @@ pub struct EditionAcquireQuery {
     /// With `false` those files stay and their tracks are not fetched.
     pub replace_versions: Option<bool>,
 }
-
-/// Status-sync outcome.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct SyncResponse {
-    /// Rows reconciled.
-    pub reconciled: u32,
-}

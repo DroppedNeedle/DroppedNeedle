@@ -7620,26 +7620,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/requests/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reconcile live rows with their linked tasks.
-         *     `POST /api/v3/requests/sync`. One bad row never stops the sweep.
-         */
-        post: operations["sync_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/requests/tracks": {
         parameters: {
             query?: never;
@@ -22073,14 +22053,6 @@ export interface components {
         SuggestionsResponse: {
             /** @description Reason-tagged tracks, pools interleaved. */
             items: components["schemas"]["SuggestionTrack"][];
-        };
-        /** @description Status-sync outcome. */
-        SyncResponse: {
-            /**
-             * Format: int32
-             * @description Rows reconciled.
-             */
-            reconciled: number;
         };
         /**
          * @description Degraded services, empty when everything is healthy (v2
@@ -42674,25 +42646,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActionResponse"];
-                };
-            };
-        };
-    };
-    sync_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncResponse"];
                 };
             };
         };

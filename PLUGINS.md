@@ -246,6 +246,12 @@ Each plugin handles one event at a time. An event that arrives while the
 plugin is still busy with the last one is skipped and counted in the plugin's
 health as a dropped event. Events never wait on plugins.
 
+`request_fulfilled` fires once per request, when its download, a drop
+import or a library check brings its album into the library. A track
+request, or a failed request whose download still exists, is not settled
+when its files arrive some other way, and an event is lost if the server
+stops between saving the change and sending it.
+
 `scrobble` and `playback_started` fire together, where scrobbling happens, so
 very short tracks and Navidrome-handled plays raise neither.
 

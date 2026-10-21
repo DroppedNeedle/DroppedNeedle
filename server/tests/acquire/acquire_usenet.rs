@@ -11,6 +11,7 @@ use droppedneedle_acquire::usenet;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::common::bundles::quiet_ticks;
 use droppedneedle_testkit::usenet::{
     NewznabMock, NewznabScenario, ProwlarrMock, ProwlarrScenario, SabnzbdMock, serve_loopback,
 };
@@ -1532,7 +1533,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
 
     let db = droppedneedle_acquire::db::AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
-    let journal = Arc::new(Journal::new(db));
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
     journal
         .run("test.seed", |store| {
             store.insert_task(

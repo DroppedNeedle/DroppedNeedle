@@ -14,6 +14,7 @@ use droppedneedle_acquire::imports;
 
 use std::sync::Arc;
 
+use crate::common::bundles::quiet_ticks;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -143,7 +144,7 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Optio
     let import_jobs = SpotifyImportJobs::new(service, platform.events.clone());
     let queue = JobQueue::new(platform.db.clone(), platform.clock.clone());
     let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
-    let journal = Arc::new(Journal::new(db));
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
     let clients = Arc::new(LiveClients::new(
         platform.http.shared().clone(),
         ClientLives::new(&platform.settings),

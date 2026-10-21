@@ -453,6 +453,29 @@ async fn cancel_matrix() {
     )
     .await;
     assert_eq!(history["items"][0]["status"], "cancelled");
+
+    // An admin stops someone else's download: stopping the task settles
+    // the row, and the cancel answers success.
+    ask(&state, TRUSTED, MBID_B).await;
+    let uri = format!("/api/v3/requests/active/{MBID_B}");
+    let (_, stopped) = call(&state, Method::DELETE, &uri, Some(ADMIN), None).await;
+    assert_eq!(stopped["success"], true, "{stopped}");
+    assert_eq!(dispatch.take_cancels().await, vec![dispatch.task(2).await]);
+    let (_, history) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/history",
+        Some(TRUSTED),
+        None,
+    )
+    .await;
+    let stopped = history["items"]
+        .as_array()
+        .expect("history items")
+        .iter()
+        .find(|item| item["musicbrainz_id"] == MBID_B)
+        .expect("the stopped row");
+    assert_eq!(stopped["status"], "cancelled", "{history}");
 }
 
 // The request-count quota counts durable rows, so a restart does not reset
@@ -586,14 +609,6 @@ async fn retry_keeps_approval_provenance() {
     )
     .await;
     dispatch.fail(&dispatch.task(1).await).await;
-    call(
-        &state,
-        Method::POST,
-        "/api/v3/requests/sync",
-        Some(ADMIN),
-        None,
-    )
-    .await;
     dispatch.take_calls().await;
 
     let (_, retried) = call(
@@ -653,14 +668,6 @@ async fn wanted_view_and_actions() {
 
     ask(&state, TRUSTED, MBID_B).await;
     dispatch.fail(&dispatch.task(1).await).await;
-    call(
-        &state,
-        Method::POST,
-        "/api/v3/requests/sync",
-        Some(ADMIN),
-        None,
-    )
-    .await;
     let (_, wanted) = call(
         &state,
         Method::GET,
@@ -1378,4 +1385,36 @@ async fn edition_acquire_is_held_while_no_source_is_ready() {
         "{body}"
     );
     assert_eq!(dispatch.take_calls().await.len(), 1, "queued, not refused");
+}
+
+// The badge count reads without writing, even with a row whose task
+// finished behind the journal's back. `Db::commits()` moves only when a
+// commit changed rows, so an unchanged count proves the read wrote none.
+#[tokio::test]
+async fn active_count_issues_no_write() {
+    let (state, db, dispatch) = setup().await;
+    ask(&state, TRUSTED, MBID_A).await;
+    let task = dispatch.task(1).await;
+    db.write("test.complete", move |tx| {
+        tx.execute(
+            "UPDATE download_tasks SET status = 'completed' WHERE id = ?1",
+            [task],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let commits = db.db().commits();
+    let before = *commits.borrow();
+    let (status, body) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/active/count",
+        Some(TRUSTED),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let after = *commits.borrow();
+    assert_eq!(after, before, "the badge read wrote");
 }

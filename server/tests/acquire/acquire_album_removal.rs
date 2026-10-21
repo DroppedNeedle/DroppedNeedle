@@ -12,6 +12,7 @@ use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, State, start_runners
 use droppedneedle_library::mutations::{ALBUM_REMOVED, AlbumRemovedJob};
 
 use crate::common::TestPlatform;
+use crate::common::bundles::quiet_ticks;
 
 /// The rows the album's clean-up may touch, as one line each.
 fn rows(db: &Path) -> Vec<String> {
@@ -111,7 +112,10 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
         &platform.supervisor,
         Handlers::default().with(
             SPEC,
-            Arc::new(AcquireAlbumCleanup::new(&AcquireStores::open(&platform.db))),
+            Arc::new(AcquireAlbumCleanup::new(&AcquireStores::open(
+                &platform.db,
+                quiet_ticks(),
+            ))),
         ),
     )
     .expect("runner starts");
@@ -169,7 +173,10 @@ async fn album_cleanup_stops_only_a_watch_armed_before_the_removal() {
         &platform.supervisor,
         Handlers::default().with(
             SPEC,
-            Arc::new(AcquireAlbumCleanup::new(&AcquireStores::open(&platform.db))),
+            Arc::new(AcquireAlbumCleanup::new(&AcquireStores::open(
+                &platform.db,
+                quiet_ticks(),
+            ))),
         ),
     )
     .expect("runner starts");

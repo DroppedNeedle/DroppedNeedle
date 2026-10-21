@@ -12,6 +12,8 @@ use super::super::ledger::{
     RetryClaim,
 };
 use super::super::models::RequestKind;
+use super::super::settle::{self, Fulfilled};
+use super::super::sql;
 use super::{lane_error, ms_from_secs, read_error, secs_from_ms};
 use crate::db::{AcquireDb, to_i64, to_u64};
 
@@ -451,7 +453,9 @@ impl RequestStore {
     }
 
     /// Link one row to its download task behind the generation CAS (`None`
-    /// skips the guard).
+    /// skips the guard). The row reads downloading, and the task records
+    /// which request it serves. A row waiting for approval, mid-cancel,
+    /// rejected or imported is not linked. Answers whether the row moved.
     pub async fn link_task(
         &self,
         kind: RequestKind,
@@ -464,16 +468,67 @@ impl RequestStore {
         let expected = guard(expected_generation);
         self.db
             .write("requests.link_task", move |tx| {
-                let changed = tx.execute(
-                    "UPDATE request_history SET download_task_id = ?2, \
-                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
-                     AND (?3 IS NULL OR generation = ?3)",
-                    params![stored, task_id, expected],
-                )?;
+                let changed =
+                    tx.execute(sql::LINK_ROW.text(), params![stored, task_id, expected])?;
+                if changed > 0 {
+                    tx.execute(sql::MARK_TASK_REQUEST.text(), params![task_id, stored])?;
+                }
                 Ok(changed > 0)
             })
             .await
             .map_err(|error| lane_error("requests.link_task", error))
+    }
+
+    /// The library holds album `key`: settle its request and fulfil its
+    /// wanted watch with `watch_outcome` in one write (see
+    /// [`settle::on_album_in_library`]). Answers the requests that reached
+    /// the library, for the caller to announce.
+    pub async fn settle_in_library(
+        &self,
+        key: &str,
+        watch_outcome: &'static str,
+        at: u64,
+    ) -> Result<Vec<Fulfilled>, RequestsError> {
+        let key = key.to_owned();
+        self.db
+            .write_background("requests.settle_in_library", move |tx| {
+                Ok(settle::on_album_in_library(
+                    tx,
+                    &key,
+                    watch_outcome,
+                    ms_from_secs(at),
+                )?)
+            })
+            .await
+            .map_err(|error| lane_error("requests.settle_in_library", error))
+    }
+
+    /// Finished tasks whose linked requests did not follow them, with the
+    /// status each task settled as.
+    pub async fn unsettled_tasks(&self) -> Result<Vec<(String, String)>, RequestsError> {
+        self.db
+            .db()
+            .read("requests.unsettled_tasks", |conn| {
+                let mut statement = conn.prepare_cached(sql::UNSETTLED_TASKS.text())?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            })
+            .await
+            .map_err(|error| lane_error("requests.unsettled_tasks", error))
+    }
+
+    /// Album requests only the library can settle: open ones with no task
+    /// left to follow, and failed ones whose task is gone.
+    pub async fn albums_without_task(&self) -> Result<Vec<String>, RequestsError> {
+        self.db
+            .db()
+            .read("requests.albums_without_task", |conn| {
+                let mut statement = conn.prepare_cached(sql::ALBUMS_WITHOUT_TASK.text())?;
+                let rows = statement.query_map([], |row| row.get(0))?;
+                Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
+            })
+            .await
+            .map_err(|error| lane_error("requests.albums_without_task", error))
     }
 
     /// Claim an approval: `awaiting_approval` becomes `pending` with the
@@ -491,7 +546,8 @@ impl RequestStore {
             .write("requests.claim_approval", move |tx| {
                 let changed = tx.execute(
                     "UPDATE request_history SET status = ?2, dispatch_authorized = 1, \
-                     reviewed_by_name = ?3, reviewed_at = ?4, generation = generation + 1 \
+                     reviewed_by_name = ?3, reviewed_at = ?4, download_task_id = NULL, \
+                     generation = generation + 1 \
                      WHERE musicbrainz_id_lower = ?1 AND status = ?5 AND generation = ?6",
                     params![
                         stored,

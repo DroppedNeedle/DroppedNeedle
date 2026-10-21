@@ -41,9 +41,9 @@ use crate::landing::ports::{
 use crate::landing::probe::{Landing, probe};
 use crate::landing::specs::Target;
 use crate::landing::{quality, specs};
-use crate::requests::ledger::RequestStatus;
 use crate::requests::models::RequestKind;
-use crate::requests::sqlite::{RequestStore, WantedStore};
+use crate::requests::settle::announce_fulfilled;
+use crate::requests::sqlite::RequestStore;
 use droppedneedle_kernel::events::{
     DropImportUpdated, EventHub, RequestImported, UserNotice, new_event_id,
 };
@@ -113,7 +113,6 @@ pub struct DropImports {
     events: EventHub,
     ticks: Arc<dyn TickSink>,
     ledger: RequestStore,
-    watches: WantedStore,
 }
 
 impl DropImports {
@@ -126,7 +125,6 @@ impl DropImports {
         events: EventHub,
         ticks: Arc<dyn TickSink>,
         ledger: RequestStore,
-        watches: WantedStore,
     ) -> Self {
         Self {
             store,
@@ -135,7 +133,6 @@ impl DropImports {
             events,
             ticks,
             ledger,
-            watches,
         }
     }
 
@@ -1041,28 +1038,21 @@ impl DropImports {
                 None
             }
         };
-        if let Some(record) = &record
-            && record.status != RequestStatus::Imported
-        {
-            match self
-                .ledger
-                .update_status(
-                    RequestKind::Album,
-                    &group,
-                    RequestStatus::Imported,
-                    Some(at),
-                    Some(record.generation),
-                )
-                .await
-            {
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(%group, ?error, "drop import could not mark the request imported");
-                }
+        match self.ledger.settle_in_library(&group, "imported", at).await {
+            Ok(fulfilled) => {
+                // A request with no owner left is credited to the uploader.
+                let fulfilled = fulfilled
+                    .into_iter()
+                    .map(|mut row| {
+                        row.user_id.get_or_insert_with(|| job.user_id.clone());
+                        row
+                    })
+                    .collect();
+                announce_fulfilled(self.ticks.as_ref(), fulfilled, crate::db::to_i64(at));
             }
-        }
-        if let Err(error) = self.watches.mark_fulfilled(&group, "imported", at).await {
-            tracing::warn!(%group, ?error, "wanted watch not settled after a drop import");
+            Err(error) => {
+                tracing::warn!(%group, ?error, "drop import could not settle the request");
+            }
         }
         let Some(record) = record else {
             return;
@@ -1087,14 +1077,6 @@ impl DropImports {
                 }),
             });
         }
-        self.ticks.announce(FlowEvent::RequestFulfilled {
-            request_id: group.clone(),
-            user_id: record
-                .user_id
-                .clone()
-                .unwrap_or_else(|| job.user_id.clone()),
-            release_group_mbid: group,
-        });
     }
 
     /// Read the files off the async workers, never entering the library.

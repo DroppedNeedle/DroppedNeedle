@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::common::bundles::quiet_ticks;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
@@ -119,14 +120,15 @@ fn settings(db: &AcquireDb) -> ConfigStore {
 fn dispatch(db: &AcquireDb, settings: &ConfigStore) -> Arc<DownloadDispatch> {
     let staging = db.path().parent().expect("scratch dir").join("staging");
     Arc::new(DownloadDispatch::new(
-        Arc::new(Journal::new(db.clone())),
+        Arc::new(Journal::new(db.clone(), quiet_ticks())),
         Arc::new(UuidGenerator),
         staging,
         settings.live(),
     ))
 }
 
-/// One album task for `user-1` in the journal, moved to `status`.
+/// One album task for `user-1` in the journal, put in `status` behind the
+/// journal's back: the requests linked to it do not follow.
 async fn seed_task(db: &AcquireDb, id: &str, rg_mbid: &str, status: TaskStatus) {
     let task = NewTask {
         id: id.to_owned(),
@@ -137,28 +139,30 @@ async fn seed_task(db: &AcquireDb, id: &str, rg_mbid: &str, status: TaskStatus) 
         origin: "user".to_owned(),
         retry_count: 0,
     };
-    let id = id.to_owned();
-    Journal::new(db.clone())
+    Journal::new(db.clone(), quiet_ticks())
         .run("test.seed_task", move |store| {
-            store.insert_task(&task, NOW as f64)?;
-            if status != TaskStatus::Queued {
-                store.transition_task(&id, status, NOW as f64, None)?;
-            }
-            Ok(())
+            store.insert_task(&task, NOW as f64)
         })
         .await
         .expect("task seeds");
+    if status != TaskStatus::Queued {
+        behind(db, id, status).await;
+    }
 }
 
-/// Move one journal task to `status`, as the worker would.
-async fn settle(db: &AcquireDb, id: &str, status: TaskStatus) {
+/// Move one task to `status` with a plain write, as something outside the
+/// journal would: its requests are left for the status sweep.
+async fn behind(db: &AcquireDb, id: &str, status: TaskStatus) {
     let id = id.to_owned();
-    Journal::new(db.clone())
-        .run("test.settle", move |store| {
-            store.transition_task(&id, status, NOW as f64, None)
-        })
-        .await
-        .expect("task settles");
+    db.write("test.behind", move |tx| {
+        tx.execute(
+            "UPDATE download_tasks SET status = ?2, completed_at = ?3 WHERE id = ?1",
+            rusqlite::params![id, status.as_str(), NOW as f64],
+        )?;
+        Ok(())
+    })
+    .await
+    .expect("task moves");
 }
 
 /// Every task in the journal, oldest first.
@@ -168,7 +172,7 @@ async fn tasks(db: &AcquireDb) -> Vec<TaskRow> {
             .fetch_all(db.pool())
             .await
             .expect("task ids read");
-    let journal = Journal::new(db.clone());
+    let journal = Journal::new(db.clone(), quiet_ticks());
     let mut rows = Vec::new();
     for id in ids {
         rows.push(journal.read_task(&id).await.unwrap().expect("task row"));
@@ -213,7 +217,7 @@ async fn search_over(
         })
         .expect("slskd connection saves");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
-    let journal = Arc::new(Journal::new(db.clone()));
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
         .expect("http client factory")
         .shared()
@@ -323,36 +327,60 @@ async fn wanted_satisfied_from_the_library() {
     assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
 }
 
-// Status sync maps task states onto requests, stamps terminal rows, and
-// falls back to the album's active task for taskless rows.
+// The status sweep settles what the journal did not: rows whose task
+// finished behind its back (a failed row whose retry completed included),
+// and album rows with no task to follow whose album the library holds. A
+// row a person decided, or a short one whose task is gone, stays. A second
+// pass finds nothing.
 #[tokio::test]
-async fn status_sync_maps_and_stamps() {
+async fn status_sweep_settles_what_the_journal_missed() {
     let db = AcquireDb::scratch().unwrap();
     db.add_user("user-1", "Owner", "user").await.unwrap();
     let ledger = RequestStore::new(db.clone());
     seed_request(&ledger, "rg-done", "downloading", Some("task-done")).await;
     seed_request(&ledger, "rg-short", "downloading", Some("task-short")).await;
-    seed_request(&ledger, "rg-taskless", "pending", None).await;
+    seed_request(&ledger, "rg-retried", "failed", Some("task-retry")).await;
+    seed_request(&ledger, "rg-held", "pending", None).await;
+    seed_request(&ledger, "rg-gone", "failed", Some("task-cleared")).await;
+    seed_request(&ledger, "rg-partial", "incomplete", Some("task-cleared-2")).await;
+    seed_request(&ledger, "rg-cancelled", "cancelled", None).await;
     seed_task(&db, "task-done", "rg-done", TaskStatus::Completed).await;
     seed_task(&db, "task-short", "rg-short", TaskStatus::Partial).await;
-    seed_task(&db, "task-x", "rg-taskless", TaskStatus::Downloading).await;
+    seed_task(&db, "task-retry", "rg-retried", TaskStatus::Completed).await;
+    let library = Arc::new(LibraryPresence::new());
+    library.add(&["rg-held", "rg-gone", "rg-partial", "rg-cancelled"]);
+    let recorded = Arc::new(crate::common::bundles::FulfilledTicks::default());
     let deps = SyncDeps {
         ledger: ledger.clone(),
-        downloads: dispatch(&db, &settings(&db)),
-        library: Arc::new(LibraryPresence::new()),
-        ticks: ticks(&EventHub::new()),
+        journal: Arc::new(Journal::new(db.clone(), recorded.clone())),
+        library,
+        ticks: recorded.clone(),
     };
     let summary = sync_tick(NOW, &deps).await;
-    assert_eq!((summary.reconciled, summary.imported), (3, 1));
+    assert_eq!(
+        (summary.settled, summary.imported, summary.errors),
+        (3, 2, 0)
+    );
     assert_eq!(status_of(&ledger, "rg-done").await, "imported");
     assert_eq!(status_of(&ledger, "rg-short").await, "incomplete");
-    assert_eq!(status_of(&ledger, "rg-taskless").await, "downloading");
+    assert_eq!(status_of(&ledger, "rg-retried").await, "imported");
+    assert_eq!(status_of(&ledger, "rg-held").await, "imported");
+    assert_eq!(status_of(&ledger, "rg-gone").await, "imported");
+    assert_eq!(status_of(&ledger, "rg-partial").await, "incomplete");
+    assert_eq!(status_of(&ledger, "rg-cancelled").await, "cancelled");
     let done = ledger
         .get(RequestKind::Album, "rg-done")
         .await
         .unwrap()
         .unwrap();
     assert_eq!(done.completed_at, Some(NOW as u64));
+    let mut keys = recorded.keys();
+    keys.sort();
+    assert_eq!(keys, ["rg-done", "rg-gone", "rg-held", "rg-retried"]);
+
+    let again = sync_tick(NOW, &deps).await;
+    assert_eq!((again.settled, again.imported, again.errors), (0, 0, 0));
+    assert_eq!(recorded.keys().len(), 4, "nothing is announced twice");
 }
 
 /// One page of an artist's release groups, as the MusicBrainz browse
@@ -559,13 +587,12 @@ async fn loop_cadence_and_shutdown() {
     db.add_user("user-1", "Owner", "user").await.unwrap();
     let ledger = RequestStore::new(db.clone());
     seed_request(&ledger, "rg-1", "downloading", Some("task-9")).await;
-    // rg-2 starts pending, so the first pass is seen to reach it too.
-    seed_request(&ledger, "rg-2", "pending", Some("task-10")).await;
+    seed_request(&ledger, "rg-2", "downloading", Some("task-10")).await;
     seed_task(&db, "task-9", "rg-1", TaskStatus::Completed).await;
     seed_task(&db, "task-10", "rg-2", TaskStatus::Downloading).await;
     let deps = Arc::new(SyncDeps {
         ledger: ledger.clone(),
-        downloads: dispatch(&db, &settings(&db)),
+        journal: Arc::new(Journal::new(db.clone(), quiet_ticks())),
         library: Arc::new(LibraryPresence::new()),
         ticks: ticks(&EventHub::new()),
     });
@@ -596,11 +623,10 @@ async fn loop_cadence_and_shutdown() {
     settle_loop().await;
     tokio::time::advance(SYNC_INITIAL_DELAY).await;
     until("the first pass", &ledger, "rg-1", "imported").await;
-    until("the first pass", &ledger, "rg-2", "downloading").await;
     // Written with the clock running: an idle runtime on a paused clock
     // would jump straight to the loop's next pass while the write waits.
     tokio::time::resume();
-    settle(&db, "task-10", TaskStatus::Completed).await;
+    behind(&db, "task-10", TaskStatus::Completed).await;
     tokio::time::pause();
     tokio::time::advance(SYNC_INTERVAL - Duration::from_secs(1)).await;
     settle_loop().await;
@@ -848,4 +874,34 @@ async fn follow_download_waits_while_the_follower_is_over_quota() {
         1,
         "the release waits for the next poll"
     );
+}
+
+// A failed request the wanted watcher downloads again reads downloading,
+// then imported once that download completes, with its watch fulfilled and
+// the request announced once.
+#[tokio::test]
+async fn wanted_redispatch_imports_the_failed_request() {
+    let db = AcquireDb::scratch().unwrap();
+    let rig = wanted(&db).await;
+    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
+    wanted_tick(NOW, &rig.deps).await;
+    let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    let checked = wanted_tick(watch.next_check_at as i64, &rig.deps).await;
+    assert_eq!(checked.dispatched, 1);
+    assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "downloading");
+    let task = tasks(&db).await.remove(0);
+    let recorded = Arc::new(crate::common::bundles::FulfilledTicks::default());
+    let journal = Journal::new(db.clone(), recorded.clone());
+    for _ in 0..2 {
+        let id = task.id.clone();
+        let _ = journal
+            .run("test.complete", move |store| {
+                store.transition_task(&id, TaskStatus::Completed, NOW as f64, None)
+            })
+            .await;
+    }
+    assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "imported");
+    let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    assert_eq!(watch.state, WatchState::Fulfilled);
+    assert_eq!(recorded.keys(), ["rg-blue"], "announced once");
 }

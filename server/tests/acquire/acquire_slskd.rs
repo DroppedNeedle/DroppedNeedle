@@ -14,6 +14,7 @@ use droppedneedle_acquire::slskd;
 
 use std::time::Duration;
 
+use crate::common::bundles::quiet_ticks;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use slskd::{
     DownloadPolicy, EnqueueFile, Locator, QualityRecipeEntry, ReqwestSlskdHttp, SlskdClient,
@@ -727,7 +728,7 @@ async fn failover_walks_every_peer() {
     let mock = MockSlskd::start().await.expect("mock starts");
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
-    let journal = std::sync::Arc::new(Journal::new(db));
+    let journal = std::sync::Arc::new(Journal::new(db, quiet_ticks()));
     journal
         .run("test.seed", |store| {
             store.insert_task(

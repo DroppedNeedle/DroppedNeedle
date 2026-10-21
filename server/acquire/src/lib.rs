@@ -7,7 +7,7 @@
 //!   math, recovery classification, and quarantine.
 //! - [`slskd`] and [`usenet`] own the source clients and indexers.
 //! - [`flows`] runs the wanted watcher, follow poll, upgrade sweep and
-//!   status sync.
+//!   request-status sweep.
 //! - [`drop_import`] takes uploaded music into the library.
 //! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
 //! - [`landing`] verifies a finished download, matches it to the
@@ -56,5 +56,5 @@ pub use wiring::AcquireSetup;
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![downloads::sql::registered()]
+    vec![downloads::sql::registered(), requests::sql::registered()]
 }
