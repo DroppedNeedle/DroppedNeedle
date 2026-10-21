@@ -506,6 +506,52 @@ pub struct ManageUndoResponse {
     pub restored: Vec<String>,
 }
 
+/// Which plugin's files to list.
+#[derive(Debug, Clone, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PluginFilesQuery {
+    /// Plugin name.
+    pub plugin: String,
+    /// Cursor from the previous page.
+    pub cursor: Option<String>,
+    /// Files per page, 1 to 100 (default 50).
+    pub limit: Option<u32>,
+}
+
+/// Whether a plugin's file is still in the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginFileState {
+    /// Added and not taken back.
+    Added,
+    /// Taken back by an undo.
+    TakenBack,
+}
+
+/// One file a plugin added to the library.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PluginFileView {
+    /// The change that added it; undo it to take the file back.
+    pub bundle_id: String,
+    /// Library folder id.
+    pub root_id: String,
+    /// Path under the library folder.
+    pub relative_path: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// When it was added, in unix milliseconds.
+    pub added_at: i64,
+    pub state: PluginFileState,
+}
+
+/// A page of a plugin's files, newest first.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PluginFilesPage {
+    pub items: Vec<PluginFileView>,
+    /// Cursor for the next page, when there is one.
+    pub next_cursor: Option<String>,
+}
+
 /// Restore tracks to their immutable first-management baselines.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct BaselineRestoreBody {

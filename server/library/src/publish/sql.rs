@@ -107,6 +107,22 @@ droppedneedle_kernel::sql! {
              JOIN library_publish_journal j ON j.bundle_id = o.bundle_id \
              WHERE instr(o.bundle_json, ?1) > 0 AND j.kind = 'delete' \
              AND j.state <> 'compensated')";
+    /// The landed files plugin `?1` added, newest first, before the point
+    /// (`?2` unix milliseconds, then bundle id `?3`), at most `?4`: each
+    /// bundle with when it was made and whether an undo took the file
+    /// away or is still settling.
+    pub(super) PLUGIN_FILES = "SELECT o.bundle_id, o.created_at, o.bundle_json, \
+             EXISTS (SELECT 1 FROM library_publish_operations t \
+             JOIN library_publish_journal d ON d.bundle_id = t.bundle_id \
+             WHERE d.kind = 'delete' AND d.state <> 'compensated' \
+             AND instr(t.bundle_json, '\"undoes\":') > 0 \
+             AND json_extract(t.bundle_json, '$.added.undoes') = o.bundle_id) \
+             FROM library_publish_journal a \
+             JOIN library_publish_operations o ON o.bundle_id = a.bundle_id \
+             WHERE a.kind = 'add' AND a.state IN ('committed', 'cleanup_pending', 'cleaned') \
+             AND json_extract(o.bundle_json, '$.added.origin.plugin') = ?1 \
+             AND (o.created_at < ?2 OR (o.created_at = ?2 AND o.bundle_id < ?3)) \
+             ORDER BY o.created_at DESC, o.bundle_id DESC LIMIT ?4";
     /// A track's (`?1`) root, relative path and availability.
     pub(super) TRACK_PLACE = "SELECT root_id, relative_path, availability FROM local_tracks \
              WHERE id = ?1";

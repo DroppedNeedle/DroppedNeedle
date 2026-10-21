@@ -43,3 +43,15 @@ export const uninstallPluginMutation = () =>
 			toastStore.show({ message: error.message || 'Removing the plugin failed.', type: 'error' });
 		}
 	}));
+
+// Takes back one file a plugin added. A refusal (the file changed since, its
+// folder takes no changes now) is shown by the confirm dialog that awaits it.
+export const undoPluginFileMutation = () =>
+	createMutation(() => ({
+		mutationFn: ({ bundleId }: { name: string; bundleId: string }) =>
+			api.global.v3.POST(PLUGIN_ENDPOINTS.undoFile(), { bundle_id: bundleId }),
+		onSuccess: async (_answer, { name }) => {
+			toastStore.show({ message: 'File removed.', type: 'success' });
+			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.files(name) });
+		}
+	}));

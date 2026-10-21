@@ -10,15 +10,16 @@ use axum::{
     http::StatusCode,
 };
 use droppedneedle_kernel::error::ApiError;
-use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::error::LibraryError;
 use super::models::{
     AddRootBody, BaselineRestoreBody, BaselineRestoreResponse, IdentifyBody, IdentifyResponse,
     ManageAppliedFile, ManageApplyBody, ManageApplyResponse, ManageFileView, ManageItemBody,
     ManagePreviewBody, ManagePreviewResponse, ManageTagChange, ManageUndoBody, ManageUndoResponse,
-    RootView, RootsResponse, RunDetailResponse, ScanBody, ScanFileView, ScanResponse, ScanRunView,
-    ScanRunsResponse, ScanScopeView, snake,
+    PluginFileState, PluginFileView, PluginFilesPage, PluginFilesQuery, RootView, RootsResponse,
+    RunDetailResponse, ScanBody, ScanFileView, ScanResponse, ScanRunView, ScanRunsResponse,
+    ScanScopeView, snake,
 };
 use crate::identify::models::IdentifyKind;
 use crate::manage::{PreviewItemInput, plain_retag};
@@ -517,6 +518,68 @@ pub async fn manage_undo(
             .into_iter()
             .map(|file| file.track_id)
             .collect(),
+    }))
+}
+
+/// The files one plugin added to the library, newest first.
+#[utoipa::path(
+    get,
+    tag = "library management",
+    path = "/api/v3/library/manage/plugin-files",
+    params(PluginFilesQuery),
+    responses(
+        (status = 200, description = "A page of the plugin's files", body = PluginFilesPage),
+        (status = 400, description = "Bad cursor or limit"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn list_plugin_files(
+    State(state): State<LibrarySetup>,
+    _caller: Admin,
+    ValidQuery(query): ValidQuery<PluginFilesQuery>,
+) -> Result<Json<PluginFilesPage>, ApiError> {
+    let limit = query.limit.unwrap_or(50);
+    if !(1..=100).contains(&limit) {
+        return Err(ApiError::invalid_input("Limit must be 1 to 100"));
+    }
+    let before = match query.cursor.as_deref().filter(|raw| !raw.is_empty()) {
+        None => None,
+        Some(raw) => Some(
+            raw.split_once('|')
+                .and_then(|(at, id)| Some((at.parse::<i64>().ok()?, id.to_owned())))
+                .ok_or_else(|| {
+                    ApiError::invalid_input("That cursor is not valid; start from the first page.")
+                })?,
+        ),
+    };
+    let mut files =
+        blocking(move || state.plugin_files(&query.plugin, before, limit + 1)).await??;
+    let next_cursor = if files.len() > limit as usize {
+        files.truncate(limit as usize);
+        files
+            .last()
+            .map(|last| format!("{}|{}", last.added_at, last.bundle_id))
+    } else {
+        None
+    };
+    Ok(Json(PluginFilesPage {
+        items: files
+            .into_iter()
+            .map(|added| PluginFileView {
+                bundle_id: added.bundle_id,
+                root_id: added.file.root_id,
+                relative_path: added.file.relative_path,
+                size: added.file.size,
+                added_at: added.added_at,
+                state: if added.taken_back {
+                    PluginFileState::TakenBack
+                } else {
+                    PluginFileState::Added
+                },
+            })
+            .collect(),
+        next_cursor,
     }))
 }
 

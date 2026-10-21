@@ -17,6 +17,7 @@
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import PluginInstall from './PluginInstall.svelte';
+	import PluginLibraryFiles from './PluginLibraryFiles.svelte';
 	import PluginPanel from './PluginPanel.svelte';
 
 	const pluginsQuery = getPluginsQuery();
@@ -26,6 +27,8 @@
 	const plugins = $derived(pluginsQuery.data?.plugins ?? []);
 
 	let confirmingRemoval = $state<string | null>(null);
+	// Library file lists load only once their section is opened.
+	let filesOpen = $state<Record<string, boolean>>({});
 
 	const runtimeLabels: Record<string, string> = {
 		starting: 'starting',
@@ -221,6 +224,22 @@
 									<div class="mt-2">
 										<PluginPanel pluginName={plugin.name} displayName={plugin.display_name} />
 									</div>
+								</details>
+							{/if}
+
+							{#if authStore.isAdmin && plugin.capabilities?.includes('library_writer')}
+								<details
+									class="mt-3 rounded-xl border border-base-content/10 p-3"
+									ontoggle={(event) => (filesOpen[plugin.name] = event.currentTarget.open)}
+								>
+									<summary class="cursor-pointer text-xs font-semibold text-base-content/65">
+										Library files
+									</summary>
+									{#if filesOpen[plugin.name]}
+										<div class="mt-2">
+											<PluginLibraryFiles pluginName={plugin.name} />
+										</div>
+									{/if}
 								</details>
 							{/if}
 

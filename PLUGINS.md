@@ -334,19 +334,24 @@ checking first and then renaming, takes no plugin files. Each plugin may
 write 100 MiB a day; past that the call fails until older writes are a day
 old, and one file may be at most 6 MiB. The write waits up to 30 seconds
 for the library to be free (no scan, move or other change running), then
-fails. Files a plugin adds, audio included, are picked up by the next
-library scan like any other file.
+fails. After each write the library folder is scanned again, so the file,
+audio included, shows up like any other.
 
 Each write is a recorded library change, made the way the server makes its
 own: the file is written beside its destination under a hidden name and
 put in place only if the name is still free, so after a crash it is either
 in place whole or not there at all. The server log line `plugin added a
 library file` names the plugin, the path and the change's `bundle_id`
-(the low-level answer carries the same id). An administrator can undo the
-change with `POST /api/v3/library/manage/undo` and `{"bundle_id": "..."}`:
-the file is removed only while it still holds the bytes the plugin wrote,
-and the undo says so and leaves the file when it was changed since. Each
-write can be undone once.
+(the low-level answer carries the same id). An administrator sees every
+file a plugin added under **Library files** on the plugin's card in
+Settings > Plugins (path, when, size, and whether it was undone) and can
+undo one there, or with `POST /api/v3/library/manage/undo` and
+`{"bundle_id": "..."}`. The list is
+`GET /api/v3/library/manage/plugin-files?plugin=<name>`. Undo removes the
+file only while it still holds the bytes the plugin wrote; when it was
+changed since, or its folder takes no changes now, the undo says so and
+leaves the file. Each write can be undone once, and the folder is scanned
+again afterwards, so a track made from the file goes missing.
 
 Example: `examples/plugins/http-catalog`.
 

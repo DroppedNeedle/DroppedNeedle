@@ -6,3 +6,7 @@ export type PluginSettingFieldInfo = components['schemas']['PluginSettingFieldIn
 export type PluginInfo = components['schemas']['PluginInfo'];
 
 export type PluginListResponse = components['schemas']['PluginListResponse'];
+
+export type PluginFileView = components['schemas']['PluginFileView'];
+
+export type PluginFilesPage = components['schemas']['PluginFilesPage'];

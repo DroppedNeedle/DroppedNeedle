@@ -15244,6 +15244,95 @@
         ]
       }
     },
+    "/api/v3/library/manage/plugin-files": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "The files one plugin added to the library, newest first.",
+        "operationId": "list_plugin_files",
+        "parameters": [
+          {
+            "name": "plugin",
+            "in": "query",
+            "description": "Plugin name.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Files per page, 1 to 100 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of the plugin's files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginFilesPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor or limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/manage/preview": {
       "post": {
         "tags": [
@@ -54289,6 +54378,76 @@
               "type": "string"
             },
             "description": "Tags or genres."
+          }
+        }
+      },
+      "PluginFileState": {
+        "type": "string",
+        "description": "Whether a plugin's file is still in the library.",
+        "enum": [
+          "added",
+          "taken_back"
+        ]
+      },
+      "PluginFileView": {
+        "type": "object",
+        "description": "One file a plugin added to the library.",
+        "required": [
+          "bundle_id",
+          "root_id",
+          "relative_path",
+          "size",
+          "added_at",
+          "state"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was added, in unix milliseconds."
+          },
+          "bundle_id": {
+            "type": "string",
+            "description": "The change that added it; undo it to take the file back."
+          },
+          "relative_path": {
+            "type": "string",
+            "description": "Path under the library folder."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Library folder id."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size in bytes.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/PluginFileState"
+          }
+        }
+      },
+      "PluginFilesPage": {
+        "type": "object",
+        "description": "A page of a plugin's files, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginFileView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor for the next page, when there is one."
           }
         }
       },

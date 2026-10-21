@@ -17,6 +17,7 @@ pub fn library_routes() -> Routes<LibrarySetup> {
         .curator(routes!(manage_preview))
         .curator(routes!(manage_apply))
         .curator(routes!(manage_undo))
+        .admin(routes!(list_plugin_files))
         .admin(routes!(baseline_restore))
         .merge(super::scan::routes())
         .merge(super::operations::routes())

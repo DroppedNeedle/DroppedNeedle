@@ -4316,6 +4316,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/manage/plugin-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The files one plugin added to the library, newest first. */
+        get: operations["list_plugin_files"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/manage/preview": {
         parameters: {
             query?: never;
@@ -18417,6 +18434,37 @@ export interface components {
             links: string[];
             /** @description Tags or genres. */
             tags: string[];
+        };
+        /**
+         * @description Whether a plugin's file is still in the library.
+         * @enum {string}
+         */
+        PluginFileState: "added" | "taken_back";
+        /** @description One file a plugin added to the library. */
+        PluginFileView: {
+            /**
+             * Format: int64
+             * @description When it was added, in unix milliseconds.
+             */
+            added_at: number;
+            /** @description The change that added it; undo it to take the file back. */
+            bundle_id: string;
+            /** @description Path under the library folder. */
+            relative_path: string;
+            /** @description Library folder id. */
+            root_id: string;
+            /**
+             * Format: int64
+             * @description Size in bytes.
+             */
+            size: number;
+            state: components["schemas"]["PluginFileState"];
+        };
+        /** @description A page of a plugin's files, newest first. */
+        PluginFilesPage: {
+            items: components["schemas"]["PluginFileView"][];
+            /** @description Cursor for the next page, when there is one. */
+            next_cursor?: string | null;
         };
         /** @description One plugin as the admin UI sees it. */
         PluginInfo: {
@@ -33911,6 +33959,60 @@ export interface operations {
             };
             /** @description Restore blocked for a file */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_plugin_files: {
+        parameters: {
+            query: {
+                /** @description Plugin name. */
+                plugin: string;
+                /** @description Cursor from the previous page. */
+                cursor?: string;
+                /** @description Files per page, 1 to 100 (default 50). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the plugin's files */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginFilesPage"];
+                };
+            };
+            /** @description Bad cursor or limit */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

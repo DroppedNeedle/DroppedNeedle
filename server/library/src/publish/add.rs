@@ -222,6 +222,50 @@ pub fn check_take_back(sandbox: &Sandbox, file: &AddedFile) -> Result<(), TakeBa
     Ok(())
 }
 
+/// One file a plugin added that landed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginFile {
+    /// The bundle that added it; its undo takes the file away.
+    pub bundle_id: String,
+    /// When it was added, in unix milliseconds.
+    pub added_at: i64,
+    pub file: AddedFile,
+    /// An undo took it away, or is still settling.
+    pub taken_back: bool,
+}
+
+/// The files plugin `plugin` added, newest first, at most `limit`, after
+/// `before` (the `added_at` and bundle id of the last file of the page
+/// before).
+pub fn plugin_files(
+    conn: &Connection,
+    plugin: &str,
+    before: Option<(i64, &str)>,
+    limit: u32,
+) -> Result<Vec<PluginFile>, PublishError> {
+    let (at, id) = before.unwrap_or((i64::MAX, ""));
+    let rows: Vec<(String, i64, String, bool)> = conn
+        .prepare_cached(sql::PLUGIN_FILES.text())?
+        .query_map(rusqlite::params![plugin, at, id, limit], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    rows.into_iter()
+        .map(|(bundle_id, added_at, json, taken_back)| {
+            let bundle: PlanBundle = serde_json::from_str(&json)?;
+            let added = bundle.added.ok_or_else(|| {
+                PublishError::Journal(format!("operation {bundle_id} added no file"))
+            })?;
+            Ok(PluginFile {
+                bundle_id,
+                added_at,
+                file: added.file,
+                taken_back,
+            })
+        })
+        .collect()
+}
+
 /// The text an undo's recorded bundle holds for the add it undoes.
 fn undoes_marker(bundle_id: &str) -> String {
     format!("\"undoes\":{}", serde_json::Value::from(bundle_id))

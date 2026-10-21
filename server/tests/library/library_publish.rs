@@ -4696,6 +4696,74 @@ fn a_plugin_file_never_replaces_one() {
 /// bytes written, once. A file changed since stays and the undo says so;
 /// an add that never landed, and the undo itself, cannot be undone.
 #[test]
+fn a_plugins_files_list_until_taken_back() {
+    let bytes = b"bytes a plugin wrote".as_slice();
+    let fix = fixture("plugin-files-list");
+    let mut publisher = open_publisher(&fix);
+    for (id, rel) in [("add-1", "notes/one.txt"), ("add-2", "notes/two.txt")] {
+        let (sealed, live) = seal(&plugin_add(id, rel, bytes));
+        publisher
+            .publish_add(&sealed, &live, bytes.to_vec())
+            .unwrap();
+    }
+    let (sealed, live) = seal(&plugin_add("add-3", "notes/three.txt", bytes));
+    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
+    publisher
+        .publish_add(&sealed, &live, bytes.to_vec())
+        .unwrap_err();
+    publisher.set_crash_point(None);
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+    let listed = |plugin: &str| {
+        let mut files = publish::add::plugin_files(&open_db(&fix), plugin, None, 10).unwrap();
+        files.sort_by(|a, b| a.bundle_id.cmp(&b.bundle_id));
+        files
+            .into_iter()
+            .map(|file| (file.bundle_id, file.file.relative_path, file.taken_back))
+            .collect::<Vec<_>>()
+    };
+    let row = |id: &str, rel: &str, taken_back: bool| (id.to_string(), rel.to_string(), taken_back);
+    assert_eq!(
+        listed("toy"),
+        [
+            row("add-1", "notes/one.txt", false),
+            row("add-2", "notes/two.txt", false)
+        ],
+        "a landed file is listed; one that never landed is not"
+    );
+    assert!(listed("other").is_empty());
+
+    let added = publish::add::plan_take_back(&open_db(&fix), "add-1")
+        .unwrap()
+        .unwrap();
+    let (sealed, live) = seal(&PlanBundle {
+        added: Some(added),
+        ..plugin_add("undo-1", "unused", b"")
+    });
+    publisher
+        .publish_as(&sealed, &live, &BTreeMap::new(), None)
+        .unwrap();
+    assert_eq!(
+        listed("toy"),
+        [
+            row("add-1", "notes/one.txt", true),
+            row("add-2", "notes/two.txt", false)
+        ],
+        "the undo is not listed as a file of its own"
+    );
+
+    let first = publish::add::plugin_files(&open_db(&fix), "toy", None, 1).unwrap();
+    let rest = publish::add::plugin_files(
+        &open_db(&fix),
+        "toy",
+        Some((first[0].added_at, &first[0].bundle_id)),
+        10,
+    )
+    .unwrap();
+    assert_eq!(first.len() + rest.len(), 2);
+    assert_ne!(first[0].bundle_id, rest[0].bundle_id);
+}
+
+#[test]
 fn undo_takes_a_plugin_file_only_while_unchanged() {
     let bytes = b"bytes a plugin wrote".as_slice();
     let fix = fixture("plugin-add-undo");

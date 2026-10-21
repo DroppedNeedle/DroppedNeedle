@@ -208,6 +208,25 @@ impl LibrarySetup {
         )?)
     }
 
+    /// One page of the files plugin `plugin` added, newest first. Blocking.
+    pub fn plugin_files(
+        &self,
+        plugin: &str,
+        before: Option<(i64, String)>,
+        limit: u32,
+    ) -> Result<Vec<super::publish::add::PluginFile>, ServiceError> {
+        self.db
+            .read_blocking("publish.plugin_files", |conn| {
+                super::publish::add::plugin_files(
+                    conn,
+                    plugin,
+                    before.as_ref().map(|(at, id)| (*at, id.as_str())),
+                    limit,
+                )
+            })
+            .map_err(publish_error)
+    }
+
     /// Unsettled publish bundles in the journal. Blocking.
     pub fn held_publish_bundles(&self) -> Result<Vec<String>, ServiceError> {
         self.held_bundles.list().map_err(publish_error)

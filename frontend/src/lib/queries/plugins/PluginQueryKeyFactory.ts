@@ -6,6 +6,7 @@ import { userIdSegment } from '$lib/queries/userKeySegment';
 export const PluginQueryKeyFactory = {
 	prefix: ['plugins'] as const,
 	list: () => [...PluginQueryKeyFactory.prefix, 'list'] as const,
+	files: (name: string) => [...PluginQueryKeyFactory.prefix, 'files', name] as const,
 	sources: (userId?: string) =>
 		[...PluginQueryKeyFactory.prefix, 'sources', userIdSegment(userId)] as const,
 	ui: (userId: string | null | undefined, name: string) =>

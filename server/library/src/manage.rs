@@ -681,6 +681,7 @@ impl super::wiring::LibraryCore {
         let (sealed, live) = seal_pinned(bundle, &self.ids.new_id(), policy_revision);
         let bundle_id = sealed.bundle.id.clone();
         let Err(error) = open.publisher.publish_add(&sealed, &live, bytes) else {
+            self.rescan(first);
             return Ok(AddedPluginFile { path, bundle_id });
         };
         let committed = self
@@ -692,6 +693,7 @@ impl super::wiring::LibraryCore {
             });
         if committed {
             tracing::warn!(%error, bundle_id, "plugin write committed; recovery finishes the rest");
+            self.rescan(first);
             return Ok(AddedPluginFile { path, bundle_id });
         }
         let unsettled = self.held_bundles.unsettled(&bundle_id).unwrap_or(true);
@@ -703,6 +705,13 @@ impl super::wiring::LibraryCore {
         } else {
             PluginFileRefusal::Publish(error)
         })
+    }
+
+    /// Have the scan walk library folder `root_id` again soon, so a file
+    /// added or taken away there shows in the library.
+    fn rescan(&self, root_id: &str) {
+        self.dirty.mark(root_id);
+        self.wakeups.notify("scan");
     }
 }
 
@@ -2173,6 +2182,7 @@ impl LibrarySetup {
         };
         let added = planned.map_err(refused)?;
         super::publish::add::check_take_back(&open.sandbox, &added.file).map_err(refused)?;
+        let root_id = added.file.root_id.clone();
         let policy_revision = policy_revision_u64(registry);
         let bundle = PlanBundle {
             id: self.ids.new_id(),
@@ -2199,6 +2209,9 @@ impl LibrarySetup {
                 PublishOutcome::CleanupPending
             }
         };
+        // A track the scan made from the file goes missing at the next scan.
+        self.dirty.mark(&root_id);
+        self.wakeups.notify("scan");
         Ok(AppliedBundle {
             bundle_id,
             outcome,

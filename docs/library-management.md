@@ -80,6 +80,8 @@ The tag editor shows the file's tags next to any value you kept for it. Change a
 
 The first time Library Management changes a file it keeps the file's original tags and path. "Restore originals" makes a preview that puts the chosen albums back exactly as they were; apply it like any run. A file someone changed since, or whose old place is taken, is left alone with the reason. Once you no longer need them, the Automation tab of Library Management can delete the kept originals for good: it shows how many there are and asks you to type CONFIRM. It refuses while a restore or a file write is still running.
 
+Files a plugin added to the library are listed under "Library files" on that plugin's card in Settings > Plugins. An admin can undo one there: the file is deleted only while it still holds what the plugin wrote, and the folder is scanned again so its track goes missing. See [PLUGINS.md](../PLUGINS.md).
+
 ## Editions and the edition sheet
 
 Every album page of your library shows the album's edition on a plate under the artist and year: its name, who picked it ("Your choice", "Picked by DroppedNeedle" or "Best guess"), its year, country and formats, and how many of its tracks your files hold, with any that are missing or that you have in another version.
