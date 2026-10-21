@@ -12339,13 +12339,10 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
              || ' ' || selected_at FROM local_track_external_identities \
              WHERE local_track_id IN (SELECT id FROM local_tracks WHERE local_album_id = ?1) \
              UNION ALL SELECT 'flag ' || state || ' ' || reason_code \
-             FROM library_album_match_state WHERE local_album_id = ?1 \
-             UNION ALL SELECT 'release ' || id || ' ' || payload_sha256 || ' ' || fetched_at \
-             FROM library_management_metadata_snapshots \
-             WHERE entity_kind = 'release' AND entity_id = ?2 ORDER BY 1",
+             FROM library_album_match_state WHERE local_album_id = ?1 ORDER BY 1",
         )
         .expect("prepare")
-        .query_map([album.as_str(), REL_1], |row| row.get(0))
+        .query_map([album.as_str()], |row| row.get(0))
         .expect("query")
         .collect::<rusqlite::Result<_>>()
         .expect("rows")
@@ -12353,8 +12350,8 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
     let before = identity(&db);
     assert_eq!(
         before.len(),
-        6,
-        "album, three tracks, the flag and the release document: {before:?}"
+        5,
+        "album, three tracks and the flag: {before:?}"
     );
 
     let again = import("task-2", &[1]);

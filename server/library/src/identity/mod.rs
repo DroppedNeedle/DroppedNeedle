@@ -6,7 +6,8 @@
 //! them sit the album's match state (`library_album_match_state`) and its
 //! two undo rows (`library_automatic_edition_undo`,
 //! `library_edition_choice_undo`). The commands here take the caller's
-//! transaction and move the catalog revision when they change a row.
+//! transaction and move the catalog revision when they change a row; the
+//! import's seal runs in the publisher's commit, which moves it already.
 //!
 //! Who decided is a [`DecisionSource`]. A row identification wrote, or one
 //! whose ids the files' tags carried, stays revisable: a later automatic
@@ -15,6 +16,7 @@
 //! by automatic work.
 
 mod automatic;
+mod import;
 pub mod reads;
 pub(crate) mod sql;
 
@@ -26,6 +28,8 @@ pub(crate) use automatic::write_match_flag;
 pub use automatic::{
     Accepted, AutomaticOutcome, Inputs, Placed, accept_automatic, retract, seal_automatic,
 };
+pub use import::{ImportedFile, adopt_import, import_album};
+pub(crate) use import::{save_album, save_track};
 
 /// The provider every identity row here names.
 pub(crate) const PROVIDER: &str = "musicbrainz";

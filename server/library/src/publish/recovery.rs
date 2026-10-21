@@ -950,6 +950,12 @@ fn resume_precommit<C: Catalog>(
                     .iter()
                     .find(|item| item.track_id == track_id)
                     .and_then(|item| item.commit_seal()),
+                identity: recorded
+                    .items
+                    .iter()
+                    .find(|item| item.track_id == track_id)
+                    .filter(|_| mgmt.starts_with(super::publisher::ADOPTED_STATE))
+                    .map(|item| item.identity.clone()),
             });
         }
     }

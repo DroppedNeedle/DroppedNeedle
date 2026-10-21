@@ -28,7 +28,7 @@ use super::paths::Sandbox;
 use super::place::Original;
 use super::planner::{
     AlbumJoin, CapabilityGate, CollisionGate, CommitSeal, DiskPreflight, JoinedTrack, PlanBundle,
-    PlanKind, SealError, SealRecheck, SealedPreview, SpaceProbe,
+    PlanKind, ReleaseIdentity, SealError, SealRecheck, SealedPreview, SpaceProbe,
 };
 use super::snapshots::{BlobStore, SnapshotStore, sha256_hex};
 use super::tags_seam::TagDocument;
@@ -66,6 +66,10 @@ pub struct TrackCommit {
     /// The rows a track that is not adopted was sealed against. The commit
     /// refuses the bundle when they moved, or when there is no seal.
     pub sealed: Option<CommitSeal>,
+    /// The release track an imported file was matched to, as its plan item
+    /// journaled it: what the commit seals as the file's identity. Set only
+    /// with `adopt`.
+    pub identity: Option<ReleaseIdentity>,
 }
 
 /// Management-state prefix journals carry for files a commit adds to the
@@ -113,7 +117,8 @@ pub trait Catalog {
     /// published location, and bump the catalog revision once. Track and
     /// album ids stay as they are. Files an import fetched for a library
     /// album join it, and are placed on its edition in the same
-    /// transaction.
+    /// transaction. An import's match is sealed in it too
+    /// ([`crate::identity::adopt_import`]).
     fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError>;
     /// Mark a track missing so streaming and search stay accurate when
     /// committed bytes cannot be recovered.
@@ -254,12 +259,20 @@ impl Catalog for SqliteCatalog {
         }
         // Joined files to place, by album, with the release they join.
         let mut placing: BTreeMap<String, (String, Vec<(String, JoinedTrack)>)> = BTreeMap::new();
+        let mut imported = Vec::new();
         for (track, written) in commit.tracks.iter().zip(&written) {
             if let Some((replaced, recycle_to)) = &track.replaces {
                 retire_replaced(conn, track, replaced, recycle_to, now)?;
             }
             if let Some(adoption) = &track.adopt {
                 let joined = adopt_track(conn, track, adoption)?;
+                if let Some(identity) = &track.identity {
+                    imported.push(crate::identity::ImportedFile {
+                        track_id: &track.track_id,
+                        identity,
+                        joined: joined.is_some(),
+                    });
+                }
                 if let (Some(joined), Some(join), Some(on)) =
                     (joined, &adoption.join, &adoption.track)
                     && joined.placed
@@ -297,6 +310,11 @@ impl Catalog for SqliteCatalog {
         }
         for (album, (release, files)) in &placing {
             crate::operations::choice::place_imported(tx, album, release, files, now)?;
+        }
+        // After the placements: a person's edition keeps them, and the
+        // seal never writes over a person's rows.
+        if !imported.is_empty() {
+            crate::identity::adopt_import(tx, &imported, now)?;
         }
         Ok(())
     }
@@ -2059,6 +2077,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 }),
                 indexed: None,
                 sealed: item.commit_seal(),
+                identity: item.adopt.is_some().then(|| item.identity.clone()),
             });
         }
         read_adopted(&mut tracks)?;

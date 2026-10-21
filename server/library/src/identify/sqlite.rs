@@ -31,14 +31,14 @@ use super::models::{
 };
 use super::queue::{PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::sources::ArtistAnswer;
-use super::sql::{ALBUM_IDENTITY, SAVE_ALBUM_IDENTITY, SAVE_TRACK_IDENTITY, TRACK_IDENTITY};
+use super::sql::{ALBUM_IDENTITY, TRACK_IDENTITY};
 use super::stores::{Approval, AttemptLanding, RELEASE_FRESH_SECS, StoreError, land_job};
 use crate::corrections::artist_convergence::{
     any_waiting, converge_ids, follow_moved, follow_waiting,
 };
 use crate::corrections::continuation::{DRAIN_BOUND, Scope, continue_tracks, drain_continuations};
 use crate::corrections::release_join::join_replaced;
-use crate::identity::{self, AutomaticOutcome, Inputs, write_match_flag};
+use crate::identity::{self, AutomaticOutcome, Inputs};
 use crate::matching::Release;
 use crate::operations::choice::RemapOrigin;
 
@@ -429,96 +429,6 @@ pub(crate) fn read_track_identity(
         .optional()
 }
 
-/// Save an album's match, never over a person's (the statement's own
-/// guard). Rows written: 0 when a person's row holds the album.
-fn save_album_row(tx: &Transaction<'_>, identity: &AlbumIdentity) -> rusqlite::Result<usize> {
-    let Some(group) = identity.release_group_mbid.as_deref() else {
-        tracing::warn!(
-            album = identity.local_album_id,
-            "album identity without a release group not stored"
-        );
-        return Ok(0);
-    };
-    let written = tx
-        .prepare_cached(SAVE_ALBUM_IDENTITY.text())?
-        .execute(params![
-            identity.local_album_id,
-            PROVIDER,
-            group,
-            identity.release_mbid,
-            identity.decision_source.as_str(),
-            now_secs(),
-            identity.row_revision.max(1) as i64,
-        ])?;
-    if written == 0 {
-        tracing::warn!(
-            album = identity.local_album_id,
-            "automatic identity not written over a person's album identity"
-        );
-    }
-    Ok(written)
-}
-
-/// Save a track's match, guarded like the album's.
-fn save_track_row(tx: &Transaction<'_>, identity: &TrackIdentity) -> rusqlite::Result<usize> {
-    let Some(recording) = identity.recording_mbid.as_deref() else {
-        tracing::warn!(
-            track = identity.local_track_id,
-            "track identity without a recording not stored"
-        );
-        return Ok(0);
-    };
-    let written = tx
-        .prepare_cached(SAVE_TRACK_IDENTITY.text())?
-        .execute(params![
-            identity.local_track_id,
-            PROVIDER,
-            recording,
-            identity.release_track_mbid,
-            identity.decision_source.as_str(),
-            now_secs(),
-            identity.row_revision.max(1) as i64,
-        ])?;
-    if written == 0 {
-        tracing::warn!(
-            track = identity.local_track_id,
-            "automatic identity not written over a person's track identity"
-        );
-    }
-    Ok(written)
-}
-
-/// What one import's download names, for [`SqliteIdentifyStore::seal_import`].
-pub struct ImportSeal<'a> {
-    pub local_album_id: &'a str,
-    pub release: &'a Release,
-    /// The files joined the album they were fetched for: a few fetched
-    /// tracks never confirm the album's match, so only they seal.
-    pub joined: bool,
-    /// The imported tracks that carry a recording.
-    pub tracks: Vec<ImportTrack>,
-}
-
-/// One imported track's ids.
-pub struct ImportTrack {
-    pub local_track_id: String,
-    pub recording_mbid: String,
-    pub release_track_mbid: String,
-}
-
-/// How an import's seal ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImportSealed {
-    /// The match was written where nothing a person chose holds it.
-    Sealed,
-    /// A person's album match holds the album: only the release document
-    /// was kept.
-    ChosenKept,
-    /// The album's or the tracks' match could not be read: nothing of it
-    /// was written and the album was offered to identification.
-    Offered,
-}
-
 /// Durable identity rows plus the facts the matcher reads.
 impl SqliteIdentifyStore {
     pub fn album_identity(
@@ -536,7 +446,7 @@ impl SqliteIdentifyStore {
         self.db
             .write_blocking(Lane::Background, "identify.save_album_identity", |tx| {
                 changing(tx, |tx| {
-                    save_album_row(tx, &identity)?;
+                    crate::identity::save_album(tx, &identity, now_secs())?;
                     Ok(())
                 })
             })
@@ -558,7 +468,7 @@ impl SqliteIdentifyStore {
         self.db
             .write_blocking(Lane::Background, "identify.save_track_identity", |tx| {
                 changing(tx, |tx| {
-                    if save_track_row(tx, &identity)? == 1 {
+                    if crate::identity::save_track(tx, &identity, now_secs())? == 1 {
                         let album: String = tx.query_row(
                             "SELECT local_album_id FROM local_tracks WHERE id = ?1",
                             params![identity.local_track_id],
@@ -670,20 +580,6 @@ impl SqliteIdentifyStore {
         }
     }
 
-    /// Seal what an import's download names, in one transaction: the
-    /// release document, then the album and track rows and the cleared
-    /// flag, where nothing a person chose holds them. The rows are read
-    /// on the same transaction. When they cannot be read, nothing of the
-    /// match is written and the album is offered to identification
-    /// instead.
-    pub fn seal_import(&self, seal: &ImportSeal<'_>) -> Result<ImportSealed, StoreError> {
-        self.db
-            .write_blocking(Lane::Background, "identify.import_seal", |tx| {
-                changing(tx, |tx| seal_import_tx(tx, seal))
-            })
-            .map(|sealed| self.landed(sealed))
-    }
-
     /// The album's match flag, if identification is unsure of it.
     pub fn match_flag(&self, local_album_id: &str) -> Result<Option<MatchFlag>, StoreError> {
         self.db.read_blocking("identify.match_flag", |conn| {
@@ -771,96 +667,6 @@ fn land_tx(tx: &Transaction<'_>, job: &IdentifyJob) -> Result<(), Landing> {
     }
     bump_identification_stream(tx)?;
     Ok(())
-}
-
-/// [`SqliteIdentifyStore::seal_import`] on its transaction.
-fn seal_import_tx(tx: &Transaction<'_>, seal: &ImportSeal<'_>) -> Result<ImportSealed, StoreError> {
-    let album = seal.local_album_id;
-    let canonical = seal.release.id.trim().to_ascii_lowercase();
-    let read = (|| -> rusqlite::Result<_> {
-        let current = read_album_identity(tx, album)?;
-        let mut tracks = Vec::with_capacity(seal.tracks.len());
-        for track in &seal.tracks {
-            tracks.push(read_track_identity(tx, &track.local_track_id)?);
-        }
-        let stored = stored_release(tx, &canonical, 0.0)?;
-        Ok((current, tracks, stored))
-    })();
-    let (current, current_tracks, stored) = match read {
-        Ok(read) => read,
-        Err(error) => {
-            tracing::error!(
-                %error,
-                album,
-                "the import could not read the album's match; nothing of it is written \
-                 and the album is offered to identification"
-            );
-            offer_album(tx, album, now_ms())?;
-            return Ok(ImportSealed::Offered);
-        }
-    };
-    let now = now_secs();
-    store_release(tx, seal.release, stored, now)?;
-    if current
-        .as_ref()
-        .is_some_and(|row| !row.decision_source.is_revisable())
-    {
-        return Ok(ImportSealed::ChosenKept);
-    }
-    // An album that already has an exact edition keeps it: a download
-    // matched to another edition adds its files without flipping the
-    // album. A whole-album download verified against the album's own
-    // edition confirms an unsure match.
-    let held = current
-        .as_ref()
-        .and_then(|row| row.release_mbid.clone())
-        .filter(|held| !seal.release.answers_to(held));
-    let mut wrote = false;
-    if held.is_some() {
-        tracing::info!(
-            album,
-            release = seal.release.id,
-            "download matched another edition; the album keeps its own"
-        );
-    } else if !seal.joined {
-        wrote |= save_album_row(
-            tx,
-            &AlbumIdentity {
-                local_album_id: album.to_owned(),
-                provider: PROVIDER.to_owned(),
-                release_group_mbid: Some(seal.release.release_group_id.clone()),
-                release_mbid: Some(seal.release.id.clone()),
-                decision_source: DecisionSource::Automatic,
-                row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
-            },
-        )? > 0;
-        wrote |= write_match_flag(tx, album, None, now)? > 0;
-    }
-    for (track, current) in seal.tracks.iter().zip(&current_tracks) {
-        if current
-            .as_ref()
-            .is_some_and(|row| !row.decision_source.is_revisable())
-        {
-            continue;
-        }
-        wrote |= save_track_row(
-            tx,
-            &TrackIdentity {
-                local_track_id: track.local_track_id.clone(),
-                provider: PROVIDER.to_owned(),
-                recording_mbid: Some(track.recording_mbid.clone()),
-                // A track of another edition keeps only its recording.
-                release_track_mbid: held.is_none().then(|| track.release_track_mbid.clone()),
-                decision_source: DecisionSource::Automatic,
-                row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
-            },
-        )? > 0;
-    }
-    // Once, after the last identity and flag write.
-    if wrote {
-        continue_tracks(tx, Scope::Album(album), now)?;
-    }
-    Ok(ImportSealed::Sealed)
 }
 
 /// The raw album identity row, every column the undo puts back.

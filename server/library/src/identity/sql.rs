@@ -55,6 +55,32 @@ droppedneedle_kernel::sql! {
              selected_at = excluded.selected_at, row_revision = row_revision + 1 \
              WHERE local_track_external_identities.decision_source IN " + REVISABLE;
 
+    /// Save an album's match. The write itself refuses to put an
+    /// automatic or embedded row over a person's.
+    pub(super) SAVE_ALBUM_IDENTITY = "INSERT INTO local_album_external_identities \
+             (local_album_id, provider, release_group_mbid, release_mbid, decision_source, \
+             selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+             release_group_mbid = excluded.release_group_mbid, \
+             release_mbid = excluded.release_mbid, \
+             decision_source = excluded.decision_source, \
+             selected_at = excluded.selected_at, row_revision = excluded.row_revision \
+             WHERE excluded.decision_source NOT IN " + REVISABLE + " \
+             OR local_album_external_identities.decision_source IN " + REVISABLE;
+    /// Save a track's match, guarded like the album's.
+    pub(super) SAVE_TRACK_IDENTITY = "INSERT INTO local_track_external_identities \
+             (local_track_id, provider, recording_mbid, release_track_mbid, decision_source, \
+             selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+             recording_mbid = excluded.recording_mbid, \
+             release_track_mbid = excluded.release_track_mbid, \
+             decision_source = excluded.decision_source, \
+             selected_at = excluded.selected_at, row_revision = excluded.row_revision \
+             WHERE excluded.decision_source NOT IN " + REVISABLE + " \
+             OR local_track_external_identities.decision_source IN " + REVISABLE;
+    /// The album a track (`?1`) is on.
+    pub(super) TRACK_ALBUM = "SELECT local_album_id FROM local_tracks WHERE id = ?1";
+
     /// Accept an automatic exact edition (`?1`, provider `?2`, group `?3`,
     /// release `?4`, at `?5`).
     pub(super) ACCEPT_ALBUM = "INSERT INTO local_album_external_identities (local_album_id, \

@@ -16,9 +16,12 @@
 //!    same transaction (from the published files' own tags, exactly as a
 //!    scan would index them), so no rescan is needed and nothing shows in
 //!    the library before its file is in place.
-//! 4. The album and its tracks get an automatic MusicBrainz identity from
-//!    the match, unless a person decided them, and the release document is
-//!    kept for later retags.
+//! 4. In that same transaction the album and its tracks get an automatic
+//!    MusicBrainz identity from the match, unless a person decided them
+//!    ([`crate::identity::adopt_import`]), and the album is queued for
+//!    automatic management. A stop at any point leaves both or neither.
+//!    The release document the match names is kept for later retags
+//!    before anything moves, so the commit makes no outside call.
 //!
 //! A file that replaces library tracks (an upgrade, or another version of
 //! its track) takes their files away in the same bundle: every old file is
@@ -57,8 +60,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
+use droppedneedle_kernel::db::Lane;
+
 use super::clock::{now_ms, today_day};
-use super::identify::sqlite::{ImportSeal, ImportTrack};
 use super::matching::Release;
 use super::publish::planner::{
     AlbumJoin, Capability, FileFingerprint, JoinedTrack, PlanBundle, PlanItem, PlanKind,
@@ -297,6 +301,12 @@ impl LibrarySetup {
                 replaces,
             });
         }
+
+        // The commit seals the match against this document and makes no
+        // outside call, so it is kept first.
+        self.identify_store
+            .save_release(&import.release, Lane::Background)
+            .map_err(|error| fault(format!("the release document was not kept: {error}")))?;
 
         let mut cell = self
             .publish
@@ -647,22 +657,25 @@ impl LibrarySetup {
         let bundle = result?;
         drop(cell);
 
-        let first = &bundle.items[0].track_id;
+        // The commit sealed the match on this album and queued it for
+        // automatic management.
+        let tracks: Vec<&str> = bundle
+            .items
+            .iter()
+            .map(|item| item.track_id.as_str())
+            .collect();
         let album_id = self
-            .scan_store
-            .album_for_track(first)
+            .db
+            .read_blocking("import.album", |conn| {
+                Ok::<_, PublishError>(crate::identity::import_album(conn, &tracks)?)
+            })
             .map_err(|error| fault(format!("the catalog could not be read: {error}")))?
             .ok_or_else(|| fault("imported track is not in the catalog".to_owned()))?;
-        let joined = joined.is_some_and(|joined| joined.album_id == album_id);
-        self.seal_import_identity(&album_id, import, &bundle, joined);
         let paths = bundle
             .items
             .iter()
             .map(|item| root.path.join(&item.dest_rel))
             .collect();
-        // Automatic management runs the folder's profile on it once the
-        // catalog settles, when the folder asks for that.
-        self.queue_automatic_management(&album_id);
         Ok(ImportedAlbum {
             bundle_id: bundle.id.clone(),
             album_id,
@@ -788,54 +801,6 @@ impl LibrarySetup {
             }
         }
         Ok(Ok(targets))
-    }
-
-    /// The match is the identity: seal the album and its tracks as an
-    /// automatic MusicBrainz identification, unless a person already
-    /// decided them, and keep the release document for retags, in one
-    /// transaction. Files that joined the album they were fetched for
-    /// (`joined`) seal only their tracks: a few fetched tracks never
-    /// confirm the album's match. When the seal does not land, the album
-    /// is offered to identification instead.
-    fn seal_import_identity(
-        &self,
-        album_id: &str,
-        import: &DownloadImport,
-        bundle: &PlanBundle,
-        joined: bool,
-    ) {
-        let store = &self.identify_store;
-        let seal = ImportSeal {
-            local_album_id: album_id,
-            release: &import.release,
-            joined,
-            tracks: bundle
-                .items
-                .iter()
-                // Extra files carry no recording: nothing to seal.
-                .filter(|item| !item.identity.recording_mbid.is_empty())
-                .map(|item| ImportTrack {
-                    local_track_id: item.track_id.clone(),
-                    recording_mbid: item.identity.recording_mbid.clone(),
-                    release_track_mbid: item.identity.release_track_mbid.clone(),
-                })
-                .collect(),
-        };
-        let Err(error) = store.seal_import(&seal) else {
-            return;
-        };
-        tracing::error!(
-            %error,
-            album = album_id,
-            "the import's match was not sealed; the album is offered to identification"
-        );
-        if let Err(error) = store.offer(album_id) {
-            tracing::error!(
-                %error,
-                album = album_id,
-                "the imported album could not be offered to identification"
-            );
-        }
     }
 }
 

@@ -2071,6 +2071,94 @@ async fn a_fetched_track_joins_a_copy_matched_automatically() {
     );
 }
 
+// An import's match and its automatic-management queueing are part of the
+// catalog commit that adds its files, so a stop around that commit never
+// leaves one without the other: stopped right after it, the file already
+// holds its identity and the album is queued; stopped just before it, the
+// commit recovery resumes seals and queues the same way.
+#[tokio::test]
+async fn an_import_stopped_around_its_commit_keeps_its_match() {
+    use droppedneedle_library::publish::CrashPoint;
+    for point in [
+        CrashPoint::AfterCatalogCommit,
+        CrashPoint::BeforeCatalogCommit,
+    ] {
+        let lengths = fixture_lengths();
+        let e = editions(1, &lengths);
+        let rig = join_rig(vec![e.old.clone(), e.new.clone()]).await;
+        rig.plant(&copy_rel(1, MYSTERONS), 0, &e.old);
+        rig.scan().await;
+        let album = rig.album_of(&rig.track_at(&copy_rel(1, MYSTERONS)));
+        rig.set_edition(&album, &e.group, &e.new.id, "automatic");
+        rig.sql("DELETE FROM library_management_automatic_queue");
+        rig.ask(
+            "t-stop",
+            &e.group,
+            &e.new.title,
+            "user",
+            Some(&e.new.id),
+            Some((&album, &e.new.id)),
+            &[(2, 1)],
+        )
+        .await;
+        let row = rig.task("t-stop").await;
+        let manifest = droppedneedle_acquire::downloads::ManifestCodec
+            .decode(&serde_json::to_vec(&rig.manifest("t-stop")).expect("bytes"))
+            .expect("manifest");
+        let landed = rig.landed("t-stop", &e.new, 1, FIXTURES[1]);
+        rig.library.arm_publish_crash(Some(point));
+        rig.acquire
+            .landing
+            .land(
+                &row,
+                None,
+                Some(&manifest),
+                Landed {
+                    files: vec![Reported {
+                        path: landed,
+                        size: None,
+                    }],
+                    mounts: vec![rig.downloads.clone()],
+                },
+                false,
+            )
+            .await;
+        rig.library.arm_publish_crash(None);
+        if point == CrashPoint::BeforeCatalogCommit {
+            rig.library.publish_tick().expect("recovery runs");
+        }
+
+        let (track, on, _, _, availability) = rig.row_at(&copy_rel(1, SOUR_TIMES)).await;
+        assert_eq!(
+            (on.as_str(), availability.as_str()),
+            (album.as_str(), "indexed"),
+            "{point:?}"
+        );
+        let identity = rig
+            .identity(&track)
+            .await
+            .unwrap_or_else(|| panic!("sealed with the commit at {point:?}"));
+        assert_eq!(
+            (identity.2.as_deref(), identity.5.as_str()),
+            (
+                Some(placed_on(&e.new, 1).2.as_deref().unwrap_or_default()),
+                "automatic"
+            ),
+            "{point:?}"
+        );
+        let queued: i64 = rig
+            .scalar(&format!(
+                "SELECT COUNT(*) FROM library_management_automatic_queue \
+                 WHERE local_album_id = '{album}'"
+            ))
+            .await;
+        assert_eq!(
+            queued, 1,
+            "queued for automatic management with the commit at {point:?}"
+        );
+    }
+}
+
 // An upgrade lands in the album its old copy was on, on the edition a
 // person chose, even when the copy's files carry another edition's tags;
 // the old copy's play follows. With two copies of the album, "Get missing
