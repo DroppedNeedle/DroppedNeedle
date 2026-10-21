@@ -14,11 +14,11 @@ use tokio::sync::Semaphore;
 use unicode_normalization::UnicodeNormalization;
 
 use super::client::SlskdClient;
-use super::error::SlskdError;
 use super::http::SlskdHttp;
 use super::models::{SlskdEnqueueResponse, SlskdTransfer, SlskdUserSearchResponse};
 use super::policy::DownloadPolicy;
 use super::query::{album_query_ladder, track_query_ladder};
+use crate::client_error::{ClientError, Service};
 
 /// How many finished transfers the mount diagnosis tries to locate under
 /// the mount (v2 `_DIAGNOSIS_SAMPLE`). Small: it is a settings-page check
@@ -176,14 +176,10 @@ impl<T: SlskdHttp> SlskdRepository<T> {
 
     pub async fn health_check(&self) -> ServiceStatus {
         match self.client.health_check().await {
-            Err(SlskdError::Auth { status, detail }) => {
+            Err(ClientError::Auth { status, detail, .. }) => {
                 // Wrong key and key-CIDR deny are both 401 server-side: one
                 // uniform message, never the URL/host/key/headers (v2).
-                let code = if status == 401 || status == 403 {
-                    status
-                } else {
-                    401
-                };
+                let code = status.unwrap_or(401);
                 let mut message = format!(
                     "Authentication rejected ({code}): check the API key and slskd's CIDR allowlist"
                 );
@@ -236,7 +232,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         artist_name: &str,
         album_title: &str,
         year: Option<i32>,
-    ) -> Result<Vec<SearchResult>, SlskdError> {
+    ) -> Result<Vec<SearchResult>, ClientError> {
         for query in album_query_ladder(artist_name, album_title, year) {
             let results = self.run_search(&query).await?;
             if !results.is_empty() {
@@ -254,7 +250,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         artist_name: &str,
         track_title: &str,
         album_title: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SlskdError> {
+    ) -> Result<Vec<SearchResult>, ClientError> {
         for query in track_query_ladder(artist_name, track_title, album_title) {
             let results = self.run_search(&query).await?;
             if !results.is_empty() {
@@ -268,10 +264,11 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     /// (username, filenames) since slskd returns no batch GUID (v2).
     /// Serialized via the enqueue semaphore; the client retries the 429
     /// "only one concurrent operation" with backoff (v2).
-    pub async fn enqueue(&self, files: &[EnqueueFile]) -> Result<TaskHandle, SlskdError> {
-        let first = files
-            .first()
-            .ok_or_else(|| SlskdError::Decode("enqueue requires at least one file".to_owned()))?;
+    pub async fn enqueue(&self, files: &[EnqueueFile]) -> Result<TaskHandle, ClientError> {
+        let first = files.first().ok_or_else(|| ClientError::BadRequest {
+            service: Service::Slskd,
+            detail: "enqueue requires at least one file".to_owned(),
+        })?;
         let username = first.username.clone();
         let requested: Vec<String> = files.iter().map(|file| file.filename.clone()).collect();
         let payload: Vec<(String, i64)> = files
@@ -282,7 +279,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
             .enqueue_permits
             .acquire()
             .await
-            .map_err(|err| SlskdError::Transport(err.to_string()))?;
+            .map_err(|err| ClientError::transport(Service::Slskd, err.to_string()))?;
         let result = self.client.enqueue(&username, &payload).await?;
         if !result.failed.is_empty() {
             tracing::warn!(
@@ -302,7 +299,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 
     /// Aggregate per-file status for one task.
-    pub async fn get_status(&self, handle: &TaskHandle) -> Result<TaskStatus, SlskdError> {
+    pub async fn get_status(&self, handle: &TaskHandle) -> Result<TaskStatus, ClientError> {
         let transfers = self.client.get_downloads(&handle.username).await?;
         let matched = match_transfers(handle, &transfers);
         Ok(aggregate_status(handle, &matched))
@@ -310,15 +307,15 @@ impl<T: SlskdHttp> SlskdRepository<T> {
 
     /// Remove the transfer records for one task (v2 `abort` /
     /// `discard_client_artifacts` / `_remove_transfer_records`).
-    pub async fn abort(&self, handle: &TaskHandle) -> Result<bool, SlskdError> {
+    pub async fn abort(&self, handle: &TaskHandle) -> Result<bool, ClientError> {
         self.remove_transfer_records(handle).await
     }
 
-    pub async fn discard_client_artifacts(&self, handle: &TaskHandle) -> Result<bool, SlskdError> {
+    pub async fn discard_client_artifacts(&self, handle: &TaskHandle) -> Result<bool, ClientError> {
         self.remove_transfer_records(handle).await
     }
 
-    async fn remove_transfer_records(&self, handle: &TaskHandle) -> Result<bool, SlskdError> {
+    async fn remove_transfer_records(&self, handle: &TaskHandle) -> Result<bool, ClientError> {
         let transfers = self.client.get_downloads(&handle.username).await?;
         let matched = match_transfers(handle, &transfers);
         let mut ok = true;
@@ -417,7 +414,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         handle: &TaskHandle,
         remote_filename: &str,
         size: Option<i64>,
-    ) -> Result<Option<PathBuf>, SlskdError> {
+    ) -> Result<Option<PathBuf>, ClientError> {
         let locator = super::locate::Locator::new(
             self.downloads_mount.clone(),
             self.incomplete_mount.clone(),
@@ -426,7 +423,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         let remote = remote_filename.to_owned();
         tokio::task::spawn_blocking(move || locator.locate_file(&username, &remote, size))
             .await
-            .map_err(|err| SlskdError::Transport(err.to_string()))
+            .map_err(|err| ClientError::transport(Service::Slskd, err.to_string()))
     }
 
     /// Basename-keyed partial fallback confined to the incomplete mount
@@ -438,7 +435,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         handle: &TaskHandle,
         remote_filename: &str,
         size: Option<i64>,
-    ) -> Result<Option<PathBuf>, SlskdError> {
+    ) -> Result<Option<PathBuf>, ClientError> {
         let locator = super::locate::Locator::new(
             self.downloads_mount.clone(),
             self.incomplete_mount.clone(),
@@ -447,17 +444,17 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         let remote = remote_filename.to_owned();
         tokio::task::spawn_blocking(move || locator.locate_partial(&username, &remote, size))
             .await
-            .map_err(|err| SlskdError::Transport(err.to_string()))
+            .map_err(|err| ClientError::transport(Service::Slskd, err.to_string()))
     }
 
     /// Run one query rung: start the search, then poll past the search
     /// window by the completion grace (v2 `_run_search`).
-    async fn run_search(&self, query: &str) -> Result<Vec<SearchResult>, SlskdError> {
+    async fn run_search(&self, query: &str) -> Result<Vec<SearchResult>, ClientError> {
         let _permit = self
             .search_permits
             .acquire()
             .await
-            .map_err(|err| SlskdError::Transport(err.to_string()))?;
+            .map_err(|err| ClientError::transport(Service::Slskd, err.to_string()))?;
         let timeout = self.policy.search_timeout;
         let search = self.client.start_search(query, timeout).await?;
         let deadline = tokio::time::Instant::now() + timeout + self.policy.completion_grace;

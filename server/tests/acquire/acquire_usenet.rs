@@ -6,6 +6,7 @@
 //! multipart add; Newznab's 202 fallback; Prowlarr's never-logged key).
 //! Transport is real HTTP over `127.0.0.1` only: no live contact, ever.
 
+use droppedneedle_acquire::client_error::ClientError;
 use droppedneedle_acquire::usenet;
 
 use std::path::PathBuf;
@@ -20,9 +21,9 @@ use usenet::newznab::{
     normalize_newznab_query, usenet_identity,
 };
 use usenet::policy::UsenetPolicy;
-use usenet::prowlarr::{ProwlarrClient, ProwlarrError, ProwlarrRelease};
+use usenet::prowlarr::{ProwlarrClient, ProwlarrIndexerInfo, ProwlarrRelease};
 use usenet::sabnzbd::{
-    HistorySlot, NzbFetchError, SabnzbdClient, SabnzbdError, SabnzbdQueue, TaskHandle,
+    HistorySlot, NzbFetchError, QueueSlot, SabnzbdClient, SabnzbdError, SabnzbdQueue, TaskHandle,
     redact_query_secrets,
 };
 
@@ -285,7 +286,7 @@ async fn sab_retry_discipline() {
         .await
         .expect_err("add is not retried");
     assert!(
-        matches!(err, SabnzbdError::Http { status: 500, .. }),
+        matches!(&err, SabnzbdError::Client(ClientError::Unavailable { detail, .. }) if detail == "HTTP 500"),
         "{err:?}"
     );
     let add_calls = mock
@@ -1251,7 +1252,10 @@ async fn newznab_deeply_nested_document_is_refused() {
         .caps(TIMEOUT)
         .await
         .expect_err("too deep");
-    assert!(matches!(err, NewznabError::Unparseable(_)), "{err:?}");
+    assert!(
+        matches!(err, NewznabError::Client(ClientError::Decode { .. })),
+        "{err:?}"
+    );
 }
 
 /// A body past the cap is refused while it is being read, whatever it
@@ -1265,7 +1269,10 @@ async fn oversized_indexer_bodies_are_refused() {
         .search("x", &[], 0, 100, TIMEOUT)
         .await
         .expect_err("too large");
-    assert!(matches!(err, NewznabError::Unparseable(_)), "{err:?}");
+    assert!(
+        matches!(err, NewznabError::Client(ClientError::Decode { .. })),
+        "{err:?}"
+    );
 
     let rows = format!("[{}]", " ".repeat(usenet::MAX_INDEXER_BODY_BYTES));
     let (base, _server) = serve_streamed(rows.into_bytes()).await;
@@ -1273,7 +1280,7 @@ async fn oversized_indexer_bodies_are_refused() {
         .search("x", &[], &[], 100, TIMEOUT)
         .await
         .expect_err("too large");
-    assert!(matches!(err, ProwlarrError::Decode(_)), "{err:?}");
+    assert!(matches!(err, ClientError::Decode { .. }), "{err:?}");
 }
 
 /// An NZB or a SABnzbd answer past its cap is an error, however the
@@ -1300,7 +1307,10 @@ async fn oversized_nzbs_and_sabnzbd_answers_are_refused() {
         .queue(TIMEOUT)
         .await
         .expect_err("too large");
-    assert!(matches!(err, SabnzbdError::ResponseTooLarge), "{err:?}");
+    assert!(
+        matches!(err, SabnzbdError::Client(ClientError::Decode { .. })),
+        "{err:?}"
+    );
 }
 
 /// If SABnzbd's failure text for a job quotes the URL it was given, the
@@ -1378,7 +1388,10 @@ async fn sab_transport_errors_never_carry_the_url() {
     let client = || SabnzbdClient::new(http(), &base, MARKER, 1, Duration::from_millis(1));
 
     let err = client().queue(TIMEOUT).await.expect_err("refused");
-    assert!(matches!(err, SabnzbdError::Transport(_)), "{err:?}");
+    assert!(
+        matches!(err, SabnzbdError::Client(ClientError::Unavailable { .. })),
+        "{err:?}"
+    );
     assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
 
     let err = client()
@@ -1603,4 +1616,107 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
         .await
         .expect_err("unknown task rejects");
     assert!(matches!(err, SourceError::Rejected(_)));
+}
+
+// ---------------------------------------------------------------------------
+// One error for every client.
+// ---------------------------------------------------------------------------
+
+/// The statuses each mock answers in turn: a wrong key, a missing item, a
+/// bad request, and a rate limit naming its wait.
+const REFUSALS: [(u16, Option<&str>); 4] =
+    [(401, None), (404, None), (400, None), (429, Some("5"))];
+
+/// The four refusals came back as four different errors, the rate limit
+/// with its wait.
+fn assert_distinct(errors: &[ClientError]) {
+    assert!(
+        matches!(
+            errors[0],
+            ClientError::Auth {
+                status: Some(401),
+                ..
+            }
+        ),
+        "{errors:?}"
+    );
+    assert!(
+        matches!(errors[1], ClientError::NotFound { .. }),
+        "{errors:?}"
+    );
+    assert!(
+        matches!(errors[2], ClientError::BadRequest { .. }),
+        "{errors:?}"
+    );
+    assert_eq!(
+        errors[3].retry_after(),
+        Some(Duration::from_secs(5)),
+        "{errors:?}"
+    );
+}
+
+/// SABnzbd, Newznab and Prowlarr each keep a wrong key, a missing item, a
+/// bad request and a rate limit apart.
+#[tokio::test]
+async fn statuses_map_to_distinct_client_errors() {
+    let sab = SabnzbdMock::new();
+    let (base, _sab) = serve_loopback(sab.router()).await.expect("mock serves");
+    let client = sab_client(&base);
+    let mut errors = Vec::new();
+    for (status, wait) in REFUSALS {
+        sab.statuses().answer_next(status, wait);
+        match client.version(TIMEOUT).await.expect_err("scripted") {
+            SabnzbdError::Client(error) => errors.push(error),
+            other => panic!("not a client error: {other:?}"),
+        }
+    }
+    assert_distinct(&errors);
+
+    let newznab = NewznabMock::new();
+    let (base, _newznab) = serve_loopback(newznab.router(NewznabScenario::DrunkenSlug))
+        .await
+        .expect("mock serves");
+    let client = newznab_client(&base, "ds", "DrunkenSlug");
+    let mut errors = Vec::new();
+    for (status, wait) in REFUSALS {
+        newznab.statuses().answer_next(status, wait);
+        match client.caps(TIMEOUT).await.expect_err("scripted") {
+            NewznabError::Client(error) => errors.push(error),
+            other => panic!("not a client error: {other:?}"),
+        }
+    }
+    assert_distinct(&errors);
+
+    let prowlarr = ProwlarrMock::new();
+    let (base, _prowlarr) = serve_loopback(prowlarr.router(ProwlarrScenario::default()))
+        .await
+        .expect("mock serves");
+    let client = prowlarr_client(&base);
+    let mut errors = Vec::new();
+    for (status, wait) in REFUSALS {
+        prowlarr.statuses().answer_next(status, wait);
+        errors.push(client.list_indexers(TIMEOUT).await.expect_err("scripted"));
+    }
+    assert_distinct(&errors);
+}
+
+/// A row missing its identity field fails decoding instead of reading as
+/// an empty id.
+#[test]
+fn rows_without_their_identity_fail_to_decode() {
+    let queue = serde_json::json!({"status": "Downloading", "filename": "job"});
+    assert!(serde_json::from_value::<QueueSlot>(queue).is_err());
+    let history = serde_json::json!({"nzo_id": "nzo-1", "status": "Completed"});
+    assert!(serde_json::from_value::<HistorySlot>(history).is_err());
+
+    let release = serde_json::json!({
+        "title": "Radiohead - In Rainbows (2007) [FLAC]",
+        "size": 2315726631_i64,
+        "indexerId": 7,
+        "protocol": "usenet",
+        "downloadUrl": "https://prowlarr.test/9/download",
+    });
+    assert!(serde_json::from_value::<ProwlarrRelease>(release).is_err());
+    let member = serde_json::json!({"name": "NZBGeek", "protocol": "usenet", "enable": true});
+    assert!(serde_json::from_value::<ProwlarrIndexerInfo>(member).is_err());
 }

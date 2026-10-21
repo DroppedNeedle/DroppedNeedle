@@ -884,10 +884,8 @@ async fn newznab_failure(
 /// Prowlarr failure mapping: auth and rate-limit verdicts name the
 /// cause; anything else is a reachability verdict. The URL is never
 /// echoed.
-fn prowlarr_failure(
-    error: &droppedneedle_acquire::usenet::prowlarr::ProwlarrError,
-) -> ProwlarrVerdict {
-    use droppedneedle_acquire::usenet::prowlarr::ProwlarrError as Source;
+fn prowlarr_failure(error: &droppedneedle_acquire::client_error::ClientError) -> ProwlarrVerdict {
+    use droppedneedle_acquire::client_error::ClientError as Source;
     let message = match error {
         Source::Auth { .. } => {
             "Prowlarr rejected the API key. Check the key in Prowlarr.".to_owned()
@@ -964,11 +962,14 @@ fn api_path_suggestion(url: &str) -> Option<String> {
 /// auth error, or a rate limit all mean the API was reached; anything
 /// else means the suggestion is wrong too.
 async fn reaches_newznab(http: &reqwest::Client, url: &str, key: &str) -> bool {
+    use droppedneedle_acquire::client_error::ClientError;
     use droppedneedle_acquire::usenet::newznab::{NewznabClient, NewznabError};
     let client = NewznabClient::new(http.clone(), url, key, "", "");
     match client.caps(PROBE_TIMEOUT).await {
         Ok(caps) => !caps_are_empty(&caps),
-        Err(NewznabError::Auth { .. } | NewznabError::RateLimited { .. }) => true,
+        Err(NewznabError::Client(ClientError::Auth { .. } | ClientError::RateLimited { .. })) => {
+            true
+        }
         Err(_) => false,
     }
 }

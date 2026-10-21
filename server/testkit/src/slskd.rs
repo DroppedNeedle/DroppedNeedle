@@ -33,6 +33,8 @@ use axum::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::scripted::ScriptedStatuses;
+
 /// API key the mock accepts when strict mode is armed.
 pub const MOCK_API_KEY: &str = "slskd-test-key";
 
@@ -591,6 +593,7 @@ fn router(state: AppState) -> axum::Router {
 /// A running mock slskd server on loopback, with scriptable fault modes.
 pub struct MockSlskd {
     state: AppState,
+    statuses: ScriptedStatuses,
     addr: SocketAddr,
 }
 
@@ -611,11 +614,16 @@ impl MockSlskd {
         let addr = listener
             .local_addr()
             .map_err(|error| format!("mock has an address: {error}"))?;
-        let app = router(state.clone());
+        let statuses = ScriptedStatuses::default();
+        let app = statuses.layer(router(state.clone()));
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
-        Ok(Self { state, addr })
+        Ok(Self {
+            state,
+            statuses,
+            addr,
+        })
     }
 
     #[must_use]
@@ -641,6 +649,12 @@ impl MockSlskd {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .scripted_responses = Some(responses);
+    }
+
+    /// Error statuses the next requests answer with, and the request count.
+    #[must_use]
+    pub fn statuses(&self) -> &ScriptedStatuses {
+        &self.statuses
     }
 
     /// The next search answers 429 once (slskd single-op limit).
@@ -775,5 +789,6 @@ impl MockSlskd {
         guard.in_flight = 0;
         guard.max_in_flight = 0;
         guard.handler_delay_ms = 0;
+        self.statuses.reset();
     }
 }

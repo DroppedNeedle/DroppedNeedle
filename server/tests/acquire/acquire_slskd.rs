@@ -10,15 +10,19 @@
 //! and policy tests (recipe validation/ranking, lossless ladder, query
 //! construction). No live contact ever.
 
+use droppedneedle_acquire::client_error::{ClientError, Service};
 use droppedneedle_acquire::slskd;
 
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::common::bundles::quiet_ticks;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use slskd::{
-    DownloadPolicy, EnqueueFile, Locator, QualityRecipeEntry, ReqwestSlskdHttp, SlskdClient,
-    SlskdRepository, TaskHandle, aggregate_status, album_query_ladder, match_transfers,
+    DownloadPolicy, EnqueueFile, HttpFault, HttpReply, Locator, QualityRecipeEntry,
+    ReqwestSlskdHttp, SlskdClient, SlskdHttp, SlskdRepository, SlskdSearchResponse,
+    SlskdUserSearchResponse, TaskHandle, aggregate_status, album_query_ladder, match_transfers,
     validate_quality_recipe,
 };
 
@@ -72,7 +76,7 @@ async fn transport_errors_never_carry_the_url() {
     ));
 
     let err = client.health_check().await.expect_err("refused");
-    assert!(matches!(err, slskd::SlskdError::Transport(_)), "{err:?}");
+    assert!(matches!(err, ClientError::Unavailable { .. }), "{err:?}");
     let shown = format!("{err} {err:?}");
     assert!(!shown.contains(MARKER), "{shown}");
 }
@@ -206,6 +210,129 @@ async fn enqueue_429_is_retried_with_backoff() {
         .expect("one 429 is retried into success");
 
     assert_eq!(handle.filenames, vec!["a.flac".to_owned()]);
+}
+
+/// A 429 whose `Retry-After` asks for longer than a call may wait is not
+/// hammered: the call stops at once and carries the wait to its caller.
+#[tokio::test]
+async fn a_long_retry_after_is_returned_not_retried() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    for _ in 0..4 {
+        mock.statuses().answer_next(429, Some("3600"));
+    }
+    let client = SlskdClient::new(ReqwestSlskdHttp::new(
+        reqwest::Client::new(),
+        &mock.base_url(),
+        MOCK_API_KEY,
+    ));
+
+    let err = client.health_check().await.expect_err("rate limited");
+
+    assert_eq!(
+        err,
+        ClientError::RateLimited {
+            service: Service::Slskd,
+            retry_after: Some(Duration::from_secs(3600)),
+        }
+    );
+    assert_eq!(mock.statuses().requests(), 1, "no retry inside the wait");
+}
+
+/// Scripted slskd answers, served in order, for the paused-clock test.
+struct ScriptedHttp(Mutex<VecDeque<HttpReply>>);
+
+impl ScriptedHttp {
+    fn next(&self) -> Result<HttpReply, HttpFault> {
+        self.0
+            .lock()
+            .expect("lock")
+            .pop_front()
+            .ok_or_else(|| HttpFault("no scripted answer left".to_owned()))
+    }
+}
+
+impl SlskdHttp for ScriptedHttp {
+    async fn get(&self, _: &str, _: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
+        self.next()
+    }
+    async fn post(&self, _: &str, _: Vec<u8>) -> Result<HttpReply, HttpFault> {
+        self.next()
+    }
+    async fn delete(&self, _: &str, _: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
+        self.next()
+    }
+}
+
+/// A 429 naming a short wait is waited out in full, then retried.
+#[tokio::test(start_paused = true)]
+async fn a_short_retry_after_is_waited_out_then_retried() {
+    let client = SlskdClient::new(ScriptedHttp(Mutex::new(VecDeque::from([
+        HttpReply {
+            status: 429,
+            retry_after: Some(Duration::from_secs(7)),
+            body: Vec::new(),
+        },
+        HttpReply {
+            status: 200,
+            retry_after: None,
+            body: br#"{"version": {"current": "0.25.1.0"}}"#.to_vec(),
+        },
+    ]))));
+    let started = tokio::time::Instant::now();
+
+    client.health_check().await.expect("retried into success");
+
+    assert!(
+        started.elapsed() >= Duration::from_secs(7),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+/// Each refusal keeps its own meaning: a wrong key, a missing item, a bad
+/// request and a rate limit with its wait never fold into one another.
+#[tokio::test]
+async fn statuses_map_to_distinct_client_errors() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    let client = SlskdClient::new(ReqwestSlskdHttp::new(
+        reqwest::Client::new(),
+        &mock.base_url(),
+        MOCK_API_KEY,
+    ));
+    let mut seen = Vec::new();
+    for (status, retry_after) in [(401, None), (404, None), (400, None), (429, Some("3600"))] {
+        mock.statuses().answer_next(status, retry_after);
+        seen.push(client.get_options().await.expect_err("scripted status"));
+    }
+
+    assert!(
+        matches!(
+            seen[0],
+            ClientError::Auth {
+                status: Some(401),
+                ..
+            }
+        ),
+        "{seen:?}"
+    );
+    assert!(matches!(seen[1], ClientError::NotFound { .. }), "{seen:?}");
+    assert!(
+        matches!(seen[2], ClientError::BadRequest { .. }),
+        "{seen:?}"
+    );
+    assert_eq!(seen[3].retry_after(), Some(Duration::from_secs(3600)));
+}
+
+/// An answer missing its identity field fails decoding instead of
+/// reading as an empty id.
+#[test]
+fn answers_without_their_identity_fail_to_decode() {
+    let search = serde_json::json!({"state": "Completed, Succeeded", "isComplete": true});
+    assert!(serde_json::from_value::<SlskdSearchResponse>(search).is_err());
+    let peer = serde_json::json!({"files": [{"filename": "a.flac", "size": 1}]});
+    assert!(serde_json::from_value::<SlskdUserSearchResponse>(peer).is_err());
+    let nameless = serde_json::json!({"username": "alice", "files": [{"size": 1}]});
+    assert!(serde_json::from_value::<SlskdUserSearchResponse>(nameless).is_err());
 }
 
 #[tokio::test]

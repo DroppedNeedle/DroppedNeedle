@@ -17,44 +17,49 @@ use std::time::{Duration, Instant};
 use futures_util::future::BoxFuture;
 use reqwest::Client;
 use serde::Deserialize;
-use thiserror::Error;
 
 use super::indexer::{Indexer, IndexerQuery};
 use super::newznab::{
     IndexerHealth, IndexerResult, UsenetRelease, normalize_newznab_query, parse_rfc2822_date,
 };
 use super::{MAX_INDEXER_BODY_BYTES, read_indexer_body};
+use crate::client_error::{ClientError, Service, retry_after};
 use crate::downloads::source_tag::SourceTag;
 use droppedneedle_kernel::http_client::{BodyError, transport_error};
 
 // ---------------------------------------------------------------------------
-// Wire models (v2 `prowlarr_models.py`: devopsarr/prowlarr-py shapes,
-// tolerant defaults so absent/unknown fields never break decode).
+// Wire models (v2 `prowlarr_models.py`: devopsarr/prowlarr-py shapes).
+//
+// Verified live against Prowlarr 2.3.5.5327 under v2 (that run's date is
+// not recorded). Each model was checked again on 2026-10-21 against the
+// in-repo `ProwlarrMock` in the testkit crate, the recording of those
+// answers (its `system/status` serves the version text "1.32.2.4987").
+// Unknown fields are ignored. Identity fields are required: a row without
+// one fails decoding instead of reading as an empty id.
 // ---------------------------------------------------------------------------
 
 /// One category row inside a release.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProwlarrCategory {
-    /// Newznab category id.
-    #[serde(default)]
+    /// Newznab category id. Required.
     pub id: i32,
 }
 
 /// One `ReleaseResource` from `/api/v1/search` (usenet + torrent mixed;
-/// the client filters to `protocol == "usenet"` with a usable URL). Debug
-/// is hand-written: the download URL embeds `?apikey=`.
+/// the client filters to `protocol == "usenet"` with a usable URL). The
+/// guid, title, size, member indexer id and protocol are required: they
+/// name the release and its source. Torrent rows carry no `downloadUrl`
+/// (recorded), so it defaults to empty and the row is skipped. Debug is
+/// hand-written: the download URL embeds `?apikey=`.
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProwlarrRelease {
     /// Release guid.
-    #[serde(default)]
     pub guid: String,
     /// Release title.
-    #[serde(default)]
     pub title: String,
     /// Size bytes.
-    #[serde(default)]
     pub size: u64,
     /// File count, when reported.
     #[serde(default)]
@@ -63,7 +68,6 @@ pub struct ProwlarrRelease {
     #[serde(default)]
     pub grabs: Option<i64>,
     /// Member indexer id.
-    #[serde(default)]
     pub indexer_id: i32,
     /// Member indexer name.
     #[serde(default)]
@@ -78,7 +82,6 @@ pub struct ProwlarrRelease {
     #[serde(default)]
     pub magnet_url: String,
     /// `usenet` or `torrent`.
-    #[serde(default)]
     pub protocol: String,
     /// ISO-8601 when present, `""` when absent.
     #[serde(default)]
@@ -112,19 +115,17 @@ impl std::fmt::Debug for ProwlarrRelease {
     }
 }
 
-/// One `IndexerResource` from `GET /api/v1/indexer` (identity + protocol
-/// + enablement for health/count reporting).
+/// One `IndexerResource` from `GET /api/v1/indexer`: identity, protocol
+/// and enablement for health and count reporting. Id, name and protocol
+/// are required; a row without `enable` counts as disabled.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProwlarrIndexerInfo {
     /// Indexer id.
-    #[serde(default)]
     pub id: i32,
     /// Display name.
-    #[serde(default)]
     pub name: String,
     /// `usenet` or `torrent`.
-    #[serde(default)]
     pub protocol: String,
     /// Whether this member is searched.
     #[serde(default)]
@@ -132,62 +133,13 @@ pub struct ProwlarrIndexerInfo {
 }
 
 /// `GET /api/v1/system/status` (subset; degraded-optional: callers must
-/// not hard-fail when it 404s).
+/// not hard-fail when it 404s). A status without a version is not
+/// Prowlarr's.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProwlarrSystemStatus {
     /// Server version.
-    #[serde(default)]
     pub version: String,
-}
-
-// ---------------------------------------------------------------------------
-// Errors.
-// ---------------------------------------------------------------------------
-
-/// Prowlarr failure. Like the Newznab error, auth and rate-limit variants
-/// let the indexer layer stand down without failing anything.
-#[derive(Debug, Clone, Error)]
-pub enum ProwlarrError {
-    /// The request never got an answer (a malformed base URL maps here
-    /// too, the v2 lidarr precedent: never a raw 500). The detail never
-    /// holds the request URL.
-    #[error("Prowlarr request failed: {0}")]
-    Transport(String),
-    /// Instance answered HTTP 4xx/5xx (other than auth/429).
-    #[error("Prowlarr returned HTTP {status}")]
-    Http {
-        /// Status code.
-        status: u16,
-        /// Same as `status`, for parity with v2's `code`.
-        code: u16,
-    },
-    /// HTTP 401/403: the instance rejected the API key.
-    #[error("Prowlarr rejected the API key")]
-    Auth {
-        /// Status code.
-        code: u16,
-    },
-    /// HTTP 429.
-    #[error("Prowlarr rate limited")]
-    RateLimited {
-        /// `Retry-After` seconds, when the header carried a number.
-        retry_after: Option<f64>,
-    },
-    /// A 200 body that isn't the documented JSON (proxy/login page), or
-    /// is too large to read.
-    #[error("Prowlarr response decode failed: {0}")]
-    Decode(String),
-}
-
-impl ProwlarrError {
-    /// `Retry-After` seconds, when rate-limited with a header value.
-    pub fn retry_after(&self) -> Option<f64> {
-        match self {
-            ProwlarrError::RateLimited { retry_after, .. } => *retry_after,
-            _ => None,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -234,10 +186,10 @@ impl ProwlarrClient {
     pub async fn system_status(
         &self,
         timeout: Duration,
-    ) -> Result<Option<ProwlarrSystemStatus>, ProwlarrError> {
+    ) -> Result<Option<ProwlarrSystemStatus>, ClientError> {
         match self.get("/system/status", &[], timeout).await {
             Ok(content) => Ok(Some(decode(&content)?)),
-            Err(ProwlarrError::Http { code: 404, .. }) => Ok(None),
+            Err(ClientError::NotFound { .. }) => Ok(None),
             Err(err) => Err(err),
         }
     }
@@ -246,7 +198,7 @@ impl ProwlarrClient {
     pub async fn list_indexers(
         &self,
         timeout: Duration,
-    ) -> Result<Vec<ProwlarrIndexerInfo>, ProwlarrError> {
+    ) -> Result<Vec<ProwlarrIndexerInfo>, ClientError> {
         let content = self.get("/indexer", &[], timeout).await?;
         decode(&content)
     }
@@ -261,7 +213,7 @@ impl ProwlarrClient {
         indexer_ids: &[i32],
         limit: u32,
         timeout: Duration,
-    ) -> Result<Vec<UsenetRelease>, ProwlarrError> {
+    ) -> Result<Vec<UsenetRelease>, ClientError> {
         let mut params: Vec<(String, String)> = vec![("query".to_owned(), query.to_owned())];
         for cat in categories {
             params.push(("categories".to_owned(), cat.to_string()));
@@ -320,7 +272,7 @@ impl ProwlarrClient {
         path: &str,
         params: &[(String, String)],
         timeout: Duration,
-    ) -> Result<Vec<u8>, ProwlarrError> {
+    ) -> Result<Vec<u8>, ClientError> {
         let url = format!("{}{path}", self.api_base());
         let refs: Vec<(&str, &str)> = params
             .iter()
@@ -334,29 +286,25 @@ impl ProwlarrClient {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|err| ProwlarrError::Transport(transport_error(err)))?;
+            .map_err(|err| ClientError::transport(Service::Prowlarr, transport_error(err)))?;
         let status = response.status().as_u16();
-        if status == 401 || status == 403 {
-            return Err(ProwlarrError::Auth { code: status });
-        }
-        if status == 429 {
-            return Err(ProwlarrError::RateLimited {
-                retry_after: retry_after(&response),
-            });
-        }
         if status >= 400 {
-            return Err(ProwlarrError::Http {
+            let wait = retry_after(response.headers());
+            return Err(ClientError::for_status(
+                Service::Prowlarr,
                 status,
-                code: status,
-            });
+                wait,
+                b"",
+            ));
         }
         read_indexer_body(response)
             .await
             .map_err(|error| match error {
-                BodyError::TooLarge => ProwlarrError::Decode(format!(
-                    "response is larger than {MAX_INDEXER_BODY_BYTES} bytes"
-                )),
-                BodyError::Transport(detail) => ProwlarrError::Transport(detail),
+                BodyError::TooLarge => ClientError::decode(
+                    Service::Prowlarr,
+                    format!("response is larger than {MAX_INDEXER_BODY_BYTES} bytes"),
+                ),
+                BodyError::Transport(detail) => ClientError::transport(Service::Prowlarr, detail),
             })
     }
 
@@ -365,17 +313,9 @@ impl ProwlarrClient {
     }
 }
 
-fn decode<T: serde::de::DeserializeOwned>(content: &[u8]) -> Result<T, ProwlarrError> {
-    serde_json::from_slice(content).map_err(|err| ProwlarrError::Decode(err.to_string()))
-}
-
-fn retry_after(response: &reqwest::Response) -> Option<f64> {
-    response
-        .headers()
-        .get("retry-after")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|raw| raw.trim().parse::<f64>().ok())
-        .map(|seconds| seconds.max(0.0))
+fn decode<T: serde::de::DeserializeOwned>(content: &[u8]) -> Result<T, ClientError> {
+    serde_json::from_slice(content)
+        .map_err(|err| ClientError::decode(Service::Prowlarr, err.to_string()))
 }
 
 /// `publishDate` (ISO-8601 when present) → unix time. ISO first, then the
@@ -634,10 +574,8 @@ impl ProwlarrIndexer {
                 }
                 (releases, true)
             }
-            Err(ProwlarrError::RateLimited { retry_after }) => {
-                let backoff = retry_after
-                    .map(Duration::from_secs_f64)
-                    .unwrap_or(self.rate_limit_backoff);
+            Err(ClientError::RateLimited { retry_after, .. }) => {
+                let backoff = retry_after.unwrap_or(self.rate_limit_backoff);
                 if let Ok(mut guard) = self.backoff_until.lock() {
                     *guard = Some(now + backoff);
                 }
@@ -647,7 +585,7 @@ impl ProwlarrIndexer {
                 );
                 (Vec::new(), false)
             }
-            Err(err @ ProwlarrError::Auth { .. }) => {
+            Err(err @ ClientError::Auth { .. }) => {
                 tracing::warn!(error = err.to_string().as_str(), "prowlarr auth failed");
                 (Vec::new(), false)
             }

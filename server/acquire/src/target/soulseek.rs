@@ -8,8 +8,9 @@
 
 use super::SearchTarget;
 use super::reasons::TrackReason;
+use crate::client_error::ClientError;
 use crate::slskd::folders::{FolderPick, RankRequest, rank_folders};
-use crate::slskd::{SearchResult, SlskdError, SlskdHttp, SlskdRepository};
+use crate::slskd::{SearchResult, SlskdHttp, SlskdRepository};
 
 /// The folder chosen, and why a lone-track share was used when it was.
 #[derive(Debug, Clone)]
@@ -24,7 +25,7 @@ pub struct SoulseekChoice {
 #[derive(Debug)]
 pub enum SoulseekMiss {
     /// slskd failed.
-    Search(SlskdError),
+    Search(ClientError),
     /// Nothing usable was found.
     Nothing(String),
 }

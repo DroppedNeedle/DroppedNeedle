@@ -18,6 +18,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use super::policy::UsenetPolicy;
+use crate::client_error::{ClientError, Service, retry_after};
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
 
 pub use super::sabnzbd_models::{
@@ -46,35 +47,28 @@ pub const MAX_SABNZBD_BODY_BYTES: usize = 16 * 1024 * 1024;
 // Errors + credential scrubbing.
 // ---------------------------------------------------------------------------
 
-/// Transport/HTTP/SABnzbd failure. Auth failures carry `auth: true`.
+/// A SABnzbd call that failed. HTTP, transport, key and decode failures
+/// are a [`ClientError`]; the rest are SABnzbd's own outcomes.
 #[derive(Debug, Clone, Error)]
 pub enum SabnzbdError {
-    /// The request never got an answer (DNS/refused/timeout/reset). The
-    /// detail never holds the request URL, which carries the API key.
-    #[error("SABnzbd request failed: {0}")]
-    Transport(String),
-    /// SABnzbd answered HTTP 4xx/5xx.
-    #[error("SABnzbd returned HTTP {status}")]
-    Http {
-        /// Status code.
+    /// The call failed the way any client call can. A refused key comes
+    /// as HTTP 200 with "API Key Incorrect" or "API Key Required" in
+    /// either error form (SABnzbd 5.0.4), so it is matched by text. The
+    /// transport detail never holds the request URL, which carries the
+    /// API key.
+    #[error(transparent)]
+    Client(#[from] ClientError),
+    /// SABnzbd answered an API-level error other than a refused key (both
+    /// wire forms).
+    #[error("{0}")]
+    Api(String),
+    /// The indexer answered the NZB fetch with an HTTP error, so handing
+    /// SABnzbd the same URL cannot help.
+    #[error("the indexer answered HTTP {status} for the NZB")]
+    NzbRefused {
+        /// The indexer's status code.
         status: u16,
-        /// Body snippet (already redacted for addurl).
-        snippet: String,
     },
-    /// SABnzbd answered an API-level error (both wire forms).
-    #[error("{message}")]
-    Api {
-        /// Error text from SABnzbd.
-        message: String,
-        /// True for "API key incorrect/required".
-        auth: bool,
-    },
-    /// SABnzbd returned a body that is neither JSON nor its text form.
-    #[error("SABnzbd returned non-JSON: {0}")]
-    NonJson(String),
-    /// SABnzbd's answer passed [`MAX_SABNZBD_BODY_BYTES`].
-    #[error("SABnzbd's answer is too large to read")]
-    ResponseTooLarge,
     /// The indexer's NZB passed [`MAX_NZB_BYTES`].
     #[error("the NZB is larger than {} MB and was not fetched", MAX_NZB_BYTES / (1024 * 1024))]
     NzbTooLarge,
@@ -95,7 +89,7 @@ pub enum SabnzbdError {
 impl SabnzbdError {
     /// Whether this failure means bad credentials.
     pub fn is_auth(&self) -> bool {
-        matches!(self, SabnzbdError::Api { auth: true, .. })
+        matches!(self, SabnzbdError::Client(error) if error.is_auth())
     }
 }
 
@@ -331,7 +325,7 @@ impl SabnzbdClient {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|err| SabnzbdError::Transport(transport_error(err)))?;
+            .map_err(|err| ClientError::transport(Service::Sabnzbd, transport_error(err)))?;
         self.parse_add(response).await
     }
 
@@ -373,7 +367,7 @@ impl SabnzbdClient {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|err| SabnzbdError::Transport(transport_error(err)))?;
+            .map_err(|err| ClientError::transport(Service::Sabnzbd, transport_error(err)))?;
         match self.parse_add(response).await {
             Ok(added) => Ok(added),
             Err(err) => Err(redacted_addurl_error(&err)),
@@ -493,9 +487,9 @@ impl SabnzbdClient {
         let response = self
             .get_with_retry(&url, &query_refs, timeout)
             .await
-            .map_err(|err| SabnzbdError::Transport(transport_error(err)))?;
+            .map_err(|err| ClientError::transport(Service::Sabnzbd, transport_error(err)))?;
         let data = self.parse_json(response).await?;
-        serde_json::from_value(data).map_err(|err| SabnzbdError::NonJson(err.to_string()))
+        serde_json::from_value(data).map_err(|err| non_json(err.to_string()))
     }
 
     /// Idempotent GETs only: transient transport errors + 5xx retry with
@@ -536,40 +530,80 @@ impl SabnzbdClient {
     ) -> Result<serde_json::Value, SabnzbdError> {
         let status = response.status().as_u16();
         if status >= 400 {
-            return Err(SabnzbdError::Http {
+            let wait = retry_after(response.headers());
+            let snippet = redact_query_secrets(&response_snippet(response).await);
+            return Err(ClientError::for_status(
+                Service::Sabnzbd,
                 status,
-                snippet: response_snippet(response).await,
-            });
+                wait,
+                snippet.as_bytes(),
+            )
+            .into());
         }
         let bytes = read_capped(response, MAX_SABNZBD_BODY_BYTES)
             .await
             .map_err(|error| match error {
-                BodyError::TooLarge => SabnzbdError::ResponseTooLarge,
-                BodyError::Transport(detail) => SabnzbdError::Transport(detail),
+                BodyError::TooLarge => non_json("the answer is too large to read".to_owned()),
+                BodyError::Transport(detail) => {
+                    ClientError::transport(Service::Sabnzbd, detail).into()
+                }
             })?;
         parse_body(&String::from_utf8_lossy(&bytes))
     }
 
     async fn parse_add(&self, response: reqwest::Response) -> Result<AddResponse, SabnzbdError> {
         let data = self.parse_json(response).await?;
-        serde_json::from_value(data).map_err(|err| SabnzbdError::NonJson(err.to_string()))
+        serde_json::from_value(data).map_err(|err| non_json(err.to_string()))
     }
+}
+
+/// A SABnzbd answer that is not the documented JSON.
+fn non_json(detail: String) -> SabnzbdError {
+    ClientError::decode(Service::Sabnzbd, detail).into()
+}
+
+/// A SABnzbd API-level error: a refused key, or SABnzbd's own message.
+fn api_error(message: String) -> SabnzbdError {
+    if is_auth_error(&message) {
+        return ClientError::Auth {
+            service: Service::Sabnzbd,
+            status: None,
+            detail: message,
+        }
+        .into();
+    }
+    SabnzbdError::Api(message)
 }
 
 /// Rebuild an addurl failure with echoed enclosure credentials scrubbed
 /// (v2 `_redacted_addurl_error`). SABnzbd's own answer is what can echo
 /// them; a transport failure never holds the URL to begin with.
 fn redacted_addurl_error(err: &SabnzbdError) -> SabnzbdError {
+    let redacted = |detail: &String| redact_query_secrets(detail);
     match err {
-        SabnzbdError::Http { status, snippet } => SabnzbdError::Http {
+        SabnzbdError::Api(message) => SabnzbdError::Api(redacted(message)),
+        SabnzbdError::Client(ClientError::Auth {
+            service,
+            status,
+            detail,
+        }) => ClientError::Auth {
+            service: *service,
             status: *status,
-            snippet: redact_query_secrets(snippet),
-        },
-        SabnzbdError::Api { message, auth } => SabnzbdError::Api {
-            message: redact_query_secrets(message),
-            auth: *auth,
-        },
-        SabnzbdError::NonJson(text) => SabnzbdError::NonJson(redact_query_secrets(text)),
+            detail: redacted(detail),
+        }
+        .into(),
+        SabnzbdError::Client(ClientError::BadRequest { service, detail }) => {
+            ClientError::BadRequest {
+                service: *service,
+                detail: redacted(detail),
+            }
+            .into()
+        }
+        SabnzbdError::Client(ClientError::Decode { service, detail }) => ClientError::Decode {
+            service: *service,
+            detail: redacted(detail),
+        }
+        .into(),
         other => other.clone(),
     }
 }
@@ -584,17 +618,14 @@ fn parse_body(text: &str) -> Result<serde_json::Value, SabnzbdError> {
             .map(|(_, rest)| rest.trim())
             .unwrap_or(trimmed)
             .to_owned();
-        let auth = is_auth_error(&message);
-        return Err(SabnzbdError::Api { message, auth });
+        return Err(api_error(message));
     }
-    let data: serde_json::Value = serde_json::from_str(text)
-        .map_err(|_| SabnzbdError::NonJson(trimmed.chars().take(120).collect()))?;
+    let data: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| non_json(trimmed.chars().take(120).collect()))?;
     if let Some(error_text) = data.get("error").and_then(serde_json::Value::as_str)
         && is_false(data.get("status"))
     {
-        let message = error_text.to_owned();
-        let auth = is_auth_error(&message);
-        return Err(SabnzbdError::Api { message, auth });
+        return Err(api_error(error_text.to_owned()));
     }
     Ok(data)
 }
@@ -965,21 +996,15 @@ impl SabnzbdQueue {
                 });
             }
             Err(NzbFetchError::Definitive { status, .. }) => {
-                return Err(SabnzbdError::Http {
-                    status,
-                    snippet: "indexer answered; addurl cannot help".to_owned(),
-                });
+                return Err(SabnzbdError::NzbRefused { status });
             }
             Err(NzbFetchError::TooLarge) => return Err(SabnzbdError::NzbTooLarge),
             Err(NzbFetchError::ContentRejection { snippet, .. }) => {
                 // An error page can echo the URL it was asked for.
-                return Err(SabnzbdError::Api {
-                    message: format!(
-                        "indexer returned a non-NZB body (likely an error/limit page): {}",
-                        redact_query_secrets(&snippet)
-                    ),
-                    auth: false,
-                });
+                return Err(SabnzbdError::Api(format!(
+                    "indexer returned a non-NZB body (likely an error/limit page): {}",
+                    redact_query_secrets(&snippet)
+                )));
             }
         };
         let response = self

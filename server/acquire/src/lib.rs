@@ -5,7 +5,8 @@
 //! - [`requests`] serves the user-facing ask/approval/wanted surface.
 //! - [`downloads`] owns the durable task journal, manifests, watchdog
 //!   math, recovery classification, and quarantine.
-//! - [`slskd`] and [`usenet`] own the source clients and indexers.
+//! - [`slskd`] and [`usenet`] own the source clients and indexers, which
+//!   all fail with one [`client_error::ClientError`].
 //! - [`flows`] runs the wanted watcher, follow poll, upgrade sweep and
 //!   request-status sweep.
 //! - [`follows`] owns the follows, their auto-download approvals and the
@@ -30,6 +31,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod client_error;
 pub mod db;
 pub mod dispatch;
 pub mod downloads;

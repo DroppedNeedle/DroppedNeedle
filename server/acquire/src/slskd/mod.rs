@@ -9,7 +9,6 @@
 //! on loopback and never touch a live slskd instance.
 
 pub mod client;
-pub mod error;
 pub mod folders;
 pub mod http;
 pub mod locate;
@@ -19,7 +18,6 @@ pub mod query;
 pub mod repository;
 
 pub use client::SlskdClient;
-pub use error::SlskdError;
 pub use http::{HttpFault, HttpReply, ReqwestSlskdHttp, SlskdHttp};
 pub use locate::Locator;
 pub use models::{

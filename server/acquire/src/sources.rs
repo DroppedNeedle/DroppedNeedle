@@ -26,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::future::BoxFuture;
 
+use super::client_error::ClientError;
 use super::downloads::TrackPosition;
 use super::downloads::journal::Journal;
 use super::downloads::quarantine::{QUARANTINE_TTL_SECONDS, soulseek_hit_quarantined};
@@ -38,7 +39,7 @@ use super::landing::ports::LandingLibrary;
 use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
 use super::search_jobs::pinned;
 use super::slskd::folders::{RankRequest, rank_folders};
-use super::slskd::{EnqueueFile, ReqwestSlskdHttp, SlskdError, SlskdRepository};
+use super::slskd::{EnqueueFile, ReqwestSlskdHttp, SlskdRepository};
 use super::target::reasons::TrackReason;
 use super::target::releases::order_releases;
 use super::target::soulseek::{self, SoulseekMiss};
@@ -56,23 +57,31 @@ fn now_unix_f64() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn slskd_error(error: SlskdError) -> SourceError {
+/// A refused request or an answer of the wrong shape is the client
+/// rejecting this request; a refused key, a missing item, a rate limit or
+/// an outage leaves the client unavailable for now.
+fn client_error(error: ClientError) -> SourceError {
     match &error {
-        SlskdError::Auth { .. } => SourceError::Unavailable(error.to_string()),
-        SlskdError::Transport(_) | SlskdError::RateLimited | SlskdError::Api { .. } => {
-            SourceError::Unavailable(error.to_string())
+        ClientError::BadRequest { .. } | ClientError::Decode { .. } => {
+            SourceError::Rejected(error.to_string())
         }
-        SlskdError::Decode(_) => SourceError::Rejected(error.to_string()),
+        ClientError::Auth { .. }
+        | ClientError::NotFound { .. }
+        | ClientError::RateLimited { .. }
+        | ClientError::Unavailable { .. } => SourceError::Unavailable(error.to_string()),
     }
 }
 
 fn sab_error(error: SabnzbdError) -> SourceError {
-    match &error {
+    match error {
+        SabnzbdError::Client(error) => client_error(error),
         SabnzbdError::RejectedNzb
         | SabnzbdError::RejectedNzbUrl
         | SabnzbdError::MissingNzbUrl
         | SabnzbdError::NzbTooLarge => SourceError::Rejected(error.to_string()),
-        _ => SourceError::Unavailable(error.to_string()),
+        SabnzbdError::Api(_)
+        | SabnzbdError::NzbRefused { .. }
+        | SabnzbdError::AmbiguousIdentity => SourceError::Unavailable(error.to_string()),
     }
 }
 
@@ -159,7 +168,7 @@ impl SlskdSource {
                 .repo
                 .get_file_path(&repo_handle, filename, size)
                 .await
-                .map_err(slskd_error)?
+                .map_err(client_error)?
             {
                 // Each located copy keeps the size advertised for it.
                 paths.push(crate::landing::Reported {
@@ -194,7 +203,7 @@ impl SlskdSource {
             .repo
             .search_album(&target.artist, &target.album_title, target.year)
             .await
-            .map_err(slskd_error)?
+            .map_err(client_error)?
             .into_iter()
             .filter(|hit| !soulseek_hit_quarantined(&hit.username, &hit.filename, &live))
             .collect();
@@ -304,7 +313,7 @@ impl SlskdSource {
             let choice = soulseek::choose(self.repo.as_ref(), &target, keep)
                 .await
                 .map_err(|miss| match miss {
-                    SoulseekMiss::Search(error) => slskd_error(error),
+                    SoulseekMiss::Search(error) => client_error(error),
                     SoulseekMiss::Nothing(reason) => SourceError::Rejected(reason),
                 })?;
             if let (Some(reason), Some(targets)) = (choice.lone_reason, self.targets.as_ref()) {
@@ -337,7 +346,7 @@ impl SlskdSource {
             .iter()
             .map(|file| (file.filename.as_str(), file.size))
             .collect();
-        let handle = self.repo.enqueue(&payload).await.map_err(slskd_error)?;
+        let handle = self.repo.enqueue(&payload).await.map_err(client_error)?;
         let sizes = handle
             .filenames
             .iter()
@@ -361,7 +370,7 @@ impl SlskdSource {
             .repo
             .get_status(&repo_handle)
             .await
-            .map_err(slskd_error)?;
+            .map_err(client_error)?;
         let all_terminal = matches!(status.status.as_str(), "completed" | "partial" | "failed");
         Ok(TransferProgress {
             all_terminal,
@@ -384,13 +393,13 @@ impl SlskdSource {
         self.repo
             .discard_client_artifacts(&repo_handle)
             .await
-            .map_err(slskd_error)
+            .map_err(client_error)
     }
 
     async fn abort_job(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
         let repo_handle =
             super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
-        self.repo.abort(&repo_handle).await.map_err(slskd_error)
+        self.repo.abort(&repo_handle).await.map_err(client_error)
     }
 }
 

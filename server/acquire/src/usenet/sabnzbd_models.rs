@@ -1,11 +1,19 @@
 //! SABnzbd wire models (v2 `sabnzbd_models.py`): stringly-typed queue
 //! numbers, real-number history bytes, opaque `nzo_id`. Every reply the
 //! client reads decodes into one of these; a job row without its
-//! `nzo_id` or name fails decoding instead of matching as an empty id.
+//! `nzo_id` or name, or a category without its name, fails decoding
+//! instead of matching as an empty id.
+//!
+//! Shapes were confirmed against the owner's SABnzbd 5.0.4 under v2 (the
+//! `version`, `get_cats` and `get_config` answers are written down; the
+//! run's date is not). Each model was checked again on 2026-10-21 against
+//! the in-repo `SabnzbdMock` in the testkit crate, which serves those 5.0.4
+//! answers.
 
 use serde::Deserialize;
 
-/// `mode=addfile` / `addurl` response. Empty `nzo_ids` means rejection.
+/// `mode=addfile` / `addurl` response. Empty `nzo_ids` means rejection,
+/// so a missing list reads as one rather than as a made-up id.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AddResponse {
     /// Whether SABnzbd accepted the add.
@@ -169,11 +177,10 @@ pub struct History {
     pub slots: Vec<HistorySlot>,
 }
 
-/// One SABnzbd category row.
+/// One SABnzbd category row (`get_config`'s `categories`).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Category {
-    /// Category name.
-    #[serde(default)]
+    /// Category name: what a job is filed under. Required.
     pub name: String,
     /// Category folder.
     #[serde(default)]

@@ -20,6 +20,7 @@ use thiserror::Error;
 use super::indexer::{Indexer, IndexerQuery};
 use super::xml::{self, Element};
 use super::{MAX_INDEXER_BODY_BYTES, read_indexer_body};
+use crate::client_error::{ClientError, Service, retry_after};
 use crate::downloads::source_tag::SourceTag;
 use droppedneedle_kernel::http_client::{BodyError, transport_error};
 
@@ -183,25 +184,19 @@ pub struct NewznabApiLimits {
 // Errors.
 // ---------------------------------------------------------------------------
 
-/// Newznab failure. Auth and rate-limit variants let the indexer layer
-/// back off or stand down without failing the fan-out.
+/// Newznab failure. HTTP, transport, key, limit and parse failures are a
+/// [`ClientError`], whichever way the indexer said them: an HTTP status,
+/// or HTTP 200 with an `<error>` whose code is 100-199 or names the key
+/// (refused key) or whose text says a limit was reached (rate limit). The
+/// indexer layer backs off or stands down on those without failing the
+/// fan-out.
 #[derive(Debug, Clone, Error)]
 pub enum NewznabError {
-    /// The request never got an answer. The detail never holds the
-    /// request URL, which carries the indexer key.
-    #[error("newznab request failed: {0}")]
-    Transport(String),
-    /// Indexer answered HTTP 4xx/5xx.
-    #[error("newznab returned HTTP {status}")]
-    Http {
-        /// Status code.
-        status: u16,
-        /// Body snippet.
-        snippet: String,
-        /// Same as `status`, for parity with v2's `code`.
-        code: u16,
-    },
-    /// `<error code= description=>` with a non-auth, non-limit code.
+    /// The call failed the way any client call can.
+    #[error(transparent)]
+    Client(#[from] ClientError),
+    /// `<error code= description=>` with a non-auth, non-limit code, such
+    /// as 202 for a function the indexer lacks.
     #[error("{message}")]
     Api {
         /// Description text.
@@ -209,42 +204,14 @@ pub enum NewznabError {
         /// Newznab error code.
         code: i32,
     },
-    /// Code 100-199 or an apikey-shaped description.
-    #[error("{message}")]
-    Auth {
-        /// Description text.
-        message: String,
-        /// Newznab error code.
-        code: i32,
-    },
-    /// HTTP 429 or a "request limit reached" description.
-    #[error("{message}")]
-    RateLimited {
-        /// Description text.
-        message: String,
-        /// `Retry-After` seconds, when the header carried an integer.
-        retry_after: Option<f64>,
-    },
-    /// The body isn't XML even after hardening, or it is nested too
-    /// deeply or too large to read.
-    #[error("newznab returned unparseable XML: {0}")]
-    Unparseable(String),
 }
 
 impl NewznabError {
     /// Newznab error code, when the failure carries one.
     pub fn code(&self) -> Option<i32> {
         match self {
-            NewznabError::Api { code, .. } | NewznabError::Auth { code, .. } => Some(*code),
-            _ => None,
-        }
-    }
-
-    /// `Retry-After` seconds, when rate-limited with a header value.
-    pub fn retry_after(&self) -> Option<f64> {
-        match self {
-            NewznabError::RateLimited { retry_after, .. } => *retry_after,
-            _ => None,
+            NewznabError::Api { code, .. } => Some(*code),
+            NewznabError::Client(_) => None,
         }
     }
 }
@@ -531,41 +498,25 @@ impl NewznabClient {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|err| NewznabError::Transport(transport_error(err)))?;
-        if response.status().as_u16() == 429 {
-            return Err(NewznabError::RateLimited {
-                message: "newznab: rate limited".to_owned(),
-                retry_after: retry_after(&response),
-            });
-        }
-        if response.status().as_u16() >= 400 {
-            let status = response.status().as_u16();
-            let body = read_indexer_body(response).await.unwrap_or_default();
-            let snippet = String::from_utf8_lossy(&body).chars().take(200).collect();
-            return Err(NewznabError::Http {
-                status,
-                snippet,
-                code: status,
-            });
+            .map_err(|err| ClientError::transport(Service::Newznab, transport_error(err)))?;
+        let status = response.status().as_u16();
+        if status >= 400 {
+            // The body is not kept: an indexer's error page can echo the
+            // request URL, which carries the key.
+            let wait = retry_after(response.headers());
+            return Err(ClientError::for_status(Service::Newznab, status, wait, b"").into());
         }
         let bytes = read_indexer_body(response)
             .await
             .map_err(|error| match error {
-                BodyError::TooLarge => NewznabError::Unparseable(format!(
-                    "response is larger than {MAX_INDEXER_BODY_BYTES} bytes"
-                )),
-                BodyError::Transport(detail) => NewznabError::Transport(detail),
+                BodyError::TooLarge => ClientError::decode(
+                    Service::Newznab,
+                    format!("response is larger than {MAX_INDEXER_BODY_BYTES} bytes"),
+                ),
+                BodyError::Transport(detail) => ClientError::transport(Service::Newznab, detail),
             })?;
         safe_parse(&bytes)
     }
-}
-
-fn retry_after(response: &reqwest::Response) -> Option<f64> {
-    response
-        .headers()
-        .get("retry-after")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|raw| raw.trim().parse::<f64>().ok())
 }
 
 /// Parse XML, hardening on failure (v2 `_safe_fromstring`, Prowlarr
@@ -578,8 +529,13 @@ fn safe_parse(raw: &[u8]) -> Result<Element, NewznabError> {
         return Ok(root);
     }
     let hardened = xml::escape_bare_amps(&cleaned);
-    xml::parse(&hardened)
-        .map_err(|err| NewznabError::Unparseable(err.to_string().chars().take(200).collect()))
+    xml::parse(&hardened).map_err(|err| {
+        ClientError::decode(
+            Service::Newznab,
+            err.to_string().chars().take(200).collect::<String>(),
+        )
+        .into()
+    })
 }
 
 /// `<error code= description=>`: HTTP may still be 200. 100-199 / apikey
@@ -595,24 +551,23 @@ fn check_error(root: &Element) -> Result<(), NewznabError> {
     let description = root.attr("description").unwrap_or("").to_owned();
     let low = description.to_ascii_lowercase();
     if (100..=199).contains(&code) || low.contains("apikey") || low.contains("api key") {
-        return Err(NewznabError::Auth {
-            message: if description.is_empty() {
-                "newznab auth failure".to_owned()
+        return Err(ClientError::Auth {
+            service: Service::Newznab,
+            status: None,
+            detail: if description.is_empty() {
+                format!("error {code}")
             } else {
                 description
             },
-            code,
-        });
+        }
+        .into());
     }
     if low.contains("request limit reached") || low.contains("limit reached") {
-        return Err(NewznabError::RateLimited {
-            message: if description.is_empty() {
-                "newznab request limit reached".to_owned()
-            } else {
-                description
-            },
+        return Err(ClientError::RateLimited {
+            service: Service::Newznab,
             retry_after: None,
-        });
+        }
+        .into());
     }
     Err(NewznabError::Api {
         message: if description.is_empty() {
@@ -1202,10 +1157,8 @@ impl NewznabIndexer {
         };
         let releases = match outcome {
             Ok(releases) => releases,
-            Err(NewznabError::RateLimited { retry_after, .. }) => {
-                let backoff = retry_after
-                    .map(Duration::from_secs_f64)
-                    .unwrap_or(self.rate_limit_backoff);
+            Err(NewznabError::Client(ClientError::RateLimited { retry_after, .. })) => {
+                let backoff = retry_after.unwrap_or(self.rate_limit_backoff);
                 if let Ok(mut guard) = self.backoff_until.lock() {
                     guard.insert(entry.id.clone(), now + backoff);
                 }
@@ -1216,7 +1169,7 @@ impl NewznabIndexer {
                 );
                 return Ok((Vec::new(), false));
             }
-            Err(err @ NewznabError::Auth { .. }) => {
+            Err(err @ NewznabError::Client(ClientError::Auth { .. })) => {
                 tracing::warn!(
                     indexer = entry.name.as_str(),
                     error = err.to_string().as_str(),

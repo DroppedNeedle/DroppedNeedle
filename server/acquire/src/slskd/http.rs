@@ -8,18 +8,23 @@
 //! status maps into the reply and the client decides what it means.
 
 use std::future::Future;
+use std::time::Duration;
 
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
+
+use crate::client_error::retry_after;
 
 /// Largest slskd answer read. A search's responses list every file every
 /// peer offered and the transfer list is unpaged, so both can run to
 /// tens of megabytes.
 const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 
-/// One answered HTTP response: status plus raw body.
+/// One answered HTTP response: status, the `Retry-After` wait when the
+/// server sent one, and the raw body.
 #[derive(Debug, Clone)]
 pub struct HttpReply {
     pub status: u16,
+    pub retry_after: Option<Duration>,
     pub body: Vec<u8>,
 }
 
@@ -90,13 +95,18 @@ impl ReqwestSlskdHttp {
             .await
             .map_err(|err| HttpFault(transport_error(err)))?;
         let status = response.status().as_u16();
+        let retry_after = retry_after(response.headers());
         let body = read_capped(response, MAX_BODY_BYTES)
             .await
             .map_err(|cause| match cause {
                 BodyError::TooLarge => HttpFault("slskd answer exceeded the size limit".to_owned()),
                 BodyError::Transport(cause) => HttpFault(cause),
             })?;
-        Ok(HttpReply { status, body })
+        Ok(HttpReply {
+            status,
+            retry_after,
+            body,
+        })
     }
 }
 

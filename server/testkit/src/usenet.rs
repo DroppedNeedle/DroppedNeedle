@@ -18,6 +18,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde_json::json;
 
+use crate::scripted::ScriptedStatuses;
+
 // ---------------------------------------------------------------------------
 // Shared plumbing.
 // ---------------------------------------------------------------------------
@@ -130,6 +132,7 @@ pub struct SabnzbdState {
 #[derive(Debug, Clone, Default)]
 pub struct SabnzbdMock {
     state: Arc<Mutex<SabnzbdState>>,
+    statuses: ScriptedStatuses,
 }
 
 impl SabnzbdMock {
@@ -148,7 +151,13 @@ impl SabnzbdMock {
                 add_nzo_ids: vec!["nzo-test-1".to_owned()],
                 ..SabnzbdState::default()
             })),
+            statuses: ScriptedStatuses::default(),
         }
+    }
+
+    /// Error statuses the next requests answer with, and the request count.
+    pub fn statuses(&self) -> &ScriptedStatuses {
+        &self.statuses
     }
 
     /// Borrow the state for setup/assertion.
@@ -197,7 +206,7 @@ impl SabnzbdMock {
 
     /// The router: `/api` plus the NZB fixtures `fetch_nzb` reads.
     pub fn router(&self) -> Router {
-        Router::new()
+        let router = Router::new()
             .route("/api", get(sab_api_get).post(sab_api_post))
             .route(
                 "/nzb/good",
@@ -223,7 +232,8 @@ impl SabnzbdMock {
                 "/nzb/denied",
                 get(|| async { (StatusCode::FORBIDDEN, "denied") }),
             )
-            .with_state(self.clone())
+            .with_state(self.clone());
+        self.statuses.layer(router)
     }
 }
 
@@ -497,6 +507,7 @@ pub enum NewznabScenario {
 #[derive(Debug, Clone, Default)]
 pub struct NewznabMock {
     calls: Arc<Mutex<Vec<NewznabSearchCall>>>,
+    statuses: ScriptedStatuses,
 }
 
 impl NewznabMock {
@@ -504,7 +515,13 @@ impl NewznabMock {
     pub fn new() -> Self {
         NewznabMock {
             calls: Arc::new(Mutex::new(Vec::new())),
+            statuses: ScriptedStatuses::default(),
         }
+    }
+
+    /// Error statuses the next requests answer with, and the request count.
+    pub fn statuses(&self) -> &ScriptedStatuses {
+        &self.statuses
     }
 
     /// Recorded searches, in order.
@@ -517,9 +534,10 @@ impl NewznabMock {
 
     /// Router serving one scenario at `/api`.
     pub fn router(&self, scenario: NewznabScenario) -> Router {
-        Router::new()
+        let router = Router::new()
             .route("/api", get(newznab_api))
-            .with_state((self.clone(), scenario))
+            .with_state((self.clone(), scenario));
+        self.statuses.layer(router)
     }
 
     fn record(&self, call: NewznabSearchCall) {
@@ -837,6 +855,7 @@ pub struct ProwlarrScenario {
 #[derive(Debug, Clone, Default)]
 pub struct ProwlarrMock {
     calls: Arc<Mutex<Vec<ProwlarrSearchCall>>>,
+    statuses: ScriptedStatuses,
 }
 
 impl ProwlarrMock {
@@ -844,7 +863,13 @@ impl ProwlarrMock {
     pub fn new() -> Self {
         ProwlarrMock {
             calls: Arc::new(Mutex::new(Vec::new())),
+            statuses: ScriptedStatuses::default(),
         }
+    }
+
+    /// Error statuses the next requests answer with, and the request count.
+    pub fn statuses(&self) -> &ScriptedStatuses {
+        &self.statuses
     }
 
     /// Recorded searches, in order.
@@ -857,11 +882,12 @@ impl ProwlarrMock {
 
     /// Router serving one scenario under `/api/v1`.
     pub fn router(&self, scenario: ProwlarrScenario) -> Router {
-        Router::new()
+        let router = Router::new()
             .route("/api/v1/system/status", get(prowlarr_status))
             .route("/api/v1/indexer", get(prowlarr_indexers))
             .route("/api/v1/search", get(prowlarr_search))
-            .with_state((self.clone(), scenario))
+            .with_state((self.clone(), scenario));
+        self.statuses.layer(router)
     }
 
     fn record(&self, call: ProwlarrSearchCall) {
