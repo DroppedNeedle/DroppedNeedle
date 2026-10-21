@@ -492,17 +492,55 @@ impl LibrarySetup {
             retention_days: policy.recycle_retention_days,
             now_ms: self.clock.now_ms(),
             page: RECYCLE_EXPIRY_PAGE,
+            due_before_ms: None,
         };
+        self.expiry_pass(&pass, go_on)
+    }
+
+    /// Empty the recycle bin now: the expiry pass with no retention, over
+    /// the copies that reached the bin before `before_ms` (unix ms, never
+    /// later than now) and the old entries stamped before it. Every rule
+    /// of the expiry holds; `finished` is false when it stopped early or
+    /// the bins could not be told. Blocking.
+    pub fn empty_recycle_bin(
+        &self,
+        before_ms: i64,
+        go_on: &dyn Fn() -> bool,
+    ) -> Result<ExpiryReport, PublishError> {
+        let now_ms = self.clock.now_ms();
+        let pass = ExpiryPass {
+            retention_days: 0,
+            now_ms,
+            page: RECYCLE_EXPIRY_PAGE,
+            due_before_ms: Some(before_ms.min(now_ms)),
+        };
+        self.expiry_pass(&pass, go_on)
+    }
+
+    fn expiry_pass(
+        &self,
+        pass: &ExpiryPass,
+        go_on: &dyn Fn() -> bool,
+    ) -> Result<ExpiryReport, PublishError> {
         let report = expiry::expire(
             &self.db,
-            &pass,
+            pass,
             &self.expiry,
             &|| self.expiry_sandbox(),
             || self.publish.lock().unwrap_or_else(PoisonError::into_inner),
             go_on,
         )?;
-        if report != ExpiryReport::default() {
-            tracing::info!(?report, "recycle bin expiry pass");
+        if report.did_anything() {
+            tracing::info!(
+                deleted = report.deleted,
+                gone = report.gone,
+                changed = report.changed,
+                kept = report.kept,
+                waited = report.waited,
+                legacy_deleted = report.legacy_deleted,
+                finished = report.finished,
+                "recycle bin expiry pass"
+            );
         }
         Ok(report)
     }
@@ -510,7 +548,7 @@ impl LibrarySetup {
     /// The library folders and the bins expiry may delete from, as the
     /// settings give them now. `None` while the library settings, or the
     /// settings the bins come from, cannot be read.
-    fn expiry_sandbox(&self) -> Option<Sandbox> {
+    pub fn expiry_sandbox(&self) -> Option<Sandbox> {
         let library = self.settings.library.read()?;
         let registry = super::settings::registry_from(&library);
         let (bins, dropped) = match self.bins.for_expiry(&registry) {

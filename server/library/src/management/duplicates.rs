@@ -184,7 +184,8 @@ impl Management {
     /// When a duplicate resolution is applied: move the file its action
     /// sends to the recycle bin, after checking it is still the file the
     /// preview showed. True when that was the whole job. The recycle bin
-    /// keeps the file in a dated folder, so it can be moved back by hand.
+    /// keeps the file in a dated folder, so it can be put back from the
+    /// Recycle Bin page.
     pub(super) fn recycle_for_duplicate(
         &self,
         snapshot: &Snapshot,

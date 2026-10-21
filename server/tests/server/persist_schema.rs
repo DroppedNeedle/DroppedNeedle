@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 163);
+    assert_eq!(table_names(&pool).await.len(), 164);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -4606,6 +4606,56 @@ async fn plugin_library_writes_table_is_added() {
         .await
         .unwrap();
     assert!(version >= 77, "user_version {version}");
+}
+
+/// Migration 0078 adds `library_recycle_bin_empties` to a database at
+/// 0077: a STRICT table with one row per empty of the bin, unfinished until
+/// it says when, whose counts are never negative and whose admin is
+/// cleared, not deleted with, when the account goes.
+#[tokio::test]
+async fn recycle_bin_empties_table_is_added() {
+    let pool = scratch_pool().await;
+    migrator_through(77).run(&pool).await.unwrap();
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for (values, refused) in [
+        ("('e1', 'admin', 1, 2, 3, 4, 0, 1, 2, '[]')", false),
+        ("('e2', NULL, 1, 2, -1, 4, 0, 1, 2, '[]')", true),
+        ("('e3', NULL, 1, 2, 'three', 4, 0, 1, 2, '[]')", true),
+        ("('e4', NULL, 1, NULL, 0, 0, 0, 0, 0, '[]')", false),
+    ] {
+        let sql = format!(
+            "INSERT INTO library_recycle_bin_empties (id, actor_user_id, before_at, \
+             finished_at, deleted, freed_bytes, older_folders, kept, waited, kept_json) \
+             VALUES {values}"
+        );
+        let outcome = sqlx::raw_sql(&sql).execute(&pool).await;
+        assert_eq!(outcome.is_err(), refused, "{values}: {outcome:?}");
+    }
+    sqlx::raw_sql("PRAGMA foreign_keys = ON; DELETE FROM auth_users WHERE id = 'admin';")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let row: (String, Option<String>, i64) = sqlx::query_as(
+        "SELECT id, actor_user_id, deleted FROM library_recycle_bin_empties WHERE id = 'e1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row, ("e1".to_owned(), None, 3));
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(version >= 78, "user_version {version}");
 }
 
 /// Migration 0076 rebuilds the request, watch and approval tables as

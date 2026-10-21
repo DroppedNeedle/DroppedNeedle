@@ -2219,10 +2219,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     .as_ref()
                     .and_then(|put_back| super::put_back::item_of(put_back, journal));
                 return super::put_back::drop_copy(
+                    &self.db,
                     &self.sandbox,
                     journal,
                     item,
                     self.temps.get(&journal.id).copied(),
+                    self.now_ms,
                 );
             }
             JournalKind::Audio

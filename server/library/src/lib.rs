@@ -43,6 +43,7 @@ pub mod operations;
 pub mod policy;
 pub mod publish;
 pub mod reconcile;
+pub mod recycle_bin;
 pub mod repairs;
 pub mod scan;
 pub mod scans;

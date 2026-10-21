@@ -448,6 +448,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         droppedneedle_library::contrib::worker::SPEC,
         library.contrib_worker.handler(),
     )
+    .with_job(
+        droppedneedle_library::recycle_bin::SPEC,
+        droppedneedle_library::recycle_bin::handler(&library),
+    )
     .with_mixer(mix_hooks)
     .with_precache_sources_from(&reads, config_store)
     .with_cover_warm_jobs(&reads)

@@ -92,6 +92,7 @@
 pub mod add;
 pub mod archive;
 pub mod bin;
+pub mod bin_contents;
 pub mod expiry;
 pub mod generated;
 pub mod journal;

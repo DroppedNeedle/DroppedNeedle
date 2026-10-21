@@ -357,6 +357,10 @@ pub struct PutBackItem {
     /// so it needs no free space there.
     #[serde(default)]
     pub linkable: bool,
+    /// The removal's journal row for this file, marked once its copy has
+    /// left the bin. Empty in a plan recorded before rows were named here.
+    #[serde(default)]
+    pub removal_row: String,
 }
 
 /// Where a removed file's copy is.

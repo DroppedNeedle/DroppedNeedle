@@ -268,6 +268,7 @@ const COVER_FLIGHT: &str =
 const TEST_TEMPLATE: &str = "the test template migrates on its own thread, once per test process";
 const LOOP_STEP: &str =
     "a blocking step awaited inside a supervised loop, its stop checked between steps";
+const JOB_STEP: &str = "blocking file and store work, awaited by the queued job that runs it, its stop checked between rows";
 const SCAN_WALK: &str = "scan walk tasks, owned and joined by the scan's drive";
 const TRANSCODE: &str = "ffmpeg's stderr reader and exit waiter, bound to one transcode";
 const PLUGIN_EVENTS: &str = "plugin event deliveries, each bounded by its call timeout";
@@ -352,6 +353,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("library/src/http/mutations.rs", 1, REQUEST),
     ("library/src/http/operations.rs", 1, REQUEST),
     ("library/src/http/reconcile.rs", 1, REQUEST),
+    ("library/src/http/recycle_bin.rs", 3, REQUEST),
     ("library/src/http/repairs.rs", 1, REQUEST),
     ("library/src/http/reviews.rs", 2, REQUEST),
     ("library/src/http/scan.rs", 1, REQUEST),
@@ -362,6 +364,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("library/src/mutations.rs", 1, REQUEST),
     ("library/src/operations/mod.rs", 2, LOOP_STEP),
     ("library/src/operations/service.rs", 9, LOOP_STEP),
+    ("library/src/recycle_bin.rs", 1, JOB_STEP),
     ("library/src/repairs/mod.rs", 1, LOOP_STEP),
     ("library/src/scan/coordinator.rs", 1, LOOP_STEP),
     ("library/src/scan/pool.rs", 1, LOOP_STEP),

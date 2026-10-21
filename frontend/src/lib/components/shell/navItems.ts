@@ -15,7 +15,8 @@ import {
 	Menu,
 	Search,
 	Settings,
-	ShieldCheck
+	ShieldCheck,
+	Trash2
 } from 'lucide-svelte';
 import { withBasePath } from '$lib/utils/basePath';
 
@@ -66,11 +67,13 @@ export const within =
 	(path) =>
 		path === prefix || path.startsWith(`${prefix}/`);
 
-// Library Management and the Review Queue live under /library but are their own destinations.
+// Library Management, the Review Queue and the Recycle Bin live under /library but are their
+// own destinations.
 const inLibrary: NavMatch = (path) =>
 	within('/library')(path) &&
 	!within('/library/management')(path) &&
-	!within('/library/review')(path);
+	!within('/library/review')(path) &&
+	!within('/library/recycle-bin')(path);
 
 export const navItems: NavItem[] = [
 	{
@@ -175,6 +178,15 @@ export const navItems: NavItem[] = [
 		audience: 'admin',
 		sidebar: { group: 'admin', active: within('/library/review') },
 		more: { active: within('/library/review') }
+	},
+	{
+		id: 'recycle-bin',
+		label: 'Recycle Bin',
+		icon: Trash2,
+		href: '/library/recycle-bin',
+		audience: 'admin',
+		sidebar: { group: 'admin', active: within('/library/recycle-bin') },
+		more: { active: within('/library/recycle-bin') }
 	},
 	{
 		id: 'settings',

@@ -25,6 +25,8 @@
 		phrase?: string;
 		/** A mutation's `isPending`, when the caller runs the work itself. */
 		pending?: boolean;
+		/** False when there turns out to be nothing to confirm: only the cancel button shows. */
+		canConfirm?: boolean;
 		onconfirm: () => unknown;
 		oncancel?: () => void;
 		children?: Snippet;
@@ -39,6 +41,7 @@
 		tone = 'primary',
 		phrase,
 		pending = false,
+		canConfirm = true,
 		onconfirm,
 		oncancel,
 		children
@@ -110,13 +113,15 @@
 		<Button variant="ghost" onclick={() => (open = false)} disabled={busy}>
 			{cancelLabel}
 		</Button>
-		<AsyncButton
-			variant={tone === 'danger' ? 'danger' : 'primary'}
-			onclick={confirm}
-			pending={busy}
-			disabled={phrase !== undefined && typed !== phrase}
-		>
-			{confirmLabel}
-		</AsyncButton>
+		{#if canConfirm}
+			<AsyncButton
+				variant={tone === 'danger' ? 'danger' : 'primary'}
+				onclick={confirm}
+				pending={busy}
+				disabled={phrase !== undefined && typed !== phrase}
+			>
+				{confirmLabel}
+			</AsyncButton>
+		{/if}
 	{/snippet}
 </Modal>

@@ -108,7 +108,7 @@ pub enum RemovalKind {
 }
 
 impl RemovalKind {
-    fn of(reason_code: &str) -> Option<Self> {
+    pub(super) fn of(reason_code: &str) -> Option<Self> {
         match reason_code {
             "ALBUM_FILES_RECYCLED" => Some(Self::Album),
             "FILE_RECYCLED" => Some(Self::Track),
@@ -461,6 +461,7 @@ pub fn plan(
             home_already,
             linkable: copy_in != CopyIn::OldBin
                 && home_device(&home).is_some_and(|dev| dev == copy_stat.dev),
+            removal_row: row.id.clone(),
         });
     }
     if items.is_empty() {
@@ -708,12 +709,18 @@ pub(super) fn place(
 /// Anything else keeps the copy and logs why once; the row is done all
 /// the same. Only a failed delete of a matching copy is an error, which
 /// leaves the row pending. `home_known` is the placed file's identity,
-/// when the caller has it.
+/// when the caller has it. Once the copy is gone, the removal's row is
+/// marked, at `now_ms`, as having left the bin, so the bin's page no
+/// longer lists it; a copy found already gone is marked only where its
+/// bin shows it is there to look in. A lost mark only waits for the
+/// bin's expiry.
 pub(super) fn drop_copy(
+    db: &Db,
     sandbox: &Sandbox,
     journal: &FileJournal,
     item: Option<&PutBackItem>,
     home_known: Option<FileStat>,
+    now_ms: i64,
 ) -> Result<(), PublishError> {
     let keep = |why: &str| {
         tracing::info!(journal_id = %journal.id, why, "a put-back keeps the removed file's copy");
@@ -730,6 +737,12 @@ pub(super) fn drop_copy(
         std::fs::symlink_metadata(copy),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound
     ) {
+        if item.copy_in == CopyIn::Bin
+            && let Ok(bin) = sandbox.ensure_under_bin(copy)
+            && super::expiry::gone_for_sure(&bin.dir, copy.parent())
+        {
+            mark_left(db, item, now_ms);
+        }
         return Ok(());
     }
     let Ok(home) = sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel) else {
@@ -747,19 +760,32 @@ pub(super) fn drop_copy(
     }
     std::fs::remove_file(copy).map_err(PublishError::from)?;
     if let Some(entry) = copy.parent() {
-        if item.copy_in == CopyIn::Bin
-            && let Err(error) = std::fs::remove_dir(entry)
-            && error.kind() != std::io::ErrorKind::DirectoryNotEmpty
-        {
-            tracing::debug!(%error, "recycle bin entry folder kept");
+        if item.copy_in == CopyIn::Bin {
+            super::expiry::drop_entry(copy);
         }
-        if let Some(parent) = entry.parent()
-            && let Err(error) = super::journal::fsync_dir(parent)
+        let synced = if item.copy_in == CopyIn::Bin {
+            entry.parent()
+        } else {
+            Some(entry)
+        };
+        if let Some(dir) = synced
+            && let Err(error) = super::journal::fsync_dir(dir)
         {
             tracing::warn!(%error, "directory sync failed");
         }
     }
+    mark_left(db, item, now_ms);
     Ok(())
+}
+
+/// Mark the removal row of `item` as having left the bin.
+fn mark_left(db: &Db, item: &PutBackItem, now_ms: i64) {
+    if item.removal_row.is_empty() {
+        return;
+    }
+    if let Err(error) = super::expiry::mark(db, &[item.removal_row.as_str()], now_ms) {
+        tracing::warn!(journal_id = %item.removal_row, %error, "a put-back copy's row was not marked; the bin's expiry will");
+    }
 }
 
 /// A put-back's catalog half: the plan and what each placed file indexes

@@ -28,6 +28,7 @@ pub fn library_routes() -> Routes<LibrarySetup> {
         .merge(super::repairs::routes())
         .merge(super::reviews::routes())
         .merge(super::mutations::routes())
+        .merge(super::recycle_bin::routes())
         .merge(super::edition::routes())
         .merge(super::history::routes())
         .merge(super::contrib::routes())

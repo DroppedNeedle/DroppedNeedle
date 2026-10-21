@@ -126,6 +126,14 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-removals'] as const,
 		albumRemovals: (userId: LibraryV3UserId, albumId: string) =>
 			[...LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(userId), albumId] as const,
+		recycleBinPrefix: (userId: LibraryV3UserId) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'recycle-bin'] as const,
+		recycleBinPages: (userId: LibraryV3UserId) =>
+			[...LibraryQueryKeyFactory.catalog.recycleBinPrefix(userId), 'pages'] as const,
+		recycleBinSummary: (userId: LibraryV3UserId) =>
+			[...LibraryQueryKeyFactory.catalog.recycleBinPrefix(userId), 'summary'] as const,
+		recycleBinStatus: (userId: LibraryV3UserId) =>
+			[...LibraryQueryKeyFactory.catalog.recycleBinPrefix(userId), 'status'] as const,
 		unconfirmed: (userId: LibraryV3UserId, state: string, offset: number) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed', state, offset] as const
 	},

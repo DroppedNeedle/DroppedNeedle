@@ -4293,6 +4293,7 @@ fn run_expiry(fix: &Fixture, sandbox: &Sandbox, page: usize) -> publish::expiry:
             retention_days: RETENTION_DAYS,
             now_ms: EXPIRY_NOW_MS,
             page,
+            due_before_ms: None,
         },
         &publish::expiry::ExpiryMemory::default(),
         &|| Some(sandbox.clone()),
@@ -4370,10 +4371,13 @@ fn a_bin_that_empties_before_the_lock_marks_nothing_gone() {
             retention_days: RETENTION_DAYS,
             now_ms: EXPIRY_NOW_MS,
             page: 200,
+            due_before_ms: None,
         },
         &publish::expiry::ExpiryMemory::default(),
         &|| Some(fix.sandbox.clone()),
-        || std::fs::rename(&other, &aside).unwrap(),
+        || {
+            let _ = std::fs::rename(&other, &aside);
+        },
         &|| true,
     )
     .unwrap();
@@ -4381,6 +4385,38 @@ fn a_bin_that_empties_before_the_lock_marks_nothing_gone() {
     assert_eq!(report.waited, 1);
     assert_eq!(report.gone, 0);
     assert_eq!(expired_at(&fix, "track-a"), None);
+}
+
+/// A pass that deletes the last other entry in a bin still marks a copy
+/// it found gone there: what proves a copy gone is read before the pass
+/// deletes anything.
+#[test]
+fn emptying_the_bin_marks_a_gone_copy_beside_the_one_it_deletes() {
+    let fix = fixture("expiry-gone-and-due");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    recycled_at(&fix, "track-b", RECYCLED_OLD + 10.0);
+    std::fs::remove_dir_all(copies["track-b"].parent().unwrap()).unwrap();
+
+    let report = publish::expiry::expire(
+        &restart(&fix),
+        &publish::expiry::ExpiryPass {
+            retention_days: 0,
+            now_ms: EXPIRY_NOW_MS,
+            page: 200,
+            due_before_ms: Some(EXPIRY_NOW_MS),
+        },
+        &publish::expiry::ExpiryMemory::default(),
+        &|| Some(fix.sandbox.clone()),
+        || (),
+        &|| true,
+    )
+    .unwrap();
+
+    assert_eq!((report.deleted, report.gone), (1, 1));
+    assert!(!copies["track-a"].exists());
+    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS));
+    assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS));
 }
 
 /// A copy whose bytes in the bin are no longer the ones recycled is not

@@ -5048,6 +5048,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/recycle-bin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List what the recycle bin holds, grouped by the removal or change
+         *     that put it there, newest first.
+         */
+        get: operations["list_recycle_bin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/recycle-bin/empty": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Empty the recycle bin of what it held at `before`, under the rules
+         *     its expiry keeps: a copy that changed in the bin, one a put-back is
+         *     using, and one in a bin that is or holds a library or download folder
+         *     stay. Runs in the background.
+         */
+        post: operations["empty_recycle_bin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/recycle-bin/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the recycle bin is being emptied, and what the last run did. */
+        get: operations["recycle_bin_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/recycle-bin/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count what emptying the recycle bin now would delete, for its
+         *     confirm.
+         */
+        get: operations["recycle_bin_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/resolve-tracks": {
         parameters: {
             query?: never;
@@ -11353,6 +11432,72 @@ export interface components {
             /** @description Wide thumbnail URL, when resolved. */
             wide_thumb_url?: string | null;
         };
+        /** @description The album a group of files came from. */
+        BinAlbumView: {
+            artist?: string | null;
+            /** @description The album has art of its own, served by its artwork route. */
+            cover_available: boolean;
+            /**
+             * @description The album has a page to open: it has files, or a MusicBrainz
+             *     release group.
+             */
+            has_page: boolean;
+            /** @description The local album id; the album page opens on it. */
+            id: string;
+            release_group_mbid?: string | null;
+            title: string;
+        };
+        /**
+         * @description What put a group of files in the bin.
+         * @enum {string}
+         */
+        BinKind: "album" | "track" | "extras" | "replaced" | "removed";
+        /** @description One removal or change whose files are in the recycle bin. */
+        BinRemovalView: {
+            album?: null | components["schemas"]["BinAlbumView"];
+            /**
+             * Format: int64
+             * @description Bytes of the copies found.
+             */
+            bytes: number;
+            /** @description Put back is offered. */
+            can_put_back: boolean;
+            /**
+             * Format: int64
+             * @description When the bin's expiry deletes its first copy, unix milliseconds;
+             *     absent while the retention can't be read.
+             */
+            expires_at?: number | null;
+            /**
+             * Format: int32
+             * @description Files in the bin.
+             */
+            files: number;
+            /**
+             * Format: int32
+             * @description Files waiting for an admin under "Some file writes need you".
+             */
+            held: number;
+            /** @description The removal's id, which Put back names. */
+            id: string;
+            kind: components["schemas"]["BinKind"];
+            /**
+             * Format: int32
+             * @description Copies not found where they should be.
+             */
+            not_found: number;
+            /**
+             * Format: int64
+             * @description When it was made, unix milliseconds.
+             */
+            removed_at: number;
+            /**
+             * Format: int32
+             * @description Copies that can't be checked: in a bin no longer set, behind a
+             *     link, or while the bins can't be told.
+             */
+            unchecked: number;
+        };
         /** @description Active BrainzMash binding (kept; the pending proposal is transient). */
         BrainzmashActiveBinding: {
             /**
@@ -13624,6 +13769,59 @@ export interface components {
             /** @description New email, or null to clear. */
             email?: string | null;
         };
+        /** @description What the last finished run did. */
+        Emptied: {
+            /**
+             * Format: int64
+             * @description When it finished, unix milliseconds.
+             */
+            at: number;
+            /** @description Who asked, while the account exists. */
+            by?: string | null;
+            /**
+             * Format: int32
+             * @description Copies deleted, or found already gone.
+             */
+            deleted: number;
+            /** Format: int64 */
+            freed_bytes: number;
+            /**
+             * Format: int32
+             * @description Copies kept: changed in the bin, or not where it may delete.
+             */
+            kept: number;
+            /** @description Up to 20 of them, with why. */
+            kept_files: components["schemas"]["KeptName"][];
+            /**
+             * Format: int32
+             * @description Old bin folders no row named, emptied.
+             */
+            older_folders: number;
+            /**
+             * Format: int32
+             * @description Copies left for later: held by a put-back, or a bin that looked
+             *     empty.
+             */
+            waited: number;
+        };
+        /** @description Empty the bin of what it held at `before`. */
+        EmptyRecycleBinBody: {
+            /**
+             * Format: int64
+             * @description The summary's `as_of`: only copies in the bin by then are deleted.
+             */
+            before: number;
+        };
+        /** @description Empty was queued. */
+        EmptyRecycleBinView: {
+            /** @description A run was already waiting; it goes ahead with its own moment. */
+            joined: boolean;
+        };
+        /**
+         * @description Whether the bin is being emptied.
+         * @enum {string}
+         */
+        EmptyingState: "idle" | "emptying" | "stopped";
         /** @description The single enrich-batch body: both enrichable buckets in one call. */
         EnrichmentBatchRequest: {
             /** @description Albums to enrich (capped per bucket, extras ignored). */
@@ -14877,6 +15075,17 @@ export interface components {
             /** @description Liveness now. */
             state: components["schemas"]["LoopState"];
         };
+        /** @description A copy a run kept. */
+        KeptName: {
+            /** @description The file's name. */
+            name: string;
+            why: components["schemas"]["KeptWhy"];
+        };
+        /**
+         * @description Why a due copy was kept.
+         * @enum {string}
+         */
+        KeptWhy: "changed" | "not_in_bin" | "not_plain_file" | "unreadable";
         /** @description `GET /albums/{album_id}/lastfm`. */
         LastFmAlbumEnrichment: {
             /**
@@ -19454,6 +19663,54 @@ export interface components {
             expires_at: number;
             /** @description Display code (`XXXX-XXXX-XXXX-XXXX-XXXX`). */
             recovery_code: string;
+        };
+        /** @description One page of the recycle bin, newest first. */
+        RecycleBinPage: {
+            /** @description The bins can be looked at now. */
+            bins_known: boolean;
+            items: components["schemas"]["BinRemovalView"][];
+            /** @description Pass back as `cursor` for the next page; absent on the last. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Days a copy stays in the bin; absent while it can't be read.
+             */
+            retention_days?: number | null;
+        };
+        /** @description Whether the bin is being emptied, and what the last run did. */
+        RecycleBinStatus: {
+            last_emptied?: null | components["schemas"]["Emptied"];
+            state: components["schemas"]["EmptyingState"];
+        };
+        /** @description What emptying the bin now would delete. */
+        RecycleBinSummary: {
+            /**
+             * Format: int64
+             * @description When this was read, unix milliseconds. Empty deletes only what was
+             *     in the bin then.
+             */
+            as_of: number;
+            /**
+             * Format: int64
+             * @description Their bytes.
+             */
+            bytes: number;
+            /**
+             * Format: int32
+             * @description Files it would delete (one changed in the bin is kept instead).
+             */
+            files: number;
+            /**
+             * Format: int32
+             * @description Older bin folders the app did not record, which it would empty.
+             */
+            older_folders: number;
+            /**
+             * Format: int32
+             * @description Files it would leave: held, in use by a put-back, not found, or in
+             *     a bin it may not empty.
+             */
+            staying: number;
         };
         /**
          * @description Another user's private playlist: existence, count, and owner only. Never
@@ -36315,6 +36572,221 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_recycle_bin: {
+        parameters: {
+            query?: {
+                /** @description The previous page's `next_cursor`. */
+                cursor?: string;
+                /** @description Items per page, 1 to 100 (50 by default). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the recycle bin */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecycleBinPage"];
+                };
+            };
+            /** @description Bad cursor or limit */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    empty_recycle_bin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyRecycleBinBody"];
+            };
+        };
+        responses: {
+            /** @description Emptying started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmptyRecycleBinView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    recycle_bin_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Emptying state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecycleBinStatus"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    recycle_bin_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What Empty would delete */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecycleBinSummary"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

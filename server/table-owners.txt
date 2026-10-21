@@ -190,6 +190,7 @@ library_publish_operations
 library_publish_replacements
 library_publish_resolutions
 library_publish_snapshots
+library_recycle_bin_empties
 library_reference_tombstones
 library_reidentification_snapshots
 library_repair_materialization

@@ -43,23 +43,21 @@ droppedneedle_kernel::sql! {
     /// One page of recycled copies due to expire: copies that reached the
     /// bin before `?1` (unix seconds), are not expired yet and whose row
     /// is done, after the cursor (`?2` recycled at, `?3` journal id), at
-    /// most `?4`, skipping any whose track a put-back still holds.
+    /// most `?4`, each with its track.
     pub(super) EXPIRY_DUE = "SELECT r.journal_id, r.recycle_to, r.replaced_sha256, \
-             r.recycled_at FROM library_publish_replacements r \
+             r.recycled_at, r.replaced_track_id FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
              WHERE r.expired_at IS NULL AND r.recycled_at IS NOT NULL AND r.recycled_at < ?1 \
              AND j.state = 'cleaned' \
              AND (r.recycled_at > ?2 OR (r.recycled_at = ?2 AND r.journal_id > ?3)) \
-             AND NOT EXISTS (SELECT 1 FROM library_publish_journal p \
-             WHERE p.kind = 'put_back' AND p.track_id = r.replaced_track_id \
-             AND p.state NOT IN ('cleaned', 'compensated')) \
              ORDER BY r.recycled_at, r.journal_id LIMIT ?4";
-    /// Whether a put-back still holds the track of row `?1`'s copy.
-    pub(super) EXPIRY_HELD = "SELECT EXISTS (SELECT 1 FROM library_publish_replacements r \
-             JOIN library_publish_journal p ON p.track_id = r.replaced_track_id \
-             WHERE r.journal_id = ?1 AND p.kind = 'put_back' \
-             AND p.state NOT IN ('cleaned', 'compensated'))";
-    /// Record that row `?1`'s copy was expired at `?2` (unix milliseconds).
+    /// The tracks a put-back not yet settled holds.
+    pub(super) EXPIRY_HELD_TRACKS = "SELECT DISTINCT track_id FROM library_publish_journal \
+             WHERE state IN ('prepared', 'staged', 'published', 'committed', \
+             'cleanup_pending', 'needs_attention') AND kind = 'put_back' \
+             AND track_id IS NOT NULL";
+    /// Record that row `?1`'s copy left the bin at `?2` (unix
+    /// milliseconds): expired, found gone, or put back.
     pub(super) EXPIRY_MARK = "UPDATE library_publish_replacements SET expired_at = ?2 \
              WHERE journal_id = ?1 AND expired_at IS NULL";
     /// Every bin entry a row names, expired or not.
@@ -131,6 +129,85 @@ droppedneedle_kernel::sql! {
               AND j.kind = 'remove' \
               AND j.state IN ('prepared', 'staged', 'published', 'compensated'))) \
              WHERE files > 0 ORDER BY created_at DESC, id";
+    /// Where a file is in the recycle bin: its copy's row is not marked as
+    /// gone, and its copy reached the bin or its row waits for an admin.
+    pub(super) fragment IN_BIN = "r.expired_at IS NULL \
+             AND (r.recycled_at IS NOT NULL OR j.state = 'needs_attention')";
+    /// One page of what the recycle bin holds, grouped by the removal or
+    /// change that put it there, newest first, before the cursor (`?1`
+    /// unix ms, then bundle id `?2`), at most `?3`: each bundle with when
+    /// it was made, when its first copy reached the bin (unix seconds),
+    /// and whether its rows are removals.
+    pub(super) BIN_PAGE = "SELECT bundle_id, removed_at, first_binned, removal FROM ( \
+             SELECT j.bundle_id AS bundle_id, \
+             COALESCE(o.created_at, CAST(MIN(r.recycled_at) * 1000 AS INTEGER), 0) AS removed_at, \
+             MIN(r.recycled_at) AS first_binned, MAX(j.kind = 'remove') AS removal \
+             FROM library_publish_replacements r \
+             JOIN library_publish_journal j ON j.id = r.journal_id \
+             LEFT JOIN library_publish_operations o ON o.bundle_id = j.bundle_id \
+             WHERE " + IN_BIN + " GROUP BY j.bundle_id) \
+             WHERE removed_at < ?1 OR (removed_at = ?1 AND bundle_id < ?2) \
+             ORDER BY removed_at DESC, bundle_id DESC LIMIT ?3";
+    /// The files in the bin of the bundles in the JSON array `?1`: each
+    /// copy, its row's state and its track's album.
+    pub(super) BIN_FILES = "SELECT j.bundle_id, r.recycle_to, j.state, t.local_album_id \
+             FROM library_publish_replacements r \
+             JOIN library_publish_journal j ON j.id = r.journal_id \
+             LEFT JOIN local_tracks t ON t.id = r.replaced_track_id \
+             WHERE j.bundle_id IN (SELECT value FROM json_each(?1)) AND " + IN_BIN + " \
+             ORDER BY j.bundle_id, r.journal_id";
+    /// The undo records of the bundles in the JSON array `?1`: reason,
+    /// album, and whether a removal row of it is still being written.
+    pub(super) BIN_RECORDS = "SELECT a.id, a.reason_code, a.local_album_id, \
+             EXISTS (SELECT 1 FROM library_publish_journal j WHERE j.bundle_id = a.id \
+             AND j.kind = 'remove' \
+             AND j.state IN ('prepared', 'staged', 'published', 'compensated')) \
+             FROM library_catalog_actions a WHERE a.action_kind = 'files_recycled' \
+             AND a.id IN (SELECT value FROM json_each(?1))";
+    /// Which of the undo records in the JSON array `?1` a put-back spent.
+    pub(super) BIN_SPENT = "SELECT json_extract(before_json, '$.undoes') \
+             FROM library_catalog_actions WHERE action_kind = 'files_put_back' \
+             AND json_extract(before_json, '$.undoes') IN (SELECT value FROM json_each(?1))";
+    /// Album `?1`, or the album it was merged into: its id, title, artist,
+    /// whether it has an indexed track, its MusicBrainz release group, and
+    /// whether it has art of its own.
+    pub(super) BIN_ALBUM = "WITH RECURSIVE chain(id, next, hops) AS ( \
+             SELECT id, retired_into_album_id, 0 FROM local_albums WHERE id = ?1 \
+             UNION ALL SELECT b.id, b.retired_into_album_id, chain.hops + 1 FROM local_albums b \
+             JOIN chain ON b.id = chain.next WHERE chain.hops < 8) \
+             SELECT a.id, a.title, a.album_artist_name, a.has_indexed_track, \
+             (SELECT e.release_group_mbid FROM local_album_external_identities e \
+             WHERE e.local_album_id = a.id AND e.provider = 'musicbrainz'), \
+             EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
+             FROM chain JOIN local_albums a ON a.id = chain.id WHERE chain.next IS NULL";
+    /// How many files the bin holds.
+    pub(super) BIN_COUNT = "SELECT COUNT(*) FROM library_publish_replacements r \
+             JOIN library_publish_journal j ON j.id = r.journal_id WHERE " + IN_BIN;
+    /// The copies an empty at `?1` (unix seconds) would try: the expiry's
+    /// due rows with no retention, each with its track.
+    pub(super) BIN_DUE = "SELECT r.recycle_to, r.replaced_track_id \
+             FROM library_publish_replacements r \
+             JOIN library_publish_journal j ON j.id = r.journal_id \
+             WHERE r.expired_at IS NULL AND r.recycled_at IS NOT NULL AND r.recycled_at < ?1 \
+             AND j.state = 'cleaned'";
+    /// What one attempt of an empty of the bin did, added to its run's row
+    /// (`?1`, the job's id): deletes, bytes and older folders sum; kept,
+    /// waited and their names are the latest attempt's; `?4` is set when it
+    /// finished.
+    pub(crate) BIN_EMPTIED_RECORD = "INSERT INTO library_recycle_bin_empties (id, \
+             actor_user_id, before_at, finished_at, deleted, freed_bytes, older_folders, kept, \
+             waited, kept_json) VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, \
+             ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(id) DO UPDATE SET \
+             finished_at = excluded.finished_at, deleted = deleted + excluded.deleted, \
+             freed_bytes = freed_bytes + excluded.freed_bytes, \
+             older_folders = older_folders + excluded.older_folders, kept = excluded.kept, \
+             waited = excluded.waited, kept_json = excluded.kept_json";
+    /// The last finished empty of the bin, with who asked.
+    pub(crate) BIN_EMPTIED_LAST = "SELECT e.finished_at, u.display_name, e.deleted, \
+             e.freed_bytes, e.older_folders, e.kept, e.waited, e.kept_json \
+             FROM library_recycle_bin_empties e \
+             LEFT JOIN auth_users u ON u.id = e.actor_user_id \
+             WHERE e.finished_at IS NOT NULL ORDER BY e.finished_at DESC, e.id DESC LIMIT 1";
     /// Whether an undo of an added file, recorded with the text `?1`, landed
     /// or is still settling.
     pub(super) TAKE_BACK_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_publish_operations o \

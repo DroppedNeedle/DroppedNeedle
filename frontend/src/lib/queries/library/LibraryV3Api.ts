@@ -91,6 +91,15 @@ export const LibraryV3Api = {
 	// putting one back.
 	albumRemovals: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/removals', { path: { album_id: albumId } }),
+	// The recycle bin page: its contents, what Empty would delete, whether
+	// it is emptying, and Empty.
+	recycleBin: (cursor: string | null, limit: number) =>
+		v3('/api/v3/library/recycle-bin', {
+			query: { limit, ...(cursor ? { cursor } : {}) }
+		}),
+	recycleBinSummary: () => v3('/api/v3/library/recycle-bin/summary'),
+	recycleBinStatus: () => v3('/api/v3/library/recycle-bin/status'),
+	emptyRecycleBin: () => v3('/api/v3/library/recycle-bin/empty'),
 	putBackRemoval: (albumId: string, removalId: string) =>
 		v3('/api/v3/library/albums/{album_id}/removals/{removal_id}/put-back', {
 			path: { album_id: albumId, removal_id: removalId }

@@ -1385,6 +1385,10 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
         operation.and_then(|json| serde_json::from_str::<super::planner::PlanBundle>(&json).ok());
     let put_back = recorded.as_ref().and_then(|bundle| bundle.put_back.clone());
     let removal = recorded.and_then(|bundle| bundle.removal);
+    let now = std::time::SystemTime::now();
+    let now_ms = now.duration_since(std::time::UNIX_EPOCH).map_or(0, |span| {
+        i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
+    });
     for journal in journals {
         if !matches!(
             journal.state,
@@ -1417,7 +1421,9 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
                 let item = put_back
                     .as_ref()
                     .and_then(|put_back| super::put_back::item_of(put_back, &journal));
-                if let Err(error) = super::put_back::drop_copy(sandbox, &journal, item, None) {
+                if let Err(error) =
+                    super::put_back::drop_copy(db, sandbox, &journal, item, None, now_ms)
+                {
                     tracing::warn!(journal_id = %journal.id, %error, "removed copy not deleted yet");
                     failed = true;
                 }
@@ -1441,7 +1447,7 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
                 replaced,
                 Path::new(hidden),
                 Seams::default(),
-                std::time::SystemTime::now(),
+                now,
                 known,
             );
             match moved {

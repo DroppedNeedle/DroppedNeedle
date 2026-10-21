@@ -4491,6 +4491,175 @@ async fn a_removed_album_is_put_back_from_its_page() {
     assert_eq!(availability_of(&conn, &gone_track), "missing");
 }
 
+/// A removed track's copy in the bin, and its row.
+fn copy_of(conn: &rusqlite::Connection, track: &str) -> (PathBuf, String) {
+    conn.query_row(
+        "SELECT recycle_to, journal_id FROM library_publish_replacements \
+         WHERE replaced_track_id = ?1",
+        [track],
+        |row| Ok((PathBuf::from(row.get::<_, String>(0)?), row.get(1)?)),
+    )
+    .expect("a copy in the bin")
+}
+
+/// Whether row `journal_id`'s copy is marked as having left the bin.
+fn left_bin(conn: &rusqlite::Connection, journal_id: &str) -> bool {
+    conn.query_row(
+        "SELECT expired_at IS NOT NULL FROM library_publish_replacements WHERE journal_id = ?1",
+        [journal_id],
+        |row| row.get(0),
+    )
+    .expect("row")
+}
+
+/// Emptying the bin deletes, however young, every copy that reached it
+/// before the moment its count was read and still holds the removed
+/// bytes, and marks its row. A copy changed in the bin is kept and named,
+/// one a put-back is using stays, and a removal made after that moment is
+/// untouched.
+#[tokio::test]
+async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::publish::expiry::KeptWhy;
+
+    let (scratch, library, music) = bare_library("lib-empty-bin").await;
+    for folder in ["A", "B", "C", "D"] {
+        plant(&music, &format!("{folder}/01.flac"), "flac_no_tags.flac");
+    }
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let mutations = Mutations::new(&library);
+    let remove = |folder: &str| -> String {
+        let track = library
+            .scan_store
+            .track_at("music", &format!("{folder}/01.flac"))
+            .unwrap()
+            .expect("track indexed");
+        let album: String = conn
+            .query_row(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("album");
+        mutations
+            .remove_album(&album, true, true, "admin")
+            .expect("album removed");
+        track
+    };
+    let [a, b, c] = ["A", "B", "C"].map(&remove);
+    let (a_copy, a_row) = copy_of(&conn, &a);
+    let (b_copy, b_row) = copy_of(&conn, &b);
+    let (c_copy, c_row) = copy_of(&conn, &c);
+    let a_size = std::fs::metadata(&a_copy).expect("copy").len();
+    std::fs::write(&b_copy, b"changed in the bin").expect("copy changes");
+    conn.execute(
+        "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+         staged, staged_sha256, track_id, state) VALUES ('pb-000', 'pb', 'put_back', \
+         'music', 'C/01.flac', '.dn-pb', 'x', ?1, 'staged')",
+        [&c],
+    )
+    .expect("a put-back holds C");
+    conn.execute(
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10",
+        [],
+    )
+    .expect("the copies reached the bin a little earlier");
+    let before = library.clock.now_ms();
+    let d = remove("D");
+    let (d_copy, d_row) = copy_of(&conn, &d);
+
+    let report = library
+        .empty_recycle_bin(before, &|| true)
+        .expect("the bin empties");
+
+    assert!(report.finished);
+    assert!(!a_copy.exists(), "an unchanged copy goes");
+    assert!(left_bin(&conn, &a_row));
+    assert_eq!((report.deleted, report.deleted_bytes), (1, a_size));
+    assert_eq!(std::fs::read(&b_copy).expect("kept"), b"changed in the bin");
+    assert!(!left_bin(&conn, &b_row));
+    assert_eq!(
+        report
+            .kept_copies
+            .iter()
+            .map(|kept| (kept.path.clone(), kept.why))
+            .collect::<Vec<_>>(),
+        [(b_copy, KeptWhy::Changed)]
+    );
+    assert!(c_copy.is_file(), "a copy a put-back uses stays");
+    assert!(!left_bin(&conn, &c_row));
+    assert_eq!(report.waited, 1);
+    assert!(d_copy.is_file(), "a removal made after the count stays");
+    assert!(!left_bin(&conn, &d_row));
+}
+
+/// The bin page lists a removal with its files and their size, offers
+/// Put back, and lists it no more once its files are back.
+#[tokio::test]
+async fn the_bin_lists_a_removal_until_it_is_put_back() {
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::publish::bin_contents::{self, BinKind};
+
+    let (scratch, library, music) = bare_library("lib-bin-page").await;
+    plant(&music, "Back/01.flac", "flac_no_tags.flac");
+    plant(&music, "Back/02.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let size: u64 = ["Back/01.flac", "Back/02.flac"]
+        .iter()
+        .map(|rel| std::fs::metadata(music.join(rel)).expect("file").len())
+        .sum();
+    let track = library
+        .scan_store
+        .track_at("music", "Back/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album: String = conn
+        .query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("album");
+    let mutations = Mutations::new(&library);
+    let removal = mutations
+        .remove_album(&album, true, true, "admin")
+        .expect("album removed")
+        .removal_id
+        .expect("removal id");
+    let sandbox = library.expiry_sandbox();
+
+    let page = bin_contents::page(&library.db, sandbox.as_ref(), None, 50).expect("bin read");
+    assert_eq!(page.items.len(), 1, "{page:?}");
+    let listed = &page.items[0];
+    assert_eq!(
+        (
+            listed.id.as_str(),
+            listed.kind,
+            listed.files,
+            listed.bytes,
+            listed.can_put_back
+        ),
+        (removal.as_str(), BinKind::Album, 2, size, true)
+    );
+    assert_eq!(
+        listed.album.as_ref().map(|album| album.id.as_str()),
+        Some(album.as_str())
+    );
+
+    mutations
+        .put_back(&album, &removal, "admin")
+        .expect("album put back");
+    let page = bin_contents::page(&library.db, sandbox.as_ref(), None, 50).expect("bin read");
+    assert!(
+        page.items.is_empty(),
+        "a removal put back has left the bin: {page:?}"
+    );
+}
+
 /// A put-back stopped at any step ends, once recovery has run, with
 /// every file either back home with its track listed and the undo spent,
 /// or still in the recycle bin with its track missing and the undo there

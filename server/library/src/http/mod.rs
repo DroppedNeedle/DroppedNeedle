@@ -12,6 +12,7 @@ pub mod models;
 pub mod mutations;
 pub mod operations;
 pub mod reconcile;
+pub mod recycle_bin;
 pub mod repairs;
 pub mod reviews;
 pub mod routes;

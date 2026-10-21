@@ -18576,6 +18576,290 @@
         ]
       }
     },
+    "/api/v3/library/recycle-bin": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "List what the recycle bin holds, grouped by the removal or change\nthat put it there, newest first.",
+        "operationId": "list_recycle_bin",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page, 1 to 100 (50 by default).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of the recycle bin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecycleBinPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor or limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/recycle-bin/empty": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Empty the recycle bin of what it held at `before`, under the rules\nits expiry keeps: a copy that changed in the bin, one a put-back is\nusing, and one in a bin that is or holds a library or download folder\nstay. Runs in the background.",
+        "operationId": "empty_recycle_bin",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRecycleBinBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Emptying started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyRecycleBinView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/recycle-bin/status": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Whether the recycle bin is being emptied, and what the last run did.",
+        "operationId": "recycle_bin_status",
+        "responses": {
+          "200": {
+            "description": "Emptying state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecycleBinStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/recycle-bin/summary": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Count what emptying the recycle bin now would delete, for its\nconfirm.",
+        "operationId": "recycle_bin_summary",
+        "responses": {
+          "200": {
+            "description": "What Empty would delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecycleBinSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/resolve-tracks": {
       "post": {
         "tags": [
@@ -38579,6 +38863,137 @@
           }
         }
       },
+      "BinAlbumView": {
+        "type": "object",
+        "description": "The album a group of files came from.",
+        "required": [
+          "id",
+          "title",
+          "has_page",
+          "cover_available"
+        ],
+        "properties": {
+          "artist": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cover_available": {
+            "type": "boolean",
+            "description": "The album has art of its own, served by its artwork route."
+          },
+          "has_page": {
+            "type": "boolean",
+            "description": "The album has a page to open: it has files, or a MusicBrainz\nrelease group."
+          },
+          "id": {
+            "type": "string",
+            "description": "The local album id; the album page opens on it."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "BinKind": {
+        "type": "string",
+        "description": "What put a group of files in the bin.",
+        "enum": [
+          "album",
+          "track",
+          "extras",
+          "replaced",
+          "removed"
+        ]
+      },
+      "BinRemovalView": {
+        "type": "object",
+        "description": "One removal or change whose files are in the recycle bin.",
+        "required": [
+          "id",
+          "kind",
+          "removed_at",
+          "files",
+          "bytes",
+          "not_found",
+          "unchecked",
+          "held",
+          "can_put_back"
+        ],
+        "properties": {
+          "album": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BinAlbumView"
+              }
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of the copies found.",
+            "minimum": 0
+          },
+          "can_put_back": {
+            "type": "boolean",
+            "description": "Put back is offered."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the bin's expiry deletes its first copy, unix milliseconds;\nabsent while the retention can't be read."
+          },
+          "files": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files in the bin.",
+            "minimum": 0
+          },
+          "held": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files waiting for an admin under \"Some file writes need you\".",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The removal's id, which Put back names."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BinKind"
+          },
+          "not_found": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Copies not found where they should be.",
+            "minimum": 0
+          },
+          "removed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was made, unix milliseconds."
+          },
+          "unchecked": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Copies that can't be checked: in a bin no longer set, behind a\nlink, or while the bins can't be told.",
+            "minimum": 0
+          }
+        }
+      },
       "BrainzmashActiveBinding": {
         "type": "object",
         "description": "Active BrainzMash binding (kept; the pending proposal is transient).",
@@ -43793,6 +44208,105 @@
           }
         }
       },
+      "Emptied": {
+        "type": "object",
+        "description": "What the last finished run did.",
+        "required": [
+          "at",
+          "deleted",
+          "freed_bytes",
+          "older_folders",
+          "kept",
+          "kept_files",
+          "waited"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it finished, unix milliseconds."
+          },
+          "by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who asked, while the account exists."
+          },
+          "deleted": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Copies deleted, or found already gone.",
+            "minimum": 0
+          },
+          "freed_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "kept": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Copies kept: changed in the bin, or not where it may delete.",
+            "minimum": 0
+          },
+          "kept_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeptName"
+            },
+            "description": "Up to 20 of them, with why."
+          },
+          "older_folders": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Old bin folders no row named, emptied.",
+            "minimum": 0
+          },
+          "waited": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Copies left for later: held by a put-back, or a bin that looked\nempty.",
+            "minimum": 0
+          }
+        }
+      },
+      "EmptyRecycleBinBody": {
+        "type": "object",
+        "description": "Empty the bin of what it held at `before`.",
+        "required": [
+          "before"
+        ],
+        "properties": {
+          "before": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The summary's `as_of`: only copies in the bin by then are deleted."
+          }
+        }
+      },
+      "EmptyRecycleBinView": {
+        "type": "object",
+        "description": "Empty was queued.",
+        "required": [
+          "joined"
+        ],
+        "properties": {
+          "joined": {
+            "type": "boolean",
+            "description": "A run was already waiting; it goes ahead with its own moment."
+          }
+        }
+      },
+      "EmptyingState": {
+        "type": "string",
+        "description": "Whether the bin is being emptied.",
+        "enum": [
+          "idle",
+          "emptying",
+          "stopped"
+        ]
+      },
       "EnrichmentBatchRequest": {
         "type": "object",
         "description": "The single enrich-batch body: both enrichable buckets in one call.",
@@ -46661,6 +47175,33 @@
             "description": "Liveness now."
           }
         }
+      },
+      "KeptName": {
+        "type": "object",
+        "description": "A copy a run kept.",
+        "required": [
+          "name",
+          "why"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The file's name."
+          },
+          "why": {
+            "$ref": "#/components/schemas/KeptWhy"
+          }
+        }
+      },
+      "KeptWhy": {
+        "type": "string",
+        "description": "Why a due copy was kept.",
+        "enum": [
+          "changed",
+          "not_in_bin",
+          "not_plain_file",
+          "unreadable"
+        ]
       },
       "LastFmAlbumEnrichment": {
         "type": "object",
@@ -56498,6 +57039,105 @@
           "recovery_code": {
             "type": "string",
             "description": "Display code (`XXXX-XXXX-XXXX-XXXX-XXXX`)."
+          }
+        }
+      },
+      "RecycleBinPage": {
+        "type": "object",
+        "description": "One page of the recycle bin, newest first.",
+        "required": [
+          "items",
+          "bins_known"
+        ],
+        "properties": {
+          "bins_known": {
+            "type": "boolean",
+            "description": "The bins can be looked at now."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BinRemovalView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; absent on the last."
+          },
+          "retention_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Days a copy stays in the bin; absent while it can't be read."
+          }
+        }
+      },
+      "RecycleBinStatus": {
+        "type": "object",
+        "description": "Whether the bin is being emptied, and what the last run did.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "last_emptied": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Emptied"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/EmptyingState"
+          }
+        }
+      },
+      "RecycleBinSummary": {
+        "type": "object",
+        "description": "What emptying the bin now would delete.",
+        "required": [
+          "files",
+          "bytes",
+          "staying",
+          "older_folders",
+          "as_of"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When this was read, unix milliseconds. Empty deletes only what was\nin the bin then."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their bytes.",
+            "minimum": 0
+          },
+          "files": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files it would delete (one changed in the bin is kept instead).",
+            "minimum": 0
+          },
+          "older_folders": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Older bin folders the app did not record, which it would empty.",
+            "minimum": 0
+          },
+          "staying": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files it would leave: held, in use by a put-back, not found, or in\na bin it may not empty.",
+            "minimum": 0
           }
         }
       },
