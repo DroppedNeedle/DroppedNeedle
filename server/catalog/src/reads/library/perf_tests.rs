@@ -17,13 +17,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use droppedneedle_kernel::db::{DbConfig, DbError, DbRuntime, Lane, fold_text, open_runtime};
 use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, latest_version};
 use library::sqlite::{
-    ALBUM_COLUMNS, ALBUM_FILTER, ALBUM_JOINS, ARTIST_CREDIT_COUNTS, LibraryDb, STATS_FORMATS,
-    SqliteCatalog, TRACK_COLUMNS, TRACK_FILTER, TRACK_JOINS, TRACK_MISS_ORACLE, album_order,
+    ALBUM_COLUMNS, ALBUM_FILTER, ALBUM_JOINS, ARTIST_CREDIT_COUNTS, LibraryCatalog, LibraryDb,
+    STATS_FORMATS, TRACK_COLUMNS, TRACK_FILTER, TRACK_JOINS, TRACK_MISS_ORACLE, album_order,
     artist_order, artist_scope_predicate, fts_match_phrase, stats_main, track_order,
 };
 use library::stores::{
-    AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, LibraryCatalog,
-    StatsRecord, TrackFilter, TrackRecord, TrackSort,
+    AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, StatsRecord,
+    TrackFilter, TrackRecord, TrackSort,
 };
 use sqlx::Row as _;
 use sqlx::SqlitePool;
@@ -34,7 +34,7 @@ static PERF_SEQ: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     runtime: DbRuntime,
     pool: SqlitePool,
-    catalog: SqliteCatalog,
+    catalog: LibraryCatalog,
     /// Dropped last: removes the scratch database.
     _dir: droppedneedle_kernel::db::scratch::ScratchDir,
 }
@@ -58,11 +58,10 @@ async fn seed_small() -> Fixture {
         })
         .await
         .expect("seed batch runs");
-    let db = LibraryDb::new(&pool);
     Fixture {
+        catalog: LibraryCatalog::new(&pool),
         runtime,
         pool,
-        catalog: SqliteCatalog::new(&db),
         _dir: dir,
     }
 }
@@ -3246,7 +3245,7 @@ impl Output {
 
 /// The 17 reads as the acceptance tests call them, over one sqlx pool.
 struct Reads {
-    catalog: SqliteCatalog,
+    catalog: LibraryCatalog,
     player: SqlitePlayerCatalog,
     miss_albums: AlbumFilter,
     miss_tracks: TrackFilter,
@@ -3263,7 +3262,7 @@ impl Reads {
             ..TrackQuery::default()
         };
         Self {
-            catalog: SqliteCatalog::new(&db),
+            catalog: LibraryCatalog::new(pool),
             player: SqlitePlayerCatalog::new(&db),
             miss_albums: AlbumFilter {
                 q: Some("zzz-no-such-thing-zzz".to_owned()),

@@ -63,7 +63,7 @@ use droppedneedle_catalog::reads::{
         CollectionsState, db::CollectionsDb, remote_import::PlaylistImportSink, store::Stores,
     },
     enrichment::{library::LiveEnrichment, live::production_enrichment},
-    library::{lookups::SqliteLookups, sqlite::LibraryDb},
+    library::lookups::LibraryLookups,
     platform::artwork::ArtworkService,
 };
 use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
@@ -466,7 +466,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     {
         tracing::warn!("the settings effects loop was already running");
     }
-    let scans = Arc::new(SqliteLookups::new(&LibraryDb::new(db.sqlx())));
+    let scans = Arc::new(LibraryLookups::new(db.sqlx()));
     let settings = SettingsSetup::build(
         p,
         effects,

@@ -1,4 +1,4 @@
-//! SQLite adapter for [`LibraryLookups`]: membership, identifier
+//! [`LibraryLookups`]: membership, identifier
 //! resolution for album status and track resolution, and the stats extras.
 //!
 //! Reads only, over the reader pool. MusicBrainz ids compare lowercase
@@ -10,10 +10,8 @@ use std::collections::{HashMap, HashSet};
 
 use sqlx::SqlitePool;
 
-use super::sqlite::{
-    LibraryDb, TRACK_COLUMNS, TRACK_JOINS, in_placeholders, internal, map_track, unwired_store,
-};
-use super::stores::{AlbumMbids, BoxFuture, LibraryLookups, StatsExtras, StoreError, TrackRecord};
+use super::sqlite::{TRACK_COLUMNS, TRACK_JOINS, in_placeholders, internal, map_track};
+use super::stores::{AlbumMbids, StatsExtras, StoreError, TrackRecord};
 use crate::reads::catalog::library::LocalCatalog;
 use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 
@@ -80,21 +78,16 @@ const OWNERS_BY_RELEASE: &str = "SELECT e.local_album_id, lower(e.release_mbid) 
     AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
     AND t.availability = 'indexed')";
 
-/// Lookups over the reader pool.
+/// Identity lookups behind membership, album status, track resolution and
+/// the stats extras.
+///
+/// Identifiers here are what a catalog page holds: a local album id, a
+/// legacy alias, or a MusicBrainz release-group or release id (compared
+/// case-insensitively). Retired (merged) albums resolve to the album they
+/// merged into. Absence is an empty answer, never failure.
 #[derive(Clone, Debug)]
-pub struct SqliteLookups {
-    db: LibraryDb,
-}
-
-impl SqliteLookups {
-    /// Adapter over one handle.
-    pub fn new(db: &LibraryDb) -> Self {
-        Self { db: db.clone() }
-    }
-
-    fn pool(&self) -> Result<&SqlitePool, StoreError> {
-        self.db.live().ok_or_else(unwired_store)
-    }
+pub struct LibraryLookups {
+    pool: SqlitePool,
 }
 
 /// The live album or artist (`kind`) a local id or alias names now, if
@@ -149,184 +142,175 @@ fn lowered(ids: &[String]) -> Vec<String> {
         .collect()
 }
 
-impl LibraryLookups for SqliteLookups {
-    fn stats_extras<'a>(&'a self) -> BoxFuture<'a, Result<StatsExtras, StoreError>> {
-        Box::pin(async move {
-            let (reviews, local_only, last_scan): (i64, i64, Option<f64>) =
-                sqlx::query_as(STATS_EXTRAS)
-                    .fetch_one(self.pool()?)
-                    .await
-                    .map_err(|error| internal("library.stats.extras", error))?;
-            Ok(StatsExtras {
-                review_count: reviews.max(0) as u64,
-                local_only_count: local_only.max(0) as u64,
-                last_scan_at: last_scan,
-            })
-        })
+impl LibraryLookups {
+    /// Lookups over the reader pool.
+    pub fn new(pool: &SqlitePool) -> Self {
+        Self { pool: pool.clone() }
     }
 
-    fn owned_albums<'a>(
-        &'a self,
-        mbids: &'a [String],
-    ) -> BoxFuture<'a, Result<HashSet<String>, StoreError>> {
-        Box::pin(async move {
-            LocalCatalog::new(self.pool()?.clone())
-                .owned_albums(mbids)
+    /// Review, local-only and last-scan totals.
+    pub async fn stats_extras(&self) -> Result<StatsExtras, StoreError> {
+        let (reviews, local_only, last_scan): (i64, i64, Option<f64>) =
+            sqlx::query_as(STATS_EXTRAS)
+                .fetch_one(&self.pool)
                 .await
-                .map_err(|error| internal("library.membership.owned", error))
+                .map_err(|error| internal("library.stats.extras", error))?;
+        Ok(StatsExtras {
+            review_count: reviews.max(0) as u64,
+            local_only_count: local_only.max(0) as u64,
+            last_scan_at: last_scan,
         })
     }
 
-    fn requested_albums<'a>(
-        &'a self,
-        mbids: &'a [String],
-    ) -> BoxFuture<'a, Result<HashSet<String>, StoreError>> {
-        Box::pin(async move {
-            LocalCatalog::new(self.pool()?.clone())
-                .requested_albums(mbids)
+    /// The MusicBrainz album ids (lowercase) the library holds with at
+    /// least one streamable track.
+    pub async fn owned_albums(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
+        LocalCatalog::new(self.pool.clone())
+            .owned_albums(mbids)
+            .await
+            .map_err(|error| internal("library.membership.owned", error))
+    }
+
+    /// The album ids (lowercase) with an open acquisition request.
+    pub async fn requested_albums(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
+        LocalCatalog::new(self.pool.clone())
+            .requested_albums(mbids)
+            .await
+            .map_err(|error| internal("library.membership.requested", error))
+    }
+
+    /// Every held release group and every open album request (the
+    /// unfiltered membership answer).
+    pub async fn all_album_mbids(&self) -> Result<AlbumMbids, StoreError> {
+        let catalog = LocalCatalog::new(self.pool.clone());
+        let owned = catalog
+            .all_owned_release_groups()
+            .await
+            .map_err(|error| internal("library.mbids.owned", error))?;
+        let requested = catalog
+            .all_requested_albums()
+            .await
+            .map_err(|error| internal("library.mbids.requested", error))?;
+        Ok(AlbumMbids { owned, requested })
+    }
+
+    /// The one live local album each identifier names. Identifiers that
+    /// name nothing, or a MusicBrainz id held by more than one album, are
+    /// left out rather than guessed.
+    pub async fn resolve_albums(
+        &self,
+        identifiers: &[String],
+    ) -> Result<HashMap<String, String>, StoreError> {
+        let pool = &self.pool;
+        let mut resolved = HashMap::new();
+        let mut pending = Vec::new();
+        let mut seen = HashSet::new();
+        for identifier in identifiers {
+            if !seen.insert(identifier.as_str()) {
+                continue;
+            }
+            match current_id(pool, "album", identifier).await? {
+                Some(album_id) => {
+                    resolved.insert(identifier.clone(), album_id);
+                }
+                None => pending.push(identifier.clone()),
+            }
+        }
+        if pending.is_empty() {
+            return Ok(resolved);
+        }
+        // A MusicBrainz id resolves only when exactly one live album
+        // holds it: several owners are separate editions, and picking
+        // one would play the wrong copy.
+        let needles = lowered(&pending);
+        let mut candidates: HashMap<String, HashSet<String>> = HashMap::new();
+        for sql in [OWNERS_BY_GROUP, OWNERS_BY_RELEASE] {
+            for (album_id, matched) in owners(pool, sql, &needles).await? {
+                candidates.entry(matched).or_default().insert(album_id);
+            }
+        }
+        for identifier in pending {
+            if let Some(albums) = candidates.get(&identifier.trim().to_lowercase())
+                && albums.len() == 1
+                && let Some(album_id) = albums.iter().next()
+            {
+                resolved.insert(identifier, album_id.clone());
+            }
+        }
+        Ok(resolved)
+    }
+
+    /// Every live local album an identifier covers for the album status
+    /// view: the album a local id or alias names, else every album holding
+    /// the MusicBrainz release group (or release). Ordered by id.
+    pub async fn status_albums(&self, identifier: &str) -> Result<Vec<String>, StoreError> {
+        let pool = &self.pool;
+        if let Some(album_id) = current_id(pool, "album", identifier).await? {
+            return Ok(vec![album_id]);
+        }
+        let needle = lowered(&[identifier.to_owned()]);
+        for sql in [OWNERS_BY_GROUP, OWNERS_BY_RELEASE] {
+            let mut albums: Vec<String> = owners(pool, sql, &needle)
+                .await?
+                .into_iter()
+                .map(|(album_id, _)| album_id)
+                .collect();
+            if !albums.is_empty() {
+                albums.sort();
+                albums.dedup();
+                return Ok(albums);
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// The live album a local id or alias names now: the album itself, the
+    /// album a merge pointed its alias at, or the album it was retired into.
+    /// None when the id names nothing live.
+    pub async fn current_album(&self, id: &str) -> Result<Option<String>, StoreError> {
+        current_id(&self.pool, "album", id).await
+    }
+
+    /// The live artist a local id or alias names now, in the same order as
+    /// [`LibraryLookups::current_album`].
+    pub async fn current_artist(&self, id: &str) -> Result<Option<String>, StoreError> {
+        current_id(&self.pool, "artist", id).await
+    }
+
+    /// The live artist linked to a MusicBrainz artist id, compared without
+    /// case. None when no live artist carries it.
+    pub async fn artist_for_mbid(&self, mbid: &str) -> Result<Option<String>, StoreError> {
+        sqlx::query_scalar(ARTIST_FOR_MBID)
+            .bind(mbid)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| internal("library.lookups.artist_mbid", error))
+    }
+
+    /// Streamable tracks of the albums, ordered by album id, disc, track.
+    pub async fn album_tracks_batch(
+        &self,
+        album_ids: &[String],
+    ) -> Result<Vec<TrackRecord>, StoreError> {
+        let pool = &self.pool;
+        let mut tracks = Vec::new();
+        for chunk in album_ids.chunks(MAX_BINDS) {
+            let sql = format!(
+                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
+                 WHERE t.local_album_id IN ({}) AND t.availability = 'indexed' \
+                 ORDER BY t.local_album_id, t.disc_number, t.track_number, t.id",
+                in_placeholders(chunk.len())
+            );
+            let mut query = sqlx::query(&sql);
+            for id in chunk {
+                query = query.bind(id);
+            }
+            let rows = query
+                .fetch_all(pool)
                 .await
-                .map_err(|error| internal("library.membership.requested", error))
-        })
-    }
-
-    fn all_album_mbids<'a>(&'a self) -> BoxFuture<'a, Result<AlbumMbids, StoreError>> {
-        Box::pin(async move {
-            let catalog = LocalCatalog::new(self.pool()?.clone());
-            let owned = catalog
-                .all_owned_release_groups()
-                .await
-                .map_err(|error| internal("library.mbids.owned", error))?;
-            let requested = catalog
-                .all_requested_albums()
-                .await
-                .map_err(|error| internal("library.mbids.requested", error))?;
-            Ok(AlbumMbids { owned, requested })
-        })
-    }
-
-    fn resolve_albums<'a>(
-        &'a self,
-        identifiers: &'a [String],
-    ) -> BoxFuture<'a, Result<HashMap<String, String>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.pool()?;
-            let mut resolved = HashMap::new();
-            let mut pending = Vec::new();
-            let mut seen = HashSet::new();
-            for identifier in identifiers {
-                if !seen.insert(identifier.as_str()) {
-                    continue;
-                }
-                match current_id(pool, "album", identifier).await? {
-                    Some(album_id) => {
-                        resolved.insert(identifier.clone(), album_id);
-                    }
-                    None => pending.push(identifier.clone()),
-                }
-            }
-            if pending.is_empty() {
-                return Ok(resolved);
-            }
-            // A MusicBrainz id resolves only when exactly one live album
-            // holds it: several owners are separate editions, and picking
-            // one would play the wrong copy.
-            let needles = lowered(&pending);
-            let mut candidates: HashMap<String, HashSet<String>> = HashMap::new();
-            for sql in [OWNERS_BY_GROUP, OWNERS_BY_RELEASE] {
-                for (album_id, matched) in owners(pool, sql, &needles).await? {
-                    candidates.entry(matched).or_default().insert(album_id);
-                }
-            }
-            for identifier in pending {
-                if let Some(albums) = candidates.get(&identifier.trim().to_lowercase())
-                    && albums.len() == 1
-                    && let Some(album_id) = albums.iter().next()
-                {
-                    resolved.insert(identifier, album_id.clone());
-                }
-            }
-            Ok(resolved)
-        })
-    }
-
-    fn status_albums<'a>(
-        &'a self,
-        identifier: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.pool()?;
-            if let Some(album_id) = current_id(pool, "album", identifier).await? {
-                return Ok(vec![album_id]);
-            }
-            let needle = lowered(&[identifier.to_owned()]);
-            for sql in [OWNERS_BY_GROUP, OWNERS_BY_RELEASE] {
-                let mut albums: Vec<String> = owners(pool, sql, &needle)
-                    .await?
-                    .into_iter()
-                    .map(|(album_id, _)| album_id)
-                    .collect();
-                if !albums.is_empty() {
-                    albums.sort();
-                    albums.dedup();
-                    return Ok(albums);
-                }
-            }
-            Ok(Vec::new())
-        })
-    }
-
-    fn current_album<'a>(
-        &'a self,
-        id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
-        Box::pin(async move { current_id(self.pool()?, "album", id).await })
-    }
-
-    fn current_artist<'a>(
-        &'a self,
-        id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
-        Box::pin(async move { current_id(self.pool()?, "artist", id).await })
-    }
-
-    fn artist_for_mbid<'a>(
-        &'a self,
-        mbid: &'a str,
-    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
-        Box::pin(async move {
-            sqlx::query_scalar(ARTIST_FOR_MBID)
-                .bind(mbid)
-                .fetch_optional(self.pool()?)
-                .await
-                .map_err(|error| internal("library.lookups.artist_mbid", error))
-        })
-    }
-
-    fn album_tracks_batch<'a>(
-        &'a self,
-        album_ids: &'a [String],
-    ) -> BoxFuture<'a, Result<Vec<TrackRecord>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.pool()?;
-            let mut tracks = Vec::new();
-            for chunk in album_ids.chunks(MAX_BINDS) {
-                let sql = format!(
-                    "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
-                     WHERE t.local_album_id IN ({}) AND t.availability = 'indexed' \
-                     ORDER BY t.local_album_id, t.disc_number, t.track_number, t.id",
-                    in_placeholders(chunk.len())
-                );
-                let mut query = sqlx::query(&sql);
-                for id in chunk {
-                    query = query.bind(id);
-                }
-                let rows = query
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|error| internal("library.lookups.tracks", error))?;
-                tracks.extend(rows.iter().map(map_track));
-            }
-            Ok(tracks)
-        })
+                .map_err(|error| internal("library.lookups.tracks", error))?;
+            tracks.extend(rows.iter().map(map_track));
+        }
+        Ok(tracks)
     }
 }

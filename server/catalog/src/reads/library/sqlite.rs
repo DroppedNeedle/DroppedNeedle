@@ -1,10 +1,8 @@
-//! Production SQLite adapters over the 0001 baseline tables.
+//! Library reads over the reader pool and the 0001 baseline tables.
 //!
-//! [`SqliteCatalog`] implements [`LibraryCatalog`](super::stores::LibraryCatalog)
-//! over the `local_*` tables plus artwork and identity rows; [`SqliteFavorites`]
-//! implements [`FavoriteReads`](super::stores::FavoriteReads) over
-//! `library_user_favorites`. Reads only: both hold the reader pool, never the
-//! writer lane.
+//! [`LibraryCatalog`] reads the `local_*` tables plus artwork and identity
+//! rows; [`FavoriteReads`] reads `library_user_favorites`. Reads only: both
+//! hold the reader pool, never the writer lane.
 //!
 //! Conventions:
 //!
@@ -34,14 +32,13 @@ use sqlx::{Row as _, SqlitePool};
 
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistListing, ArtistRecord, ArtistScope, ArtistSort,
-    BoxFuture, DecadeRecord, GenreRecord, ManagementHoldRecord, StatsRecord, StoreError,
-    TrackFilter, TrackRecord, TrackSort,
+    DecadeRecord, GenreRecord, ManagementHoldRecord, StatsRecord, StoreError, TrackFilter,
+    TrackRecord, TrackSort,
 };
-use super::stores::{FavoriteReads, LibraryCatalog};
 use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 
-/// Shared SQLite handle for the library adapters: the reader pool.
-/// `Clone` is cheap; clones share the pool.
+/// The reader pool for the player catalog. Its unwired form and
+/// [`LibraryDb::live`] remain only for collections' unwired database.
 #[derive(Clone, Debug, Default)]
 pub struct LibraryDb {
     inner: Option<SqlitePool>,
@@ -68,10 +65,6 @@ impl LibraryDb {
 
 pub(crate) fn internal(op: &str, error: sqlx::Error) -> StoreError {
     StoreError::read(op, error)
-}
-
-pub(crate) fn unwired_store() -> StoreError {
-    StoreError::Internal("library store is not wired".to_owned())
 }
 
 /// Escape the LIKE metacharacters in a folded filter, then wrap for
@@ -603,782 +596,65 @@ pub(crate) async fn hydrate_artists(
     Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }
 
-/// Catalog reads over the reader pool.
+/// Catalog reads over the `local_*` tables plus artwork and identity rows.
+///
+/// Table mapping: `local_albums`, `local_artists`, `local_tracks`,
+/// `local_album_artists`, `local_track_artists`,
+/// `local_album_external_identities`, `local_artist_external_identities`,
+/// `local_track_genres`, `local_album_artwork`. Every track read filters
+/// `local_tracks.availability = 'indexed'`; missing or excluded files are
+/// invisible here. `Clone` is cheap; clones share the reader pool.
 #[derive(Clone, Debug)]
-pub struct SqliteCatalog {
-    db: LibraryDb,
+pub struct LibraryCatalog {
+    pool: SqlitePool,
 }
 
-impl SqliteCatalog {
-    /// Adapter over one handle.
-    pub fn new(db: &LibraryDb) -> Self {
-        Self { db: db.clone() }
+impl LibraryCatalog {
+    /// Reads over the reader pool.
+    pub fn new(pool: &SqlitePool) -> Self {
+        Self { pool: pool.clone() }
     }
-}
 
-impl LibraryCatalog for SqliteCatalog {
-    fn list_albums<'a>(
-        &'a self,
-        filter: &'a AlbumFilter,
+    /// One page of albums plus the match total.
+    pub async fn list_albums(
+        &self,
+        filter: &AlbumFilter,
         sort: AlbumSort,
         descending: bool,
         limit: u64,
         offset: u64,
-    ) -> BoxFuture<'a, Result<(Vec<AlbumRecord>, u64), StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let pattern = filter.q.as_deref().map(like_pattern);
-            let order = album_order(sort, descending);
-            // Page the ids first: filtering and ordering touch albums only,
-            // so the track aggregation below runs over the page, never the
-            // catalog. Page order is restored below from this vec.
-            let ids: Vec<String> = sqlx::query_scalar(&format!(
-                "SELECT a.id FROM local_albums a WHERE {ALBUM_FILTER} \
-                 ORDER BY {order} LIMIT ? OFFSET ?"
-            ))
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .bind(filter.artist_id.as_deref())
-            .bind(filter.artist_id.as_deref())
-            .bind(filter.decade)
-            .bind(filter.decade)
-            .bind(filter.decade)
-            .bind(filter.format.as_deref())
-            .bind(filter.format.as_deref())
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.albums.list", error))?;
-            let mut records = HashMap::with_capacity(ids.len());
-            if !ids.is_empty() {
-                let placeholders = in_placeholders(ids.len());
-                let sql = format!(
-                    "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
-                     WHERE a.id IN ({placeholders}) GROUP BY a.id"
-                );
-                let mut query = sqlx::query(&sql);
-                for id in &ids {
-                    query = query.bind(id);
-                }
-                let rows = query
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|error| internal("library.albums.list", error))?;
-                for row in &rows {
-                    let record = map_album(row);
-                    records.insert(record.id.clone(), record);
-                }
-            }
-            let row = sqlx::query(&format!(
-                "SELECT COUNT(*) AS total FROM local_albums a WHERE {ALBUM_FILTER}"
-            ))
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .bind(filter.artist_id.as_deref())
-            .bind(filter.artist_id.as_deref())
-            .bind(filter.decade)
-            .bind(filter.decade)
-            .bind(filter.decade)
-            .bind(filter.format.as_deref())
-            .bind(filter.format.as_deref())
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.albums.count", error))?;
-            let total: i64 = row.get("total");
-            let mut ordered = Vec::with_capacity(ids.len());
-            for id in &ids {
-                if let Some(record) = records.remove(id) {
-                    ordered.push(record);
-                }
-            }
-            Ok((ordered, total.max(0) as u64))
-        })
-    }
-
-    fn get_album<'a>(
-        &'a self,
-        id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<AlbumRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let row = sqlx::query(&format!(
-                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.id = ? GROUP BY a.id"
-            ))
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| internal("library.albums.get", error))?;
-            Ok(row.as_ref().map(map_album))
-        })
-    }
-
-    fn management_hold<'a>(
-        &'a self,
-        album_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<ManagementHoldRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let row = sqlx::query(
-                "SELECT 'your_choice' AS kind, CAST(excluded_at * 1000 AS INTEGER) AS held_at, \
-                 row_revision AS exclusion_revision, 0 AS handing_back \
-                 FROM library_management_exclusions WHERE local_album_id = ?1 \
-                 UNION ALL \
-                 SELECT cause, noticed_at, NULL, handed_back_at IS NOT NULL \
-                 FROM library_album_takeovers WHERE local_album_id = ?1 \
-                 AND NOT EXISTS (SELECT 1 FROM library_management_exclusions \
-                 WHERE local_album_id = ?1) LIMIT 1",
-            )
-            .bind(album_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| internal("library.albums.management_hold", error))?;
-            Ok(row.map(|row| ManagementHoldRecord {
-                kind: row.get("kind"),
-                held_at: row.get("held_at"),
-                exclusion_revision: row.get("exclusion_revision"),
-                handing_back: row.get("handing_back"),
-            }))
-        })
-    }
-
-    fn get_album_by_release_group<'a>(
-        &'a self,
-        release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<Option<AlbumRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let row = sqlx::query(&format!(
-                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE ae.release_group_mbid = ? \
-                 GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC LIMIT 1"
-            ))
-            .bind(release_group_mbid)
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| internal("library.albums.match", error))?;
-            Ok(row.as_ref().map(map_album))
-        })
-    }
-
-    fn album_tracks<'a>(
-        &'a self,
-        album_id: &'a str,
-        limit: u64,
-        offset: u64,
-    ) -> BoxFuture<'a, Result<(Vec<TrackRecord>, u64), StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(&format!(
-                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
-                 WHERE t.local_album_id = ? AND t.availability = 'indexed' \
-                 ORDER BY t.disc_number ASC, t.track_number ASC, t.id ASC \
-                 LIMIT ? OFFSET ?"
-            ))
-            .bind(album_id)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.albums.tracks", error))?;
-            let row = sqlx::query(
-                "SELECT COUNT(*) AS total FROM local_tracks t \
-                 WHERE t.local_album_id = ? AND t.availability = 'indexed'",
-            )
-            .bind(album_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.albums.tracks.count", error))?;
-            let total: i64 = row.get("total");
-            Ok((rows.iter().map(map_track).collect(), total.max(0) as u64))
-        })
-    }
-
-    fn album_copies<'a>(
-        &'a self,
-        album_id: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<AlbumRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(&format!(
-                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
-                 WHERE ae.release_group_mbid = \
-                 (SELECT release_group_mbid FROM local_album_external_identities \
-                  WHERE local_album_id = ?) \
-                 AND a.id != ? GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC"
-            ))
-            .bind(album_id)
-            .bind(album_id)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.albums.copies", error))?;
-            Ok(rows.iter().map(map_album).collect())
-        })
-    }
-
-    fn list_artists<'a>(
-        &'a self,
-        scope: ArtistScope,
-        q: Option<&'a str>,
-        sort: ArtistSort,
-        descending: bool,
-        limit: u64,
-        offset: u64,
-    ) -> BoxFuture<'a, Result<ArtistListing, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let pattern = q.map(like_pattern);
-            let scope_sql = artist_scope_predicate(scope)
-                .replace("(LED)", LED_PREDICATE)
-                .replace("(CREDITED)", CREDITED_PREDICATE);
-            // Page the ids first; counts aggregate over the page below.
-            // Count sorts join pre-aggregated per-artist counts, with
-            // COALESCE so artists without any sort as zero.
-            let counted = match sort {
-                ArtistSort::AlbumCount => Some(ALBUM_COUNT_BY_ARTIST),
-                ArtistSort::AppearanceCount => Some(APPEARANCE_COUNT_BY_ARTIST),
-                ArtistSort::Name | ArtistSort::DateAdded => None,
-            };
-            let ids: Vec<String> = if let Some(counts) = counted {
-                let direction = if descending { "DESC" } else { "ASC" };
-                sqlx::query_scalar(&format!(
-                    "SELECT r.id FROM local_artists r \
-                     LEFT JOIN ({counts}) ac ON ac.aid = r.id \
-                     WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
-                     AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
-                     ORDER BY COALESCE(ac.c, 0) {direction}, \
-                     r.folded_name ASC, r.id ASC LIMIT ? OFFSET ?"
-                ))
-                .bind(pattern.as_deref())
-                .bind(pattern.as_deref())
-                .bind(limit as i64)
-                .bind(offset as i64)
-                .fetch_all(pool)
-                .await
-                .map_err(|error| internal("library.artists.list", error))?
-            } else {
-                let order = artist_order(sort, descending);
-                sqlx::query_scalar(&format!(
-                    "SELECT r.id FROM local_artists r \
-                     WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
-                     AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
-                     ORDER BY {order} LIMIT ? OFFSET ?"
-                ))
-                .bind(pattern.as_deref())
-                .bind(pattern.as_deref())
-                .bind(limit as i64)
-                .bind(offset as i64)
-                .fetch_all(pool)
-                .await
-                .map_err(|error| internal("library.artists.list", error))?
-            };
-            let records = hydrate_artists(pool, &ids).await?;
-            let totals = sqlx::query(&format!(
-                "SELECT COALESCE(SUM(CASE WHEN {CREDITED_PREDICATE} THEN 1 ELSE 0 END), 0) AS total, \
-                 COALESCE(SUM(CASE WHEN {LED_PREDICATE} THEN 1 ELSE 0 END), 0) AS led, \
-                 COALESCE(SUM(CASE WHEN NOT ({LED_PREDICATE}) AND ({CREDITED_PREDICATE}) \
-                 THEN 1 ELSE 0 END), 0) AS contributors \
-                 {ARTIST_JOINS} WHERE r.retired_into_artist_id IS NULL \
-                 AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\')"
-            ))
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.artists.count", error))?;
-            let mut total: i64 = totals.get("total");
-            let led: i64 = totals.get("led");
-            let contributors: i64 = totals.get("contributors");
-            if !matches!(scope, ArtistScope::All) {
-                let scoped = sqlx::query(&format!(
-                    "SELECT COUNT(*) AS total {ARTIST_JOINS} \
-                     WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
-                     AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\')"
-                ))
-                .bind(pattern.as_deref())
-                .bind(pattern.as_deref())
-                .fetch_one(pool)
-                .await
-                .map_err(|error| internal("library.artists.count", error))?;
-                total = scoped.get("total");
-            }
-            Ok((
-                records,
-                total.max(0) as u64,
-                led.max(0) as u64,
-                contributors.max(0) as u64,
-            ))
-        })
-    }
-
-    fn get_artist<'a>(
-        &'a self,
-        id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<ArtistRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let row = sqlx::query(&format!(
-                "SELECT {ARTIST_ROW_COLUMNS} {ARTIST_JOINS} \
-                 WHERE r.id = ? AND r.retired_into_artist_id IS NULL"
-            ))
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| internal("library.artists.get", error))?;
-            let Some(row) = row else {
-                return Ok(None);
-            };
-            let owned = [id.to_owned()];
-            let (album_counts, credit_counts) = artist_counts(pool, &owned).await?;
-            let album_count = album_counts.get(id).copied().unwrap_or(0);
-            let credits = credit_counts.get(id).copied().unwrap_or_default();
-            Ok(Some(map_artist(&row, album_count, credits)))
-        })
-    }
-
-    fn artist_albums<'a>(
-        &'a self,
-        artist_id: &'a str,
-        limit: u64,
-        offset: u64,
-    ) -> BoxFuture<'a, Result<(Vec<AlbumRecord>, u64), StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(&format!(
-                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.album_artist_id = ? \
-                 GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC LIMIT ? OFFSET ?"
-            ))
-            .bind(artist_id)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.artists.albums", error))?;
-            let row = sqlx::query(
-                "SELECT COUNT(*) AS total FROM local_albums a \
-                 WHERE a.album_artist_id = ?",
-            )
-            .bind(artist_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.artists.albums.count", error))?;
-            let total: i64 = row.get("total");
-            Ok((rows.iter().map(map_album).collect(), total.max(0) as u64))
-        })
-    }
-
-    fn artist_appearances<'a>(
-        &'a self,
-        artist_id: &'a str,
-        limit: u64,
-        offset: u64,
-    ) -> BoxFuture<'a, Result<(Vec<AlbumRecord>, u64), StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let filter = "a.album_artist_id != ? AND EXISTS \
-                (SELECT 1 FROM local_tracks at \
-                 JOIN local_track_artists ata ON ata.local_track_id = at.id \
-                 WHERE at.local_album_id = a.id AND ata.local_artist_id = ? \
-                 AND at.availability = 'indexed')";
-            let rows = sqlx::query(&format!(
-                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE {filter} \
-                 GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC LIMIT ? OFFSET ?"
-            ))
-            .bind(artist_id)
-            .bind(artist_id)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.artists.appearances", error))?;
-            let row = sqlx::query(&format!(
-                "SELECT COUNT(*) AS total FROM local_albums a WHERE {filter}"
-            ))
-            .bind(artist_id)
-            .bind(artist_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.artists.appearances.count", error))?;
-            let total: i64 = row.get("total");
-            Ok((rows.iter().map(map_album).collect(), total.max(0) as u64))
-        })
-    }
-
-    fn list_tracks<'a>(
-        &'a self,
-        filter: &'a TrackFilter,
-        sort: TrackSort,
-        descending: bool,
-        limit: u64,
-        offset: u64,
-    ) -> BoxFuture<'a, Result<(Vec<TrackRecord>, u64), StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            // Words of 3+ characters search the FTS index; anything else
-            // keeps the LIKE substring match.
-            let search = filter.q.as_deref().and_then(TextSearch::parse);
-            // Miss oracle: when no track text matches, the page and total
-            // are empty whatever the other filters say (they only narrow).
-            if let Some(search) = &search {
-                let hit: bool = sqlx::query_scalar(TRACK_MISS_ORACLE)
-                    .bind(&search.fts)
-                    .fetch_one(pool)
-                    .await
-                    .map_err(|error| internal("library.tracks.search", error))?;
-                if !hit {
-                    return Ok((Vec::new(), 0));
-                }
-            }
-            let pattern = match search {
-                Some(_) => None,
-                None => filter.q.as_deref().map(like_pattern),
-            };
-            let genre = filter
-                .genre
-                .as_deref()
-                .map(|name| droppedneedle_kernel::db::fold_text(name.trim()));
-            let where_sql = match &search {
-                Some(search) => track_filter_fts(search),
-                None => TRACK_FILTER.to_owned(),
-            };
-            let bind_filter = |sql| {
-                bind_track_filter(
-                    sql,
-                    search.as_ref(),
-                    pattern.as_deref(),
-                    filter,
-                    genre.as_deref(),
-                )
-            };
-            let order = track_order(sort, descending);
-            let list_sql = format!(
-                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {where_sql} \
-                 ORDER BY {order} LIMIT ? OFFSET ?"
-            );
-            let rows = bind_filter(&list_sql)
-                .bind(limit as i64)
-                .bind(offset as i64)
-                .fetch_all(pool)
-                .await
-                .map_err(|error| internal("library.tracks.list", error))?;
-            let unfiltered = filter.q.is_none()
-                && filter.album_id.is_none()
-                && filter.artist_id.is_none()
-                && filter.genre.is_none();
-            let total = if unfiltered {
-                // Maintained exact count of indexed tracks (migration 0005).
-                let total: i64 = sqlx::query_scalar(
-                    "SELECT COALESCE(SUM(indexed_tracks), 0) \
-                     FROM library_track_format_stats",
-                )
-                .fetch_one(pool)
-                .await
-                .map_err(|error| internal("library.tracks.count", error))?;
-                total.max(0) as u64
-            } else {
-                let count_sql =
-                    format!("SELECT COUNT(*) AS total FROM local_tracks t WHERE {where_sql}");
-                let row = bind_filter(&count_sql)
-                    .fetch_one(pool)
-                    .await
-                    .map_err(|error| internal("library.tracks.count", error))?;
-                let total: i64 = row.get("total");
-                total.max(0) as u64
-            };
-            Ok((rows.iter().map(map_track).collect(), total))
-        })
-    }
-
-    fn get_track<'a>(
-        &'a self,
-        id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<TrackRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let row = sqlx::query(&format!(
-                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
-                 WHERE t.id = ({CURRENT_TRACK}) AND t.availability = 'indexed'"
-            ))
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| internal("library.tracks.get", error))?;
-            Ok(row.as_ref().map(map_track))
-        })
-    }
-
-    fn track_has_lyrics<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            sqlx::query_scalar::<_, bool>(&format!(
-                "SELECT EXISTS (SELECT 1 FROM local_tracks t \
-                 JOIN local_track_lyrics l ON l.local_track_id = t.id \
-                 WHERE t.id = ({CURRENT_TRACK}) AND t.availability = 'indexed')"
-            ))
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.tracks.lyrics", error))
-        })
-    }
-
-    fn stats<'a>(&'a self) -> BoxFuture<'a, Result<StatsRecord, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            // Track totals come from the maintained per-format rows
-            // (migration 0005); the zero-count rows they keep stay out of
-            // the breakdown, matching GROUP BY exactly.
-            let row = sqlx::query(&stats_main())
-                .fetch_one(pool)
-                .await
-                .map_err(|error| internal("library.stats", error))?;
-            let albums: i64 = row.get("albums");
-            let artists: i64 = row.get("artists");
-            let tracks: i64 = row.get("tracks");
-            let rows = sqlx::query(STATS_FORMATS)
-                .fetch_all(pool)
-                .await
-                .map_err(|error| internal("library.stats.formats", error))?;
-            let mut format_breakdown = std::collections::HashMap::new();
-            for row in &rows {
-                let format: String = row.get("format");
-                let total: i64 = row.get("total");
-                format_breakdown.insert(format, total.max(0) as u64);
-            }
-            Ok(StatsRecord {
-                total_albums: albums.max(0) as u64,
-                total_artists: artists.max(0) as u64,
-                total_tracks: tracks.max(0) as u64,
-                total_size_bytes: row.get("size_bytes"),
-                format_breakdown,
-            })
-        })
-    }
-
-    fn recently_added<'a>(
-        &'a self,
-        limit: u64,
-    ) -> BoxFuture<'a, Result<Vec<AlbumRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(&format!(
-                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
-                 GROUP BY a.id ORDER BY a.created_at DESC, a.id ASC LIMIT ?"
-            ))
-            .bind(limit as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.albums.recent", error))?;
-            Ok(rows.iter().map(map_album).collect())
-        })
-    }
-
-    fn genres<'a>(&'a self) -> BoxFuture<'a, Result<Vec<GenreRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(
-                "WITH tagged(track_id, folded, name) AS ( \
-                 SELECT local_track_id, folded_name, name FROM local_track_genres \
-                 UNION \
-                 SELECT id, genre_folded, genre FROM local_tracks \
-                 WHERE genre_folded IS NOT NULL AND genre_folded != '') \
-                 SELECT g.folded AS folded_name, MIN(g.name) AS name, \
-                 COUNT(DISTINCT t.id) AS track_count, \
-                 COUNT(DISTINCT t.local_album_id) AS album_count \
-                 FROM tagged g JOIN local_tracks t ON t.id = g.track_id \
-                 AND t.availability = 'indexed' \
-                 GROUP BY g.folded ORDER BY track_count DESC, name ASC",
-            )
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.genres", error))?;
-            Ok(rows
-                .iter()
-                .map(|row| {
-                    let track_count: i64 = row.get("track_count");
-                    let album_count: i64 = row.get("album_count");
-                    GenreRecord {
-                        name: row.get("name"),
-                        folded_name: row.get("folded_name"),
-                        track_count: track_count.max(0) as u64,
-                        album_count: album_count.max(0) as u64,
-                    }
-                })
-                .collect())
-        })
-    }
-
-    fn genre_tracks<'a>(
-        &'a self,
-        genre_folded: &'a str,
-        limit: u64,
-        offset: u64,
-    ) -> BoxFuture<'a, Result<(Vec<TrackRecord>, u64), StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let folded = droppedneedle_kernel::db::fold_text(genre_folded.trim());
-            let filter = "t.availability = 'indexed' AND \
-                (EXISTS (SELECT 1 FROM local_track_genres g \
-                 WHERE g.local_track_id = t.id AND g.folded_name = ?) \
-                 OR t.genre_folded = ?)";
-            let rows = sqlx::query(&format!(
-                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {filter} \
-                 ORDER BY t.artist_name_folded ASC, t.album_title_folded ASC, \
-                 t.disc_number ASC, t.track_number ASC, t.id ASC LIMIT ? OFFSET ?"
-            ))
-            .bind(&folded)
-            .bind(&folded)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.genres.tracks", error))?;
-            let row = sqlx::query(&format!(
-                "SELECT COUNT(*) AS total FROM local_tracks t WHERE {filter}"
-            ))
-            .bind(&folded)
-            .bind(&folded)
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.genres.tracks.count", error))?;
-            let total: i64 = row.get("total");
-            Ok((rows.iter().map(map_track).collect(), total.max(0) as u64))
-        })
-    }
-
-    fn decades<'a>(&'a self) -> BoxFuture<'a, Result<Vec<DecadeRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(
-                "SELECT (year / 10 * 10) AS decade, COUNT(*) AS album_count \
-                 FROM local_albums WHERE year IS NOT NULL \
-                 GROUP BY decade ORDER BY decade ASC",
-            )
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.decades", error))?;
-            Ok(rows
-                .iter()
-                .map(|row| {
-                    let album_count: i64 = row.get("album_count");
-                    DecadeRecord {
-                        decade: row.get("decade"),
-                        album_count: album_count.max(0) as u64,
-                    }
-                })
-                .collect())
-        })
-    }
-
-    fn newest_tracks<'a>(
-        &'a self,
-        limit: u64,
-    ) -> BoxFuture<'a, Result<Vec<TrackRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(&format!(
-                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
-                 WHERE t.availability = 'indexed' \
-                 ORDER BY t.imported_at DESC, t.id ASC LIMIT ?"
-            ))
-            .bind(limit as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.tracks.newest", error))?;
-            Ok(rows.iter().map(map_track).collect())
-        })
-    }
-
-    fn oldest_tracks<'a>(
-        &'a self,
-        limit: u64,
-    ) -> BoxFuture<'a, Result<Vec<TrackRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(&format!(
-                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
-                 WHERE t.availability = 'indexed' \
-                 ORDER BY t.imported_at ASC, t.id ASC LIMIT ?"
-            ))
-            .bind(limit as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.tracks.oldest", error))?;
-            Ok(rows.iter().map(map_track).collect())
-        })
-    }
-
-    fn random_tracks<'a>(
-        &'a self,
-        limit: u64,
-        decade: Option<i64>,
-    ) -> BoxFuture<'a, Result<Vec<TrackRecord>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            // Two phases: a uniform random pick over the narrow rows, then
-            // the wide columns for the picks alone.
-            let ids: Vec<String> = sqlx::query_scalar(
-                "SELECT t.id FROM local_tracks t WHERE t.availability = 'indexed' \
-                 AND (? IS NULL OR (t.year >= ? AND t.year < ? + 10)) \
-                 ORDER BY RANDOM() LIMIT ?",
-            )
-            .bind(decade)
-            .bind(decade)
-            .bind(decade)
-            .bind(limit as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.tracks.random", error))?;
-            if ids.is_empty() {
-                return Ok(Vec::new());
-            }
+    ) -> Result<(Vec<AlbumRecord>, u64), StoreError> {
+        let pool = &self.pool;
+        let pattern = filter.q.as_deref().map(like_pattern);
+        let order = album_order(sort, descending);
+        // Page the ids first: filtering and ordering touch albums only,
+        // so the track aggregation below runs over the page, never the
+        // catalog. Page order is restored below from this vec.
+        let ids: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT a.id FROM local_albums a WHERE {ALBUM_FILTER} \
+             ORDER BY {order} LIMIT ? OFFSET ?"
+        ))
+        .bind(pattern.as_deref())
+        .bind(pattern.as_deref())
+        .bind(pattern.as_deref())
+        .bind(filter.artist_id.as_deref())
+        .bind(filter.artist_id.as_deref())
+        .bind(filter.decade)
+        .bind(filter.decade)
+        .bind(filter.decade)
+        .bind(filter.format.as_deref())
+        .bind(filter.format.as_deref())
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.albums.list", error))?;
+        let mut records = HashMap::with_capacity(ids.len());
+        if !ids.is_empty() {
+            let placeholders = in_placeholders(ids.len());
             let sql = format!(
-                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
-                 WHERE t.availability = 'indexed' AND t.id IN ({})",
-                in_placeholders(ids.len())
+                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
+                 WHERE a.id IN ({placeholders}) GROUP BY a.id"
             );
             let mut query = sqlx::query(&sql);
             for id in &ids {
@@ -1387,94 +663,734 @@ impl LibraryCatalog for SqliteCatalog {
             let rows = query
                 .fetch_all(pool)
                 .await
-                .map_err(|error| internal("library.tracks.random", error))?;
-            let mut by_id = rows
-                .iter()
-                .map(map_track)
-                .map(|track| (track.id.clone(), track))
-                .collect::<HashMap<_, _>>();
-            Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
-        })
-    }
-}
-
-/// Favorite reads over the reader pool.
-#[derive(Clone, Debug)]
-pub struct SqliteFavorites {
-    db: LibraryDb,
-}
-
-impl SqliteFavorites {
-    /// Adapter over one handle.
-    pub fn new(db: &LibraryDb) -> Self {
-        Self { db: db.clone() }
-    }
-}
-
-impl FavoriteReads for SqliteFavorites {
-    fn filter_favorites<'a>(
-        &'a self,
-        user_id: &'a str,
-        kind: &'a str,
-        ids: &'a [String],
-    ) -> BoxFuture<'a, Result<std::collections::HashSet<String>, StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            if ids.is_empty() {
-                return Ok(std::collections::HashSet::new());
+                .map_err(|error| internal("library.albums.list", error))?;
+            for row in &rows {
+                let record = map_album(row);
+                records.insert(record.id.clone(), record);
             }
-            let placeholders = vec!["?"; ids.len()].join(", ");
-            let sql = format!(
-                "SELECT item_id FROM library_user_favorites \
-                 WHERE user_id = ? AND item_kind = ? AND item_id IN ({placeholders})"
-            );
-            let mut query = sqlx::query(&sql).bind(user_id).bind(kind);
-            for id in ids {
-                query = query.bind(id);
+        }
+        let row = sqlx::query(&format!(
+            "SELECT COUNT(*) AS total FROM local_albums a WHERE {ALBUM_FILTER}"
+        ))
+        .bind(pattern.as_deref())
+        .bind(pattern.as_deref())
+        .bind(pattern.as_deref())
+        .bind(filter.artist_id.as_deref())
+        .bind(filter.artist_id.as_deref())
+        .bind(filter.decade)
+        .bind(filter.decade)
+        .bind(filter.decade)
+        .bind(filter.format.as_deref())
+        .bind(filter.format.as_deref())
+        .fetch_one(pool)
+        .await
+        .map_err(|error| internal("library.albums.count", error))?;
+        let total: i64 = row.get("total");
+        let mut ordered = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some(record) = records.remove(id) {
+                ordered.push(record);
             }
-            let rows = query
-                .fetch_all(pool)
-                .await
-                .map_err(|error| internal("library.favorites.filter", error))?;
-            Ok(rows
-                .iter()
-                .map(|row| row.get::<String, _>("item_id"))
-                .collect())
-        })
+        }
+        Ok((ordered, total.max(0) as u64))
     }
 
-    fn favorite_counts<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<(u64, u64, u64), StoreError>> {
-        Box::pin(async move {
-            let Some(pool) = self.db.live() else {
-                return Err(unwired_store());
-            };
-            let rows = sqlx::query(
-                "SELECT item_kind AS kind, COUNT(*) AS total \
-                 FROM library_user_favorites WHERE user_id = ? GROUP BY item_kind",
-            )
-            .bind(user_id)
+    /// One album by id. None is absence, never failure.
+    pub async fn get_album(&self, id: &str) -> Result<Option<AlbumRecord>, StoreError> {
+        let pool = &self.pool;
+        let row = sqlx::query(&format!(
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.id = ? GROUP BY a.id"
+        ))
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| internal("library.albums.get", error))?;
+        Ok(row.as_ref().map(map_album))
+    }
+
+    /// Why library management leaves the album's files alone. None when
+    /// it does not. A person's own choice wins over the app's step back.
+    pub async fn management_hold(
+        &self,
+        album_id: &str,
+    ) -> Result<Option<ManagementHoldRecord>, StoreError> {
+        let pool = &self.pool;
+        let row = sqlx::query(
+            "SELECT 'your_choice' AS kind, CAST(excluded_at * 1000 AS INTEGER) AS held_at, \
+             row_revision AS exclusion_revision, 0 AS handing_back \
+             FROM library_management_exclusions WHERE local_album_id = ?1 \
+             UNION ALL \
+             SELECT cause, noticed_at, NULL, handed_back_at IS NOT NULL \
+             FROM library_album_takeovers WHERE local_album_id = ?1 \
+             AND NOT EXISTS (SELECT 1 FROM library_management_exclusions \
+             WHERE local_album_id = ?1) LIMIT 1",
+        )
+        .bind(album_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| internal("library.albums.management_hold", error))?;
+        Ok(row.map(|row| ManagementHoldRecord {
+            kind: row.get("kind"),
+            held_at: row.get("held_at"),
+            exclusion_revision: row.get("exclusion_revision"),
+            handing_back: row.get("handing_back"),
+        }))
+    }
+
+    /// Oldest album carrying one release-group mbid. None is absence,
+    /// never failure; siblings order oldest first so the match route is
+    /// deterministic.
+    pub async fn get_album_by_release_group(
+        &self,
+        release_group_mbid: &str,
+    ) -> Result<Option<AlbumRecord>, StoreError> {
+        let pool = &self.pool;
+        let row = sqlx::query(&format!(
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE ae.release_group_mbid = ? \
+             GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC LIMIT 1"
+        ))
+        .bind(release_group_mbid)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| internal("library.albums.match", error))?;
+        Ok(row.as_ref().map(map_album))
+    }
+
+    /// One page of an album's streamable tracks, disc/track order, plus total.
+    pub async fn album_tracks(
+        &self,
+        album_id: &str,
+        limit: u64,
+        offset: u64,
+    ) -> Result<(Vec<TrackRecord>, u64), StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(&format!(
+            "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
+             WHERE t.local_album_id = ? AND t.availability = 'indexed' \
+             ORDER BY t.disc_number ASC, t.track_number ASC, t.id ASC \
+             LIMIT ? OFFSET ?"
+        ))
+        .bind(album_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.albums.tracks", error))?;
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS total FROM local_tracks t \
+             WHERE t.local_album_id = ? AND t.availability = 'indexed'",
+        )
+        .bind(album_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|error| internal("library.albums.tracks.count", error))?;
+        let total: i64 = row.get("total");
+        Ok((rows.iter().map(map_track).collect(), total.max(0) as u64))
+    }
+
+    /// Other local albums sharing the album's release group, oldest first.
+    /// Empty when the album is unidentified or has no siblings.
+    pub async fn album_copies(&self, album_id: &str) -> Result<Vec<AlbumRecord>, StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(&format!(
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
+             WHERE ae.release_group_mbid = \
+             (SELECT release_group_mbid FROM local_album_external_identities \
+              WHERE local_album_id = ?) \
+             AND a.id != ? GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC"
+        ))
+        .bind(album_id)
+        .bind(album_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.albums.copies", error))?;
+        Ok(rows.iter().map(map_album).collect())
+    }
+
+    /// One page of artists in scope plus the match total, the album-artist
+    /// total, and the contributor total (totals honor `q`, ignore paging).
+    pub async fn list_artists(
+        &self,
+        scope: ArtistScope,
+        q: Option<&str>,
+        sort: ArtistSort,
+        descending: bool,
+        limit: u64,
+        offset: u64,
+    ) -> Result<ArtistListing, StoreError> {
+        let pool = &self.pool;
+        let pattern = q.map(like_pattern);
+        let scope_sql = artist_scope_predicate(scope)
+            .replace("(LED)", LED_PREDICATE)
+            .replace("(CREDITED)", CREDITED_PREDICATE);
+        // Page the ids first; counts aggregate over the page below.
+        // Count sorts join pre-aggregated per-artist counts, with
+        // COALESCE so artists without any sort as zero.
+        let counted = match sort {
+            ArtistSort::AlbumCount => Some(ALBUM_COUNT_BY_ARTIST),
+            ArtistSort::AppearanceCount => Some(APPEARANCE_COUNT_BY_ARTIST),
+            ArtistSort::Name | ArtistSort::DateAdded => None,
+        };
+        let ids: Vec<String> = if let Some(counts) = counted {
+            let direction = if descending { "DESC" } else { "ASC" };
+            sqlx::query_scalar(&format!(
+                "SELECT r.id FROM local_artists r \
+                 LEFT JOIN ({counts}) ac ON ac.aid = r.id \
+                 WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
+                 AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
+                 ORDER BY COALESCE(ac.c, 0) {direction}, \
+                 r.folded_name ASC, r.id ASC LIMIT ? OFFSET ?"
+            ))
+            .bind(pattern.as_deref())
+            .bind(pattern.as_deref())
+            .bind(limit as i64)
+            .bind(offset as i64)
             .fetch_all(pool)
             .await
-            .map_err(|error| internal("library.favorites.counts", error))?;
-            let mut albums = 0;
-            let mut artists = 0;
-            let mut tracks = 0;
-            for row in &rows {
-                let kind: String = row.get("kind");
-                let total: i64 = row.get("total");
-                match kind.as_str() {
-                    "album" => albums = total.max(0) as u64,
-                    "artist" => artists = total.max(0) as u64,
-                    "track" => tracks = total.max(0) as u64,
-                    _ => {}
-                }
+            .map_err(|error| internal("library.artists.list", error))?
+        } else {
+            let order = artist_order(sort, descending);
+            sqlx::query_scalar(&format!(
+                "SELECT r.id FROM local_artists r \
+                 WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
+                 AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
+                 ORDER BY {order} LIMIT ? OFFSET ?"
+            ))
+            .bind(pattern.as_deref())
+            .bind(pattern.as_deref())
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| internal("library.artists.list", error))?
+        };
+        let records = hydrate_artists(pool, &ids).await?;
+        let totals = sqlx::query(&format!(
+            "SELECT COALESCE(SUM(CASE WHEN {CREDITED_PREDICATE} THEN 1 ELSE 0 END), 0) AS total, \
+             COALESCE(SUM(CASE WHEN {LED_PREDICATE} THEN 1 ELSE 0 END), 0) AS led, \
+             COALESCE(SUM(CASE WHEN NOT ({LED_PREDICATE}) AND ({CREDITED_PREDICATE}) \
+             THEN 1 ELSE 0 END), 0) AS contributors \
+             {ARTIST_JOINS} WHERE r.retired_into_artist_id IS NULL \
+             AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\')"
+        ))
+        .bind(pattern.as_deref())
+        .bind(pattern.as_deref())
+        .fetch_one(pool)
+        .await
+        .map_err(|error| internal("library.artists.count", error))?;
+        let mut total: i64 = totals.get("total");
+        let led: i64 = totals.get("led");
+        let contributors: i64 = totals.get("contributors");
+        if !matches!(scope, ArtistScope::All) {
+            let scoped = sqlx::query(&format!(
+                "SELECT COUNT(*) AS total {ARTIST_JOINS} \
+                 WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
+                 AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\')"
+            ))
+            .bind(pattern.as_deref())
+            .bind(pattern.as_deref())
+            .fetch_one(pool)
+            .await
+            .map_err(|error| internal("library.artists.count", error))?;
+            total = scoped.get("total");
+        }
+        Ok((
+            records,
+            total.max(0) as u64,
+            led.max(0) as u64,
+            contributors.max(0) as u64,
+        ))
+    }
+
+    /// One artist by id. None is absence, never failure.
+    pub async fn get_artist(&self, id: &str) -> Result<Option<ArtistRecord>, StoreError> {
+        let pool = &self.pool;
+        let row = sqlx::query(&format!(
+            "SELECT {ARTIST_ROW_COLUMNS} {ARTIST_JOINS} \
+             WHERE r.id = ? AND r.retired_into_artist_id IS NULL"
+        ))
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| internal("library.artists.get", error))?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let owned = [id.to_owned()];
+        let (album_counts, credit_counts) = artist_counts(pool, &owned).await?;
+        let album_count = album_counts.get(id).copied().unwrap_or(0);
+        let credits = credit_counts.get(id).copied().unwrap_or_default();
+        Ok(Some(map_artist(&row, album_count, credits)))
+    }
+
+    /// One page of albums led by the artist, name order, plus total.
+    pub async fn artist_albums(
+        &self,
+        artist_id: &str,
+        limit: u64,
+        offset: u64,
+    ) -> Result<(Vec<AlbumRecord>, u64), StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(&format!(
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.album_artist_id = ? \
+             GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC LIMIT ? OFFSET ?"
+        ))
+        .bind(artist_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.artists.albums", error))?;
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS total FROM local_albums a \
+             WHERE a.album_artist_id = ?",
+        )
+        .bind(artist_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|error| internal("library.artists.albums.count", error))?;
+        let total: i64 = row.get("total");
+        Ok((rows.iter().map(map_album).collect(), total.max(0) as u64))
+    }
+
+    /// One page of albums where the artist appears without leading, name
+    /// order, plus total.
+    pub async fn artist_appearances(
+        &self,
+        artist_id: &str,
+        limit: u64,
+        offset: u64,
+    ) -> Result<(Vec<AlbumRecord>, u64), StoreError> {
+        let pool = &self.pool;
+        let filter = "a.album_artist_id != ? AND EXISTS \
+            (SELECT 1 FROM local_tracks at \
+             JOIN local_track_artists ata ON ata.local_track_id = at.id \
+             WHERE at.local_album_id = a.id AND ata.local_artist_id = ? \
+             AND at.availability = 'indexed')";
+        let rows = sqlx::query(&format!(
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE {filter} \
+             GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC LIMIT ? OFFSET ?"
+        ))
+        .bind(artist_id)
+        .bind(artist_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.artists.appearances", error))?;
+        let row = sqlx::query(&format!(
+            "SELECT COUNT(*) AS total FROM local_albums a WHERE {filter}"
+        ))
+        .bind(artist_id)
+        .bind(artist_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|error| internal("library.artists.appearances.count", error))?;
+        let total: i64 = row.get("total");
+        Ok((rows.iter().map(map_album).collect(), total.max(0) as u64))
+    }
+
+    /// One page of streamable tracks plus the match total.
+    pub async fn list_tracks(
+        &self,
+        filter: &TrackFilter,
+        sort: TrackSort,
+        descending: bool,
+        limit: u64,
+        offset: u64,
+    ) -> Result<(Vec<TrackRecord>, u64), StoreError> {
+        let pool = &self.pool;
+        // Words of 3+ characters search the FTS index; anything else
+        // keeps the LIKE substring match.
+        let search = filter.q.as_deref().and_then(TextSearch::parse);
+        // Miss oracle: when no track text matches, the page and total
+        // are empty whatever the other filters say (they only narrow).
+        if let Some(search) = &search {
+            let hit: bool = sqlx::query_scalar(TRACK_MISS_ORACLE)
+                .bind(&search.fts)
+                .fetch_one(pool)
+                .await
+                .map_err(|error| internal("library.tracks.search", error))?;
+            if !hit {
+                return Ok((Vec::new(), 0));
             }
-            Ok((albums, artists, tracks))
+        }
+        let pattern = match search {
+            Some(_) => None,
+            None => filter.q.as_deref().map(like_pattern),
+        };
+        let genre = filter
+            .genre
+            .as_deref()
+            .map(|name| droppedneedle_kernel::db::fold_text(name.trim()));
+        let where_sql = match &search {
+            Some(search) => track_filter_fts(search),
+            None => TRACK_FILTER.to_owned(),
+        };
+        let bind_filter = |sql| {
+            bind_track_filter(
+                sql,
+                search.as_ref(),
+                pattern.as_deref(),
+                filter,
+                genre.as_deref(),
+            )
+        };
+        let order = track_order(sort, descending);
+        let list_sql = format!(
+            "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {where_sql} \
+             ORDER BY {order} LIMIT ? OFFSET ?"
+        );
+        let rows = bind_filter(&list_sql)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| internal("library.tracks.list", error))?;
+        let unfiltered = filter.q.is_none()
+            && filter.album_id.is_none()
+            && filter.artist_id.is_none()
+            && filter.genre.is_none();
+        let total = if unfiltered {
+            // Maintained exact count of indexed tracks (migration 0005).
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(indexed_tracks), 0) \
+                 FROM library_track_format_stats",
+            )
+            .fetch_one(pool)
+            .await
+            .map_err(|error| internal("library.tracks.count", error))?;
+            total.max(0) as u64
+        } else {
+            let count_sql =
+                format!("SELECT COUNT(*) AS total FROM local_tracks t WHERE {where_sql}");
+            let row = bind_filter(&count_sql)
+                .fetch_one(pool)
+                .await
+                .map_err(|error| internal("library.tracks.count", error))?;
+            let total: i64 = row.get("total");
+            total.max(0) as u64
+        };
+        Ok((rows.iter().map(map_track).collect(), total))
+    }
+
+    /// One streamable track by id. None covers unknown ids and tracks
+    /// whose file is missing or excluded.
+    pub async fn get_track(&self, id: &str) -> Result<Option<TrackRecord>, StoreError> {
+        let pool = &self.pool;
+        let row = sqlx::query(&format!(
+            "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
+             WHERE t.id = ({CURRENT_TRACK}) AND t.availability = 'indexed'"
+        ))
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| internal("library.tracks.get", error))?;
+        Ok(row.as_ref().map(map_track))
+    }
+
+    /// Whether one streamable track's file carries lyrics, as the lyrics
+    /// sweep last found. False for unknown ids.
+    pub async fn track_has_lyrics(&self, id: &str) -> Result<bool, StoreError> {
+        let pool = &self.pool;
+        sqlx::query_scalar::<_, bool>(&format!(
+            "SELECT EXISTS (SELECT 1 FROM local_tracks t \
+             JOIN local_track_lyrics l ON l.local_track_id = t.id \
+             WHERE t.id = ({CURRENT_TRACK}) AND t.availability = 'indexed')"
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(|error| internal("library.tracks.lyrics", error))
+    }
+
+    /// Library totals.
+    pub async fn stats(&self) -> Result<StatsRecord, StoreError> {
+        let pool = &self.pool;
+        // Track totals come from the maintained per-format rows
+        // (migration 0005); the zero-count rows they keep stay out of
+        // the breakdown, matching GROUP BY exactly.
+        let row = sqlx::query(&stats_main())
+            .fetch_one(pool)
+            .await
+            .map_err(|error| internal("library.stats", error))?;
+        let albums: i64 = row.get("albums");
+        let artists: i64 = row.get("artists");
+        let tracks: i64 = row.get("tracks");
+        let rows = sqlx::query(STATS_FORMATS)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| internal("library.stats.formats", error))?;
+        let mut format_breakdown = std::collections::HashMap::new();
+        for row in &rows {
+            let format: String = row.get("format");
+            let total: i64 = row.get("total");
+            format_breakdown.insert(format, total.max(0) as u64);
+        }
+        Ok(StatsRecord {
+            total_albums: albums.max(0) as u64,
+            total_artists: artists.max(0) as u64,
+            total_tracks: tracks.max(0) as u64,
+            total_size_bytes: row.get("size_bytes"),
+            format_breakdown,
         })
+    }
+
+    /// Newest albums first, capped.
+    pub async fn recently_added(&self, limit: u64) -> Result<Vec<AlbumRecord>, StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(&format!(
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
+             GROUP BY a.id ORDER BY a.created_at DESC, a.id ASC LIMIT ?"
+        ))
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.albums.recent", error))?;
+        Ok(rows.iter().map(map_album).collect())
+    }
+
+    /// Genres by descending track count, name tiebreak.
+    pub async fn genres(&self) -> Result<Vec<GenreRecord>, StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(
+            "WITH tagged(track_id, folded, name) AS ( \
+             SELECT local_track_id, folded_name, name FROM local_track_genres \
+             UNION \
+             SELECT id, genre_folded, genre FROM local_tracks \
+             WHERE genre_folded IS NOT NULL AND genre_folded != '') \
+             SELECT g.folded AS folded_name, MIN(g.name) AS name, \
+             COUNT(DISTINCT t.id) AS track_count, \
+             COUNT(DISTINCT t.local_album_id) AS album_count \
+             FROM tagged g JOIN local_tracks t ON t.id = g.track_id \
+             AND t.availability = 'indexed' \
+             GROUP BY g.folded ORDER BY track_count DESC, name ASC",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.genres", error))?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let track_count: i64 = row.get("track_count");
+                let album_count: i64 = row.get("album_count");
+                GenreRecord {
+                    name: row.get("name"),
+                    folded_name: row.get("folded_name"),
+                    track_count: track_count.max(0) as u64,
+                    album_count: album_count.max(0) as u64,
+                }
+            })
+            .collect())
+    }
+
+    /// One page of a genre's streamable tracks, artist/album/disc/track
+    /// order, plus total. Empty when the genre is unknown.
+    pub async fn genre_tracks(
+        &self,
+        genre_folded: &str,
+        limit: u64,
+        offset: u64,
+    ) -> Result<(Vec<TrackRecord>, u64), StoreError> {
+        let pool = &self.pool;
+        let folded = droppedneedle_kernel::db::fold_text(genre_folded.trim());
+        let filter = "t.availability = 'indexed' AND \
+            (EXISTS (SELECT 1 FROM local_track_genres g \
+             WHERE g.local_track_id = t.id AND g.folded_name = ?) \
+             OR t.genre_folded = ?)";
+        let rows = sqlx::query(&format!(
+            "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {filter} \
+             ORDER BY t.artist_name_folded ASC, t.album_title_folded ASC, \
+             t.disc_number ASC, t.track_number ASC, t.id ASC LIMIT ? OFFSET ?"
+        ))
+        .bind(&folded)
+        .bind(&folded)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.genres.tracks", error))?;
+        let row = sqlx::query(&format!(
+            "SELECT COUNT(*) AS total FROM local_tracks t WHERE {filter}"
+        ))
+        .bind(&folded)
+        .bind(&folded)
+        .fetch_one(pool)
+        .await
+        .map_err(|error| internal("library.genres.tracks.count", error))?;
+        let total: i64 = row.get("total");
+        Ok((rows.iter().map(map_track).collect(), total.max(0) as u64))
+    }
+
+    /// Decade shelves, ascending. Albums without a year sit outside.
+    pub async fn decades(&self) -> Result<Vec<DecadeRecord>, StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(
+            "SELECT (year / 10 * 10) AS decade, COUNT(*) AS album_count \
+             FROM local_albums WHERE year IS NOT NULL \
+             GROUP BY decade ORDER BY decade ASC",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.decades", error))?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let album_count: i64 = row.get("album_count");
+                DecadeRecord {
+                    decade: row.get("decade"),
+                    album_count: album_count.max(0) as u64,
+                }
+            })
+            .collect())
+    }
+
+    /// Suggestion candidates: newest imports.
+    pub async fn newest_tracks(&self, limit: u64) -> Result<Vec<TrackRecord>, StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(&format!(
+            "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
+             WHERE t.availability = 'indexed' \
+             ORDER BY t.imported_at DESC, t.id ASC LIMIT ?"
+        ))
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.tracks.newest", error))?;
+        Ok(rows.iter().map(map_track).collect())
+    }
+
+    /// Suggestion candidates: oldest imports.
+    pub async fn oldest_tracks(&self, limit: u64) -> Result<Vec<TrackRecord>, StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(&format!(
+            "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
+             WHERE t.availability = 'indexed' \
+             ORDER BY t.imported_at ASC, t.id ASC LIMIT ?"
+        ))
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.tracks.oldest", error))?;
+        Ok(rows.iter().map(map_track).collect())
+    }
+
+    /// Suggestion candidates: random streamable tracks, optionally from
+    /// one decade.
+    pub async fn random_tracks(
+        &self,
+        limit: u64,
+        decade: Option<i64>,
+    ) -> Result<Vec<TrackRecord>, StoreError> {
+        let pool = &self.pool;
+        // Two phases: a uniform random pick over the narrow rows, then
+        // the wide columns for the picks alone.
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT t.id FROM local_tracks t WHERE t.availability = 'indexed' \
+             AND (? IS NULL OR (t.year >= ? AND t.year < ? + 10)) \
+             ORDER BY RANDOM() LIMIT ?",
+        )
+        .bind(decade)
+        .bind(decade)
+        .bind(decade)
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.tracks.random", error))?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = format!(
+            "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
+             WHERE t.availability = 'indexed' AND t.id IN ({})",
+            in_placeholders(ids.len())
+        );
+        let mut query = sqlx::query(&sql);
+        for id in &ids {
+            query = query.bind(id);
+        }
+        let rows = query
+            .fetch_all(pool)
+            .await
+            .map_err(|error| internal("library.tracks.random", error))?;
+        let mut by_id = rows
+            .iter()
+            .map(map_track)
+            .map(|track| (track.id.clone(), track))
+            .collect::<HashMap<_, _>>();
+        Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+    }
+}
+
+/// Favorite flags for the caller.
+///
+/// Table mapping: `library_user_favorites` (`item_kind` is `album`,
+/// `artist`, or `track`; `item_id` is the local id).
+#[derive(Clone, Debug)]
+pub struct FavoriteReads {
+    pool: SqlitePool,
+}
+
+impl FavoriteReads {
+    /// Reads over the reader pool.
+    pub fn new(pool: &SqlitePool) -> Self {
+        Self { pool: pool.clone() }
+    }
+
+    /// Which of the ids the user favorited, for one kind.
+    pub async fn filter_favorites(
+        &self,
+        user_id: &str,
+        kind: &str,
+        ids: &[String],
+    ) -> Result<std::collections::HashSet<String>, StoreError> {
+        let pool = &self.pool;
+        if ids.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let placeholders = vec!["?"; ids.len()].join(", ");
+        let sql = format!(
+            "SELECT item_id FROM library_user_favorites \
+             WHERE user_id = ? AND item_kind = ? AND item_id IN ({placeholders})"
+        );
+        let mut query = sqlx::query(&sql).bind(user_id).bind(kind);
+        for id in ids {
+            query = query.bind(id);
+        }
+        let rows = query
+            .fetch_all(pool)
+            .await
+            .map_err(|error| internal("library.favorites.filter", error))?;
+        Ok(rows
+            .iter()
+            .map(|row| row.get::<String, _>("item_id"))
+            .collect())
+    }
+
+    /// Favorite counts for the caller: albums, artists, tracks.
+    pub async fn favorite_counts(&self, user_id: &str) -> Result<(u64, u64, u64), StoreError> {
+        let pool = &self.pool;
+        let rows = sqlx::query(
+            "SELECT item_kind AS kind, COUNT(*) AS total \
+             FROM library_user_favorites WHERE user_id = ? GROUP BY item_kind",
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.favorites.counts", error))?;
+        let mut albums = 0;
+        let mut artists = 0;
+        let mut tracks = 0;
+        for row in &rows {
+            let kind: String = row.get("kind");
+            let total: i64 = row.get("total");
+            match kind.as_str() {
+                "album" => albums = total.max(0) as u64,
+                "artist" => artists = total.max(0) as u64,
+                "track" => tracks = total.max(0) as u64,
+                _ => {}
+            }
+        }
+        Ok((albums, artists, tracks))
     }
 }

@@ -1,229 +1,72 @@
-//! Library reads: the auth matrix, input validation and fault hiding over
-//! the routes, the same-era suggestion pool, and the SQLite catalog and
-//! favorites adapters over a scratch migrated database.
+//! Library reads over the real stores on a migrated template database:
+//! the auth matrix, input validation and fault hiding over the routes, and
+//! the catalog, favorites and lookups reads, including a missing and an
+//! excluded track proving streamable-only counts.
 
 use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
 use droppedneedle_catalog::reads::library;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
+use droppedneedle_library::scan::coordinator::SharedResolver;
+use droppedneedle_media::stream::local_files::LibraryFiles;
 use library::LibraryDeps;
-use library::lookups::SqliteLookups;
-use library::memory::{
-    FailingCatalog, FailingFavorites, FailingLyrics, MemoryCatalog, MemoryFavorites, MemoryLyrics,
-};
-use library::models::SuggestionsResponse;
-use library::sqlite::{LibraryDb, SqliteCatalog, SqliteFavorites};
+use library::file_lyrics::{FileLyrics, NoOnlineLyrics};
+use library::lookups::LibraryLookups;
+use library::sqlite::{FavoriteReads, LibraryCatalog};
 use library::stores::{
-    AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, FavoriteReads,
-    LibraryCatalog, LyricDoc, LyricsPort, TrackFilter, TrackRecord, TrackSort,
+    AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricDoc, LyricsPort, StoreError,
+    TrackFilter, TrackSort,
 };
+use library::tags::FileTagReader;
 use serde_json::Value;
+use sqlx::SqlitePool;
 use tower::ServiceExt as _;
 
-fn album(
-    id: &str,
-    title: &str,
-    artist_id: &str,
-    artist_name: &str,
-    year: Option<i64>,
-    added: f64,
-) -> AlbumRecord {
-    AlbumRecord {
-        id: id.to_owned(),
-        title: title.to_owned(),
-        artist_name: artist_name.to_owned(),
-        artist_id: artist_id.to_owned(),
-        release_group_mbid: None,
-        release_mbid: None,
-        artist_mbid: None,
-        linked: false,
-        track_count: 2,
-        total_duration_seconds: 400.0,
-        total_size_bytes: 8_000_000,
-        format: Some("flac".to_owned()),
-        year,
-        is_compilation: false,
-        cover_available: true,
-        date_added: Some(added),
-        contribution_id: None,
-        contribution_state: None,
+/// The online lyrics source, answering from a fixed set of docs.
+struct ScriptedLyrics(HashMap<String, LyricDoc>);
+
+impl LyricsPort for ScriptedLyrics {
+    fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>> {
+        Box::pin(async move { Ok(self.0.get(track_id).cloned()) })
     }
 }
 
-fn artist(id: &str, name: &str, albums: u64, tracks: u64, added: f64) -> ArtistRecord {
-    ArtistRecord {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        artist_mbid: None,
-        linked: false,
-        album_count: albums,
-        track_count: tracks,
-        appearance_album_count: 0,
-        appearance_track_count: 0,
-        date_added: Some(added),
-    }
+fn scripted_lyrics() -> ScriptedLyrics {
+    ScriptedLyrics(HashMap::from([(
+        "t1".to_owned(),
+        LyricDoc {
+            lines: vec![
+                ("line one".to_owned(), Some(1000)),
+                ("line two".to_owned(), Some(4500)),
+            ],
+            synced: true,
+        },
+    )]))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn track(
-    id: &str,
-    title: &str,
-    album_id: &str,
-    album_title: &str,
-    artist_name: &str,
-    added: f64,
-    year: Option<i64>,
-    format: &str,
-) -> TrackRecord {
-    TrackRecord {
-        id: id.to_owned(),
-        title: title.to_owned(),
-        album_id: album_id.to_owned(),
-        album_title: album_title.to_owned(),
-        artist_name: artist_name.to_owned(),
-        artist_id: None,
-        album_artist_name: artist_name.to_owned(),
-        album_artist_id: None,
-        recording_mbid: None,
-        release_group_mbid: None,
-        artist_mbid: None,
-        album_artist_mbid: None,
-        disc_number: 1,
-        track_number: 1,
-        year,
-        genre: None,
-        duration_seconds: Some(200.0),
-        format: format.to_owned(),
-        bit_rate: None,
-        sample_rate: None,
-        bit_depth: None,
-        channels: None,
-        file_size_bytes: 4_000_000,
-        date_added: Some(added),
-        cover_available: true,
-    }
-}
-
-/// Seeded catalog matching the tests below.
-fn seeded_catalog() -> MemoryCatalog {
-    let mut al1 = album("al1", "First Light", "a1", "Aurora", Some(1994), 1000.0);
-    al1.release_group_mbid = Some("rg-first-light".to_owned());
-    let al2 = album("al2", "Second Dawn", "a1", "Aurora", Some(2001), 2000.0);
-    let al3 = album("al3", "Lone Peak", "a2", "Boreal", Some(1994), 1500.0);
-    let al4 = album(
-        "al4",
-        "First Light (Deluxe)",
-        "a1",
-        "Aurora",
-        Some(1994),
-        1200.0,
-    );
-    let t1 = track(
-        "t1",
-        "Opener",
-        "al1",
-        "First Light",
-        "Aurora",
-        1000.0,
-        Some(1994),
-        "flac",
-    );
-    let t2 = track(
-        "t2",
-        "Closer",
-        "al1",
-        "First Light",
-        "Aurora",
-        1100.0,
-        Some(1994),
-        "flac",
-    );
-    let t3 = track(
-        "t3",
-        "Single",
-        "al2",
-        "Second Dawn",
-        "Aurora",
-        2000.0,
-        Some(2001),
-        "mp3",
-    );
-    let t4 = track(
-        "t4",
-        "Peak",
-        "al3",
-        "Lone Peak",
-        "Boreal",
-        1500.0,
-        Some(1994),
-        "flac",
-    );
-    MemoryCatalog::new()
-        .with_albums(vec![al1.clone(), al2.clone(), al3.clone()])
-        .with_artists(vec![
-            artist("a1", "Aurora", 2, 3, 1000.0),
-            artist("a2", "Boreal", 1, 1, 1500.0),
-            artist("a3", "Guest", 0, 1, 1600.0),
-        ])
-        .with_tracks(vec![t1.clone(), t2.clone(), t3.clone(), t4.clone()])
-        .with_copies("al1", vec![al4])
-        .with_artist_albums("a1", vec![al1.clone(), al2.clone()], vec![])
-        .with_artist_albums("a2", vec![al3], vec![])
-        .with_artist_albums("a3", vec![], vec![al1])
-        .with_genre("rock", "Rock", vec![t1, t2])
-        .with_genre("jazz", "Jazz", vec![t3])
-}
-
-fn seeded_favorites() -> MemoryFavorites {
-    MemoryFavorites::new()
-        .with_favorites("user-ada", "album", &["al1"])
-        .with_favorites("user-ada", "artist", &["a2"])
-        .with_favorites("user-ada", "track", &["t3"])
-}
-
-fn seeded_lyrics() -> MemoryLyrics {
-    MemoryLyrics::new()
-        .with_doc(
-            "t1",
-            LyricDoc {
-                lines: vec![
-                    ("line one".to_owned(), Some(1000)),
-                    ("line two".to_owned(), Some(4500)),
-                ],
-                synced: true,
-            },
-        )
-        .with_doc(
-            "t2",
-            LyricDoc {
-                lines: vec![("plain words".to_owned(), None)],
-                synced: false,
-            },
-        )
-}
-
-fn deps(
-    catalog: Arc<dyn LibraryCatalog>,
-    favorites: Arc<dyn FavoriteReads>,
-    lyrics: Arc<dyn LyricsPort>,
-) -> LibraryDeps {
+/// The production library deps over one pool, with `online` behind the
+/// lyrics files carry.
+fn deps(pool: &SqlitePool, online: Arc<dyn LyricsPort>) -> LibraryDeps {
+    let catalog = LibraryCatalog::new(pool);
+    let files = LibraryFiles::new(pool.clone(), SharedResolver::default());
     LibraryDeps {
+        lyrics: Arc::new(FileLyrics::new(catalog.clone(), files.clone(), online)),
         catalog,
-        favorites,
-        lyrics,
-        lookups: Arc::new(library::memory::EmptyLookups),
+        favorites: FavoriteReads::new(pool),
+        lookups: LibraryLookups::new(pool),
         upgrade_policy: None,
-        tags: Arc::new(library::tags::UnwiredTagReader),
+        tags: FileTagReader::new(files),
     }
 }
 
-/// The signed-in user the seeded favorites belong to.
+/// The signed-in user the routes run as.
 const ADA: (&str, Role) = ("user-ada", Role::User);
 
 /// Router signed in as `caller`, or anonymous when None.
@@ -255,7 +98,8 @@ async fn get(app: Router, path: &str) -> (StatusCode, Value) {
     (status, json)
 }
 
-/// Every library route with concrete ids. The auth and leak loops walk this.
+/// Every library route with ids the seeded catalog holds. The auth and
+/// fault loops walk this.
 const ROUTES: &[&str] = &[
     "/api/v3/library/albums",
     "/api/v3/library/albums/al1",
@@ -273,7 +117,7 @@ const ROUTES: &[&str] = &[
     "/api/v3/library/genres",
     "/api/v3/library/genres/rock/tracks",
     "/api/v3/local-library/albums",
-    "/api/v3/local-library/albums/match/rg-first-light",
+    "/api/v3/local-library/albums/match/rg1",
     "/api/v3/local-library/search?q=light",
     "/api/v3/local-library/recent",
     "/api/v3/local-library/decades",
@@ -281,80 +125,9 @@ const ROUTES: &[&str] = &[
 ];
 
 #[tokio::test]
-async fn suggestions_same_era_pool_tags_era_picks() {
-    let catalog = MemoryCatalog::new().with_tracks(vec![
-        track(
-            "u1",
-            "New One",
-            "al9",
-            "New Set",
-            "Aurora",
-            1.0,
-            Some(2001),
-            "flac",
-        ),
-        track(
-            "u2",
-            "New Two",
-            "al9",
-            "New Set",
-            "Aurora",
-            2.0,
-            Some(2001),
-            "flac",
-        ),
-        track(
-            "u3",
-            "Old One",
-            "al8",
-            "Old Set",
-            "Aurora",
-            3.0,
-            Some(1990),
-            "flac",
-        ),
-        track(
-            "u4",
-            "Old Two",
-            "al8",
-            "Old Set",
-            "Aurora",
-            4.0,
-            Some(1990),
-            "flac",
-        ),
-    ]);
-    let app = app(
-        deps(
-            Arc::new(catalog),
-            Arc::new(MemoryFavorites::new()),
-            Arc::new(MemoryLyrics::new()),
-        ),
-        Some(ADA),
-    );
-    let (status, json) = get(app, "/api/v3/local-library/suggestions?limit=4&decade=1990").await;
-    assert_eq!(status, StatusCode::OK);
-    let suggestions: SuggestionsResponse =
-        serde_json::from_value(json).expect("suggestions decode");
-    let era: Vec<&str> = suggestions
-        .items
-        .iter()
-        .filter(|item| item.reason == "same_era")
-        .map(|item| item.track_id.as_str())
-        .collect();
-    assert_eq!(era, ["u3"]);
-}
-
-#[tokio::test]
 async fn bad_input_stays_in_the_envelope() {
-    let app = app(
-        deps(
-            Arc::new(seeded_catalog()),
-            Arc::new(seeded_favorites()),
-            Arc::new(seeded_lyrics()),
-        ),
-        Some(ADA),
-    );
+    let fixture = sqlite_fixture().await;
+    let app = app(deps(&fixture.pool, Arc::new(scripted_lyrics())), Some(ADA));
     for path in [
         "/api/v3/library/albums?sort=nope",
         "/api/v3/library/albums?order=sideways",
@@ -376,22 +149,10 @@ async fn bad_input_stays_in_the_envelope() {
 
 #[tokio::test]
 async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
-    let authenticated = app(
-        deps(
-            Arc::new(seeded_catalog()),
-            Arc::new(seeded_favorites()),
-            Arc::new(seeded_lyrics()),
-        ),
-        Some(ADA),
-    );
-    let anonymous = app(
-        deps(
-            Arc::new(seeded_catalog()),
-            Arc::new(seeded_favorites()),
-            Arc::new(seeded_lyrics()),
-        ),
-        None,
-    );
+    let fixture = sqlite_fixture().await;
+    let deps = deps(&fixture.pool, Arc::new(scripted_lyrics()));
+    let authenticated = app(deps.clone(), Some(ADA));
+    let anonymous = app(deps.clone(), None);
     for path in ROUTES {
         let (status, _) = get(authenticated.clone(), path).await;
         assert_eq!(status, StatusCode::OK, "user should pass {path}");
@@ -416,14 +177,7 @@ async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
         let json: Value = serde_json::from_slice(&bytes).expect("body is json");
         assert_eq!(json["error"]["code"], "UNAUTHORIZED", "anon {path}");
     }
-    let as_admin = app(
-        deps(
-            Arc::new(seeded_catalog()),
-            Arc::new(seeded_favorites()),
-            Arc::new(seeded_lyrics()),
-        ),
-        Some(("user-root", Role::Admin)),
-    );
+    let as_admin = app(deps, Some(("user-root", Role::Admin)));
     let (status, _) = get(as_admin, "/api/v3/library/stats").await;
     assert_eq!(status, StatusCode::OK);
 }
@@ -431,14 +185,16 @@ async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
 #[tokio::test]
 async fn every_route_hides_store_faults() {
     let scope = TestApp::start("reads-library-faults").await;
-    let app = scope.request_scope(app(
-        deps(
-            Arc::new(FailingCatalog::new()),
-            Arc::new(FailingFavorites::new()),
-            Arc::new(FailingLyrics::new()),
-        ),
-        Some(ADA),
-    ));
+    // A database file that cannot be opened: every store read fails, and
+    // the error text carries the path.
+    let dir = ScratchDir::new("reads-library-faults");
+    let secret = dir.join("secret-library.db");
+    let pool = SqlitePool::connect_lazy_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&secret)
+            .create_if_missing(false),
+    );
+    let app = scope.request_scope(app(deps(&pool, Arc::new(NoOnlineLyrics)), Some(ADA)));
     for path in ROUTES {
         let response = app
             .clone()
@@ -462,9 +218,7 @@ async fn every_route_hides_store_faults() {
             .await
             .expect("body reads");
         let text = String::from_utf8(bytes.to_vec()).expect("body is text");
-        assert!(!text.contains("/tmp/secret.db"), "path leaked on {path}");
-        assert!(!text.contains("db.internal"), "host leaked on {path}");
-        assert!(!text.contains("injected fault"), "cause leaked on {path}");
+        assert!(!text.contains("secret-library"), "path leaked on {path}");
         let json: Value = serde_json::from_str(&text).expect("body is json");
         assert_eq!(json["error"]["code"], "INTERNAL_ERROR", "for {path}");
         assert_eq!(
@@ -478,15 +232,12 @@ async fn every_route_hides_store_faults() {
     }
 }
 
-// SQLite: the real adapters over a scratch migrated database,
-// including a missing and an excluded track proving streamable-only counts.
-
 struct SqliteFixture {
     #[allow(dead_code)]
     runtime: droppedneedle_kernel::db::DbRuntime,
-    catalog: SqliteCatalog,
-    favorites: SqliteFavorites,
-    lookups: SqliteLookups,
+    pool: SqlitePool,
+    catalog: LibraryCatalog,
+    favorites: FavoriteReads,
     /// Declared last so the database closes before the directory goes.
     _scratch: ScratchDir,
 }
@@ -494,7 +245,7 @@ struct SqliteFixture {
 async fn sqlite_fixture() -> SqliteFixture {
     let dir = ScratchDir::new("reads-library");
     let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    let pool = runtime.db().sqlx();
+    let pool = runtime.db().sqlx().clone();
     let seed = [
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) VALUES \
          ('a1', 'Aurora', 'aurora', 'group', 1000, 1000), \
@@ -562,12 +313,11 @@ async fn sqlite_fixture() -> SqliteFixture {
         )
         .await
         .expect("seed batch runs");
-    let db = LibraryDb::new(pool);
     SqliteFixture {
         runtime,
-        catalog: SqliteCatalog::new(&db),
-        favorites: SqliteFavorites::new(&db),
-        lookups: SqliteLookups::new(&db),
+        catalog: LibraryCatalog::new(&pool),
+        favorites: FavoriteReads::new(&pool),
+        pool,
         _scratch: dir,
     }
 }
@@ -817,14 +567,7 @@ async fn sqlite_artists_scopes_and_credits() {
 #[tokio::test]
 async fn appearances_answer_by_musicbrainz_id_as_by_library_id() {
     let fixture = sqlite_fixture().await;
-    let deps = LibraryDeps {
-        catalog: Arc::new(fixture.catalog.clone()),
-        favorites: Arc::new(fixture.favorites.clone()),
-        lyrics: Arc::new(MemoryLyrics::default()),
-        lookups: Arc::new(fixture.lookups.clone()),
-        upgrade_policy: None,
-        tags: Arc::new(library::tags::UnwiredTagReader),
-    };
+    let deps = deps(&fixture.pool, Arc::new(NoOnlineLyrics));
     let (status, by_id) = get(
         app(deps.clone(), Some(ADA)),
         "/api/v3/library/artists/a3/appearances",
@@ -957,7 +700,7 @@ async fn sqlite_genres_decades_and_suggestion_pools() {
 }
 
 #[tokio::test]
-async fn sqlite_favorites_and_unwired_fails_closed() {
+async fn sqlite_favorites_flags_and_counts() {
     let fixture = sqlite_fixture().await;
     let ids = ["al1".to_owned(), "al2".to_owned()];
     let marked = fixture
@@ -978,10 +721,4 @@ async fn sqlite_favorites_and_unwired_fails_closed() {
         .await
         .expect("counts read");
     assert_eq!(counts, (0, 0, 0));
-
-    let unwired = LibraryDb::unwired();
-    let catalog = SqliteCatalog::new(&unwired);
-    assert!(catalog.stats().await.is_err());
-    let favorites = SqliteFavorites::new(&unwired);
-    assert!(favorites.favorite_counts("u1").await.is_err());
 }

@@ -18466,8 +18466,7 @@ fn texts(db: &rusqlite::Connection, sql: &str) -> Vec<String> {
 /// the artist is the same record, with its favorite and play.
 #[tokio::test]
 async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
-    use droppedneedle_catalog::reads::library::sqlite::{LibraryDb, SqliteCatalog};
-    use droppedneedle_catalog::reads::library::stores::LibraryCatalog as _;
+    use droppedneedle_catalog::reads::library::sqlite::LibraryCatalog;
     use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
@@ -18587,7 +18586,7 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
         )
         .await
         .expect("reader opens");
-    let read = SqliteCatalog::new(&LibraryDb::new(&pool))
+    let read = LibraryCatalog::new(&pool)
         .get_artist(&artist)
         .await
         .expect("artist reads")

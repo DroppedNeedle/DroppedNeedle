@@ -1,5 +1,5 @@
 //! [`LyricsPort`] that serves the lyrics a track's file carries before
-//! asking the port it wraps (the provider lookup, or empty memory).
+//! asking the port it wraps (the provider lookup, or [`NoOnlineLyrics`]).
 //!
 //! A track the lyrics sweep marked is read from disk: its file is found
 //! through the same lookup and root confinement as playback, then its
@@ -14,11 +14,12 @@ use std::sync::Arc;
 use droppedneedle_library::tags::lyrics::read_file_lyrics;
 use droppedneedle_media::stream::local_files::{LibraryFiles, LocateError};
 
-use super::stores::{BoxFuture, LibraryCatalog, LyricDoc, LyricsPort, StoreError};
+use super::sqlite::LibraryCatalog;
+use super::stores::{BoxFuture, LyricDoc, LyricsPort, StoreError};
 
 /// File lyrics first, then the wrapped port.
 pub struct FileLyrics {
-    catalog: Arc<dyn LibraryCatalog>,
+    catalog: LibraryCatalog,
     files: LibraryFiles,
     fallback: Arc<dyn LyricsPort>,
 }
@@ -26,7 +27,7 @@ pub struct FileLyrics {
 impl FileLyrics {
     /// Serve marked tracks from their files, everything else from `fallback`.
     pub fn new(
-        catalog: Arc<dyn LibraryCatalog>,
+        catalog: LibraryCatalog,
         files: LibraryFiles,
         fallback: Arc<dyn LyricsPort>,
     ) -> Self {
@@ -64,5 +65,19 @@ impl LyricsPort for FileLyrics {
                 None => self.fallback.get(track_id).await,
             }
         })
+    }
+}
+
+/// The port behind file lyrics when no online lyrics source is set up:
+/// every track reads as having none.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoOnlineLyrics;
+
+impl LyricsPort for NoOnlineLyrics {
+    fn get<'a>(
+        &'a self,
+        _track_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>> {
+        Box::pin(async { Ok(None) })
     }
 }

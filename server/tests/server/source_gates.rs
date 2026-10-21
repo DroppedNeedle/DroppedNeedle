@@ -75,10 +75,6 @@ const OPENS: &[Place] = &[
         "the read-only stamp probe of an existing database before the runtime opens it, and its tests",
     ),
     place(
-        "catalog/src/reads/mod.rs",
-        "an in-memory pool for the reads' test bundle, until the catalog reads have tests on real stores",
-    ),
-    place(
         "catalog/src/reads/library/perf_tests.rs",
         "migration and plan-recording fixtures of the read benchmarks, until the catalog reads have tests on real stores",
     ),

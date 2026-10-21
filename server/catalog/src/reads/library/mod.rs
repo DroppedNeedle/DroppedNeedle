@@ -7,9 +7,9 @@
 //! POSTs only because their id lists ride in a body.
 //!
 //! Layout mirrors the users routes: `handlers` are thin, `services` hold the
-//! domain logic and return [`services::LibraryFailure`], `stores` defines
-//! the ports, `sqlite` implements them over the reader pool, and `memory`
-//! carries the test fakes. Status mapping lives only in `error`.
+//! domain logic and return [`services::LibraryFailure`], `stores` holds the
+//! records and the lyrics port, and `sqlite` and `lookups` read them over
+//! the reader pool. Status mapping lives only in `error`.
 //!
 //! Wiring: the app mounts [`routes`], which also registers the paths in
 //! the API document.
@@ -18,7 +18,6 @@ pub mod error;
 pub mod file_lyrics;
 pub mod handlers;
 pub mod lookups;
-pub mod memory;
 pub mod models;
 #[cfg(test)]
 mod perf_tests;
@@ -31,19 +30,19 @@ pub mod tags;
 use std::sync::Arc;
 
 use droppedneedle_kernel::mount::{Routes, routes};
-use stores::{FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, TrackTagReader};
+use stores::LyricsPort;
 
 /// Every dependency the library reads need, injected by constructor.
 #[derive(Clone)]
 pub struct LibraryDeps {
     /// Catalog reads over the `local_*` tables.
-    pub catalog: Arc<dyn LibraryCatalog>,
+    pub catalog: sqlite::LibraryCatalog,
     /// Favorite flags and counts for the caller.
-    pub favorites: Arc<dyn FavoriteReads>,
+    pub favorites: sqlite::FavoriteReads,
     /// Stored-lyrics reads; the provider fetch sits behind this port too.
     pub lyrics: Arc<dyn LyricsPort>,
     /// Membership, album status, track resolution and stats extras.
-    pub lookups: Arc<dyn LibraryLookups>,
+    pub lookups: lookups::LibraryLookups,
     /// The download policy album status reads its upgrade cutoff from, per
     /// call; `None` shows no upgrades.
     pub upgrade_policy: Option<
@@ -52,7 +51,7 @@ pub struct LibraryDeps {
         >,
     >,
     /// Tag reads from the files on disk (admin tag view).
-    pub tags: Arc<dyn TrackTagReader>,
+    pub tags: tags::FileTagReader,
 }
 
 /// The library read routes, at their full `/api/v3` paths. Every handler

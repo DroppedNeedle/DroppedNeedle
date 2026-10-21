@@ -23,9 +23,9 @@ use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayStat, PlayedValues, PlayerAlbum, PlayerCatalog, PlayerIds,
     PlayerTrack, ShuffleSeeds, TrackOrder, TrackQuery,
 };
+use droppedneedle_catalog::reads::library::sqlite::LibraryCatalog;
 use droppedneedle_catalog::reads::library::stores::{
-    ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LibraryCatalog, LyricDoc, LyricsPort,
-    StoreError,
+    ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LyricDoc, LyricsPort, StoreError,
 };
 use droppedneedle_catalog::reads::platform::covers::{CoverArt, CoverLookup};
 
@@ -127,7 +127,7 @@ pub type ImageBytes = (Vec<u8>, String);
 #[derive(Clone)]
 pub struct CompatLibrary {
     /// Native catalog reads (artists, genres, single albums and artists).
-    pub catalog: Arc<dyn LibraryCatalog>,
+    pub catalog: LibraryCatalog,
     /// Player reads (rich tracks, filtered pages, history).
     pub player: Arc<dyn PlayerCatalog>,
     /// Shared playlists and favorites.
@@ -198,19 +198,9 @@ impl CompatLibrary {
     /// Everything compat reads, from the native reads bundle: the same
     /// catalog, collections, lyrics and cover art the web UI uses.
     pub fn from_reads(reads: &droppedneedle_catalog::reads::ReadsSetup) -> Self {
-        use droppedneedle_catalog::reads::library::{
-            player::SqlitePlayerCatalog, sqlite::LibraryDb,
-        };
-
-        let player_db = reads
-            .collections
-            .db
-            .pool()
-            .map(LibraryDb::new)
-            .unwrap_or_else(|_| LibraryDb::unwired());
         Self {
             catalog: reads.library.catalog.clone(),
-            player: Arc::new(SqlitePlayerCatalog::new(&player_db)),
+            player: Arc::new(reads.collections.items.clone()),
             collections: reads.collections.clone(),
             lyrics: reads.library.lyrics.clone(),
             covers: reads.platform.covers.covers.clone(),

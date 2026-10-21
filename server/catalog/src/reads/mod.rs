@@ -22,8 +22,6 @@ pub mod youtube;
 use std::sync::Arc;
 
 use droppedneedle_auth::users::UsersDeps;
-#[cfg(any(test, feature = "test-support"))]
-use droppedneedle_kernel::ids::IdGenerator;
 
 /// Everything `create_app` needs to mount the reads routes, built once.
 #[derive(Clone)]
@@ -160,36 +158,6 @@ impl ReadsSetup {
             youtube,
         }
     }
-
-    /// Test bundle over unwired adapters. Library answers from empty memory
-    /// stores, search from a lazy pool, and wrapped denies everything; the
-    /// hooked-state suites that use this never touch reads routes.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
-        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:")
-            .map_err(|error| format!("test reads pool: {error}"))?;
-        let discover = test_discover_deps();
-        Ok(Self {
-            youtube: unwired_youtube(&discover, ids),
-            library: library::LibraryDeps {
-                catalog: Arc::new(library::memory::MemoryCatalog::new()),
-                favorites: Arc::new(library::memory::MemoryFavorites::new()),
-                lyrics: Arc::new(library::memory::MemoryLyrics::new()),
-                lookups: Arc::new(library::memory::EmptyLookups),
-                upgrade_policy: None,
-                tags: Arc::new(library::tags::UnwiredTagReader),
-            },
-            search: search::SearchDeps::new(
-                search::service::SearchService::new(pool),
-                Arc::new(search::ports::UnconfiguredEnrichment),
-            ),
-            discover,
-            collections: collections::CollectionsState::unwired(),
-            catalog: None,
-            platform: test_platform_state(),
-            artwork: None,
-        })
-    }
 }
 
 /// The library reads: the SQLite catalog, favorites and lookups over the
@@ -203,9 +171,7 @@ fn library_deps(
     enrichment: Option<&enrichment::live::ProductionEnrichment>,
     files: droppedneedle_media::stream::local_files::LibraryFiles,
 ) -> library::LibraryDeps {
-    let library_db = library::sqlite::LibraryDb::new(pool);
-    let catalog: Arc<dyn library::stores::LibraryCatalog> =
-        Arc::new(library::sqlite::SqliteCatalog::new(&library_db));
+    let catalog = library::sqlite::LibraryCatalog::new(pool);
     let provider_lyrics: Arc<dyn library::stores::LyricsPort> = match enrichment {
         Some(pair) => Arc::new(
             enrichment::ProviderLyrics::new(
@@ -215,7 +181,7 @@ fn library_deps(
             )
             .with_settings(pair.lyrics_settings.clone()),
         ),
-        None => Arc::new(library::memory::MemoryLyrics::new()),
+        None => Arc::new(library::file_lyrics::NoOnlineLyrics),
     };
     library::LibraryDeps {
         lyrics: Arc::new(library::file_lyrics::FileLyrics::new(
@@ -224,47 +190,10 @@ fn library_deps(
             provider_lyrics,
         )),
         catalog,
-        favorites: Arc::new(library::sqlite::SqliteFavorites::new(&library_db)),
-        lookups: Arc::new(library::lookups::SqliteLookups::new(&library_db)),
+        favorites: library::sqlite::FavoriteReads::new(pool),
+        lookups: library::lookups::LibraryLookups::new(pool),
         upgrade_policy: Some(settings.live()),
-        tags: Arc::new(library::tags::FileTagReader::new(files)),
-    }
-}
-
-/// YouTube links with no database, searching through discover's YouTube
-/// client so both spend from one daily budget.
-#[cfg(any(test, feature = "test-support"))]
-fn unwired_youtube(
-    discover: &discover::ReadsDeps,
-    ids: Arc<dyn IdGenerator>,
-) -> youtube::YouTubeLinks {
-    youtube::YouTubeLinks::new(
-        youtube::store::LinkStore::new(collections::db::CollectionsDb::unwired()),
-        discover.youtube.clone(),
-        ids,
-        discover.clock.clone(),
-    )
-}
-
-/// Test discover deps: every port runs its fake.
-#[cfg(any(test, feature = "test-support"))]
-fn test_discover_deps() -> discover::ReadsDeps {
-    use discover::fakes::{
-        FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
-        FakeYouTube,
-    };
-
-    let clock = droppedneedle_kernel::clock::ManualClock::at(0);
-    discover::ReadsDeps {
-        content: Arc::new(FakeContent::new(clock.clone())),
-        queues: Arc::new(FakeQueues),
-        batches: Arc::new(FakeBatches::new(clock)),
-        charts: Arc::new(FakeCharts::new()),
-        previews: Arc::new(FakePreviews),
-        youtube: Arc::new(FakeYouTube::unconfigured()),
-        radio: Arc::new(FakeRadio),
-        now_playing: Arc::new(FakeNowPlaying),
-        clock: Arc::new(droppedneedle_kernel::clock::SystemClock),
+        tags: library::tags::FileTagReader::new(files),
     }
 }
 
@@ -313,23 +242,6 @@ fn platform_state(
             inputs.providers.github.clone(),
         ))),
         WrappedState::new(ConfigWrappedKey::new(settings.live()), wrapped),
-    )
-}
-
-/// Test platform states: no art, a tagged build, and wrapped denying
-/// every request.
-#[cfg(any(test, feature = "test-support"))]
-fn test_platform_state() -> platform::PlatformState {
-    use platform::{
-        covers::{CoversState, FakeCoverArt},
-        version::{FakeReleases, VersionState},
-        wrapped::{FakeWrappedData, WrappedState},
-    };
-
-    platform::PlatformState::new(
-        CoversState::new(Arc::new(FakeCoverArt::empty())),
-        VersionState::new(Arc::new(FakeReleases::tagged("dev"))),
-        WrappedState::new(String::new(), Arc::new(FakeWrappedData::empty(2026))),
     )
 }
 
