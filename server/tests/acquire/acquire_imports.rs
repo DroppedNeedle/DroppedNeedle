@@ -2,7 +2,7 @@
 //!
 //! Coverage of the Lidarr read-only import (monitored artists
 //! become follows), the Spotify OAuth/playlist import plus settings rows,
-//! the `spotify:import` durable job, and the acquisition health smoke with
+//! the Spotify import jobs, and the acquisition health smoke with
 //! its independent per-source release gates. Every test runs against the
 //! in-repo loopback mocks or scripted probes; nothing touches a live
 //! Lidarr, Spotify, slskd, SABnzbd, or indexer. The Spotify import runs on
@@ -23,6 +23,7 @@ use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
 use droppedneedle_catalog::reads::collections::store::PlaylistStore;
+use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, start_runners};
 use droppedneedle_kernel::runtime_config::ConfigError;
 use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
 use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
@@ -35,7 +36,7 @@ use imports::handlers::{ImportsDeps, imports_router};
 use imports::health::{
     ClientProbe, HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
 };
-use imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
+use imports::jobs::{SPEC, SpotifyImportJobs, SpotifyImports};
 use imports::lidarr::{
     LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
 };
@@ -120,21 +121,9 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
         spotify_playlists.clone(),
         resolver.clone(),
     ));
-    let jobs = Arc::new(JobRegistry::new());
-    let runner = service.clone();
-    let executor = Arc::new(TaskExecutor::new(
-        jobs.clone(),
-        move |job: QueuedSpotifyImport| {
-            let service = runner.clone();
-            tokio::spawn(async move {
-                let result = service
-                    .populate_playlist(&job.user_id, &job.spotify_playlist_id, &job.playlist_id)
-                    .await
-                    .map_err(|error| error.user_message());
-                (job.playlist_id.clone(), result)
-            })
-        },
-    ));
+    let import_jobs = SpotifyImportJobs::new(service, platform.events.clone());
+    let queue = JobQueue::new(platform.db.clone(), platform.clock.clone());
+    let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
     let slskd = Arc::new(ScriptedSlskd::new());
     let sabnzbd = Arc::new(ScriptedSabnzbd::new());
     let newznab = Arc::new(ScriptedNewznab::new());
@@ -150,8 +139,7 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
         spotify_links: spotify_links.clone(),
         spotify_playlists,
         resolver,
-        jobs,
-        executor,
+        spotify_imports,
         probes: Arc::new(HealthProbes {
             slskd: slskd.clone(),
             sabnzbd: sabnzbd.clone(),
@@ -162,6 +150,12 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
         base_path: String::new(),
         trusted_proxies: Default::default(),
     };
+    start_runners(
+        &queue,
+        &platform.supervisor,
+        Handlers::default().with(SPEC, Arc::new(import_jobs)),
+    )
+    .expect("import runner starts");
     Rig {
         deps,
         lidarr_settings,
@@ -618,7 +612,7 @@ async fn link_spotify_via(
 }
 
 async fn poll_job_done(deps: ImportsDeps, user_id: &str, spotify_id: &str) -> Value {
-    for _ in 0..100 {
+    for _ in 0..500 {
         let (status, body) = get_json(
             authed_app(deps.clone(), user_id, Role::User),
             &format!("/api/v3/acquire/spotify/jobs/{spotify_id}"),

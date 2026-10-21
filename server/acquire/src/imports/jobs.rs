@@ -1,226 +1,234 @@
-//! The `spotify:import` durable job and its downloads seam.
+//! Spotify playlist imports as [`KIND`] jobs on the jobs table.
 //!
-//! v2 runs the populate as a `TaskRegistry` background task keyed
-//! `spotify:import:{user}:{playlist}` (v2 Spotify routes),
-//! answering the POST immediately and skipping the spawn when the key is
-//! already running. This module keeps the key, the answer-fast shape, and
-//! the single-flight rule, and records terminal states for the status route.
+//! Starting an import queues one job keyed by user and Spotify playlist,
+//! unless that key already has one queued or running, so one import per
+//! user and playlist runs at a time. The route answers at once; the job
+//! fetches the playlist, resolves its albums and replaces the playlist's
+//! rows in one transaction.
 //!
-//! [`SpotifyImportExecutor`] is the minimal local trait onto the downloads
-//! state machine. [`TaskExecutor`] is the in-memory implementation that
-//! spawns a task; a durable downloads-backed executor can replace it
-//! without touching the handlers.
+//! A run is safe to repeat: it reads the playlist from Spotify again and
+//! replaces the rows wholesale, so a run cut short by a restart is simply
+//! run again by the next process, and a run that already wrote leaves the
+//! same rows. A busy database puts the job back without spending an
+//! attempt. Any other failure ends the job failed, with a code the status
+//! route turns into its message.
+//!
+//! The jobs module runs one handler per kind, so imports run one at a time
+//! across users.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::time::Duration;
 
-/// Build the durable job key (v2 `task_key`, verbatim format).
+use droppedneedle_kernel::db::{Db, DbError, Lane};
+use droppedneedle_kernel::events::{EventHub, PlaylistImported, UserNotice, new_event_id};
+use droppedneedle_kernel::jobs::BoxFuture;
+use droppedneedle_kernel::jobs::queue::{
+    JobCtx, JobError, JobHandler, JobKind, JobQueue, KindSpec, Outcome, PAYLOAD_INVALID, State,
+};
+use serde::{Deserialize, Serialize};
+
+use super::spotify::SpotifyImportService;
+use super::spotify_client::SpotifyError;
+
+/// The import job kind.
+pub const KIND: JobKind = JobKind::new("spotify.import");
+
+/// How imports run: a long playlist with many albums to resolve may take
+/// a while at background priority, and the runner keeps the lease alive.
+pub const SPEC: KindSpec = KindSpec::new(KIND)
+    .max_attempts(3)
+    .run_timeout(Duration::from_secs(2 * 3600));
+
+/// Not linked to Spotify, or the link no longer refreshes.
+pub const NOT_LINKED: &str = "SPOTIFY_NOT_LINKED";
+/// Spotify did not answer, or answered something the import cannot read.
+pub const UNAVAILABLE: &str = "SPOTIFY_UNAVAILABLE";
+/// The playlist could not be saved.
+pub const SAVE_FAILED: &str = "SPOTIFY_SAVE_FAILED";
+
+/// The job key for one user's import of one Spotify playlist.
 pub fn import_job_key(user_id: &str, spotify_playlist_id: &str) -> String {
     format!("spotify:import:{user_id}:{spotify_playlist_id}")
 }
 
-/// Terminal-or-live state of one import job.
+/// What one import job carries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ImportJob {
+    user_id: String,
+    spotify_playlist_id: String,
+    playlist_id: String,
+}
+
+/// Where one import stands.
 #[derive(Debug, Clone, PartialEq)]
-pub enum JobState {
-    /// Populate still running.
-    Running {
-        /// Internal playlist id being filled.
-        playlist_id: String,
-    },
-    /// Populate finished.
-    Done {
-        /// Internal playlist id.
-        playlist_id: String,
-        /// Tracks written.
-        track_count: usize,
-    },
-    /// Populate failed. The message is user-safe.
+pub enum ImportState {
+    /// Queued or running.
+    Running,
+    /// Finished.
+    Done,
+    /// Failed. The message is user-safe.
     Error {
-        /// Internal playlist id.
-        playlist_id: String,
-        /// User-safe failure summary.
+        /// What went wrong.
         message: String,
     },
 }
 
-/// One queued populate.
-#[derive(Debug, Clone, PartialEq)]
-pub struct QueuedSpotifyImport {
-    /// Durable job key.
-    pub key: String,
-    /// Owning user.
-    pub user_id: String,
-    /// Spotify playlist id.
-    pub spotify_playlist_id: String,
-    /// Internal playlist id to fill.
-    pub playlist_id: String,
+/// The user-safe line for a failed import's code.
+pub fn failure_message(code: Option<&str>) -> &'static str {
+    match code {
+        Some(NOT_LINKED) => "Spotify account not linked",
+        Some(UNAVAILABLE) => "Failed to fetch playlist from Spotify",
+        Some(SAVE_FAILED) => "Failed to save the imported playlist",
+        _ => "The import did not finish",
+    }
 }
 
-/// Minimal local seam onto the downloads state machine: run one queued
-/// populate. [`TaskExecutor`] below is the task-spawning in-memory
-/// implementation.
-pub trait SpotifyImportExecutor: Send + Sync {
-    /// Run `job` to completion, recording its terminal state.
-    fn execute(&self, job: QueuedSpotifyImport);
+/// Queues imports and reads where they stand.
+#[derive(Clone, Debug)]
+pub struct SpotifyImports {
+    db: Db,
+    queue: JobQueue,
 }
 
-/// Registry behind the single-flight rule and the status route.
-#[derive(Debug, Default)]
-pub struct JobRegistry {
-    inner: Mutex<JobTables>,
-}
-
-/// Terminal states kept for the status route; older ones are dropped.
-pub const KEPT_TERMINAL_STATES: usize = 256;
-
-/// Live keys plus terminal states, oldest terminal key first.
-#[derive(Debug, Default)]
-struct JobTables {
-    running: HashSet<String>,
-    states: HashMap<String, JobState>,
-    finished: VecDeque<String>,
-}
-
-impl JobRegistry {
-    /// Empty registry.
-    pub fn new() -> Self {
-        Self::default()
+impl SpotifyImports {
+    /// Imports on `queue`, written through `db`.
+    pub fn new(db: Db, queue: JobQueue) -> Self {
+        Self { db, queue }
     }
 
-    /// True when `key` is currently running.
-    pub fn is_running(&self, key: &str) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .running
-            .contains(key)
-    }
-
-    /// Latest known state for `key`, if any.
-    pub fn state_for(&self, key: &str) -> Option<JobState> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .states
-            .get(key)
-            .cloned()
-    }
-
-    /// Mark `key` running. Returns false when it already runs (the lost
-    /// race answers `already_running` instead of double-spawning, v2).
-    pub fn mark_running(&self, key: &str, playlist_id: &str) -> bool {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !inner.running.insert(key.to_owned()) {
-            return false;
+    /// Queue the import of `spotify_playlist_id` into `playlist_id` for
+    /// `user_id`, unless one for that pair is already queued or running.
+    pub async fn start(
+        &self,
+        user_id: &str,
+        spotify_playlist_id: &str,
+        playlist_id: &str,
+    ) -> Result<(), JobError> {
+        let key = import_job_key(user_id, spotify_playlist_id);
+        if let Some(status) = self.queue.latest(KIND, &key).await?
+            && matches!(status.state, State::Queued | State::Running)
+        {
+            return Ok(());
         }
-        inner.states.insert(
-            key.to_owned(),
-            JobState::Running {
-                playlist_id: playlist_id.to_owned(),
-            },
-        );
-        true
+        let job = ImportJob {
+            user_id: user_id.to_owned(),
+            spotify_playlist_id: spotify_playlist_id.to_owned(),
+            playlist_id: playlist_id.to_owned(),
+        };
+        let queue = self.queue.clone();
+        self.db
+            .write(Lane::Foreground, "spotify-import-enqueue", move |tx| {
+                queue.enqueue(tx, KIND, &key, &job).map(|_| ())
+            })
+            .await
     }
 
-    /// Record a terminal state and release the key.
-    pub fn finish(&self, key: &str, state: JobState) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        inner.running.remove(key);
-        inner.states.insert(key.to_owned(), state);
-        inner.finished.retain(|done| done != key);
-        inner.finished.push_back(key.to_owned());
-        while inner.finished.len() > KEPT_TERMINAL_STATES {
-            if let Some(oldest) = inner.finished.pop_front()
-                && !inner.running.contains(&oldest)
-            {
-                inner.states.remove(&oldest);
-            }
-        }
+    /// Where the newest import of `spotify_playlist_id` for `user_id`
+    /// stands, or `None` when there is none.
+    pub async fn state(
+        &self,
+        user_id: &str,
+        spotify_playlist_id: &str,
+    ) -> Result<Option<ImportState>, DbError> {
+        let key = import_job_key(user_id, spotify_playlist_id);
+        Ok(self
+            .queue
+            .latest(KIND, &key)
+            .await?
+            .map(|status| match status.state {
+                State::Queued | State::Running => ImportState::Running,
+                State::Done => ImportState::Done,
+                State::Failed => ImportState::Error {
+                    message: failure_message(status.last_error.as_deref()).to_owned(),
+                },
+            }))
+    }
+
+    /// Record a finished import for a test that needs one without running
+    /// it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn seed_done(
+        &self,
+        user_id: &str,
+        spotify_playlist_id: &str,
+        playlist_id: &str,
+    ) -> Result<(), JobError> {
+        let key = import_job_key(user_id, spotify_playlist_id);
+        let job = ImportJob {
+            user_id: user_id.to_owned(),
+            spotify_playlist_id: spotify_playlist_id.to_owned(),
+            playlist_id: playlist_id.to_owned(),
+        };
+        let queue = self.queue.clone();
+        self.db
+            .write(Lane::Background, "spotify-import-seed", move |tx| {
+                queue.enqueue(tx, KIND, &key, &job)?;
+                let claimed = queue.claim_in(tx, &SPEC)?.ok_or(JobError::LeaseLost)?;
+                queue.complete(tx, &claimed.lease)
+            })
+            .await
     }
 }
 
-/// Task-spawning executor: the memory [`SpotifyImportExecutor`]. Holds the
-/// service behind an async runner closure so the trait itself stays sync
-/// and object-safe for a durable implementation.
-pub struct TaskExecutor<F> {
-    registry: Arc<JobRegistry>,
-    run: F,
+/// Runs [`KIND`] jobs through the import service.
+pub struct SpotifyImportJobs {
+    service: Arc<SpotifyImportService>,
+    events: EventHub,
 }
 
-impl<F> TaskExecutor<F>
-where
-    F: Fn(QueuedSpotifyImport) -> tokio::task::JoinHandle<(String, Result<usize, String>)>
-        + Send
-        + Sync
-        + 'static,
-{
-    /// Wire the executor over a registry and a spawn closure.
-    pub fn new(registry: Arc<JobRegistry>, run: F) -> Self {
-        Self { registry, run }
+impl SpotifyImportJobs {
+    /// Imports run by `service`; each finished one is announced on
+    /// `events`.
+    pub fn new(service: Arc<SpotifyImportService>, events: EventHub) -> Self {
+        Self { service, events }
     }
 }
 
-impl<F> SpotifyImportExecutor for TaskExecutor<F>
-where
-    F: Fn(QueuedSpotifyImport) -> tokio::task::JoinHandle<(String, Result<usize, String>)>
-        + Send
-        + Sync
-        + 'static,
-{
-    fn execute(&self, job: QueuedSpotifyImport) {
-        if !self.registry.mark_running(&job.key, &job.playlist_id) {
-            return;
-        }
-        let registry = self.registry.clone();
-        let key = job.key.clone();
-        let playlist_id = job.playlist_id.clone();
-        let handle = (self.run)(job);
-        tokio::spawn(async move {
-            let state = match handle.await {
-                Ok((_, Ok(track_count))) => JobState::Done {
-                    playlist_id,
-                    track_count,
-                },
-                Ok((_, Err(message))) => JobState::Error {
-                    playlist_id,
-                    message,
-                },
-                Err(join_error) => JobState::Error {
-                    playlist_id,
-                    message: format!("import task failed: {join_error}"),
-                },
+impl JobHandler for SpotifyImportJobs {
+    fn run(&self, job: JobCtx) -> BoxFuture<'static, Outcome> {
+        let (service, events) = (self.service.clone(), self.events.clone());
+        Box::pin(async move {
+            let Ok(import) = job.payload::<ImportJob>() else {
+                return Outcome::Fail {
+                    code: PAYLOAD_INVALID,
+                };
             };
-            registry.finish(&key, state);
-        });
+            let result = service
+                .populate_playlist(
+                    &import.user_id,
+                    &import.spotify_playlist_id,
+                    &import.playlist_id,
+                )
+                .await;
+            let code = match result {
+                Ok(_) => {
+                    announce_playlist_imported(&events, &import);
+                    return Outcome::Done;
+                }
+                Err(SpotifyError::Busy) => return Outcome::Busy,
+                Err(SpotifyError::NotLinked) => NOT_LINKED,
+                Err(SpotifyError::Unavailable(cause)) => {
+                    tracing::warn!(%cause, "spotify import fetch failed");
+                    UNAVAILABLE
+                }
+                Err(SpotifyError::Store(cause)) => {
+                    tracing::error!(%cause, "spotify import write failed");
+                    SAVE_FAILED
+                }
+            };
+            Outcome::Fail { code }
+        })
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn terminal_states_are_bounded() {
-        let registry = JobRegistry::new();
-        for index in 0..KEPT_TERMINAL_STATES + 10 {
-            let key = format!("job-{index}");
-            assert!(registry.mark_running(&key, "p"));
-            registry.finish(
-                &key,
-                JobState::Done {
-                    playlist_id: "p".to_owned(),
-                    track_count: 1,
-                },
-            );
-        }
-        assert!(registry.state_for("job-0").is_none());
-        let last = format!("job-{}", KEPT_TERMINAL_STATES + 9);
-        assert!(registry.state_for(&last).is_some());
-    }
+/// Tell the importing user's open tabs the playlist has its tracks, so the
+/// list and detail views refresh.
+fn announce_playlist_imported(events: &EventHub, import: &ImportJob) {
+    events.notify(
+        &import.user_id,
+        UserNotice::PlaylistImported(PlaylistImported {
+            playlist_id: import.playlist_id.clone(),
+            event_id: new_event_id(),
+        }),
+    );
 }

@@ -238,10 +238,7 @@ impl SpotifyImportService {
             })
             .collect();
         let written = rows.len();
-        self.playlists
-            .replace_tracks(playlist_id, &rows)
-            .await
-            .map_err(SpotifyError::Store)?;
+        self.playlists.replace_tracks(playlist_id, &rows).await?;
         if let CoverOutcome::Skipped(reason) = self
             .persist_cover(spotify_playlist_id, playlist_id, &info)
             .await

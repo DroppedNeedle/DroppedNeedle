@@ -248,7 +248,6 @@ const AWAITED: &str = "blocking file or store work, awaited by the request or lo
 const UPLOAD_CLEANUP: &str = "removes unused uploads when the request's guard drops";
 const DROP_IMPORT_STEP: &str = "blocking file work, awaited by the drop import that runs it";
 const DROP_IMPORT: &str = "a drop import a request starts; it logs its own end";
-const SPOTIFY_IMPORT: &str = "a Spotify import a request starts; it logs its own end";
 const MIX_REFRESH: &str = "a personal-mix refresh a request starts; it logs its own end";
 const SEARCH: &str = "an acquire search a request starts; it logs its own end";
 const WORKER_CHILD: &str = "a landing or review the download worker waits for";
@@ -284,7 +283,6 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/drop_import/http.rs", 1, UPLOAD_CLEANUP),
     ("acquire/src/drop_import/mod.rs", 7, DROP_IMPORT_STEP),
     ("acquire/src/drop_import/mod.rs", 1, DROP_IMPORT),
-    ("acquire/src/imports/jobs.rs", 1, SPOTIFY_IMPORT),
     ("acquire/src/landing/hold.rs", 1, AWAITED),
     ("acquire/src/landing/library.rs", 2, AWAITED),
     ("acquire/src/landing/mod.rs", 3, AWAITED),
@@ -297,7 +295,6 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/slskd/repository.rs", 3, AWAITED),
     ("acquire/src/target/mod.rs", 1, AWAITED),
     ("acquire/src/usenet/sabnzbd.rs", 6, AWAITED),
-    ("acquire/src/wiring.rs", 2, SPOTIFY_IMPORT),
     ("acquire/src/worker/landings.rs", 2, WORKER_CHILD),
     ("acquire/src/worker/review.rs", 1, WORKER_CHILD),
     ("acquire/src/worker.rs", 3, AWAITED),

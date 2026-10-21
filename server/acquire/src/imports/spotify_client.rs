@@ -94,17 +94,8 @@ pub enum SpotifyError {
     Unavailable(String),
     /// A local store read or write failed. The detail reaches the log only.
     Store(String),
-}
-
-impl SpotifyError {
-    /// The user-facing line a background import records (v2 texts).
-    pub fn user_message(&self) -> String {
-        match self {
-            Self::NotLinked => "Spotify account not linked".to_owned(),
-            Self::Unavailable(_) => "Failed to fetch playlist from Spotify".to_owned(),
-            Self::Store(_) => "Failed to save the imported playlist".to_owned(),
-        }
-    }
+    /// The database was too busy to take a write; try again later.
+    Busy,
 }
 
 /// Per-user Spotify Web API client (v2 `SpotifyClient`). Base URLs inject

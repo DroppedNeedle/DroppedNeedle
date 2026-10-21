@@ -322,6 +322,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             &collections,
         ),
         &outbound.spotify(),
+        queues.queue().clone(),
     )
     .map_err(stage("acquire setup"))?;
     let reads = ReadsSetup::build(
@@ -438,6 +439,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_mixer(mix_hooks.clone())
     .with_precache_sources_from(&reads, config_store)
     .with_cover_warm_jobs(&reads)
+    .with_job(
+        droppedneedle_acquire::imports::jobs::SPEC,
+        acquire.spotify_import_jobs.clone(),
+    )
     .with_discovery_demand(Arc::new(
         droppedneedle_catalog::reads::discover::demand::ContentDemand(
             reads.discover.content.clone(),

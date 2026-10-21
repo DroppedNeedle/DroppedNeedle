@@ -34,7 +34,7 @@ use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradeWorklist,
 };
 use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
-use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
+use super::imports::jobs::{SpotifyImportJobs, SpotifyImports};
 use super::imports::lidarr::LidarrClient;
 use super::imports::spotify::SpotifyImportService;
 use super::imports::spotify_albums::AlbumResolver;
@@ -70,8 +70,9 @@ use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::state::{ApprovalSeedSink, PendingApprovalsSource};
 use droppedneedle_catalog::reads::collections::store::Stores as CollectionsStores;
-use droppedneedle_kernel::events::{EventHub, PlaylistImported, UserNotice, new_event_id};
+use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::queue::JobQueue;
 use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -474,6 +475,8 @@ pub struct AcquireSetup {
     pub search_jobs: Arc<SearchJobs>,
     /// Drop import: uploaded music into the library.
     pub drops: Arc<DropImports>,
+    /// Runs the Spotify import jobs; registered on the jobs table.
+    pub spotify_import_jobs: Arc<SpotifyImportJobs>,
 }
 
 /// Flows stores plus the loop deps built over them.
@@ -692,13 +695,14 @@ impl AcquireSetup {
     /// stores already opened on it. Credentials and tuning are read from
     /// its settings on use (decrypted in memory only); notices and import
     /// completions go to its event hub. `ports` are the other areas it
-    /// reaches.
+    /// reaches. Spotify imports are queued on `queue`.
     pub fn build(
         platform: &Platform,
         users: UsersDeps,
         stores: AcquireStores,
         ports: AcquirePorts,
         spotify: &SpotifyEndpoints,
+        queue: JobQueue,
     ) -> Result<Self, String> {
         let db = stores.db.clone();
         let (config, ids, config_store) = (
@@ -797,31 +801,8 @@ impl AcquireSetup {
             spotify_playlists.clone(),
             resolver.clone(),
         ));
-        let jobs = Arc::new(JobRegistry::new());
-        let runner = spotify_service.clone();
-        let import_events = events.clone();
-        let executor = Arc::new(TaskExecutor::new(
-            jobs.clone(),
-            move |job: QueuedSpotifyImport| {
-                let service = runner.clone();
-                let events = import_events.clone();
-                tokio::spawn(async move {
-                    let result = service
-                        .populate_playlist(&job.user_id, &job.spotify_playlist_id, &job.playlist_id)
-                        .await;
-                    if result.is_ok() {
-                        announce_playlist_imported(&events, &job);
-                    }
-                    let result = result.map_err(|error| {
-                        if let super::imports::spotify_client::SpotifyError::Store(cause) = &error {
-                            tracing::error!(%cause, "spotify import write failed");
-                        }
-                        error.user_message()
-                    });
-                    (job.playlist_id.clone(), result)
-                })
-            },
-        ));
+        let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(spotify_service, events.clone()));
+        let spotify_imports = SpotifyImports::new(platform.db.clone(), queue);
         let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
@@ -835,8 +816,7 @@ impl AcquireSetup {
             spotify_links,
             spotify_playlists,
             resolver,
-            jobs,
-            executor,
+            spotify_imports,
             probes: Arc::new(LiveProbes::bundle(&probes)),
             ids: ids.clone(),
             base_path: config.base_path.clone(),
@@ -890,6 +870,7 @@ impl AcquireSetup {
             landing,
             search_jobs,
             drops,
+            spotify_import_jobs,
         })
     }
 
@@ -993,25 +974,16 @@ impl AcquireSetup {
             spotify_playlists.clone(),
             resolver.clone(),
         ));
-        let jobs = Arc::new(JobRegistry::new());
-        let import_events = events.clone();
-        let executor = Arc::new(TaskExecutor::new(
-            jobs.clone(),
-            move |job: QueuedSpotifyImport| {
-                let service = service.clone();
-                let events = import_events.clone();
-                tokio::spawn(async move {
-                    let result = service
-                        .populate_playlist(&job.user_id, &job.spotify_playlist_id, &job.playlist_id)
-                        .await
-                        .map_err(|_| "spotify import failed".to_owned());
-                    if result.is_ok() {
-                        announce_playlist_imported(&events, &job);
-                    }
-                    (job.playlist_id.clone(), result)
-                })
-            },
-        ));
+        let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(service, events.clone()));
+        // No runner takes these here: the tests on this bundle import no
+        // playlists.
+        let spotify_imports = SpotifyImports::new(
+            db.db().clone(),
+            JobQueue::new(
+                db.db().clone(),
+                Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ),
+        );
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http),
             lidarr_settings: Arc::new(MemoryLidarrSettings::new()),
@@ -1023,8 +995,7 @@ impl AcquireSetup {
             spotify_links,
             spotify_playlists,
             resolver,
-            jobs,
-            executor,
+            spotify_imports,
             probes: Arc::new(HealthProbes {
                 slskd: Arc::new(ScriptedSlskd::new()),
                 sabnzbd: Arc::new(ScriptedSabnzbd::new()),
@@ -1093,6 +1064,7 @@ impl AcquireSetup {
             landing,
             search_jobs,
             drops,
+            spotify_import_jobs,
         })
     }
 
@@ -1244,18 +1216,6 @@ fn flows_bundle(
         sweep_deps,
         sync_deps,
     }
-}
-
-/// Tell the importing user's open tabs the playlist has its tracks, so the
-/// list and detail views refresh (v2 `spotify.py` import completion).
-fn announce_playlist_imported(events: &EventHub, job: &QueuedSpotifyImport) {
-    events.notify(
-        &job.user_id,
-        UserNotice::PlaylistImported(PlaylistImported {
-            playlist_id: job.playlist_id.clone(),
-            event_id: new_event_id(),
-        }),
-    );
 }
 
 /// Days since epoch to `YYYY-MM-DD` (Howard Hinnant's civil algorithm).

@@ -351,7 +351,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Latest known state of one `spotify:import` job.",
+        "summary": "Latest known state of one Spotify playlist import.",
         "operationId": "get_spotify_job",
         "parameters": [
           {
@@ -418,7 +418,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Start a Spotify playlist import: ensure the internal record, queue the\n`spotify:import` durable job unless it already runs, and answer the id\nimmediately (v2 answer-fast shape).",
+        "summary": "Start a Spotify playlist import: ensure the internal record, queue the\nimport job unless one for this playlist is already queued or running,\nand answer the id at once.",
         "operationId": "import_spotify_playlist",
         "parameters": [
           {

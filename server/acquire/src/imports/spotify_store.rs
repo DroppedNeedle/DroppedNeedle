@@ -18,10 +18,11 @@ use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use super::spotify::ImportedTrack;
-use super::spotify_client::now_unix_secs;
+use super::spotify_client::{SpotifyError, now_unix_secs};
 use super::spotify_oauth::{PendingAuth, STATE_TTL_SECS, SpotifyConnection};
 use crate::db::AcquireDb;
 use droppedneedle_auth::times::{parse_iso, to_iso};
+use droppedneedle_catalog::reads::collections::db::StoreError;
 use droppedneedle_catalog::reads::collections::store::PlaylistStore;
 use droppedneedle_catalog::reads::collections::store::playlists::{CoverImage, NewEntry, Written};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
@@ -318,17 +319,30 @@ impl CollectionsPlaylistBridge {
         &self,
         playlist_id: &str,
         tracks: &[ImportedTrack],
-    ) -> Result<(), String> {
+    ) -> Result<(), SpotifyError> {
         let entries = tracks.iter().map(entry_for).collect();
         match self
             .playlists
             .replace_entries(playlist_id, entries)
             .await
-            .map_err(|error| error.to_string())?
-        {
+            .map_err(|error| match error {
+                StoreError::Busy(_) => SpotifyError::Busy,
+                other => SpotifyError::Store(other.to_string()),
+            })? {
             Written::Done(()) => Ok(()),
-            Written::Missing => Err(format!("playlist {playlist_id} is gone")),
+            Written::Missing => Err(SpotifyError::Store(format!(
+                "playlist {playlist_id} is gone"
+            ))),
         }
+    }
+
+    /// How many rows a playlist holds.
+    pub async fn track_count(&self, playlist_id: &str) -> Result<usize, String> {
+        self.playlists
+            .tracks(playlist_id)
+            .await
+            .map(|rows| rows.len())
+            .map_err(|error| error.to_string())
     }
 
     /// Store the picked provider image as the local cover. Answers false

@@ -182,7 +182,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Latest known state of one `spotify:import` job. */
+        /** Latest known state of one Spotify playlist import. */
         get: operations["get_spotify_job"];
         put?: never;
         post?: never;
@@ -223,8 +223,8 @@ export interface paths {
         put?: never;
         /**
          * Start a Spotify playlist import: ensure the internal record, queue the
-         *     `spotify:import` durable job unless it already runs, and answer the id
-         *     immediately (v2 answer-fast shape).
+         *     import job unless one for this playlist is already queued or running,
+         *     and answer the id at once.
          */
         post: operations["import_spotify_playlist"];
         delete?: never;

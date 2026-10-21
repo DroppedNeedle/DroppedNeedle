@@ -78,6 +78,10 @@ pub fn acquire_at(
             providers,
         },
         &outbound.spotify(),
+        droppedneedle_kernel::jobs::queue::JobQueue::new(
+            platform.db.clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
     )
     .expect("acquire bundle builds")
 }

@@ -13,9 +13,7 @@
 //! the populate worker, `spotify_albums` the MusicBrainz release group of
 //! each imported album, `spotify_store` holds the SQLite stores behind it (links, authorize
 //! states, imported playlists),
-//! `jobs` holds the `spotify:import` durable-job key plus the minimal local
-//! [`jobs::SpotifyImportExecutor`] seam onto the downloads state machine
-//! (the in-memory implementation spawns a task), `health`
+//! `jobs` runs each playlist import as a job on the jobs table, `health`
 //! holds the slskd/Usenet smoke plus the per-source release gates,
 //! and `handlers` owns the native routes; the loopback mock servers the
 //! tests run against live in the testkit crate. The app mounts

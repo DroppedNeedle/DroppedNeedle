@@ -23,7 +23,6 @@ use std::collections::HashMap;
 use axum::http::StatusCode;
 use droppedneedle::docs::ApiDoc;
 use droppedneedle_acquire::downloads::{state::TaskStatus, store::NewTask};
-use droppedneedle_acquire::imports::jobs::{JobState, import_job_key};
 use droppedneedle_acquire::requests::ledger::{STATUS_FAILED, WATCH_STOPPED, WantedWatch};
 use droppedneedle_acquire::requests::models::RequestKind;
 use droppedneedle_acquire::search_jobs::store::{COMPLETED, JobPayload, JobStore, NewJob};
@@ -1197,16 +1196,17 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
         }
         Owned::SpotifyJob => {
             let spotify_id = format!("spotify-list-{n}");
-            let jobs = &app.state().acquire.imports.jobs;
-            let key = import_job_key(&owner.id, &spotify_id);
-            assert!(jobs.mark_running(&key, "playlist-1"));
-            jobs.finish(
-                &key,
-                JobState::Done {
-                    playlist_id: "playlist-1".to_owned(),
-                    track_count: 3,
-                },
-            );
+            let imports = &app.state().acquire.imports;
+            let playlist_id = imports
+                .spotify_playlists
+                .create(&owner.id, "Imported", &format!("spotify:{spotify_id}"))
+                .await
+                .expect("playlist seeds");
+            imports
+                .spotify_imports
+                .seed_done(&owner.id, &spotify_id, &playlist_id)
+                .await
+                .expect("import seeds");
             ids.insert("id", spotify_id);
         }
         Owned::TagWrite => {

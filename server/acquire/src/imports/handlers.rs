@@ -30,15 +30,14 @@ use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::queue::JobError;
 use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Deserialize;
 use utoipa::IntoParams;
 
 use super::error::ImportsError;
 use super::health::HealthProbes;
-use super::jobs::{
-    JobRegistry, JobState, QueuedSpotifyImport, SpotifyImportExecutor, import_job_key,
-};
+use super::jobs::{ImportState, SpotifyImports};
 use super::lidarr::{
     ApprovalSink, FollowStore, LIDARR_NOT_CONNECTED, LidarrClient, LidarrError,
     LidarrImportService, LidarrSettingsStore, ServiceError, normalize_lidarr_url,
@@ -82,10 +81,8 @@ pub struct ImportsDeps {
     pub spotify_playlists: Arc<CollectionsPlaylistBridge>,
     /// Finds each imported album's MusicBrainz release group.
     pub resolver: Arc<AlbumResolver>,
-    /// `spotify:import` job registry.
-    pub jobs: Arc<JobRegistry>,
-    /// Downloads-seam executor running the populates.
-    pub executor: Arc<dyn SpotifyImportExecutor>,
+    /// Queues Spotify imports on the jobs table and reads their state.
+    pub spotify_imports: SpotifyImports,
     /// Health probes behind the smoke and gates.
     pub probes: Arc<HealthProbes>,
     /// Fresh ids, the OAuth state fallback when the OS RNG fails.
@@ -532,12 +529,31 @@ fn spotify_failed(error: SpotifyError) -> ImportsError {
             cause: format!("spotify playlist list failed: {detail}"),
         },
         SpotifyError::Store(cause) => ImportsError::internal(&cause),
+        SpotifyError::Busy => ImportsError::Busy {
+            cause: "spotify store busy".to_owned(),
+        },
     }
 }
 
+/// Map a jobs table failure to the wire, keeping busy a 503.
+fn job_failed(error: JobError) -> ImportsError {
+    if error.is_busy() {
+        ImportsError::Busy {
+            cause: error.to_string(),
+        }
+    } else {
+        ImportsError::internal(&error)
+    }
+}
+
+/// Longest Spotify playlist id an import accepts. Spotify's are 22
+/// characters; the bound keeps the job key within what the jobs table
+/// holds.
+const MAX_SPOTIFY_ID: usize = 64;
+
 /// Start a Spotify playlist import: ensure the internal record, queue the
-/// `spotify:import` durable job unless it already runs, and answer the id
-/// immediately (v2 answer-fast shape).
+/// import job unless one for this playlist is already queued or running,
+/// and answer the id at once.
 #[utoipa::path(post, tag = "imports", path = "/api/v3/acquire/spotify/playlists/{id}/import",
     params(("id" = String, Path, description = "Spotify playlist id")),
     request_body = SpotifyImportRequest,
@@ -548,9 +564,9 @@ pub async fn import_spotify_playlist(
     Path(id): Path<String>,
     ValidJson(body): ValidJson<SpotifyImportRequest>,
 ) -> Result<Json<SpotifyImportResponse>, ApiError> {
-    if id.trim().is_empty() {
+    if id.trim().is_empty() || id.chars().count() > MAX_SPOTIFY_ID {
         return Err(ImportsError::InvalidInput {
-            message: "Spotify playlist id must not be empty".to_owned(),
+            message: "Spotify playlist id is not valid".to_owned(),
         }
         .into());
     }
@@ -559,19 +575,14 @@ pub async fn import_spotify_playlist(
         .ensure_playlist_record(principal.user_id(), &id, &body.name)
         .await
         .map_err(spotify_failed)?;
-    let key = import_job_key(principal.user_id(), &id);
-    if !deps.jobs.is_running(&key) {
-        deps.executor.execute(QueuedSpotifyImport {
-            key,
-            user_id: principal.user_id().to_owned(),
-            spotify_playlist_id: id,
-            playlist_id: playlist_id.clone(),
-        });
-    }
+    deps.spotify_imports
+        .start(principal.user_id(), &id, &playlist_id)
+        .await
+        .map_err(job_failed)?;
     Ok(Json(SpotifyImportResponse { playlist_id }))
 }
 
-/// Latest known state of one `spotify:import` job.
+/// Latest known state of one Spotify playlist import.
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/jobs/{id}",
     params(("id" = String, Path, description = "Spotify playlist id the import runs for")),
     responses((status = 200, description = "Job state", body = SpotifyJobStatus)))]
@@ -580,34 +591,53 @@ pub async fn get_spotify_job(
     User(principal): User,
     Path(id): Path<String>,
 ) -> Result<Json<SpotifyJobStatus>, ApiError> {
-    let key = import_job_key(principal.user_id(), &id);
-    match deps.jobs.state_for(&key) {
-        Some(JobState::Running { playlist_id }) => Ok(Json(SpotifyJobStatus {
+    let user_id = principal.user_id();
+    let Some(state) = deps
+        .spotify_imports
+        .state(user_id, &id)
+        .await
+        .map_err(|error| job_failed(error.into()))?
+    else {
+        return Err(ImportsError::NotFound.into());
+    };
+    // The import fills the record its start made; a record deleted since
+    // leaves nothing to report.
+    let Some(playlist_id) = deps
+        .spotify_playlists
+        .get_by_source_ref(&format!("spotify:{id}"), user_id)
+        .await
+        .map_err(|cause| ImportsError::internal(&cause))?
+    else {
+        return Err(ImportsError::NotFound.into());
+    };
+    let status = match state {
+        ImportState::Running => SpotifyJobStatus {
             state: "running".to_owned(),
             playlist_id,
             track_count: None,
             message: None,
-        })),
-        Some(JobState::Done {
-            playlist_id,
-            track_count,
-        }) => Ok(Json(SpotifyJobStatus {
-            state: "done".to_owned(),
-            playlist_id,
-            track_count: Some(track_count as i64),
-            message: None,
-        })),
-        Some(JobState::Error {
-            playlist_id,
-            message,
-        }) => Ok(Json(SpotifyJobStatus {
+        },
+        ImportState::Done => {
+            let tracks = deps
+                .spotify_playlists
+                .track_count(&playlist_id)
+                .await
+                .map_err(|cause| ImportsError::internal(&cause))?;
+            SpotifyJobStatus {
+                state: "done".to_owned(),
+                playlist_id,
+                track_count: Some(i64::try_from(tracks).unwrap_or(i64::MAX)),
+                message: None,
+            }
+        }
+        ImportState::Error { message } => SpotifyJobStatus {
             state: "error".to_owned(),
             playlist_id,
             track_count: None,
             message: Some(message),
-        })),
-        None => Err(ImportsError::NotFound.into()),
-    }
+        },
+    };
+    Ok(Json(status))
 }
 
 /// Acquisition health smoke: slskd or Usenet readiness plus the
