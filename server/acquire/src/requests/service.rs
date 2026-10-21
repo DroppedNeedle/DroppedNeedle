@@ -13,19 +13,16 @@ use std::sync::Arc;
 
 use super::RequestsState;
 use super::auth::auto_approves;
-use super::bridges::FollowDecisionSink;
 use super::error::RequestsError;
 use super::ledger::{
-    ApprovalState, BeginOutcome, RequestRecord, RequestStatus, meaningful_name, now_epoch,
-    validate_mbid,
+    BeginOutcome, RequestRecord, RequestStatus, meaningful_name, now_epoch, validate_mbid,
 };
 use super::models::{
-    ActionResponse, ActiveCountResponse, ActiveRequestsResponse, AlbumIntake, ApprovalBatchItem,
-    ApprovalBatchListResponse, AutoDownloadApprovalItem, AutoDownloadApprovalsResponse,
-    BatchCancelResponse, BatchIntake, BatchIntakeResponse, ClearHistoryResponse, HistoryQuery,
-    HistoryResponse, IntakeResponse, PersonalMixApprovalItem, PersonalMixApprovalsResponse,
-    RefreshResponse, RequestItem, RequestKind, TrackIntake, TrackIntakeResponse,
-    WantedActionResponse, WantedItem, WantedResponse, WantedRetryingItem,
+    ActionResponse, ActiveCountResponse, ActiveRequestsResponse, AlbumIntake, BatchCancelResponse,
+    BatchIntake, BatchIntakeResponse, ClearHistoryResponse, HistoryQuery, HistoryResponse,
+    IntakeResponse, PersonalMixApprovalItem, PersonalMixApprovalsResponse, RefreshResponse,
+    RequestItem, RequestKind, TrackIntake, TrackIntakeResponse, WantedActionResponse, WantedItem,
+    WantedResponse, WantedRetryingItem,
 };
 use super::quota::QuotaLedger;
 use super::sqlite::{EditionStore, PersonalMixStore, RequestStore, WantedStore, WatchChange};
@@ -36,7 +33,7 @@ use crate::dispatch::{
 };
 use crate::downloads::state::TaskStatus;
 use crate::edition::chosen_edition;
-use crate::follows::approvals::FollowApprovalStore;
+use crate::follows::Follows;
 use droppedneedle_auth::{Admin, Principal};
 
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
@@ -59,16 +56,14 @@ pub struct RequestsService {
     dispatch: Arc<DownloadDispatch>,
     /// Wanted watches.
     wanted: WantedStore,
-    /// Auto-download approvals.
-    follows: FollowApprovalStore,
+    /// Follows, for the auto-download asks on the approval badge.
+    follows: Follows,
     /// Personal-mix approvals and refresh guard.
     mixes: Arc<PersonalMixStore>,
     /// In-flight edition acquires.
     editions: EditionStore,
     /// The application database (library edition and names).
     library: AcquireDb,
-    /// Verdict sink into the collections follow rows, when wired.
-    follow_sink: Option<Arc<dyn FollowDecisionSink>>,
     /// Plugin host for `request_created` events, when there is one.
     plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
     /// The personal-mix builder, when there is one.
@@ -97,7 +92,6 @@ impl RequestsService {
             mixes: state.mixes.clone(),
             editions: state.editions.clone(),
             library: state.library.clone(),
-            follow_sink: state.follow_sink.clone(),
             plugins: state.plugins.clone(),
             mixer: state.mixer.clone(),
             edition_plans: state.edition_plans.clone(),
@@ -1283,211 +1277,6 @@ impl RequestsService {
             .mark_seen(&mbid, principal.user_id(), principal.is_admin())
             .await?;
         watch_action(change)
-    }
-
-    /// Pending auto-download approvals (admin).
-    pub async fn auto_download_approvals(
-        &self,
-        _admin: &Admin,
-    ) -> Result<AutoDownloadApprovalsResponse, RequestsError> {
-        let items = self
-            .follows
-            .pending()
-            .await?
-            .into_iter()
-            .map(|row| AutoDownloadApprovalItem {
-                user_id: row.user_id,
-                user_name: row.user_name,
-                artist_mbid: row.artist_mbid,
-                artist_name: row.artist_name,
-                requested_at: row.requested_at,
-            })
-            .collect::<Vec<_>>();
-        Ok(AutoDownloadApprovalsResponse {
-            count: items.len() as u32,
-            items,
-        })
-    }
-
-    /// Approve one auto-download grant (admin).
-    pub async fn approve_auto_download(
-        &self,
-        admin: &Admin,
-        user_id: &str,
-        artist_mbid: &str,
-    ) -> Result<ActionResponse, RequestsError> {
-        validate_mbid(artist_mbid)?;
-        let Some(row) = self
-            .follows
-            .decide(
-                user_id,
-                artist_mbid,
-                ApprovalState::Approved,
-                reviewer(admin),
-                now_epoch(),
-            )
-            .await?
-        else {
-            return Ok(no_match());
-        };
-        if let Some(sink) = &self.follow_sink {
-            sink.arm_auto_download(user_id, &row.artist_mbid, &row.artist_name)
-                .await
-                .map_err(|cause| RequestsError::internal(&cause))?;
-        }
-        Ok(ActionResponse {
-            success: true,
-            message: "Auto-download approved".to_owned(),
-        })
-    }
-
-    /// Reject one auto-download ask, keeping the follow (admin; as v2 does).
-    pub async fn reject_auto_download(
-        &self,
-        admin: &Admin,
-        user_id: &str,
-        artist_mbid: &str,
-    ) -> Result<ActionResponse, RequestsError> {
-        validate_mbid(artist_mbid)?;
-        if self
-            .follows
-            .decide(
-                user_id,
-                artist_mbid,
-                ApprovalState::Rejected,
-                reviewer(admin),
-                now_epoch(),
-            )
-            .await?
-            .is_none()
-        {
-            return Ok(no_match());
-        }
-        if let Some(sink) = &self.follow_sink {
-            sink.clear_auto_download(user_id, artist_mbid)
-                .await
-                .map_err(|cause| RequestsError::internal(&cause))?;
-        }
-        Ok(ActionResponse {
-            success: true,
-            message: "Auto-download rejected".to_owned(),
-        })
-    }
-
-    /// Revoke one auto-download grant, keeping the follow (admin; as v2 does).
-    pub async fn revoke_auto_download(
-        &self,
-        admin: &Admin,
-        user_id: &str,
-        artist_mbid: &str,
-    ) -> Result<ActionResponse, RequestsError> {
-        validate_mbid(artist_mbid)?;
-        if self
-            .follows
-            .revoke(user_id, artist_mbid, reviewer(admin), now_epoch())
-            .await?
-            .is_none()
-        {
-            return Ok(no_match());
-        }
-        if let Some(sink) = &self.follow_sink {
-            sink.clear_auto_download(user_id, artist_mbid)
-                .await
-                .map_err(|cause| RequestsError::internal(&cause))?;
-        }
-        Ok(ActionResponse {
-            success: true,
-            message: "Auto-download revoked".to_owned(),
-        })
-    }
-
-    /// Pending bulk-approval batches (admin).
-    pub async fn auto_download_batches(
-        &self,
-        _admin: &Admin,
-    ) -> Result<ApprovalBatchListResponse, RequestsError> {
-        let batches = self
-            .follows
-            .pending_batches()
-            .await?
-            .iter()
-            .map(|batch| ApprovalBatchItem {
-                batch_id: batch.batch_id.clone(),
-                user_id: batch.user_id.clone(),
-                user_name: batch.user_name.clone(),
-                artist_count: batch.artists.len() as u32,
-                sample_names: batch
-                    .artists
-                    .iter()
-                    .take(3)
-                    .map(|(_, name)| name.clone())
-                    .collect(),
-                requested_at: batch.requested_at,
-            })
-            .collect::<Vec<_>>();
-        Ok(ApprovalBatchListResponse {
-            count: batches.len() as u32,
-            batches,
-        })
-    }
-
-    /// Approve one bulk batch (admin).
-    pub async fn approve_auto_download_batch(
-        &self,
-        admin: &Admin,
-        batch_id: &str,
-    ) -> Result<ActionResponse, RequestsError> {
-        self.decide_batch(admin, batch_id, ApprovalState::Approved)
-            .await
-    }
-
-    /// Reject one bulk batch (admin).
-    pub async fn reject_auto_download_batch(
-        &self,
-        admin: &Admin,
-        batch_id: &str,
-    ) -> Result<ActionResponse, RequestsError> {
-        self.decide_batch(admin, batch_id, ApprovalState::Rejected)
-            .await
-    }
-
-    /// Decide every pending row of one batch and carry the verdict into the
-    /// follow rows.
-    async fn decide_batch(
-        &self,
-        admin: &Admin,
-        batch_id: &str,
-        state: ApprovalState,
-    ) -> Result<ActionResponse, RequestsError> {
-        let rows = self
-            .follows
-            .decide_batch(batch_id, state, reviewer(admin), now_epoch())
-            .await?;
-        if rows.is_empty() {
-            return Ok(ActionResponse {
-                success: false,
-                message: "No matching batch found".to_owned(),
-            });
-        }
-        if let Some(sink) = &self.follow_sink {
-            for (user_id, artist_mbid, artist_name) in &rows {
-                let applied = if state == ApprovalState::Approved {
-                    sink.arm_auto_download(user_id, artist_mbid, artist_name)
-                        .await
-                } else {
-                    sink.clear_auto_download(user_id, artist_mbid).await
-                };
-                applied.map_err(|cause| RequestsError::internal(&cause))?;
-            }
-        }
-        Ok(ActionResponse {
-            success: true,
-            message: format!(
-                "Auto-download {} for {} artists",
-                state.as_str(),
-                rows.len()
-            ),
-        })
     }
 
     /// Pending personal-mix approvals (admin).

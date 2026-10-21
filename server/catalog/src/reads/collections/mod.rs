@@ -1,4 +1,4 @@
-//! Collections: playlists, favorites, ratings, follows, approval reads.
+//! Collections: playlists, favorites, ratings, follow reads.
 //!
 //! Layout: `handlers` parse and render, `service` holds the rules and
 //! returns the domain [`error::CollectionsError`], `store` reads and
@@ -20,9 +20,9 @@ use droppedneedle_kernel::mount::{Routes, routes};
 
 pub use state::CollectionsState;
 
-/// The collections routes at their full `/api/v3` paths. Playlists,
-/// favorites, ratings and follows take any signed-in user, approvals an
-/// admin.
+/// The collections routes at their full `/api/v3` paths, each for any
+/// signed-in user. Following and the auto-download approvals are the
+/// follows' routes in acquisition.
 pub fn routes() -> Routes<CollectionsState> {
     use handlers::*;
 
@@ -50,13 +50,9 @@ pub fn routes() -> Routes<CollectionsState> {
         .user(routes!(rating_lookup_handler))
         .user(routes!(set_rating_handler))
         .user(routes!(get_follow_status_handler))
-        .user(routes!(set_follow_handler))
-        .user(routes!(set_auto_download_handler))
         .user(routes!(list_followed_artists_handler))
         .user(routes!(list_new_releases_handler))
         .user(routes!(list_recent_releases_handler))
         .user(routes!(unseen_count_handler))
         .user(routes!(mark_seen_handler))
-        .admin(routes!(list_approvals_handler))
-        .admin(routes!(list_approval_batches_handler))
 }

@@ -1,12 +1,11 @@
 //! Collections business rules: playlist ownership and visibility, favorite
-//! kinds, follow and auto-download state, approval reads.
+//! kinds, follow and auto-download state.
 //!
 //! The service returns [`CollectionsError`](super::error::CollectionsError)
 //! and knows nothing of HTTP. Native handlers, both compat protocols and the
 //! remote playlist import all go through it, so one set of rules guards one
 //! set of rows.
 
-mod approvals;
 mod favorites;
 mod follows;
 mod play_marks;

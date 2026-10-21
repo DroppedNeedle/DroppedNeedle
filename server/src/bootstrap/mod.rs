@@ -343,12 +343,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         reads_inputs,
         Some(enrichment),
         ReadsPorts {
-            collections: CollectionsState::wired(
-                collections_db,
-                collections,
-                acquire.pending_approvals(),
-                acquire.approval_seeds(),
-            ),
+            collections: CollectionsState::over(collections_db, collections),
             catalog,
             artwork,
             library_files: LibraryFiles::new(db.sqlx().clone(), library.root_source()),

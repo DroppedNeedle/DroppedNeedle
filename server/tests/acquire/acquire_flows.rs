@@ -27,7 +27,7 @@ use droppedneedle_acquire::flows::{
     seams::{CandidateSearch, TickSink},
     stores::{AdminDirectory, LibraryPresence, UpgradeWorklist},
 };
-use droppedneedle_acquire::follows::cursors::FollowStore;
+use droppedneedle_acquire::follows::Follows;
 use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord, RequestStatus, WatchState},
@@ -427,7 +427,7 @@ async fn follow_poll_baselines_then_emits() {
     })
     .await
     .unwrap();
-    let follows = FollowStore::new(db.clone());
+    let follows = Follows::new(db.clone());
     // The first poll reads the old page; every later poll the new one.
     const MB: &str = "http://musicbrainz.test/ws/2";
     let wire = Arc::new(ScriptedWire::new());
@@ -491,7 +491,7 @@ async fn follow_poll_baselines_then_emits() {
     assert_eq!(queued[0].user_id, "user-1", "only the approved follower");
     assert_eq!(queued[0].release_group_mbid, "rg-new");
     assert_eq!(queued[0].artist_name, "The Band");
-    let cursor = follows.get("artist-1").await.unwrap().unwrap();
+    let cursor = follows.cursor("artist-1").await.unwrap().unwrap();
     assert_eq!(cursor.pending.len(), 1);
     assert_eq!(cursor.pending[0].rg_mbid, "rg-future");
     let feed: Vec<String> = sqlx::query_scalar(
@@ -906,7 +906,7 @@ async fn follow_download_waits_while_the_follower_is_over_quota() {
             },
             RequestPriority::BackgroundSync,
         ));
-    let follows = FollowStore::new(db.clone());
+    let follows = Follows::new(db.clone());
     let deps = FollowDeps {
         follows: follows.clone(),
         poll: Arc::new(poll),
@@ -921,7 +921,7 @@ async fn follow_download_waits_while_the_follower_is_over_quota() {
     let polled = follow_tick(NOW + 86_400, &deps).await;
     assert_eq!(polled.enqueued, 0);
     assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
-    let cursor = follows.get("artist-1").await.unwrap().unwrap();
+    let cursor = follows.cursor("artist-1").await.unwrap().unwrap();
     assert_eq!(
         cursor.pending.len(),
         1,

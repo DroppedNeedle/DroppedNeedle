@@ -39,8 +39,8 @@ use super::error::ImportsError;
 use super::health::HealthProbes;
 use super::jobs::{ImportState, SpotifyImports};
 use super::lidarr::{
-    ApprovalSink, FollowStore, LIDARR_NOT_CONNECTED, LidarrClient, LidarrError,
-    LidarrImportService, LidarrSettingsStore, ServiceError, normalize_lidarr_url,
+    LIDARR_NOT_CONNECTED, LidarrClient, LidarrError, LidarrImportService, ServiceError,
+    normalize_lidarr_url,
 };
 use super::models::{
     AcquireHealth, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportRequest,
@@ -56,19 +56,19 @@ use super::spotify_oauth::{
     redirect_uri,
 };
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
-use crate::settings::ConfigSpotifySettings;
+use crate::follows::Follows;
+use crate::requests::error::RequestsError;
+use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
 
 /// Every dependency the imports routes need, injected by constructor.
 #[derive(Clone)]
 pub struct ImportsDeps {
     /// Read-only Lidarr client (the two sanctioned GETs).
     pub lidarr: LidarrClient,
-    /// Lidarr connection rows.
-    pub lidarr_settings: Arc<dyn LidarrSettingsStore>,
-    /// Follow rows the import writes.
-    pub follows: Arc<dyn FollowStore>,
-    /// Approval batches for non-admin mirrors.
-    pub approvals: Arc<dyn ApprovalSink>,
+    /// Lidarr connection settings.
+    pub lidarr_settings: Arc<ConfigLidarrSettings>,
+    /// The follows the import writes.
+    pub follows: Follows,
     /// Spotify API client over injected bases.
     pub spotify: SpotifyClient,
     /// Spotify app settings.
@@ -100,7 +100,6 @@ impl ImportsDeps {
             self.lidarr.clone(),
             self.lidarr_settings.clone(),
             self.follows.clone(),
-            self.approvals.clone(),
         )
     }
 
@@ -160,9 +159,6 @@ pub fn imports_legacy_callback_router(deps: ImportsDeps) -> axum::Router {
 /// log only.
 fn lidarr_failed(error: ServiceError) -> ImportsError {
     match error {
-        ServiceError::Approvals(cause) => {
-            ImportsError::internal(&format_args!("approval batch failed: {cause}"))
-        }
         ServiceError::NotConnected => ImportsError::NotConfigured {
             message: LIDARR_NOT_CONNECTED.to_owned(),
         },
@@ -172,9 +168,12 @@ fn lidarr_failed(error: ServiceError) -> ImportsError {
         ServiceError::Lidarr(LidarrError::Unavailable(detail)) => ImportsError::Unavailable {
             cause: format!("lidarr import failed: {detail}"),
         },
-        ServiceError::Follows(cause) => {
-            ImportsError::internal(&format_args!("lidarr import follow write failed: {cause}"))
-        }
+        ServiceError::Follows(RequestsError::Busy { operation }) => ImportsError::Busy {
+            cause: format!("lidarr import follows: {operation}"),
+        },
+        ServiceError::Follows(cause) => ImportsError::internal(&format_args!(
+            "lidarr import follow write failed: {cause:?}"
+        )),
     }
 }
 

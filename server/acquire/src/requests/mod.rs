@@ -12,7 +12,6 @@
 //! watcher loop shares the wanted rows through [`sqlite::WantedStore`].
 
 pub mod auth;
-pub mod bridges;
 pub mod discovery;
 pub mod error;
 pub mod http;
@@ -30,24 +29,22 @@ pub mod state;
 pub mod views;
 
 #[cfg(any(test, feature = "test-support"))]
-use axum::{Router, routing};
+use axum::Router;
 use droppedneedle_kernel::mount::{Routes, routes};
 
 pub use state::RequestsState;
 
-/// Every requests route plus the two approval-read GETs, in one router
-/// with no layers, for tests.
+/// Every requests route plus the follows' auto-download approval routes,
+/// in one router with no layers, for tests.
 #[cfg(any(test, feature = "test-support"))]
 pub fn requests_routes(state: RequestsState) -> Router {
-    routes()
-        .with_state(state.clone())
-        .into_router()
-        .merge(approval_read_routes(state))
+    let follows = crate::follows::routes()
+        .with_state(state.follows.clone())
+        .into_router();
+    routes().with_state(state).into_router().merge(follows)
 }
 
-/// App-facing routes: everything except the two approval-read GETs, which
-/// the collections routes serve (same paths, same admin posture; mounting
-/// both would collide). Reads and intake take any signed-in user, approval
+/// The requests routes. Reads and intake take any signed-in user, approval
 /// verbs an admin, edition acquire a curator.
 pub fn routes() -> Routes<RequestsState> {
     use intake::*;
@@ -72,31 +69,10 @@ pub fn routes() -> Routes<RequestsState> {
         .admin(routes!(approvals_count_handler))
         .admin(routes!(approve_handler))
         .admin(routes!(reject_handler))
-        .admin(routes!(approve_auto_download_handler))
-        .admin(routes!(reject_auto_download_handler))
-        .admin(routes!(revoke_auto_download_handler))
-        .admin(routes!(approve_auto_download_batch_handler))
-        .admin(routes!(reject_auto_download_batch_handler))
         .admin(routes!(mix_approvals_handler))
         .admin(routes!(approve_mix_handler))
         .admin(routes!(reject_mix_handler))
         .admin(routes!(revoke_mix_handler))
         .user(routes!(refresh_mix_handler))
         .curator(routes!(acquire_edition_handler))
-}
-
-/// The two approval-read GETs over this module's approval store, kept out
-/// of the API document. The app does not mount these (see [`routes`]).
-#[cfg(any(test, feature = "test-support"))]
-pub fn approval_read_routes(state: RequestsState) -> Router {
-    Router::new()
-        .route(
-            "/api/v3/requests/auto-download-approvals",
-            routing::get(views::auto_download_approvals_handler),
-        )
-        .route(
-            "/api/v3/requests/auto-download-approval-batches",
-            routing::get(views::auto_download_batches_handler),
-        )
-        .with_state(state)
 }

@@ -195,7 +195,7 @@ impl E2e {
                 ..crate::common::reads_inputs(&p.config.root_app_dir)
             },
             &library,
-            collections.wired(&acquire),
+            collections.wired(),
             Some(&acquire),
         );
         let providers = Arc::new(Providers::unpaced(Arc::new(

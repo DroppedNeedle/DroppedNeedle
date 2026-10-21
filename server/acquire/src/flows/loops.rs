@@ -28,7 +28,8 @@ use crate::dispatch::{
 };
 use crate::downloads::journal::Journal;
 use crate::downloads::state::TaskStatus;
-use crate::follows::cursors::{FeedRelease, FollowCursor, FollowStore, Follower, PendingRelease};
+use crate::follows::Follows;
+use crate::follows::cursors::{FeedRelease, FollowCursor, Follower, PendingRelease};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{RequestStatus, WantedWatch, WatchState};
 use crate::requests::models::RequestKind;
@@ -470,7 +471,7 @@ pub struct FollowSummary {
 /// Follow-poll dependencies.
 pub struct FollowDeps {
     /// Cursors, auto-download followers and the feed.
-    pub follows: FollowStore,
+    pub follows: Follows,
     /// Release-page provider seam.
     pub poll: Arc<dyn ReleasePoll>,
     /// Download dispatch.

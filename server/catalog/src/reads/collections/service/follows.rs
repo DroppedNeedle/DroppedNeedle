@@ -1,10 +1,9 @@
-//! Follows and new-release reads.
+//! Follow and new-release reads.
 //!
-//! Following an artist is instant. Enabling auto-download files an ask:
-//! trusted and admin accounts approve themselves, regular users wait in
-//! `pending` for an admin verdict (`acquire::requests` decides it).
-//! Auto-download needs a follow first. Unfollowing keeps any approval row,
-//! so a grant survives a re-follow (v2 rule).
+//! A follow's auto-download state: off, or on and approved (trusted and
+//! admin accounts approve themselves), or waiting for an admin, or turned
+//! down. Following, the toggle and the verdicts are written by the follows
+//! module in acquisition.
 
 use super::CollectionsService;
 use crate::reads::collections::error::CollectionsError;
@@ -15,7 +14,7 @@ use crate::reads::collections::models::{
 use crate::reads::collections::state::AutoDownloadState;
 use crate::reads::collections::store::FollowStore;
 use crate::reads::collections::store::follows::{FollowRow, ReleaseFilter, ReleaseRow};
-use droppedneedle_auth::{Principal, Role};
+use droppedneedle_auth::Role;
 
 /// To-do list page size: default and largest (v2 `/new-releases`).
 const PAGE_DEFAULT: usize = 50;
@@ -135,60 +134,6 @@ impl CollectionsService<'_> {
         artist_mbid: &str,
     ) -> Result<FollowStatusResponse, CollectionsError> {
         follow_status(&self.state.stores.follows, user_id, artist_mbid).await
-    }
-
-    /// Follow or unfollow one artist.
-    pub async fn set_follow(
-        &self,
-        user_id: &str,
-        artist_mbid: &str,
-        followed: bool,
-        artist_name: Option<String>,
-    ) -> Result<FollowStatusResponse, CollectionsError> {
-        let follows = &self.state.stores.follows;
-        if followed {
-            let name = artist_name.filter(|name| !name.trim().is_empty());
-            follows
-                .follow(user_id, &[(artist_mbid.to_owned(), name)])
-                .await?;
-        } else {
-            follows.unfollow(user_id, artist_mbid).await?;
-        }
-        self.follow_status(user_id, artist_mbid).await
-    }
-
-    /// Turn auto-download on or off. Enabling needs a follow.
-    pub async fn set_auto_download(
-        &self,
-        caller: &Principal,
-        artist_mbid: &str,
-        enabled: bool,
-    ) -> Result<FollowStatusResponse, CollectionsError> {
-        let follows = &self.state.stores.follows;
-        let Some(row) = follows.get(caller.user_id(), artist_mbid).await? else {
-            return Err(if enabled {
-                CollectionsError::Conflict {
-                    message: "Follow the artist before enabling auto-download".to_owned(),
-                }
-            } else {
-                CollectionsError::NotFound
-            });
-        };
-        follows
-            .set_intent(caller.user_id(), &[artist_mbid.to_owned()], enabled)
-            .await?;
-        if let Some(sink) = &self.state.approval_seeds {
-            if enabled && !caller.role().is_curator() {
-                sink.seed_approval(caller.user_id(), artist_mbid, &row.artist_name)
-                    .await
-                    .map_err(|cause| CollectionsError::internal(&cause))?;
-            } else if !enabled {
-                sink.withdraw_approval(caller.user_id(), artist_mbid)
-                    .await
-                    .map_err(|cause| CollectionsError::internal(&cause))?;
-            }
-        }
-        self.follow_status(caller.user_id(), artist_mbid).await
     }
 
     /// The caller's followed artists, newest first.

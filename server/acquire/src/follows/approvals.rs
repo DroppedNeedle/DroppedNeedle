@@ -1,114 +1,173 @@
-//! Auto-download approvals and import batches.
+//! Auto-download approvals and import batches over
+//! `auto_download_approvals`. Batch members are approval rows sharing a
+//! `batch_id`. The writes here are steps inside one [`Follows`]
+//! transaction; the reads go through the pool.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
-use crate::db::AcquireDb;
+use super::Follows;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{ApprovalBatch, ApprovalState, FollowApproval};
-use crate::requests::sqlite::{lane_error, ms_from_secs, read_error, secs_from_ms};
-
-/// Durable auto-download approvals plus import batches over
-/// `auto_download_approvals` (v2 `follow_store` approval half). Batch
-/// members are approval rows sharing a `batch_id`.
-#[derive(Clone)]
-pub struct FollowApprovalStore {
-    db: AcquireDb,
-}
+use crate::requests::sqlite::{read_error, secs_from_ms};
 
 /// One pending approval or batch row as the queries read it.
 type ApprovalRow = (String, Option<String>, String, String, i64, Option<String>);
 
-impl FollowApprovalStore {
-    /// Approvals over one database.
-    pub fn new(db: AcquireDb) -> Self {
-        Self { db }
-    }
+/// Who decided, as stamped on the row: user id and display name.
+pub(super) type Reviewer = (String, Option<String>);
 
-    /// File (or refresh) one pending approval (v2 `upsert_approval`). An
-    /// approved row stays approved: an admin's yes lasts until revoked.
-    pub async fn file_pending(
-        &self,
-        user_id: &str,
-        artist_mbid: &str,
-        artist_name: &str,
-        now: u64,
-    ) -> Result<(), RequestsError> {
-        let (user_id, artist_mbid, artist_name) = (
-            user_id.to_owned(),
-            artist_mbid.to_owned(),
-            artist_name.to_owned(),
-        );
-        self.db
-            .write("approvals.file", move |tx| {
-                tx.execute(
-                    "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
-                     artist_mbid_lower, artist_name, state, requested_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-                     ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-                     artist_name = excluded.artist_name, state = excluded.state, \
-                     requested_at = excluded.requested_at, reviewed_by_id = NULL, \
-                     reviewed_by_name = NULL, reviewed_at = NULL, batch_id = NULL \
-                     WHERE auto_download_approvals.state <> 'approved'",
-                    params![
-                        user_id,
-                        artist_mbid,
-                        artist_mbid.to_lowercase(),
-                        artist_name,
-                        ApprovalState::Pending,
-                        ms_from_secs(now)
-                    ],
-                )?;
-                Ok(())
-            })
-            .await
-            .map_err(|error| lane_error("approvals.file", error))
-    }
+/// File (or refresh) one pending ask. An approved row stays approved: an
+/// admin's yes lasts until revoked.
+pub(super) fn file_pending(
+    tx: &Transaction,
+    user_id: &str,
+    artist_mbid: &str,
+    artist_name: &str,
+    now_ms: i64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
+         artist_mbid_lower, artist_name, state, requested_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
+         artist_name = excluded.artist_name, state = excluded.state, \
+         requested_at = excluded.requested_at, reviewed_by_id = NULL, \
+         reviewed_by_name = NULL, reviewed_at = NULL, batch_id = NULL \
+         WHERE auto_download_approvals.state <> ?7",
+        params![
+            user_id,
+            artist_mbid,
+            artist_mbid.to_lowercase(),
+            artist_name,
+            ApprovalState::Pending,
+            now_ms,
+            ApprovalState::Approved
+        ],
+    )?;
+    Ok(())
+}
 
-    /// Open one import batch over several artists (v2
-    /// `create_import_approval_batch`). Never downgrades an approved row.
-    pub async fn create_batch(
-        &self,
-        batch_id: &str,
-        user_id: &str,
-        artists: &[(String, String)],
-        source: &str,
-        now: u64,
-    ) -> Result<(), RequestsError> {
-        let (batch_id, user_id, source) =
-            (batch_id.to_owned(), user_id.to_owned(), source.to_owned());
-        let artists = artists.to_vec();
-        self.db
-            .write("approvals.batch", move |tx| {
-                for (mbid, name) in &artists {
-                    tx.execute(
-                        "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
-                         artist_mbid_lower, artist_name, state, requested_at, batch_id, source) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-                         ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-                         artist_name = excluded.artist_name, state = excluded.state, \
-                         requested_at = excluded.requested_at, reviewed_by_id = NULL, \
-                         reviewed_by_name = NULL, reviewed_at = NULL, \
-                         batch_id = excluded.batch_id, source = excluded.source \
-                         WHERE auto_download_approvals.state != ?9",
-                        params![
-                            user_id,
-                            mbid,
-                            mbid.to_lowercase(),
-                            name,
-                            ApprovalState::Pending,
-                            ms_from_secs(now),
-                            batch_id,
-                            source,
-                            ApprovalState::Approved
-                        ],
-                    )?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(|error| lane_error("approvals.batch", error))
-    }
+/// File one batch member. Never downgrades an approved row.
+pub(super) fn file_batch_member(
+    tx: &Transaction,
+    batch_id: &str,
+    user_id: &str,
+    (artist_mbid, artist_name): (&str, &str),
+    source: &str,
+    now_ms: i64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
+         artist_mbid_lower, artist_name, state, requested_at, batch_id, source) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
+         artist_name = excluded.artist_name, state = excluded.state, \
+         requested_at = excluded.requested_at, reviewed_by_id = NULL, \
+         reviewed_by_name = NULL, reviewed_at = NULL, \
+         batch_id = excluded.batch_id, source = excluded.source \
+         WHERE auto_download_approvals.state != ?9",
+        params![
+            user_id,
+            artist_mbid,
+            artist_mbid.to_lowercase(),
+            artist_name,
+            ApprovalState::Pending,
+            now_ms,
+            batch_id,
+            source,
+            ApprovalState::Approved
+        ],
+    )?;
+    Ok(())
+}
 
+/// Withdraw a pending ask (the user turned auto-download back off).
+pub(super) fn withdraw_pending(
+    tx: &Transaction,
+    user_id: &str,
+    mbid_lower: &str,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "DELETE FROM auto_download_approvals WHERE user_id = ?1 \
+         AND artist_mbid_lower = ?2 AND state = ?3",
+        params![user_id, mbid_lower, ApprovalState::Pending],
+    )?;
+    Ok(())
+}
+
+/// Move one row from `from` to `to`, stamping the reviewer. A row in any
+/// other state stays as it is and answers `None`.
+pub(super) fn transition(
+    tx: &Transaction,
+    user_id: &str,
+    mbid_lower: &str,
+    (from, to): (ApprovalState, ApprovalState),
+    reviewer: &Reviewer,
+    now_ms: i64,
+) -> rusqlite::Result<Option<FollowApproval>> {
+    let row: Option<(String, String, Option<String>, i64)> = tx
+        .query_row(
+            "SELECT a.artist_mbid, a.artist_name, u.display_name, a.requested_at \
+             FROM auto_download_approvals a LEFT JOIN auth_users u ON u.id = a.user_id \
+             WHERE a.user_id = ?1 AND a.artist_mbid_lower = ?2 AND a.state = ?3",
+            params![user_id, mbid_lower, from],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let Some((artist_mbid, artist_name, user_name, requested_at)) = row else {
+        return Ok(None);
+    };
+    tx.execute(
+        "UPDATE auto_download_approvals SET state = ?3, reviewed_by_id = ?4, \
+         reviewed_by_name = ?5, reviewed_at = ?6 \
+         WHERE user_id = ?1 AND artist_mbid_lower = ?2",
+        params![user_id, mbid_lower, to, reviewer.0, reviewer.1, now_ms],
+    )?;
+    Ok(Some(FollowApproval {
+        user_name: user_name.unwrap_or_else(|| user_id.to_owned()),
+        user_id: user_id.to_owned(),
+        artist_mbid,
+        artist_name,
+        state: to,
+        requested_at: secs_from_ms(requested_at),
+    }))
+}
+
+/// Decide every still-pending row of one batch; returns the moved rows as
+/// `(user_id, artist_mbid, artist_name)`.
+pub(super) fn decide_batch_rows(
+    tx: &Transaction,
+    batch_id: &str,
+    state: ApprovalState,
+    reviewer: &Reviewer,
+    now_ms: i64,
+) -> rusqlite::Result<Vec<(String, String, String)>> {
+    let mut statement = tx.prepare(
+        "SELECT user_id, artist_mbid, artist_name FROM auto_download_approvals \
+         WHERE batch_id = ?1 AND state = ?2 ORDER BY artist_name",
+    )?;
+    let rows = statement
+        .query_map(params![batch_id, ApprovalState::Pending], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<rusqlite::Result<Vec<(String, String, String)>>>()?;
+    drop(statement);
+    tx.execute(
+        "UPDATE auto_download_approvals SET state = ?2, reviewed_by_id = ?3, \
+         reviewed_by_name = ?4, reviewed_at = ?5 WHERE batch_id = ?1 AND state = ?6",
+        params![
+            batch_id,
+            state,
+            reviewer.0,
+            reviewer.1,
+            now_ms,
+            ApprovalState::Pending
+        ],
+    )?;
+    Ok(rows)
+}
+
+impl Follows {
     /// Pending single approvals (not batch members), oldest first.
     pub async fn pending(&self) -> Result<Vec<FollowApproval>, RequestsError> {
         let rows = self.pending_rows(false).await?;
@@ -127,8 +186,7 @@ impl FollowApprovalStore {
             .collect())
     }
 
-    /// Pending batches grouped by batch and user, oldest first (v2
-    /// `list_pending_approval_batches`).
+    /// Pending batches grouped by batch and user, oldest first.
     pub async fn pending_batches(&self) -> Result<Vec<ApprovalBatch>, RequestsError> {
         let rows = self.pending_rows(true).await?;
         let mut batches: Vec<ApprovalBatch> = Vec::new();
@@ -157,7 +215,7 @@ impl FollowApprovalStore {
     }
 
     /// Pending units for the badge: single approvals plus one unit per
-    /// pending batch (v2 `count_pending_approval_units`).
+    /// pending batch.
     pub async fn pending_units(&self) -> Result<u32, RequestsError> {
         let count: i64 = sqlx::query_scalar(
             "SELECT (SELECT COUNT(*) FROM auto_download_approvals \
@@ -169,159 +227,6 @@ impl FollowApprovalStore {
         .await
         .map_err(|error| read_error("approvals.units", error))?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
-    }
-
-    /// Move one pending approval to `state`, stamping the reviewer. Only a
-    /// pending row moves (v2 `set_approval_state` behind the pending read).
-    pub async fn decide(
-        &self,
-        user_id: &str,
-        artist_mbid: &str,
-        state: ApprovalState,
-        reviewer: (&str, Option<String>),
-        now: u64,
-    ) -> Result<Option<FollowApproval>, RequestsError> {
-        self.transition(
-            user_id,
-            artist_mbid,
-            ApprovalState::Pending,
-            state,
-            reviewer,
-            now,
-            "approvals.decide",
-        )
-        .await
-    }
-
-    /// Revoke a prior grant. Only approved rows revoke.
-    pub async fn revoke(
-        &self,
-        user_id: &str,
-        artist_mbid: &str,
-        reviewer: (&str, Option<String>),
-        now: u64,
-    ) -> Result<Option<FollowApproval>, RequestsError> {
-        self.transition(
-            user_id,
-            artist_mbid,
-            ApprovalState::Approved,
-            ApprovalState::Revoked,
-            reviewer,
-            now,
-            "approvals.revoke",
-        )
-        .await
-    }
-
-    /// Withdraw a pending ask (the user turned auto-download back off).
-    pub async fn withdraw(&self, user_id: &str, artist_mbid: &str) -> Result<bool, RequestsError> {
-        let (user_id, mbid_lower) = (user_id.to_owned(), artist_mbid.to_lowercase());
-        self.db
-            .write("approvals.withdraw", move |tx| {
-                let changed = tx.execute(
-                    "DELETE FROM auto_download_approvals WHERE user_id = ?1 \
-                     AND artist_mbid_lower = ?2 AND state = ?3",
-                    params![user_id, mbid_lower, ApprovalState::Pending],
-                )?;
-                Ok(changed > 0)
-            })
-            .await
-            .map_err(|error| lane_error("approvals.withdraw", error))
-    }
-
-    /// Decide every still-pending row of one batch; returns the moved rows
-    /// as `(user_id, artist_mbid, artist_name)` (v2 `set_batch_approval_state`).
-    pub async fn decide_batch(
-        &self,
-        batch_id: &str,
-        state: ApprovalState,
-        reviewer: (&str, Option<String>),
-        now: u64,
-    ) -> Result<Vec<(String, String, String)>, RequestsError> {
-        let batch_id = batch_id.to_owned();
-        let (reviewer_id, reviewer_name) = (reviewer.0.to_owned(), reviewer.1);
-        self.db
-            .write("approvals.decide_batch", move |tx| {
-                let mut statement = tx.prepare(
-                    "SELECT user_id, artist_mbid, artist_name FROM auto_download_approvals \
-                     WHERE batch_id = ?1 AND state = ?2 ORDER BY artist_name",
-                )?;
-                let rows = statement
-                    .query_map(params![batch_id, ApprovalState::Pending], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                    })?
-                    .collect::<rusqlite::Result<Vec<(String, String, String)>>>()?;
-                drop(statement);
-                tx.execute(
-                    "UPDATE auto_download_approvals SET state = ?2, reviewed_by_id = ?3, \
-                     reviewed_by_name = ?4, reviewed_at = ?5 WHERE batch_id = ?1 AND state = ?6",
-                    params![
-                        batch_id,
-                        state,
-                        reviewer_id,
-                        reviewer_name,
-                        ms_from_secs(now),
-                        ApprovalState::Pending
-                    ],
-                )?;
-                Ok(rows)
-            })
-            .await
-            .map_err(|error| lane_error("approvals.decide_batch", error))
-    }
-
-    /// Guarded state move for one row.
-    #[allow(clippy::too_many_arguments)]
-    async fn transition(
-        &self,
-        user_id: &str,
-        artist_mbid: &str,
-        from: ApprovalState,
-        to: ApprovalState,
-        reviewer: (&str, Option<String>),
-        now: u64,
-        operation: &'static str,
-    ) -> Result<Option<FollowApproval>, RequestsError> {
-        let (user_id, mbid_lower) = (user_id.to_owned(), artist_mbid.to_lowercase());
-        let (reviewer_id, reviewer_name) = (reviewer.0.to_owned(), reviewer.1);
-        self.db
-            .write(operation, move |tx| {
-                let row: Option<(String, String, Option<String>, i64)> = tx
-                    .query_row(
-                        "SELECT a.artist_mbid, a.artist_name, u.display_name, a.requested_at \
-                         FROM auto_download_approvals a LEFT JOIN auth_users u ON u.id = a.user_id \
-                         WHERE a.user_id = ?1 AND a.artist_mbid_lower = ?2 AND a.state = ?3",
-                        params![user_id, mbid_lower, from],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                    )
-                    .optional()?;
-                let Some((artist_mbid, artist_name, user_name, requested_at)) = row else {
-                    return Ok(None);
-                };
-                tx.execute(
-                    "UPDATE auto_download_approvals SET state = ?3, reviewed_by_id = ?4, \
-                     reviewed_by_name = ?5, reviewed_at = ?6 \
-                     WHERE user_id = ?1 AND artist_mbid_lower = ?2",
-                    params![
-                        user_id,
-                        mbid_lower,
-                        to,
-                        reviewer_id,
-                        reviewer_name,
-                        ms_from_secs(now)
-                    ],
-                )?;
-                Ok(Some(FollowApproval {
-                    user_name: user_name.unwrap_or_else(|| user_id.clone()),
-                    user_id,
-                    artist_mbid,
-                    artist_name,
-                    state: to,
-                    requested_at: secs_from_ms(requested_at),
-                }))
-            })
-            .await
-            .map_err(|error| lane_error(operation, error))
     }
 
     /// Pending rows, singles or batch members, oldest first.

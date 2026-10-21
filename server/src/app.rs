@@ -234,6 +234,9 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(droppedneedle_acquire::requests::routes(), |state| {
             state.acquire.requests.clone()
         })
+        .area(droppedneedle_acquire::follows::routes(), |state| {
+            state.acquire.requests.follows.clone()
+        })
         .area(droppedneedle_acquire::downloads::routes(), |state| {
             state.acquire.downloads_routes()
         })

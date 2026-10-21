@@ -20,8 +20,9 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
+use droppedneedle_acquire::follows::Follows;
 use droppedneedle_acquire::probes::{LiveProbes, ProbeCache, refresh_probes};
-use droppedneedle_acquire::settings::ConfigSpotifySettings;
+use droppedneedle_acquire::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::wiring::{ClientLives, LiveClients};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
@@ -29,12 +30,12 @@ use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
 use droppedneedle_catalog::reads::collections::store::PlaylistStore;
 use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, start_runners};
-use droppedneedle_kernel::runtime_config::ConfigError;
 use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    DownloadClients, SabnzbdConnection, SlskdConnection,
+    DownloadClients, LidarrImportConnection, SabnzbdConnection, SlskdConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
+use droppedneedle_kernel::runtime_config::{ConfigError, Secret};
 use droppedneedle_testkit::imports::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_PLAYLIST_NO_TRACK_ID,
     SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
@@ -44,9 +45,7 @@ use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
 use imports::handlers::{ImportsDeps, imports_router};
 use imports::jobs::{SPEC, SpotifyImportJobs, SpotifyImports};
-use imports::lidarr::{
-    LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
-};
+use imports::lidarr::{LidarrClient, LidarrImportService};
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{ImportedTrack, SpotifyImportService};
 use imports::spotify_albums::AlbumResolver;
@@ -85,13 +84,11 @@ fn no_redirect_client() -> reqwest::Client {
 
 /// Fully wired module bundle for tests: the Spotify import on the
 /// production stores over the auth rig's database and settings, Lidarr on
-/// its memory stores, health on the live probes over the rig's settings.
+/// the rig's follows and settings, health on the live probes over the
+/// rig's settings.
 #[allow(dead_code)]
 struct Rig {
     deps: ImportsDeps,
-    lidarr_settings: Arc<MemoryLidarrSettings>,
-    follows: Arc<MemoryFollowStore>,
-    approvals: Arc<MemoryApprovalSink>,
     spotify_links: Arc<SqliteSpotifyLinks>,
     playlists: PlaylistStore,
     clients: Arc<LiveClients>,
@@ -113,9 +110,8 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Optio
     let platform = &auth.platform;
     let db = AcquireDb::new(platform.db.clone());
     let playlists = PlaylistStore::new(CollectionsDb::new(platform.db.clone()));
-    let lidarr_settings = Arc::new(MemoryLidarrSettings::new());
-    let follows = Arc::new(MemoryFollowStore::new());
-    let approvals = Arc::new(MemoryApprovalSink::new());
+    let lidarr_settings = Arc::new(ConfigLidarrSettings::new(platform.settings.clone()));
+    let follows = Follows::new(db.clone());
     let spotify_settings = Arc::new(ConfigSpotifySettings::new(platform.settings.clone()));
     let spotify_states = Arc::new(SqliteSpotifyStates::new(db.clone()));
     let spotify_links = Arc::new(SqliteSpotifyLinks::new(db.clone(), platform.crypto.clone()));
@@ -157,9 +153,8 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Optio
     let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
     let deps = ImportsDeps {
         lidarr: LidarrClient::new(http),
-        lidarr_settings: lidarr_settings.clone(),
-        follows: follows.clone(),
-        approvals: approvals.clone(),
+        lidarr_settings,
+        follows,
         spotify: spotify_client,
         spotify_settings,
         spotify_states,
@@ -180,9 +175,6 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Optio
     .expect("import runner starts");
     Rig {
         deps,
-        lidarr_settings,
-        follows,
-        approvals,
         spotify_links,
         playlists,
         clients,
@@ -256,6 +248,18 @@ async fn put_json(app: Router, path: &str, payload: Value) -> (StatusCode, Value
             .expect("request builds"),
     )
     .await
+}
+
+/// Save the Lidarr connection to the mock in the rig's settings.
+async fn seed_lidarr(auth: &AuthRig, base_url: &str) {
+    auth.platform
+        .settings
+        .save_secret(LidarrImportConnection {
+            url: base_url.to_owned(),
+            api_key: Secret::new(LIDARR_KEY.to_owned()),
+        })
+        .await
+        .expect("lidarr settings save");
 }
 
 async fn seed_rig() -> (AuthRig, String, String) {
@@ -338,7 +342,7 @@ async fn lidarr_import_becomes_follows_with_counts() {
     let (auth, admin_id, _) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
     let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1", None);
-    bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
+    seed_lidarr(&auth, &server.base_url).await;
     let payload = json!({"selected_mbids": [LIDARR_MBID_ALL, LIDARR_MBID_NONE]});
 
     let (status, body) = post_json(
@@ -381,26 +385,36 @@ async fn lidarr_non_admin_mirror_opens_approval_batch_at_service_level() {
     // The HTTP surface is admin-only, so the non-admin branch is briefed at
     // the service seam: the ordered writes still mirror intent, but only
     // behind an approval batch id.
+    let (auth, _, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
-    let settings = Arc::new(MemoryLidarrSettings::new());
-    settings.seed(&lidarr.base_url, LIDARR_KEY);
-    let follows = Arc::new(MemoryFollowStore::new());
-    let approvals = Arc::new(MemoryApprovalSink::new());
+    seed_lidarr(&auth, &lidarr.base_url).await;
+    let follows = Follows::new(AcquireDb::new(auth.platform.db.clone()));
     let service = LidarrImportService::new(
         LidarrClient::new(http_client()),
-        settings,
+        Arc::new(ConfigLidarrSettings::new(auth.platform.settings.clone())),
         follows.clone(),
-        approvals.clone(),
     );
     let response = service
-        .import_artists("u-9", false, &[LIDARR_MBID_ALL.to_owned()])
+        .import_artists(&user_id, false, &[LIDARR_MBID_ALL.to_owned()])
         .await
         .expect("import works");
     assert_eq!(response.imported, 1);
     assert_eq!(response.auto_download_enabled, 1);
-    assert!(response.approval_batch_id.is_some());
-    assert_eq!(approvals.batches().len(), 1);
-    assert!(follows.auto_download_intent("u-9", &LIDARR_MBID_ALL.to_lowercase()));
+    let batches = follows.batch_list().await.expect("batches read");
+    assert_eq!(batches.count, 1);
+    assert_eq!(
+        Some(batches.batches[0].batch_id.clone()),
+        response.approval_batch_id
+    );
+    let status = follows
+        .status(&user_id, LIDARR_MBID_ALL)
+        .await
+        .expect("status reads");
+    assert!(status.auto_download);
+    assert_eq!(
+        serde_json::to_value(status.auto_download_state).unwrap(),
+        "pending"
+    );
 }
 
 #[tokio::test]
@@ -444,7 +458,7 @@ async fn lidarr_surface_issues_only_the_two_sanctioned_gets() {
     let (auth, admin_id, _) = seed_rig().await;
     let (server, recorder) = serve_lidarr().await.expect("mock serves");
     let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1", None);
-    bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
+    seed_lidarr(&auth, &server.base_url).await;
 
     let _ = post_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
@@ -482,7 +496,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
     let (auth, admin_id, user_id) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
     let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1", None);
-    bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
+    seed_lidarr(&auth, &server.base_url).await;
 
     let (status, body) = get_json(
         anon_app(bundle.deps.clone()),

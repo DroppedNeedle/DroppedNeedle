@@ -4,24 +4,18 @@
 //! (`/system/status`, `/artist`) under `{base}/api/v1` with the `X-Api-Key`
 //! header (verified against live Lidarr 3.1.3.4968), monitored artists only,
 //! the authoritative re-fetch, the pre-read counts, the auto-download rule
-//! (only brand-new follows monitored `all`), and the ordered crash-safe
-//! writes. No method here issues any Lidarr management call.
+//! (only brand-new follows monitored `all`), and the follows written in
+//! one transaction. No method here issues any Lidarr management call.
 
 use std::collections::{HashMap, HashSet};
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::Mutex;
-
-use futures_util::future::BoxFuture;
 
 use serde::{Deserialize, Serialize};
 
-use super::models::{
-    LidarrArtistCandidate, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportResponse,
-};
+use super::models::{LidarrArtistCandidate, LidarrArtistListResponse, LidarrImportResponse};
+use crate::follows::{Follows, ImportArtist};
+use crate::requests::error::RequestsError;
+use crate::settings::ConfigLidarrSettings;
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
-#[cfg(any(test, feature = "test-support"))]
-use droppedneedle_kernel::runtime_config::SECRET_MASK;
-use droppedneedle_kernel::runtime_config::secret_sections::LidarrImportConnection;
 
 /// Largest Lidarr answer read. `/artist` is one unpaged list of every
 /// artist with its overview and images, so a large library runs to tens
@@ -182,261 +176,11 @@ impl LidarrClient {
     }
 }
 
-/// Follow rows the import reads and writes. The bulk store method keeps the
-/// zero-MusicBrainz-call guarantee (as in v2): names come from Lidarr, never
-/// the per-artist follow path.
-pub trait FollowStore: Send + Sync {
-    /// Lowercased MBIDs of `candidates` the user already follows.
-    fn existing_followed_lower<'a>(
-        &'a self,
-        user_id: &'a str,
-        candidates: &'a [String],
-    ) -> BoxFuture<'a, Result<HashSet<String>, String>>;
-    /// Follow every `(mbid, name)` pair idempotently, preserving
-    /// `auto_download` and `followed_at` on conflicts (as in v2).
-    fn follow_artists_bulk<'a>(
-        &'a self,
-        user_id: &'a str,
-        pairs: &'a [(String, String)],
-    ) -> BoxFuture<'a, Result<(), String>>;
-    /// Flip auto-download intent for followed rows.
-    fn set_auto_download_intent_bulk<'a>(
-        &'a self,
-        user_id: &'a str,
-        mbids: &'a [String],
-        intent: bool,
-    ) -> BoxFuture<'a, Result<(), String>>;
-}
-
-/// Approval batches for non-admin auto-download mirrors (v2
-/// `FollowService.create_import_batch`).
-pub trait ApprovalSink: Send + Sync {
-    /// Open one batch over the auto-download subset; returns its id.
-    fn create_import_batch<'a>(
-        &'a self,
-        user_id: &'a str,
-        pairs: &'a [(String, String)],
-    ) -> futures_util::future::BoxFuture<'a, Result<String, String>>;
-}
-
-/// Lidarr connection settings rows (v2 `PreferencesService` lidarr block).
-pub trait LidarrSettingsStore: Send + Sync {
-    /// Masked settings for reads.
-    fn get(&self) -> LidarrConnectionSettings;
-    /// The saved connection with its real key, for probes and imports.
-    /// The key sits in a [`Secret`], so it never reaches a response.
-    ///
-    /// [`Secret`]: droppedneedle_kernel::runtime_config::Secret
-    fn get_raw(&self) -> LidarrImportConnection;
-    /// Save; a masked key preserves the stored one. A failed save is
-    /// logged, and the read that follows shows what is stored.
-    fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()>;
-}
-
-/// In-memory follow rows for tests and the pre-persistence tier.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct MemoryFollowStore {
-    /// Auto-download intent per `(user_id, lowercased mbid)` follow.
-    inner: Mutex<HashMap<(String, String), bool>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemoryFollowStore {
-    /// Empty store.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemoryFollowStore {
-    /// Auto-download intent for one followed row.
-    pub fn auto_download_intent(&self, user_id: &str, mbid_lower: &str) -> bool {
-        let inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        inner
-            .get(&(user_id.to_owned(), mbid_lower.to_owned()))
-            .is_some_and(|auto_download| *auto_download)
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FollowStore for MemoryFollowStore {
-    fn existing_followed_lower<'a>(
-        &'a self,
-        user_id: &'a str,
-        candidates: &'a [String],
-    ) -> BoxFuture<'a, Result<HashSet<String>, String>> {
-        let inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let found = candidates
-            .iter()
-            .filter(|candidate| inner.contains_key(&(user_id.to_owned(), (*candidate).clone())))
-            .cloned()
-            .collect();
-        Box::pin(std::future::ready(Ok(found)))
-    }
-
-    fn follow_artists_bulk<'a>(
-        &'a self,
-        user_id: &'a str,
-        pairs: &'a [(String, String)],
-    ) -> BoxFuture<'a, Result<(), String>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for (mbid, _name) in pairs {
-            inner
-                .entry((user_id.to_owned(), mbid.to_lowercase()))
-                .or_insert(false);
-        }
-        Box::pin(std::future::ready(Ok(())))
-    }
-
-    fn set_auto_download_intent_bulk<'a>(
-        &'a self,
-        user_id: &'a str,
-        mbids: &'a [String],
-        intent: bool,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for mbid in mbids {
-            if let Some(auto_download) = inner.get_mut(&(user_id.to_owned(), mbid.to_lowercase())) {
-                *auto_download = intent;
-            }
-        }
-        Box::pin(std::future::ready(Ok(())))
-    }
-}
-
-/// One recorded approval batch: owning user plus the auto-download pairs.
-#[cfg(any(test, feature = "test-support"))]
-type ApprovalBatch = (String, Vec<(String, String)>);
-
-/// In-memory approval batches.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct MemoryApprovalSink {
-    inner: Mutex<Vec<ApprovalBatch>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemoryApprovalSink {
-    /// Empty sink.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Batches opened so far, for test assertions.
-    pub fn batches(&self) -> Vec<ApprovalBatch> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ApprovalSink for MemoryApprovalSink {
-    fn create_import_batch<'a>(
-        &'a self,
-        user_id: &'a str,
-        pairs: &'a [(String, String)],
-    ) -> futures_util::future::BoxFuture<'a, Result<String, String>> {
-        Box::pin(async move {
-            let mut inner = self
-                .inner
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let id = format!("batch-{}", inner.len() + 1);
-            inner.push((user_id.to_owned(), pairs.to_vec()));
-            Ok(id)
-        })
-    }
-}
-
-/// In-memory Lidarr settings rows.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct MemoryLidarrSettings {
-    inner: Mutex<LidarrConnectionSettings>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemoryLidarrSettings {
-    /// Empty rows.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Seed raw rows for tests.
-    pub fn seed(&self, url: &str, api_key: &str) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        inner.url = normalize_lidarr_url(url);
-        inner.api_key = api_key.to_owned();
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl LidarrSettingsStore for MemoryLidarrSettings {
-    fn get(&self) -> LidarrConnectionSettings {
-        let inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        LidarrConnectionSettings {
-            url: inner.url.clone(),
-            api_key: if inner.api_key.is_empty() {
-                String::new()
-            } else {
-                SECRET_MASK.to_owned()
-            },
-        }
-    }
-
-    fn get_raw(&self) -> LidarrImportConnection {
-        let inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        LidarrImportConnection {
-            url: inner.url.clone(),
-            api_key: droppedneedle_kernel::runtime_config::Secret::new(inner.api_key.clone()),
-        }
-    }
-
-    fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()> {
-        Box::pin(async move {
-            let mut inner = self
-                .inner
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            inner.url = normalize_lidarr_url(&settings.url);
-            if settings.api_key != SECRET_MASK {
-                inner.api_key = settings.api_key.clone();
-            }
-        })
-    }
-}
-
 /// Read-only Lidarr-to-follows importer (v2 `LidarrImportService`).
 pub struct LidarrImportService {
     client: LidarrClient,
-    settings: std::sync::Arc<dyn LidarrSettingsStore>,
-    follows: std::sync::Arc<dyn FollowStore>,
-    approvals: std::sync::Arc<dyn ApprovalSink>,
+    settings: std::sync::Arc<ConfigLidarrSettings>,
+    follows: Follows,
 }
 
 /// Missing-connection failure. The message reaches the user (v2 400).
@@ -447,15 +191,13 @@ impl LidarrImportService {
     /// Wire the service from its parts.
     pub fn new(
         client: LidarrClient,
-        settings: std::sync::Arc<dyn LidarrSettingsStore>,
-        follows: std::sync::Arc<dyn FollowStore>,
-        approvals: std::sync::Arc<dyn ApprovalSink>,
+        settings: std::sync::Arc<ConfigLidarrSettings>,
+        follows: Follows,
     ) -> Self {
         Self {
             client,
             settings,
             follows,
-            approvals,
         }
     }
 
@@ -488,7 +230,7 @@ impl LidarrImportService {
             .collect();
         let existing = self
             .follows
-            .existing_followed_lower(user_id, &lowers)
+            .followed_among(user_id, &lowers)
             .await
             .map_err(ServiceError::Follows)?;
         let artists: Vec<LidarrArtistCandidate> = monitored
@@ -511,6 +253,10 @@ impl LidarrImportService {
     }
 
     /// Import a selection into one user's follows (v2 `import_artists`).
+    /// The follows, the approval batch and the auto-download intents land
+    /// in one transaction. Only brand-new follows of artists Lidarr
+    /// monitors with `all` get auto-download, so a re-import never re-arms
+    /// a follow the user turned off.
     pub async fn import_artists(
         &self,
         user_id: &str,
@@ -525,7 +271,7 @@ impl LidarrImportService {
             .map(|artist| (artist.foreign_artist_id.to_lowercase(), artist))
             .collect();
 
-        let mut selected_valid_lower: Vec<String> = Vec::new();
+        let mut artists = Vec::new();
         let mut skipped_invalid: i64 = 0;
         let mut seen: HashSet<String> = HashSet::new();
         for mbid in selected_mbids {
@@ -537,86 +283,26 @@ impl LidarrImportService {
             if !seen.insert(lower.clone()) {
                 continue;
             }
-            if by_lower.contains_key(&lower) {
-                selected_valid_lower.push(lower);
+            if let Some(artist) = by_lower.get(&lower) {
+                artists.push(ImportArtist {
+                    mbid: artist.foreign_artist_id.clone(),
+                    name: artist.artist_name.clone(),
+                    monitors_new: artist.monitor_new_items == "all",
+                });
             }
         }
-
-        // Pre-read existing follows before any write (as in v2): the bulk
-        // upsert cannot tell a fresh insert from a conflict, so both the
-        // counts and the auto-download rule need the prior state.
-        let existing = self
+        let batch_id = (!is_admin).then(|| format!("batch-{}", uuid::Uuid::new_v4().simple()));
+        let outcome = self
             .follows
-            .existing_followed_lower(user_id, &selected_valid_lower)
+            .import(user_id, artists, batch_id)
             .await
             .map_err(ServiceError::Follows)?;
-        let new_lowers: Vec<&String> = selected_valid_lower
-            .iter()
-            .filter(|lower| !existing.contains(*lower))
-            .collect();
-        let imported = new_lowers.len() as i64;
-        let already_following = selected_valid_lower.len() as i64 - imported;
-        // Mirror auto-download only for brand-new follows monitored `all`.
-        let auto_dl_lowers: Vec<&String> = new_lowers
-            .into_iter()
-            .filter(|lower| {
-                by_lower
-                    .get(*lower)
-                    .is_some_and(|artist| artist.monitor_new_items == "all")
-            })
-            .collect();
-
-        // Write order matters (v2): (a) bulk-follow the whole valid
-        // selection, (b) approvals for the auto-download subset before
-        // flipping intent, (c) flip intent. A mid-sequence crash fails safe
-        // with intent off rather than intent-on-without-approval.
-        let pairs: Vec<(String, String)> = selected_valid_lower
-            .iter()
-            .filter_map(|lower| {
-                by_lower
-                    .get(lower)
-                    .map(|artist| (artist.foreign_artist_id.clone(), artist.artist_name.clone()))
-            })
-            .collect();
-        self.follows
-            .follow_artists_bulk(user_id, &pairs)
-            .await
-            .map_err(ServiceError::Follows)?;
-        let mut approval_batch_id: Option<String> = None;
-        if !auto_dl_lowers.is_empty() && !is_admin {
-            let auto_pairs: Vec<(String, String)> = auto_dl_lowers
-                .iter()
-                .filter_map(|lower| {
-                    by_lower.get(*lower).map(|artist| {
-                        (artist.foreign_artist_id.clone(), artist.artist_name.clone())
-                    })
-                })
-                .collect();
-            approval_batch_id = Some(
-                self.approvals
-                    .create_import_batch(user_id, &auto_pairs)
-                    .await
-                    .map_err(ServiceError::Approvals)?,
-            );
-        }
-        let auto_download_enabled = auto_dl_lowers.len() as i64;
-        if !auto_dl_lowers.is_empty() {
-            let mbids: Vec<String> = auto_dl_lowers
-                .iter()
-                .filter_map(|lower| by_lower.get(*lower).map(|a| a.foreign_artist_id.clone()))
-                .collect();
-            self.follows
-                .set_auto_download_intent_bulk(user_id, &mbids, true)
-                .await
-                .map_err(ServiceError::Follows)?;
-        }
-
         Ok(LidarrImportResponse {
-            imported,
-            already_following,
+            imported: outcome.imported as i64,
+            already_following: outcome.already_following as i64,
             skipped_invalid,
-            auto_download_enabled,
-            approval_batch_id,
+            auto_download_enabled: outcome.auto_download_enabled as i64,
+            approval_batch_id: outcome.approval_batch_id,
         })
     }
 }
@@ -628,8 +314,6 @@ pub enum ServiceError {
     NotConnected,
     /// Lidarr fetch failed.
     Lidarr(LidarrError),
-    /// The approval batch could not be filed.
-    Approvals(String),
-    /// The follow store failed. The text goes to the log only.
-    Follows(String),
+    /// The follow write or read failed.
+    Follows(RequestsError),
 }

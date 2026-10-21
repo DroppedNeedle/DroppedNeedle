@@ -10,22 +10,20 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use droppedneedle_auth::{Admin, User};
+use droppedneedle_auth::User;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::{
     http::HttpResult,
     models::{
-        AddTracksBody, AddTracksResponse, ApprovalBatchListResponse,
-        AutoDownloadApprovalListResponse, AutoDownloadBody, CheckTracksBody, CheckTracksResponse,
-        CoverUploadBody, CoverUploadResponse, CreatePlaylistBody, FavoriteListResponse,
-        FavoriteQuery, FavoriteStatusResponse, FollowBody, FollowStatusResponse,
-        FollowedArtistListResponse, NewReleaseListResponse, NewReleasePageQuery, PlaylistDetail,
-        PlaylistListResponse, PlaylistSummary, PlaylistTrack, RatingLookupBody,
-        RatingLookupResponse, RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody,
-        RemoveTracksResponse, ReorderBody, ReorderResponse, ResolveSourcesResponse,
-        SetFavoriteBody, SetRatingBody, StatusResponse, UnseenCountResponse, UpdatePlaylistBody,
-        UpdateTrackBody, VisibilityBody,
+        AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
+        CoverUploadResponse, CreatePlaylistBody, FavoriteListResponse, FavoriteQuery,
+        FavoriteStatusResponse, FollowStatusResponse, FollowedArtistListResponse,
+        NewReleaseListResponse, NewReleasePageQuery, PlaylistDetail, PlaylistListResponse,
+        PlaylistSummary, PlaylistTrack, RatingLookupBody, RatingLookupResponse,
+        RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody, RemoveTracksResponse,
+        ReorderBody, ReorderResponse, ResolveSourcesResponse, SetFavoriteBody, SetRatingBody,
+        StatusResponse, UnseenCountResponse, UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
     },
     service::CollectionsService,
     state::CollectionsState,
@@ -604,65 +602,6 @@ pub async fn get_follow_status_handler(
     ))
 }
 
-/// Follow or unfollow one artist.
-#[utoipa::path(
-    put,
-    path = "/api/v3/artists/{artist_mbid}/follow",
-    tag = "collections",
-    params(("artist_mbid" = String, Path, description = "Artist MBID")),
-    request_body = FollowBody,
-    responses(
-        (status = 200, description = "Follow status", body = FollowStatusResponse),
-        (status = 400, description = "Bad request body"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn set_follow_handler(
-    State(state): State<CollectionsState>,
-    User(caller): User,
-    Path(artist_mbid): Path<String>,
-    ValidJson(body): ValidJson<FollowBody>,
-) -> HttpResult<Json<FollowStatusResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .set_follow(
-                caller.user_id(),
-                &artist_mbid,
-                body.followed,
-                body.artist_name,
-            )
-            .await?,
-    ))
-}
-
-/// Turn auto-download on or off for one artist.
-#[utoipa::path(
-    put,
-    path = "/api/v3/artists/{artist_mbid}/auto-download",
-    tag = "collections",
-    params(("artist_mbid" = String, Path, description = "Artist MBID")),
-    request_body = AutoDownloadBody,
-    responses(
-        (status = 200, description = "Follow status", body = FollowStatusResponse),
-        (status = 400, description = "Bad request body"),
-        (status = 401, description = "Not authenticated"),
-        (status = 404, description = "Artist not followed"),
-        (status = 409, description = "Follow before enabling auto-download"),
-    )
-)]
-pub async fn set_auto_download_handler(
-    State(state): State<CollectionsState>,
-    User(caller): User,
-    Path(artist_mbid): Path<String>,
-    ValidJson(body): ValidJson<AutoDownloadBody>,
-) -> HttpResult<Json<FollowStatusResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .set_auto_download(&caller, &artist_mbid, body.enabled)
-            .await?,
-    ))
-}
-
 /// List the caller's followed artists.
 #[utoipa::path(
     get,
@@ -770,50 +709,6 @@ pub async fn mark_seen_handler(
     Ok(Json(
         CollectionsService::new(&state)
             .mark_seen(caller.user_id())
-            .await?,
-    ))
-}
-
-/// List pending auto-download requests.
-#[utoipa::path(
-    get,
-    path = "/api/v3/requests/auto-download-approvals",
-    tag = "collections",
-    responses(
-        (status = 200, description = "Pending approvals", body = AutoDownloadApprovalListResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-    )
-)]
-pub async fn list_approvals_handler(
-    State(state): State<CollectionsState>,
-    admin: Admin,
-) -> HttpResult<Json<AutoDownloadApprovalListResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .list_approvals(&admin)
-            .await?,
-    ))
-}
-
-/// List pending requests grouped per user.
-#[utoipa::path(
-    get,
-    path = "/api/v3/requests/auto-download-approval-batches",
-    tag = "collections",
-    responses(
-        (status = 200, description = "Approval batches", body = ApprovalBatchListResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-    )
-)]
-pub async fn list_approval_batches_handler(
-    State(state): State<CollectionsState>,
-    admin: Admin,
-) -> HttpResult<Json<ApprovalBatchListResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .list_approval_batches(&admin)
             .await?,
     ))
 }

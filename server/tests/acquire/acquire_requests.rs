@@ -37,6 +37,7 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::DownloadDispatch;
 use droppedneedle_acquire::downloads::manifest::{ManifestCodec, PlannedAlbum, ReplaceVersion};
 use droppedneedle_acquire::downloads::state::TaskStatus;
+use droppedneedle_acquire::follows::ImportArtist;
 use droppedneedle_acquire::requests::{
     self, RequestsState,
     ledger::{WantedWatch, WatchState},
@@ -244,6 +245,23 @@ async fn call(
     )
 }
 
+/// Follow `artist` as `who` and ask for its auto-download.
+async fn ask_auto_download(state: &RequestsState, who: Who, artist: &str) {
+    let follow = format!("/api/v3/artists/{artist}/follow");
+    let body = json!({"followed": true, "artist_name": "Artist"});
+    assert_eq!(
+        call(state, Method::PUT, &follow, Some(who), Some(body))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let toggle = format!("/api/v3/artists/{artist}/auto-download");
+    let enable = json!({"enabled": true});
+    let (status, body) = call(state, Method::PUT, &toggle, Some(who), Some(enable)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auto_download_state"], "pending");
+}
+
 async fn ask(state: &RequestsState, who: Who, mbid: &str) -> (StatusCode, Value) {
     call(
         state,
@@ -297,11 +315,7 @@ async fn requests_and_approvals_survive_a_rebuild() {
     );
     assert_eq!(ask(&state, TRUSTED, MBID_B).await.1["status"], "pending");
     assert_eq!(ask(&state, BOB, MBID_B).await.0, StatusCode::ACCEPTED);
-    state
-        .follows
-        .file_pending("u-ada", ARTIST, "Artist", 1_700_000_000)
-        .await
-        .unwrap();
+    ask_auto_download(&state, ADA, ARTIST).await;
     state.wanted.enrol(watch(MBID_C, "u-ada")).await.unwrap();
 
     let after = rebuilt(&db, QuotaPolicy::default(), &dispatch);
@@ -686,25 +700,24 @@ async fn wanted_view_and_actions() {
 #[tokio::test]
 async fn auto_download_approvals() {
     let (state, _db, _dispatch) = setup().await;
-    state
+    ask_auto_download(&state, ADA, ARTIST).await;
+    let imported = state
         .follows
-        .file_pending("u-ada", ARTIST, "Artist", 1_700_000_000)
-        .await
-        .unwrap();
-    state
-        .follows
-        .create_batch(
-            "batch-1",
+        .import(
             "u-bob",
-            &[
-                (MBID_A.to_owned(), "One".to_owned()),
-                (MBID_B.to_owned(), "Two".to_owned()),
-            ],
-            "lidarr_import",
-            1_700_000_000,
+            [(MBID_A, "One"), (MBID_B, "Two")]
+                .into_iter()
+                .map(|(mbid, name)| ImportArtist {
+                    mbid: mbid.to_owned(),
+                    name: name.to_owned(),
+                    monitors_new: true,
+                })
+                .collect(),
+            Some("batch-1".to_owned()),
         )
         .await
         .unwrap();
+    assert_eq!(imported.approval_batch_id.as_deref(), Some("batch-1"));
     let (_, count) = call(
         &state,
         Method::GET,
@@ -723,6 +736,12 @@ async fn auto_download_approvals() {
     );
     let (_, approved) = call(&state, Method::POST, &approve, Some(ADMIN), None).await;
     assert_eq!(approved["success"], true);
+    let status = state.follows.status("u-ada", ARTIST).await.unwrap();
+    assert!(status.auto_download, "the verdict arms the follow with it");
+    assert_eq!(
+        serde_json::to_value(status.auto_download_state).unwrap(),
+        "approved"
+    );
     let (_, again) = call(&state, Method::POST, &approve, Some(ADMIN), None).await;
     assert_eq!(again["success"], false, "only a pending row decides");
     let (_, rejected) = call(
@@ -734,6 +753,11 @@ async fn auto_download_approvals() {
     )
     .await;
     assert_eq!(rejected["message"], "Auto-download rejected for 2 artists");
+    let status = state.follows.status("u-bob", MBID_A).await.unwrap();
+    assert!(
+        status.followed && !status.auto_download,
+        "a rejected batch keeps the follow and clears its intent"
+    );
 }
 
 /// ListenBrainz stand-in: one weekly-jams playlist with two tracks on two

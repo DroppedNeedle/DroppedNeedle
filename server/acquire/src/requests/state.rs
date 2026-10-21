@@ -4,12 +4,11 @@
 
 use std::sync::Arc;
 
-use super::bridges::FollowDecisionSink;
 use super::quota::QuotaLedger;
 use super::sqlite::{EditionStore, PersonalMixStore, RequestStore, WantedStore};
 use crate::db::AcquireDb;
 use crate::dispatch::DownloadDispatch;
-use crate::follows::approvals::FollowApprovalStore;
+use crate::follows::Follows;
 
 /// Everything the requests router needs, built once.
 #[derive(Clone)]
@@ -22,8 +21,8 @@ pub struct RequestsState {
     pub dispatch: Arc<DownloadDispatch>,
     /// Wanted watches (shared with the watcher loop).
     pub wanted: WantedStore,
-    /// Auto-download approvals.
-    pub follows: FollowApprovalStore,
+    /// Follows and their auto-download approvals.
+    pub follows: Follows,
     /// Personal-mix approvals and refresh guard.
     pub mixes: Arc<PersonalMixStore>,
     /// In-flight edition acquires.
@@ -31,9 +30,6 @@ pub struct RequestsState {
     /// The application database, for the library's chosen edition and
     /// album names.
     pub library: AcquireDb,
-    /// Verdict sink into the collections follow rows. `None` in tests that
-    /// run the routes alone; wiring connects the collections store.
-    pub follow_sink: Option<Arc<dyn FollowDecisionSink>>,
     /// The plugin host: new requests are announced to `subscriber`
     /// plugins. `None` in tests that run the routes alone.
     pub plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
@@ -75,11 +71,10 @@ impl RequestsState {
             quota,
             dispatch,
             wanted: WantedStore::new(db.clone()),
-            follows: FollowApprovalStore::new(db.clone()),
+            follows: Follows::new(db.clone()),
             mixes: Arc::new(PersonalMixStore::new(db.clone())),
             editions: EditionStore::new(db.clone()),
             library: db.clone(),
-            follow_sink: None,
             plugins: None,
             mixer: None,
             edition_plans: None,

@@ -453,56 +453,6 @@ pub struct WantedActionResponse {
     pub state: String,
 }
 
-/// One pending auto-download approval.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct AutoDownloadApprovalItem {
-    /// Requesting user id.
-    pub user_id: String,
-    /// Requesting display name.
-    pub user_name: String,
-    /// Artist MBID.
-    pub artist_mbid: String,
-    /// Artist name.
-    pub artist_name: String,
-    /// Epoch seconds when asked.
-    pub requested_at: u64,
-}
-
-/// Pending auto-download approvals.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct AutoDownloadApprovalsResponse {
-    /// Pending rows.
-    pub items: Vec<AutoDownloadApprovalItem>,
-    /// Row count.
-    pub count: u32,
-}
-
-/// One pending bulk-approval batch.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ApprovalBatchItem {
-    /// Batch id.
-    pub batch_id: String,
-    /// Requesting user id.
-    pub user_id: String,
-    /// Requesting display name.
-    pub user_name: String,
-    /// Artists covered.
-    pub artist_count: u32,
-    /// Sample artist names.
-    pub sample_names: Vec<String>,
-    /// Epoch seconds when asked.
-    pub requested_at: u64,
-}
-
-/// Pending bulk-approval batches.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ApprovalBatchListResponse {
-    /// Pending batches.
-    pub batches: Vec<ApprovalBatchItem>,
-    /// Batch count.
-    pub count: u32,
-}
-
 /// One pending personal-mix auto-request approval.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PersonalMixApprovalItem {

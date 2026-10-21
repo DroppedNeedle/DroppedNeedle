@@ -4,11 +4,8 @@
 //! users, everything survives a restart, pins never write identity, and
 //! store faults stay hidden.
 
-use std::sync::Arc;
-
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::follows::approvals::FollowApprovalStore;
-use droppedneedle_acquire::settings::{ApprovalSeedBridge, RequestsPendingSource};
+use droppedneedle_acquire::follows::{self, Follows};
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::collections::{self, CollectionsState, db::CollectionsDb};
@@ -80,18 +77,18 @@ impl Rig {
             .unwrap()
     }
 
-    /// Collections wired to the acquire approval store, as production is.
     fn state(&self) -> CollectionsState {
-        let db = self.runtime.db().clone();
-        let approvals = FollowApprovalStore::new(AcquireDb::new(db.clone()));
-        let mut state = CollectionsState::new(CollectionsDb::new(db));
-        state.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(approvals.clone())));
-        state.approval_seeds = Some(Arc::new(ApprovalSeedBridge::new(approvals)));
-        state
+        CollectionsState::new(CollectionsDb::new(self.runtime.db().clone()))
     }
 
+    /// The collections routes beside the follows' routes, as the app
+    /// mounts them.
     fn app(&self) -> Router {
-        collections::routes().with_state(self.state()).into_router()
+        let follows = Follows::new(AcquireDb::new(self.runtime.db().clone()));
+        collections::routes()
+            .with_state(self.state())
+            .into_router()
+            .merge(follows::routes().with_state(follows).into_router())
     }
 
     /// Close the database and open it again, as a server restart does.
@@ -612,7 +609,6 @@ async fn store_faults_render_fixed_500_envelopes() {
         "/api/v3/playlists",
         "/api/v3/favorites",
         "/api/v3/following/artists",
-        "/api/v3/requests/auto-download-approvals",
     ] {
         let (status, headers, bytes) =
             send(&app, Some(ADMIN), request(Method::GET, uri, None)).await;

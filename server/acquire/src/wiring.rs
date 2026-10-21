@@ -31,7 +31,7 @@ use super::flows::loops::{
 use super::flows::seams::ReleasePoll;
 use super::flows::seams::{Candidate, CandidateSearch, TickSink};
 use super::flows::stores::{AdminDirectory, LibraryPresence, UpgradeWorklist};
-use super::follows::cursors::FollowStore as FlowsFollowStore;
+use super::follows::Follows;
 use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
 use super::imports::jobs::{SpotifyImportJobs, SpotifyImports};
 use super::imports::lidarr::LidarrClient;
@@ -44,7 +44,6 @@ use super::imports::spotify_store::{
 use super::landing::LandingService;
 use super::landing::ports::LandingLibrary;
 use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes};
-use super::requests::bridges::FollowDecisionSink;
 use super::requests::error::RequestsError;
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::{RequestStore, WantedStore};
@@ -53,9 +52,7 @@ use super::search::FanoutSearch;
 use super::search_jobs::SearchJobs;
 use super::search_jobs::store::JobStore;
 use super::settings::{
-    ApprovalSeedBridge, CollectionsFollowBridge, ConfigLidarrSettings, ConfigSpotifySettings,
-    FollowDecisionBridge, RequestsApprovalBridge, RequestsPendingSource, clamp_u32, clamp_u64,
-    clamp_usize,
+    ConfigLidarrSettings, ConfigSpotifySettings, clamp_u32, clamp_u64, clamp_usize,
 };
 use super::slskd::{DownloadPolicy as SlskdPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository};
 use super::sources::{SabnzbdSource, SlskdSource};
@@ -67,7 +64,6 @@ use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup_recovery};
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_catalog::reads::collections::state::{ApprovalSeedSink, PendingApprovalsSource};
 use droppedneedle_catalog::reads::collections::store::Stores as CollectionsStores;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::ids::IdGenerator;
@@ -488,7 +484,7 @@ pub struct FlowsBundle {
     /// Request ledger (shared with intake).
     pub ledger: RequestStore,
     /// Follow-poll cursors.
-    pub follows: FlowsFollowStore,
+    pub follows: Follows,
     /// Upgrade worklist, read from the catalog.
     pub worklist: UpgradeWorklist,
     /// Library presence, read from the catalog.
@@ -574,8 +570,8 @@ pub struct AcquirePorts {
     /// Plugin download sources, plugin indexers that feed usenet, and
     /// plugin events.
     pub plugins: Arc<PluginHost>,
-    /// The collections stores: follow verdicts, imported playlists and the
-    /// Weekly Mix playlist are written to them.
+    /// The collections stores: imported playlists and the Weekly Mix
+    /// playlist are written to them.
     pub collections: CollectionsStores,
     /// The shared providers; the Weekly Mix reads ListenBrainz through
     /// them.
@@ -593,7 +589,6 @@ struct MixInputs {
 /// What the durable core reaches outside acquisition. The test bundle
 /// leaves most of it out.
 struct CorePorts {
-    follow_sink: Option<Arc<dyn FollowDecisionSink>>,
     plugins: Option<Arc<PluginHost>>,
     edition_plans: Option<Arc<dyn EditionPlans>>,
     readiness: Option<AcquireReadiness>,
@@ -634,7 +629,6 @@ fn core(
     // builder itself, which intake never reaches.
     let intake = RequestsState {
         wanted: stores.wanted.clone(),
-        follow_sink: ports.follow_sink,
         plugins: ports.plugins.clone(),
         edition_plans: ports.edition_plans,
         // "Get missing tracks" also asks for the edition's tracks below
@@ -730,9 +724,6 @@ impl AcquireSetup {
             quota,
             search,
             CorePorts {
-                follow_sink: Some(Arc::new(FollowDecisionBridge::new(
-                    collections.follows.clone(),
-                ))),
                 plugins: Some(ports.plugins.clone()),
                 edition_plans: Some(ports.edition_plans),
                 readiness: Some(AcquireReadiness {
@@ -793,8 +784,7 @@ impl AcquireSetup {
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http.clone()),
             lidarr_settings,
-            follows: Arc::new(CollectionsFollowBridge::new(collections.follows.clone())),
-            approvals: Arc::new(RequestsApprovalBridge::new(core.requests.follows.clone())),
+            follows: core.requests.follows.clone(),
             spotify: spotify_client,
             spotify_settings,
             spotify_states,
@@ -858,22 +848,9 @@ impl AcquireSetup {
         })
     }
 
-    /// The pending auto-download approvals, read by the collections
-    /// approval list from the store the approval mutations write.
-    pub fn pending_approvals(&self) -> Arc<dyn PendingApprovalsSource> {
-        Arc::new(RequestsPendingSource::new(self.requests.follows.clone()))
-    }
-
-    /// Where follow toggles that land pending file the approval the admin
-    /// mutations decide.
-    pub fn approval_seeds(&self) -> Arc<dyn ApprovalSeedSink> {
-        Arc::new(ApprovalSeedBridge::new(self.requests.follows.clone()))
-    }
-
     /// Test bundle over `db` (a scratch database), default settings and
     /// the import stores over it. Finished downloads land in `library` when
-    /// there is one. The follow verdicts go to an unwired collections
-    /// store. Call inside a tokio runtime.
+    /// there is one. Call inside a tokio runtime.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         db: AcquireDb,
@@ -881,7 +858,6 @@ impl AcquireSetup {
         events: EventHub,
         library: Option<Arc<dyn LandingLibrary>>,
     ) -> Result<Self, String> {
-        use super::imports::lidarr::{MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings};
         use droppedneedle_catalog::reads::collections::db::CollectionsDb;
         use droppedneedle_catalog::reads::collections::store::PlaylistStore;
         use droppedneedle_kernel::runtime_config::crypto::Crypto;
@@ -912,7 +888,6 @@ impl AcquireSetup {
             )),
             None,
         ));
-        let unwired = CollectionsStores::new(&CollectionsDb::unwired());
         let core = core(
             &stores,
             ids.clone(),
@@ -923,7 +898,6 @@ impl AcquireSetup {
                 clients: clients.clone(),
             }),
             CorePorts {
-                follow_sink: Some(Arc::new(FollowDecisionBridge::new(unwired.follows))),
                 plugins: None,
                 edition_plans: None,
                 readiness: None,
@@ -973,9 +947,8 @@ impl AcquireSetup {
         );
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http),
-            lidarr_settings: Arc::new(MemoryLidarrSettings::new()),
-            follows: Arc::new(MemoryFollowStore::new()),
-            approvals: Arc::new(MemoryApprovalSink::new()),
+            lidarr_settings: Arc::new(ConfigLidarrSettings::new(Arc::new(settings.clone()))),
+            follows: core.requests.follows.clone(),
             spotify: spotify_client,
             spotify_settings,
             spotify_states: Arc::new(SqliteSpotifyStates::new(db.clone())),
@@ -1145,7 +1118,7 @@ fn flows_bundle(
 ) -> FlowsBundle {
     let watches = requests.wanted.clone();
     let ledger = requests.store.clone();
-    let follows = FlowsFollowStore::new(db.clone());
+    let follows = requests.follows.clone();
     let worklist = UpgradeWorklist::new(db.clone());
     let library = Arc::new(LibraryPresence::over_catalog(db.pool().clone()));
     let admins = AdminDirectory::over_users(db.clone());

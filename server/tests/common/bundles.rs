@@ -187,14 +187,9 @@ pub fn collections_at(platform: &Platform) -> Collections {
 }
 
 impl Collections {
-    /// The collections state with acquisition's approvals.
-    pub fn wired(&self, acquire: &AcquireSetup) -> CollectionsState {
-        CollectionsState::wired(
-            self.db.clone(),
-            self.stores.clone(),
-            acquire.pending_approvals(),
-            acquire.approval_seeds(),
-        )
+    /// The collections state over these stores.
+    pub fn wired(&self) -> CollectionsState {
+        CollectionsState::over(self.db.clone(), self.stores.clone())
     }
 }
 

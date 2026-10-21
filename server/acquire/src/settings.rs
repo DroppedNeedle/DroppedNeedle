@@ -1,4 +1,4 @@
-//! Settings reads and the follow bridges between modules.
+//! Settings reads.
 //!
 //! Acquire reads every settings section through a [`Live`] handle, so a
 //! saved setting reaches the next use without a restart. A section that
@@ -10,35 +10,10 @@
 //! [`ConfigSpotifySettings`] serve the imports over the `lidarr_import`
 //! and `spotify_settings` secret sections. They read through live handles
 //! and hold the store only to save.
-//!
-//! The follow bridges share one follow/approval truth across modules:
-//!
-//! - [`CollectionsFollowBridge`] serves the imports `FollowStore` from
-//!   the reads collections follow rows (Lidarr imports land as real
-//!   follows instead of rows private to the imports code).
-//! - [`RequestsApprovalBridge`] serves the imports `ApprovalSink` from
-//!   the requests approval store (import batches are actionable through
-//!   the batch mutations).
-//! - [`FollowDecisionBridge`] carries requests approval verdicts back
-//!   into the collections follow rows.
-//! - [`RequestsPendingSource`] and [`ApprovalSeedBridge`] close the loop
-//!   the other way: collections reads share the requests approval store,
-//!   and follow toggles file the approvals the admin mutations decide.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use futures_util::future::BoxFuture;
-
-use super::db::now_epoch;
-use super::follows::approvals::FollowApprovalStore;
-use super::imports::lidarr::{ApprovalSink, FollowStore, LidarrSettingsStore};
 use super::imports::models::{LidarrConnectionSettings, SpotifySettings as ImportsSpotifySettings};
-use super::requests::bridges::FollowDecisionSink;
-use droppedneedle_catalog::reads::collections::state::{
-    ApprovalSeedSink, PendingApproval, PendingApprovalsSource, PendingBatch,
-};
-use droppedneedle_catalog::reads::collections::store::FollowStore as CollectionsFollowStore;
 use droppedneedle_kernel::runtime_config::mask::display_mask;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, SpotifySettings,
@@ -87,10 +62,9 @@ impl ConfigLidarrSettings {
             store,
         }
     }
-}
 
-impl LidarrSettingsStore for ConfigLidarrSettings {
-    fn get(&self) -> LidarrConnectionSettings {
+    /// Masked settings for reads.
+    pub fn get(&self) -> LidarrConnectionSettings {
         let section = self.live.read().unwrap_or_default();
         LidarrConnectionSettings {
             url: section.url.clone(),
@@ -98,20 +72,22 @@ impl LidarrSettingsStore for ConfigLidarrSettings {
         }
     }
 
-    fn get_raw(&self) -> LidarrImportConnection {
+    /// The saved connection with its real key, for probes and imports.
+    /// The key sits in a [`Secret`], so it never reaches a response.
+    pub fn get_raw(&self) -> LidarrImportConnection {
         (**self.live.read().unwrap_or_default()).clone()
     }
 
-    fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()> {
+    /// Save; a masked key keeps the stored one. A failed save is logged,
+    /// and the read that follows shows what is stored.
+    pub async fn save(&self, settings: &LidarrConnectionSettings) {
         let incoming = LidarrImportConnection {
             url: settings.url.clone(),
             api_key: Secret::new(settings.api_key.clone()),
         };
-        Box::pin(async move {
-            if let Err(error) = self.store.save_secret(incoming).await {
-                tracing::warn!(%error, "lidarr settings save failed");
-            }
-        })
+        if let Err(error) = self.store.save_secret(incoming).await {
+            tracing::warn!(%error, "lidarr settings save failed");
+        }
     }
 }
 
@@ -192,231 +168,5 @@ impl ConfigSpotifySettings {
                 },
                 error => ImportsError::internal(&error),
             })
-    }
-}
-
-/// Imports follow store over the collections follow rows.
-pub struct CollectionsFollowBridge {
-    follows: CollectionsFollowStore,
-}
-
-impl CollectionsFollowBridge {
-    /// Bridge over the shared collections follow store.
-    pub fn new(follows: CollectionsFollowStore) -> Self {
-        Self { follows }
-    }
-}
-
-impl FollowStore for CollectionsFollowBridge {
-    fn existing_followed_lower<'a>(
-        &'a self,
-        user_id: &'a str,
-        candidates: &'a [String],
-    ) -> BoxFuture<'a, Result<HashSet<String>, String>> {
-        Box::pin(async move {
-            self.follows
-                .followed_among(user_id, candidates)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn follow_artists_bulk<'a>(
-        &'a self,
-        user_id: &'a str,
-        pairs: &'a [(String, String)],
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            let artists = pairs
-                .iter()
-                .map(|(mbid, name)| (mbid.clone(), Some(name.clone())))
-                .collect::<Vec<_>>();
-            self.follows
-                .follow(user_id, &artists)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn set_auto_download_intent_bulk<'a>(
-        &'a self,
-        user_id: &'a str,
-        mbids: &'a [String],
-        intent: bool,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            self.follows
-                .set_intent(user_id, mbids, intent)
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
-    }
-}
-
-/// Imports approval sink over the requests approval store.
-pub struct RequestsApprovalBridge {
-    approvals: FollowApprovalStore,
-}
-
-impl RequestsApprovalBridge {
-    /// Sink over the shared requests approval store.
-    pub fn new(approvals: FollowApprovalStore) -> Self {
-        Self { approvals }
-    }
-}
-
-impl ApprovalSink for RequestsApprovalBridge {
-    fn create_import_batch<'a>(
-        &'a self,
-        user_id: &'a str,
-        pairs: &'a [(String, String)],
-    ) -> BoxFuture<'a, Result<String, String>> {
-        Box::pin(async move {
-            let id = format!("batch-{}", uuid::Uuid::new_v4().simple());
-            self.approvals
-                .create_batch(&id, user_id, pairs, "lidarr_import", now_epoch())
-                .await
-                .map_err(|error| format!("{error:?}"))?;
-            Ok(id)
-        })
-    }
-}
-
-/// Requests verdict sink over the collections follow rows.
-pub struct FollowDecisionBridge {
-    follows: CollectionsFollowStore,
-}
-
-impl FollowDecisionBridge {
-    /// Sink over the shared collections follow store.
-    pub fn new(follows: CollectionsFollowStore) -> Self {
-        Self { follows }
-    }
-}
-
-impl FollowDecisionSink for FollowDecisionBridge {
-    fn arm_auto_download<'a>(
-        &'a self,
-        user_id: &'a str,
-        artist_mbid: &'a str,
-        artist_name: &'a str,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            self.follows
-                .arm(user_id, artist_mbid, artist_name)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn clear_auto_download<'a>(
-        &'a self,
-        user_id: &'a str,
-        artist_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            self.follows
-                .set_intent(user_id, &[artist_mbid.to_owned()], false)
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
-    }
-}
-
-/// Collections approval reads over the requests approval store.
-pub struct RequestsPendingSource {
-    approvals: FollowApprovalStore,
-}
-
-impl RequestsPendingSource {
-    /// Source over the shared requests approval store.
-    pub fn new(approvals: FollowApprovalStore) -> Self {
-        Self { approvals }
-    }
-}
-
-impl PendingApprovalsSource for RequestsPendingSource {
-    fn pending_approvals(&self) -> BoxFuture<'_, Result<Vec<PendingApproval>, String>> {
-        Box::pin(async move {
-            let rows = self
-                .approvals
-                .pending()
-                .await
-                .map_err(|error| format!("{error:?}"))?;
-            Ok(rows
-                .into_iter()
-                .map(|row| PendingApproval {
-                    user_id: row.user_id,
-                    user_name: row.user_name,
-                    artist_mbid: row.artist_mbid,
-                    artist_name: row.artist_name,
-                    requested_at: row.requested_at,
-                })
-                .collect())
-        })
-    }
-
-    fn pending_batches(&self) -> BoxFuture<'_, Result<Vec<PendingBatch>, String>> {
-        Box::pin(async move {
-            let rows = self
-                .approvals
-                .pending_batches()
-                .await
-                .map_err(|error| format!("{error:?}"))?;
-            Ok(rows
-                .into_iter()
-                .map(|batch| PendingBatch {
-                    batch_id: batch.batch_id,
-                    user_id: batch.user_id,
-                    user_name: batch.user_name,
-                    artists: batch.artists,
-                    requested_at: batch.requested_at,
-                })
-                .collect())
-        })
-    }
-}
-
-/// Collections seed sink over the requests approval store.
-pub struct ApprovalSeedBridge {
-    approvals: FollowApprovalStore,
-}
-
-impl ApprovalSeedBridge {
-    /// Sink over the shared requests approval store.
-    pub fn new(approvals: FollowApprovalStore) -> Self {
-        Self { approvals }
-    }
-}
-
-impl ApprovalSeedSink for ApprovalSeedBridge {
-    fn seed_approval<'a>(
-        &'a self,
-        user_id: &'a str,
-        artist_mbid: &'a str,
-        artist_name: &'a str,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            self.approvals
-                .file_pending(user_id, artist_mbid, artist_name, now_epoch())
-                .await
-                .map_err(|error| format!("{error:?}"))
-        })
-    }
-
-    fn withdraw_approval<'a>(
-        &'a self,
-        user_id: &'a str,
-        artist_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            self.approvals
-                .withdraw(user_id, artist_mbid)
-                .await
-                .map(|_| ())
-                .map_err(|error| format!("{error:?}"))
-        })
     }
 }

@@ -1,5 +1,6 @@
-//! View and approval handlers: active, history, wanted, the three approval
-//! queues, the personal-mix refresh route, and the status-sync sweep.
+//! View and approval handlers: active, history, wanted, the request and
+//! personal-mix approval queues, and the personal-mix refresh route. The
+//! auto-download approvals are the follows' routes.
 //!
 //! Route posture: reads need any authenticated principal (admins see every
 //! row, anyone else sees their own); every approval verb needs an admin;
@@ -17,9 +18,8 @@ use droppedneedle_kernel::extract::ValidQuery;
 
 use super::error::RequestsError;
 use super::models::{
-    ActionResponse, ActiveCountResponse, ActiveRequestsResponse, ApprovalBatchListResponse,
-    AutoDownloadApprovalsResponse, HistoryQuery, HistoryResponse, KindQuery,
-    PersonalMixApprovalsResponse, RefreshResponse, RequestKind, WantedActionResponse,
+    ActionResponse, ActiveCountResponse, ActiveRequestsResponse, HistoryQuery, HistoryResponse,
+    KindQuery, PersonalMixApprovalsResponse, RefreshResponse, RequestKind, WantedActionResponse,
     WantedResponse,
 };
 use super::service::RequestsService;
@@ -243,163 +243,6 @@ pub async fn wanted_seen_handler(
     Ok(Json(
         RequestsService::new(&state)
             .wanted_seen(&principal, &musicbrainz_id)
-            .await?,
-    ))
-}
-
-/// Pending auto-download approvals.
-/// `GET /api/v3/requests/auto-download-approvals`. Admin only.
-#[utoipa::path(
-    get,
-    tag = "requests",
-    path = "/api/v3/requests/auto-download-approvals",
-    responses((status = 200, body = AutoDownloadApprovalsResponse))
-)]
-pub async fn auto_download_approvals_handler(
-    State(state): State<RequestsState>,
-    admin: Admin,
-) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
-        RequestsService::new(&state)
-            .auto_download_approvals(&admin)
-            .await?,
-    ))
-}
-
-/// Approve one auto-download grant.
-/// `POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve`.
-/// Admin only.
-#[utoipa::path(
-    post,
-    tag = "requests",
-    path = "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve",
-    params(
-        ("user_id" = String, Path, description = "Requesting user id"),
-        ("artist_mbid" = String, Path, description = "Artist MBID"),
-    ),
-    responses((status = 200, body = ActionResponse))
-)]
-pub async fn approve_auto_download_handler(
-    State(state): State<RequestsState>,
-    admin: Admin,
-    Path((user_id, artist_mbid)): Path<(String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
-        RequestsService::new(&state)
-            .approve_auto_download(&admin, &user_id, &artist_mbid)
-            .await?,
-    ))
-}
-
-/// Reject one auto-download ask, keeping the follow.
-/// `POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject`.
-/// Admin only.
-#[utoipa::path(
-    post,
-    tag = "requests",
-    path = "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject",
-    params(
-        ("user_id" = String, Path, description = "Requesting user id"),
-        ("artist_mbid" = String, Path, description = "Artist MBID"),
-    ),
-    responses((status = 200, body = ActionResponse))
-)]
-pub async fn reject_auto_download_handler(
-    State(state): State<RequestsState>,
-    admin: Admin,
-    Path((user_id, artist_mbid)): Path<(String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
-        RequestsService::new(&state)
-            .reject_auto_download(&admin, &user_id, &artist_mbid)
-            .await?,
-    ))
-}
-
-/// Revoke one auto-download grant, keeping the follow.
-/// `POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke`.
-/// Admin only.
-#[utoipa::path(
-    post,
-    tag = "requests",
-    path = "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke",
-    params(
-        ("user_id" = String, Path, description = "Requesting user id"),
-        ("artist_mbid" = String, Path, description = "Artist MBID"),
-    ),
-    responses((status = 200, body = ActionResponse))
-)]
-pub async fn revoke_auto_download_handler(
-    State(state): State<RequestsState>,
-    admin: Admin,
-    Path((user_id, artist_mbid)): Path<(String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
-        RequestsService::new(&state)
-            .revoke_auto_download(&admin, &user_id, &artist_mbid)
-            .await?,
-    ))
-}
-
-/// Pending bulk-approval batches.
-/// `GET /api/v3/requests/auto-download-approval-batches`. Admin only.
-#[utoipa::path(
-    get,
-    tag = "requests",
-    path = "/api/v3/requests/auto-download-approval-batches",
-    responses((status = 200, body = ApprovalBatchListResponse))
-)]
-pub async fn auto_download_batches_handler(
-    State(state): State<RequestsState>,
-    admin: Admin,
-) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
-        RequestsService::new(&state)
-            .auto_download_batches(&admin)
-            .await?,
-    ))
-}
-
-/// Approve one bulk batch.
-/// `POST /api/v3/requests/auto-download-approval-batches/{batch_id}/approve`.
-/// Admin only.
-#[utoipa::path(
-    post,
-    tag = "requests",
-    path = "/api/v3/requests/auto-download-approval-batches/{batch_id}/approve",
-    params(("batch_id" = String, Path, description = "Batch id")),
-    responses((status = 200, body = ActionResponse))
-)]
-pub async fn approve_auto_download_batch_handler(
-    State(state): State<RequestsState>,
-    admin: Admin,
-    Path(batch_id): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
-        RequestsService::new(&state)
-            .approve_auto_download_batch(&admin, &batch_id)
-            .await?,
-    ))
-}
-
-/// Reject one bulk batch.
-/// `POST /api/v3/requests/auto-download-approval-batches/{batch_id}/reject`.
-/// Admin only.
-#[utoipa::path(
-    post,
-    tag = "requests",
-    path = "/api/v3/requests/auto-download-approval-batches/{batch_id}/reject",
-    params(("batch_id" = String, Path, description = "Batch id")),
-    responses((status = 200, body = ActionResponse))
-)]
-pub async fn reject_auto_download_batch_handler(
-    State(state): State<RequestsState>,
-    admin: Admin,
-    Path(batch_id): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
-        RequestsService::new(&state)
-            .reject_auto_download_batch(&admin, &batch_id)
             .await?,
     ))
 }

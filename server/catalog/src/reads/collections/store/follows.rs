@@ -1,24 +1,17 @@
-//! Follows over `user_followed_artists`, plus the new-release feed.
+//! Follow reads over `user_followed_artists`, plus the new-release feed.
 //!
-//! A follow row carries the auto-download intent; the approval verdict
-//! lives in `auto_download_approvals`, which the acquisition approval
-//! store alone writes. This store only reads the verdict to show a
-//! follow's state. Rows key on the lowercased MBID, as in v2, so imported
-//! follows and follows made here are one row.
+//! The follows module in acquisition alone writes the follow rows and
+//! their approval verdicts in `auto_download_approvals`; this store only
+//! reads them to show a follow's state. Rows key on the lowercased MBID.
 //!
 //! New releases come from `new_release_feed` joined to the user's follows;
 //! albums already in the library drop out of the to-do list (v2 rule).
 
-use std::collections::HashSet;
-
 use rusqlite::params;
 use sqlx::Row as _;
 
-use super::super::db::{CollectionsDb, StoreError, epoch_from_real, now_real, placeholders};
+use super::super::db::{CollectionsDb, StoreError, epoch_from_real, now_real};
 use crate::reads::library::definitions::owned_release_groups;
-
-/// Name used when a follow arrives without one (v2 placeholder).
-pub const UNKNOWN_ARTIST: &str = "Unknown Artist";
 
 /// Release groups the library owns, lowercased.
 const OWNED_RELEASE_GROUPS: &str = owned_release_groups!();
@@ -168,170 +161,6 @@ impl FollowStore {
             .map(follow_from_row)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| StoreError::read("follows.list", error))
-    }
-
-    /// Every follow with auto-download on and no approved verdict, oldest
-    /// ask first. Callers drop the roles that approve themselves.
-    pub async fn awaiting_verdict(&self) -> Result<Vec<FollowRow>, StoreError> {
-        let pool = self.db.pool()?;
-        let rows = sqlx::query(&format!(
-            "{FOLLOW_SELECT} WHERE f.auto_download = 1 \
-             AND (a.state IS NULL OR a.state = 'pending') \
-             ORDER BY COALESCE(a.requested_at, f.updated_at), f.user_id, f.artist_mbid_lower"
-        ))
-        .fetch_all(pool)
-        .await
-        .map_err(|error| StoreError::read("follows.awaiting_verdict", error))?;
-        rows.iter()
-            .map(follow_from_row)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| StoreError::read("follows.awaiting_verdict", error))
-    }
-
-    /// Lowercased MBIDs among `candidates` the user already follows.
-    pub async fn followed_among(
-        &self,
-        user_id: &str,
-        candidates: &[String],
-    ) -> Result<HashSet<String>, StoreError> {
-        let mut out = HashSet::new();
-        if candidates.is_empty() {
-            return Ok(out);
-        }
-        let pool = self.db.pool()?;
-        for chunk in candidates.chunks(500) {
-            let sql = format!(
-                "SELECT artist_mbid_lower FROM user_followed_artists \
-                 WHERE user_id = ? AND artist_mbid_lower IN ({})",
-                placeholders(chunk.len())
-            );
-            let mut query = sqlx::query_scalar::<_, String>(&sql).bind(user_id);
-            for mbid in chunk {
-                query = query.bind(mbid.to_lowercase());
-            }
-            out.extend(
-                query
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|error| StoreError::read("follows.followed_among", error))?,
-            );
-        }
-        Ok(out)
-    }
-
-    /// Follow artists. Re-following keeps the intent and the start date and
-    /// refreshes the name snapshot when one is given (v2 upsert).
-    pub async fn follow(
-        &self,
-        user_id: &str,
-        artists: &[(String, Option<String>)],
-    ) -> Result<(), StoreError> {
-        if artists.is_empty() {
-            return Ok(());
-        }
-        let user_id = user_id.to_owned();
-        let artists = artists.to_vec();
-        self.db
-            .write("follows.follow", move |tx| {
-                let now = now_real();
-                let mut stmt = tx.prepare(
-                    "INSERT INTO user_followed_artists (user_id, artist_mbid, \
-                     artist_mbid_lower, artist_name, auto_download, followed_at, updated_at) \
-                     VALUES (?1, ?2, ?3, COALESCE(?4, ?5), 0, ?6, ?6) \
-                     ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-                     artist_name = COALESCE(?4, artist_name), updated_at = ?6",
-                )?;
-                for (mbid, name) in &artists {
-                    stmt.execute(params![
-                        user_id,
-                        mbid,
-                        mbid.to_lowercase(),
-                        name,
-                        UNKNOWN_ARTIST,
-                        now
-                    ])?;
-                }
-                Ok(())
-            })
-            .await
-    }
-
-    /// Unfollow. Any approval row stays, so re-enabling keeps a grant (v2).
-    pub async fn unfollow(&self, user_id: &str, artist_mbid: &str) -> Result<bool, StoreError> {
-        let (user_id, lower) = (user_id.to_owned(), artist_mbid.to_lowercase());
-        self.db
-            .write("follows.unfollow", move |tx| {
-                let changed = tx.execute(
-                    "DELETE FROM user_followed_artists \
-                     WHERE user_id = ?1 AND artist_mbid_lower = ?2",
-                    params![user_id, lower],
-                )?;
-                Ok(changed > 0)
-            })
-            .await
-    }
-
-    /// Set the auto-download intent on followed rows. Unknown rows are
-    /// skipped; returns how many rows changed.
-    pub async fn set_intent(
-        &self,
-        user_id: &str,
-        artist_mbids: &[String],
-        enabled: bool,
-    ) -> Result<usize, StoreError> {
-        if artist_mbids.is_empty() {
-            return Ok(0);
-        }
-        let user_id = user_id.to_owned();
-        let lowers = artist_mbids
-            .iter()
-            .map(|mbid| mbid.to_lowercase())
-            .collect::<Vec<_>>();
-        self.db
-            .write("follows.set_intent", move |tx| {
-                let now = now_real();
-                let mut stmt = tx.prepare(
-                    "UPDATE user_followed_artists SET auto_download = ?1, updated_at = ?2 \
-                     WHERE user_id = ?3 AND artist_mbid_lower = ?4",
-                )?;
-                let mut changed = 0;
-                for lower in &lowers {
-                    changed += stmt.execute(params![i64::from(enabled), now, user_id, lower])?;
-                }
-                Ok(changed)
-            })
-            .await
-    }
-
-    /// An approval verdict arrived: turn auto-download on, following the
-    /// artist first when the ask came from a request rather than a follow
-    /// toggle. The verdict itself is the approval store's write.
-    pub async fn arm(
-        &self,
-        user_id: &str,
-        artist_mbid: &str,
-        artist_name: &str,
-    ) -> Result<(), StoreError> {
-        let (user_id, mbid, name) = (
-            user_id.to_owned(),
-            artist_mbid.to_owned(),
-            artist_name.to_owned(),
-        );
-        self.db
-            .write("follows.arm", move |tx| {
-                let now = now_real();
-                let lower = mbid.to_lowercase();
-                tx.execute(
-                    "INSERT INTO user_followed_artists (user_id, artist_mbid, \
-                     artist_mbid_lower, artist_name, auto_download, followed_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5) \
-                     ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-                     auto_download = 1, updated_at = ?5",
-                    params![user_id, mbid, lower, name, now],
-                )?;
-                Ok(())
-            })
-            .await
     }
 
     /// One page of release sightings for the user's follows, newest

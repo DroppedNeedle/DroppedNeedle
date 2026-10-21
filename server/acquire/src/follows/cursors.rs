@@ -1,4 +1,4 @@
-//! Follow-poll cursors over `user_followed_artists`.
+//! The follow poll's side of [`Follows`]: cursors and auto followers.
 //!
 //! Every followed artist has one cursor in `acquire_follow_cursors`, with
 //! its known release groups in `artist_known_releases`; a poll records the
@@ -9,8 +9,9 @@ use std::collections::HashSet;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
-use crate::db::AcquireDb;
+use super::{Follows, auto_download_live};
 use crate::flows::stores::{StoreFailure, lane_failure, read_failure};
+use crate::requests::ledger::ApprovalState;
 use droppedneedle_auth::Role;
 
 /// A follower whose auto-download is live, with the role on their account.
@@ -68,12 +69,6 @@ pub struct FeedRelease {
     pub first_release_date: Option<String>,
 }
 
-/// Durable follow-poll cursors over `user_followed_artists`.
-#[derive(Clone)]
-pub struct FollowStore {
-    db: AcquireDb,
-}
-
 /// One cursor as the pool reads it: lowercase key, MBID as followed,
 /// name, then the cursor columns (all null for a never-polled artist).
 type CursorRow = (
@@ -86,12 +81,7 @@ type CursorRow = (
     Option<String>,
 );
 
-impl FollowStore {
-    /// Cursors over one database.
-    pub fn new(db: AcquireDb) -> Self {
-        Self { db }
-    }
-
+impl Follows {
     /// Followed artists whose poll is due at `now`, never-polled first,
     /// then oldest due, capped at `limit`. Artists nobody follows any more
     /// drop out even when a cursor remains.
@@ -122,16 +112,15 @@ impl FollowStore {
     }
 
     /// Users whose auto-download is live for this artist, ordered by user
-    /// id so the owner pick is stable: intent on, and either a curator
-    /// role (they approve themselves) or an approved grant.
+    /// id so the owner pick is stable: intent on, and either a role that
+    /// approves itself or an approved grant.
     pub async fn auto_followers(&self, artist_mbid: &str) -> Result<Vec<Follower>, StoreFailure> {
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT f.user_id, u.role FROM user_followed_artists f \
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT f.user_id, u.role, a.state FROM user_followed_artists f \
              JOIN auth_users u ON u.id = f.user_id \
              LEFT JOIN auto_download_approvals a \
                ON a.user_id = f.user_id AND a.artist_mbid_lower = f.artist_mbid_lower \
              WHERE f.artist_mbid_lower = ?1 AND f.auto_download = 1 \
-               AND (u.role IN ('admin', 'trusted') OR a.state = 'approved') \
              ORDER BY f.user_id",
         )
         .bind(artist_mbid.to_lowercase())
@@ -140,9 +129,10 @@ impl FollowStore {
         .map_err(|error| read_failure("follows.auto_followers", error))?;
         Ok(rows
             .into_iter()
-            .map(|(user_id, role)| Follower {
-                user_id,
-                role: Role::from_stored(&role),
+            .filter_map(|(user_id, role, verdict)| {
+                let role = Role::from_stored(&role);
+                let verdict = verdict.as_deref().and_then(ApprovalState::parse);
+                auto_download_live(role, verdict).then_some(Follower { user_id, role })
             })
             .collect())
     }
@@ -213,7 +203,7 @@ impl FollowStore {
     }
 
     /// One artist's cursor, if it has been polled.
-    pub async fn get(&self, artist_mbid: &str) -> Result<Option<FollowCursor>, StoreFailure> {
+    pub async fn cursor(&self, artist_mbid: &str) -> Result<Option<FollowCursor>, StoreFailure> {
         let row: Option<CursorRow> = sqlx::query_as(
             "SELECT c.artist_mbid_lower, c.artist_mbid_lower, '', c.baselined, c.cursor_date, \
              c.next_poll_at, c.pending FROM acquire_follow_cursors c \
