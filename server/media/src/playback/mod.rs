@@ -45,8 +45,6 @@
 //! fan-out that would consume the registry's generation.
 
 pub mod error;
-#[cfg(any(test, feature = "test-support"))]
-pub mod fakes;
 pub mod forwarding;
 pub mod handlers;
 pub mod models;

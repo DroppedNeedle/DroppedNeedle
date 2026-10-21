@@ -34,8 +34,9 @@ use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority};
 
-use super::ports::{ReportTrack, ScrobbleLinks, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
+use super::ports::{ReportTrack, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
 use super::scrobble_models::{AdditionalInfo, Listen, SubmitListens, TrackMetadata};
+use super::sqlite::PlaybackStore;
 
 /// Jobs waiting per service. A burst past this answers "queue full".
 pub const FORWARD_QUEUE_DEPTH: usize = 512;
@@ -102,7 +103,7 @@ pub struct ForwardJob {
 pub struct ScrobbleForwarder {
     lastfm_tx: tokio::sync::mpsc::Sender<ForwardJob>,
     listenbrainz_tx: tokio::sync::mpsc::Sender<ForwardJob>,
-    links: Arc<dyn ScrobbleLinks>,
+    links: Arc<PlaybackStore>,
     lastfm_switch: Arc<dyn LastFmSwitch>,
 }
 
@@ -116,7 +117,7 @@ impl ScrobbleForwarder {
     /// Build the sink and the queues its worker drains. Last.fm forwards
     /// also need the admin's Last.fm master switch on.
     pub fn channel(
-        links: Arc<dyn ScrobbleLinks>,
+        links: Arc<PlaybackStore>,
         lastfm_switch: Arc<dyn LastFmSwitch>,
     ) -> (Self, ForwardQueues) {
         let (lastfm_tx, lastfm) = tokio::sync::mpsc::channel(FORWARD_QUEUE_DEPTH);

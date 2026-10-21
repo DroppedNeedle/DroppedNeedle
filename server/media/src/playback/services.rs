@@ -24,11 +24,11 @@ use super::{
         ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest, ServiceResult,
     },
     ports::{
-        DisplayNames, ListeningPrefs, PlayEvents, PlayHistory, PlayRecord, ProviderFailure,
-        RemoteReport, RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ScrobbleTargets,
-        ServiceOutcome, TrackCatalog, TrackInfo, VISIBILITY_FULL, VISIBILITY_OFFLINE,
-        VISIBILITY_TRACK_HIDDEN,
+        PlayEvents, PlayRecord, ProviderFailure, RemoteReport, RemoteReporters, ReportTrack,
+        ScrobblePrefs, ScrobbleSinks, ScrobbleTargets, ServiceOutcome, TrackInfo, VISIBILITY_FULL,
+        VISIBILITY_OFFLINE, VISIBILITY_TRACK_HIDDEN,
     },
+    sqlite::PlaybackStore,
 };
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::events::{NowPlayingEntry, NowPlayingSnapshot};
@@ -822,17 +822,17 @@ impl Default for MixedDedup {
 #[derive(Clone)]
 pub struct PlaybackDeps {
     /// Track resolution for reporting.
-    pub catalog: Arc<dyn TrackCatalog>,
+    pub catalog: Arc<PlaybackStore>,
     /// External scrobble sinks (Last.fm / ListenBrainz).
     pub sinks: Arc<dyn ScrobbleSinks>,
     /// Outbound remote attribution (Jellyfin / Navidrome / Plex).
     pub remotes: Arc<dyn RemoteReporters>,
     /// Local play-history source of truth.
-    pub history: Arc<dyn PlayHistory>,
+    pub history: Arc<PlaybackStore>,
     /// Per-user forwarding and visibility choices.
-    pub prefs: Arc<dyn ListeningPrefs>,
+    pub prefs: Arc<PlaybackStore>,
     /// Display-name resolution for presence entries.
-    pub names: Arc<dyn DisplayNames>,
+    pub names: Arc<PlaybackStore>,
     /// Bounded playback sessions.
     pub sessions: SessionStore,
     /// Live presence registry.

@@ -25,7 +25,7 @@ use crate::playback::reports::{ReportQueue, run_report_worker};
 use crate::playback::services::{
     MixedDedup, PlaybackDeps, PresenceRegistry, ScrobbleDedup, SessionStore,
 };
-use crate::playback::sqlite::PlaybackDb;
+use crate::playback::sqlite::PlaybackStore;
 use crate::remotes::adapter::ImportSink;
 use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
@@ -177,10 +177,10 @@ impl MediaSetup {
         let stream = StreamState {
             engine: Arc::new(gateway),
         };
-        let playback_db = Arc::new(PlaybackDb::new(db.clone(), ids.clone()));
+        let store = Arc::new(PlaybackStore::new(db.clone(), ids.clone()));
         let (queue, rx) = ReportQueue::channel();
         let (forwarder, forwards) =
-            ScrobbleForwarder::channel(playback_db.clone(), users.lastfm_switch.clone());
+            ScrobbleForwarder::channel(store.clone(), users.lastfm_switch.clone());
         let forwards = ForwardWorker::new(
             forwards,
             providers.listenbrainz.clone(),
@@ -188,12 +188,12 @@ impl MediaSetup {
             credentials,
         );
         let playback = PlaybackDeps {
-            catalog: playback_db.clone(),
+            catalog: store.clone(),
             sinks: Arc::new(forwarder),
             remotes: Arc::new(queue),
-            history: playback_db.clone(),
-            prefs: playback_db.clone(),
-            names: playback_db,
+            history: store.clone(),
+            prefs: store.clone(),
+            names: store,
             sessions: SessionStore::new(),
             presence: PresenceRegistry::new(platform.events.clone()),
             dedup: ScrobbleDedup::new(),

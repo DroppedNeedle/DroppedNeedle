@@ -1,12 +1,15 @@
-//! Playback reporting over the port fakes: the start, progress and stop
-//! lifecycle, the scrobble threshold rules, dedup across duplicate and
-//! mixed reports, presence visibility, the session gate, hidden faults,
-//! and the MBID warmup loop cadence. One journey runs the whole app on its
-//! own database: what a play from each kind of player leaves in history.
+//! Playback reporting on the playback store over a migrated database: the
+//! start, progress and stop lifecycle, the scrobble threshold rules, dedup
+//! across duplicate and mixed reports, presence visibility, the session
+//! gate, hidden faults, and the MBID warmup loop cadence. Only the outside
+//! services (the scrobble sinks and the media servers) are doubles. One
+//! journey runs the whole app on its own database: what a play from each
+//! kind of player leaves in history.
 
 use droppedneedle_media::playback;
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{
@@ -19,69 +22,257 @@ use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_kernel::clock::{Clock, ManualClock};
 use playback::PlaybackDeps;
-use playback::fakes::{
-    FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeRemotes, FakeSinks, FakeWarmup,
+use playback::ports::{
+    ProviderFailure, RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets,
+    ServiceOutcome,
 };
-use playback::ports::ScrobblePrefs;
 use playback::services::{
     MixedDedup, PresenceRegistry, SESSION_TTL_SECS, ScrobbleDedup, SessionKey, SessionStore,
     meets_subsonic_threshold, presence_key, should_scrobble_native, submit_session_scrobble,
     subsonic_scrobble_threshold_ms,
 };
-use playback::warmup::{self, WarmupScope};
+use playback::sqlite::PlaybackStore;
+use playback::warmup::{self, WarmupScope, WarmupStats};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::TestApp;
 use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::compat::{CompatApp, PLAYER, named, rest};
+use crate::common::{ScratchDir, TestApp};
 
 const NOW: i64 = 1_790_000_000;
+
+/// Last.fm and ListenBrainz: records every forward and accepts it.
+#[derive(Default)]
+struct FakeSinks {
+    now_playing: Mutex<Vec<ReportTrack>>,
+    scrobbles: Mutex<Vec<ReportTrack>>,
+}
+
+impl FakeSinks {
+    fn now_playing_calls(&self) -> usize {
+        self.now_playing.lock().expect("lock").len()
+    }
+
+    fn scrobble_calls(&self) -> usize {
+        self.scrobbles.lock().expect("lock").len()
+    }
+
+    fn accept(
+        seen: &Mutex<Vec<ReportTrack>>,
+        track: &ReportTrack,
+        targets: ScrobbleTargets,
+    ) -> HashMap<String, ServiceOutcome> {
+        seen.lock().expect("lock").push(track.clone());
+        let accepted = ServiceOutcome {
+            success: true,
+            error: None,
+        };
+        [
+            ("lastfm", targets.lastfm),
+            ("listenbrainz", targets.listenbrainz),
+        ]
+        .into_iter()
+        .filter(|(_, wanted)| *wanted)
+        .map(|(service, _)| (service.to_owned(), accepted.clone()))
+        .collect()
+    }
+}
+
+impl ScrobbleSinks for FakeSinks {
+    fn report_now_playing(
+        &self,
+        _user_id: &str,
+        track: &ReportTrack,
+        targets: ScrobbleTargets,
+    ) -> HashMap<String, ServiceOutcome> {
+        Self::accept(&self.now_playing, track, targets)
+    }
+
+    fn submit_scrobble(
+        &self,
+        _user_id: &str,
+        track: &ReportTrack,
+        targets: ScrobbleTargets,
+    ) -> HashMap<String, ServiceOutcome> {
+        Self::accept(&self.scrobbles, track, targets)
+    }
+}
+
+/// The user's media servers: records every attribution call.
+#[derive(Default)]
+struct FakeRemotes {
+    calls: Mutex<Vec<(&'static str, String)>>,
+}
+
+impl FakeRemotes {
+    fn answer(&self, op: &'static str, source: &str) -> Result<(), ProviderFailure> {
+        self.calls
+            .lock()
+            .expect("lock")
+            .push((op, source.to_owned()));
+        Ok(())
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.lock().expect("lock").len()
+    }
+}
+
+impl RemoteReporters for FakeRemotes {
+    fn report_start(&self, source: &str, _report: &RemoteReport) -> Result<(), ProviderFailure> {
+        self.answer("start", source)
+    }
+
+    fn report_progress(&self, source: &str, _report: &RemoteReport) -> Result<(), ProviderFailure> {
+        self.answer("progress", source)
+    }
+
+    fn report_stop(&self, source: &str, _report: &RemoteReport) -> Result<(), ProviderFailure> {
+        self.answer("stop", source)
+    }
+
+    fn scrobble(&self, source: &str, _report: &RemoteReport) -> Result<(), ProviderFailure> {
+        self.answer("scrobble", source)
+    }
+}
+
+/// The listeners the rig knows, one library track ("Roads", four minutes,
+/// with a recording and a matched release group), and the first listener
+/// forwarding to both scrobble services.
+const SEED: &str = "\
+    INSERT INTO auth_users (id, display_name, created_at) VALUES \
+     ('user-1', 'Listener One', ''), ('user-hidden', 'Hidden', ''), \
+     ('user-offline', 'Offline', ''), ('user-broken', 'Broken', ''); \
+    INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
+     navidrome_handles_external_scrobbles, updated_at) VALUES ('user-1', 1, 1, 0, ''); \
+    INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+     VALUES ('artist-1', 'Portishead', 'portishead', 'group', 0, 0); \
+    INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+     album_artist_id, grouping_source, created_at, updated_at) \
+     VALUES ('album-1', 'root-1', 'portishead/dummy', 'Dummy', 'dummy', 'artist-1', \
+     'manual', 0, 0); \
+    INSERT INTO local_album_external_identities \
+     (local_album_id, release_group_mbid, decision_source, selected_at) \
+     VALUES ('album-1', 'rg-mbid-1', 'manual', 1); \
+    INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+     path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+     artist_name, album_title, album_title_folded, embedded_recording_mbid, file_format, \
+     duration_seconds, ingest_source, imported_at, membership_source) \
+     VALUES ('track-1', 'album-1', 'root-1', '/music/roads.flac', 'roads.flac', 'hash-1', \
+     1024, 0, 'rev-1', 'Roads', 'roads', 'Portishead', 'Dummy', 'dummy', \
+     'recording-mbid-1', 'flac', 240.0, 'seed', 0, 'manual');";
 
 struct Rig {
     deps: PlaybackDeps,
     clock: ManualClock,
     sinks: Arc<FakeSinks>,
     remotes: Arc<FakeRemotes>,
-    history: Arc<FakeHistory>,
-    prefs: Arc<FakePrefs>,
+    store: Arc<PlaybackStore>,
+    scratch: ScratchDir,
 }
 
-fn rig_with_sinks(sinks: FakeSinks) -> Rig {
+fn rig() -> Rig {
+    let scratch = ScratchDir::new("playback-rig");
+    let path = scratch.join("app.db");
+    crate::common::migrated_db(&path);
+    rusqlite::Connection::open(&path)
+        .expect("seed connection")
+        .execute_batch(SEED)
+        .expect("the rig is seeded");
+    let store = Arc::new(PlaybackStore::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens"),
+        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+    ));
     let clock = ManualClock::at(NOW * 1000);
-    let sinks = Arc::new(sinks);
+    let sinks = Arc::new(FakeSinks::default());
     let remotes = Arc::new(FakeRemotes::default());
-    let history = Arc::new(FakeHistory::default());
-    let prefs = Arc::new(FakePrefs::default());
     let deps = PlaybackDeps {
-        catalog: Arc::new(FakeCatalog::with_tracks(vec![
-            FakeCatalog::sample_track(),
-            FakeCatalog::short_track(),
-        ])),
+        catalog: store.clone(),
         sinks: sinks.clone(),
         remotes: remotes.clone(),
-        history: history.clone(),
-        prefs: prefs.clone(),
-        names: Arc::new(FakeNames::default()),
+        history: store.clone(),
+        prefs: store.clone(),
+        names: store.clone(),
         sessions: SessionStore::new(),
         presence: PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new()),
         dedup: ScrobbleDedup::new(),
         mixed: MixedDedup::new(),
         clock: Arc::new(clock.clone()),
-        events: std::sync::Arc::new(droppedneedle_media::playback::ports::NoPlayEvents),
+        events: Arc::new(playback::ports::NoPlayEvents),
     };
     Rig {
         deps,
         clock,
         sinks,
         remotes,
-        history,
-        prefs,
+        store,
+        scratch,
     }
 }
 
-fn rig() -> Rig {
-    rig_with_sinks(FakeSinks::accepting())
+impl Rig {
+    fn sql(&self) -> rusqlite::Connection {
+        rusqlite::Connection::open(self.scratch.join("app.db")).expect("database opens")
+    }
+
+    /// Plays recorded so far, for every listener.
+    fn plays(&self) -> i64 {
+        self.sql()
+            .query_row("SELECT COUNT(*) FROM library_play_history", [], |row| {
+                row.get(0)
+            })
+            .expect("plays count")
+    }
+
+    /// Save the listener's forwarding toggles.
+    fn set_scrobble(&self, user_id: &str, lastfm: bool, listenbrainz: bool, navidrome: bool) {
+        self.sql()
+            .execute(
+                "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, \
+                 scrobble_to_listenbrainz, navidrome_handles_external_scrobbles, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, '') ON CONFLICT (user_id) DO UPDATE SET \
+                 scrobble_to_lastfm = ?2, scrobble_to_listenbrainz = ?3, \
+                 navidrome_handles_external_scrobbles = ?4",
+                rusqlite::params![user_id, lastfm, listenbrainz, navidrome],
+            )
+            .expect("prefs saved");
+    }
+
+    /// Save the listener's presence visibility.
+    fn set_visibility(&self, user_id: &str, visibility: &str) {
+        self.sql()
+            .execute(
+                "INSERT INTO user_listening_prefs (user_id, now_playing_visibility, updated_at) \
+                 VALUES (?1, ?2, '') ON CONFLICT (user_id) DO UPDATE SET \
+                 now_playing_visibility = ?2",
+                [user_id, visibility],
+            )
+            .expect("visibility saved");
+    }
+
+    /// Store a visibility that does not read as text, so the listener's
+    /// visibility read fails.
+    fn break_visibility(&self, user_id: &str) {
+        self.sql()
+            .execute(
+                "INSERT INTO user_listening_prefs (user_id, now_playing_visibility, updated_at) \
+                 VALUES (?1, X'00', '')",
+                [user_id],
+            )
+            .expect("broken visibility stored");
+    }
+
+    /// Link `service` for the listener, with `data` as the stored document.
+    fn link(&self, user_id: &str, service: &str, data: &str) {
+        self.sql()
+            .execute(
+                "INSERT INTO user_connections (user_id, service, connection_data, enabled, \
+                 created_at, updated_at) VALUES (?1, ?2, ?3, 1, '', '')",
+                [user_id, service, data],
+            )
+            .expect("link stored");
+    }
 }
 
 fn principal(user_id: &str) -> Principal {
@@ -213,10 +404,10 @@ async fn lifecycle_start_progress_stop_counts_the_play() {
     assert_eq!(body["accepted"], true);
     assert_eq!(body["scrobbled"], true);
 
-    assert_eq!(rig.history.records().len(), 1);
-    assert_eq!(rig.sinks.scrobble_calls().len(), 1);
-    assert_eq!(rig.sinks.now_playing_calls().len(), 1);
-    assert!(rig.remotes.calls().is_empty());
+    assert_eq!(rig.plays(), 1);
+    assert_eq!(rig.sinks.scrobble_calls(), 1);
+    assert_eq!(rig.sinks.now_playing_calls(), 1);
+    assert_eq!(rig.remotes.calls(), 0);
     assert_eq!(
         snapshot(&rig, "user-1").await["sessions"]
             .as_array()
@@ -237,8 +428,8 @@ async fn stop_below_threshold_skips_but_clears_presence() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["scrobbled"], false);
 
-    assert!(rig.history.records().is_empty());
-    assert!(rig.sinks.scrobble_calls().is_empty());
+    assert_eq!(rig.plays(), 0);
+    assert_eq!(rig.sinks.scrobble_calls(), 0);
     assert_eq!(
         snapshot(&rig, "user-1").await["sessions"]
             .as_array()
@@ -256,7 +447,7 @@ async fn stop_counts_once_per_session() {
     assert_eq!(first["scrobbled"], true);
     let (_, second) = stop(&rig, "user-1", "track-1", "local", Some(235_000)).await;
     assert_eq!(second["scrobbled"], false);
-    assert_eq!(rig.history.records().len(), 1);
+    assert_eq!(rig.plays(), 1);
 }
 
 #[tokio::test]
@@ -271,7 +462,7 @@ async fn restart_after_rewind_opens_a_fresh_session() {
     progress(&rig, "user-1", "track-1", Some(10_000), false).await;
     let (_, second) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
     assert_eq!(second["scrobbled"], true);
-    assert_eq!(rig.history.records().len(), 2);
+    assert_eq!(rig.plays(), 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -327,21 +518,14 @@ async fn duplicate_submits_dedup() {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(answer["accepted"], true);
     }
-    assert_eq!(rig.history.records().len(), 1);
-    assert_eq!(rig.sinks.scrobble_calls().len(), 1);
+    assert_eq!(rig.plays(), 1);
+    assert_eq!(rig.sinks.scrobble_calls(), 1);
 }
 
 #[tokio::test]
 async fn navidrome_delegation_skips_forwarding_but_records() {
     let rig = rig();
-    rig.prefs.set_scrobble(
-        "user-1",
-        ScrobblePrefs {
-            scrobble_to_lastfm: true,
-            scrobble_to_listenbrainz: true,
-            navidrome_handles_external: true,
-        },
-    );
+    rig.set_scrobble("user-1", true, true, true);
     let (status, answer, _) = call(
         app(&rig, Some("user-1")),
         "POST",
@@ -357,14 +541,18 @@ async fn navidrome_delegation_skips_forwarding_but_records() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(answer["accepted"], true);
-    assert_eq!(rig.history.records().len(), 1);
-    assert!(rig.sinks.scrobble_calls().is_empty());
+    assert_eq!(rig.plays(), 1);
+    assert_eq!(rig.sinks.scrobble_calls(), 0);
 }
 
 #[tokio::test]
 async fn mixed_report_dedup_counts_live_once() {
     let rig = rig();
-    let track = FakeCatalog::sample_track();
+    let track = rig
+        .deps
+        .catalog
+        .get_track("track-1")
+        .expect("the track is in the catalog");
     let key = SessionKey {
         user_id: "user-1".to_owned(),
         client: "web".to_owned(),
@@ -380,7 +568,7 @@ async fn mixed_report_dedup_counts_live_once() {
     );
     assert!(second.accepted);
     assert!(second.services.is_empty());
-    assert_eq!(rig.history.records().len(), 1);
+    assert_eq!(rig.plays(), 1);
 
     // Backdated plays bypass the mixed cache (v2 exact); a distinct play
     // time counts again.
@@ -395,7 +583,7 @@ async fn mixed_report_dedup_counts_live_once() {
         NOW,
     );
     assert!(third.accepted);
-    assert_eq!(rig.history.records().len(), 2);
+    assert_eq!(rig.plays(), 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -405,9 +593,9 @@ async fn mixed_report_dedup_counts_live_once() {
 #[tokio::test]
 async fn presence_visibility_redacts_and_omits() {
     let rig = rig();
-    rig.prefs.set_visibility("user-hidden", "track_hidden");
-    rig.prefs.set_visibility("user-offline", "offline");
-    rig.prefs.fail_visibility("user-broken");
+    rig.set_visibility("user-hidden", "track_hidden");
+    rig.set_visibility("user-offline", "offline");
+    rig.break_visibility("user-broken");
     for user in ["user-hidden", "user-offline", "user-broken"] {
         let (status, _, _) = call(
             app(&rig, Some(user)),
@@ -491,15 +679,18 @@ async fn warmup_loops_use_honest_cadences() {
         (WarmupScope::Navidrome, Duration::from_secs(12)),
         (WarmupScope::Plex, Duration::from_secs(15)),
     ] {
-        let fake = Arc::new(FakeWarmup::default());
-        let passes: Arc<std::sync::Mutex<Vec<Instant>>> = Arc::default();
+        let passes: Arc<Mutex<Vec<Instant>>> = Arc::default();
         let started = Instant::now();
-        let (work_fake, work_passes) = (fake.clone(), passes.clone());
+        let work_passes = passes.clone();
         warmup::start(&supervisor, scope, move || {
-            let (fake, passes) = (work_fake.clone(), work_passes.clone());
+            let passes = work_passes.clone();
             async move {
                 passes.lock().expect("lock").push(Instant::now());
-                fake.run(scope)
+                Ok::<_, String>(WarmupStats {
+                    scope: scope.key(),
+                    warmed: 2,
+                    pruned: 1,
+                })
             }
         })
         .expect("warmup starts");
@@ -522,7 +713,7 @@ async fn warmup_loops_use_honest_cadences() {
                 assert!(std::time::Instant::now() < bound, "Jellyfin warms once");
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            assert_eq!(fake.passes(), vec![scope.key().to_owned()]);
+            assert_eq!(passes.lock().expect("lock").len(), 1);
         } else {
             let gap = at[1].duration_since(at[0]);
             assert!(
@@ -538,7 +729,7 @@ async fn warmup_loops_use_honest_cadences() {
 #[tokio::test]
 async fn compat_now_playing_serves_full_sessions_only() {
     let rig = rig();
-    rig.prefs.set_visibility("user-hidden", "track_hidden");
+    rig.set_visibility("user-hidden", "track_hidden");
     start(&rig, "user-1", "track-1", "local").await;
     start(&rig, "user-hidden", "track-1", "local").await;
 
@@ -551,18 +742,6 @@ async fn compat_now_playing_serves_full_sessions_only() {
 // ---------------------------------------------------------------------------
 // Scrobble forwarding
 // ---------------------------------------------------------------------------
-
-/// Every user has ListenBrainz linked; nobody has Last.fm.
-struct ListenBrainzOnly;
-
-impl playback::ports::ScrobbleLinks for ListenBrainzOnly {
-    fn linked(&self, _user_id: &str) -> playback::ports::ScrobbleTargets {
-        playback::ports::ScrobbleTargets {
-            lastfm: false,
-            listenbrainz: true,
-        }
-    }
-}
 
 /// One fixed ListenBrainz token per user.
 struct FixedToken;
@@ -589,18 +768,6 @@ impl playback::forwarding::ScrobbleCredentials for FixedToken {
                 session_key: "lfm-session".to_owned(),
             })
         })
-    }
-}
-
-/// Links Last.fm only.
-struct LastFmOnly;
-
-impl playback::ports::ScrobbleLinks for LastFmOnly {
-    fn linked(&self, _user_id: &str) -> playback::ports::ScrobbleTargets {
-        playback::ports::ScrobbleTargets {
-            lastfm: true,
-            listenbrainz: false,
-        }
     }
 }
 
@@ -639,8 +806,10 @@ async fn a_scrobble_reaches_listenbrainz_once() {
         let _ = axum::serve(listener, sink).await;
     });
 
+    let mut rig = rig();
+    rig.link("user-1", "listenbrainz", "sealed");
     let (forwarder, rx) = ScrobbleForwarder::channel(
-        Arc::new(ListenBrainzOnly),
+        rig.store.clone(),
         Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
     );
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
@@ -658,7 +827,6 @@ async fn a_scrobble_reaches_listenbrainz_once() {
         Arc::new(FixedToken),
     );
     let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
-    let mut rig = rig();
     rig.deps.sinks = Arc::new(forwarder);
     let request = ScrobbleSubmitRequest {
         track_name: "Roads".to_owned(),
@@ -704,7 +872,6 @@ async fn a_switched_off_listenbrainz_keeps_the_listen_for_later() {
     use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
     use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
     use playback::forwarding::{ForwardWorker, ScrobbleForwarder};
-    use playback::ports::{ReportTrack, ScrobbleSinks as _, ScrobbleTargets};
 
     let wire = Arc::new(ScriptedWire::new());
     let submit = format!("{DEFAULT_BASE_URL}/1/submit-listens");
@@ -732,8 +899,10 @@ async fn a_switched_off_listenbrainz_keeps_the_listen_for_later() {
             ..droppedneedle_providers::ProviderEndpoints::closed()
         },
     );
+    let rig = rig();
+    rig.link("user-1", "listenbrainz", "sealed");
     let (forwarder, rx) = ScrobbleForwarder::channel(
-        Arc::new(ListenBrainzOnly),
+        rig.store.clone(),
         Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
     );
     let worker = ForwardWorker::new(
@@ -784,7 +953,6 @@ async fn a_scrobble_last_fm_turns_away_for_now_is_delivered_later() {
     use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
     use droppedneedle_providers::lastfm::DEFAULT_BASE_URL;
     use playback::forwarding::{ForwardWorker, ScrobbleForwarder};
-    use playback::ports::{ReportTrack, ScrobbleSinks as _, ScrobbleTargets};
 
     let wire = Arc::new(ScriptedWire::new());
     for body in [
@@ -808,8 +976,10 @@ async fn a_scrobble_last_fm_turns_away_for_now_is_delivered_later() {
             ..droppedneedle_providers::ProviderEndpoints::closed()
         },
     );
+    let rig = rig();
+    rig.link("user-1", "lastfm", r#"{"session_key": "sealed"}"#);
     let (forwarder, rx) = ScrobbleForwarder::channel(
-        Arc::new(LastFmOnly),
+        rig.store.clone(),
         Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
     );
     let worker = ForwardWorker::new(

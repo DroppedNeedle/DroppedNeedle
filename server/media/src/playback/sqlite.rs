@@ -1,10 +1,12 @@
-//! Production playback ports over the SQLite schema.
+//! The playback store: everything reporting reads and writes in the
+//! database.
 //!
-//! The reporting traits are synchronous, so these stores use the blocking
+//! The reporting services are synchronous, so the store uses the blocking
 //! forms of [`Db`]: reads go through the request read pool and a play is
 //! one background write on the writer lane. Catalog reads hit
 //! `local_tracks`, plays land in `library_play_history`, prefs read
-//! `user_listening_prefs`, and display names resolve from `auth_users`.
+//! `user_listening_prefs`, links read `user_connections`, and display
+//! names resolve from `auth_users`.
 //!
 //! Every call runs through [`off_worker`], which moves a multi-threaded
 //! runtime's other tasks off the current thread before it waits on the
@@ -23,20 +25,81 @@ use droppedneedle_library::repairs::plays::{Matched, PlayKeys, match_play};
 use rusqlite::OptionalExtension;
 
 use super::ports::{
-    DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, ScrobbleLinks,
-    ScrobblePrefs, ScrobbleTargets, TrackCatalog, TrackInfo, VISIBILITY_FULL,
+    PlayRecord, ProviderFailure, ScrobblePrefs, ScrobbleTargets, TrackInfo, VISIBILITY_FULL,
 };
 
-/// Production playback stores over the database.
-pub struct PlaybackDb {
+/// Playback's reads and writes over the database.
+pub struct PlaybackStore {
     db: Db,
     ids: Arc<dyn IdGenerator>,
 }
 
-impl PlaybackDb {
+impl PlaybackStore {
     /// Playback reads and writes on `db`.
     pub fn new(db: Db, ids: Arc<dyn IdGenerator>) -> Self {
         Self { db, ids }
+    }
+
+    /// Resolve one track for reporting. An unknown id, or a read that
+    /// failed, is `None` (the handler 404s); the catalog never fails a
+    /// report.
+    pub fn get_track(&self, track_id: &str) -> Option<TrackInfo> {
+        off_worker(|| or_logged("playback-track", self.read_track(track_id), || None))
+    }
+
+    /// Record one play for the user. Every accepted play lands here
+    /// whatever the user linked (v2 `PlayHistoryStore` rule).
+    pub fn record(&self, user_id: &str, record: &PlayRecord) {
+        off_worker(|| self.write_play(user_id, record));
+    }
+
+    /// The user's external-forwarding toggles; the column defaults when
+    /// the user saved none or the read failed.
+    pub fn scrobble_prefs(&self, user_id: &str) -> ScrobblePrefs {
+        off_worker(|| {
+            or_logged(
+                "playback-scrobble-prefs",
+                self.read_scrobble_prefs(user_id),
+                default_scrobble_prefs,
+            )
+        })
+    }
+
+    /// The user's presence visibility. Fallible so a failed read redacts
+    /// fail-closed instead of failing the report (v2
+    /// `NowPlayingService._load_visibility` rule).
+    pub fn visibility(&self, user_id: &str) -> Result<String, ProviderFailure> {
+        off_worker(|| {
+            self.read_visibility(user_id).map_err(|error| {
+                tracing::warn!(read = "playback-visibility", %error, "playback read failed");
+                ProviderFailure(error.to_string())
+            })
+        })
+    }
+
+    /// The scrobble services the user linked; a failed read reads as
+    /// unlinked.
+    pub fn linked(&self, user_id: &str) -> ScrobbleTargets {
+        off_worker(|| {
+            or_logged(
+                "playback-scrobble-links",
+                self.read_links(user_id),
+                ScrobbleTargets::default,
+            )
+        })
+    }
+
+    /// The name presence entries show for the user: the display name, else
+    /// the username, else the id.
+    pub fn display_name(&self, user_id: &str) -> String {
+        off_worker(|| {
+            or_logged(
+                "playback-display-name",
+                self.read_display_name(user_id),
+                || None,
+            )
+            .unwrap_or_else(|| user_id.to_owned())
+        })
     }
 }
 
@@ -60,13 +123,7 @@ fn or_logged<T>(read: &'static str, result: Result<T, DbError>, fallback: impl F
     })
 }
 
-impl TrackCatalog for PlaybackDb {
-    fn get_track(&self, track_id: &str) -> Option<TrackInfo> {
-        off_worker(|| or_logged("playback-track", self.read_track(track_id), || None))
-    }
-}
-
-impl PlaybackDb {
+impl PlaybackStore {
     /// The track a local id names now: an id that continued into another
     /// track reads as that track (retired ids stay aliases).
     fn read_track(&self, track_id: &str) -> Result<Option<TrackInfo>, DbError> {
@@ -110,15 +167,7 @@ impl PlaybackDb {
             Ok(track)
         })
     }
-}
 
-impl PlayHistory for PlaybackDb {
-    fn record(&self, user_id: &str, record: &PlayRecord) {
-        off_worker(|| self.write_play(user_id, record));
-    }
-}
-
-impl PlaybackDb {
     /// Insert one play as a background write. A play the lane refuses is
     /// logged with what it was, never dropped silently.
     ///
@@ -217,28 +266,7 @@ fn default_scrobble_prefs() -> ScrobblePrefs {
     }
 }
 
-impl ListeningPrefs for PlaybackDb {
-    fn scrobble_prefs(&self, user_id: &str) -> ScrobblePrefs {
-        off_worker(|| {
-            or_logged(
-                "playback-scrobble-prefs",
-                self.read_scrobble_prefs(user_id),
-                default_scrobble_prefs,
-            )
-        })
-    }
-
-    fn visibility(&self, user_id: &str) -> Result<String, ProviderFailure> {
-        off_worker(|| {
-            self.read_visibility(user_id).map_err(|error| {
-                tracing::warn!(read = "playback-visibility", %error, "playback read failed");
-                ProviderFailure(error.to_string())
-            })
-        })
-    }
-}
-
-impl PlaybackDb {
+impl PlaybackStore {
     fn read_scrobble_prefs(&self, user_id: &str) -> Result<ScrobblePrefs, DbError> {
         self.db.read_blocking("playback-scrobble-prefs", |conn| {
             let prefs = conn
@@ -273,21 +301,7 @@ impl PlaybackDb {
             Ok(visibility.unwrap_or_else(|| VISIBILITY_FULL.to_owned()))
         })
     }
-}
 
-impl ScrobbleLinks for PlaybackDb {
-    fn linked(&self, user_id: &str) -> ScrobbleTargets {
-        off_worker(|| {
-            or_logged(
-                "playback-scrobble-links",
-                self.read_links(user_id),
-                ScrobbleTargets::default,
-            )
-        })
-    }
-}
-
-impl PlaybackDb {
     /// Linked scrobble services from `user_connections`: a ListenBrainz
     /// row (its document is sealed whole, so presence is the signal) and
     /// a Last.fm row whose plain document carries a session key. A failed
@@ -324,22 +338,7 @@ impl PlaybackDb {
         }
         Ok(targets)
     }
-}
 
-impl DisplayNames for PlaybackDb {
-    fn display_name(&self, user_id: &str) -> String {
-        off_worker(|| {
-            or_logged(
-                "playback-display-name",
-                self.read_display_name(user_id),
-                || None,
-            )
-            .unwrap_or_else(|| user_id.to_owned())
-        })
-    }
-}
-
-impl PlaybackDb {
     /// The user's display name, else their username; `None` when neither
     /// is set or the user is gone.
     fn read_display_name(&self, user_id: &str) -> Result<Option<String>, DbError> {

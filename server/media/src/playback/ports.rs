@@ -1,13 +1,11 @@
-//! Ports behind playback reporting.
+//! Ports and shared types of playback reporting.
 //!
-//! Services reach the outside world through these traits: the catalog for
-//! track resolution, the scrobble sinks for Last.fm/ListenBrainz forwarding,
-//! the remote reporters for Jellyfin/Navidrome/Plex session attribution, the
-//! history store for the local source of truth, and the prefs for per-user
-//! forwarding and visibility choices. Tests run these on fakes (see
-//! `fakes.rs`); production binds the SQLite stores in `sqlite.rs` behind
-//! the same traits. Every fallible method returns a plain
-//! string cause: provider detail stays in the log, never on the wire.
+//! Only what lies outside the process sits behind a trait here: the
+//! scrobble sinks (Last.fm and ListenBrainz), the remote reporters (the
+//! user's media servers) and the play listeners (the plugins host, another
+//! area). The database side is the concrete store in `sqlite.rs`. Every
+//! fallible method returns a plain string cause: provider detail stays in
+//! the log, never on the wire.
 
 use std::collections::HashMap;
 
@@ -38,13 +36,6 @@ pub struct TrackInfo {
     pub recording_mbid: Option<String>,
     /// Release-group MBID, when known.
     pub rg_mbid: Option<String>,
-}
-
-/// Catalog lookups for reporting. Unknown ids resolve to `None` (the
-/// handler 404s); the catalog itself never fails a report.
-pub trait TrackCatalog: Send + Sync {
-    /// Resolve one track for reporting.
-    fn get_track(&self, track_id: &str) -> Option<TrackInfo>;
 }
 
 /// One play, by name, for external forwarding.
@@ -97,7 +88,7 @@ impl ScrobbleTargets {
 /// External scrobble sinks (Last.fm / ListenBrainz). Sinks forward only to
 /// the `targets` asked for, and only for accounts the user linked. The map
 /// key is the service name; an empty map means no linked account, not a
-/// failure.
+/// failure. A trait because it stands for two outside services.
 pub trait ScrobbleSinks: Send + Sync {
     /// Forward a now-playing report for the user's linked accounts.
     fn report_now_playing(
@@ -113,13 +104,6 @@ pub trait ScrobbleSinks: Send + Sync {
         track: &ReportTrack,
         targets: ScrobbleTargets,
     ) -> HashMap<String, ServiceOutcome>;
-}
-
-/// Which scrobble services a user has linked. Synchronous like the other
-/// playback ports; a failed read reads as unlinked.
-pub trait ScrobbleLinks: Send + Sync {
-    /// The user's linked services.
-    fn linked(&self, user_id: &str) -> ScrobbleTargets;
 }
 
 /// One outbound session report to a remote music server.
@@ -139,7 +123,8 @@ pub struct RemoteReport {
 
 /// Outbound session attribution to Jellyfin/Navidrome/Plex. Local and
 /// YouTube plays have no upstream (v2 only ever reports remote plays to
-/// their own server), so production no-ops those sources.
+/// their own server), so production no-ops those sources. A trait because
+/// it stands for the user's media servers, outside the process.
 pub trait RemoteReporters: Send + Sync {
     /// Report a playback start to `source`.
     fn report_start(&self, source: &str, report: &RemoteReport) -> Result<(), ProviderFailure>;
@@ -180,7 +165,8 @@ pub struct PlayRecord {
 /// Listeners for accepted plays (plugins). Called after dedup, the
 /// short-track gate and Navidrome delegation, whatever the user's Last.fm
 /// and ListenBrainz choices are. Must not block: implementations hand the
-/// play off and return.
+/// play off and return. A trait because the listener is the plugins host,
+/// another area.
 pub trait PlayEvents: Send + Sync {
     /// One play was accepted for `user_id`.
     fn play_accepted(&self, user_id: &str, report: &ReportTrack, played_at: i64);
@@ -192,13 +178,6 @@ pub struct NoPlayEvents;
 
 impl PlayEvents for NoPlayEvents {
     fn play_accepted(&self, _user_id: &str, _report: &ReportTrack, _played_at: i64) {}
-}
-
-/// Local play-history store. Every accepted play lands here regardless of
-/// external linkage (v2 `PlayHistoryStore` rule).
-pub trait PlayHistory: Send + Sync {
-    /// Record one play for the user.
-    fn record(&self, user_id: &str, record: &PlayRecord);
 }
 
 /// Per-user external-forwarding choices (v2 listening prefs, scrobble half).
@@ -219,21 +198,3 @@ pub const VISIBILITY_FULL: &str = "full";
 pub const VISIBILITY_TRACK_HIDDEN: &str = "track_hidden";
 /// Absent from the shared feed entirely.
 pub const VISIBILITY_OFFLINE: &str = "offline";
-
-/// Per-user listening preferences: forwarding toggles plus the presence
-/// visibility behind the shared feed.
-pub trait ListeningPrefs: Send + Sync {
-    /// External-forwarding toggles for the user.
-    fn scrobble_prefs(&self, user_id: &str) -> ScrobblePrefs;
-    /// Presence visibility for the user. Fallible so a transient store
-    /// error redacts fail-closed instead of failing the report (v2
-    /// `NowPlayingService._load_visibility` rule).
-    fn visibility(&self, user_id: &str) -> Result<String, ProviderFailure>;
-}
-
-/// Display-name resolution for presence entries. Kept behind a port so the
-/// playback code never joins the user store itself.
-pub trait DisplayNames: Send + Sync {
-    /// Display name for the user.
-    fn display_name(&self, user_id: &str) -> String;
-}

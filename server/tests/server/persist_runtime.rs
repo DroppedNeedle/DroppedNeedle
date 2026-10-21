@@ -810,11 +810,11 @@ async fn chunked_write_commits_and_cancels() {
 #[tokio::test]
 async fn a_play_outlasting_the_request_wait_is_still_recorded() {
     use droppedneedle_kernel::db::{FOREGROUND_WAIT_LIMIT, WATCH_TICK};
-    use droppedneedle_media::playback::ports::{PlayHistory as _, PlayRecord};
-    use droppedneedle_media::playback::sqlite::PlaybackDb;
+    use droppedneedle_media::playback::ports::PlayRecord;
+    use droppedneedle_media::playback::sqlite::PlaybackStore;
 
     let (runtime, _dir) = open_scratch("play-busy").await;
-    let history = PlaybackDb::new(
+    let history = PlaybackStore::new(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
     );
