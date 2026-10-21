@@ -578,6 +578,58 @@ async fn upgrade_sweep_gates_and_cap() {
     assert_eq!(grabs[0].user_id, "admin-1");
 }
 
+// A file's release-group tag stands in for the album's identity only
+// while the album has none: an album identified as another group whose
+// files still carry the old tag does not make that group held.
+#[tokio::test]
+async fn presence_trusts_a_tag_only_for_an_unidentified_album() {
+    let db = AcquireDb::scratch().unwrap();
+    db.write("test.seed_library", |tx| {
+        tx.execute_batch(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+               VALUES ('ar1', 'A', 'a', 'person', 0, 0);",
+        )?;
+        for (album, tag) in [("identified", "rg-x"), ("unidentified", "rg-u")] {
+            tx.execute(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                   album_artist_id, album_artist_name, grouping_source, created_at, updated_at)
+                   VALUES (?1, 'r1', ?1, 'T', 't', 'ar1', 'A', 'automatic', 0, 0)",
+                [album],
+            )?;
+            tx.execute(
+                "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+                   path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+                   album_title, album_title_folded, file_format, bit_rate, ingest_source,
+                   imported_at, membership_source, availability, embedded_release_group_mbid)
+                   VALUES (?1, ?2, 'r1', ?1, ?1, ?1, 1, 0, 's', 'T', 't', 'T', 't', 'mp3', 320,
+                     'scan', 0, 'automatic', 'indexed', ?3)",
+                [format!("t-{album}"), album.to_owned(), tag.to_owned()],
+            )?;
+        }
+        tx.execute_batch(
+            "INSERT INTO local_album_external_identities
+               (local_album_id, release_group_mbid, decision_source, selected_at)
+               VALUES ('identified', 'rg-y', 'automatic', 0);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let library = LibraryPresence::over_catalog(db.pool().clone());
+    assert!(
+        !library.contains("rg-x").await,
+        "an album identified as another group never holds its files' tag"
+    );
+    assert!(
+        library.contains("rg-y").await,
+        "the album's own group is held"
+    );
+    assert!(
+        library.contains("rg-u").await,
+        "an unidentified album's tag stands in for its identity"
+    );
+}
+
 // The sync loop waits its startup delay, runs a pass, waits the honest
 // interval and parks the job stopped on shutdown; a stop during the delay
 // still parks it stopped without running a pass.
