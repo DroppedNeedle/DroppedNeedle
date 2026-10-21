@@ -16,8 +16,18 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 use crate::db::AcquireDb;
+use droppedneedle_auth::Role;
 use droppedneedle_kernel::db::{DbError, map_sqlx_busy};
 use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, tier_rank};
+
+/// A follower whose auto-download is live, with the role on their account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Follower {
+    /// User id.
+    pub user_id: String,
+    /// Account role, for the quota check.
+    pub role: Role,
+}
 
 /// A flows store failure, already logged by the caller with its context.
 #[derive(Debug, thiserror::Error)]
@@ -142,9 +152,9 @@ impl FollowStore {
     /// Users whose auto-download is live for this artist, ordered by user
     /// id so the owner pick is stable: intent on, and either a curator
     /// role (they approve themselves) or an approved grant.
-    pub async fn auto_followers(&self, artist_mbid: &str) -> Result<Vec<String>, StoreFailure> {
-        sqlx::query_scalar(
-            "SELECT f.user_id FROM user_followed_artists f \
+    pub async fn auto_followers(&self, artist_mbid: &str) -> Result<Vec<Follower>, StoreFailure> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT f.user_id, u.role FROM user_followed_artists f \
              JOIN auth_users u ON u.id = f.user_id \
              LEFT JOIN auto_download_approvals a \
                ON a.user_id = f.user_id AND a.artist_mbid_lower = f.artist_mbid_lower \
@@ -155,7 +165,14 @@ impl FollowStore {
         .bind(artist_mbid.to_lowercase())
         .fetch_all(self.db.pool())
         .await
-        .map_err(|error| read_failure("follows.auto_followers", error))
+        .map_err(|error| read_failure("follows.auto_followers", error))?;
+        Ok(rows
+            .into_iter()
+            .map(|(user_id, role)| Follower {
+                user_id,
+                role: Role::from_stored(&role),
+            })
+            .collect())
     }
 
     /// Store one cursor after a poll, with its known set, and add the new

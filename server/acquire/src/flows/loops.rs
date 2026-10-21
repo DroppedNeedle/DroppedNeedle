@@ -21,19 +21,22 @@ use droppedneedle_kernel::jobs::{
     AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
 };
 
-use super::seams::{
-    CandidateSearch, DispatchKind, DispatchRequest, DownloadDispatch, FlowEvent, ObservedRelease,
-    ReleasePoll, TickSink,
-};
+use super::seams::{CandidateSearch, FlowEvent, ObservedRelease, ReleasePoll, TickSink};
 use super::stores::{
-    AdminDirectory, CutoffList, FeedRelease, FollowCursor, FollowStore, LibraryPresence,
+    AdminDirectory, CutoffList, FeedRelease, FollowCursor, FollowStore, Follower, LibraryPresence,
     PendingRelease, UpgradePolicy,
 };
+use crate::dispatch::{
+    DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
+};
+use crate::downloads::state::TaskStatus;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatch};
 use crate::requests::models::RequestKind;
+use crate::requests::quota::QuotaLedger;
 use crate::requests::sqlite::{RequestStore, WantedStore};
 use crate::search_jobs::store::JobStore;
+use droppedneedle_auth::Principal;
 use droppedneedle_catalog::reads::catalog::mapping::{should_include_release, type_set};
 use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
 use droppedneedle_kernel::runtime_config::Live;
@@ -137,7 +140,7 @@ pub struct WantedDeps {
     /// Candidate search.
     pub search: Arc<dyn CandidateSearch>,
     /// Download dispatch.
-    pub downloads: Arc<dyn DownloadDispatch>,
+    pub downloads: Arc<DownloadDispatch>,
     /// Library presence for satisfaction checks.
     pub library: Arc<LibraryPresence>,
     /// Durable ticks.
@@ -256,25 +259,29 @@ async fn check_watch(
                 });
                 return Ok(());
             }
-            let dispatch = DispatchRequest {
-                user_id: watch.user_id.clone(),
-                kind: DispatchKind::Album,
-                mbid: watch.key.clone(),
-                artist: watch.artist_name.clone(),
-                title: watch.album_title.clone(),
-                origin: "wanted".to_owned(),
+            let dispatch = album_dispatch(
+                &watch.user_id,
+                &watch.key,
+                &watch.artist_name,
+                &watch.album_title,
+                DispatchOrigin::Wanted,
                 // One dispatch per check slot: a crash between the dispatch
                 // and the reschedule answers the same task next time.
-                idempotency_key: Some(format!("wanted:{}:{}", watch.key, watch.check_count)),
-            };
+                Some(format!("wanted:{}:{}", watch.key, watch.check_count)),
+            );
             match deps.downloads.dispatch(&dispatch).await {
-                Ok(task_id) => {
+                Ok(outcome) => {
+                    let task_id = outcome.task_id().to_owned();
                     deps.ledger
                         .link_task(RequestKind::Album, &watch.key, &task_id, None)
                         .await?;
                     deps.watches
                         .record_check(&watch.key, 0, next(0), at, "dispatched")
                         .await?;
+                    if !outcome.started() {
+                        // Another download of the album is already working.
+                        return Ok(());
+                    }
                     deps.ticks.emit(
                         "wanted.dispatched",
                         &format!("wanted {} auto-dispatched as {task_id}", watch.key),
@@ -354,8 +361,8 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
                 continue;
             }
             if let Some(task_id) = row.task_id.as_deref() {
-                match deps.downloads.task_status(task_id).await {
-                    Ok(Some(status)) if matches!(status.as_str(), "downloading" | "processing") => {
+                match deps.downloads.task(task_id).await {
+                    Ok(Some(task)) if !task.status.is_terminal() => {
                         continue;
                     }
                     Ok(_) => {}
@@ -478,7 +485,9 @@ pub struct FollowDeps {
     /// Release-page provider seam.
     pub poll: Arc<dyn ReleasePoll>,
     /// Download dispatch.
-    pub downloads: Arc<dyn DownloadDispatch>,
+    pub downloads: Arc<DownloadDispatch>,
+    /// The followers' request and storage quotas.
+    pub quota: Arc<QuotaLedger>,
     /// Library presence: owned albums never enter the feed or download.
     pub library: Arc<LibraryPresence>,
     /// Durable ticks.
@@ -716,13 +725,14 @@ enum Queued {
 async fn queue_release(
     deps: &FollowDeps,
     cursor: &FollowCursor,
-    followers: &[String],
+    followers: &[Follower],
     release: &PendingRelease,
     now: i64,
 ) -> Queued {
-    let Some(owner) = followers.first() else {
+    let Some(follower) = followers.first() else {
         return Queued::Settled;
     };
+    let owner = &follower.user_id;
     if deps.library.contains(&release.rg_mbid).await {
         return Queued::Settled;
     }
@@ -735,17 +745,30 @@ async fn queue_release(
             return Queued::Retry;
         }
     }
-    let dispatch = DispatchRequest {
-        user_id: owner.clone(),
-        kind: DispatchKind::Album,
-        mbid: release.rg_mbid.clone(),
-        artist: cursor.artist_name.clone(),
-        title: release.title.clone(),
-        origin: "follow".to_owned(),
-        idempotency_key: Some(format!("follow:{}", release.rg_mbid.to_lowercase())),
-    };
+    match within_quota(deps, follower, now).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::info!(rg_mbid = %release.rg_mbid, owner,
+                "follower is over quota; holding the download for the next poll");
+            return Queued::Retry;
+        }
+        Err(error) => {
+            tracing::warn!(rg_mbid = %release.rg_mbid, owner, ?error,
+                "follower quota unreadable; retrying next poll");
+            return Queued::Retry;
+        }
+    }
+    let dispatch = album_dispatch(
+        owner,
+        &release.rg_mbid,
+        &cursor.artist_name,
+        &release.title,
+        DispatchOrigin::Follow,
+        Some(format!("follow:{}", release.rg_mbid.to_lowercase())),
+    );
     match deps.downloads.dispatch(&dispatch).await {
-        Ok(task_id) => {
+        Ok(DispatchOutcome::Active { .. }) => Queued::Settled,
+        Ok(DispatchOutcome::Dispatched { task_id }) => {
             deps.ticks.emit(
                 "follow.enqueued",
                 &format!("follow {} enqueued for {owner}", release.rg_mbid),
@@ -768,6 +791,66 @@ async fn queue_release(
                 "follow dispatch failed; retrying next poll");
             Queued::Retry
         }
+    }
+}
+
+/// Whether the follower may start one more download now: inside their
+/// request count for the window and their storage budget, as an ask of
+/// their own would be. Trusted and admin followers skip both.
+async fn within_quota(
+    deps: &FollowDeps,
+    follower: &Follower,
+    now: i64,
+) -> Result<bool, RequestsError> {
+    let principal = Principal::acting_for(&follower.user_id, follower.role, None);
+    if let Some(gate) = deps
+        .quota
+        .request_gate(principal.user_id(), principal.role(), 1)?
+    {
+        let used = deps
+            .quota
+            .count_in_window(principal.user_id(), gate.window_days, epoch(now))
+            .await?;
+        if used.saturating_add(gate.new_requests) > gate.limit {
+            return Ok(false);
+        }
+    }
+    match deps
+        .quota
+        .check_storage_admission(
+            principal.user_id(),
+            principal.role(),
+            DispatchOrigin::Follow,
+        )
+        .await
+    {
+        Ok(()) => Ok(true),
+        Err(RequestsError::StorageFull { .. }) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// One whole-album download.
+fn album_dispatch(
+    user_id: &str,
+    release_group_mbid: &str,
+    artist: &str,
+    title: &str,
+    origin: DispatchOrigin,
+    idempotency_key: Option<String>,
+) -> DispatchRequest {
+    DispatchRequest {
+        user_id: user_id.to_owned(),
+        target: DispatchTarget::Album {
+            release_group_mbid: release_group_mbid.to_owned(),
+        },
+        artist_name: artist.to_owned(),
+        title: title.to_owned(),
+        origin,
+        release_mbid: None,
+        wanted: Vec::new(),
+        planned_album: None,
+        idempotency_key,
     }
 }
 
@@ -807,7 +890,7 @@ pub struct SweepDeps {
     /// Admin directory for sweep ownership.
     pub admins: AdminDirectory,
     /// Download dispatch.
-    pub downloads: Arc<dyn DownloadDispatch>,
+    pub downloads: Arc<DownloadDispatch>,
     /// Durable ticks.
     pub ticks: Arc<dyn TickSink>,
 }
@@ -815,7 +898,8 @@ pub struct SweepDeps {
 /// Run one background-upgrade sweep: while upgrades are allowed
 /// and the scan is enabled, walk the cutoff-unmet worklist and enqueue at
 /// most `max_per_run` origin-`upgrade` grabs owned by the oldest admin.
-/// `AlreadyInLibrary` answers never count as enqueued; a poison item never
+/// An album with a live download is not grabbed again and does not count
+/// as enqueued; a poison item never
 /// starves its siblings (v2 `run_background_upgrade_sweep`).
 pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
     let Some(policy) = deps.policy.read() else {
@@ -844,17 +928,16 @@ pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
         if summary.enqueued >= policy.max_per_run {
             break;
         }
-        let dispatch = DispatchRequest {
-            user_id: owner.clone(),
-            kind: DispatchKind::Album,
-            mbid: item.rg_mbid.clone(),
-            artist: item.artist.clone(),
-            title: item.title.clone(),
-            origin: "upgrade".to_owned(),
-            idempotency_key: None,
-        };
-        match deps.downloads.dispatch_upgrade(&dispatch).await {
-            Ok(super::seams::UpgradeDispatch::Enqueued(task_id)) => {
+        let dispatch = album_dispatch(
+            &owner,
+            &item.rg_mbid,
+            &item.artist,
+            &item.title,
+            DispatchOrigin::Upgrade,
+            None,
+        );
+        match deps.downloads.dispatch(&dispatch).await {
+            Ok(DispatchOutcome::Dispatched { task_id }) => {
                 deps.ticks.emit(
                     "upgrade.enqueued",
                     &format!("upgrade {} enqueued as {task_id}", item.rg_mbid),
@@ -862,7 +945,7 @@ pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
                 );
                 summary.enqueued += 1;
             }
-            Ok(super::seams::UpgradeDispatch::AlreadyInLibrary) => {}
+            Ok(DispatchOutcome::Active { .. }) => {}
             Err(cause) => {
                 tracing::warn!(rg_mbid = %item.rg_mbid, %cause, "upgrade dispatch failed");
                 summary.errors += 1;
@@ -963,7 +1046,7 @@ pub struct SyncDeps {
     /// Request ledger.
     pub ledger: RequestStore,
     /// Download dispatch for task lookups.
-    pub downloads: Arc<dyn DownloadDispatch>,
+    pub downloads: Arc<DownloadDispatch>,
     /// Library presence for the album fallback.
     pub library: Arc<LibraryPresence>,
     /// Durable ticks.
@@ -972,14 +1055,13 @@ pub struct SyncDeps {
 
 /// Map a download task status onto a request status (v2
 /// `_TASK_TO_REQUEST_STATUS`, `requests_page_service.py`).
-pub fn map_task_status(task_status: &str) -> Option<&'static str> {
+pub fn map_task_status(task_status: TaskStatus) -> &'static str {
     match task_status {
-        "downloading" | "processing" => Some("downloading"),
-        "completed" => Some("imported"),
-        "partial" => Some("incomplete"),
-        "failed" => Some("failed"),
-        "cancelled" => Some("cancelled"),
-        _ => None,
+        TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing => "downloading",
+        TaskStatus::Completed => "imported",
+        TaskStatus::Partial => "incomplete",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Cancelled => "cancelled",
     }
 }
 
@@ -1080,19 +1162,23 @@ async fn sync_one(
     let at = epoch(now);
     let mut task_status = None;
     if let Some(task_id) = row.task_id.as_deref() {
-        task_status = deps.downloads.task_status(task_id).await?;
+        task_status = deps
+            .downloads
+            .task(task_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|task| task.status);
     }
     if task_status.is_none() && row.kind == RequestKind::Album {
         task_status = deps
             .downloads
             .active_task_for_album(&row.key)
-            .await?
-            .map(|view| view.status);
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|task| task.status);
     }
     if let Some(task_status) = task_status {
-        let Some(mapped) = map_task_status(&task_status) else {
-            return Ok(());
-        };
+        let mapped = map_task_status(task_status);
         if mapped == row.status {
             return Ok(());
         }
@@ -1114,7 +1200,11 @@ async fn sync_one(
                 summary.imported += 1;
                 deps.ticks.emit(
                     "request_fulfilled",
-                    &format!("request {} imported (task {task_status})", row.key),
+                    &format!(
+                        "request {} imported (task {})",
+                        row.key,
+                        task_status.as_str()
+                    ),
                     now,
                 );
                 deps.ticks.announce(fulfilled(row));

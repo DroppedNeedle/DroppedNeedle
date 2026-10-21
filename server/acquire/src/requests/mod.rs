@@ -5,16 +5,15 @@
 //! full path its utoipa annotation names, in the group of the `User`,
 //! `Curator` or `Admin` extractor it takes.
 //!
-//! Seams owned elsewhere: [`dispatch::DownloadDispatch`] (the downloads
-//! module implements durable fetch; intake only starts, cancels, and
-//! polls through it) and [`mix::PersonalMixBuilder`], which the refresh
+//! Reached elsewhere: [`crate::dispatch::DownloadDispatch`] (intake only
+//! starts, cancels, and reads downloads through it) and
+//! [`mix::PersonalMixBuilder`], which the refresh
 //! route and the daily sweep both drive. The wanted
 //! watcher loop shares the wanted rows through [`sqlite::WantedStore`].
 
 pub mod auth;
 pub mod bridges;
 pub mod discovery;
-pub mod dispatch;
 pub mod error;
 pub mod http;
 pub mod intake;

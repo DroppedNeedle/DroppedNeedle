@@ -8,13 +8,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::UnifiedDispatch;
+use droppedneedle_acquire::dispatch::{
+    DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
+};
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::manifest::{ManifestCodec, TrackPosition};
 use droppedneedle_acquire::downloads::sources::SourceHandle;
-use droppedneedle_acquire::requests::dispatch::{
-    DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch,
-};
 use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
 };
@@ -127,18 +126,18 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
         .join("settings");
     let settings =
         droppedneedle_acquire::settings::scratch_settings(&settings_dir).expect("settings open");
-    let dispatch = UnifiedDispatch::new(
+    let dispatch = DownloadDispatch::new(
         journal.clone(),
         Arc::new(UuidGenerator),
         staging.to_path_buf(),
         settings.live(),
     );
-    let outcome = DownloadDispatch::dispatch(
-        &dispatch,
-        &DispatchRequest {
+    let outcome = dispatch
+        .dispatch(&DispatchRequest {
             user_id: "u1".to_owned(),
-            kind: "track".to_owned(),
-            key: RECORDING.to_owned(),
+            target: DispatchTarget::Track {
+                recording_mbid: RECORDING.to_owned(),
+            },
             artist_name: "Massive Attack".to_owned(),
             title: "One Love".to_owned(),
             origin: DispatchOrigin::User,
@@ -146,10 +145,9 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
             wanted: Vec::new(),
             planned_album: None,
             idempotency_key: None,
-        },
-    )
-    .await
-    .expect("track dispatches");
+        })
+        .await
+        .expect("track dispatches");
     let DispatchOutcome::Dispatched { task_id } = outcome else {
         panic!("track was not dispatched: {outcome:?}");
     };

@@ -11,11 +11,9 @@ mod edition;
 
 use std::sync::Arc;
 
+use super::RequestsState;
 use super::auth::auto_approves;
 use super::bridges::FollowDecisionSink;
-use super::dispatch::{
-    DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTaskState,
-};
 use super::error::RequestsError;
 use super::ledger::{
     BeginOutcome, CANCELLABLE_STATUSES, CLEARABLE_STATUSES, RETRYABLE_STATUSES, RequestRecord,
@@ -35,8 +33,12 @@ use super::quota::QuotaLedger;
 use super::sqlite::{
     EditionStore, FollowApprovalStore, PersonalMixStore, RequestStore, WantedStore, WatchChange,
 };
-use super::{RequestsState, dispatch::DownloadDispatch};
 use crate::db::AcquireDb;
+use crate::dispatch::{
+    DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget,
+    DownloadDispatch,
+};
+use crate::downloads::state::TaskStatus;
 use crate::edition::chosen_edition;
 use droppedneedle_auth::{Admin, Principal};
 
@@ -56,8 +58,8 @@ pub struct RequestsService {
     store: RequestStore,
     /// Quota ledger.
     quota: Arc<QuotaLedger>,
-    /// Download-dispatch seam.
-    dispatch: Arc<dyn DownloadDispatch>,
+    /// Download dispatch.
+    dispatch: Arc<DownloadDispatch>,
     /// Wanted watches.
     wanted: WantedStore,
     /// Auto-download approvals.
@@ -684,7 +686,7 @@ impl RequestsService {
             .unwrap_or_else(|| admin.user_id().to_owned());
         let request = stored_dispatch(&claimed, DispatchOrigin::Approval, &owner);
         match self.dispatch.dispatch(&request).await {
-            Err(DispatchError::Validation(message)) => {
+            Err(DispatchError::Busy { operation }) => {
                 self.store
                     .restore_status(
                         kind,
@@ -694,10 +696,7 @@ impl RequestsService {
                         claimed.generation,
                     )
                     .await?;
-                Ok(ActionResponse {
-                    success: false,
-                    message,
-                })
+                Err(RequestsError::Busy { operation })
             }
             Err(DispatchError::Failed(cause)) => {
                 tracing::error!(%cause, "approved dispatch failed");
@@ -715,28 +714,13 @@ impl RequestsService {
                     message: format!("Approved but failed to start: {}", record_title(&record)),
                 })
             }
-            Ok(DispatchOutcome::AlreadyInLibrary) => {
-                self.store
-                    .update_status(
-                        kind,
-                        &mbid,
-                        STATUS_IMPORTED,
-                        Some(now),
-                        Some(claimed.generation),
-                    )
-                    .await?;
-                Ok(ActionResponse {
-                    success: true,
-                    message: format!("Approved: {}", record_title(&record)),
-                })
-            }
-            Ok(DispatchOutcome::Dispatched { task_id }) => {
+            Ok(outcome) => {
                 if !self
                     .store
-                    .link_task(kind, &mbid, &task_id, Some(claimed.generation))
+                    .link_task(kind, &mbid, outcome.task_id(), Some(claimed.generation))
                     .await?
                 {
-                    cancel_linked(self.dispatch.as_ref(), &task_id).await;
+                    cancel_started(&self.dispatch, &outcome).await;
                     return Ok(ActionResponse {
                         success: false,
                         message: "Approved request became stale".to_owned(),
@@ -847,7 +831,7 @@ impl RequestsService {
             });
         }
         if let Some(task_id) = record.task_id.as_deref()
-            && !cancel_linked(self.dispatch.as_ref(), task_id).await
+            && !cancel_linked(&self.dispatch, task_id).await
         {
             return Ok(ActionResponse {
                 success: false,
@@ -956,14 +940,11 @@ impl RequestsService {
             .unwrap_or_else(|| principal.user_id().to_owned());
         let request = stored_dispatch(&record, DispatchOrigin::Retry, &owner);
         match self.dispatch.dispatch(&request).await {
-            Err(DispatchError::Validation(message)) => {
+            Err(DispatchError::Busy { operation }) => {
                 self.store
                     .update_status(kind, &mbid, &prior_status, None, Some(generation))
                     .await?;
-                Ok(ActionResponse {
-                    success: false,
-                    message,
-                })
+                Err(RequestsError::Busy { operation })
             }
             Err(DispatchError::Failed(cause)) => {
                 tracing::error!(%cause, "retry dispatch failed");
@@ -975,22 +956,13 @@ impl RequestsService {
                     message: "Retry failed to start download".to_owned(),
                 })
             }
-            Ok(DispatchOutcome::AlreadyInLibrary) => {
-                self.store
-                    .update_status(kind, &mbid, STATUS_IMPORTED, Some(now), Some(generation))
-                    .await?;
-                Ok(ActionResponse {
-                    success: true,
-                    message: format!("Re-requested {}", record_title(&record)),
-                })
-            }
-            Ok(DispatchOutcome::Dispatched { task_id }) => {
+            Ok(outcome) => {
                 if !self
                     .store
-                    .link_task(kind, &mbid, &task_id, Some(generation))
+                    .link_task(kind, &mbid, outcome.task_id(), Some(generation))
                     .await?
                 {
-                    cancel_linked(self.dispatch.as_ref(), &task_id).await;
+                    cancel_started(&self.dispatch, &outcome).await;
                     return Ok(ActionResponse {
                         success: false,
                         message: "Retry request became stale".to_owned(),
@@ -1608,7 +1580,7 @@ impl RequestsService {
         for kind in [RequestKind::Album, RequestKind::Track] {
             for record in self.store.with_status(kind, STATUS_CANCELLING).await? {
                 if let Some(task_id) = record.task_id.as_deref()
-                    && !cancel_linked(self.dispatch.as_ref(), task_id).await
+                    && !cancel_linked(&self.dispatch, task_id).await
                 {
                     continue;
                 }
@@ -1647,7 +1619,10 @@ impl RequestsService {
                                 report.redispatched += 1;
                                 task_id
                             }
-                            Ok(DispatchOutcome::AlreadyInLibrary) => continue,
+                            Ok(DispatchOutcome::Active { task_id }) => {
+                                report.relinked += 1;
+                                task_id
+                            }
                             Err(error) => {
                                 tracing::warn!(key = %record.key, ?error, "recovery dispatch failed");
                                 continue;
@@ -1788,19 +1763,7 @@ impl RequestsService {
         let request = stored_dispatch(won, origin, &owner);
         let now = now_epoch();
         match self.dispatch.dispatch(&request).await {
-            Err(DispatchError::Validation(message)) => {
-                self.store
-                    .update_status(
-                        RequestKind::Album,
-                        &won.key,
-                        STATUS_FAILED,
-                        Some(now),
-                        Some(won.generation),
-                    )
-                    .await?;
-                Err(RequestsError::InvalidInput { message })
-            }
-            Err(DispatchError::Failed(cause)) => {
+            Err(cause) => {
                 self.store
                     .update_status(
                         RequestKind::Album,
@@ -1814,33 +1777,18 @@ impl RequestsService {
                     "album dispatch failed: {cause}"
                 )))
             }
-            Ok(DispatchOutcome::AlreadyInLibrary) => {
-                self.store
-                    .update_status(
-                        RequestKind::Album,
-                        &won.key,
-                        STATUS_IMPORTED,
-                        Some(now),
-                        Some(won.generation),
-                    )
-                    .await?;
-                // Quirk, kept: v2 marks the row imported yet answers
-                // `status: "pending"` on this path.
-                Ok(IntakeResponse {
-                    success: true,
-                    message: "Album is already in the library".to_owned(),
-                    musicbrainz_id: won.key.clone(),
-                    status: STATUS_PENDING.to_owned(),
-                    task_id: None,
-                })
-            }
-            Ok(DispatchOutcome::Dispatched { task_id }) => {
+            Ok(outcome) => {
                 if !self
                     .store
-                    .link_task(RequestKind::Album, &won.key, &task_id, Some(won.generation))
+                    .link_task(
+                        RequestKind::Album,
+                        &won.key,
+                        outcome.task_id(),
+                        Some(won.generation),
+                    )
                     .await?
                 {
-                    cancel_linked(self.dispatch.as_ref(), &task_id).await;
+                    cancel_started(&self.dispatch, &outcome).await;
                     return Err(RequestsError::internal(&format_args!(
                         "album link lost its generation for {}",
                         won.key
@@ -1851,7 +1799,7 @@ impl RequestsService {
                     message: "Request accepted".to_owned(),
                     musicbrainz_id: won.key.clone(),
                     status: STATUS_PENDING.to_owned(),
-                    task_id: Some(task_id),
+                    task_id: Some(outcome.task_id().to_owned()),
                 })
             }
         }
@@ -1867,19 +1815,7 @@ impl RequestsService {
         let request = stored_dispatch(won, origin, &owner);
         let now = now_epoch();
         match self.dispatch.dispatch(&request).await {
-            Err(DispatchError::Validation(message)) => {
-                self.store
-                    .update_status(
-                        RequestKind::Track,
-                        &won.key,
-                        STATUS_FAILED,
-                        Some(now),
-                        Some(won.generation),
-                    )
-                    .await?;
-                Err(RequestsError::InvalidInput { message })
-            }
-            Err(DispatchError::Failed(cause)) => {
+            Err(cause) => {
                 self.store
                     .update_status(
                         RequestKind::Track,
@@ -1893,28 +1829,18 @@ impl RequestsService {
                     "track dispatch failed: {cause}"
                 )))
             }
-            Ok(DispatchOutcome::AlreadyInLibrary) => {
-                self.store
-                    .update_status(
-                        RequestKind::Track,
-                        &won.key,
-                        STATUS_IMPORTED,
-                        Some(now),
-                        Some(won.generation),
-                    )
-                    .await?;
-                Ok(TrackIntakeResponse {
-                    status: "already_in_library".to_owned(),
-                    task_id: None,
-                })
-            }
-            Ok(DispatchOutcome::Dispatched { task_id }) => {
+            Ok(outcome) => {
                 if !self
                     .store
-                    .link_task(RequestKind::Track, &won.key, &task_id, Some(won.generation))
+                    .link_task(
+                        RequestKind::Track,
+                        &won.key,
+                        outcome.task_id(),
+                        Some(won.generation),
+                    )
                     .await?
                 {
-                    cancel_linked(self.dispatch.as_ref(), &task_id).await;
+                    cancel_started(&self.dispatch, &outcome).await;
                     return Err(RequestsError::internal(&format_args!(
                         "track link lost its generation for {}",
                         won.key
@@ -1922,7 +1848,7 @@ impl RequestsService {
                 }
                 Ok(TrackIntakeResponse {
                     status: STATUS_QUEUED.to_owned(),
-                    task_id: Some(task_id),
+                    task_id: Some(outcome.task_id().to_owned()),
                 })
             }
         }
@@ -1946,7 +1872,7 @@ impl RequestsService {
             return Ok(false);
         }
         if let Some(task_id) = record.task_id.as_deref()
-            && !cancel_linked(self.dispatch.as_ref(), task_id).await
+            && !cancel_linked(&self.dispatch, task_id).await
         {
             return Ok(false);
         }
@@ -2000,7 +1926,7 @@ impl RequestsService {
                 ..
             }) => {
                 if let Some(task_id) = task_id.as_deref()
-                    && !cancel_linked(self.dispatch.as_ref(), task_id).await
+                    && !cancel_linked(&self.dispatch, task_id).await
                 {
                     self.store
                         .restore_status(kind, mbid, &prior_status, STATUS_CANCELLING, generation)
@@ -2066,7 +1992,7 @@ impl RequestsService {
                 ..
             }) => {
                 if let Some(task_id) = task_id.as_deref()
-                    && !cancel_linked(self.dispatch.as_ref(), task_id).await
+                    && !cancel_linked(&self.dispatch, task_id).await
                 {
                     self.store
                         .restore_status(kind, mbid, &prior_status, STATUS_CANCELLING, generation)
@@ -2120,14 +2046,14 @@ impl RequestsService {
         let Some(task_id) = record.task_id.as_deref() else {
             return item;
         };
-        match self.dispatch.task_progress(task_id).await {
+        match self.dispatch.task(task_id).await {
             Ok(Some(snapshot)) => {
                 item.progress = Some(snapshot.progress_percent as f64);
                 item.size = snapshot.total_size_bytes.map(|total| total as f64);
                 item.size_remaining = snapshot
                     .total_size_bytes
                     .map(|total| (total - snapshot.downloaded_bytes).max(0) as f64);
-                if snapshot.status == "queued"
+                if snapshot.status == TaskStatus::Queued
                     && let Some(readiness) = &self.readiness
                     && !(readiness.sources_ready)()
                 {
@@ -2158,24 +2084,20 @@ impl RequestsService {
         let Some(task_id) = record.task_id.as_deref() else {
             return Ok(false);
         };
-        let state = self
-            .dispatch
-            .task_state(task_id)
-            .await
-            .map_err(dispatch_fault)?;
-        let mapped = match state {
-            DispatchTaskState::Active => {
+        let task = self.dispatch.task(task_id).await.map_err(dispatch_fault)?;
+        let mapped = match task.map(|task| task.status) {
+            Some(TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing) => {
                 if record.status == STATUS_PENDING || record.status == STATUS_QUEUED {
                     Some(STATUS_DOWNLOADING)
                 } else {
                     None
                 }
             }
-            DispatchTaskState::Imported => Some(STATUS_IMPORTED),
-            DispatchTaskState::Incomplete => Some(STATUS_INCOMPLETE),
-            DispatchTaskState::Failed => Some(STATUS_FAILED),
-            DispatchTaskState::Cancelled => Some(STATUS_CANCELLED),
-            DispatchTaskState::Missing => None,
+            Some(TaskStatus::Completed) => Some(STATUS_IMPORTED),
+            Some(TaskStatus::Partial) => Some(STATUS_INCOMPLETE),
+            Some(TaskStatus::Failed) => Some(STATUS_FAILED),
+            Some(TaskStatus::Cancelled) => Some(STATUS_CANCELLED),
+            None => None,
         };
         let Some(next) = mapped else {
             return Ok(false);
@@ -2200,7 +2122,8 @@ impl RequestsService {
 /// A dispatch read failure as a server fault (the cause goes to the log).
 fn dispatch_fault(error: DispatchError) -> RequestsError {
     match error {
-        DispatchError::Validation(message) | DispatchError::Failed(message) => {
+        DispatchError::Busy { operation } => RequestsError::Busy { operation },
+        DispatchError::Failed(message) => {
             RequestsError::internal(&format_args!("dispatch read failed: {message}"))
         }
     }
@@ -2208,13 +2131,21 @@ fn dispatch_fault(error: DispatchError) -> RequestsError {
 
 /// Cancel one linked task, logging a failure. Callers that must not leave
 /// a row cancelled over a live transfer check the result.
-async fn cancel_linked(dispatch: &dyn DownloadDispatch, task_id: &str) -> bool {
-    match dispatch.cancel_task(task_id).await {
+async fn cancel_linked(dispatch: &DownloadDispatch, task_id: &str) -> bool {
+    match dispatch.cancel(task_id).await {
         Ok(()) => true,
         Err(error) => {
             tracing::warn!(task_id, ?error, "task cancel failed");
             false
         }
+    }
+}
+
+/// Cancel a task this ask just started and could not link. A live task
+/// it found belongs to another ask and keeps running.
+async fn cancel_started(dispatch: &DownloadDispatch, outcome: &DispatchOutcome) {
+    if outcome.started() {
+        cancel_linked(dispatch, outcome.task_id()).await;
     }
 }
 
@@ -2307,10 +2238,17 @@ fn stored_dispatch(
     } else {
         record.album_title.clone()
     };
+    let target = match record.kind {
+        RequestKind::Album => DispatchTarget::Album {
+            release_group_mbid: record.key.clone(),
+        },
+        RequestKind::Track => DispatchTarget::Track {
+            recording_mbid: record.key.clone(),
+        },
+    };
     DispatchRequest {
         user_id: owner_id.to_owned(),
-        kind: record.kind.as_str().to_owned(),
-        key: record.key.clone(),
+        target,
         artist_name: record.artist_name.clone(),
         title,
         origin,

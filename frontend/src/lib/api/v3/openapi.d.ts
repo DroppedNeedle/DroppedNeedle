@@ -12992,7 +12992,10 @@ export interface components {
              * @description When the next automatic retry is due, if one will run.
              */
             next_retry_at?: number | null;
-            /** @description `user`, `retry` or `upgrade`. */
+            /**
+             * @description What started the download: `user`, `approval`, `retry`, `wanted`,
+             *     `upgrade`, `edition` or `follow`.
+             */
             origin: string;
             /** Format: int64 */
             progress_percent: number;

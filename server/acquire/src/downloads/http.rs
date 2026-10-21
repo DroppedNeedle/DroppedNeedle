@@ -92,7 +92,8 @@ pub struct DownloadTaskResponse {
     pub download_type: String,
     /// `soulseek`, `usenet` or `plugin:<key>`.
     pub source: String,
-    /// `user`, `retry` or `upgrade`.
+    /// What started the download: `user`, `approval`, `retry`, `wanted`,
+    /// `upgrade`, `edition` or `follow`.
     pub origin: String,
     pub release_group_mbid: String,
     pub release_mbid: Option<String>,
@@ -843,7 +844,7 @@ pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<axum::Router, Str
         .map(|dir| dir.join("settings"))
         .ok_or_else(|| "scratch database has no directory".to_owned())?;
     let settings = crate::settings::scratch_settings(&dir)?;
-    let dispatch = crate::dispatch::UnifiedDispatch::new(
+    let dispatch = crate::dispatch::DownloadDispatch::new(
         worker.journal().clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
         worker.staging_root(),

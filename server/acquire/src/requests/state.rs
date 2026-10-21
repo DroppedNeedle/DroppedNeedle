@@ -1,17 +1,16 @@
 //! Requests state: the durable stores behind one handle.
 //!
-//! Services take this handle and clone what they need. Production passes
-//! the downloads module's durable dispatch.
+//! Services take this handle and clone what they need.
 
 use std::sync::Arc;
 
 use super::bridges::FollowDecisionSink;
-use super::dispatch::DownloadDispatch;
 use super::quota::QuotaLedger;
 use super::sqlite::{
     EditionStore, FollowApprovalStore, PersonalMixStore, RequestStore, WantedStore,
 };
 use crate::db::AcquireDb;
+use crate::dispatch::DownloadDispatch;
 
 /// Everything the requests router needs, built once.
 #[derive(Clone)]
@@ -20,8 +19,8 @@ pub struct RequestsState {
     pub store: RequestStore,
     /// Quota ledger.
     pub quota: Arc<QuotaLedger>,
-    /// Download-dispatch seam (the downloads module in production).
-    pub dispatch: Arc<dyn DownloadDispatch>,
+    /// Download dispatch.
+    pub dispatch: Arc<DownloadDispatch>,
     /// Wanted watches (shared with the watcher loop).
     pub wanted: WantedStore,
     /// Auto-download approvals.
@@ -71,11 +70,7 @@ impl RequestsState {
     /// State over one database, one quota ledger and one dispatch, with no
     /// ports: the routes alone. Production fills the ports in
     /// [`crate::wiring`] before anything holds the state.
-    pub fn new(
-        db: &AcquireDb,
-        quota: Arc<QuotaLedger>,
-        dispatch: Arc<dyn DownloadDispatch>,
-    ) -> Self {
+    pub fn new(db: &AcquireDb, quota: Arc<QuotaLedger>, dispatch: Arc<DownloadDispatch>) -> Self {
         Self {
             store: RequestStore::new(db.clone()),
             quota,
@@ -99,8 +94,7 @@ impl RequestsState {
     /// state, the database (to seed users and rows) and the dispatch (to
     /// read and settle its tasks). Call inside a tokio runtime.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests() -> Result<(Self, AcquireDb, Arc<crate::dispatch::UnifiedDispatch>), String> {
-        use crate::dispatch::UnifiedDispatch;
+    pub fn for_tests() -> Result<(Self, AcquireDb, Arc<DownloadDispatch>), String> {
         use crate::downloads::journal::Journal;
 
         let db = AcquireDb::scratch()?;
@@ -110,7 +104,7 @@ impl RequestsState {
             .ok_or_else(|| "scratch database has no directory".to_owned())?
             .to_path_buf();
         let settings = crate::settings::scratch_settings(&dir.join("settings"))?;
-        let dispatch = Arc::new(UnifiedDispatch::new(
+        let dispatch = Arc::new(DownloadDispatch::new(
             Arc::new(Journal::new(db.clone())),
             Arc::new(droppedneedle_kernel::ids::UuidGenerator),
             dir.join("staging"),

@@ -605,6 +605,29 @@ fn the_platform_is_borrowed_never_kept() {
     );
 }
 
+/// One way into the download queue: the concrete `DownloadDispatch`. A
+/// download is not an outside service, so no trait stands in front of it.
+#[test]
+fn downloads_start_through_one_concrete_dispatch() {
+    let pattern = Regex::new(r"\btrait\s+\w*Dispatch\w*").unwrap();
+    let mut wrong = Vec::new();
+    for source in workspace_sources() {
+        if !source.path.starts_with("acquire/src/") {
+            continue;
+        }
+        let code = source.code();
+        for found in pattern.find_iter(&code) {
+            let line = code[..found.start()].matches('\n').count() + 1;
+            wrong.push(format!("{}:{line}: {}", source.path, found.as_str()));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "start downloads through `dispatch::DownloadDispatch`, not a trait:\n{}",
+        wrong.join("\n")
+    );
+}
+
 /// One stop: the supervisor's token. No loop keeps a stop flag, a sleep
 /// seam or a jitter seam of its own.
 #[test]

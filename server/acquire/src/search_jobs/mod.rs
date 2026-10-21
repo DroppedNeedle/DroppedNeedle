@@ -32,10 +32,10 @@ use self::store::{
     PickedTask, SEARCHING,
 };
 use super::db::now_epoch;
+use super::dispatch::DispatchOrigin;
 use super::downloads::journal::Journal;
 use super::downloads::store::{NewTask, TaskDetails, TaskRow};
 use super::edition::library_holds;
-use super::requests::dispatch::DispatchOrigin;
 use super::requests::error::RequestsError;
 use super::requests::ledger::{WATCH_DORMANT, WATCH_FULFILLED, WATCH_STOPPED, WantedWatch};
 use super::requests::quota::QuotaLedger;

@@ -18,7 +18,7 @@ use axum::Router;
 use futures_util::future::BoxFuture;
 
 use super::db::AcquireDb;
-use super::dispatch::UnifiedDispatch;
+use super::dispatch::DownloadDispatch;
 use super::downloads::journal::Journal;
 use super::downloads::orphans::RecycleBin;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
@@ -450,8 +450,8 @@ pub struct AcquireSetup {
     pub requests: RequestsState,
     /// Imports deps (config-backed settings, bridged follows).
     pub imports: ImportsDeps,
-    /// Unified dispatch behind both dispatch spellings.
-    pub dispatch: Arc<UnifiedDispatch>,
+    /// The one way into the download queue.
+    pub dispatch: Arc<DownloadDispatch>,
     /// Shared download journal.
     pub journal: Arc<Journal>,
     /// Flows stores and loop deps.
@@ -622,7 +622,7 @@ struct CorePorts {
 /// The pieces shared by the production and test bundles.
 struct Core {
     requests: RequestsState,
-    dispatch: Arc<UnifiedDispatch>,
+    dispatch: Arc<DownloadDispatch>,
     journal: Arc<Journal>,
     flows: Arc<FlowsBundle>,
 }
@@ -642,7 +642,7 @@ fn core(
 ) -> Core {
     let db = &stores.db;
     let journal = stores.journal.clone();
-    let dispatch = Arc::new(UnifiedDispatch::new(
+    let dispatch = Arc::new(DownloadDispatch::new(
         journal.clone(),
         ids,
         staging_root.to_owned(),
@@ -1148,7 +1148,7 @@ fn flows_bundle(
     db: &AcquireDb,
     requests: &RequestsState,
     search: Arc<dyn CandidateSearch>,
-    dispatch: Arc<UnifiedDispatch>,
+    dispatch: Arc<DownloadDispatch>,
     settings: &ConfigStore,
     ticks: Arc<dyn TickSink>,
     release_poll: Arc<dyn ReleasePoll>,
@@ -1172,6 +1172,7 @@ fn flows_bundle(
         follows: follows.clone(),
         poll: release_poll,
         downloads: dispatch.clone(),
+        quota: requests.quota.clone(),
         library: library.clone(),
         ticks: ticks.clone(),
         preferences: settings.live(),

@@ -10,7 +10,9 @@
 
 use std::sync::Arc;
 
-use crate::flows::seams::{DispatchKind, DispatchRequest, DownloadDispatch, UpgradeDispatch};
+use crate::dispatch::{
+    DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
+};
 use crate::flows::stores::{UpgradeItem, UpgradePolicy, UpgradeWorklist};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
@@ -46,9 +48,8 @@ pub enum UpgradeOutcome {
 #[derive(Debug, Clone)]
 pub struct UpgradeAsk {
     pub user_id: String,
-    pub kind: DispatchKind,
-    /// Release-group MBID (album) or recording MBID (track).
-    pub mbid: String,
+    /// The album or the track.
+    pub target: DispatchTarget,
     pub artist: String,
     pub title: String,
 }
@@ -58,14 +59,14 @@ pub struct UpgradeAsk {
 pub struct Upgrades {
     worklist: UpgradeWorklist,
     policy: Live<DownloadPolicy>,
-    dispatch: Arc<dyn DownloadDispatch>,
+    dispatch: Arc<DownloadDispatch>,
 }
 
 impl Upgrades {
     pub fn new(
         worklist: UpgradeWorklist,
         policy: Live<DownloadPolicy>,
-        dispatch: Arc<dyn DownloadDispatch>,
+        dispatch: Arc<DownloadDispatch>,
     ) -> Self {
         Self {
             worklist,
@@ -105,15 +106,15 @@ impl Upgrades {
         if !policy.upgrade_allowed {
             return Ok(UpgradeOutcome::Satisfied);
         }
-        let meets = match ask.kind {
-            DispatchKind::Album => {
+        let meets = match &ask.target {
+            DispatchTarget::Album { release_group_mbid } => {
                 self.worklist
-                    .album_meets_cutoff(&ask.mbid, &policy.cutoff)
+                    .album_meets_cutoff(release_group_mbid, &policy.cutoff)
                     .await
             }
-            DispatchKind::Track => {
+            DispatchTarget::Track { recording_mbid } => {
                 self.worklist
-                    .recording_meets_cutoff(&ask.mbid, &policy.cutoff)
+                    .recording_meets_cutoff(recording_mbid, &policy.cutoff)
                     .await
             }
         }
@@ -123,17 +124,19 @@ impl Upgrades {
         }
         let request = DispatchRequest {
             user_id: ask.user_id,
-            kind: ask.kind,
-            mbid: ask.mbid,
-            artist: ask.artist,
+            target: ask.target,
+            artist_name: ask.artist,
             title: ask.title,
-            origin: "upgrade".to_owned(),
+            origin: DispatchOrigin::Upgrade,
+            release_mbid: None,
+            wanted: Vec::new(),
+            planned_album: None,
             idempotency_key: None,
         };
-        match self.dispatch.dispatch_upgrade(&request).await {
-            Ok(UpgradeDispatch::Enqueued(task_id)) => Ok(UpgradeOutcome::Queued(task_id)),
-            Ok(UpgradeDispatch::AlreadyInLibrary) => Ok(UpgradeOutcome::Satisfied),
-            Err(cause) => Err(UpgradeError::Unavailable(cause)),
+        match self.dispatch.dispatch(&request).await {
+            Ok(DispatchOutcome::Dispatched { task_id }) => Ok(UpgradeOutcome::Queued(task_id)),
+            Ok(DispatchOutcome::Active { .. }) => Ok(UpgradeOutcome::Satisfied),
+            Err(cause) => Err(UpgradeError::Unavailable(cause.to_string())),
         }
     }
 }

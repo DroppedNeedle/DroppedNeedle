@@ -116,7 +116,7 @@ pub struct Target {
     /// The requested recording, for a track download.
     pub recording_mbid: Option<String>,
     pub track_title: Option<String>,
-    /// `user`, `retry`, or `upgrade`.
+    /// The task's origin (a `DispatchOrigin` as stored text).
     pub origin: String,
     /// The last-resort re-pull: hold a wrong track instead of failing over.
     pub hold_on_wrong_track: bool,

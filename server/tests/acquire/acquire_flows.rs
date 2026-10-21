@@ -11,7 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::UnifiedDispatch;
+use droppedneedle_acquire::dispatch::{
+    DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
+};
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskRow};
@@ -28,6 +30,7 @@ use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord},
     models::RequestKind,
+    quota::QuotaLedger,
     sqlite::{RequestStore, WantedStore},
 };
 use droppedneedle_acquire::search_jobs::store::JobStore;
@@ -111,9 +114,9 @@ fn settings(db: &AcquireDb) -> ConfigStore {
 }
 
 /// The production dispatch over the download journal on `db`.
-fn dispatch(db: &AcquireDb, settings: &ConfigStore) -> Arc<UnifiedDispatch> {
+fn dispatch(db: &AcquireDb, settings: &ConfigStore) -> Arc<DownloadDispatch> {
     let staging = db.path().parent().expect("scratch dir").join("staging");
-    Arc::new(UnifiedDispatch::new(
+    Arc::new(DownloadDispatch::new(
         Arc::new(Journal::new(db.clone())),
         Arc::new(UuidGenerator),
         staging,
@@ -280,7 +283,7 @@ async fn wanted_enrols_then_auto_downloads() {
     assert_eq!((checked.checked, checked.dispatched), (1, 1));
     let queued = tasks(&db).await;
     assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].origin, "retry", "a wanted find queues as a retry");
+    assert_eq!(queued[0].origin, "wanted", "a wanted find says so");
     assert_eq!(queued[0].release_group_mbid, "rg-blue");
     let row = rig
         .deps
@@ -433,6 +436,7 @@ async fn follow_poll_baselines_then_emits() {
         follows: follows.clone(),
         poll: Arc::new(poll),
         downloads: dispatch(&db, &settings),
+        quota: Arc::new(QuotaLedger::new(settings.live(), db.clone())),
         library,
         ticks: ticks(&EventHub::new()),
         preferences: settings.live(),
@@ -696,4 +700,148 @@ async fn prune_drops_only_settled_rows_past_retention() {
             .is_none()
     );
     assert_eq!(status_of(&ledger, "rg-live").await, "pending");
+}
+
+// An upgrade asked for an album that is already downloading answers that
+// task as active and queues nothing.
+#[tokio::test]
+async fn upgrade_of_a_downloading_album_answers_active() {
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("user-1", "Owner", "user").await.unwrap();
+    db.add_user("admin-1", "Admin", "admin").await.unwrap();
+    seed_task(&db, "task-0", "rg-0", TaskStatus::Downloading).await;
+    let outcome = dispatch(&db, &settings(&db))
+        .dispatch(&DispatchRequest {
+            user_id: "admin-1".to_owned(),
+            target: DispatchTarget::Album {
+                release_group_mbid: "rg-0".to_owned(),
+            },
+            artist_name: "Massive Attack".to_owned(),
+            title: "rg-0".to_owned(),
+            origin: DispatchOrigin::Upgrade,
+            release_mbid: None,
+            wanted: Vec::new(),
+            planned_album: None,
+            idempotency_key: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        DispatchOutcome::Active {
+            task_id: "task-0".to_owned()
+        }
+    );
+    assert_eq!(tasks(&db).await.len(), 1);
+}
+
+// A plain user's auto-download of a followed artist's new release waits
+// while they are over their request quota.
+#[tokio::test]
+async fn follow_download_waits_while_the_follower_is_over_quota() {
+    let db = AcquireDb::scratch().unwrap();
+    db.write("seed follows", |tx| {
+        tx.execute_batch(
+            "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+               ('user-2', 'Listener', 'user', '2024-01-01'); \
+             INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+               artist_name, auto_download, followed_at, updated_at) VALUES \
+               ('user-2', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1); \
+             INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
+               artist_name, state, requested_at) VALUES \
+               ('user-2', 'Artist-1', 'artist-1', 'The Band', 'approved', 1);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let settings = settings(&db);
+    settings
+        .save_blocking(DownloadPolicy {
+            default_request_quota_count: 1,
+            default_request_quota_days: 7,
+            ..DownloadPolicy::default()
+        })
+        .expect("download policy saves");
+    // One ask already in the window uses up the quota.
+    let ledger = RequestStore::new(db.clone());
+    let record = RequestRecord {
+        key: "rg-asked".to_owned(),
+        kind: RequestKind::Album,
+        status: "pending".to_owned(),
+        artist_name: "The Band".to_owned(),
+        album_title: "Asked".to_owned(),
+        artist_mbid: None,
+        year: None,
+        release_mbid: None,
+        track_title: None,
+        duration_seconds: None,
+        track_release_group_mbid: None,
+        user_id: Some("user-2".to_owned()),
+        requested_by_name: None,
+        requesters: Vec::new(),
+        requested_at: NOW as u64,
+        completed_at: None,
+        task_id: None,
+        generation: 0,
+        dispatch_authorized: true,
+        monitor_artist: false,
+        auto_download_artist: false,
+        reviewed_by_name: None,
+        reviewed_at: None,
+    };
+    ledger
+        .begin_batch(vec![record], "user-2", None)
+        .await
+        .unwrap()
+        .unwrap();
+    const MB: &str = "http://musicbrainz.test/ws/2";
+    let wire = Arc::new(ScriptedWire::new());
+    let json = [("content-type", "application/json")];
+    let url = format!("{MB}/release-group");
+    wire.answer(
+        &url,
+        200,
+        &json,
+        browse_page(&[("rg-old", "2020-01-01", "Album", &[])]),
+    );
+    wire.answer(
+        &url,
+        200,
+        &json,
+        browse_page(&[
+            ("rg-old", "2020-01-01", "Album", &[]),
+            ("rg-new", "2024-06-01", "Album", &[]),
+        ]),
+    );
+    let providers = droppedneedle_providers::Providers::unpaced(wire);
+    let poll =
+        droppedneedle_acquire::search::MusicBrainzReleasePoll::new(providers.musicbrainz.fixed(
+            MbSource::Mirror {
+                base_url: MB.to_owned(),
+                rate_per_sec: 0.0,
+            },
+            RequestPriority::BackgroundSync,
+        ));
+    let follows = FollowStore::new(db.clone());
+    let deps = FollowDeps {
+        follows: follows.clone(),
+        poll: Arc::new(poll),
+        downloads: dispatch(&db, &settings),
+        quota: Arc::new(QuotaLedger::new(settings.live(), db.clone())),
+        library: Arc::new(LibraryPresence::new()),
+        ticks: ticks(&EventHub::new()),
+        preferences: settings.live(),
+        today: Arc::new(|| "2024-06-01".to_owned()),
+    };
+    follow_tick(NOW, &deps).await;
+    let polled = follow_tick(NOW + 86_400, &deps).await;
+    assert_eq!(polled.enqueued, 0);
+    assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
+    let cursor = follows.get("artist-1").await.unwrap().unwrap();
+    assert_eq!(
+        cursor.pending.len(),
+        1,
+        "the release waits for the next poll"
+    );
 }

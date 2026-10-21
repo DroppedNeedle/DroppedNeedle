@@ -20,9 +20,9 @@
 //!
 //! The `db`, `dispatch`, `search`, `sources`, `settings`, `probes`,
 //! `worker`, and `wiring` modules unify the per-area seams onto one
-//! production spelling each (a single
-//! [`dispatch::UnifiedDispatch`] implements both dispatch traits, one
-//! [`search::FanoutSearch`] serves the candidate seam, and so on) and
+//! production spelling each (one [`dispatch::DownloadDispatch`] starts
+//! every download, one [`search::FanoutSearch`] serves the candidate
+//! seam, and so on) and
 //! assemble the [`wiring::AcquireSetup`] bundle the app mounts.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

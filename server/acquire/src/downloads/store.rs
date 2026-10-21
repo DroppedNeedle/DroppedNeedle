@@ -49,7 +49,7 @@ pub struct TaskRow {
     pub album_title: String,
     /// Current persisted status.
     pub status: TaskStatus,
-    /// Why the task exists: `user`, `retry`, or `upgrade`.
+    /// Why the task exists: a `DispatchOrigin` as stored text.
     pub origin: String,
     /// `album` or `track`.
     pub download_type: String,
@@ -185,7 +185,7 @@ pub struct NewTask {
     pub album_title: String,
     /// Target release-group MBID.
     pub release_group_mbid: String,
-    /// Why the task exists: `user`, `retry`, or `upgrade`.
+    /// Why the task exists: a `DispatchOrigin` as stored text.
     pub origin: String,
     /// Retry generation (0 for a fresh request).
     pub retry_count: i64,

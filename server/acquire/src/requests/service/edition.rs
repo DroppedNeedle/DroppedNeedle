@@ -17,12 +17,12 @@
 //! are never retagged.
 
 use super::RequestsService;
+use crate::dispatch::{
+    DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget,
+};
 use crate::downloads::manifest::{PlannedAlbum, ReplaceVersion};
 use crate::edition::{copy_is_held, local_names};
 use crate::flows::stores::UpgradeWorklist;
-use crate::requests::dispatch::{
-    DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTaskState,
-};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{EditionMark, now_epoch, validate_mbid};
 use crate::requests::models::EditionAcquireResponse;
@@ -153,6 +153,18 @@ fn started_message(requested: Option<u32>, versions: u32) -> String {
     }
 }
 
+/// The answer while another download of the album is still working.
+fn already_in_progress(task_id: String) -> EditionAcquireResponse {
+    EditionAcquireResponse {
+        status: "already_in_progress".to_owned(),
+        message: "This album is already downloading. Wait for that download to finish, \
+                  then try again."
+            .to_owned(),
+        task_id: Some(task_id),
+        ..EditionAcquireResponse::default()
+    }
+}
+
 impl RequestsService {
     /// Fill the chosen edition's missing tracks and upgrade its owned
     /// tracks below the cutoff (curator only, as in v2). `album_id` names
@@ -169,14 +181,7 @@ impl RequestsService {
         let mbid = validate_mbid(release_group)?;
         let now = now_epoch();
         if let Some(busy) = self.album_busy(&mbid).await? {
-            return Ok(EditionAcquireResponse {
-                status: "already_in_progress".to_owned(),
-                message: "This album is already downloading. Wait for that download to finish, \
-                          then try again."
-                    .to_owned(),
-                task_id: Some(busy),
-                ..EditionAcquireResponse::default()
-            });
+            return Ok(already_in_progress(busy));
         }
         self.quota
             .check_storage_admission(curator.user_id(), curator.role(), DispatchOrigin::Edition)
@@ -265,8 +270,9 @@ impl RequestsService {
             .is_some_and(|readiness| !(readiness.sources_ready)());
         let request = DispatchRequest {
             user_id: curator.user_id().to_owned(),
-            kind: "edition".to_owned(),
-            key: mbid.clone(),
+            target: DispatchTarget::Album {
+                release_group_mbid: mbid.clone(),
+            },
             artist_name,
             title,
             origin: DispatchOrigin::Edition,
@@ -279,16 +285,11 @@ impl RequestsService {
             idempotency_key: None,
         };
         match self.dispatch.dispatch(&request).await {
-            Err(DispatchError::Validation(message)) => Err(RequestsError::InvalidInput { message }),
+            Err(DispatchError::Busy { operation }) => Err(RequestsError::Busy { operation }),
             Err(DispatchError::Failed(cause)) => Err(RequestsError::internal(&format_args!(
                 "edition dispatch failed: {cause}"
             ))),
-            Ok(DispatchOutcome::AlreadyInLibrary) => {
-                response.status = "already_complete".to_owned();
-                response.message =
-                    "Every track of this edition is already in your library.".to_owned();
-                Ok(response)
-            }
+            Ok(DispatchOutcome::Active { task_id }) => Ok(already_in_progress(task_id)),
             Ok(DispatchOutcome::Dispatched { task_id }) => {
                 self.editions
                     .set(EditionMark {
@@ -319,12 +320,12 @@ impl RequestsService {
     /// any other (a request, an upgrade, a retry). Never two at once.
     async fn album_busy(&self, release_group_mbid: &str) -> Result<Option<String>, RequestsError> {
         if let Some(mark) = self.editions.get(release_group_mbid).await? {
-            let state = self
+            let task = self
                 .dispatch
-                .task_state(&mark.task_id)
+                .task(&mark.task_id)
                 .await
                 .map_err(super::dispatch_fault)?;
-            if state == DispatchTaskState::Active {
+            if task.is_some_and(|task| !task.status.is_terminal()) {
                 return Ok(Some(mark.task_id));
             }
             self.editions.clear(release_group_mbid).await?;

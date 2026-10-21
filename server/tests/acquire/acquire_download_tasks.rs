@@ -11,7 +11,9 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::UnifiedDispatch;
+use droppedneedle_acquire::dispatch::{
+    DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
+};
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::{
     http::downloads_router,
@@ -19,9 +21,6 @@ use droppedneedle_acquire::downloads::{
     store::NewTask,
 };
 use droppedneedle_acquire::landing::LandingService;
-use droppedneedle_acquire::requests::dispatch::{
-    DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
-};
 use droppedneedle_acquire::worker::{
     DownloadWorker, FixedSource, Source, WorkerConfig, run_startup_recovery,
 };
@@ -192,11 +191,11 @@ async fn reimport_guards_role_link_and_client() {
 async fn dispatch_reads_progress_and_guard_from_journal() {
     let dispatch = dispatch_over(journal().await);
 
-    let snapshot = dispatch.task_progress("t-linked").await.unwrap().unwrap();
-    assert_eq!(snapshot.status, "failed");
+    let snapshot = dispatch.task("t-linked").await.unwrap().unwrap();
+    assert_eq!(snapshot.status, TaskStatus::Failed);
     assert_eq!(snapshot.error_message.as_deref(), Some("mount gone"));
     assert_eq!(snapshot.progress_percent, 0);
-    assert!(dispatch.task_progress("nope").await.unwrap().is_none());
+    assert!(dispatch.task("nope").await.unwrap().is_none());
 
     assert!(dispatch.reimportable("t-linked").await.unwrap());
     assert!(!dispatch.reimportable("t-bare").await.unwrap());
@@ -205,10 +204,10 @@ async fn dispatch_reads_progress_and_guard_from_journal() {
 }
 
 /// Dispatch over `journal`, staging under its scratch database directory.
-fn dispatch_over(journal: Arc<Journal>) -> UnifiedDispatch {
+fn dispatch_over(journal: Arc<Journal>) -> DownloadDispatch {
     let staging = staging_for(&journal);
     let policy = settings_beside(&journal).live();
-    UnifiedDispatch::new(journal, Arc::new(UuidGenerator), staging, policy)
+    DownloadDispatch::new(journal, Arc::new(UuidGenerator), staging, policy)
 }
 
 /// Default settings beside the journal's scratch database.
@@ -248,8 +247,9 @@ async fn failed_dispatch_keeps_no_key() {
     let dispatch = dispatch_over(journal.clone());
     let request = DispatchRequest {
         user_id: "u-new".to_owned(),
-        kind: "album".to_owned(),
-        key: "rg-1".to_owned(),
+        target: DispatchTarget::Album {
+            release_group_mbid: "rg-1".to_owned(),
+        },
         artist_name: "artist".to_owned(),
         title: "album".to_owned(),
         origin: DispatchOrigin::User,
@@ -293,7 +293,7 @@ async fn cancel_hands_the_transfer_to_cleanup() {
         .await
         .unwrap();
     dispatch_over(journal.clone())
-        .cancel_task("t-live")
+        .cancel("t-live")
         .await
         .unwrap();
 

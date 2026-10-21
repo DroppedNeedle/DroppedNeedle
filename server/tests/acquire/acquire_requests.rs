@@ -36,12 +36,11 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::UnifiedDispatch;
+use droppedneedle_acquire::dispatch::DownloadDispatch;
 use droppedneedle_acquire::downloads::manifest::{ManifestCodec, PlannedAlbum, ReplaceVersion};
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::requests::{
     self, RequestsState,
-    dispatch::{DispatchTaskState, DownloadDispatch as _},
     ledger::{WATCH_WATCHING, WantedWatch},
     models::RequestKind,
     quota::{QuotaLedger, QuotaPolicy},
@@ -100,7 +99,7 @@ struct Dispatched {
 
 /// The download journal behind a state, read the way the worker reads it.
 struct Downloads {
-    dispatch: Arc<UnifiedDispatch>,
+    dispatch: Arc<DownloadDispatch>,
     staging: PathBuf,
     /// Tasks already handed out by `take_calls`.
     taken: Mutex<usize>,
@@ -1032,8 +1031,13 @@ async fn recovery_finishes_cancels_and_dispatches() {
     let first = dispatch.task(1).await;
     assert_eq!(dispatch.take_cancels().await, vec![first.clone()]);
     assert_eq!(
-        dispatch.dispatch.task_state(&first).await.unwrap(),
-        DispatchTaskState::Cancelled
+        dispatch
+            .dispatch
+            .task(&first)
+            .await
+            .unwrap()
+            .map(|task| task.status),
+        Some(TaskStatus::Cancelled)
     );
     let calls = dispatch.take_calls().await;
     assert_eq!(calls.len(), 1);

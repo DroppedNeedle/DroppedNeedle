@@ -42264,7 +42264,7 @@
           },
           "origin": {
             "type": "string",
-            "description": "`user`, `retry` or `upgrade`."
+            "description": "What started the download: `user`, `approval`, `retry`, `wanted`,\n`upgrade`, `edition` or `follow`."
           },
           "progress_percent": {
             "type": "integer",

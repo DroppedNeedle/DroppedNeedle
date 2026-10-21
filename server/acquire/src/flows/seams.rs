@@ -1,90 +1,12 @@
-//! Seams behind the acquisition flows: the boundary to code they do not own.
+//! Seams behind the acquisition flows: the outside services they reach.
 //!
-//! Downloads dispatch and provider/indexer search live elsewhere (the
-//! orchestrator and clients, and the search fan-out). The flows reach them
-//! only through the traits here, so real implementations plug in without
-//! touching flow logic. Every fallible method
-//! returns a plain string cause, the playback-ports convention: provider
-//! detail stays in the log, never on the wire.
+//! Provider and indexer search and the release pages live elsewhere (the
+//! search fan-out, the MusicBrainz client). The flows reach them only
+//! through the traits here. Every fallible method returns a plain string
+//! cause: provider detail stays in the log, never on the wire. Downloads
+//! start through the concrete [`crate::dispatch::DownloadDispatch`].
 
 use futures_util::future::BoxFuture;
-
-/// What kind of request a dispatch serves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DispatchKind {
-    /// Whole album, keyed by release-group MBID.
-    Album,
-    /// Single track, keyed by recording MBID.
-    Track,
-}
-
-/// One download dispatch: the orchestrator owns the queue behind it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DispatchRequest {
-    /// Owning user id.
-    pub user_id: String,
-    /// Album or track.
-    pub kind: DispatchKind,
-    /// Release-group MBID (album) or recording MBID (track).
-    pub mbid: String,
-    /// Artist name for the task row.
-    pub artist: String,
-    /// Album or track title for the task row.
-    pub title: String,
-    /// Origin tag: `user`, `wanted`, `follow`, `upgrade`.
-    pub origin: String,
-    /// Caller-supplied idempotency key. A repeat dispatch with the same
-    /// key answers the original task instead of minting a duplicate;
-    /// `None` always mints fresh.
-    pub idempotency_key: Option<String>,
-}
-
-/// One download task as the status sync sees it. `status` is one of
-/// `downloading`, `processing`, `completed`, `partial`, `failed`,
-/// `cancelled` (v2 `download_task.status`, `requests_page_service.py`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DownloadTaskView {
-    /// Task id.
-    pub task_id: String,
-    /// Raw task status.
-    pub status: String,
-    /// Release-group MBID for album tasks, when known.
-    pub album_mbid: Option<String>,
-}
-
-/// Outcome of an upgrade dispatch. `AlreadyInLibrary` answers the
-/// `already_in_library` sentinel from v2 `request_upgrade_album`
-/// (`core/tasks.py`): the sweep must not count it as enqueued.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UpgradeDispatch {
-    /// A new upgrade grab, with its task id.
-    Enqueued(String),
-    /// The album already meets cutoff; nothing was queued.
-    AlreadyInLibrary,
-}
-
-/// Downloads dispatch seam, implemented by the orchestrator.
-pub trait DownloadDispatch: Send + Sync {
-    /// Queue a download; answers the new task id.
-    fn dispatch<'a>(
-        &'a self,
-        request: &'a DispatchRequest,
-    ) -> BoxFuture<'a, Result<String, String>>;
-    /// Current status of one task, or `None` when unknown.
-    fn task_status<'a>(&'a self, task_id: &'a str)
-    -> BoxFuture<'a, Result<Option<String>, String>>;
-    /// Newest active task for an album across users, for the album-row
-    /// fallback in the status sync.
-    fn active_task_for_album<'a>(
-        &'a self,
-        rg_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<Option<DownloadTaskView>, String>>;
-    /// Queue an origin-`upgrade` grab with active-task dedup.
-    fn dispatch_upgrade<'a>(
-        &'a self,
-        request: &'a DispatchRequest,
-    ) -> BoxFuture<'a, Result<UpgradeDispatch, String>>;
-}
 
 /// One provider/indexer candidate for a wanted album.
 #[derive(Debug, Clone, PartialEq, Eq)]

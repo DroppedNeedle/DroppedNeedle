@@ -23,7 +23,7 @@ use super::held::{BulkSkip, HeldError, HeldImports, Placed, Reverified};
 use super::held_rows::HeldRow;
 use super::queue_rows::Viewer;
 use super::upgrades::{UpgradeAsk, UpgradeError, UpgradeOutcome, Upgrades};
-use crate::flows::seams::DispatchKind;
+use crate::dispatch::DispatchTarget;
 use crate::requests::error::RequestsError;
 use droppedneedle_auth::{Admin, Curator, Principal, User};
 use droppedneedle_kernel::error::ApiError;
@@ -624,8 +624,9 @@ pub async fn upgrade_album_handler(
         .upgrades
         .request(UpgradeAsk {
             user_id: curator.user_id().to_owned(),
-            kind: DispatchKind::Album,
-            mbid: required(&body.release_group_mbid, "release_group_mbid")?,
+            target: DispatchTarget::Album {
+                release_group_mbid: required(&body.release_group_mbid, "release_group_mbid")?,
+            },
             artist: body.artist_name,
             title: body.album_title,
         })
@@ -654,8 +655,9 @@ pub async fn upgrade_track_handler(
         .upgrades
         .request(UpgradeAsk {
             user_id: curator.user_id().to_owned(),
-            kind: DispatchKind::Track,
-            mbid: required(&body.recording_mbid, "recording_mbid")?,
+            target: DispatchTarget::Track {
+                recording_mbid: required(&body.recording_mbid, "recording_mbid")?,
+            },
             artist: body.artist_name,
             title: body.track_title,
         })

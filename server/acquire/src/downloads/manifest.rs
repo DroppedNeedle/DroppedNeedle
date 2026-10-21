@@ -164,7 +164,7 @@ pub struct DownloadManifest {
     /// discard) on a repeat gate failure.
     #[serde(default)]
     pub hold_on_wrong_track: bool,
-    /// Owning task's origin (`user`, `retry`, `upgrade`).
+    /// Owning task's origin (a `DispatchOrigin` as stored text).
     #[serde(default = "default_origin")]
     pub origin: String,
     /// Explicit administrator for conversion-held items.
