@@ -3,7 +3,7 @@
 
 use droppedneedle_kernel::db::{DbError, Lane};
 
-use super::models::{AlbumIdentity, IdentifyJob, JobState, TrackIdentity};
+use super::models::{AlbumIdentity, IdentifyJob, JobState};
 use super::sqlite::SqliteIdentifyStore;
 use crate::matching::Release;
 
@@ -127,15 +127,15 @@ impl From<StoreError> for crate::management::models::ManagementError {
     }
 }
 
-/// A curator's approval: the review it settles and the identities it
-/// seals. The album identity's row revision is the store's to set.
+/// A curator's approval: the review it settles and the album match it
+/// seals. The album identity's row revision is the store's to set; the
+/// files are placed on the release afterwards, as on any chosen edition.
 #[derive(Debug, Clone)]
 pub struct Approval {
     pub review_id: String,
     pub by_user_id: String,
     pub candidate_key: String,
     pub album: AlbumIdentity,
-    pub tracks: Vec<TrackIdentity>,
 }
 
 /// States a claimed job can land in after one attempt.

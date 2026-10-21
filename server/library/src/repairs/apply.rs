@@ -13,7 +13,7 @@ use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use super::store::{self, OpenFinding};
 use crate::catalog_revision::bump_catalog;
-use crate::identify::sqlite::offer_album;
+use crate::identify::queue::queue_retry;
 use crate::operations::choice;
 use crate::operations::decisions::{CatalogAction, TrackRow, record_action, upsert_track_identity};
 use crate::operations::models::OperationError;
@@ -74,9 +74,20 @@ fn apply_finding(
 ) -> Result<Option<&'static str>, OperationError> {
     match finding.finding_code.as_str() {
         "safe_detach" => {
-            let detached = choice::detach(tx, album_id, DETACH_REASON, actor, Some(job_id), now)?;
+            let detached = crate::identity::remove(
+                tx,
+                album_id,
+                crate::identity::Removal::Repair {
+                    reason: DETACH_REASON,
+                    actor,
+                    job_id: Some(job_id),
+                },
+                now,
+            )?;
+            // Matched again even when its files were identified before:
+            // the detach's undo is carried through this identification.
             if detached.is_some() {
-                offer_album(tx, album_id, crate::clock::now_ms() as i64)?;
+                queue_retry(tx, album_id, actor, crate::clock::now_ms() as i64)?;
             }
             Ok(detached.map(|_| "DETACHED"))
         }

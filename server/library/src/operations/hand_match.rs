@@ -12,27 +12,21 @@
 //! DroppedNeedle choose" and "Leave unmanaged" change that identity, so
 //! the row then stands for nothing and is no longer offered for undo.
 //!
-//! A match on an edition the app picked (or carried from v2) makes the
-//! edition the person's, as "Looks right" does, with the edition's undo
-//! kept. A match never writes a file, never marks the album taken over and
-//! never stamps or hands it back.
+//! A match on an edition the app picked makes the edition the person's, as
+//! "Looks right" does, with the edition's undo kept; one carried from v2
+//! already is a person's. A match never writes a file, never marks the
+//! album taken over and never stamps or hands it back. The checks run
+//! here, the writes in [`crate::identity::hand_match`].
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::choice::{self, CHOSEN_FITS_NO_FILE, undo_point};
-use super::decisions::{
-    CatalogAction, TrackRow, indexed_track_ids, record_action, restore_track_row,
-    upsert_track_identity,
-};
 use super::models::{OperationError, ReidentificationCandidate};
 use super::plan::{StoredPlacement, seat};
 use super::reasons;
 use super::store::PROVIDER;
-use crate::catalog_revision::bump_catalog;
-use crate::corrections::continuation::{Scope, continue_tracks};
-use crate::corrections::release_join::join_replaced;
 use crate::identify::models::PriorTrackIdentity;
-use crate::identify::sqlite::album_identity_row;
+use crate::identity::reads::{album_identity_row, identity_revision, indexed_track_ids, track_row};
+use crate::identity::{self, Matched};
 use crate::matching::model::Release;
 
 /// Whether the album is in the library and not merged into another.
@@ -89,14 +83,16 @@ pub(super) fn guard(
             reasons::CUSTOM_EDITION_KEEPS_FILES,
         ));
     }
-    if choice::identity_revision(conn, album_id)? != expected_identity_revision {
+    if identity_revision(conn, album_id)? != expected_identity_revision {
         return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
     }
     album_release(conn, album_id)?.ok_or(OperationError::Invalid(reasons::NO_EDITION_TO_PLAN))
 }
 
 /// The album's indexed files whose identity names a release track, each
-/// with when a person matched it there by hand, if that match stands.
+/// with when a person matched it there by hand, if that match stands. The
+/// row a match by hand writes is `manual`, so only such a row stands for
+/// one.
 pub(super) fn stored_placements(
     conn: &Connection,
     album_id: &str,
@@ -172,56 +168,6 @@ pub(super) fn on_release(stored: Vec<StoredPlacement>, release: &Release) -> Vec
         .collect()
 }
 
-/// The album's indexed files whose match by hand stands, with the release
-/// track each holds.
-pub(super) fn standing(
-    conn: &Connection,
-    album_id: &str,
-) -> rusqlite::Result<Vec<(String, String)>> {
-    conn.prepare(
-        "SELECT h.local_track_id, i.release_track_mbid FROM library_track_hand_matches h \
-         JOIN local_tracks t ON t.id = h.local_track_id \
-         JOIN local_track_external_identities i \
-         ON i.local_track_id = h.local_track_id AND i.provider = ?2 \
-         WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
-         AND i.decision_source = 'manual' AND lower(i.release_mbid) = lower(h.release_mbid) \
-         AND lower(i.release_track_mbid) = lower(h.release_track_mbid) \
-         ORDER BY h.local_track_id",
-    )?
-    .query_map(params![album_id, PROVIDER], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })?
-    .collect()
-}
-
-/// One file's track identity row, if it has one.
-fn track_row(conn: &Connection, track_id: &str) -> rusqlite::Result<Option<PriorTrackIdentity>> {
-    conn.query_row(
-        "SELECT local_track_id, recording_mbid, release_mbid, release_track_mbid, \
-         medium_position, release_track_position, decision_source, attempt_id, selected_at \
-         FROM local_track_external_identities WHERE local_track_id = ?1 AND provider = ?2",
-        params![track_id, PROVIDER],
-        |row| {
-            Ok(PriorTrackIdentity {
-                local_track_id: row.get(0)?,
-                recording_mbid: row.get(1)?,
-                release_mbid: row.get(2)?,
-                release_track_mbid: row.get(3)?,
-                medium_position: row.get(4)?,
-                release_track_position: row.get(5)?,
-                decision_source: row.get(6)?,
-                attempt_id: row.get(7)?,
-                selected_at: row.get(8)?,
-            })
-        },
-    )
-    .optional()
-}
-
-fn to_json<T: serde::Serialize>(value: &T) -> Result<String, OperationError> {
-    serde_json::to_string(value).map_err(|error| OperationError::Store(error.to_string()))
-}
-
 /// One match a person asked for.
 pub(super) struct HandMatch<'a> {
     pub album_id: &'a str,
@@ -253,15 +199,15 @@ pub(super) fn match_file(
             reasons::CUSTOM_EDITION_KEEPS_FILES,
         ));
     }
-    let identity = album_identity_row(tx, album_id)?;
-    let Some(album_release) = identity
+    let album_row = album_identity_row(tx, album_id)?;
+    let Some(album_release) = album_row
         .as_ref()
         .and_then(|row| row.release_mbid.clone())
         .filter(|release| !release.trim().is_empty())
     else {
         return Err(OperationError::Invalid(reasons::NO_EDITION_TO_PLAN));
     };
-    if choice::identity_revision(tx, album_id)? != asked.expected_identity_revision
+    if identity_revision(tx, album_id)? != asked.expected_identity_revision
         || !release.answers_to(album_release.trim())
     {
         return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
@@ -289,66 +235,22 @@ pub(super) fn match_file(
     if seats.iter().any(|seat| seat.track == track_index) {
         return Err(OperationError::Conflict(reasons::EDITION_TRACK_TAKEN));
     }
-
-    // Matching a file is the person's word for the edition.
-    let point = undo_point(tx, album_id)?;
-    if identity.and_then(|row| row.decision_source).as_deref() != Some("manual") {
-        choice::confirm_for_match(tx, album_id, &point, asked.actor, now)?;
-    }
-    let prior = track_row(tx, asked.track_id)?;
-    tx.execute(
-        "INSERT INTO library_track_hand_matches (local_track_id, release_mbid, \
-         release_track_mbid, prior_identity_json, matched_by_user_id, matched_at) \
-         VALUES (?1, ?2, ?3, ?4, (SELECT id FROM auth_users WHERE id = ?5), ?6) \
-         ON CONFLICT (local_track_id) DO UPDATE SET release_mbid = excluded.release_mbid, \
-         release_track_mbid = excluded.release_track_mbid, \
-         prior_identity_json = excluded.prior_identity_json, \
-         matched_by_user_id = excluded.matched_by_user_id, matched_at = excluded.matched_at",
-        params![
-            asked.track_id,
-            album_release,
-            release.tracks[track_index].id,
-            prior.as_ref().map(to_json).transpose()?,
-            asked.actor,
-            now_ms,
-        ],
-    )?;
     let track = &release.tracks[track_index];
-    upsert_track_identity(
+    identity::hand_match(
         tx,
-        &TrackRow {
-            local_track_id: asked.track_id,
-            recording_mbid: &track.recording_id,
-            release_mbid: Some(&album_release),
-            release_track_mbid: Some(&track.id),
-            medium_position: Some(track.disc),
-            release_track_position: Some(track.position),
-            decision_source: "manual",
-        },
-        now,
-    )?;
-    // The file now fits the edition the person chose.
-    tx.execute(
-        "DELETE FROM library_album_match_state WHERE local_album_id = ?1 AND reason_code = ?2",
-        params![album_id, CHOSEN_FITS_NO_FILE],
-    )?;
-    record_action(
-        tx,
-        CatalogAction {
-            actor: asked.actor,
-            kind: "track_matched",
+        &Matched {
             album_id,
-            job_id: None,
-            before: serde_json::to_value(&prior).unwrap_or_default(),
-            after: serde_json::to_value(track_row(tx, asked.track_id)?).unwrap_or_default(),
-            reason: "TRACK_MATCHED",
+            track_id: asked.track_id,
+            release_mbid: &album_release,
+            release_track_mbid: &track.id,
+            recording_mbid: &track.recording_id,
+            disc: track.disc,
+            position: track.position,
+            actor: asked.actor,
+            now,
+            now_ms,
         },
-        now,
     )?;
-    crate::management::automatic::queue(tx, album_id, now)?;
-    bump_catalog(tx)?;
-    join_replaced(tx, Scope::Album(album_id), now)?;
-    continue_tracks(tx, Scope::Album(album_id), now)?;
     Ok(())
 }
 
@@ -418,34 +320,14 @@ pub(super) fn unmatch_file(
         .map(serde_json::from_str)
         .transpose()
         .map_err(|error| OperationError::Store(error.to_string()))?;
-    match prior.as_ref().filter(|row| row.recording_mbid.is_some()) {
-        Some(row) => restore_track_row(tx, row, now)?,
-        None => {
-            tx.execute(
-                "DELETE FROM local_track_external_identities \
-                 WHERE local_track_id = ?1 AND provider = ?2",
-                params![track_id, PROVIDER],
-            )?;
-        }
-    }
-    tx.execute(
-        "DELETE FROM library_track_hand_matches WHERE local_track_id = ?1",
-        params![track_id],
-    )?;
-    record_action(
+    identity::unmatch(
         tx,
-        CatalogAction {
-            actor,
-            kind: "track_match_undone",
-            album_id,
-            job_id: None,
-            before: serde_json::to_value(&current).unwrap_or_default(),
-            after: serde_json::to_value(&prior).unwrap_or_default(),
-            reason: "TRACK_MATCH_UNDONE",
-        },
+        album_id,
+        track_id,
+        prior.as_ref(),
+        current.as_ref(),
+        actor,
         now,
     )?;
-    crate::management::automatic::queue(tx, album_id, now)?;
-    bump_catalog(tx)?;
     Ok(())
 }

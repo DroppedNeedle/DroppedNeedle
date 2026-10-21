@@ -9,15 +9,16 @@
 
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
+use super::reads::{album_identity_row, identity_revision, track_identity_rows};
 use super::sql;
+use super::undo::{carry_undo, keep_choice_undo, snapshot};
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::release_join::join_replaced;
 use crate::identify::models::{AutomaticSeal, MatchFlag, PriorAlbumIdentity, PriorTrackIdentity};
-use crate::identify::sqlite::{
-    album_identity_row, album_input_revision, offer_album, track_identity_rows,
-};
+use crate::identify::queue::{album_input_revision, offer_album};
+use crate::operations::decisions::{CatalogAction, record_action};
 
 /// What automatic work read the album at.
 #[derive(Debug, Clone, Copy)]
@@ -60,6 +61,7 @@ pub fn seal_automatic(
     let before = tx.total_changes();
     let prior = album_identity_row(tx, album)?;
     let prior_tracks = track_identity_rows(tx, album)?;
+    let prior_revision = prior.as_ref().and_then(|row| row.row_revision).unwrap_or(0);
     let now = inputs.now;
     let written = tx.prepare_cached(sql::SEAL_ALBUM.text())?.execute(params![
         album,
@@ -71,6 +73,9 @@ pub fn seal_automatic(
     if written != 1 {
         return Ok(AutomaticOutcome::PersonsChoice);
     }
+    // A person's undo carried through this identification now answers to
+    // the match it sealed.
+    carry_undo(tx, album, prior_revision, identity_revision(tx, album)?)?;
     // The flag lands with the seal, so a best guess is never applied
     // without it (and a confident match never keeps a stale one).
     write_match_flag(tx, album, seal.flag.as_ref(), now)?;
@@ -163,20 +168,22 @@ pub struct Accepted<'a> {
 /// Accept an exact edition a recheck found, as confirmed: the album row
 /// and the placed files' rows become automatic on the release, the other
 /// files leave their release tracks, a waiting placement and any match
-/// flag go, and the rows it replaced are kept as the automatic-edition
-/// undo. A person's choice, made now or carried over from v2, is never
-/// replaced.
+/// flag go. The rows it replaced are kept as both undos (the album page's
+/// edition undo and the automatic-edition undo), and either puts the
+/// earlier match state back. A person's choice, made now or carried over
+/// from v2, is never replaced: `None` then. Returns the audit row id.
 pub fn accept_automatic(
     tx: &Transaction<'_>,
     album_id: &str,
     accepted: &Accepted<'_>,
-) -> rusqlite::Result<AutomaticOutcome> {
+) -> rusqlite::Result<Option<String>> {
     if album_source(tx, album_id)?.is_some_and(DecisionSource::is_persons_choice) {
-        return Ok(AutomaticOutcome::PersonsChoice);
+        return Ok(None);
     }
     let before = tx.total_changes();
-    let prior = album_identity_row(tx, album_id)?;
-    let prior_tracks = track_identity_rows(tx, album_id)?;
+    let replaced = snapshot(tx, album_id)?;
+    let prior = replaced.identity.clone();
+    let prior_tracks = replaced.tracks.clone();
     let now = accepted.now;
     tx.prepare_cached(sql::ACCEPT_ALBUM.text())?
         .execute(params![
@@ -219,8 +226,27 @@ pub fn accept_automatic(
             now,
         },
     )?;
+    let action = record_action(
+        tx,
+        CatalogAction {
+            actor: "system",
+            kind: "automatic_exact_edition",
+            album_id,
+            job_id: accepted.job_id,
+            before: serde_json::to_value(&prior).unwrap_or_default(),
+            after: serde_json::json!({
+                "release_group_mbid": accepted.release_group_mbid,
+                "release_mbid": accepted.release_mbid,
+                "placed": accepted.placed.len(),
+                "extra": accepted.extra.len(),
+            }),
+            reason: accepted.reason_code,
+        },
+        now,
+    )?;
+    keep_choice_undo(tx, album_id, &replaced, &action, false, now)?;
     bump_if_changed(tx, before)?;
-    Ok(AutomaticOutcome::Done)
+    Ok(Some(action))
 }
 
 /// Whether the album's files changed since `inputs` were read. When they

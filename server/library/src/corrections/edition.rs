@@ -368,24 +368,10 @@ fn move_edition(tx: &Transaction<'_>, from: &str, to: &str) -> rusqlite::Result<
     Ok(())
 }
 
-/// Remove an album's edition and everything that hangs off it.
+/// Remove an album's edition and everything that hangs off it, with no
+/// undo ([`identity::Removal::Merge`]).
 pub(crate) fn drop_edition(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
-    tx.execute(
-        "DELETE FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
-        params![album_id, PROVIDER],
-    )?;
-    for table in [
-        "library_album_match_state",
-        "library_edition_choice_undo",
-        "library_automatic_edition_undo",
-        "library_edition_remap_queue",
-        "library_custom_edition_active",
-    ] {
-        tx.execute(
-            &format!("DELETE FROM {table} WHERE local_album_id = ?1"),
-            params![album_id],
-        )?;
-    }
+    identity::remove(tx, album_id, identity::Removal::Merge, 0.0)?;
     Ok(())
 }
 

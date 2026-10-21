@@ -4,10 +4,10 @@
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
-use super::choice::undo_available;
 use super::reasons::{self, Reason};
 use super::store::{self, PROVIDER};
 use crate::identify::models::CandidateEvidence;
+use crate::identity::reads::undo_available;
 
 /// Where an album's edition stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
@@ -109,9 +109,10 @@ pub fn edition_status(
         .as_ref()
         .and_then(|(_, _, json)| serde_json::from_str(json).ok())
         .unwrap_or_default();
-    let protected = identity
-        .as_ref()
-        .is_some_and(|(_, _, source, _, _, _)| source == "manual" || source == "legacy_import");
+    let protected = identity.as_ref().is_some_and(|(_, _, source, _, _, _)| {
+        crate::identity::DecisionSource::parse(source)
+            .is_some_and(crate::identity::DecisionSource::is_persons_choice)
+    });
     let (state, reason) = match (&identity, &flagged) {
         // A chosen edition stays chosen; a flag on it explains a problem
         // with the choice (it fits none of the files).

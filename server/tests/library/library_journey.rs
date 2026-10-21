@@ -13939,29 +13939,143 @@ async fn a_queued_choice_keeps_a_carried_leave_unmanaged() {
     );
 }
 
-/// A person approving a release for an album whose remap came from a
-/// release-group pin makes the queued row theirs: from then on it is
-/// treated as a person's choice of this album's edition.
+/// A curator approving a release, with the evidence for each file, makes
+/// it their choice and queues the files to be placed on it, replacing what
+/// was queued (here a release-group pin's row). The approval itself leaves
+/// the files' rows alone. Placing the files then puts each on its release
+/// track with its position and changes nothing of the album's match, so
+/// the approval's undo still puts the album back as it was.
 #[tokio::test]
-async fn approving_a_release_makes_the_queued_remap_the_persons() {
-    let (scratch, library, album, _) = chosen_album_at_rest("lib-place-approved").await;
+async fn an_approved_release_is_placed_and_its_undo_survives() {
+    use droppedneedle_library::identify::models::{
+        CandidateEvidence, EvidenceClass, TrackEvidence,
+    };
+
+    let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-approved").await;
     let db = scratch_db(&scratch);
     queue_remap_row(&library, &album, "group_pin");
-    file_edition_review(&library.identify_store, &album);
-    let review = library.pending_reviews(&album).unwrap();
+    let chosen = choice_row(&db, &album);
+    let files: Vec<_> = tracks.iter().map(|track| placement(&db, track)).collect();
+    let mut recall = fitting_release(&library, &album);
+    recall.releases[0].id = REL_2.to_owned();
+    recall.releases[0].release_group_id = "rg-2".to_owned();
+    let release = recall.releases[0].clone();
+    droppedneedle_library::identify::review::file_review(
+        &library.identify_store,
+        "rev-approved",
+        &album,
+        "EDITION_UNCERTAIN",
+        vec![CandidateEvidence {
+            candidate_key: format!("rg-2:{REL_2}"),
+            release_group_mbid: "rg-2".to_owned(),
+            release_mbid: Some(REL_2.to_owned()),
+            album_title: "Album".to_owned(),
+            album_artist_name: String::new(),
+            track_evidence: tracks
+                .iter()
+                .zip(&release.tracks)
+                .map(|(track, on_release)| TrackEvidence {
+                    local_track_id: track.clone(),
+                    classification: EvidenceClass::Supported,
+                    evidence_kinds: Vec::new(),
+                    recording_mbid: Some(on_release.recording_id.clone()),
+                    release_track_mbid: Some(on_release.id.clone()),
+                })
+                .collect(),
+            score: 1.0,
+            reason_code: "EDITION_UNCERTAIN".to_owned(),
+            distance: 0.0,
+            penalties: Vec::new(),
+        }],
+    )
+    .unwrap();
+
     library
-        .approve_review(&review[0].id, "curator", &format!("rg-2:{REL_2}"))
+        .approve_review("rev-approved", "curator", &format!("rg-2:{REL_2}"))
         .expect("approved");
     assert_eq!(remap_row(&db, &album), Some(("album_pin".to_owned(), 0)));
+    let after: Vec<_> = tracks.iter().map(|track| placement(&db, track)).collect();
+    assert_eq!(after, files, "the approval leaves the files");
+
+    remap_once(&library, &scratch.identify, recall).await;
+    assert_eq!(remap_row(&db, &album), None);
+    for (track, on_release) in tracks.iter().zip(&release.tracks) {
+        let placed: (
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+            String,
+        ) = db
+            .query_row(
+                "SELECT release_mbid, release_track_mbid, medium_position, \
+                 release_track_position, decision_source \
+                 FROM local_track_external_identities WHERE local_track_id = ?1",
+                [track],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("placed");
+        assert_eq!(
+            placed,
+            (
+                Some(REL_2.to_owned()),
+                Some(on_release.id.clone()),
+                Some(i64::from(on_release.disc)),
+                Some(i64::from(on_release.position)),
+                "manual".to_owned()
+            )
+        );
+    }
+
+    droppedneedle_library::operations::service::Operations::new(&library)
+        .undo_edition_choice(&album, "curator")
+        .expect("the approval's undo still applies");
+    let undone = choice_row(&db, &album);
     assert_eq!(
-        db.query_row(
-            "SELECT release_mbid FROM library_edition_remap_queue WHERE local_album_id = ?1",
-            [&album],
-            |row| row.get::<_, String>(0),
-        )
-        .expect("queue reads"),
-        REL_2
+        (&undone.0, &undone.1, &undone.2, undone.3),
+        (&chosen.0, &chosen.1, &chosen.2, chosen.3),
+        "the album is as before the approval"
     );
+    let files_now: Vec<_> = tracks.iter().map(|track| placement(&db, track)).collect();
+    assert_eq!(
+        files_now
+            .iter()
+            .map(|row| (&row.0, &row.1))
+            .collect::<Vec<_>>(),
+        files.iter().map(|row| (&row.0, &row.1)).collect::<Vec<_>>(),
+        "the files are as before"
+    );
+}
+
+/// A chosen edition MusicBrainz now lists under a newer id: placing the
+/// files writes them on the release as the album's match names it, so
+/// what reads the album's release finds them.
+#[tokio::test]
+async fn a_choice_placed_under_a_merged_id_keeps_the_albums_release() {
+    let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-merged").await;
+    let db = scratch_db(&scratch);
+    queue_remap_row(&library, &album, "album_pin");
+    let mut recall = fitting_release(&library, &album);
+    recall.releases[0].id = REL_2.to_owned();
+    recall.releases[0].old_ids = vec![REL_1.to_owned()];
+
+    remap_once(&library, &scratch.identify, recall).await;
+    assert_eq!(remap_row(&db, &album), None);
+    for track in &tracks {
+        assert_eq!(
+            placement(&db, track).0.as_deref(),
+            Some(REL_1),
+            "on the album's release"
+        );
+    }
 }
 
 /// An album retagged by hand across two scans, whose edition a person
@@ -16240,11 +16354,12 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
     assert_eq!(holdings(&db, &tracks[1])[1], 0);
 }
 
-/// A review approval that maps a copy of a track whose original is gone to
-/// the original's release track moves the original's history to it at the
-/// approval, with no scan. An approval records no release on its tracks.
+/// A review approval of the release a copy of a gone track belongs to
+/// moves the original's history to the copy once the files are placed on
+/// that release, with no scan. The copy lands on the original's release
+/// track, with the release.
 #[tokio::test]
-async fn an_approval_continues_a_track_at_once() {
+async fn an_approval_continues_a_track_once_its_files_are_placed() {
     use droppedneedle_library::identify::models::{
         CandidateEvidence, EvidenceClass, TrackEvidence,
     };
@@ -16305,11 +16420,17 @@ async fn an_approval_continues_a_track_at_once() {
     library
         .approve_review("rev-approve", "curator", &key)
         .expect("approved");
+    remap_once(
+        &library,
+        &scratch.identify,
+        fitting_release(&library, &album),
+    )
+    .await;
     let (release, mapped, _) = placement(&db, &copy);
     assert_eq!(
-        (release, mapped),
-        (None, Some(release_track)),
-        "mapped with no release"
+        (release.as_deref(), mapped),
+        (Some(REL_1), Some(release_track)),
+        "placed on the approved release"
     );
     assert_eq!(holdings(&db, &copy)[1], 1);
     assert_eq!(holdings(&db, &old[1])[1], 0);
@@ -20312,9 +20433,9 @@ fn plan_file<'a>(plan: &'a Value, track: &str) -> &'a Value {
 /// edition again keep the match. A tag edit written to the file after the
 /// match holds "Undo match" back until that write is undone from History;
 /// then "Undo match" puts the file back as it was, and the play and star
-/// stay. On an edition the app picked, or one
-/// carried from v2, the match makes the edition the person's, and the
-/// edition's own undo puts the album and the file back.
+/// stay. On an edition the app picked, the match makes the edition the
+/// person's, and the edition's own undo puts the album and the file back.
+/// One carried from v2 already is a person's and keeps its source.
 #[tokio::test]
 async fn a_file_matched_by_hand_counts_as_its_track() {
     let rig = Rig::start("lib-hand-match").await;
@@ -20606,8 +20727,8 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let carried = album_choice(&db, album);
-    assert_eq!(carried.0, "manual");
-    assert!(carried.1.is_some(), "chosen by the curator");
+    assert_eq!(carried.0, "legacy_import", "v2's choice stays as it is");
+    assert!(carried.1.is_none());
     rig.stop().await;
 }
 

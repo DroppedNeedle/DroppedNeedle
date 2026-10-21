@@ -576,9 +576,10 @@ impl IdentifyService {
         )
     }
 
-    /// A curator approves a review: the chosen candidate seals as a manual
-    /// identity, which later automatic passes can never overwrite. The
-    /// review settles and every identity lands together or not at all.
+    /// A curator approves a review: the chosen candidate becomes the
+    /// album's match as their choice, which later automatic passes can
+    /// never overwrite, and the files are placed on its release in the
+    /// background. The review settles with it, together or not at all.
     /// `Ok(false)` for an unknown review or candidate, or a settled review.
     pub fn approve_candidate(
         &self,
@@ -599,22 +600,6 @@ impl IdentifyService {
         else {
             return Ok(false);
         };
-        let tracks = winner
-            .track_evidence
-            .iter()
-            .filter(|track| track.classification == EvidenceClass::Supported)
-            .filter_map(|track| {
-                let recording = track.recording_mbid.as_deref()?;
-                Some(TrackIdentity {
-                    local_track_id: track.local_track_id.clone(),
-                    provider: "musicbrainz".to_owned(),
-                    recording_mbid: Some(recording.to_owned()),
-                    release_track_mbid: track.release_track_mbid.clone(),
-                    decision_source: DecisionSource::Manual,
-                    row_revision: 1,
-                })
-            })
-            .collect();
         self.deps.store.approve(&Approval {
             review_id: review_id.to_owned(),
             by_user_id: by_user_id.to_owned(),
@@ -627,7 +612,6 @@ impl IdentifyService {
                 decision_source: DecisionSource::Manual,
                 row_revision: 1,
             },
-            tracks,
         })
     }
 

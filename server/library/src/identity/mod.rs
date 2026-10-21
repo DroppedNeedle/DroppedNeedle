@@ -14,11 +14,20 @@
 //! pass may replace it, and new evidence that contradicts it takes it
 //! away. A person's choice, and one carried over from v2, is never touched
 //! by automatic work.
+//!
+//! Beside the five tables the module also writes what only means something
+//! with a match: the queued placement of an album's files
+//! (`library_edition_remap_queue`), the active custom edition and its
+//! manifests, and the records of files matched by hand.
 
 mod automatic;
+mod custom;
 mod import;
+mod person;
 pub mod reads;
+pub mod remap;
 pub(crate) mod sql;
+mod undo;
 
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{Transaction, params};
@@ -28,8 +37,77 @@ pub(crate) use automatic::write_match_flag;
 pub use automatic::{
     Accepted, AutomaticOutcome, Inputs, Placed, accept_automatic, retract, seal_automatic,
 };
+pub use custom::{Custom, custom_edition};
 pub use import::{ImportedFile, adopt_import, import_album};
 pub(crate) use import::{save_album, save_track};
+pub use person::{
+    Approved, Chosen, Matched, Offer, Removal, approve, choose, confirm, hand_back, hand_match,
+    leave_unmanaged, place, remove, unmatch,
+};
+pub(crate) use person::{TrackRow, upsert_track_identity};
+pub use undo::{AutomaticUndo, AutomaticUndone, undo, undo_automatic};
+
+/// Why a person's identity command wrote nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// The album has no indexed file.
+    AlbumNotFound,
+    /// The edition has a track for none of the album's files.
+    EditionFitsNoFile,
+    /// The album has no match naming a release to confirm.
+    NoMatchToConfirm,
+    /// The album's match is not an unconfirmed best guess.
+    NothingToConfirm,
+    /// The album has no edition change to take back.
+    NoEditionChoice,
+    /// The album's identity changed since its last edition change.
+    EditionChoiceStale,
+    /// The album has no automatic edition to undo.
+    NoAutomaticEdition,
+    /// The album changed since its automatic edition.
+    AutomaticUndoStale,
+    /// The album's identity is not at the revision the person saw.
+    EditionChanged,
+    /// The custom edition's release belongs to another release group.
+    CustomEditionGroupConflict,
+    /// The files lack an album title or an album artist.
+    CustomEditionNamesMissing,
+    /// The album artist's match names another artist.
+    CustomEditionArtistConflict,
+    /// The files lack a unique disc and track number of their own.
+    CustomEditionPositions,
+}
+
+/// A person's identity command failed: the store failed, or the command
+/// refused and wrote nothing.
+#[derive(Debug)]
+pub enum IdentityError {
+    Db(rusqlite::Error),
+    Refused(Refusal),
+}
+
+impl std::fmt::Display for IdentityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Db(error) => write!(f, "{error}"),
+            Self::Refused(refusal) => write!(f, "refused: {refusal:?}"),
+        }
+    }
+}
+
+impl std::error::Error for IdentityError {}
+
+impl From<rusqlite::Error> for IdentityError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Db(error)
+    }
+}
+
+impl From<Refusal> for IdentityError {
+    fn from(refusal: Refusal) -> Self {
+        Self::Refused(refusal)
+    }
+}
 
 /// The provider every identity row here names.
 pub(crate) const PROVIDER: &str = "musicbrainz";
@@ -113,33 +191,45 @@ pub(crate) enum Rows {
 /// `Rows::Any` clears the undo rows whenever the album is left with no
 /// match, so it also runs before another album's row is moved onto this
 /// one. `Rows::Revisable` clears them only when it deleted a row: an album
-/// a person took the match off keeps that change's undo. `true` when a
-/// match row went.
+/// a person took the match off keeps that change's undo. A retraction is
+/// automatic work, so an undo carried through it (a hand back's) stays,
+/// keyed to the album having no match. `true` when a match row went.
 pub(crate) fn delete_album_row(
     tx: &Transaction<'_>,
     album_id: &str,
     rows: Rows,
 ) -> rusqlite::Result<bool> {
-    let statement = match rows {
-        Rows::Any => sql::DELETE_ALBUM_ROW,
-        Rows::Revisable => sql::DELETE_REVISABLE_ALBUM_ROW,
-    };
-    let deleted = tx
-        .prepare_cached(statement.text())?
-        .execute(params![album_id, PROVIDER])?;
-    let forget = match rows {
-        Rows::Any => !tx
-            .prepare_cached(sql::HAS_ALBUM_ROW.text())?
-            .query_row(params![album_id, PROVIDER], |row| row.get::<_, bool>(0))?,
-        Rows::Revisable => deleted > 0,
-    };
-    if forget {
-        for statement in [sql::FORGET_AUTOMATIC_UNDO, sql::FORGET_CHOICE_UNDO] {
-            tx.prepare_cached(statement.text())?
-                .execute(params![album_id])?;
+    match rows {
+        Rows::Any => {
+            let deleted = tx
+                .prepare_cached(sql::DELETE_ALBUM_ROW.text())?
+                .execute(params![album_id, PROVIDER])?;
+            let matched: bool = tx
+                .prepare_cached(sql::HAS_ALBUM_ROW.text())?
+                .query_row(params![album_id, PROVIDER], |row| row.get(0))?;
+            if !matched {
+                for statement in [sql::FORGET_AUTOMATIC_UNDO, sql::FORGET_CHOICE_UNDO] {
+                    tx.prepare_cached(statement.text())?
+                        .execute(params![album_id])?;
+                }
+            }
+            Ok(deleted > 0)
+        }
+        Rows::Revisable => {
+            let revision = reads::identity_revision(tx, album_id)?;
+            let deleted = tx
+                .prepare_cached(sql::DELETE_REVISABLE_ALBUM_ROW.text())?
+                .execute(params![album_id, PROVIDER])?;
+            if deleted > 0 {
+                tx.prepare_cached(sql::FORGET_AUTOMATIC_UNDO.text())?
+                    .execute(params![album_id])?;
+                tx.prepare_cached(sql::FORGET_UNCARRIED_CHOICE_UNDO.text())?
+                    .execute(params![album_id, revision])?;
+                undo::carry_undo(tx, album_id, revision, 0)?;
+            }
+            Ok(deleted > 0)
         }
     }
-    Ok(deleted > 0)
 }
 
 #[cfg(test)]

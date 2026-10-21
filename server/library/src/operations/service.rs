@@ -20,12 +20,12 @@ use super::reidentify::evaluation;
 use super::store::{self, NewReidentification};
 use super::{choice, decisions, hand_match, history, reviews};
 use crate::clock::now_unix;
-use crate::identify::models::IdentifyKind;
 use crate::identify::models::LocalAlbumFacts;
+use crate::identify::queue::queue_retry;
 use crate::identify::service::IdentifyService;
 use crate::identify::sources::EditionQuery;
 use crate::identify::sqlite::SqliteIdentifyStore;
-use crate::identify::sqlite::{album_identity_row, queue_retry};
+use crate::identity::reads::album_identity_row;
 use crate::jobs::{self, OperationKind};
 use crate::matching::model::Release;
 use crate::scan::watcher::WorkWakeups;
@@ -709,24 +709,7 @@ impl Operations {
         self.db
             .write_blocking(Lane::Foreground, "operations.hand_back", |tx| {
                 choice::hand_back(tx, album_id, actor, now_unix())
-            })?;
-        let revision = self.store.input_revision(album_id)?;
-        if let Err(error) = self.identify.enqueue_album(
-            &self.ids.new_id(),
-            album_id,
-            IdentifyKind::Manual,
-            &revision,
-            Some(actor),
-            crate::clock::now_ms(),
-            Lane::Foreground,
-        ) {
-            tracing::warn!(
-                %error,
-                album = album_id,
-                "edition handed back but the identification was not queued"
-            );
-        }
-        Ok(())
+            })
     }
 
     /// What the app did by itself to the album, newest first, as
@@ -759,8 +742,8 @@ impl Operations {
     }
 
     /// Place the files of the next album whose edition still waits for
-    /// them (pins converted by an upgrade, v2 imports, a person's release
-    /// approved without its tracks, an album that gained files). True when
+    /// them (pins converted by an upgrade, v2 imports, a release a person
+    /// approved, an album that gained files). True when
     /// one was handled. Store calls block: run this on a blocking thread.
     pub async fn remap_next(&self) -> Result<bool, OperationError> {
         use choice::RemapOrigin;
@@ -779,7 +762,6 @@ impl Operations {
                 Lane::Background,
             )
             .await;
-        let actor = pending.chosen_by_user_id.as_deref();
         let place_only = pending.origin == RemapOrigin::PlaceOnly;
         self.db
             .write_blocking(Lane::Background, "operations.remap", |tx| {
@@ -795,19 +777,24 @@ impl Operations {
                     choice::drop_remap(tx, &pending)?;
                     return Ok(true);
                 }
+                // Placing files writes only their track rows: the album's
+                // match, and the undo of the choice that queued them, stay.
+                // Placing on an edition the album already has needs only
+                // the candidate's spots; a choice needs its release too.
                 let placed = match outcome {
-                    Ok(candidate) if place_only => {
-                        choice::place_files(tx, &pending, &candidate, now).map(|_| ())
-                    }
-                    Ok(candidate) => choice::apply_choice(
+                    Ok(candidate) if place_only => crate::identity::remap::place_files(
                         tx,
-                        &pending.local_album_id,
-                        &candidate,
-                        actor,
-                        None,
+                        &pending,
+                        &choice::offer_on(&candidate, &pending.release_mbid),
                         now,
                     )
-                    .map(|_| ()),
+                    .map(|_| ())
+                    .map_err(OperationError::from),
+                    Ok(candidate) => choice::offer(&candidate).and_then(|offer| {
+                        crate::identity::remap::place_choice(tx, &pending, &offer, now)
+                            .map(|_| ())
+                            .map_err(OperationError::from)
+                    }),
                     Err(error) => Err(error),
                 };
                 match placed {

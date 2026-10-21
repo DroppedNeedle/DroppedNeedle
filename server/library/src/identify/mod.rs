@@ -21,6 +21,5 @@ pub mod review;
 pub mod rules;
 pub mod service;
 pub mod sources;
-pub(crate) mod sql;
 pub mod sqlite;
 pub mod stores;

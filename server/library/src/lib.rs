@@ -58,7 +58,6 @@ pub mod wiring;
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
     vec![
         scan::sql::registered(),
-        identify::sql::registered(),
         identity::sql::registered(),
         contrib::sql::registered(),
         publish::sql::registered(),

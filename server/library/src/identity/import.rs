@@ -11,13 +11,12 @@
 use droppedneedle_kernel::db::savepoint;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
+use super::reads::{read_album_identity, read_track_identity, stored_release};
 use super::sql;
 use super::{DecisionSource, PROVIDER, write_match_flag};
 use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::identify::models::{AlbumIdentity, TrackIdentity};
-use crate::identify::sqlite::{
-    offer_album, read_album_identity, read_track_identity, stored_release,
-};
+use crate::identify::queue::offer_album;
 use crate::publish::planner::ReleaseIdentity;
 
 /// One file an import's bundle added to the catalog.

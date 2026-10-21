@@ -92,11 +92,18 @@ pub enum ReviewAction {
     Restore,
 }
 
-const ROW_COLUMNS: &str = "r.id, r.local_album_id, r.reason_code, r.candidates_json, r.state, \
-     r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, ''), \
-     COALESCE(a.album_artist_name, ''), r.created_ms, r.updated_ms, \
-     EXISTS (SELECT 1 FROM local_album_external_identities e \
-             WHERE e.local_album_id = r.local_album_id AND e.decision_source = 'manual')";
+/// A review row's columns; the last says whether a person's choice, made
+/// now or carried over from v2, holds the album.
+fn row_columns() -> String {
+    format!(
+        "r.id, r.local_album_id, r.reason_code, r.candidates_json, r.state, \
+         r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, ''), \
+         COALESCE(a.album_artist_name, ''), r.created_ms, r.updated_ms, \
+         EXISTS (SELECT 1 FROM local_album_external_identities e \
+                 WHERE e.local_album_id = r.local_album_id AND e.decision_source IN {})",
+        crate::identity::sql::PERSONS
+    )
+}
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
     let Some(review) = map_review(row)? else {
@@ -226,8 +233,10 @@ pub fn list(
         }
     };
     let mut statement = conn.prepare(&format!(
-        "SELECT {ROW_COLUMNS} {clause} ORDER BY {order}, r.id LIMIT {} OFFSET {}",
-        filter.limit, filter.offset
+        "SELECT {} {clause} ORDER BY {order}, r.id LIMIT {} OFFSET {}",
+        row_columns(),
+        filter.limit,
+        filter.offset
     ))?;
     let mut rows = statement
         .query_map(params, map_row)?
@@ -412,8 +421,9 @@ pub fn plan_bulk(
 pub fn get(conn: &Connection, review_id: &str) -> rusqlite::Result<Option<ReviewRow>> {
     conn.query_row(
         &format!(
-            "SELECT {ROW_COLUMNS} FROM library_identify_reviews r \
-             LEFT JOIN local_albums a ON a.id = r.local_album_id WHERE r.id = ?1"
+            "SELECT {} FROM library_identify_reviews r \
+             LEFT JOIN local_albums a ON a.id = r.local_album_id WHERE r.id = ?1",
+            row_columns()
         ),
         [review_id],
         map_row,

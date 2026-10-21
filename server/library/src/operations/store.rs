@@ -20,8 +20,9 @@ use super::models::{
     Control, Evaluation, OperationError, OperationJob, OperationKind, OperationState, WorkResult,
 };
 use super::reasons;
-use crate::identify::sqlite::{album_identity_row, album_input_revision};
+use crate::identify::queue::album_input_revision;
 use crate::identity::DecisionSource;
+use crate::identity::reads::album_identity_row;
 use crate::jobs::{self, ControlChange, NewJob, NewWork, Tally, WorkState};
 use crate::management::profile::root_assignment;
 use droppedneedle_kernel::runtime_config::Live;
