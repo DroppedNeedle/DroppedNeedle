@@ -47,11 +47,6 @@ const ALLOWED: &[Allowed] = &[
         why: "the MusicBrainz contribution callback at its v1 path: kept until the legacy callbacks are removed",
     },
     Allowed {
-        path: "acquire/src/requests/mod.rs",
-        calls: 2,
-        why: "test-support only: the approval reads over this module's store, for its slice tests",
-    },
-    Allowed {
         path: "media/src/stream/routes.rs",
         calls: 1,
         why: "test-support only: the stream route over a fake engine, for its slice tests",
