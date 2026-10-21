@@ -22793,7 +22793,7 @@ export interface components {
              * @description Epoch seconds when the next check is due, when scheduled.
              */
             next_check_at?: number | null;
-            /** @description Watch state: `watching`, `paused`, or loop-set `dormant`. */
+            /** @description Watch state: `watching`, `stopped` or `fulfilled`. */
             state: string;
             /** @description Owner id (admins see every row). */
             user_id?: string | null;

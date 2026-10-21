@@ -31,7 +31,7 @@ use crate::dispatch::{
 };
 use crate::downloads::state::TaskStatus;
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatch};
+use crate::requests::ledger::{RequestRecord, RequestStatus, WantedWatch, WatchState};
 use crate::requests::models::RequestKind;
 use crate::requests::quota::QuotaLedger;
 use crate::requests::sqlite::{RequestStore, WantedStore};
@@ -204,7 +204,13 @@ async fn check_watch(
             .mark_fulfilled(&watch.key, "in_library", at)
             .await?;
         deps.ledger
-            .update_status(RequestKind::Album, &watch.key, "imported", Some(at), None)
+            .update_status(
+                RequestKind::Album,
+                &watch.key,
+                RequestStatus::Imported,
+                Some(at),
+                None,
+            )
             .await?;
         deps.ticks.emit(
             "request_fulfilled",
@@ -340,16 +346,16 @@ fn notify_wanted(
 /// stopped watch, skips rows with no requester, and skips rows whose
 /// linked task is still active (v2 `_maybe_enrol` guards).
 async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -> usize {
-    let mut statuses = vec![("failed", "missing")];
+    let mut statuses = vec![(RequestStatus::Failed, "missing")];
     if settings.watch_partial_albums {
-        statuses.push(("incomplete", "partial"));
+        statuses.push((RequestStatus::Incomplete, "partial"));
     }
     let mut enrolled = 0;
     for (status, kind) in statuses {
         let rows = match deps.ledger.with_status(RequestKind::Album, status).await {
             Ok(rows) => rows,
             Err(error) => {
-                tracing::warn!(status, ?error, "wanted enrolment could not read requests");
+                tracing::warn!(%status, ?error, "wanted enrolment could not read requests");
                 continue;
             }
         };
@@ -382,7 +388,7 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
                 year: row.year,
                 cover_url: None,
                 kind: kind.to_owned(),
-                state: WATCH_WATCHING.to_owned(),
+                state: WatchState::Watching,
                 created_at: epoch(now),
                 first_release_date: None,
                 check_count: 0,
@@ -1055,22 +1061,16 @@ pub struct SyncDeps {
 
 /// Map a download task status onto a request status (v2
 /// `_TASK_TO_REQUEST_STATUS`, `requests_page_service.py`).
-pub fn map_task_status(task_status: TaskStatus) -> &'static str {
+pub fn map_task_status(task_status: TaskStatus) -> RequestStatus {
     match task_status {
-        TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing => "downloading",
-        TaskStatus::Completed => "imported",
-        TaskStatus::Partial => "incomplete",
-        TaskStatus::Failed => "failed",
-        TaskStatus::Cancelled => "cancelled",
+        TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing => {
+            RequestStatus::Downloading
+        }
+        TaskStatus::Completed => RequestStatus::Imported,
+        TaskStatus::Partial => RequestStatus::Incomplete,
+        TaskStatus::Failed => RequestStatus::Failed,
+        TaskStatus::Cancelled => RequestStatus::Cancelled,
     }
-}
-
-/// Terminal request statuses: nothing left to reconcile.
-pub fn is_terminal(status: &str) -> bool {
-    matches!(
-        status,
-        "imported" | "incomplete" | "failed" | "cancelled" | "ignored"
-    )
 }
 
 /// Run one request-status-sync pass: reconcile every active row
@@ -1182,7 +1182,10 @@ async fn sync_one(
         if mapped == row.status {
             return Ok(());
         }
-        let terminal = is_terminal(mapped) && mapped != "incomplete";
+        let terminal = matches!(
+            mapped,
+            RequestStatus::Imported | RequestStatus::Failed | RequestStatus::Cancelled
+        );
         let won = deps
             .ledger
             .update_status(
@@ -1196,7 +1199,7 @@ async fn sync_one(
             .map_err(|error| format!("{error:?}"))?;
         if won {
             summary.reconciled += 1;
-            if mapped == "imported" {
+            if mapped == RequestStatus::Imported {
                 summary.imported += 1;
                 deps.ticks.emit(
                     "request_fulfilled",
@@ -1220,7 +1223,7 @@ async fn sync_one(
         .update_status(
             row.kind,
             &row.key,
-            "imported",
+            RequestStatus::Imported,
             Some(at),
             Some(row.generation),
         )

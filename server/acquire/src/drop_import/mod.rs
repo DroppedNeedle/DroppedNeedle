@@ -41,6 +41,7 @@ use crate::landing::ports::{
 use crate::landing::probe::{Landing, probe};
 use crate::landing::specs::Target;
 use crate::landing::{quality, specs};
+use crate::requests::ledger::RequestStatus;
 use crate::requests::models::RequestKind;
 use crate::requests::sqlite::{RequestStore, WantedStore};
 use droppedneedle_kernel::events::{
@@ -1041,14 +1042,14 @@ impl DropImports {
             }
         };
         if let Some(record) = &record
-            && record.status != "imported"
+            && record.status != RequestStatus::Imported
         {
             match self
                 .ledger
                 .update_status(
                     RequestKind::Album,
                     &group,
-                    "imported",
+                    RequestStatus::Imported,
                     Some(at),
                     Some(record.generation),
                 )

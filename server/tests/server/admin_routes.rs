@@ -684,7 +684,7 @@ async fn quota_usage_counts_asks_and_bytes() {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock reads")
-        .as_secs();
+        .as_millis();
     // Asks count from the durable request rows.
     for key in ["ask-1", "ask-2", "ask-3"] {
         lane_seed(

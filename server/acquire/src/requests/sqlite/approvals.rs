@@ -3,10 +3,8 @@
 use rusqlite::{OptionalExtension, params};
 
 use super::super::error::RequestsError;
-use super::super::ledger::{ApprovalBatch, FollowApproval};
-use super::{
-    APPROVAL_APPROVED, APPROVAL_PENDING, APPROVAL_REVOKED, epoch_from_real, lane_error, read_error,
-};
+use super::super::ledger::{ApprovalBatch, ApprovalState, FollowApproval};
+use super::{lane_error, ms_from_secs, read_error, secs_from_ms};
 use crate::db::AcquireDb;
 
 /// Durable auto-download approvals plus import batches over
@@ -18,15 +16,7 @@ pub struct FollowApprovalStore {
 }
 
 /// One pending approval or batch row as the queries read it.
-type ApprovalRow = (
-    String,
-    Option<String>,
-    String,
-    String,
-    String,
-    f64,
-    Option<String>,
-);
+type ApprovalRow = (String, Option<String>, String, String, i64, Option<String>);
 
 impl FollowApprovalStore {
     /// Approvals over one database.
@@ -62,8 +52,8 @@ impl FollowApprovalStore {
                         artist_mbid,
                         artist_mbid.to_lowercase(),
                         artist_name,
-                        APPROVAL_PENDING,
-                        now as f64
+                        ApprovalState::Pending,
+                        ms_from_secs(now)
                     ],
                 )?;
                 Ok(())
@@ -103,11 +93,11 @@ impl FollowApprovalStore {
                             mbid,
                             mbid.to_lowercase(),
                             name,
-                            APPROVAL_PENDING,
-                            now as f64,
+                            ApprovalState::Pending,
+                            ms_from_secs(now),
                             batch_id,
                             source,
-                            APPROVAL_APPROVED
+                            ApprovalState::Approved
                         ],
                     )?;
                 }
@@ -123,15 +113,13 @@ impl FollowApprovalStore {
         Ok(rows
             .into_iter()
             .map(
-                |(user_id, user_name, artist_mbid, artist_name, state, requested_at, _)| {
-                    FollowApproval {
-                        user_name: user_name.unwrap_or_else(|| user_id.clone()),
-                        user_id,
-                        artist_mbid,
-                        artist_name,
-                        state,
-                        requested_at: epoch_from_real(requested_at),
-                    }
+                |(user_id, user_name, artist_mbid, artist_name, requested_at, _)| FollowApproval {
+                    user_name: user_name.unwrap_or_else(|| user_id.clone()),
+                    user_id,
+                    artist_mbid,
+                    artist_name,
+                    state: ApprovalState::Pending,
+                    requested_at: secs_from_ms(requested_at),
                 },
             )
             .collect())
@@ -142,9 +130,9 @@ impl FollowApprovalStore {
     pub async fn pending_batches(&self) -> Result<Vec<ApprovalBatch>, RequestsError> {
         let rows = self.pending_rows(true).await?;
         let mut batches: Vec<ApprovalBatch> = Vec::new();
-        for (user_id, user_name, artist_mbid, artist_name, state, requested_at, batch_id) in rows {
+        for (user_id, user_name, artist_mbid, artist_name, requested_at, batch_id) in rows {
             let batch_id = batch_id.unwrap_or_default();
-            let requested_at = epoch_from_real(requested_at);
+            let requested_at = secs_from_ms(requested_at);
             if let Some(batch) = batches
                 .iter_mut()
                 .find(|batch| batch.batch_id == batch_id && batch.user_id == user_id)
@@ -158,7 +146,7 @@ impl FollowApprovalStore {
                 user_name: user_name.unwrap_or_else(|| user_id.clone()),
                 user_id,
                 artists: vec![(artist_mbid, artist_name)],
-                state,
+                state: ApprovalState::Pending,
                 requested_at,
             });
         }
@@ -187,14 +175,14 @@ impl FollowApprovalStore {
         &self,
         user_id: &str,
         artist_mbid: &str,
-        state: &str,
+        state: ApprovalState,
         reviewer: (&str, Option<String>),
         now: u64,
     ) -> Result<Option<FollowApproval>, RequestsError> {
         self.transition(
             user_id,
             artist_mbid,
-            APPROVAL_PENDING,
+            ApprovalState::Pending,
             state,
             reviewer,
             now,
@@ -214,8 +202,8 @@ impl FollowApprovalStore {
         self.transition(
             user_id,
             artist_mbid,
-            APPROVAL_APPROVED,
-            APPROVAL_REVOKED,
+            ApprovalState::Approved,
+            ApprovalState::Revoked,
             reviewer,
             now,
             "approvals.revoke",
@@ -231,7 +219,7 @@ impl FollowApprovalStore {
                 let changed = tx.execute(
                     "DELETE FROM auto_download_approvals WHERE user_id = ?1 \
                      AND artist_mbid_lower = ?2 AND state = ?3",
-                    params![user_id, mbid_lower, APPROVAL_PENDING],
+                    params![user_id, mbid_lower, ApprovalState::Pending],
                 )?;
                 Ok(changed > 0)
             })
@@ -244,11 +232,11 @@ impl FollowApprovalStore {
     pub async fn decide_batch(
         &self,
         batch_id: &str,
-        state: &str,
+        state: ApprovalState,
         reviewer: (&str, Option<String>),
         now: u64,
     ) -> Result<Vec<(String, String, String)>, RequestsError> {
-        let (batch_id, state) = (batch_id.to_owned(), state.to_owned());
+        let batch_id = batch_id.to_owned();
         let (reviewer_id, reviewer_name) = (reviewer.0.to_owned(), reviewer.1);
         self.db
             .write("approvals.decide_batch", move |tx| {
@@ -257,7 +245,7 @@ impl FollowApprovalStore {
                      WHERE batch_id = ?1 AND state = ?2 ORDER BY artist_name",
                 )?;
                 let rows = statement
-                    .query_map(params![batch_id, APPROVAL_PENDING], |row| {
+                    .query_map(params![batch_id, ApprovalState::Pending], |row| {
                         Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                     })?
                     .collect::<rusqlite::Result<Vec<(String, String, String)>>>()?;
@@ -270,8 +258,8 @@ impl FollowApprovalStore {
                         state,
                         reviewer_id,
                         reviewer_name,
-                        now as f64,
-                        APPROVAL_PENDING
+                        ms_from_secs(now),
+                        ApprovalState::Pending
                     ],
                 )?;
                 Ok(rows)
@@ -286,21 +274,17 @@ impl FollowApprovalStore {
         &self,
         user_id: &str,
         artist_mbid: &str,
-        from: &'static str,
-        to: &str,
+        from: ApprovalState,
+        to: ApprovalState,
         reviewer: (&str, Option<String>),
         now: u64,
         operation: &'static str,
     ) -> Result<Option<FollowApproval>, RequestsError> {
-        let (user_id, mbid_lower, to) = (
-            user_id.to_owned(),
-            artist_mbid.to_lowercase(),
-            to.to_owned(),
-        );
+        let (user_id, mbid_lower) = (user_id.to_owned(), artist_mbid.to_lowercase());
         let (reviewer_id, reviewer_name) = (reviewer.0.to_owned(), reviewer.1);
         self.db
             .write(operation, move |tx| {
-                let row: Option<(String, String, Option<String>, f64)> = tx
+                let row: Option<(String, String, Option<String>, i64)> = tx
                     .query_row(
                         "SELECT a.artist_mbid, a.artist_name, u.display_name, a.requested_at \
                          FROM auto_download_approvals a LEFT JOIN auth_users u ON u.id = a.user_id \
@@ -322,7 +306,7 @@ impl FollowApprovalStore {
                         to,
                         reviewer_id,
                         reviewer_name,
-                        now as f64
+                        ms_from_secs(now)
                     ],
                 )?;
                 Ok(Some(FollowApproval {
@@ -331,7 +315,7 @@ impl FollowApprovalStore {
                     artist_mbid,
                     artist_name,
                     state: to,
-                    requested_at: epoch_from_real(requested_at),
+                    requested_at: secs_from_ms(requested_at),
                 }))
             })
             .await
@@ -341,7 +325,7 @@ impl FollowApprovalStore {
     /// Pending rows, singles or batch members, oldest first.
     async fn pending_rows(&self, batched: bool) -> Result<Vec<ApprovalRow>, RequestsError> {
         sqlx::query_as(
-            "SELECT a.user_id, u.display_name, a.artist_mbid, a.artist_name, a.state, \
+            "SELECT a.user_id, u.display_name, a.artist_mbid, a.artist_name, \
              a.requested_at, a.batch_id FROM auto_download_approvals a \
              LEFT JOIN auth_users u ON u.id = a.user_id \
              WHERE a.state = 'pending' AND (a.batch_id IS NOT NULL) = ?1 \

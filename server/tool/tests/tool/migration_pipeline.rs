@@ -421,7 +421,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         ("download_tasks", 1),
         ("download_attempts", 1),
         ("library_user_favorite_names", 2),
-        ("wanted_watches", 1),
+        ("wanted_watches", 2),
         ("wanted_seen_candidates", 1),
         ("user_quotas", 1),
         ("download_quarantine", 1),
@@ -442,6 +442,36 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     // the history row now names the carried track, and only the queued
     // track v2 itself no longer had still waits.
     assert_eq!(rows("import_pending_links").await, 1);
+    // v2's ISO request times land as milliseconds, and its dormant watch
+    // lands watching and due.
+    let request: (i64, i64) = sqlx::query_as(
+        "SELECT h.requested_at, r.requested_at FROM request_history h \
+         JOIN request_history_requesters r USING (musicbrainz_id_lower)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("request reads");
+    assert_eq!(request, (1_700_000_000_250, 1_700_000_000_250));
+    let dormant: (String, i64, i64) = sqlx::query_as(
+        "SELECT state, created_at, next_check_at FROM wanted_watches \
+         WHERE release_group_mbid_lower = ?",
+    )
+    .bind(droppedneedle_tool::tooling::fixture::DORMANT_WATCH_MBID)
+    .fetch_one(&pool)
+    .await
+    .expect("dormant watch reads");
+    assert_eq!(
+        (dormant.0.as_str(), dormant.1),
+        ("watching", 1_600_000_000_500)
+    );
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_millis();
+    assert!(
+        i128::from(dormant.2) <= i128::try_from(now_ms).expect("now fits"),
+        "the dormant watch is due now"
+    );
     let history: Option<String> =
         sqlx::query_scalar("SELECT local_track_id FROM library_play_history WHERE id = 'listen-1'")
             .fetch_one(&pool)

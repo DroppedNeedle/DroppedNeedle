@@ -28,7 +28,7 @@ use droppedneedle_acquire::flows::{
 };
 use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::requests::{
-    ledger::{BeginOutcome, RequestRecord},
+    ledger::{BeginOutcome, RequestRecord, RequestStatus, WatchState},
     models::RequestKind,
     quota::QuotaLedger,
     sqlite::{RequestStore, WantedStore},
@@ -68,7 +68,7 @@ async fn seed_request(store: &RequestStore, key: &str, status: &str, task: Optio
     let record = RequestRecord {
         key: key.to_owned(),
         kind: RequestKind::Album,
-        status: status.to_owned(),
+        status: RequestStatus::parse(status).expect("a known status"),
         artist_name: "Massive Attack".to_owned(),
         album_title: "Blue Lines".to_owned(),
         artist_mbid: None,
@@ -105,6 +105,8 @@ async fn status_of(store: &RequestStore, key: &str) -> String {
         .unwrap()
         .unwrap()
         .status
+        .as_str()
+        .to_owned()
 }
 
 /// Settings beside `db`, at their defaults until a test saves one.
@@ -273,10 +275,11 @@ async fn wanted_enrols_then_auto_downloads() {
         .await
         .unwrap()
         .expect("watch persisted");
-    assert_eq!(watch.state, "watching");
-    // A second sweep never enrols the same request twice.
+    assert_eq!(watch.state, WatchState::Watching);
+    // A second sweep never enrols the same request twice, and the stored
+    // due time is not reached yet.
     let again = wanted_tick(NOW, &rig.deps).await;
-    assert_eq!(again.enrolled, 0);
+    assert_eq!((again.enrolled, again.checked), (0, 0));
 
     let due = watch.next_check_at as i64;
     let checked = wanted_tick(due, &rig.deps).await;
@@ -312,7 +315,7 @@ async fn wanted_satisfied_from_the_library() {
     assert_eq!(summary.fulfilled, 1);
     assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "imported");
     let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
-    assert_eq!(watch.state, "fulfilled");
+    assert_eq!(watch.state, WatchState::Fulfilled);
     assert_eq!(
         notices(&rig.events, "user-1").await,
         [names::WANTED_FULFILLED]
@@ -653,7 +656,7 @@ async fn until(what: &str, ledger: &RequestStore, key: &str, status: &str) {
         let row = ledger.get(RequestKind::Album, key).await;
         tokio::time::pause();
         if let Ok(Some(row)) = row
-            && row.status == status
+            && row.status.as_str() == status
         {
             return;
         }
@@ -680,6 +683,7 @@ fn recheck_bands() {
 #[tokio::test]
 async fn prune_drops_only_settled_rows_past_retention() {
     let db = AcquireDb::scratch().unwrap();
+    db.add_user("user-1", "Owner", "user").await.unwrap();
     let ledger = RequestStore::new(db.clone());
     seed_request(&ledger, "rg-done", "imported", None).await;
     seed_request(&ledger, "rg-live", "pending", None).await;
@@ -768,7 +772,7 @@ async fn follow_download_waits_while_the_follower_is_over_quota() {
     let record = RequestRecord {
         key: "rg-asked".to_owned(),
         kind: RequestKind::Album,
-        status: "pending".to_owned(),
+        status: RequestStatus::Pending,
         artist_name: "The Band".to_owned(),
         album_title: "Asked".to_owned(),
         artist_mbid: None,

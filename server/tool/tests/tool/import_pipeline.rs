@@ -781,7 +781,7 @@ async fn pending_import_reopens_a_rejected_row() {
     .unwrap();
     sqlx::query(
         "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
-         artist_name, state, requested_at) VALUES ('u1', ?, ?, 'Test Artist', 'rejected', 200.0)",
+         artist_name, state, requested_at) VALUES ('u1', ?, ?, 'Test Artist', 'rejected', 200000)",
     )
     .bind(MBID)
     .bind(MBID.to_lowercase())
@@ -797,13 +797,13 @@ async fn pending_import_reopens_a_rejected_row() {
     let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
 
     assert_eq!(report.exit.code, ExitCode::OkWithDrops);
-    let row: (String, f64) = sqlx::query_as(
+    let row: (String, i64) = sqlx::query_as(
         "SELECT state, requested_at FROM auto_download_approvals WHERE user_id = 'u1'",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row, ("pending".to_owned(), 100.0));
+    assert_eq!(row, ("pending".to_owned(), 100_000));
 }
 
 #[tokio::test]
@@ -819,7 +819,7 @@ async fn rejected_and_unknown_states_never_win_a_merge() {
     .unwrap();
     sqlx::query(
         "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
-         artist_name, state, requested_at) VALUES ('u1', ?, ?, 'Test Artist', 'pending', 100.0)",
+         artist_name, state, requested_at) VALUES ('u1', ?, ?, 'Test Artist', 'pending', 100000)",
     )
     .bind(MBID)
     .bind(MBID.to_lowercase())
@@ -842,7 +842,7 @@ async fn rejected_and_unknown_states_never_win_a_merge() {
         ))
         .await;
         assert_eq!(report.entities["approval"].imported, 0);
-        let row: (String, f64) = sqlx::query_as(
+        let row: (String, i64) = sqlx::query_as(
             "SELECT state, requested_at FROM auto_download_approvals WHERE user_id = 'u1'",
         )
         .fetch_one(&pool)
@@ -850,7 +850,7 @@ async fn rejected_and_unknown_states_never_win_a_merge() {
         .unwrap();
         assert_eq!(
             row,
-            ("pending".to_owned(), 50.0),
+            ("pending".to_owned(), 50_000),
             "state {state} must not win, earliest request still applies"
         );
     }

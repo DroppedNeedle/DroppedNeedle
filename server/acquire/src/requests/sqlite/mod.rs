@@ -10,8 +10,10 @@
 //! and writes the row under the write lock.
 //!
 //! Album rows key on the lowercased release-group MBID and track rows on
-//! `track:` plus the lowercased recording MBID (the v2 key scheme). Times
-//! are epoch seconds.
+//! `track:` plus the lowercased recording MBID (the v2 key scheme). Rows
+//! carry epoch seconds; the request, watch and approval tables store
+//! integer milliseconds, converted only by [`ms_from_secs`] and
+//! [`secs_from_ms`].
 
 mod approvals;
 mod editions;
@@ -44,12 +46,30 @@ fn read_error(operation: &'static str, error: sqlx::Error) -> RequestsError {
     lane_error(operation, map_sqlx_busy(operation, error))
 }
 
-/// Approval states.
+/// Personal-mix approval states (`personal_mix_approvals` has no CHECK yet).
 pub(super) const APPROVAL_PENDING: &str = "pending";
 pub(super) const APPROVAL_APPROVED: &str = "approved";
 pub(super) const APPROVAL_REVOKED: &str = "revoked";
 
-/// v2 stores watch times as REAL epoch seconds.
+/// Epoch seconds as stored: request, watch and approval times are integer
+/// milliseconds.
+pub(super) fn ms_from_secs(seconds: u64) -> i64 {
+    i64::try_from(seconds)
+        .unwrap_or(i64::MAX)
+        .saturating_mul(1000)
+}
+
+/// Fractional epoch seconds (a library removal's time) as stored.
+pub(super) fn ms_from_secs_f64(seconds: f64) -> i64 {
+    (seconds * 1000.0).round() as i64
+}
+
+/// A stored millisecond time as epoch seconds, clamping negatives to zero.
+pub(super) fn secs_from_ms(millis: i64) -> u64 {
+    u64::try_from(millis / 1000).unwrap_or(0)
+}
+
+/// Personal-mix times are still REAL epoch seconds.
 pub(super) fn epoch_from_real(value: f64) -> u64 {
     if value.is_finite() && value > 0.0 {
         value as u64

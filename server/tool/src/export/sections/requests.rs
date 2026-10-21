@@ -5,8 +5,82 @@
 //! and the user asks again. Requesters and dismissals follow their request.
 //! Request counts per user come from the requester rows, so carrying them
 //! keeps quota usage where it was.
+//!
+//! v3 keeps these times as integer milliseconds where v2 had ISO text or
+//! REAL seconds, and has no dormant watch: one carries over watching and
+//! due.
 
-use super::{Source, TableSection, Target, col};
+use super::library::live_user;
+use super::{Column, Parent, Source, TableSection, Target, col};
+
+/// A v2 time column (ISO text, numeric text or REAL seconds) as integer
+/// milliseconds; NULL when it does not read as a time.
+macro_rules! millis {
+    ($column:literal) => {
+        concat!(
+            "CASE WHEN typeof(s.",
+            $column,
+            ") = 'integer' THEN s.",
+            $column,
+            " * 1000 ",
+            "WHEN typeof(s.",
+            $column,
+            ") = 'real' THEN CAST(round(s.",
+            $column,
+            " * 1000) AS INTEGER) ",
+            "WHEN s.",
+            $column,
+            " GLOB '[0-9]*' AND s.",
+            $column,
+            " NOT GLOB '*[^0-9.]*' ",
+            "THEN CAST(round(CAST(s.",
+            $column,
+            " AS REAL) * 1000) AS INTEGER) ",
+            "ELSE CAST(round((julianday(s.",
+            $column,
+            ") - 2440587.5) * 86400000.0) AS INTEGER) END"
+        )
+    };
+}
+
+/// Now, as integer milliseconds.
+macro_rules! now_millis {
+    () => {
+        "CAST(round((julianday('now') - 2440587.5) * 86400000.0) AS INTEGER)"
+    };
+}
+
+/// A v2 whole-number column, NULL when it holds something else.
+macro_rules! whole {
+    ($column:literal) => {
+        concat!(
+            "CASE WHEN typeof(s.",
+            $column,
+            ") = 'integer' THEN s.",
+            $column,
+            " ",
+            "WHEN typeof(s.",
+            $column,
+            ") = 'real' THEN CAST(round(s.",
+            $column,
+            ") AS INTEGER) ",
+            "WHEN s.",
+            $column,
+            " GLOB '[0-9]*' AND s.",
+            $column,
+            " NOT GLOB '*[^0-9]*' ",
+            "THEN CAST(s.",
+            $column,
+            " AS INTEGER) END"
+        )
+    };
+}
+
+/// Requester and dismissal rows hang off their request.
+const ON_REQUEST: &[Parent] = &[Parent::required(
+    "request_history",
+    &[("musicbrainz_id_lower", "musicbrainz_id_lower")],
+)];
 
 /// v2's terminal request states.
 const FINISHED: &str = "s.status IN ('imported', 'incomplete', 'failed', 'cancelled', 'rejected')";
@@ -31,23 +105,31 @@ pub const REQUESTS: TableSection = TableSection {
         col("artist_name"),
         col("album_title"),
         col("artist_mbid"),
-        col("year"),
+        Column::new("year").from_sql(whole!("year")),
         col("cover_url"),
-        col("requested_at"),
-        col("completed_at"),
+        Column::new("requested_at").from_sql(concat!(
+            "COALESCE(",
+            millis!("requested_at"),
+            ", ",
+            millis!("completed_at"),
+            ", ",
+            now_millis!(),
+            ")"
+        )),
+        Column::new("completed_at").from_sql(millis!("completed_at")),
         col("status"),
         col("monitor_artist"),
         col("auto_download_artist"),
         col("user_id"),
         col("requested_by_name"),
-        col("reviewed_by_id"),
+        Column::new("reviewed_by_id").from_sql(live_user!("reviewed_by_id")),
         col("reviewed_by_name"),
-        col("reviewed_at"),
+        Column::new("reviewed_at").from_sql(millis!("reviewed_at")),
         col("download_task_id"),
         col("release_mbid"),
         col("request_kind"),
         col("track_title"),
-        col("duration_seconds"),
+        Column::new("duration_seconds").from_sql(whole!("duration_seconds")),
         col("track_release_group_mbid"),
         col("dispatch_authorized"),
         col("generation"),
@@ -71,12 +153,12 @@ pub const REQUEST_REQUESTERS: TableSection = TableSection {
     columns: &[
         col("user_id"),
         col("musicbrainz_id_lower"),
-        col("requested_at"),
+        Column::new("requested_at").from_sql(concat!("COALESCE(", millis!("requested_at"), ", 0)")),
         col("requested_by_name"),
     ],
     key: &["user_id", "musicbrainz_id_lower"],
     unique: &[],
-    parents: &[],
+    parents: ON_REQUEST,
     user_column: Some("user_id"),
     left_behind: "requesters of unfinished requests; request again in v3",
 };
@@ -93,11 +175,17 @@ pub const REQUEST_DISMISSALS: TableSection = TableSection {
     columns: &[
         col("user_id"),
         col("musicbrainz_id_lower"),
-        col("dismissed_at"),
+        Column::new("dismissed_at").from_sql(concat!(
+            "COALESCE(",
+            millis!("dismissed_at"),
+            ", ",
+            now_millis!(),
+            ")"
+        )),
     ],
     key: &["user_id", "musicbrainz_id_lower"],
     unique: &[],
-    parents: &[],
+    parents: ON_REQUEST,
     user_column: Some("user_id"),
     left_behind: "dismissals of unfinished requests; nothing to do",
 };
@@ -118,16 +206,31 @@ pub const WANTED_WATCHES: TableSection = TableSection {
         col("artist_name"),
         col("album_title"),
         col("artist_mbid"),
-        col("year"),
+        Column::new("year").from_sql(whole!("year")),
         col("cover_url"),
         col("kind"),
-        col("state"),
-        col("created_at"),
+        Column::new("state")
+            .from_sql("CASE s.state WHEN 'dormant' THEN 'watching' ELSE s.state END"),
+        Column::new("created_at").from_sql(concat!(
+            "COALESCE(",
+            millis!("created_at"),
+            ", ",
+            now_millis!(),
+            ")"
+        )),
         col("first_release_date"),
         col("check_count"),
         col("quiet_streak"),
-        col("last_checked_at"),
-        col("next_check_at"),
+        Column::new("last_checked_at").from_sql(millis!("last_checked_at")),
+        Column::new("next_check_at").from_sql(concat!(
+            "CASE WHEN s.state = 'dormant' THEN ",
+            now_millis!(),
+            " ELSE COALESCE(",
+            millis!("next_check_at"),
+            ", ",
+            now_millis!(),
+            ") END"
+        )),
         col("last_outcome"),
         col("new_candidate_count"),
     ],

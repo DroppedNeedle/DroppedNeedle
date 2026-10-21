@@ -1446,7 +1446,7 @@ async fn approval_conflict_keeps_most_permissive() {
     sqlx::query(
         "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower,
              artist_name, state, requested_at)
-         VALUES (?, ?, ?, 'Fixture Artist One', 'approved', 9999999999.0)",
+         VALUES (?, ?, ?, 'Fixture Artist One', 'approved', 9999999999000)",
     )
     .bind(&fixture.alice_id)
     .bind(&fixture.artist_one_mbid)
@@ -1465,7 +1465,7 @@ async fn approval_conflict_keeps_most_permissive() {
         1
     );
 
-    let approval: (String, f64) = sqlx::query_as(
+    let approval: (String, i64) = sqlx::query_as(
         "SELECT state, requested_at FROM auto_download_approvals
          WHERE user_id = ? AND artist_mbid_lower = ?",
     )
@@ -1474,7 +1474,7 @@ async fn approval_conflict_keeps_most_permissive() {
     .fetch_one(&pool)
     .await
     .expect("approval reads back");
-    assert_eq!(approval, ("approved".to_owned(), 1_740_000_000.0));
+    assert_eq!(approval, ("approved".to_owned(), 1_740_000_000_000));
 }
 
 #[tokio::test]

@@ -41,7 +41,7 @@ use droppedneedle_acquire::downloads::manifest::{ManifestCodec, PlannedAlbum, Re
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::requests::{
     self, RequestsState,
-    ledger::{WATCH_WATCHING, WantedWatch},
+    ledger::{WantedWatch, WatchState},
     models::RequestKind,
     quota::{QuotaLedger, QuotaPolicy},
     service::RequestsService,
@@ -277,7 +277,7 @@ fn watch(key: &str, user: &str) -> WantedWatch {
         year: None,
         cover_url: None,
         kind: "missing".to_owned(),
-        state: WATCH_WATCHING.to_owned(),
+        state: WatchState::Watching,
         created_at: 1_700_000_000,
         first_release_date: None,
         check_count: 0,

@@ -229,7 +229,7 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
             tx.execute(
                 "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
                  album_title, requested_at, status, user_id, request_kind) \
-                 VALUES (?1, ?1, 'Portishead', 'Dummy', '1700000000', 'pending', 'u-asker', \
+                 VALUES (?1, ?1, 'Portishead', 'Dummy', 1700000000000, 'pending', 'u-asker', \
                  'album')",
                 [GROUP],
             )?;

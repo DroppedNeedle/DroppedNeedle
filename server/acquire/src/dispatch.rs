@@ -54,7 +54,18 @@ pub enum DispatchOrigin {
 }
 
 impl DispatchOrigin {
-    /// The text stored in `download_tasks.origin`.
+    /// Every origin, in the order `request_history.origin`'s CHECK lists them.
+    pub const ALL: [Self; 7] = [
+        Self::User,
+        Self::Approval,
+        Self::Retry,
+        Self::Wanted,
+        Self::Upgrade,
+        Self::Edition,
+        Self::Follow,
+    ];
+
+    /// The text stored in `download_tasks.origin` and `request_history.origin`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::User => "user",

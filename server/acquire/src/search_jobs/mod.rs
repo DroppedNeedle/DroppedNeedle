@@ -37,7 +37,7 @@ use super::downloads::journal::Journal;
 use super::downloads::store::{NewTask, TaskDetails, TaskRow};
 use super::edition::library_holds;
 use super::requests::error::RequestsError;
-use super::requests::ledger::{WATCH_DORMANT, WATCH_FULFILLED, WATCH_STOPPED, WantedWatch};
+use super::requests::ledger::{WantedWatch, WatchState};
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::WantedStore;
 use super::target::{SearchTarget, Targets};
@@ -532,8 +532,8 @@ impl SearchJobs {
                 .map_err(refused)?;
         }
         let existing = self.wanted.get(&group).await.map_err(refused)?;
-        match existing.as_ref().map(|watch| watch.state.as_str()) {
-            None | Some(WATCH_FULFILLED) => {
+        match existing.as_ref().map(|watch| watch.state) {
+            None | Some(WatchState::Fulfilled) => {
                 let at = i64::try_from(now).unwrap_or(i64::MAX);
                 let next = crate::flows::loops::interval_seconds(None, 0, at);
                 self.wanted
@@ -547,7 +547,7 @@ impl SearchJobs {
                         year: row.year,
                         cover_url: None,
                         kind: "missing".to_owned(),
-                        state: String::new(),
+                        state: WatchState::Watching,
                         created_at: now,
                         first_release_date: None,
                         check_count: 0,
@@ -558,22 +558,23 @@ impl SearchJobs {
                     .await
                     .map_err(refused)?;
             }
-            Some(WATCH_DORMANT | WATCH_STOPPED) => {
+            Some(WatchState::Stopped) => {
                 // The person just asked: wake it whoever's watch it is.
                 self.wanted
                     .resume(&group, &row.user_id, true, now)
                     .await
                     .map_err(refused)?;
             }
-            Some(_) => {}
+            Some(WatchState::Watching) => {}
         }
         let state = self
             .wanted
             .get(&group)
             .await
             .map_err(refused)?
-            .map(|watch| watch.state)
-            .unwrap_or_else(|| "watching".to_owned());
+            .map_or(WatchState::Watching, |watch| watch.state)
+            .as_str()
+            .to_owned();
         tracing::info!(job_id, release_group_mbid = %group, "manual search dismissed; album watched");
         Ok(state)
     }

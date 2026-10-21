@@ -91,7 +91,7 @@ const FOLLOW_SELECT: &str = "SELECT f.user_id AS user_id, \
     COALESCE(u.username_display, u.username, u.display_name, f.user_id) AS user_name, \
     COALESCE(u.role, 'user') AS user_role, f.artist_mbid AS artist_mbid, \
     f.artist_name AS artist_name, f.auto_download AS auto_download, \
-    a.state AS approval_state, a.requested_at AS requested_at, \
+    a.state AS approval_state, a.requested_at / 1000.0 AS requested_at, \
     f.followed_at AS followed_at, f.updated_at AS updated_at \
     FROM user_followed_artists f \
     LEFT JOIN auth_users u ON u.id = f.user_id \

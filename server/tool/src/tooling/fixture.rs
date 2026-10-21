@@ -97,6 +97,9 @@ const SHARED_SOURCE_REF: &str = "spotify:playlist:road";
 pub const FINISHED_REQUEST_MBID: &str = "aaaaaaaa-0000-4000-8000-000000000001";
 /// Bob's request still waiting for approval; it stays behind.
 pub const PENDING_REQUEST_MBID: &str = "aaaaaaaa-0000-4000-8000-000000000002";
+/// Alice's dormant wanted watch; v3 has no dormant state, so it lands
+/// watching and due.
+pub const DORMANT_WATCH_MBID: &str = "bbbbbbbb-0000-4000-8000-000000000002";
 /// Alice's completed download.
 pub const FINISHED_DOWNLOAD_ID: &str = "download-done";
 /// Bytes of the playlist cover file.
@@ -825,11 +828,11 @@ fn build_user_data(
          INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name,
              album_title, requested_at, completed_at, status, user_id)
          VALUES ('{FINISHED_REQUEST_MBID}', '{FINISHED_REQUEST_MBID}', 'Artist', 'Album',
-                 '1700000000', '1700000500', 'imported', '{alice}'),
+                 '2023-11-14T22:13:20.250000+00:00', '1700000500', 'imported', '{alice}'),
                 ('{PENDING_REQUEST_MBID}', '{PENDING_REQUEST_MBID}', 'Artist', 'Next',
                  '1700001000', NULL, 'awaiting_approval', '{bob}');
          INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, requested_at)
-         VALUES ('{alice}', '{FINISHED_REQUEST_MBID}', '1700000000'),
+         VALUES ('{alice}', '{FINISHED_REQUEST_MBID}', '2023-11-14T22:13:20.250000+00:00'),
                 ('{bob}', '{PENDING_REQUEST_MBID}', '1700001000');
          INSERT INTO request_history_dismissals (user_id, musicbrainz_id_lower, dismissed_at)
          VALUES ('{alice}', '{FINISHED_REQUEST_MBID}', '{at}');
@@ -842,7 +845,9 @@ fn build_user_data(
          INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, user_id,
              artist_name, album_title, kind, state, created_at, next_check_at)
          VALUES ('bbbbbbbb-0000-4000-8000-000000000001', 'BBBBBBBB-0000-4000-8000-000000000001',
-                 '{alice}', 'Artist', 'Rare', 'missing', 'watching', 1700000000.0, 1700086400.0);
+                 '{alice}', 'Artist', 'Rare', 'missing', 'watching', 1700000000.0, 1700086400.0),
+                ('{DORMANT_WATCH_MBID}', '{DORMANT_WATCH_MBID}', '{alice}', 'Artist', 'Asleep',
+                 'missing', 'dormant', 1600000000.5, 1900000000.0);
          INSERT INTO wanted_seen_candidates (release_group_mbid_lower, source, identity,
              first_seen_at)
          VALUES ('bbbbbbbb-0000-4000-8000-000000000001', 'soulseek', 'peer/Rare', 1700000300.0);

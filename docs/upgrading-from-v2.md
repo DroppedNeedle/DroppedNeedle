@@ -267,7 +267,9 @@ machine and its data folders can run it.
 - **Wanted watches going dormant.** v2 stopped checking a watch once it was
   older than "Go dormant after (days)", 365 by default, until someone
   resumed it. v3 keeps checking a watch until the album arrives or someone
-  stops it, and the setting is gone. Stop the watches you no longer want.
+  stops it, and the setting is gone. A watch that was dormant starts
+  watching again and is checked on the first pass. Stop the watches you no
+  longer want.
 - **"Restart under current policy".** v2 saved the quality policy each
   download started with and could restart a download under the policy in
   force now (`POST /api/v1/downloads/<id>/restart-with-current-policy`). v3

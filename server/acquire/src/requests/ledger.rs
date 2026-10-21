@@ -9,52 +9,246 @@
 use super::error::RequestsError;
 use super::models::RequestKind;
 
-/// Row is live and owned by exactly one generation.
-pub const STATUS_PENDING: &str = "pending";
-/// Row is live and fetching.
-pub const STATUS_DOWNLOADING: &str = "downloading";
-/// Row is live and queued behind other fetches.
-pub const STATUS_QUEUED: &str = "queued";
-/// Row waits for an admin decision; no task exists yet.
-pub const STATUS_AWAITING_APPROVAL: &str = "awaiting_approval";
-/// Row is mid-cancel; new asks attach to the verdict, never a new row.
-pub const STATUS_CANCELLING: &str = "cancelling";
-/// Row was cancelled.
-pub const STATUS_CANCELLED: &str = "cancelled";
-/// Row failed.
-pub const STATUS_FAILED: &str = "failed";
-/// Row landed in the library.
-pub const STATUS_IMPORTED: &str = "imported";
-/// Row landed short.
-pub const STATUS_INCOMPLETE: &str = "incomplete";
-/// Row was rejected by a reviewer.
-pub const STATUS_REJECTED: &str = "rejected";
+/// One SQL conversion for a closed set stored as text: the value is its
+/// `as_str`, and text outside the set fails decoding.
+macro_rules! sql_text {
+    ($type:ty) => {
+        impl rusqlite::types::ToSql for $type {
+            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+                Ok(rusqlite::types::ToSqlOutput::from(self.as_str()))
+            }
+        }
 
-/// Asks that keep a row alive (v2 `_ACTIVE_REQUEST_STATUSES`).
-pub const ACTIVE_STATUSES: [&str; 4] = [
-    STATUS_PENDING,
-    STATUS_DOWNLOADING,
-    STATUS_QUEUED,
-    STATUS_AWAITING_APPROVAL,
-];
+        impl rusqlite::types::FromSql for $type {
+            fn column_result(
+                value: rusqlite::types::ValueRef<'_>,
+            ) -> rusqlite::types::FromSqlResult<Self> {
+                let text = value.as_str()?;
+                Self::parse(text).ok_or_else(|| {
+                    rusqlite::types::FromSqlError::Other(
+                        format!(concat!("not a ", stringify!($type), ": {}"), text).into(),
+                    )
+                })
+            }
+        }
+    };
+}
 
-/// Tasks an owner may still stop (v2 `_CANCELLABLE_STATUSES`).
-pub const CANCELLABLE_STATUSES: [&str; 3] = [STATUS_PENDING, STATUS_DOWNLOADING, STATUS_QUEUED];
+/// A request row's status. The `request_history.status` CHECK lists
+/// exactly these values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RequestStatus {
+    /// Live, dispatched or about to be.
+    Pending,
+    /// Live, queued behind other fetches.
+    Queued,
+    /// Live and fetching.
+    Downloading,
+    /// Waits for an admin decision; no task exists yet.
+    AwaitingApproval,
+    /// Mid-cancel; new asks attach to the verdict, never a new row.
+    Cancelling,
+    /// Cancelled.
+    Cancelled,
+    /// Failed.
+    Failed,
+    /// Landed in the library.
+    Imported,
+    /// Landed short.
+    Incomplete,
+    /// Rejected by a reviewer.
+    Rejected,
+}
 
-/// Terminal rows a retry may revive (v2 `_RETRYABLE_STATUSES`).
-pub const RETRYABLE_STATUSES: [&str; 3] = [STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE];
+impl RequestStatus {
+    /// Every status, in CHECK order.
+    pub const ALL: [Self; 10] = [
+        Self::Pending,
+        Self::Queued,
+        Self::Downloading,
+        Self::AwaitingApproval,
+        Self::Cancelling,
+        Self::Cancelled,
+        Self::Failed,
+        Self::Imported,
+        Self::Incomplete,
+        Self::Rejected,
+    ];
 
-/// Terminal rows history-clearing may drop (v2 `_CLEARABLE_STATUSES`).
-pub const CLEARABLE_STATUSES: [&str; 4] = [
-    STATUS_IMPORTED,
-    STATUS_INCOMPLETE,
-    STATUS_FAILED,
-    STATUS_CANCELLED,
-];
+    /// Stored and wire form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Queued => "queued",
+            Self::Downloading => "downloading",
+            Self::AwaitingApproval => "awaiting_approval",
+            Self::Cancelling => "cancelling",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+            Self::Imported => "imported",
+            Self::Incomplete => "incomplete",
+            Self::Rejected => "rejected",
+        }
+    }
 
-/// Whether a status keeps its row alive.
-pub fn is_active(status: &str) -> bool {
-    ACTIVE_STATUSES.contains(&status)
+    /// Read back a stored or requested status.
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|status| status.as_str() == value)
+    }
+
+    /// Asks that keep a row alive (v2 `_ACTIVE_REQUEST_STATUSES`).
+    pub const fn is_active(self) -> bool {
+        matches!(
+            self,
+            Self::Pending | Self::Downloading | Self::Queued | Self::AwaitingApproval
+        )
+    }
+
+    /// Tasks an owner may still stop (v2 `_CANCELLABLE_STATUSES`).
+    pub const fn is_cancellable(self) -> bool {
+        matches!(self, Self::Pending | Self::Downloading | Self::Queued)
+    }
+
+    /// Finished rows a retry may revive (v2 `_RETRYABLE_STATUSES`).
+    pub const fn is_retryable(self) -> bool {
+        matches!(self, Self::Failed | Self::Cancelled | Self::Incomplete)
+    }
+
+    /// Finished rows history-clearing may drop (v2 `_CLEARABLE_STATUSES`).
+    pub const fn is_clearable(self) -> bool {
+        matches!(
+            self,
+            Self::Imported | Self::Incomplete | Self::Failed | Self::Cancelled
+        )
+    }
+}
+
+impl std::fmt::Display for RequestStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+sql_text!(RequestStatus);
+
+/// Whether a request row may move `from -> to`.
+///
+/// Advisory, like the download task table: the store never refuses a
+/// write for a missing edge. Tests and reviewers assert legality with it.
+pub fn can_request_transition(from: RequestStatus, to: RequestStatus) -> bool {
+    use RequestStatus as S;
+    let settles = matches!(to, S::Cancelled | S::Failed | S::Imported | S::Incomplete);
+    match from {
+        // Live rows follow their task, and their owner may cancel.
+        S::Pending | S::Queued => settles || matches!(to, S::Downloading | S::Cancelling),
+        S::Downloading => settles || to == S::Cancelling,
+        // An admin decides; the owner may withdraw.
+        S::AwaitingApproval => matches!(to, S::Pending | S::Rejected | S::Cancelled),
+        // A cancel lands, or a failed one puts the row back.
+        S::Cancelling => matches!(to, S::Cancelled | S::Pending | S::Queued | S::Downloading),
+        // Finished rows start again through a new ask or a retry; one the
+        // library already holds settles as imported.
+        S::Failed | S::Cancelled | S::Incomplete => matches!(
+            to,
+            S::Pending | S::AwaitingApproval | S::Queued | S::Imported
+        ),
+        S::Imported | S::Rejected => matches!(to, S::Pending | S::AwaitingApproval | S::Queued),
+    }
+}
+
+/// A wanted watch's state. The `wanted_watches.state` CHECK lists exactly
+/// these values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WatchState {
+    /// Checked on its schedule.
+    Watching,
+    /// Stopped by its owner or an admin.
+    Stopped,
+    /// The album reached the library.
+    Fulfilled,
+}
+
+impl WatchState {
+    /// Every state, in CHECK order.
+    pub const ALL: [Self; 3] = [Self::Watching, Self::Stopped, Self::Fulfilled];
+
+    /// Stored and wire form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Watching => "watching",
+            Self::Stopped => "stopped",
+            Self::Fulfilled => "fulfilled",
+        }
+    }
+
+    /// Read back a stored state.
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|state| state.as_str() == value)
+    }
+}
+
+sql_text!(WatchState);
+
+/// Whether a watch may move `from -> to`. A stopped watch resumes; a
+/// fulfilled one watches again when its album leaves the library.
+pub fn can_watch_transition(from: WatchState, to: WatchState) -> bool {
+    use WatchState as W;
+    matches!(
+        (from, to),
+        (W::Watching, W::Stopped | W::Fulfilled)
+            | (W::Stopped, W::Watching | W::Fulfilled)
+            | (W::Fulfilled, W::Watching)
+    )
+}
+
+/// An approval's state, for follow auto-downloads and personal mixes. The
+/// `auto_download_approvals.state` CHECK lists exactly these values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ApprovalState {
+    /// Waits for an admin.
+    Pending,
+    /// Approved.
+    Approved,
+    /// Rejected.
+    Rejected,
+    /// Approved once, then withdrawn.
+    Revoked,
+}
+
+impl ApprovalState {
+    /// Every state, in CHECK order.
+    pub const ALL: [Self; 4] = [Self::Pending, Self::Approved, Self::Rejected, Self::Revoked];
+
+    /// Stored and wire form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    /// Read back a stored state.
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|state| state.as_str() == value)
+    }
+}
+
+sql_text!(ApprovalState);
+
+/// Whether an approval may move `from -> to`. A new ask puts a rejected
+/// or revoked row back to pending.
+pub fn can_approval_transition(from: ApprovalState, to: ApprovalState) -> bool {
+    use ApprovalState as A;
+    matches!(
+        (from, to),
+        (A::Pending, A::Approved | A::Rejected)
+            | (A::Approved, A::Revoked)
+            | (A::Rejected | A::Revoked, A::Pending)
+    )
 }
 
 /// One co-requester attached to a shared row.
@@ -74,7 +268,7 @@ pub struct RequestRecord {
     /// Album or track.
     pub kind: RequestKind,
     /// Row status.
-    pub status: String,
+    pub status: RequestStatus,
     /// Artist name.
     pub artist_name: String,
     /// Album title.
@@ -164,7 +358,7 @@ pub enum CancelDecision {
     /// Caller may not touch this row.
     Denied {
         /// Status at decision time.
-        prior_status: String,
+        prior_status: RequestStatus,
     },
     /// Co-requester detached; the shared row continues.
     Detached,
@@ -173,7 +367,7 @@ pub enum CancelDecision {
     /// Owner must cancel the linked task, then finalize.
     CancelTask {
         /// Status at decision time.
-        prior_status: String,
+        prior_status: RequestStatus,
         /// Task to cancel, when linked.
         task_id: Option<String>,
         /// Owner the task runs under.
@@ -191,20 +385,11 @@ pub enum RetryClaim {
         /// Claimed generation.
         generation: u64,
         /// Status the claim moved the row to.
-        target_status: String,
+        target_status: RequestStatus,
     },
     /// Lost: row missing, moved on, or foreign.
     Lost,
 }
-
-/// Wanted watch states (v2 `wanted_watches.state`).
-pub const WATCH_WATCHING: &str = "watching";
-/// Watched long enough without a find; the loop parks it.
-pub const WATCH_DORMANT: &str = "dormant";
-/// Stopped by its owner or an admin.
-pub const WATCH_STOPPED: &str = "stopped";
-/// Satisfied: the album reached the library.
-pub const WATCH_FULFILLED: &str = "fulfilled";
 
 /// One wanted watch: a user waiting on an album no source has yet.
 #[derive(Debug, Clone, PartialEq)]
@@ -227,8 +412,8 @@ pub struct WantedWatch {
     pub cover_url: Option<String>,
     /// `missing` (whole album) or `partial` (filling gaps).
     pub kind: String,
-    /// One of the `WATCH_*` states.
-    pub state: String,
+    /// Watch state.
+    pub state: WatchState,
     /// Epoch seconds when created (or last resumed).
     pub created_at: u64,
     /// First release date (`YYYY-MM-DD`, possibly partial), when known.
@@ -254,8 +439,8 @@ pub struct FollowApproval {
     pub artist_mbid: String,
     /// Artist name.
     pub artist_name: String,
-    /// `pending`, `approved`, `rejected`, or `revoked`.
-    pub state: String,
+    /// Approval state.
+    pub state: ApprovalState,
     /// Epoch seconds when asked.
     pub requested_at: u64,
 }
@@ -271,8 +456,8 @@ pub struct ApprovalBatch {
     pub user_name: String,
     /// Covered artists.
     pub artists: Vec<(String, String)>,
-    /// `pending`, `approved`, or `rejected`.
-    pub state: String,
+    /// Approval state.
+    pub state: ApprovalState,
     /// Epoch seconds when asked.
     pub requested_at: u64,
 }
@@ -349,4 +534,100 @@ pub fn meaningful_name(value: Option<&str>) -> Option<String> {
         return None;
     }
     Some(text.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ApprovalState, RequestStatus, WatchState, can_approval_transition, can_request_transition,
+        can_watch_transition,
+    };
+
+    /// Every request status pair: exactly the listed moves are allowed.
+    #[test]
+    fn request_transitions_are_exactly_the_listed_pairs() {
+        use RequestStatus::{
+            AwaitingApproval, Cancelled, Cancelling, Downloading, Failed, Imported, Incomplete,
+            Pending, Queued, Rejected,
+        };
+        let live_settles = [Cancelled, Failed, Imported, Incomplete];
+        let mut allowed = Vec::new();
+        for from in [Pending, Queued] {
+            for to in live_settles.into_iter().chain([Downloading, Cancelling]) {
+                allowed.push((from, to));
+            }
+        }
+        for to in live_settles.into_iter().chain([Cancelling]) {
+            allowed.push((Downloading, to));
+        }
+        for to in [Pending, Rejected, Cancelled] {
+            allowed.push((AwaitingApproval, to));
+        }
+        for to in [Cancelled, Pending, Queued, Downloading] {
+            allowed.push((Cancelling, to));
+        }
+        for from in [Failed, Cancelled, Incomplete] {
+            for to in [Pending, AwaitingApproval, Queued, Imported] {
+                allowed.push((from, to));
+            }
+        }
+        for from in [Imported, Rejected] {
+            for to in [Pending, AwaitingApproval, Queued] {
+                allowed.push((from, to));
+            }
+        }
+        for from in RequestStatus::ALL {
+            for to in RequestStatus::ALL {
+                assert_eq!(
+                    can_request_transition(from, to),
+                    allowed.contains(&(from, to)),
+                    "{from} -> {to}"
+                );
+            }
+        }
+    }
+
+    /// Every watch state pair: exactly the listed moves are allowed.
+    #[test]
+    fn watch_transitions_are_exactly_the_listed_pairs() {
+        use WatchState::{Fulfilled, Stopped, Watching};
+        let allowed = [
+            (Watching, Stopped),
+            (Watching, Fulfilled),
+            (Stopped, Watching),
+            (Stopped, Fulfilled),
+            (Fulfilled, Watching),
+        ];
+        for from in WatchState::ALL {
+            for to in WatchState::ALL {
+                assert_eq!(
+                    can_watch_transition(from, to),
+                    allowed.contains(&(from, to)),
+                    "{from:?} -> {to:?}"
+                );
+            }
+        }
+    }
+
+    /// Every approval state pair: exactly the listed moves are allowed.
+    #[test]
+    fn approval_transitions_are_exactly_the_listed_pairs() {
+        use ApprovalState::{Approved, Pending, Rejected, Revoked};
+        let allowed = [
+            (Pending, Approved),
+            (Pending, Rejected),
+            (Approved, Revoked),
+            (Rejected, Pending),
+            (Revoked, Pending),
+        ];
+        for from in ApprovalState::ALL {
+            for to in ApprovalState::ALL {
+                assert_eq!(
+                    can_approval_transition(from, to),
+                    allowed.contains(&(from, to)),
+                    "{from:?} -> {to:?}"
+                );
+            }
+        }
+    }
 }

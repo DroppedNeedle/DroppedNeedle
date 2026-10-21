@@ -64362,7 +64362,7 @@
           },
           "state": {
             "type": "string",
-            "description": "Watch state: `watching`, `paused`, or loop-set `dormant`."
+            "description": "Watch state: `watching`, `stopped` or `fulfilled`."
           },
           "user_id": {
             "type": [

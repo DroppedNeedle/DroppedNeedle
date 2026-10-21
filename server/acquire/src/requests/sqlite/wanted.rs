@@ -5,10 +5,8 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 use super::super::error::RequestsError;
-use super::super::ledger::{
-    WATCH_DORMANT, WATCH_FULFILLED, WATCH_STOPPED, WATCH_WATCHING, WantedWatch,
-};
-use super::{epoch_from_real, lane_error, read_error};
+use super::super::ledger::{WantedWatch, WatchState};
+use super::{lane_error, ms_from_secs, ms_from_secs_f64, read_error, secs_from_ms};
 use crate::db::AcquireDb;
 
 /// Columns every watch read selects, in decode order.
@@ -18,6 +16,10 @@ const WATCH_SELECT: &str = "SELECT w.release_group_mbid_lower, w.user_id, u.disp
      w.new_candidate_count FROM wanted_watches w LEFT JOIN auth_users u ON u.id = w.user_id";
 
 fn watch_from_sqlx(row: &SqliteRow) -> Result<WantedWatch, sqlx::Error> {
+    let state: String = row.try_get(9)?;
+    let state = WatchState::parse(&state).ok_or_else(|| {
+        sqlx::Error::Decode(format!("wanted_watches.state: unknown value {state}").into())
+    })?;
     Ok(WantedWatch {
         key: row.try_get(0)?,
         user_id: row.try_get(1)?,
@@ -30,12 +32,12 @@ fn watch_from_sqlx(row: &SqliteRow) -> Result<WantedWatch, sqlx::Error> {
             .and_then(|year| i32::try_from(year).ok()),
         cover_url: row.try_get(7)?,
         kind: row.try_get(8)?,
-        state: row.try_get(9)?,
-        created_at: epoch_from_real(row.try_get(10)?),
+        state,
+        created_at: secs_from_ms(row.try_get(10)?),
         first_release_date: row.try_get(11)?,
         check_count: u32::try_from(row.try_get::<i64, _>(12)?).unwrap_or(0),
         quiet_streak: u32::try_from(row.try_get::<i64, _>(13)?).unwrap_or(0),
-        next_check_at: epoch_from_real(row.try_get(14)?),
+        next_check_at: secs_from_ms(row.try_get(14)?),
         new_candidate_count: u32::try_from(row.try_get::<i64, _>(15)?).unwrap_or(0),
     })
 }
@@ -54,11 +56,11 @@ fn watch_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<WantedWatch>
         cover_url: row.get(7)?,
         kind: row.get(8)?,
         state: row.get(9)?,
-        created_at: epoch_from_real(row.get(10)?),
+        created_at: secs_from_ms(row.get(10)?),
         first_release_date: row.get(11)?,
         check_count: u32::try_from(row.get::<_, i64>(12)?).unwrap_or(0),
         quiet_streak: u32::try_from(row.get::<_, i64>(13)?).unwrap_or(0),
-        next_check_at: epoch_from_real(row.get(14)?),
+        next_check_at: secs_from_ms(row.get(14)?),
         new_candidate_count: u32::try_from(row.get::<_, i64>(15)?).unwrap_or(0),
     })
 }
@@ -98,7 +100,7 @@ impl WantedStore {
                 let watches = tx.execute(
                     "DELETE FROM wanted_watches WHERE state IN ('stopped', 'fulfilled') \
                      AND COALESCE(last_checked_at, created_at) < ?1",
-                    params![cutoff as f64],
+                    params![ms_from_secs(cutoff)],
                 )?;
                 let seen = tx.execute(
                     "DELETE FROM wanted_seen_candidates WHERE release_group_mbid_lower \
@@ -167,8 +169,8 @@ impl WantedStore {
              ORDER BY w.next_check_at, w.release_group_mbid_lower LIMIT ?3"
         );
         let rows = sqlx::query(&sql)
-            .bind(WATCH_WATCHING)
-            .bind(now as f64)
+            .bind(WatchState::Watching.as_str())
+            .bind(ms_from_secs(now))
             .bind(i64::try_from(limit).unwrap_or(i64::MAX))
             .fetch_all(self.db.pool())
             .await
@@ -202,10 +204,10 @@ impl WantedStore {
                         watch.year,
                         watch.cover_url,
                         watch.kind,
-                        WATCH_WATCHING,
-                        watch.created_at as f64,
+                        WatchState::Watching,
+                        ms_from_secs(watch.created_at),
                         watch.first_release_date,
-                        watch.next_check_at as f64,
+                        ms_from_secs(watch.next_check_at),
                     ],
                 )?;
                 if inserted > 0 {
@@ -218,12 +220,12 @@ impl WantedStore {
                      WHERE release_group_mbid_lower = ?1 AND state = ?7",
                     params![
                         key,
-                        WATCH_WATCHING,
+                        WatchState::Watching,
                         watch.user_id,
                         watch.kind,
-                        watch.created_at as f64,
-                        watch.next_check_at as f64,
-                        WATCH_FULFILLED,
+                        ms_from_secs(watch.created_at),
+                        ms_from_secs(watch.next_check_at),
+                        WatchState::Fulfilled,
                     ],
                 )?;
                 Ok(rearmed > 0)
@@ -249,7 +251,13 @@ impl WantedStore {
                     "UPDATE wanted_watches SET check_count = check_count + 1, \
                      quiet_streak = ?2, next_check_at = ?3, last_checked_at = ?4, \
                      last_outcome = ?5 WHERE release_group_mbid_lower = ?1",
-                    params![key, quiet_streak, next_check_at as f64, now as f64, outcome],
+                    params![
+                        key,
+                        quiet_streak,
+                        ms_from_secs(next_check_at),
+                        ms_from_secs(now),
+                        outcome
+                    ],
                 )?;
                 Ok(())
             })
@@ -272,7 +280,7 @@ impl WantedStore {
                     "UPDATE wanted_watches SET state = ?2, last_outcome = ?3, \
                      last_checked_at = ?4, new_candidate_count = 0 \
                      WHERE release_group_mbid_lower = ?1",
-                    params![key, WATCH_FULFILLED, outcome, now as f64],
+                    params![key, WatchState::Fulfilled, outcome, ms_from_secs(now)],
                 )?;
                 Ok(())
             })
@@ -280,8 +288,8 @@ impl WantedStore {
             .map_err(|error| lane_error("wanted.fulfilled", error))
     }
 
-    /// Stop one watch (v2 `stop_watch`): watching or dormant becomes
-    /// stopped. Owners and admins only.
+    /// Stop one watch (v2 `stop_watch`): watching becomes stopped. Owners
+    /// and admins only.
     pub async fn stop(
         &self,
         key: &str,
@@ -297,8 +305,8 @@ impl WantedStore {
             |tx, key, _| {
                 tx.execute(
                     "UPDATE wanted_watches SET state = ?2 WHERE release_group_mbid_lower = ?1 \
-                 AND state IN (?3, ?4)",
-                    params![key, WATCH_STOPPED, WATCH_WATCHING, WATCH_DORMANT],
+                 AND state = ?3",
+                    params![key, WatchState::Stopped, WatchState::Watching],
                 )?;
                 Ok(())
             },
@@ -306,9 +314,9 @@ impl WantedStore {
         .await
     }
 
-    /// Resume one watch (v2 `resume_watch`): dormant or stopped becomes
-    /// watching and due now with a fresh window; a watching row is simply
-    /// due now; a fulfilled row refuses. Owners and admins only.
+    /// Resume one watch (v2 `resume_watch`): stopped becomes watching and
+    /// due now with a fresh window; a watching row is simply due now; a
+    /// fulfilled row refuses. Owners and admins only.
     pub async fn resume(
         &self,
         key: &str,
@@ -317,16 +325,21 @@ impl WantedStore {
         now: u64,
     ) -> Result<WatchChange, RequestsError> {
         self.change(key, user_id, is_admin, "wanted.resume", false, move |tx, key, state| {
-            if state == WATCH_WATCHING {
+            if state == WatchState::Watching {
                 tx.execute(
                     "UPDATE wanted_watches SET next_check_at = ?2 WHERE release_group_mbid_lower = ?1",
-                    params![key, now as f64],
+                    params![key, ms_from_secs(now)],
                 )?;
             } else {
                 tx.execute(
                     "UPDATE wanted_watches SET state = ?2, next_check_at = ?3, created_at = ?3 \
-                     WHERE release_group_mbid_lower = ?1 AND state IN (?4, ?5)",
-                    params![key, WATCH_WATCHING, now as f64, WATCH_DORMANT, WATCH_STOPPED],
+                     WHERE release_group_mbid_lower = ?1 AND state = ?4",
+                    params![
+                        key,
+                        WatchState::Watching,
+                        ms_from_secs(now),
+                        WatchState::Stopped
+                    ],
                 )?;
             }
             Ok(())
@@ -390,7 +403,7 @@ impl WantedStore {
         apply: F,
     ) -> Result<WatchChange, RequestsError>
     where
-        F: FnOnce(&Transaction, &str, &str) -> rusqlite::Result<()> + Send + 'static,
+        F: FnOnce(&Transaction, &str, WatchState) -> rusqlite::Result<()> + Send + 'static,
     {
         let key = key.to_lowercase();
         let user_id = user_id.to_owned();
@@ -402,10 +415,10 @@ impl WantedStore {
                 if !is_admin && watch.user_id != user_id {
                     return Ok(WatchChange::NotFound);
                 }
-                if watch.state == WATCH_FULFILLED && !allow_fulfilled {
+                if watch.state == WatchState::Fulfilled && !allow_fulfilled {
                     return Ok(WatchChange::Fulfilled);
                 }
-                apply(tx, &key, &watch.state)?;
+                apply(tx, &key, watch.state)?;
                 Ok(match load_watch_tx(tx, &key)? {
                     Some(watch) => WatchChange::Done(Box::new(watch)),
                     None => WatchChange::NotFound,
@@ -417,7 +430,7 @@ impl WantedStore {
 }
 
 /// After an admin removed the album at `removed_at` (unix seconds): stop a
-/// watching or dormant watch armed at or before then (v2
+/// watching watch armed at or before then (v2
 /// `stop_after_library_removal`). A watch armed since, by a new request,
 /// is left alone. Answers whether it changed.
 pub(crate) fn stop_after_removal(
@@ -427,13 +440,12 @@ pub(crate) fn stop_after_removal(
 ) -> rusqlite::Result<bool> {
     let changed = tx.execute(
         "UPDATE wanted_watches SET state = ?2 WHERE release_group_mbid_lower = ?1 \
-         AND state IN (?3, ?4) AND created_at <= ?5",
+         AND state = ?3 AND created_at <= ?4",
         params![
             key.to_lowercase(),
-            WATCH_STOPPED,
-            WATCH_WATCHING,
-            WATCH_DORMANT,
-            removed_at
+            WatchState::Stopped,
+            WatchState::Watching,
+            ms_from_secs_f64(removed_at)
         ],
     )?;
     Ok(changed > 0)
@@ -442,7 +454,7 @@ pub(crate) fn stop_after_removal(
 /// After an admin removed the album at `removed_at` but wants a
 /// replacement: a watch fulfilled before then goes back to watching, due
 /// `now`, with fresh counters (v2 `continue_after_library_removal`).
-/// Stopped and dormant watches keep the user's choice, and a watch armed
+/// Stopped watches keep the user's choice, and a watch armed
 /// since the removal is left alone; rearming stamps `created_at`, so a
 /// second run never rearms its own rearm.
 pub(crate) fn rearm_after_removal(
@@ -458,10 +470,10 @@ pub(crate) fn rearm_after_removal(
          WHERE release_group_mbid_lower = ?1 AND state = ?4 AND created_at <= ?5",
         params![
             key.to_lowercase(),
-            WATCH_WATCHING,
-            now,
-            WATCH_FULFILLED,
-            removed_at
+            WatchState::Watching,
+            ms_from_secs_f64(now),
+            WatchState::Fulfilled,
+            ms_from_secs_f64(removed_at)
         ],
     )?;
     Ok(changed > 0)

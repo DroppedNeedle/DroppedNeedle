@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use axum::http::StatusCode;
 use droppedneedle::docs::ApiDoc;
 use droppedneedle_acquire::downloads::{state::TaskStatus, store::NewTask};
-use droppedneedle_acquire::requests::ledger::{STATUS_FAILED, WATCH_STOPPED, WantedWatch};
+use droppedneedle_acquire::requests::ledger::{RequestStatus, WantedWatch, WatchState};
 use droppedneedle_acquire::requests::models::RequestKind;
 use droppedneedle_acquire::search_jobs::store::{COMPLETED, JobPayload, JobStore, NewJob};
 use serde_json::{Value, json};
@@ -1081,7 +1081,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
                 .update_status(
                     RequestKind::Album,
                     &mbid,
-                    STATUS_FAILED,
+                    RequestStatus::Failed,
                     Some(1_700_000_000),
                     None,
                 )
@@ -1107,7 +1107,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
                     year: None,
                     cover_url: None,
                     kind: "missing".to_owned(),
-                    state: WATCH_STOPPED.to_owned(),
+                    state: WatchState::Stopped,
                     created_at: 1_700_000_000,
                     first_release_date: None,
                     check_count: 0,

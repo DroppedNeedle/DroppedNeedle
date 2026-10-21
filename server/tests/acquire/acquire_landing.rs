@@ -289,7 +289,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
             tx.execute(
                 "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
                  album_title, requested_at, status, user_id, download_task_id, request_kind) \
-                 VALUES (?1, ?1, 'Portishead', 'Dummy', '1700000000', 'downloading', 'u-ada', \
+                 VALUES (?1, ?1, 'Portishead', 'Dummy', 1700000000000, 'downloading', 'u-ada', \
                  't-good', 'album')",
                 [GOOD_GROUP],
             )?;

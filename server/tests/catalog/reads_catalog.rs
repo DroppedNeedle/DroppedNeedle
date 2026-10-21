@@ -343,7 +343,7 @@ async fn seed_library(pool: &SqlitePool) {
         format!(
             "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
              album_title, requested_at, status, request_kind) VALUES \
-             ('{KID_A}', '{KID_A}', 'Radiohead', 'Kid A', '2026-09-01T00:00:00Z', 'pending', \
+             ('{KID_A}', '{KID_A}', 'Radiohead', 'Kid A', 1788220800000, 'pending', \
              'album')"
         ),
     ];

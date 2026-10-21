@@ -1014,12 +1014,18 @@ struct ApprovalRow {
     user_id: String,
     artist_mbid_lower: String,
     state: String,
-    requested_at: f64,
+    requested_at: i64,
     reviewed_by_id: Option<String>,
     reviewed_by_name: Option<String>,
-    reviewed_at: Option<f64>,
+    reviewed_at: Option<i64>,
     batch_id: Option<String>,
     source: Option<String>,
+}
+
+/// An approval time from the export (REAL epoch seconds) as the table
+/// stores it: integer milliseconds.
+fn approval_ms(seconds: f64) -> i64 {
+    (seconds * 1000.0).round() as i64
 }
 
 /// Read-only view of the target database the merge decisions run against.
@@ -1195,10 +1201,10 @@ enum Planned {
     MergeApproval {
         key: (String, String),
         state: String,
-        requested_at: f64,
+        requested_at: i64,
         reviewed_by_id: Option<String>,
         reviewed_by_name: Option<String>,
-        reviewed_at: Option<f64>,
+        reviewed_at: Option<i64>,
         batch_id: Option<String>,
         source: Option<String>,
     },
@@ -1860,7 +1866,7 @@ impl Plan {
                         opt_str(approval, "source"),
                         opt_str(approval, "reviewed_by_id").filter(|_| !reviewer_nulled),
                         opt_str(approval, "reviewed_by_name"),
-                        opt_num(approval, "reviewed_at"),
+                        opt_num(approval, "reviewed_at").map(approval_ms),
                     )
                 } else {
                     (
@@ -1874,9 +1880,10 @@ impl Plan {
                 };
                 // Earliest request wins. The spec does not name this field; min
                 // keeps re-imports convergent.
-                let requested_at = existing
-                    .requested_at
-                    .min(num_or(approval, "requested_at", 0.0));
+                let requested_at =
+                    existing
+                        .requested_at
+                        .min(approval_ms(num_or(approval, "requested_at", 0.0)));
                 if existing.state == state
                     && existing.batch_id == batch_id
                     && existing.source == source
@@ -2258,10 +2265,10 @@ async fn insert_approval(
     .bind(mbid.trim().to_lowercase())
     .bind(str_or(record, "artist_name", ""))
     .bind(str_or(record, "state", "pending"))
-    .bind(num_or(record, "requested_at", 0.0))
+    .bind(approval_ms(num_or(record, "requested_at", 0.0)))
     .bind(reviewer)
     .bind(opt_str(record, "reviewed_by_name"))
-    .bind(opt_num(record, "reviewed_at"))
+    .bind(opt_num(record, "reviewed_at").map(approval_ms))
     .bind(opt_str(record, "batch_id"))
     .bind(opt_str(record, "source"))
     .execute(&mut **tx)
@@ -2274,10 +2281,10 @@ async fn merge_approval(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     key: &(String, String),
     state: &str,
-    requested_at: f64,
+    requested_at: i64,
     reviewed_by_id: Option<String>,
     reviewed_by_name: Option<String>,
-    reviewed_at: Option<f64>,
+    reviewed_at: Option<i64>,
     batch_id: Option<String>,
     source: Option<String>,
 ) -> Result<(), ImportError> {

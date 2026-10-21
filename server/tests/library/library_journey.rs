@@ -3853,7 +3853,7 @@ async fn album_cleanup_survives_a_stop_after_the_removal() {
              INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, \
              user_id, artist_name, album_title, kind, state, created_at, next_check_at) \
              VALUES ('rg-gone', 'rg-gone', 'fan', 'Band', 'LP', 'missing', 'watching', \
-             1767225600.0, 1767225600.0);",
+             1767225600000, 1767225600000);",
             held.display()
         ))
         .expect("acquisition rows seeded");

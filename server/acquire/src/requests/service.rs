@@ -16,10 +16,8 @@ use super::auth::auto_approves;
 use super::bridges::FollowDecisionSink;
 use super::error::RequestsError;
 use super::ledger::{
-    BeginOutcome, CANCELLABLE_STATUSES, CLEARABLE_STATUSES, RETRYABLE_STATUSES, RequestRecord,
-    STATUS_AWAITING_APPROVAL, STATUS_CANCELLED, STATUS_CANCELLING, STATUS_DOWNLOADING,
-    STATUS_FAILED, STATUS_IMPORTED, STATUS_INCOMPLETE, STATUS_PENDING, STATUS_QUEUED, is_active,
-    meaningful_name, now_epoch, validate_mbid,
+    ApprovalState, BeginOutcome, RequestRecord, RequestStatus, meaningful_name, now_epoch,
+    validate_mbid,
 };
 use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, AlbumIntake, ApprovalBatchItem,
@@ -124,7 +122,7 @@ impl RequestsService {
                 request_id: record.key.clone(),
                 user_id: record.user_id.clone().unwrap_or_default(),
                 release_group_mbid,
-                status: record.status.clone(),
+                status: record.status.as_str().to_owned(),
             }),
         );
     }
@@ -179,7 +177,7 @@ impl RequestsService {
             });
         }
         if let Some(existing) = self.store.get(RequestKind::Album, &mbid).await?
-            && (is_active(&existing.status) || existing.status == STATUS_CANCELLING)
+            && (existing.status.is_active() || existing.status == RequestStatus::Cancelling)
         {
             return self.attach_album(principal, &existing, body).await;
         }
@@ -215,17 +213,17 @@ impl RequestsService {
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
-            BeginOutcome::Existing(winner) if is_active(&winner.status) => {
+            BeginOutcome::Existing(winner) if winner.status.is_active() => {
                 self.attach_album(principal, &winner, body).await
             }
-            BeginOutcome::Existing(winner) if winner.status == STATUS_CANCELLING => {
+            BeginOutcome::Existing(winner) if winner.status == RequestStatus::Cancelling => {
                 self.attach_album(principal, &winner, body).await
             }
             BeginOutcome::Existing(_) => Ok(IntakeResponse {
                 success: false,
                 message: "Request could not be recorded".to_owned(),
                 musicbrainz_id: mbid,
-                status: STATUS_FAILED.to_owned(),
+                status: RequestStatus::Failed.as_str().to_owned(),
                 task_id: None,
             }),
             BeginOutcome::Won(won) => {
@@ -235,7 +233,7 @@ impl RequestsService {
                         success: true,
                         message: "Request submitted, awaiting admin approval".to_owned(),
                         musicbrainz_id: mbid,
-                        status: STATUS_AWAITING_APPROVAL.to_owned(),
+                        status: RequestStatus::AwaitingApproval.as_str().to_owned(),
                         task_id: None,
                     });
                 }
@@ -274,7 +272,7 @@ impl RequestsService {
         let now = now_epoch();
 
         if let Some(existing) = self.store.get(RequestKind::Track, &mbid).await?
-            && (is_active(&existing.status) || existing.status == STATUS_CANCELLING)
+            && (existing.status.is_active() || existing.status == RequestStatus::Cancelling)
         {
             self.store
                 .attach_requester(
@@ -297,7 +295,7 @@ impl RequestsService {
         let record = RequestRecord {
             key: mbid.to_lowercase(),
             kind: RequestKind::Track,
-            status: status_for_role(needs_approval).to_owned(),
+            status: status_for_role(needs_approval),
             artist_name,
             album_title,
             artist_mbid: body.artist_mbid.clone(),
@@ -326,7 +324,7 @@ impl RequestsService {
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
             BeginOutcome::Existing(winner)
-                if is_active(&winner.status) || winner.status == STATUS_CANCELLING =>
+                if winner.status.is_active() || winner.status == RequestStatus::Cancelling =>
             {
                 self.store
                     .attach_requester(
@@ -340,14 +338,14 @@ impl RequestsService {
                 Ok(track_duplicate(&winner))
             }
             BeginOutcome::Existing(_) => Ok(TrackIntakeResponse {
-                status: STATUS_QUEUED.to_owned(),
+                status: RequestStatus::Queued.as_str().to_owned(),
                 task_id: None,
             }),
             BeginOutcome::Won(won) => {
                 self.announce_created(&won);
                 if needs_approval {
                     return Ok(TrackIntakeResponse {
-                        status: STATUS_AWAITING_APPROVAL.to_owned(),
+                        status: RequestStatus::AwaitingApproval.as_str().to_owned(),
                         task_id: None,
                     });
                 }
@@ -461,7 +459,7 @@ impl RequestsService {
                 requested: 0,
                 skipped,
                 overflow: 0,
-                status: STATUS_FAILED.to_owned(),
+                status: RequestStatus::Failed.as_str().to_owned(),
             });
         }
 
@@ -471,7 +469,7 @@ impl RequestsService {
             records.push(RequestRecord {
                 key: mbid.to_lowercase(),
                 kind: RequestKind::Album,
-                status: status_for_role(needs_approval).to_owned(),
+                status: status_for_role(needs_approval),
                 artist_name: artist_name.clone(),
                 album_title: album_title.clone(),
                 artist_mbid: item.artist_mbid.clone(),
@@ -508,7 +506,7 @@ impl RequestsService {
                     created.push(won);
                 }
                 BeginOutcome::Existing(winner)
-                    if is_active(&winner.status) || winner.status == STATUS_CANCELLING =>
+                    if winner.status.is_active() || winner.status == RequestStatus::Cancelling =>
                 {
                     // Won by someone else between the live read and the
                     // bulk claim: a listener attachment, never a dispatch
@@ -547,7 +545,7 @@ impl RequestsService {
                 requested: 0,
                 skipped,
                 overflow: 0,
-                status: STATUS_FAILED.to_owned(),
+                status: RequestStatus::Failed.as_str().to_owned(),
             });
         }
         if needs_approval {
@@ -557,7 +555,7 @@ impl RequestsService {
                 requested: created.len() as u32,
                 skipped,
                 overflow: 0,
-                status: STATUS_AWAITING_APPROVAL.to_owned(),
+                status: RequestStatus::AwaitingApproval.as_str().to_owned(),
             });
         }
 
@@ -586,9 +584,9 @@ impl RequestsService {
             skipped,
             overflow: 0,
             status: if dispatched > 0 {
-                STATUS_PENDING.to_owned()
+                RequestStatus::Pending.as_str().to_owned()
             } else {
-                STATUS_FAILED.to_owned()
+                RequestStatus::Failed.as_str().to_owned()
             },
         })
     }
@@ -656,8 +654,8 @@ impl RequestsService {
                 message: "Request not found".to_owned(),
             });
         };
-        if record.status != STATUS_AWAITING_APPROVAL {
-            return Ok(not_waiting(&record.status));
+        if record.status != RequestStatus::AwaitingApproval {
+            return Ok(not_waiting(record.status.as_str()));
         }
         let claimed = self
             .store
@@ -674,7 +672,7 @@ impl RequestsService {
                 .store
                 .get(kind, &mbid)
                 .await?
-                .map(|row| row.status)
+                .map(|row| row.status.as_str().to_owned())
                 .unwrap_or_else(|| "changed".to_owned());
             return Ok(not_waiting(&status));
         };
@@ -691,8 +689,8 @@ impl RequestsService {
                     .restore_status(
                         kind,
                         &mbid,
-                        STATUS_AWAITING_APPROVAL,
-                        STATUS_PENDING,
+                        RequestStatus::AwaitingApproval,
+                        RequestStatus::Pending,
                         claimed.generation,
                     )
                     .await?;
@@ -704,7 +702,7 @@ impl RequestsService {
                     .update_status(
                         kind,
                         &mbid,
-                        STATUS_FAILED,
+                        RequestStatus::Failed,
                         Some(now),
                         Some(claimed.generation),
                     )
@@ -749,8 +747,8 @@ impl RequestsService {
                 message: "Request not found".to_owned(),
             });
         };
-        if record.status != STATUS_AWAITING_APPROVAL {
-            return Ok(not_waiting(&record.status));
+        if record.status != RequestStatus::AwaitingApproval {
+            return Ok(not_waiting(record.status.as_str()));
         }
         let claimed = self
             .store
@@ -767,7 +765,7 @@ impl RequestsService {
                 .store
                 .get(kind, &mbid)
                 .await?
-                .map(|row| row.status)
+                .map(|row| row.status.as_str().to_owned())
                 .unwrap_or_else(|| "changed".to_owned());
             return Ok(not_waiting(&status));
         }
@@ -797,13 +795,13 @@ impl RequestsService {
                 .requester_cancel_verbose(kind, &mbid, &record, principal.user_id(), now)
                 .await;
         }
-        if record.status == STATUS_AWAITING_APPROVAL {
+        if record.status == RequestStatus::AwaitingApproval {
             if !self
                 .store
                 .update_status(
                     kind,
                     &mbid,
-                    STATUS_CANCELLED,
+                    RequestStatus::Cancelled,
                     Some(now),
                     Some(record.generation),
                 )
@@ -824,7 +822,7 @@ impl RequestsService {
                 message: format!("Cancelled request for {}", record_title(&record)),
             });
         }
-        if !CANCELLABLE_STATUSES.contains(&record.status.as_str()) {
+        if !record.status.is_cancellable() {
             return Ok(ActionResponse {
                 success: false,
                 message: format!("Cannot cancel request with status '{}'", record.status),
@@ -843,7 +841,7 @@ impl RequestsService {
             .update_status(
                 kind,
                 &mbid,
-                STATUS_CANCELLED,
+                RequestStatus::Cancelled,
                 Some(now),
                 Some(record.generation),
             )
@@ -877,18 +875,18 @@ impl RequestsService {
                 message: "Request not found".to_owned(),
             });
         };
-        if !RETRYABLE_STATUSES.contains(&record.status.as_str()) {
+        if !record.status.is_retryable() {
             return Ok(ActionResponse {
                 success: false,
                 message: format!("Cannot retry request with status '{}'", record.status),
             });
         }
-        let prior_status = record.status.clone();
+        let prior_status = record.status;
         let can_dispatch = record.dispatch_authorized || auto_approves(principal.role());
         let target = if can_dispatch {
-            STATUS_PENDING
+            RequestStatus::Pending
         } else {
-            STATUS_AWAITING_APPROVAL
+            RequestStatus::AwaitingApproval
         };
         let claim = self
             .store
@@ -907,9 +905,10 @@ impl RequestsService {
             super::ledger::RetryClaim::Claimed { generation, .. } => generation,
             super::ledger::RetryClaim::Lost => {
                 let current = self.store.get(kind, &mbid).await?;
-                let current_status = current.as_ref().map(|row| row.status.as_str());
                 if !principal.is_admin()
-                    && current_status.is_some_and(|s| RETRYABLE_STATUSES.contains(&s))
+                    && current
+                        .as_ref()
+                        .is_some_and(|row| row.status.is_retryable())
                     && !self
                         .store
                         .is_requester(kind, &mbid, principal.user_id())
@@ -928,7 +927,7 @@ impl RequestsService {
                 });
             }
         };
-        if target == STATUS_AWAITING_APPROVAL {
+        if target == RequestStatus::AwaitingApproval {
             return Ok(ActionResponse {
                 success: true,
                 message: "Retry submitted, awaiting admin approval".to_owned(),
@@ -942,14 +941,14 @@ impl RequestsService {
         match self.dispatch.dispatch(&request).await {
             Err(DispatchError::Busy { operation }) => {
                 self.store
-                    .update_status(kind, &mbid, &prior_status, None, Some(generation))
+                    .update_status(kind, &mbid, prior_status, None, Some(generation))
                     .await?;
                 Err(RequestsError::Busy { operation })
             }
             Err(DispatchError::Failed(cause)) => {
                 tracing::error!(%cause, "retry dispatch failed");
                 self.store
-                    .update_status(kind, &mbid, &prior_status, None, Some(generation))
+                    .update_status(kind, &mbid, prior_status, None, Some(generation))
                     .await?;
                 Ok(ActionResponse {
                     success: false,
@@ -999,13 +998,15 @@ impl RequestsService {
                 message: "Cannot clear another user's request".to_owned(),
             });
         }
-        if !CLEARABLE_STATUSES.contains(&record.status.as_str()) {
+        if !record.status.is_clearable() {
             return Ok(ClearHistoryResponse { success: false });
         }
         let cleared = if principal.is_admin() {
             self.store.delete(kind, &mbid).await?
         } else {
-            self.store.dismiss(kind, &mbid, principal.user_id()).await?
+            self.store
+                .dismiss(kind, &mbid, principal.user_id(), now_epoch())
+                .await?
         };
         Ok(ClearHistoryResponse { success: cleared })
     }
@@ -1135,7 +1136,7 @@ impl RequestsService {
                 artist_name: watch.artist_name,
                 album_title: watch.album_title,
                 kind: watch.kind,
-                state: watch.state,
+                state: watch.state.as_str().to_owned(),
                 check_count: watch.check_count,
                 next_check_at: Some(watch.next_check_at),
                 new_candidate_count: watch.new_candidate_count,
@@ -1165,7 +1166,7 @@ impl RequestsService {
     ) -> Result<Vec<WantedRetryingItem>, RequestsError> {
         let is_admin = principal.is_admin();
         let mut out = Vec::new();
-        for status in [STATUS_FAILED, STATUS_INCOMPLETE] {
+        for status in [RequestStatus::Failed, RequestStatus::Incomplete] {
             for record in self.store.with_status(RequestKind::Album, status).await? {
                 if !is_admin && !record.has_requester(principal.user_id()) {
                     continue;
@@ -1292,7 +1293,7 @@ impl RequestsService {
             .decide(
                 user_id,
                 artist_mbid,
-                "approved",
+                ApprovalState::Approved,
                 reviewer(admin),
                 now_epoch(),
             )
@@ -1324,7 +1325,7 @@ impl RequestsService {
             .decide(
                 user_id,
                 artist_mbid,
-                "rejected",
+                ApprovalState::Rejected,
                 reviewer(admin),
                 now_epoch(),
             )
@@ -1407,7 +1408,8 @@ impl RequestsService {
         admin: &Admin,
         batch_id: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        self.decide_batch(admin, batch_id, "approved").await
+        self.decide_batch(admin, batch_id, ApprovalState::Approved)
+            .await
     }
 
     /// Reject one bulk batch (admin).
@@ -1416,7 +1418,8 @@ impl RequestsService {
         admin: &Admin,
         batch_id: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        self.decide_batch(admin, batch_id, "rejected").await
+        self.decide_batch(admin, batch_id, ApprovalState::Rejected)
+            .await
     }
 
     /// Decide every pending row of one batch and carry the verdict into the
@@ -1425,7 +1428,7 @@ impl RequestsService {
         &self,
         admin: &Admin,
         batch_id: &str,
-        state: &str,
+        state: ApprovalState,
     ) -> Result<ActionResponse, RequestsError> {
         let rows = self
             .follows
@@ -1439,7 +1442,7 @@ impl RequestsService {
         }
         if let Some(sink) = &self.follow_sink {
             for (user_id, artist_mbid, artist_name) in &rows {
-                let applied = if state == "approved" {
+                let applied = if state == ApprovalState::Approved {
                     sink.arm_auto_download(user_id, artist_mbid, artist_name)
                         .await
                 } else {
@@ -1450,7 +1453,11 @@ impl RequestsService {
         }
         Ok(ActionResponse {
             success: true,
-            message: format!("Auto-download {state} for {} artists", rows.len()),
+            message: format!(
+                "Auto-download {} for {} artists",
+                state.as_str(),
+                rows.len()
+            ),
         })
     }
 
@@ -1578,7 +1585,11 @@ impl RequestsService {
         let now = now_epoch();
         let mut report = RequestRecovery::default();
         for kind in [RequestKind::Album, RequestKind::Track] {
-            for record in self.store.with_status(kind, STATUS_CANCELLING).await? {
+            for record in self
+                .store
+                .with_status(kind, RequestStatus::Cancelling)
+                .await?
+            {
                 if let Some(task_id) = record.task_id.as_deref()
                     && !cancel_linked(&self.dispatch, task_id).await
                 {
@@ -1589,7 +1600,7 @@ impl RequestsService {
                     .update_status(
                         kind,
                         &record.key,
-                        STATUS_CANCELLED,
+                        RequestStatus::Cancelled,
                         Some(now),
                         Some(record.generation),
                     )
@@ -1598,7 +1609,7 @@ impl RequestsService {
                     report.cancelled += 1;
                 }
             }
-            for record in self.store.with_status(kind, STATUS_PENDING).await? {
+            for record in self.store.with_status(kind, RequestStatus::Pending).await? {
                 if record.task_id.is_some() || !record.dispatch_authorized {
                     continue;
                 }
@@ -1683,9 +1694,9 @@ impl RequestsService {
                 .widen_monitoring(RequestKind::Album, &existing.key, body.auto_download_artist)
                 .await?;
         }
-        let message = if existing.status == STATUS_AWAITING_APPROVAL {
+        let message = if existing.status == RequestStatus::AwaitingApproval {
             "Request is awaiting admin approval"
-        } else if existing.status == STATUS_CANCELLING {
+        } else if existing.status == RequestStatus::Cancelling {
             "Request is being cancelled"
         } else {
             "Request already in progress"
@@ -1694,7 +1705,7 @@ impl RequestsService {
             success: true,
             message: message.to_owned(),
             musicbrainz_id: existing.key.clone(),
-            status: existing.status.clone(),
+            status: existing.status.as_str().to_owned(),
             task_id: existing.task_id.clone(),
         })
     }
@@ -1727,7 +1738,7 @@ impl RequestsService {
         RequestRecord {
             key: mbid.to_lowercase(),
             kind: RequestKind::Album,
-            status: status_for_role(needs_approval).to_owned(),
+            status: status_for_role(needs_approval),
             artist_name: artist_name.to_owned(),
             album_title: album_title.to_owned(),
             artist_mbid: body.artist_mbid.clone(),
@@ -1768,7 +1779,7 @@ impl RequestsService {
                     .update_status(
                         RequestKind::Album,
                         &won.key,
-                        STATUS_FAILED,
+                        RequestStatus::Failed,
                         Some(now),
                         Some(won.generation),
                     )
@@ -1798,7 +1809,7 @@ impl RequestsService {
                     success: true,
                     message: "Request accepted".to_owned(),
                     musicbrainz_id: won.key.clone(),
-                    status: STATUS_PENDING.to_owned(),
+                    status: RequestStatus::Pending.as_str().to_owned(),
                     task_id: Some(outcome.task_id().to_owned()),
                 })
             }
@@ -1820,7 +1831,7 @@ impl RequestsService {
                     .update_status(
                         RequestKind::Track,
                         &won.key,
-                        STATUS_FAILED,
+                        RequestStatus::Failed,
                         Some(now),
                         Some(won.generation),
                     )
@@ -1847,7 +1858,7 @@ impl RequestsService {
                     )));
                 }
                 Ok(TrackIntakeResponse {
-                    status: STATUS_QUEUED.to_owned(),
+                    status: RequestStatus::Queued.as_str().to_owned(),
                     task_id: Some(outcome.task_id().to_owned()),
                 })
             }
@@ -1865,10 +1876,7 @@ impl RequestsService {
         let Some(record) = self.store.get(kind, mbid).await? else {
             return Ok(false);
         };
-        if !matches!(
-            record.status.as_str(),
-            STATUS_AWAITING_APPROVAL | STATUS_PENDING | STATUS_QUEUED | STATUS_DOWNLOADING
-        ) {
+        if !record.status.is_active() {
             return Ok(false);
         }
         if let Some(task_id) = record.task_id.as_deref()
@@ -1881,7 +1889,7 @@ impl RequestsService {
             .update_status(
                 kind,
                 mbid,
-                STATUS_CANCELLED,
+                RequestStatus::Cancelled,
                 Some(now),
                 Some(record.generation),
             )
@@ -1889,7 +1897,7 @@ impl RequestsService {
         {
             return Ok(false);
         }
-        if record.status == STATUS_AWAITING_APPROVAL {
+        if record.status == RequestStatus::AwaitingApproval {
             self.store
                 .set_dispatch_authorized(kind, mbid, false)
                 .await?;
@@ -1929,13 +1937,25 @@ impl RequestsService {
                     && !cancel_linked(&self.dispatch, task_id).await
                 {
                     self.store
-                        .restore_status(kind, mbid, &prior_status, STATUS_CANCELLING, generation)
+                        .restore_status(
+                            kind,
+                            mbid,
+                            prior_status,
+                            RequestStatus::Cancelling,
+                            generation,
+                        )
                         .await?;
                     return Ok(false);
                 }
                 if !self
                     .store
-                    .update_status(kind, mbid, STATUS_CANCELLED, Some(now), Some(generation))
+                    .update_status(
+                        kind,
+                        mbid,
+                        RequestStatus::Cancelled,
+                        Some(now),
+                        Some(generation),
+                    )
                     .await?
                 {
                     return Ok(false);
@@ -1964,8 +1984,8 @@ impl RequestsService {
                 message: "Request not found".to_owned(),
             }),
             Some(super::ledger::CancelDecision::Denied { prior_status }) => {
-                if CANCELLABLE_STATUSES.contains(&prior_status.as_str())
-                    || prior_status == STATUS_AWAITING_APPROVAL
+                if prior_status.is_cancellable()
+                    || prior_status == RequestStatus::AwaitingApproval
                 {
                     return Err(RequestsError::Forbidden {
                         message: "Cannot cancel another user's request".to_owned(),
@@ -1995,7 +2015,7 @@ impl RequestsService {
                     && !cancel_linked(&self.dispatch, task_id).await
                 {
                     self.store
-                        .restore_status(kind, mbid, &prior_status, STATUS_CANCELLING, generation)
+                        .restore_status(kind, mbid, prior_status, RequestStatus::Cancelling, generation)
                         .await?;
                     return Ok(ActionResponse {
                         success: false,
@@ -2005,15 +2025,15 @@ impl RequestsService {
                 if !self.store.update_status(
                     kind,
                     mbid,
-                    STATUS_CANCELLED,
+                    RequestStatus::Cancelled,
                     Some(now),
                     Some(generation),
                 ).await? {
                     self.store.restore_status(
                         kind,
                         mbid,
-                        &prior_status,
-                        STATUS_CANCELLING,
+                        prior_status,
+                        RequestStatus::Cancelling,
                         generation,
                     ).await?;
                     return Ok(ActionResponse {
@@ -2068,7 +2088,7 @@ impl RequestsService {
         }
         // v2 history quirk: only failed rows offer the admin reimport, and
         // only when the task still has its candidate linked.
-        if record.status == STATUS_FAILED {
+        if record.status == RequestStatus::Failed {
             match self.dispatch.reimportable(task_id).await {
                 Ok(reimportable) => item.can_reimport = Some(reimportable),
                 Err(error) => tracing::warn!(task_id, ?error, "reimport check failed"),
@@ -2087,16 +2107,17 @@ impl RequestsService {
         let task = self.dispatch.task(task_id).await.map_err(dispatch_fault)?;
         let mapped = match task.map(|task| task.status) {
             Some(TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing) => {
-                if record.status == STATUS_PENDING || record.status == STATUS_QUEUED {
-                    Some(STATUS_DOWNLOADING)
+                if record.status == RequestStatus::Pending || record.status == RequestStatus::Queued
+                {
+                    Some(RequestStatus::Downloading)
                 } else {
                     None
                 }
             }
-            Some(TaskStatus::Completed) => Some(STATUS_IMPORTED),
-            Some(TaskStatus::Partial) => Some(STATUS_INCOMPLETE),
-            Some(TaskStatus::Failed) => Some(STATUS_FAILED),
-            Some(TaskStatus::Cancelled) => Some(STATUS_CANCELLED),
+            Some(TaskStatus::Completed) => Some(RequestStatus::Imported),
+            Some(TaskStatus::Partial) => Some(RequestStatus::Incomplete),
+            Some(TaskStatus::Failed) => Some(RequestStatus::Failed),
+            Some(TaskStatus::Cancelled) => Some(RequestStatus::Cancelled),
             None => None,
         };
         let Some(next) = mapped else {
@@ -2105,8 +2126,11 @@ impl RequestsService {
         if next == record.status {
             return Ok(false);
         }
-        let completed =
-            matches!(next, STATUS_IMPORTED | STATUS_FAILED | STATUS_CANCELLED).then_some(now);
+        let completed = matches!(
+            next,
+            RequestStatus::Imported | RequestStatus::Failed | RequestStatus::Cancelled
+        )
+        .then_some(now);
         self.store
             .update_status(
                 record.kind,
@@ -2162,7 +2186,7 @@ fn watch_action(change: WatchChange) -> Result<WantedActionResponse, RequestsErr
     match change {
         WatchChange::Done(watch) => Ok(WantedActionResponse {
             success: true,
-            state: watch.state,
+            state: watch.state.as_str().to_owned(),
         }),
         WatchChange::NotFound => Err(RequestsError::NotFound),
         WatchChange::Fulfilled => Err(RequestsError::InvalidInput {
@@ -2184,11 +2208,11 @@ pub struct RequestRecovery {
 }
 
 /// Initial status for one role's fresh ask.
-fn status_for_role(needs_approval: bool) -> &'static str {
+fn status_for_role(needs_approval: bool) -> RequestStatus {
     if needs_approval {
-        STATUS_AWAITING_APPROVAL
+        RequestStatus::AwaitingApproval
     } else {
-        STATUS_PENDING
+        RequestStatus::Pending
     }
 }
 
@@ -2204,13 +2228,13 @@ fn missing_names(mbid: &str) -> RequestsError {
 
 /// Duplicate-track reply mirroring the winner (v2 `request_track`).
 fn track_duplicate(existing: &RequestRecord) -> TrackIntakeResponse {
-    let status = if existing.status == STATUS_AWAITING_APPROVAL {
-        STATUS_AWAITING_APPROVAL
+    let status = if existing.status == RequestStatus::AwaitingApproval {
+        RequestStatus::AwaitingApproval
     } else {
-        STATUS_QUEUED
+        RequestStatus::Queued
     };
     TrackIntakeResponse {
-        status: status.to_owned(),
+        status: status.as_str().to_owned(),
         task_id: existing.task_id.clone(),
     }
 }
@@ -2295,7 +2319,7 @@ impl From<&RequestRecord> for RequestItem {
             cover_url: None,
             requested_at: record.requested_at,
             completed_at: record.completed_at,
-            status: record.status.clone(),
+            status: record.status.as_str().to_owned(),
             progress: None,
             eta: None,
             size: None,

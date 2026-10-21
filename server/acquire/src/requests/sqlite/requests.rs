@@ -8,12 +8,11 @@ use sqlx::sqlite::SqliteRow;
 
 use super::super::error::RequestsError;
 use super::super::ledger::{
-    BeginOutcome, CANCELLABLE_STATUSES, CancelDecision, QuotaGate, QuotaRefusal,
-    RETRYABLE_STATUSES, RequestRecord, Requester, RetryClaim, STATUS_AWAITING_APPROVAL,
-    STATUS_CANCELLED, STATUS_CANCELLING, STATUS_PENDING, STATUS_REJECTED, is_active,
+    BeginOutcome, CancelDecision, QuotaGate, QuotaRefusal, RequestRecord, RequestStatus, Requester,
+    RetryClaim,
 };
 use super::super::models::RequestKind;
-use super::{lane_error, read_error};
+use super::{lane_error, ms_from_secs, read_error, secs_from_ms};
 use crate::db::{AcquireDb, to_i64, to_u64};
 
 /// Ledger key for one row (v2 `_request_key`).
@@ -25,15 +24,13 @@ fn row_key(kind: RequestKind, key: &str) -> String {
     }
 }
 
-/// Columns every record read selects, in decode order. Times are stored as
-/// epoch seconds in v2's TEXT columns, so reads cast them back.
+/// Columns every record read selects, in decode order.
 const RECORD_SELECT: &str = "SELECT rh.musicbrainz_id_lower, rh.request_kind, rh.status, \
      rh.artist_name, rh.album_title, rh.artist_mbid, rh.year, rh.release_mbid, \
      rh.track_title, rh.duration_seconds, rh.track_release_group_mbid, rh.user_id, \
-     rh.requested_by_name, CAST(rh.requested_at AS INTEGER) AS requested_at, \
-     CAST(rh.completed_at AS INTEGER) AS completed_at, rh.download_task_id, rh.generation, \
-     rh.dispatch_authorized, rh.monitor_artist, rh.auto_download_artist, \
-     rh.reviewed_by_name, CAST(rh.reviewed_at AS INTEGER) AS reviewed_at \
+     rh.requested_by_name, rh.requested_at, rh.completed_at, rh.download_task_id, \
+     rh.generation, rh.dispatch_authorized, rh.monitor_artist, rh.auto_download_artist, \
+     rh.reviewed_by_name, rh.reviewed_at \
      FROM request_history rh";
 
 /// Per-user filter: with `?1` NULL every row passes; otherwise the row's
@@ -43,22 +40,27 @@ const MEMBER_FILTER: &str = "(?1 IS NULL OR ((rh.user_id = ?1 OR EXISTS (SELECT 
      AND rr.user_id = ?1)) AND NOT EXISTS (SELECT 1 FROM request_history_dismissals d \
      WHERE d.musicbrainz_id_lower = rh.musicbrainz_id_lower AND d.user_id = ?1)))";
 
-/// Split a ledger key into kind and bare MBID.
-fn split_key(stored: &str, kind: &str) -> (RequestKind, String) {
-    let kind = RequestKind::parse(kind).unwrap_or(RequestKind::Album);
-    let key = stored.strip_prefix("track:").unwrap_or(stored).to_owned();
-    (kind, key)
+/// The bare MBID of a ledger key.
+fn bare_key(stored: &str) -> String {
+    stored.strip_prefix("track:").unwrap_or(stored).to_owned()
+}
+
+/// A stored closed-set value that does not parse, as a decode failure.
+fn unknown_value(column: &str, value: &str) -> sqlx::Error {
+    sqlx::Error::Decode(format!("request_history.{column}: unknown value {value}").into())
 }
 
 /// Decode one record from the reader pool (requesters attach later).
 fn record_from_sqlx(row: &SqliteRow) -> Result<RequestRecord, sqlx::Error> {
     let stored: String = row.try_get(0)?;
     let kind: String = row.try_get(1)?;
-    let (kind, key) = split_key(&stored, &kind);
+    let kind = RequestKind::parse(&kind).ok_or_else(|| unknown_value("request_kind", &kind))?;
+    let status: String = row.try_get(2)?;
+    let status = RequestStatus::parse(&status).ok_or_else(|| unknown_value("status", &status))?;
     Ok(RequestRecord {
-        key,
+        key: bare_key(&stored),
         kind,
-        status: row.try_get(2)?,
+        status,
         artist_name: row.try_get(3)?,
         album_title: row.try_get(4)?,
         artist_mbid: row.try_get(5)?,
@@ -72,15 +74,15 @@ fn record_from_sqlx(row: &SqliteRow) -> Result<RequestRecord, sqlx::Error> {
         user_id: row.try_get(11)?,
         requested_by_name: row.try_get(12)?,
         requesters: Vec::new(),
-        requested_at: row.try_get::<Option<i64>, _>(13)?.map_or(0, to_u64),
-        completed_at: row.try_get::<Option<i64>, _>(14)?.map(to_u64),
+        requested_at: secs_from_ms(row.try_get(13)?),
+        completed_at: row.try_get::<Option<i64>, _>(14)?.map(secs_from_ms),
         task_id: row.try_get(15)?,
         generation: to_u64(row.try_get(16)?),
         dispatch_authorized: row.try_get::<i64, _>(17)? != 0,
         monitor_artist: row.try_get::<i64, _>(18)? != 0,
         auto_download_artist: row.try_get::<i64, _>(19)? != 0,
         reviewed_by_name: row.try_get(20)?,
-        reviewed_at: row.try_get::<Option<i64>, _>(21)?.map(to_u64),
+        reviewed_at: row.try_get::<Option<i64>, _>(21)?.map(secs_from_ms),
     })
 }
 
@@ -88,9 +90,15 @@ fn record_from_sqlx(row: &SqliteRow) -> Result<RequestRecord, sqlx::Error> {
 fn record_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRecord> {
     let stored: String = row.get(0)?;
     let kind: String = row.get(1)?;
-    let (kind, key) = split_key(&stored, &kind);
+    let kind = RequestKind::parse(&kind).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Text,
+            format!("request_history.request_kind: unknown value {kind}").into(),
+        )
+    })?;
     Ok(RequestRecord {
-        key,
+        key: bare_key(&stored),
         kind,
         status: row.get(2)?,
         artist_name: row.get(3)?,
@@ -106,15 +114,15 @@ fn record_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestReco
         user_id: row.get(11)?,
         requested_by_name: row.get(12)?,
         requesters: Vec::new(),
-        requested_at: row.get::<_, Option<i64>>(13)?.map_or(0, to_u64),
-        completed_at: row.get::<_, Option<i64>>(14)?.map(to_u64),
+        requested_at: secs_from_ms(row.get(13)?),
+        completed_at: row.get::<_, Option<i64>>(14)?.map(secs_from_ms),
         task_id: row.get(15)?,
         generation: to_u64(row.get(16)?),
         dispatch_authorized: row.get::<_, i64>(17)? != 0,
         monitor_artist: row.get::<_, i64>(18)? != 0,
         auto_download_artist: row.get::<_, i64>(19)? != 0,
         reviewed_by_name: row.get(20)?,
-        reviewed_at: row.get::<_, Option<i64>>(21)?.map(to_u64),
+        reviewed_at: row.get::<_, Option<i64>>(21)?.map(secs_from_ms),
     })
 }
 
@@ -151,8 +159,8 @@ fn count_asks_tx(tx: &Transaction, user_id: &str, since: u64) -> rusqlite::Resul
     let count: i64 = tx.query_row(
         "SELECT COUNT(*) FROM request_history_requesters rr \
          JOIN request_history rh ON rh.musicbrainz_id_lower = rr.musicbrainz_id_lower \
-         WHERE rr.user_id = ?1 AND CAST(rr.requested_at AS INTEGER) >= ?2",
-        params![user_id, to_i64(since)],
+         WHERE rr.user_id = ?1 AND rr.requested_at >= ?2",
+        params![user_id, ms_from_secs(since)],
         |row| row.get(0),
     )?;
     Ok(u32::try_from(count).unwrap_or(u32::MAX))
@@ -171,11 +179,11 @@ fn is_member_tx(tx: &Transaction, stored: &str, user_id: &str) -> rusqlite::Resu
 
 /// Claim one generation for a record inside a write transaction (v2
 /// `async_record_request`). A live or cancelling row wins over the
-/// newcomer; a terminal row is reused with its listeners and dismissals
-/// cleared.
+/// newcomer; a terminal row is replaced, and its listeners and dismissals
+/// go with it.
 fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<BeginOutcome> {
     let stored = row_key(record.kind, &record.key);
-    let existing: Option<(String, i64)> = tx
+    let existing: Option<(RequestStatus, i64)> = tx
         .query_row(
             "SELECT status, generation FROM request_history WHERE musicbrainz_id_lower = ?1",
             params![stored],
@@ -183,7 +191,7 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
         )
         .optional()?;
     if let Some((status, _)) = &existing
-        && (is_active(status) || status == STATUS_CANCELLING)
+        && (status.is_active() || *status == RequestStatus::Cancelling)
     {
         let current = load_record_tx(tx, &stored)?;
         return Ok(match current {
@@ -198,16 +206,12 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
     record.requesters.clear();
     if existing.is_some() {
         tx.execute(
-            "DELETE FROM request_history_requesters WHERE musicbrainz_id_lower = ?1",
-            params![stored],
-        )?;
-        tx.execute(
-            "DELETE FROM request_history_dismissals WHERE musicbrainz_id_lower = ?1",
+            "DELETE FROM request_history WHERE musicbrainz_id_lower = ?1",
             params![stored],
         )?;
     }
     tx.execute(
-        "INSERT OR REPLACE INTO request_history (musicbrainz_id_lower, musicbrainz_id, \
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, \
          artist_name, album_title, artist_mbid, year, cover_url, requested_at, completed_at, \
          status, monitor_artist, auto_download_artist, user_id, requested_by_name, \
          reviewed_by_id, reviewed_by_name, reviewed_at, download_task_id, release_mbid, \
@@ -221,15 +225,15 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
             record.album_title,
             record.artist_mbid,
             record.year,
-            to_i64(record.requested_at),
-            record.completed_at.map(to_i64),
+            ms_from_secs(record.requested_at),
+            record.completed_at.map(ms_from_secs),
             record.status,
             record.monitor_artist,
             record.auto_download_artist,
             record.user_id,
             record.requested_by_name,
             record.reviewed_by_name,
-            record.reviewed_at.map(to_i64),
+            record.reviewed_at.map(ms_from_secs),
             record.task_id,
             record.release_mbid,
             record.kind.as_str(),
@@ -242,12 +246,12 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
     )?;
     if let Some(owner) = &record.user_id {
         tx.execute(
-            "INSERT OR REPLACE INTO request_history_requesters (user_id, musicbrainz_id_lower, \
+            "INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, \
              requested_at, requested_by_name) VALUES (?1, ?2, ?3, ?4)",
             params![
                 owner,
                 stored,
-                to_i64(record.requested_at),
+                ms_from_secs(record.requested_at),
                 record.requested_by_name
             ],
         )?;
@@ -375,14 +379,14 @@ impl RequestStore {
         let user_id = user_id.to_owned();
         self.db
             .write("requests.attach", move |tx| {
-                let status: Option<String> = tx
+                let status: Option<RequestStatus> = tx
                     .query_row(
                         "SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1",
                         params![stored],
                         |row| row.get(0),
                     )
                     .optional()?;
-                if !status.as_deref().is_some_and(is_active) {
+                if !status.is_some_and(RequestStatus::is_active) {
                     return Ok(false);
                 }
                 tx.execute(
@@ -391,7 +395,7 @@ impl RequestStore {
                      ON CONFLICT (user_id, musicbrainz_id_lower) DO UPDATE SET \
                      requested_by_name = COALESCE(excluded.requested_by_name, \
                      request_history_requesters.requested_by_name)",
-                    params![user_id, stored, to_i64(now), name],
+                    params![user_id, stored, ms_from_secs(now), name],
                 )?;
                 Ok(true)
             })
@@ -426,12 +430,11 @@ impl RequestStore {
         &self,
         kind: RequestKind,
         key: &str,
-        status: &str,
+        status: RequestStatus,
         completed_at: Option<u64>,
         expected_generation: Option<u64>,
     ) -> Result<bool, RequestsError> {
         let stored = row_key(kind, key);
-        let status = status.to_owned();
         let expected = guard(expected_generation);
         self.db
             .write("requests.update_status", move |tx| {
@@ -439,7 +442,7 @@ impl RequestStore {
                     "UPDATE request_history SET status = ?2, completed_at = ?3, \
                      generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
                      AND (?4 IS NULL OR generation = ?4)",
-                    params![stored, status, completed_at.map(to_i64), expected],
+                    params![stored, status, completed_at.map(ms_from_secs), expected],
                 )?;
                 Ok(changed > 0)
             })
@@ -492,10 +495,10 @@ impl RequestStore {
                      WHERE musicbrainz_id_lower = ?1 AND status = ?5 AND generation = ?6",
                     params![
                         stored,
-                        STATUS_PENDING,
+                        RequestStatus::Pending,
                         reviewer_name,
-                        to_i64(reviewed_at),
-                        STATUS_AWAITING_APPROVAL,
+                        ms_from_secs(reviewed_at),
+                        RequestStatus::AwaitingApproval,
                         to_i64(expected_generation)
                     ],
                 )?;
@@ -527,10 +530,10 @@ impl RequestStore {
                      AND status = ?5 AND generation = ?6",
                     params![
                         stored,
-                        STATUS_REJECTED,
+                        RequestStatus::Rejected,
                         reviewer_name,
-                        to_i64(now),
-                        STATUS_AWAITING_APPROVAL,
+                        ms_from_secs(now),
+                        RequestStatus::AwaitingApproval,
                         to_i64(expected_generation)
                     ],
                 )?;
@@ -548,7 +551,7 @@ impl RequestStore {
         kind: RequestKind,
         key: &str,
         user_id: &str,
-        target_status: &str,
+        target: RequestStatus,
         dispatch_authorized: bool,
         require_membership: bool,
         requested_at: u64,
@@ -556,10 +559,9 @@ impl RequestStore {
     ) -> Result<RetryClaim, RequestsError> {
         let stored = row_key(kind, key);
         let user_id = user_id.to_owned();
-        let target = target_status.to_owned();
         self.db
             .write("requests.claim_retry", move |tx| {
-                let row: Option<(String, i64)> = tx
+                let row: Option<(RequestStatus, i64)> = tx
                     .query_row(
                         "SELECT status, generation FROM request_history \
                          WHERE musicbrainz_id_lower = ?1",
@@ -570,7 +572,7 @@ impl RequestStore {
                 let Some((status, generation)) = row else {
                     return Ok(RetryClaim::Lost);
                 };
-                if !RETRYABLE_STATUSES.contains(&status.as_str())
+                if !status.is_retryable()
                     || to_u64(generation) != expected_generation
                     || (require_membership && !is_member_tx(tx, &stored, &user_id)?)
                 {
@@ -580,7 +582,12 @@ impl RequestStore {
                     "UPDATE request_history SET status = ?2, dispatch_authorized = ?3, \
                      requested_at = ?4, completed_at = NULL, download_task_id = NULL, \
                      generation = generation + 1 WHERE musicbrainz_id_lower = ?1",
-                    params![stored, target, dispatch_authorized, to_i64(requested_at)],
+                    params![
+                        stored,
+                        target,
+                        dispatch_authorized,
+                        ms_from_secs(requested_at)
+                    ],
                 )?;
                 Ok(RetryClaim::Claimed {
                     generation: to_u64(generation).saturating_add(1),
@@ -629,7 +636,7 @@ impl RequestStore {
                 let Some(record) = load_record_tx(tx, &stored)? else {
                     return Ok(None);
                 };
-                let prior = record.status.clone();
+                let prior = record.status;
                 if !is_member_tx(tx, &stored, &user_id)? {
                     return Ok(Some(CancelDecision::Denied {
                         prior_status: prior,
@@ -643,16 +650,16 @@ impl RequestStore {
                     )?;
                     return Ok(Some(CancelDecision::Detached));
                 }
-                if record.status == STATUS_AWAITING_APPROVAL {
+                if record.status == RequestStatus::AwaitingApproval {
                     tx.execute(
                         "UPDATE request_history SET status = ?2, completed_at = ?3, \
                          dispatch_authorized = 0, generation = generation + 1 \
                          WHERE musicbrainz_id_lower = ?1",
-                        params![stored, STATUS_CANCELLED, to_i64(now)],
+                        params![stored, RequestStatus::Cancelled, ms_from_secs(now)],
                     )?;
                     return Ok(Some(CancelDecision::CancelledDirect));
                 }
-                if !CANCELLABLE_STATUSES.contains(&record.status.as_str()) {
+                if !record.status.is_cancellable() {
                     return Ok(Some(CancelDecision::Denied {
                         prior_status: prior,
                     }));
@@ -660,7 +667,7 @@ impl RequestStore {
                 tx.execute(
                     "UPDATE request_history SET status = ?2, generation = generation + 1 \
                      WHERE musicbrainz_id_lower = ?1",
-                    params![stored, STATUS_CANCELLING],
+                    params![stored, RequestStatus::Cancelling],
                 )?;
                 Ok(Some(CancelDecision::CancelTask {
                     prior_status: prior,
@@ -679,12 +686,11 @@ impl RequestStore {
         &self,
         kind: RequestKind,
         key: &str,
-        status: &str,
-        expected_status: &str,
+        status: RequestStatus,
+        expected_status: RequestStatus,
         expected_generation: u64,
     ) -> Result<bool, RequestsError> {
         let stored = row_key(kind, key);
-        let (status, expected_status) = (status.to_owned(), expected_status.to_owned());
         self.db
             .write("requests.restore_status", move |tx| {
                 let changed = tx.execute(
@@ -720,19 +726,12 @@ impl RequestStore {
             .map_err(|error| lane_error("requests.set_dispatch_authorized", error))
     }
 
-    /// Drop a row outright with its listeners and hides (admin history-clear).
+    /// Drop a row outright; its listeners and hides go with it (admin
+    /// history-clear).
     pub async fn delete(&self, kind: RequestKind, key: &str) -> Result<bool, RequestsError> {
         let stored = row_key(kind, key);
         self.db
             .write("requests.delete", move |tx| {
-                tx.execute(
-                    "DELETE FROM request_history_requesters WHERE musicbrainz_id_lower = ?1",
-                    params![stored],
-                )?;
-                tx.execute(
-                    "DELETE FROM request_history_dismissals WHERE musicbrainz_id_lower = ?1",
-                    params![stored],
-                )?;
                 let changed = tx.execute(
                     "DELETE FROM request_history WHERE musicbrainz_id_lower = ?1",
                     params![stored],
@@ -749,6 +748,7 @@ impl RequestStore {
         kind: RequestKind,
         key: &str,
         user_id: &str,
+        now: u64,
     ) -> Result<bool, RequestsError> {
         let stored = row_key(kind, key);
         let user_id = user_id.to_owned();
@@ -764,8 +764,8 @@ impl RequestStore {
                 }
                 tx.execute(
                     "INSERT OR IGNORE INTO request_history_dismissals \
-                     (user_id, musicbrainz_id_lower) VALUES (?1, ?2)",
-                    params![user_id, stored],
+                     (user_id, musicbrainz_id_lower, dismissed_at) VALUES (?1, ?2, ?3)",
+                    params![user_id, stored, ms_from_secs(now)],
                 )?;
                 Ok(true)
             })
@@ -782,7 +782,7 @@ impl RequestStore {
         let sql = format!(
             "{RECORD_SELECT} WHERE rh.status IN ('pending','downloading','queued',\
              'awaiting_approval') AND (?2 IS NULL OR rh.request_kind = ?2) AND {MEMBER_FILTER} \
-             ORDER BY CAST(rh.requested_at AS INTEGER) DESC, rh.musicbrainz_id_lower"
+             ORDER BY rh.requested_at DESC, rh.musicbrainz_id_lower"
         );
         self.fetch_records(
             "requests.active",
@@ -809,9 +809,9 @@ impl RequestStore {
              AND {MEMBER_FILTER}"
         );
         let order = match sort {
-            "oldest" => "CAST(rh.requested_at AS INTEGER) ASC",
-            "status" => "rh.status ASC, CAST(rh.requested_at AS INTEGER) DESC",
-            _ => "CAST(rh.requested_at AS INTEGER) DESC",
+            "oldest" => "rh.requested_at ASC",
+            "status" => "rh.status ASC, rh.requested_at DESC",
+            _ => "rh.requested_at DESC",
         };
         let user = user_id.map(str::to_owned);
         let kind = kind.map(|kind| kind.as_str());
@@ -844,11 +844,11 @@ impl RequestStore {
     pub async fn pending_approvals(&self) -> Result<Vec<RequestRecord>, RequestsError> {
         let sql = format!(
             "{RECORD_SELECT} WHERE rh.status = ?1 \
-             ORDER BY CAST(rh.requested_at AS INTEGER) ASC, rh.musicbrainz_id_lower"
+             ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower"
         );
         self.fetch_records(
             "requests.pending_approvals",
-            sqlx::query(&sql).bind(STATUS_AWAITING_APPROVAL),
+            sqlx::query(&sql).bind(RequestStatus::AwaitingApproval.as_str()),
         )
         .await
     }
@@ -857,17 +857,15 @@ impl RequestStore {
     pub async fn with_status(
         &self,
         kind: RequestKind,
-        status: &str,
+        status: RequestStatus,
     ) -> Result<Vec<RequestRecord>, RequestsError> {
         let sql = format!(
             "{RECORD_SELECT} WHERE rh.status = ?1 AND rh.request_kind = ?2 \
-             ORDER BY CAST(rh.requested_at AS INTEGER) ASC, rh.musicbrainz_id_lower"
+             ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower"
         );
         self.fetch_records(
             "requests.with_status",
-            sqlx::query(&sql)
-                .bind(status.to_owned())
-                .bind(kind.as_str()),
+            sqlx::query(&sql).bind(status.as_str()).bind(kind.as_str()),
         )
         .await
     }
@@ -877,10 +875,10 @@ impl RequestStore {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM request_history_requesters rr \
              JOIN request_history rh ON rh.musicbrainz_id_lower = rr.musicbrainz_id_lower \
-             WHERE rr.user_id = ?1 AND CAST(rr.requested_at AS INTEGER) >= ?2",
+             WHERE rr.user_id = ?1 AND rr.requested_at >= ?2",
         )
         .bind(user_id)
-        .bind(to_i64(since))
+        .bind(ms_from_secs(since))
         .fetch_one(self.db.pool())
         .await
         .map_err(|error| read_error("requests.count_asks", error))?;
@@ -888,29 +886,19 @@ impl RequestStore {
     }
 
     /// Delete terminal requests settled before `cutoff` (epoch seconds),
-    /// keeping any a live wanted watch still points at, then the
-    /// requester and dismissal rows left without a request. Returns the
-    /// requests deleted (v2 `prune_old_terminal_requests`).
+    /// keeping any a live wanted watch still points at; their requester
+    /// and dismissal rows go with them. Returns the requests deleted (v2
+    /// `prune_old_terminal_requests`).
     pub async fn prune_terminal(&self, cutoff: u64) -> Result<u64, RequestsError> {
         self.db
             .write_background("requests.prune", move |tx| {
                 let deleted = tx.execute(
                     "DELETE FROM request_history \
                      WHERE status IN ('imported', 'incomplete', 'failed', 'cancelled', 'rejected') \
-                       AND CAST(COALESCE(completed_at, requested_at) AS INTEGER) < ?1 \
+                       AND COALESCE(completed_at, requested_at) < ?1 \
                        AND musicbrainz_id_lower NOT IN (SELECT release_group_mbid_lower \
-                           FROM wanted_watches WHERE state IN ('watching', 'dormant'))",
-                    params![to_i64(cutoff)],
-                )?;
-                tx.execute(
-                    "DELETE FROM request_history_requesters WHERE musicbrainz_id_lower \
-                     NOT IN (SELECT musicbrainz_id_lower FROM request_history)",
-                    [],
-                )?;
-                tx.execute(
-                    "DELETE FROM request_history_dismissals WHERE musicbrainz_id_lower \
-                     NOT IN (SELECT musicbrainz_id_lower FROM request_history)",
-                    [],
+                           FROM wanted_watches WHERE state = 'watching')",
+                    params![ms_from_secs(cutoff)],
                 )?;
                 Ok(u64::try_from(deleted).unwrap_or(0))
             })

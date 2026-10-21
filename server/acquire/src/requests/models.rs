@@ -370,7 +370,7 @@ pub struct WantedItem {
     pub album_title: String,
     /// `missing` (whole album) or `partial` (filling gaps).
     pub kind: String,
-    /// Watch state: `watching`, `paused`, or loop-set `dormant`.
+    /// Watch state: `watching`, `stopped` or `fulfilled`.
     pub state: String,
     /// Passed checks so far.
     pub check_count: u32,

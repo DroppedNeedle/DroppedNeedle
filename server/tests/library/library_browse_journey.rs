@@ -108,7 +108,7 @@ async fn fixture() -> Fixture {
          ('run1', 'incremental', 'manual', 'completed', 'reconciling', '{}', 10, 20, 2000.5), \
          ('run2', 'incremental', 'manual', 'failed', 'reconciling', '{}', 30, 40, 9000000000.0)",
         "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, album_title, \
-         requested_at, status) VALUES ('rg-req', 'RG-REQ', 'Someone', 'Wanted', '2024-01-01', 'pending')",
+         requested_at, status) VALUES ('rg-req', 'RG-REQ', 'Someone', 'Wanted', 1704067200000, 'pending')",
     ]
     .join(";\n");
     app.db().execute_batch(&seed).expect("seed batch runs");

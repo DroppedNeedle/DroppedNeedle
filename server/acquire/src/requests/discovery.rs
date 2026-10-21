@@ -8,7 +8,7 @@ use futures_util::future::BoxFuture;
 use super::error::{QUOTA_EXCEEDED, RequestsError, STORAGE_FULL};
 use super::models::{BatchIntake, BatchItem, RequestKind};
 use super::service::RequestsService;
-use super::{RequestsState, ledger::STATUS_FAILED};
+use super::{RequestsState, ledger::RequestStatus};
 use droppedneedle_auth::{Admin, Principal, Role};
 use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, BatchRequests};
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BatchRefusal, ProviderFailure};
@@ -79,7 +79,7 @@ impl BatchRequests for DiscoveryBatchRequests {
                 .request_batch(caller, &body)
                 .await
                 .map_err(batch_failure)?;
-            if response.status == STATUS_FAILED && response.requested == 0 {
+            if response.status == RequestStatus::Failed.as_str() && response.requested == 0 {
                 return Err(BatchFailure::Invalid(
                     "None of these albums could be requested: each one needs an artist and an \
                      album name."

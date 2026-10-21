@@ -4554,3 +4554,519 @@ async fn recycled_rows_gain_an_expiry_column() {
         .unwrap();
     assert!(version >= 75, "user_version {version}");
 }
+
+/// Migration 0076 rebuilds the request, watch and approval tables as
+/// STRICT tables with checked states and millisecond times. A database
+/// before it, with a row in every state and times in every stored form,
+/// keeps each row with its time to the millisecond. Its dormant watch
+/// watches again and is due, rows pointing at a user or request that is
+/// gone are cleared or dropped instead of failing the upgrade, and no
+/// trigger comes back on the approvals.
+#[tokio::test]
+async fn request_watch_and_approval_rows_keep_their_meaning_and_states_are_checked() {
+    let pool = scratch_pool().await;
+    migrator_through(75).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'Asker', 'user', '2024-01-01'), ('u2', 'Admin', 'admin', '2024-01-01'); \
+         INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, year, requested_at, completed_at, status, user_id, reviewed_by_id, \
+         reviewed_at, request_kind, duration_seconds) VALUES \
+         ('r-pending', 'R', 'a', 'b', 1999, '2026-10-07T22:43:09.330331+00:00', NULL, \
+          'pending', 'u1', 'ghost', NULL, 'album', NULL), \
+         ('r-queued', 'R', 'a', 'b', '1999', '1700000000', NULL, 'queued', 'u1', NULL, \
+          NULL, 'album', NULL), \
+         ('r-downloading', 'R', 'a', 'b', 1999.0, '1700000000.25', NULL, 'downloading', \
+          'u1', NULL, NULL, 'album', NULL), \
+         ('r-awaiting', 'R', 'a', 'b', 'soon', 1700000001, NULL, 'awaiting_approval', \
+          'ghost', NULL, NULL, 'album', NULL), \
+         ('r-cancelling', 'R', 'a', 'b', NULL, '2024-01-01 10:00:00', NULL, 'cancelling', \
+          'u1', NULL, NULL, 'album', NULL), \
+         ('r-cancelled', 'R', 'a', 'b', NULL, '1700000000', '1700000002', 'cancelled', \
+          'u1', NULL, NULL, 'album', NULL), \
+         ('r-failed', 'R', 'a', 'b', NULL, 'garbage', '1700000500', 'failed', 'u1', NULL, \
+          NULL, 'album', NULL), \
+         ('r-imported', 'R', 'a', 'b', NULL, '1700000000', '1700000600', 'imported', 'u1', \
+          'u2', '2023-11-14T22:13:20Z', 'album', NULL), \
+         ('r-incomplete', 'R', 'a', 'b', NULL, '1700000000', NULL, 'incomplete', 'u1', NULL, \
+          NULL, 'album', NULL), \
+         ('track:r-rejected', 'R', 'a', 'b', NULL, '1700000000', '1700000700', 'rejected', \
+          'u1', 'u2', '1700000700', 'track', 241.6); \
+         INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, requested_at) \
+         VALUES ('u1', 'r-pending', '2026-10-07T22:43:09.330331+00:00'), \
+         ('u2', 'r-pending', 'garbage'), ('ghost', 'r-pending', '1'), ('u1', 'gone', '1'); \
+         INSERT INTO request_history_dismissals (user_id, musicbrainz_id_lower) \
+         VALUES ('u1', 'r-imported'), ('ghost', 'r-imported'), ('u1', 'gone'); \
+         INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, user_id, \
+         artist_name, album_title, kind, state, created_at, last_checked_at, next_check_at) \
+         VALUES \
+         ('w-watching', 'W', 'u1', 'a', 'b', 'missing', 'watching', 1700000000.5, NULL, \
+          1800000000.25), \
+         ('w-dormant', 'W', 'u1', 'a', 'b', 'missing', 'dormant', 1600000000.125, \
+          1600000001.0, 4000000000.0), \
+         ('w-stopped', 'W', 'u1', 'a', 'b', 'partial', 'stopped', 1700000000.0, NULL, \
+          1700000000.0), \
+         ('w-fulfilled', 'W', 'u1', 'a', 'b', 'missing', 'fulfilled', 1700000000.0, \
+          1700000100.75, 1700000000.0), \
+         ('w-orphan', 'W', 'ghost', 'a', 'b', 'missing', 'watching', 1.0, NULL, 2.0); \
+         INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
+         artist_name, state, requested_at, reviewed_by_id, reviewed_at) VALUES \
+         ('u1', 'A1', 'a1', 'n', 'pending', 1700000000.125, NULL, NULL), \
+         ('u1', 'A2', 'a2', 'n', 'approved', 1700000000.0, 'u2', 1700000010.5), \
+         ('u1', 'A3', 'a3', 'n', 'rejected', 1700000000.0, 'ghost', 1700000020.0), \
+         ('u1', 'A4', 'a4', 'n', 'revoked', 1700000000.0, 'u2', 1700000030.0);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let before_ms = now_ms();
+
+    migrator_through(76).run(&pool).await.unwrap();
+
+    let after_ms = now_ms();
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stamped, 76);
+
+    let requests: Vec<RequestRow> = sqlx::query_as(
+        "SELECT musicbrainz_id_lower, status, requested_at, completed_at, user_id, \
+         reviewed_by_id, reviewed_at, origin, year, duration_seconds \
+         FROM request_history ORDER BY musicbrainz_id_lower",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let u1 = Some("u1");
+    let u2 = Some("u2");
+    assert_eq!(
+        requests,
+        vec![
+            request(
+                "r-awaiting",
+                "awaiting_approval",
+                1_700_000_001_000,
+                None,
+                None
+            ),
+            request(
+                "r-cancelled",
+                "cancelled",
+                1_700_000_000_000,
+                Some(1_700_000_002_000),
+                u1
+            ),
+            request("r-cancelling", "cancelling", 1_704_103_200_000, None, u1),
+            request("r-downloading", "downloading", 1_700_000_000_250, None, u1).year(1999),
+            // An unreadable ask time takes the finish time.
+            request(
+                "r-failed",
+                "failed",
+                1_700_000_500_000,
+                Some(1_700_000_500_000),
+                u1
+            ),
+            request(
+                "r-imported",
+                "imported",
+                1_700_000_000_000,
+                Some(1_700_000_600_000),
+                u1
+            )
+            .reviewed(u2, 1_700_000_000_000),
+            request("r-incomplete", "incomplete", 1_700_000_000_000, None, u1),
+            request("r-pending", "pending", 1_791_412_989_330, None, u1).year(1999),
+            request("r-queued", "queued", 1_700_000_000_000, None, u1).year(1999),
+            request(
+                "track:r-rejected",
+                "rejected",
+                1_700_000_000_000,
+                Some(1_700_000_700_000),
+                u1
+            )
+            .reviewed(u2, 1_700_000_700_000)
+            .duration(242),
+        ]
+    );
+
+    let requesters: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT user_id, musicbrainz_id_lower, requested_at FROM request_history_requesters \
+         ORDER BY user_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        requesters,
+        vec![
+            ("u1".to_owned(), "r-pending".to_owned(), 1_791_412_989_330),
+            ("u2".to_owned(), "r-pending".to_owned(), 0),
+        ],
+        "a requester of a gone user or request is dropped; an unreadable time is 0"
+    );
+    let dismissals: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT user_id, musicbrainz_id_lower, dismissed_at FROM request_history_dismissals",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(dismissals.len(), 1, "{dismissals:?}");
+    assert_eq!(
+        (dismissals[0].0.as_str(), dismissals[0].1.as_str()),
+        ("u1", "r-imported")
+    );
+    // The old default wrote datetime('now'), whole seconds.
+    assert!(
+        dismissals[0].2 > before_ms - 2_000 && dismissals[0].2 <= after_ms,
+        "{dismissals:?}"
+    );
+
+    let watches: Vec<(String, String, i64, Option<i64>, i64)> = sqlx::query_as(
+        "SELECT release_group_mbid_lower, state, created_at, last_checked_at, next_check_at \
+         FROM wanted_watches ORDER BY release_group_mbid_lower",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        watches.len(),
+        4,
+        "the watch of a gone user is dropped: {watches:?}"
+    );
+    let dormant = &watches[0];
+    assert_eq!(
+        (dormant.0.as_str(), dormant.1.as_str(), dormant.2, dormant.3),
+        (
+            "w-dormant",
+            "watching",
+            1_600_000_000_125,
+            Some(1_600_000_001_000)
+        )
+    );
+    assert!(
+        dormant.4 >= before_ms && dormant.4 <= after_ms,
+        "the dormant watch is due now: {dormant:?}"
+    );
+    let watch = |key: &str, state: &str, created: i64, checked: Option<i64>, next: i64| {
+        (key.to_owned(), state.to_owned(), created, checked, next)
+    };
+    assert_eq!(
+        watches[1..].to_vec(),
+        vec![
+            watch(
+                "w-fulfilled",
+                "fulfilled",
+                1_700_000_000_000,
+                Some(1_700_000_100_750),
+                1_700_000_000_000
+            ),
+            watch(
+                "w-stopped",
+                "stopped",
+                1_700_000_000_000,
+                None,
+                1_700_000_000_000
+            ),
+            watch(
+                "w-watching",
+                "watching",
+                1_700_000_000_500,
+                None,
+                1_800_000_000_250
+            ),
+        ]
+    );
+
+    type ApprovalRow = (String, String, i64, Option<String>, Option<i64>);
+    let approvals: Vec<ApprovalRow> = sqlx::query_as(
+        "SELECT artist_mbid_lower, state, requested_at, reviewed_by_id, reviewed_at \
+         FROM auto_download_approvals ORDER BY artist_mbid_lower",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let approval = |key: &str, state: &str, asked: i64, by: Option<&str>, at: Option<i64>| {
+        (
+            key.to_owned(),
+            state.to_owned(),
+            asked,
+            by.map(str::to_owned),
+            at,
+        )
+    };
+    assert_eq!(
+        approvals,
+        vec![
+            approval("a1", "pending", 1_700_000_000_125, None, None),
+            approval(
+                "a2",
+                "approved",
+                1_700_000_000_000,
+                u2,
+                Some(1_700_000_010_500)
+            ),
+            approval(
+                "a3",
+                "rejected",
+                1_700_000_000_000,
+                None,
+                Some(1_700_000_020_000)
+            ),
+            approval(
+                "a4",
+                "revoked",
+                1_700_000_000_000,
+                u2,
+                Some(1_700_000_030_000)
+            ),
+        ]
+    );
+
+    let tables = [
+        "request_history",
+        "request_history_requesters",
+        "request_history_dismissals",
+        "wanted_watches",
+        "auto_download_approvals",
+    ];
+    let mut keys: Vec<(String, String, String, String)> = Vec::new();
+    for table in tables {
+        let strict: i64 = sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = ?")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(strict, 1, "{table}");
+        let triggers: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?",
+        )
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(triggers, 0, "{table}");
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT \"from\", \"table\", on_delete FROM pragma_foreign_key_list(?) \
+             ORDER BY \"from\"",
+        )
+        .bind(table)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        keys.extend(
+            rows.into_iter()
+                .map(|(from, parent, action)| (table.to_owned(), from, parent, action)),
+        );
+    }
+    let key = |table: &str, from: &str, parent: &str, action: &str| {
+        (
+            table.to_owned(),
+            from.to_owned(),
+            parent.to_owned(),
+            action.to_owned(),
+        )
+    };
+    assert_eq!(
+        keys,
+        vec![
+            key(
+                "request_history",
+                "reviewed_by_id",
+                "auth_users",
+                "SET NULL"
+            ),
+            key("request_history", "user_id", "auth_users", "SET NULL"),
+            key(
+                "request_history_requesters",
+                "musicbrainz_id_lower",
+                "request_history",
+                "CASCADE"
+            ),
+            key(
+                "request_history_requesters",
+                "user_id",
+                "auth_users",
+                "CASCADE"
+            ),
+            key(
+                "request_history_dismissals",
+                "musicbrainz_id_lower",
+                "request_history",
+                "CASCADE"
+            ),
+            key(
+                "request_history_dismissals",
+                "user_id",
+                "auth_users",
+                "CASCADE"
+            ),
+            key("wanted_watches", "user_id", "auth_users", "CASCADE"),
+            key(
+                "auto_download_approvals",
+                "reviewed_by_id",
+                "auth_users",
+                "SET NULL"
+            ),
+            key(
+                "auto_download_approvals",
+                "user_id",
+                "auth_users",
+                "CASCADE"
+            ),
+        ]
+    );
+    let broken: Vec<(String,)> = sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert!(broken.is_empty(), "{broken:?}");
+
+    for refused in [
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, requested_at, status) VALUES ('x', 'X', 'a', 'b', 1, 'ignored')",
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, requested_at, status, origin) \
+         VALUES ('x', 'X', 'a', 'b', 1, 'pending', 'robot')",
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, requested_at, status) VALUES ('x', 'X', 'a', 'b', '2024-01-01', 'pending')",
+        "UPDATE wanted_watches SET state = 'dormant'",
+        "UPDATE auto_download_approvals SET state = 'archived'",
+    ] {
+        assert!(
+            sqlx::query(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+}
+
+/// One `request_history` row as the 0076 upgrade test reads it.
+type RequestRow = (
+    String,
+    String,
+    i64,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    String,
+    Option<i64>,
+    Option<i64>,
+);
+
+/// An expected request row: user origin, no reviewer, year or length.
+fn request(
+    key: &str,
+    status: &str,
+    requested: i64,
+    completed: Option<i64>,
+    user: Option<&str>,
+) -> RequestRow {
+    (
+        key.to_owned(),
+        status.to_owned(),
+        requested,
+        completed,
+        user.map(str::to_owned),
+        None,
+        None,
+        "user".to_owned(),
+        None,
+        None,
+    )
+}
+
+/// Adjustments to an expected request row.
+trait ExpectedRequest {
+    fn reviewed(self, by: Option<&str>, at: i64) -> Self;
+    fn year(self, year: i64) -> Self;
+    fn duration(self, seconds: i64) -> Self;
+}
+
+impl ExpectedRequest for RequestRow {
+    fn reviewed(mut self, by: Option<&str>, at: i64) -> Self {
+        self.5 = by.map(str::to_owned);
+        self.6 = Some(at);
+        self
+    }
+
+    fn year(mut self, year: i64) -> Self {
+        self.8 = Some(year);
+        self
+    }
+
+    fn duration(mut self, seconds: i64) -> Self {
+        self.9 = Some(seconds);
+        self
+    }
+}
+
+/// The request status, watch state, approval state and request origin the
+/// database accepts are exactly the ones the code names, and each enum's
+/// text reads back to itself.
+#[tokio::test]
+async fn request_state_checks_list_exactly_the_code_values() {
+    use droppedneedle_acquire::dispatch::DispatchOrigin;
+    use droppedneedle_acquire::requests::ledger::{ApprovalState, RequestStatus, WatchState};
+
+    let pool = migrated_pool().await;
+    let mut schemas = BTreeMap::new();
+    for table in [
+        "request_history",
+        "wanted_watches",
+        "auto_download_approvals",
+    ] {
+        let sql: String = sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = ?")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        schemas.insert(table, sql);
+    }
+    let listed = |table: &str, column: &str| -> Vec<String> {
+        let sql = &schemas[table];
+        let marker = format!("CHECK({column} IN (");
+        let values = &sql[sql.find(&marker).expect("the column has a CHECK") + marker.len()..];
+        values[..values.find(')').expect("the list ends")]
+            .split(',')
+            .map(|value| value.trim().trim_matches('\'').to_owned())
+            .collect()
+    };
+    assert_eq!(
+        listed("request_history", "status"),
+        RequestStatus::ALL.map(|status| status.as_str().to_owned())
+    );
+    assert_eq!(
+        listed("request_history", "origin"),
+        DispatchOrigin::ALL.map(|origin| origin.as_str().to_owned())
+    );
+    assert_eq!(
+        listed("wanted_watches", "state"),
+        WatchState::ALL.map(|state| state.as_str().to_owned())
+    );
+    assert_eq!(
+        listed("auto_download_approvals", "state"),
+        ApprovalState::ALL.map(|state| state.as_str().to_owned())
+    );
+    for status in RequestStatus::ALL {
+        assert_eq!(RequestStatus::parse(status.as_str()), Some(status));
+    }
+    for state in WatchState::ALL {
+        assert_eq!(WatchState::parse(state.as_str()), Some(state));
+    }
+    for state in ApprovalState::ALL {
+        assert_eq!(ApprovalState::parse(state.as_str()), Some(state));
+    }
+    for origin in DispatchOrigin::ALL {
+        assert_eq!(DispatchOrigin::parse(origin.as_str()), Some(origin));
+    }
+    assert_eq!(WatchState::parse("dormant"), None);
+}
+
+/// Wall time in milliseconds, for checks against "due now".
+fn now_ms() -> i64 {
+    let elapsed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    i64::try_from(elapsed.as_millis()).unwrap()
+}
