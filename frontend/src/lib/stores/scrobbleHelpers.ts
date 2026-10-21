@@ -46,20 +46,20 @@ export function shouldScrobble(
 
 export function formatServiceTooltip(
 	scrobbleStatus: string,
-	serviceDetail: Record<string, { success: boolean }> | null
+	serviceDetail: Record<string, { queued: boolean }> | null
 ): string {
 	if (scrobbleStatus === 'tracking') return 'Tracking';
 	if (!serviceDetail || Object.keys(serviceDetail).length === 0) {
 		return scrobbleStatus === 'scrobbled' ? 'Scrobbled' : 'Scrobble failed';
 	}
-	const succeeded = Object.entries(serviceDetail)
-		.filter(([, v]) => v.success)
+	const queued = Object.entries(serviceDetail)
+		.filter(([, v]) => v.queued)
 		.map(([k]) => (k === 'lastfm' ? 'Last.fm' : k === 'listenbrainz' ? 'ListenBrainz' : k));
 	const failed = Object.entries(serviceDetail)
-		.filter(([, v]) => !v.success)
+		.filter(([, v]) => !v.queued)
 		.map(([k]) => (k === 'lastfm' ? 'Last.fm' : k === 'listenbrainz' ? 'ListenBrainz' : k));
 	const parts: string[] = [];
-	if (succeeded.length) parts.push(`Scrobbled to ${succeeded.join(', ')}`);
+	if (queued.length) parts.push(`Scrobbling to ${queued.join(', ')}`);
 	if (failed.length) parts.push(`Failed: ${failed.join(', ')}`);
 	return parts.join(' · ') || 'Scrobbled';
 }

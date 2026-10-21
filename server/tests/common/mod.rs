@@ -16,7 +16,7 @@ pub mod logs;
 pub mod platform;
 pub mod sources;
 
-pub use app::TestApp;
+pub use app::{Login, TestApp};
 pub use platform::TestPlatform;
 
 use std::path::{Path, PathBuf};

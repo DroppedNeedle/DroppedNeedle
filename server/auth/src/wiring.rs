@@ -29,7 +29,9 @@ use super::session::rate_limit::RateLimiter;
 use super::session::stated::StatedAddresses;
 use super::users::UsersDeps;
 use super::users::lastfm_http::LastFmAuthHttp;
-use super::users::stores::{HibpPolicy, LastFmKeys, LastFmSwitch, SecurityPolicy};
+use super::users::stores::{
+    HibpPolicy, LastFmKeys, LastFmState, LastFmSwitch, LastFmUnreadable, SecurityPolicy,
+};
 use axum::extract::FromRef;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -145,17 +147,24 @@ impl LastFmSwitch for StoreLastFmSwitch {
     }
 
     fn instance_keys(&self) -> Option<LastFmKeys> {
-        let section = match self.settings.get() {
-            Ok(section) => section,
-            Err(error) => {
-                tracing::warn!(%error, "cannot read the Last.fm app key pair");
-                return None;
-            }
-        };
+        self.read()
+            .inspect_err(|_| tracing::warn!("cannot read the Last.fm app key pair"))
+            .ok()
+            .and_then(|state| state.instance_keys)
+    }
+
+    fn read(&self) -> Result<LastFmState, LastFmUnreadable> {
+        let section = self.settings.get().map_err(|error| {
+            tracing::warn!(%error, "cannot read the Last.fm settings");
+            LastFmUnreadable
+        })?;
         let (api_key, shared_secret) = (section.api_key.expose(), section.shared_secret.expose());
-        (!api_key.is_empty() && !shared_secret.is_empty()).then(|| LastFmKeys {
-            api_key: api_key.to_owned(),
-            shared_secret: shared_secret.to_owned(),
+        Ok(LastFmState {
+            enabled: section.enabled,
+            instance_keys: (!api_key.is_empty() && !shared_secret.is_empty()).then(|| LastFmKeys {
+                api_key: api_key.to_owned(),
+                shared_secret: shared_secret.to_owned(),
+            }),
         })
     }
 }

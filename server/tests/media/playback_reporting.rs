@@ -2,9 +2,10 @@
 //! start, progress and stop lifecycle, the scrobble threshold rules, dedup
 //! across duplicate and mixed reports, presence visibility, the session
 //! gate, hidden faults, and the MBID warmup loop cadence. Only the outside
-//! services (the scrobble sinks and the media servers) are doubles. One
-//! journey runs the whole app on its own database: what a play from each
-//! kind of player leaves in history.
+//! services (the now-playing sinks and the media servers) are doubles; a
+//! counted play's scrobbles are read as the jobs written with it. Journeys
+//! run the whole app on its own database: what a play from each kind of
+//! player leaves in history, and a scrobble that outlives a restart.
 
 use droppedneedle_media::playback;
 
@@ -24,7 +25,6 @@ use droppedneedle_kernel::clock::{Clock, ManualClock};
 use playback::PlaybackDeps;
 use playback::ports::{
     ProviderFailure, RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets,
-    ServiceOutcome,
 };
 use playback::presence::{PresenceRegistry, presence_key};
 use playback::report::{MixedDedup, ScrobbleDedup, submit_session_scrobble};
@@ -43,40 +43,15 @@ use crate::common::{ScratchDir, TestApp};
 
 const NOW: i64 = 1_790_000_000;
 
-/// Last.fm and ListenBrainz: records every forward and accepts it.
+/// Last.fm and ListenBrainz now-playing: records every report and takes it.
 #[derive(Default)]
 struct FakeSinks {
     now_playing: Mutex<Vec<ReportTrack>>,
-    scrobbles: Mutex<Vec<ReportTrack>>,
 }
 
 impl FakeSinks {
     fn now_playing_calls(&self) -> usize {
         self.now_playing.lock().expect("lock").len()
-    }
-
-    fn scrobble_calls(&self) -> usize {
-        self.scrobbles.lock().expect("lock").len()
-    }
-
-    fn accept(
-        seen: &Mutex<Vec<ReportTrack>>,
-        track: &ReportTrack,
-        targets: ScrobbleTargets,
-    ) -> HashMap<String, ServiceOutcome> {
-        seen.lock().expect("lock").push(track.clone());
-        let accepted = ServiceOutcome {
-            success: true,
-            error: None,
-        };
-        [
-            ("lastfm", targets.lastfm),
-            ("listenbrainz", targets.listenbrainz),
-        ]
-        .into_iter()
-        .filter(|(_, wanted)| *wanted)
-        .map(|(service, _)| (service.to_owned(), accepted.clone()))
-        .collect()
     }
 }
 
@@ -86,17 +61,9 @@ impl ScrobbleSinks for FakeSinks {
         _user_id: &str,
         track: &ReportTrack,
         targets: ScrobbleTargets,
-    ) -> HashMap<String, ServiceOutcome> {
-        Self::accept(&self.now_playing, track, targets)
-    }
-
-    fn submit_scrobble(
-        &self,
-        _user_id: &str,
-        track: &ReportTrack,
-        targets: ScrobbleTargets,
-    ) -> HashMap<String, ServiceOutcome> {
-        Self::accept(&self.scrobbles, track, targets)
+    ) -> ScrobbleTargets {
+        self.now_playing.lock().expect("lock").push(track.clone());
+        targets
     }
 }
 
@@ -169,7 +136,6 @@ struct Rig {
     clock: ManualClock,
     sinks: Arc<FakeSinks>,
     remotes: Arc<FakeRemotes>,
-    store: Arc<PlaybackStore>,
     crypto: Arc<droppedneedle_kernel::runtime_config::Crypto>,
     db: droppedneedle_kernel::db::Db,
     scratch: ScratchDir,
@@ -193,12 +159,14 @@ fn rig() -> Rig {
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
         crypto.clone(),
         Arc::new(clock.clone()),
+        droppedneedle_kernel::jobs::queue::JobQueue::new(db.clone(), Arc::new(clock.clone())),
     ));
     let sinks = Arc::new(FakeSinks::default());
     let remotes = Arc::new(FakeRemotes::default());
     let deps = PlaybackDeps {
-        store: store.clone(),
+        store,
         sinks: sinks.clone(),
+        lastfm_switch: Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
         remotes: remotes.clone(),
         sessions: SessionStore::new(),
         presence: PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new()),
@@ -207,21 +175,35 @@ fn rig() -> Rig {
         clock: Arc::new(clock.clone()),
         events: Arc::new(playback::ports::NoPlayEvents),
     };
-    Rig {
+    let rig = Rig {
         deps,
         clock,
         sinks,
         remotes,
-        store,
         crypto,
         db,
         scratch,
-    }
+    };
+    rig.link_listenbrainz("user-1", "lb-token");
+    rig.link_lastfm("user-1");
+    rig
 }
 
 impl Rig {
     fn sql(&self) -> rusqlite::Connection {
         rusqlite::Connection::open(self.scratch.join("app.db")).expect("database opens")
+    }
+
+    /// Plays waiting to be scrobbled, to any service.
+    fn scrobbles(&self) -> i64 {
+        self.sql()
+            .query_row(
+                "SELECT COUNT(DISTINCT idempotency_key) FROM durable_jobs \
+                 WHERE kind LIKE 'scrobble.%'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("scrobble jobs count")
     }
 
     /// Plays recorded so far, for every listener.
@@ -437,7 +419,7 @@ async fn lifecycle_start_progress_stop_counts_the_play() {
     assert_eq!(body["scrobbled"], true);
 
     assert_eq!(rig.plays(), 1);
-    assert_eq!(rig.sinks.scrobble_calls(), 1);
+    assert_eq!(rig.scrobbles(), 1);
     assert_eq!(rig.sinks.now_playing_calls(), 1);
     assert_eq!(rig.remotes.calls(), 0);
     assert_eq!(
@@ -483,7 +465,7 @@ async fn a_play_waits_out_a_held_lane_and_lands_once() {
         .expect("the holder ends")
         .expect("the hold commits");
     assert_eq!(rig.plays(), 1);
-    assert_eq!(rig.sinks.scrobble_calls(), 1);
+    assert_eq!(rig.scrobbles(), 1);
 }
 
 #[tokio::test]
@@ -495,7 +477,7 @@ async fn stop_below_threshold_skips_but_clears_presence() {
     assert_eq!(body["scrobbled"], false);
 
     assert_eq!(rig.plays(), 0);
-    assert_eq!(rig.sinks.scrobble_calls(), 0);
+    assert_eq!(rig.scrobbles(), 0);
     assert_eq!(
         snapshot(&rig, "user-1").await["sessions"]
             .as_array()
@@ -585,7 +567,7 @@ async fn duplicate_submits_dedup() {
         assert_eq!(answer["accepted"], true);
     }
     assert_eq!(rig.plays(), 1);
-    assert_eq!(rig.sinks.scrobble_calls(), 1);
+    assert_eq!(rig.scrobbles(), 1);
 }
 
 #[tokio::test]
@@ -608,7 +590,7 @@ async fn navidrome_delegation_skips_forwarding_but_records() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(answer["accepted"], true);
     assert_eq!(rig.plays(), 1);
-    assert_eq!(rig.sinks.scrobble_calls(), 0);
+    assert_eq!(rig.scrobbles(), 0);
 }
 
 #[tokio::test]
@@ -809,252 +791,305 @@ async fn compat_now_playing_serves_full_sessions_only() {
 // Scrobble forwarding
 // ---------------------------------------------------------------------------
 
-type SeenListens = Arc<std::sync::Mutex<Vec<(String, Value)>>>;
+/// The recording the scrobbled play names.
+const RECORDING: &str = "98255a8c-017a-4bc7-8dd6-1fa36124572b";
+/// The ListenBrainz scrobble job kind.
+const LISTENBRAINZ_JOBS: droppedneedle_kernel::jobs::queue::JobKind =
+    droppedneedle_kernel::jobs::queue::JobKind::new("scrobble.listenbrainz");
 
-async fn record_listen(
-    axum::extract::State(seen): axum::extract::State<SeenListens>,
+/// One scripted ListenBrainz answer.
+struct LbAnswer {
+    status: u16,
+    body: &'static str,
+}
+
+impl LbAnswer {
+    fn new(status: u16, body: &'static str) -> Self {
+        Self { status, body }
+    }
+}
+
+/// ListenBrainz on loopback: records every listen with the token that sent
+/// it, and answers from that token's script, then 200.
+#[derive(Clone, Default)]
+struct ListenBrainz {
+    scripts: Arc<Mutex<HashMap<String, std::collections::VecDeque<LbAnswer>>>>,
+    seen: Arc<Mutex<Vec<(String, Value)>>>,
+}
+
+impl ListenBrainz {
+    fn script(&self, token: &str, answers: Vec<LbAnswer>) {
+        self.scripts
+            .lock()
+            .expect("lock")
+            .insert(token.to_owned(), answers.into());
+    }
+
+    fn seen(&self) -> Vec<(String, Value)> {
+        self.seen.lock().expect("lock").clone()
+    }
+
+    /// Serve it, and the outside world with ListenBrainz at it.
+    async fn outbound(&self) -> droppedneedle::bootstrap::Outbound {
+        let router = Router::new()
+            .route("/1/submit-listens", axum::routing::post(listen))
+            .with_state(self.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("binds");
+        let origin = format!("http://{}", listener.local_addr().expect("addr"));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        droppedneedle::bootstrap::Outbound {
+            listenbrainz: origin,
+            ..crate::common::closed_outbound()
+        }
+    }
+}
+
+async fn listen(
+    axum::extract::State(lb): axum::extract::State<ListenBrainz>,
     headers: axum::http::HeaderMap,
     axum::Json(body): axum::Json<Value>,
-) -> axum::Json<Value> {
-    let auth = headers
+) -> axum::response::Response {
+    let token = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Token "))
         .unwrap_or("")
         .to_owned();
-    seen.lock().expect("lock").push((auth, body));
-    axum::Json(json!({"status": "ok"}))
+    lb.seen.lock().expect("lock").push((token.clone(), body));
+    let answer = lb
+        .scripts
+        .lock()
+        .expect("lock")
+        .get_mut(&token)
+        .and_then(std::collections::VecDeque::pop_front)
+        .unwrap_or_else(|| LbAnswer::new(200, r#"{"status": "ok"}"#));
+    axum::response::Response::builder()
+        .status(answer.status)
+        .header("content-type", "application/json")
+        .body(Body::from(answer.body))
+        .expect("answer builds")
 }
 
-/// A counted play reaches ListenBrainz as a `single` listen with the
-/// user's token, once: the dedup keeps a repeat submit at home.
+/// A user forwarding to ListenBrainz with `token`, linked as the link
+/// route stores it.
+async fn listener(app: &TestApp, name: &str, token: &str) -> crate::common::Login {
+    let login = app.login_user(name).await;
+    let (crypto, _) =
+        droppedneedle_kernel::runtime_config::Crypto::load_or_generate(&app.config.config_dir())
+            .expect("the app's key reads");
+    let sealed = crypto
+        .encrypt(&json!({"user_token": token, "username": name}).to_string())
+        .expect("link seals");
+    let db = app.db();
+    db.execute(
+        "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
+         updated_at) VALUES (?1, 'listenbrainz', ?2, 1, '', '')",
+        [&login.user_id, &sealed],
+    )
+    .expect("link stored");
+    db.execute(
+        "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
+         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 0, 1, 0, '') \
+         ON CONFLICT (user_id) DO UPDATE SET scrobble_to_listenbrainz = 1",
+        [&login.user_id],
+    )
+    .expect("prefs saved");
+    login
+}
+
+/// Submit one play of Roads a minute ago; its time and the play's id.
+async fn submit_play(app: &TestApp, user: &crate::common::Login) -> (Value, i64, String) {
+    let played_at = droppedneedle_kernel::clock::SystemClock.now_unix() - 60;
+    let (status, answer) = app
+        .call(
+            "POST",
+            "/api/v3/scrobble/submit",
+            &[("authorization", user.authorization.as_str())],
+            Some(json!({
+                "track_name": "Roads",
+                "artist_name": "Portishead",
+                "album_name": "Dummy",
+                "timestamp": played_at,
+                "duration_ms": 240_000,
+                "mbid": RECORDING,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let play_id = app
+        .db()
+        .query_row(
+            "SELECT id FROM library_play_history WHERE user_id = ?1",
+            [&user.user_id],
+            |row| row.get(0),
+        )
+        .expect("the play is recorded");
+    (answer, played_at, play_id)
+}
+
+/// The jobs table and its manual clock.
+fn job_table(
+    app: &TestApp,
+) -> (
+    droppedneedle_kernel::jobs::queue::JobQueue,
+    droppedneedle::bootstrap::jobs::scripted::ScriptedJobs,
+) {
+    let jobs = &app.state().jobs;
+    (
+        jobs.queue().expect("the app has a jobs table").clone(),
+        jobs.scripted().expect("test hooks are on").clone(),
+    )
+}
+
+/// Wait for the play's job of `kind` to read as `ok` says.
+async fn scrobble_job(
+    app: &TestApp,
+    queue: &droppedneedle_kernel::jobs::queue::JobQueue,
+    kind: droppedneedle_kernel::jobs::queue::JobKind,
+    play_id: &str,
+    what: &str,
+    ok: impl Fn(&droppedneedle_kernel::jobs::queue::JobStatus) -> bool,
+) -> droppedneedle_kernel::jobs::queue::JobStatus {
+    app.until(what, || async {
+        queue
+            .latest(kind, play_id)
+            .await
+            .expect("the jobs table reads")
+            .filter(|row| ok(row))
+    })
+    .await
+}
+
+/// A listen ListenBrainz cannot take now (503) waits in the jobs table
+/// through a restart, and is sent again once it can: the same request,
+/// once, and then the job is done.
 #[tokio::test]
-async fn a_scrobble_reaches_listenbrainz_once() {
-    use playback::forwarding::{ForwardWorker, ScrobbleForwarder};
-    use playback::models::ScrobbleSubmitRequest;
+async fn an_undelivered_scrobble_survives_restart() {
+    use droppedneedle_kernel::jobs::queue::State;
 
-    let seen: SeenListens = Arc::default();
-    let sink = Router::new()
-        .route("/1/submit-listens", axum::routing::post(record_listen))
-        .with_state(seen.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("binds");
-    let base = format!("http://{}", listener.local_addr().expect("addr"));
-    let server = tokio::spawn(async move {
-        let _ = axum::serve(listener, sink).await;
-    });
+    let lb = ListenBrainz::default();
+    lb.script("lb-token", vec![LbAnswer::new(503, r#"{"code": 503}"#)]);
+    let app = TestApp::start_hooked_with("scrobble-restart", lb.outbound().await).await;
+    let user = listener(&app, "listener", "lb-token").await;
 
-    let mut rig = rig();
-    rig.link_listenbrainz("user-1", "lb-token");
-    let (forwarder, rx) = ScrobbleForwarder::channel(
-        rig.store.clone(),
-        Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
-    );
-    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
-    let providers = droppedneedle_providers::Providers::unpaced_at(
-        Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
-        droppedneedle_providers::ProviderEndpoints {
-            listenbrainz: base,
-            ..droppedneedle_providers::ProviderEndpoints::closed()
-        },
-    );
-    let worker = ForwardWorker::new(rx, providers.listenbrainz.clone(), providers.lastfm.clone());
-    let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
-    rig.deps.sinks = Arc::new(forwarder);
-    let request = ScrobbleSubmitRequest {
-        track_name: "Roads".to_owned(),
-        artist_name: "Portishead".to_owned(),
-        timestamp: NOW - 60,
-        album_name: Some("Dummy".to_owned()),
-        duration_ms: Some(240_000),
-        mbid: None,
-        release_group_mbid: None,
-        source: None,
-        track_id: None,
-    };
-    for _ in 0..2 {
-        let answer =
-            playback::report::submit_scrobble(&rig.deps, "user-1", &request).expect("accepted");
-        assert!(answer.accepted);
-    }
-    // Dropping the rig closes the queue; the worker delivers what is in it
-    // and then ends.
-    drop(rig);
-    tokio::time::timeout(Duration::from_secs(30), worker)
-        .await
-        .expect("the worker drains its queue")
-        .expect("the worker ends cleanly");
-    server.abort();
-    let seen = seen.lock().expect("lock").clone();
-    assert_eq!(seen.len(), 1, "the dedup keeps the repeat at home");
-    let (auth, body) = &seen[0];
-    assert_eq!(auth, "Token lb-token");
+    let (answer, played_at, play_id) = submit_play(&app, &user).await;
+    assert_eq!(answer["accepted"], true);
+    assert_eq!(answer["services"]["listenbrainz"]["queued"], true);
+    let (queue, _) = job_table(&app);
+    let waiting = scrobble_job(
+        &app,
+        &queue,
+        LISTENBRAINZ_JOBS,
+        &play_id,
+        "the refused listen waits",
+        |row| row.state == State::Queued && row.attempts == 1,
+    )
+    .await;
+    assert_eq!(waiting.last_error.as_deref(), Some("SERVICE_UNAVAILABLE"));
+
+    let app = app.restart().await;
+    let (queue, kit) = job_table(&app);
+    kit.clock().set(waiting.not_before_at);
+    queue.wake();
+    scrobble_job(
+        &app,
+        &queue,
+        LISTENBRAINZ_JOBS,
+        &play_id,
+        "the listen lands",
+        |row| row.state == State::Done,
+    )
+    .await;
+
+    let seen = lb.seen();
+    assert_eq!(seen.len(), 2, "one refused send and one that landed");
+    assert_eq!(seen[1], seen[0], "both sends are the same request");
+    let (token, body) = &seen[1];
+    assert_eq!(token, "lb-token");
     assert_eq!(body["listen_type"], "single");
-    assert_eq!(body["payload"][0]["listened_at"], NOW - 60);
-    assert_eq!(body["payload"][0]["track_metadata"]["track_name"], "Roads");
+    let listen = &body["payload"][0];
+    assert_eq!(listen["listened_at"], played_at);
+    assert_eq!(listen["track_metadata"]["release_name"], "Dummy");
     assert_eq!(
-        body["payload"][0]["track_metadata"]["release_name"],
-        "Dummy"
+        listen["track_metadata"]["additional_info"]["recording_mbid"],
+        RECORDING
     );
+    app.stop().await;
 }
 
-/// A listen ListenBrainz refuses with its "currently disabled" 500 is kept
-/// and sent again, and lands once the endpoint answers.
-#[tokio::test(start_paused = true)]
-async fn a_switched_off_listenbrainz_keeps_the_listen_for_later() {
-    use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
-    use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
-    use playback::forwarding::{ForwardWorker, ScrobbleForwarder};
+/// A Last.fm scrobble whose job meets admin settings that cannot be read
+/// waits for them, rather than reading them as "Last.fm off" and dropping
+/// the play for good.
+#[tokio::test]
+async fn an_unreadable_last_fm_section_holds_the_scrobble() {
+    use droppedneedle_kernel::jobs::queue::{JobKind, State};
 
-    let wire = Arc::new(ScriptedWire::new());
-    let submit = format!("{DEFAULT_BASE_URL}/1/submit-listens");
-    for (status, body) in [
-        (
-            500,
-            r#"{"code": 500, "error": "Listen submission currently disabled"}"#,
-        ),
-        (200, r#"{"status": "ok"}"#),
-    ] {
-        wire.on(
-            Method::Post,
-            &submit,
-            Scripted::Answer {
-                status,
-                headers: Vec::new(),
-                body: body.as_bytes().to_vec(),
-            },
-        );
-    }
-    let providers = droppedneedle_providers::Providers::unpaced_at(
-        wire.clone(),
-        droppedneedle_providers::ProviderEndpoints {
-            listenbrainz: DEFAULT_BASE_URL.to_owned(),
-            ..droppedneedle_providers::ProviderEndpoints::closed()
-        },
-    );
-    let rig = rig();
-    rig.link_listenbrainz("user-1", "lb-token");
-    let (forwarder, rx) = ScrobbleForwarder::channel(
-        rig.store.clone(),
-        Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
-    );
-    let worker = ForwardWorker::new(rx, providers.listenbrainz.clone(), providers.lastfm.clone());
-    forwarder.submit_scrobble(
-        "user-1",
-        &ReportTrack {
-            track_name: "Roads".to_owned(),
-            artist_name: "Portishead".to_owned(),
-            album_name: None,
-            duration_ms: 0,
-            mbid: None,
-            release_group_mbid: None,
-            source: None,
-            played_at: Some(NOW - 60),
-        },
-        ScrobbleTargets {
-            lastfm: false,
-            listenbrainz: true,
-        },
-    );
-    let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
-    // The queue stays open while the retry is due; time is virtual.
-    for _ in 0..600 {
-        if wire.sent().len() >= 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    drop(forwarder);
-    worker.await.expect("the worker ends cleanly");
+    let app = TestApp::start_hooked_with(
+        "scrobble-lastfm-unreadable",
+        crate::common::closed_outbound(),
+    )
+    .await;
+    let user = app.login_user("listener").await;
+    let (crypto, _) =
+        droppedneedle_kernel::runtime_config::Crypto::load_or_generate(&app.config.config_dir())
+            .expect("the app's key reads");
+    let seal = |value: &str| crypto.encrypt(value).expect("secret seals");
+    let document = json!({
+        "configured": true,
+        "api_key": seal("lfm-key"),
+        "shared_secret": seal("lfm-secret"),
+        "username": "listener",
+        "session_key": seal("lfm-session"),
+    });
+    let db = app.db();
+    db.execute(
+        "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
+         updated_at) VALUES (?1, 'lastfm', ?2, 1, '', '')",
+        [&user.user_id, &document.to_string()],
+    )
+    .expect("link stored");
+    db.execute(
+        "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
+         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 1, 0, 0, '') \
+         ON CONFLICT (user_id) DO UPDATE SET scrobble_to_lastfm = 1",
+        [&user.user_id],
+    )
+    .expect("prefs saved");
+    drop(db);
+    let (app, ()) = app
+        .while_stopped(|config| {
+            rusqlite::Connection::open(&config.library_db_path)
+                .expect("database opens")
+                .execute(
+                    "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+                     VALUES ('lastfm_settings', '{\"enabled\": \"yes\"}', 1, 1) \
+                     ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json",
+                    [],
+                )
+                .expect("section stored");
+        })
+        .await;
+
+    let (_, _, play_id) = submit_play(&app, &user).await;
+    let (queue, _) = job_table(&app);
+    let held = scrobble_job(
+        &app,
+        &queue,
+        JobKind::new("scrobble.lastfm"),
+        &play_id,
+        "the scrobble waits for the settings",
+        |row| row.state != State::Running && row.attempts == 1,
+    )
+    .await;
     assert_eq!(
-        wire.sent().len(),
-        2,
-        "the refused listen is sent again and the second try lands"
+        (held.state, held.last_error.as_deref()),
+        (State::Queued, Some("SETTINGS_UNREADABLE"))
     );
-}
-
-/// A scrobble Last.fm turns away for now (error 16, "temporarily
-/// unavailable", inside a 200) is kept and sent again, and lands once
-/// Last.fm takes it.
-#[tokio::test(start_paused = true)]
-async fn a_scrobble_last_fm_turns_away_for_now_is_delivered_later() {
-    use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
-    use droppedneedle_providers::lastfm::DEFAULT_BASE_URL;
-    use playback::forwarding::{ForwardWorker, ScrobbleForwarder};
-
-    let wire = Arc::new(ScriptedWire::new());
-    for body in [
-        r#"{"error": 16, "message": "There was a temporary error processing your request."}"#,
-        r#"{"scrobbles": {"@attr": {"accepted": 1, "ignored": 0}}}"#,
-    ] {
-        wire.on(
-            Method::Post,
-            DEFAULT_BASE_URL,
-            Scripted::Answer {
-                status: 200,
-                headers: Vec::new(),
-                body: body.as_bytes().to_vec(),
-            },
-        );
-    }
-    let providers = droppedneedle_providers::Providers::unpaced_at(
-        wire.clone(),
-        droppedneedle_providers::ProviderEndpoints {
-            lastfm: DEFAULT_BASE_URL.to_owned(),
-            ..droppedneedle_providers::ProviderEndpoints::closed()
-        },
-    );
-    let rig = rig();
-    rig.link_lastfm("user-1");
-    let (forwarder, rx) = ScrobbleForwarder::channel(
-        rig.store.clone(),
-        Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
-    );
-    let worker = ForwardWorker::new(rx, providers.listenbrainz.clone(), providers.lastfm.clone());
-    forwarder.submit_scrobble(
-        "user-1",
-        &ReportTrack {
-            track_name: "Roads".to_owned(),
-            artist_name: "Portishead".to_owned(),
-            album_name: None,
-            duration_ms: 0,
-            mbid: None,
-            release_group_mbid: None,
-            source: None,
-            played_at: Some(NOW - 60),
-        },
-        ScrobbleTargets {
-            lastfm: true,
-            listenbrainz: false,
-        },
-    );
-    let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
-    // The queue stays open while the retry is due; time is virtual.
-    for _ in 0..600 {
-        if wire.sent().len() >= 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    drop(forwarder);
-    worker.await.expect("the worker ends cleanly");
-    let sent = wire.sent();
-    assert_eq!(
-        sent.len(),
-        2,
-        "the turned-away scrobble is sent again and the second try lands"
-    );
-    let droppedneedle_providers::executor::Body::Form(form) = &sent[1].body else {
-        panic!("a scrobble is a form post");
-    };
-    let field = |name: &str| {
-        form.iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.as_str())
-    };
-    assert_eq!(field("method"), Some("track.scrobble"));
-    assert_eq!(field("sk"), Some("lfm-session"));
-    assert_eq!(field("timestamp"), Some((NOW - 60).to_string().as_str()));
+    app.stop().await;
 }
 
 // ---------------------------------------------------------------------------

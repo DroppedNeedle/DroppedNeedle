@@ -1145,16 +1145,6 @@ export type ScrobbleSubmission = {
 	source?: string;
 };
 
-export type ServiceResult = {
-	success: boolean;
-	error?: string;
-};
-
-export type ScrobbleResponse = {
-	accepted: boolean;
-	services: Record<string, ServiceResult>;
-};
-
 export type LastFmArtistEnrichment = components['schemas']['LastFmArtistEnrichment'];
 export type LastFmAlbumEnrichment = components['schemas']['LastFmAlbumEnrichment'];
 

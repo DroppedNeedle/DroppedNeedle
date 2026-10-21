@@ -217,6 +217,8 @@ impl E2e {
             Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
                 acquire.requests.mixer.clone(),
             )),
+            droppedneedle_kernel::jobs::queue::JobQueue::new(p.db.clone(), p.clock.clone()),
+            p.clock.clone(),
         )
         .expect("media bundle builds");
         let compat = droppedneedle_compat::CompatSetup::build(

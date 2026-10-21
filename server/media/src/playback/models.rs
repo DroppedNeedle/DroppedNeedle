@@ -163,15 +163,15 @@ pub struct ScrobbleNowPlayingRequest {
     pub source: Option<String>,
 }
 
-/// Per-service forwarding outcome (v2 `ServiceResult`). Forwarding runs in
-/// the background, so `success` means the report was queued for delivery,
-/// not that the service has accepted it (v2 waited for the service).
+/// Per-service forwarding outcome. Delivery runs in the background, so this
+/// says the report is waiting to be sent, not that the service took it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ServiceResult {
-    /// True when the report was queued for that service. Delivery happens
-    /// afterwards with retries; a later refusal is logged, not reported.
-    pub success: bool,
-    /// Why the report was not queued (the forwarding queue was full).
+    /// True when the report is waiting for that service. A scrobble waits
+    /// in a kept queue and is sent, retried while the service is down,
+    /// within two weeks of the play; a now-playing report is sent once.
+    pub queued: bool,
+    /// Why the report is not waiting (the play was not saved).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -179,9 +179,10 @@ pub struct ServiceResult {
 /// Answer to a scrobble or now-playing forward (v2 `ScrobbleResponse`).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ScrobbleResponse {
-    /// Whether the play counted. Submit is true whenever history recorded,
-    /// even with no linked account; now-playing is true only when at least
-    /// one service queued it (the v2 accepted-quirk, kept).
+    /// Whether the play counted. Submit is true when history recorded it,
+    /// even with no linked account, and false when the play could not be
+    /// saved; now-playing is true only when at least one service has it
+    /// (the v2 accepted-quirk, kept).
     pub accepted: bool,
     /// Per-service outcomes, keyed by service name.
     #[serde(default)]

@@ -452,7 +452,30 @@ pub trait LastFmSwitch: Send + Sync {
     /// The instance key pair, when the admin saved both halves. Users
     /// without their own pair link and scrobble with it (v2 parity).
     fn instance_keys(&self) -> Option<LastFmKeys>;
+    /// The switch and the instance pair from one read, or
+    /// [`LastFmUnreadable`] when the section cannot be read: work that must
+    /// not take a broken read for "off" waits instead.
+    fn read(&self) -> Result<LastFmState, LastFmUnreadable> {
+        Ok(LastFmState {
+            enabled: self.enabled(),
+            instance_keys: self.instance_keys(),
+        })
+    }
 }
+
+/// The admin's Last.fm settings as one read saw them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastFmState {
+    /// Whether Last.fm linking and fan-out are enabled.
+    pub enabled: bool,
+    /// The instance key pair, when the admin saved both halves.
+    pub instance_keys: Option<LastFmKeys>,
+}
+
+/// The admin's Last.fm settings could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the Last.fm settings cannot be read")]
+pub struct LastFmUnreadable;
 
 /// The two Last.fm auth web calls. The live client is
 /// [`super::lastfm_http::LastFmAuthHttp`].

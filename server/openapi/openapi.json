@@ -60578,7 +60578,7 @@
         "properties": {
           "accepted": {
             "type": "boolean",
-            "description": "Whether the play counted. Submit is true whenever history recorded,\neven with no linked account; now-playing is true only when at least\none service queued it (the v2 accepted-quirk, kept)."
+            "description": "Whether the play counted. Submit is true when history recorded it,\neven with no linked account, and false when the play could not be\nsaved; now-playing is true only when at least one service has it\n(the v2 accepted-quirk, kept)."
           },
           "services": {
             "type": "object",
@@ -61538,9 +61538,9 @@
       },
       "ServiceResult": {
         "type": "object",
-        "description": "Per-service forwarding outcome (v2 `ServiceResult`). Forwarding runs in\nthe background, so `success` means the report was queued for delivery,\nnot that the service has accepted it (v2 waited for the service).",
+        "description": "Per-service forwarding outcome. Delivery runs in the background, so this\nsays the report is waiting to be sent, not that the service took it.",
         "required": [
-          "success"
+          "queued"
         ],
         "properties": {
           "error": {
@@ -61548,11 +61548,11 @@
               "string",
               "null"
             ],
-            "description": "Why the report was not queued (the forwarding queue was full)."
+            "description": "Why the report is not waiting (the play was not saved)."
           },
-          "success": {
+          "queued": {
             "type": "boolean",
-            "description": "True when the report was queued for that service. Delivery happens\nafterwards with retries; a later refusal is logged, not reported."
+            "description": "True when the report is waiting for that service. A scrobble waits\nin a kept queue and is sent, retried while the service is down,\nwithin two weeks of the play; a now-playing report is sent once."
           }
         }
       },

@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
 use droppedneedle_auth::times::to_iso;
-use droppedneedle_auth::users::stores::LastFmSwitch;
+use droppedneedle_auth::users::stores::{LastFmKeys, LastFmSwitch};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
@@ -263,16 +263,20 @@ impl ListeningStore {
     /// The user's ListenBrainz token, read synchronously; `None` when
     /// unlinked, unopenable or unreadable.
     pub fn listenbrainz_token_blocking(&self, user_id: &str) -> Option<String> {
-        let sealed = self
-            .db
-            .read_blocking("listening-link", |conn| {
-                read_connection(conn, user_id, LISTENBRAINZ)
-            })
-            .unwrap_or_else(|error: DbError| {
+        self.listenbrainz_token_checked(user_id)
+            .unwrap_or_else(|error| {
                 tracing::warn!(%user_id, %error, "listenbrainz token read failed");
                 None
-            })?;
-        usable_token(open_link(&self.crypto, &sealed))
+            })
+    }
+
+    /// [`ListeningStore::listenbrainz_token_blocking`], with a failed read
+    /// kept apart from a link that is missing or does not open.
+    pub fn listenbrainz_token_checked(&self, user_id: &str) -> Result<Option<String>, DbError> {
+        let sealed = self.db.read_blocking("listening-link", |conn| {
+            read_connection(conn, user_id, LISTENBRAINZ)
+        })?;
+        Ok(sealed.and_then(|sealed| usable_token(open_link(&self.crypto, &sealed))))
     }
 
     /// The user's Last.fm signing material, read synchronously: `None`
@@ -287,37 +291,51 @@ impl ListeningStore {
         if !lastfm.enabled() {
             return None;
         }
-        let data = self
-            .db
-            .read_blocking("listening-link", |conn| {
-                read_connection(conn, user_id, LASTFM)
-            })
-            .unwrap_or_else(|error: DbError| {
-                tracing::warn!(?error, "last.fm link read failed; skipping the forward");
+        self.lastfm_session_checked(user_id, lastfm.instance_keys().as_ref())
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "last.fm link read failed; skipping the forward");
                 None
-            })?;
+            })
+    }
+
+    /// The user's Last.fm signing material, with `instance_keys` standing
+    /// in for a user without their own pair. A failed read is an error;
+    /// `None` is a link that is missing or does not open.
+    pub fn lastfm_session_checked(
+        &self,
+        user_id: &str,
+        instance_keys: Option<&LastFmKeys>,
+    ) -> Result<Option<LastFmSession>, DbError> {
+        let Some(data) = self.db.read_blocking("listening-link", |conn| {
+            read_connection(conn, user_id, LASTFM)
+        })?
+        else {
+            return Ok(None);
+        };
         let Ok(document) = serde_json::from_str::<LastFmDocument>(&data) else {
             tracing::warn!("last.fm connection row is corrupt; treating as unlinked");
-            return None;
+            return Ok(None);
         };
         let open = |sealed: Option<String>| -> Option<String> {
             let plaintext = self.crypto.decrypt(sealed.as_deref()?).ok()?;
             (!plaintext.is_empty()).then_some(plaintext)
         };
-        let session_key = open(document.session_key)?;
+        let Some(session_key) = open(document.session_key) else {
+            return Ok(None);
+        };
         let (api_key, shared_secret) = match (open(document.api_key), open(document.shared_secret))
         {
             (Some(api_key), Some(shared_secret)) => (api_key, shared_secret),
-            _ => {
-                let keys = lastfm.instance_keys()?;
-                (keys.api_key, keys.shared_secret)
-            }
+            _ => match instance_keys {
+                Some(keys) => (keys.api_key.clone(), keys.shared_secret.clone()),
+                None => return Ok(None),
+            },
         };
-        Some(LastFmSession {
+        Ok(Some(LastFmSession {
             api_key,
             shared_secret,
             session_key,
-        })
+        }))
     }
 
     /// The stored ListenBrainz document, or `None` after logging a failed

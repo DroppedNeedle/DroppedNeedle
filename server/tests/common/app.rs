@@ -98,6 +98,14 @@ impl TestApp {
         Self::launch(tag, outbound, |config| config, |_| {}).await
     }
 
+    /// As [`TestApp::start_with`], with test hooks on: the jobs table runs
+    /// on a manual clock.
+    // Only some test binaries use it.
+    #[allow(dead_code)]
+    pub async fn start_hooked_with(tag: &str, outbound: bootstrap::Outbound) -> Self {
+        Self::launch(tag, outbound, AppConfig::with_test_hooks, |_| {}).await
+    }
+
     /// As [`TestApp::start`], with the deployment config passed through
     /// `configure` before the app builds: `AppConfig::with_test_hooks` mounts
     /// the `__test__` failure routes.

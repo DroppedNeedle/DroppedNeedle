@@ -9,9 +9,10 @@ use std::{
 
 use super::{
     PlaybackDeps,
+    forwarding::Service,
     listening::ScrobblePrefs,
     models::{ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest, ServiceResult},
-    ports::{PlayRecord, ReportTrack, ScrobbleTargets, ServiceOutcome, TrackInfo},
+    ports::{PlayRecord, ReportTrack, ScrobbleTargets, TrackInfo},
     rules::{ServiceError, normalize_client},
     sessions::SessionKey,
 };
@@ -195,9 +196,9 @@ pub fn submit_session_scrobble(
     response
 }
 
-/// Submit one native scrobble (v2 `ScrobbleService.submit_scrobble`,
-/// exact order: validate, name-dedup, record history, short-track gate,
-/// Navidrome delegation, forward; accepted stays true once recorded).
+/// Submit one native scrobble (v2 `ScrobbleService.submit_scrobble`:
+/// validate, name-dedup, short-track gate, Navidrome delegation, then the
+/// play recorded with its forwards; accepted once recorded).
 ///
 /// A play from the library may name its track. The play is then filed
 /// under the track that id names now, with that track's recording and
@@ -317,11 +318,10 @@ pub fn forward_sink_now_playing(
             services: HashMap::new(),
         });
     }
-    let outcomes = deps.sinks.report_now_playing(user_id, &track, targets);
-    let (services, any_success) = collect_outcomes(outcomes);
+    let handed = deps.sinks.report_now_playing(user_id, &track, targets);
     Ok(ScrobbleResponse {
-        accepted: any_success,
-        services,
+        accepted: !handed.is_empty(),
+        services: service_results(handed, true),
     })
 }
 
@@ -334,9 +334,12 @@ fn targets(prefs: &ScrobblePrefs) -> ScrobbleTargets {
     }
 }
 
-/// Shared submit core: name-dedup, history, short-track gate, delegation,
-/// forward. `played_at` is always set on this path. `track_id` is the
-/// library track when the caller resolved one.
+/// Shared submit core: name-dedup, then the short-track gate, Navidrome
+/// delegation and the services the play goes to, then one write of the
+/// play with a scrobble job per service, then the plugin event.
+/// `played_at` is always set on this path. `track_id` is the library track
+/// when the caller resolved one. A play that could not be saved is not
+/// accepted, and nothing waits to be sent for it.
 fn submit_counted_play(
     deps: &PlaybackDeps,
     user_id: &str,
@@ -352,7 +355,26 @@ fn submit_counted_play(
             services: HashMap::new(),
         };
     }
-    deps.store.record(
+    let (prefs, links) = forwarding(deps, user_id);
+    let short = report.duration_ms > 0 && report.duration_ms < MIN_TRACK_DURATION_MS;
+    let delegated =
+        report.source.as_deref() == Some("navidrome") && prefs.navidrome_handles_external_scrobbles;
+    let counted = !short && !delegated;
+    let forward = if counted {
+        // A Last.fm section that cannot be read counts as on: the job reads
+        // it again and holds the play until it can.
+        let lastfm_on = deps
+            .lastfm_switch
+            .read()
+            .map_or(true, |state| state.enabled);
+        targets(&prefs).and(ScrobbleTargets {
+            lastfm: links.lastfm && lastfm_on,
+            listenbrainz: links.listenbrainz,
+        })
+    } else {
+        ScrobbleTargets::default()
+    };
+    let saved = deps.store.record(
         user_id,
         &PlayRecord {
             track_id: track_id.map(str::to_owned),
@@ -365,65 +387,60 @@ fn submit_counted_play(
             source: report.source.clone(),
             played_at,
         },
+        forward,
     );
+    if !saved {
+        return ScrobbleResponse {
+            accepted: false,
+            services: service_results(forward, false),
+        };
+    }
     deps.dedup.record(dedup_key, now);
-
-    if report.duration_ms > 0 && report.duration_ms < MIN_TRACK_DURATION_MS {
-        return ScrobbleResponse {
-            accepted: true,
-            services: HashMap::new(),
-        };
+    if counted {
+        deps.events.play_accepted(user_id, report, played_at);
     }
-    let prefs = deps.store.scrobble_prefs(user_id);
-    if report.source.as_deref() == Some("navidrome") && prefs.navidrome_handles_external_scrobbles {
-        return ScrobbleResponse {
-            accepted: true,
-            services: HashMap::new(),
-        };
-    }
-    deps.events.play_accepted(user_id, report, played_at);
-    let targets = targets(&prefs);
-    if targets.is_empty() {
-        return ScrobbleResponse {
-            accepted: true,
-            services: HashMap::new(),
-        };
-    }
-    let outcomes = deps.sinks.submit_scrobble(user_id, report, targets);
-    let (services, _) = collect_outcomes(outcomes);
     ScrobbleResponse {
         accepted: true,
-        services,
+        services: service_results(forward, true),
     }
 }
 
-/// Render per-service outcomes and note whether any service took the
-/// report (v2 `_gather_results`: failures become per-service errors, never
-/// a failed call).
-fn collect_outcomes(
-    outcomes: HashMap<String, ServiceOutcome>,
-) -> (HashMap<String, ServiceResult>, bool) {
-    let mut services = HashMap::new();
-    let mut any_success = false;
-    for (name, outcome) in outcomes {
-        if outcome.success {
-            any_success = true;
-        } else {
-            tracing::warn!(
-                service = name,
-                error = outcome.error,
-                "scrobble forward failed"
-            );
-        }
-        services.insert(
-            name,
-            ServiceResult {
-                success: outcome.success,
-                error: outcome.error,
-            },
-        );
-    }
-    (services, any_success)
+/// The user's preferences and links for a counted play. A read that fails
+/// asks for both services as linked, with Navidrome delegation at its
+/// default: each job reads them again and decides, so a failed read never
+/// drops a play's scrobbles.
+fn forwarding(deps: &PlaybackDeps, user_id: &str) -> (ScrobblePrefs, ScrobbleTargets) {
+    deps.store.forwarding(user_id).unwrap_or_else(|error| {
+        tracing::warn!(%error, "scrobble preferences read failed; the jobs will decide");
+        let both = ScrobbleTargets {
+            lastfm: true,
+            listenbrainz: true,
+        };
+        let prefs = ScrobblePrefs {
+            scrobble_to_lastfm: true,
+            scrobble_to_listenbrainz: true,
+            ..ScrobblePrefs::default()
+        };
+        (prefs, both)
+    })
+}
+
+/// One result per service in `services`: waiting to be sent, or not
+/// because the play was not saved.
+fn service_results(services: ScrobbleTargets, queued: bool) -> HashMap<String, ServiceResult> {
+    Service::ALL
+        .into_iter()
+        .filter(|service| services.wants(*service))
+        .map(|service| {
+            (
+                service.as_str().to_owned(),
+                ServiceResult {
+                    queued,
+                    error: (!queued).then(|| "Not saved; try again".to_owned()),
+                },
+            )
+        })
+        .collect()
 }
 
 /// Sink-side now-playing for a session start (same delegation and
@@ -452,10 +469,7 @@ pub(super) fn forward_now_playing(
     if targets.is_empty() {
         return;
     }
-    let (services, _) = collect_outcomes(deps.sinks.report_now_playing(user_id, &report, targets));
-    if services.values().any(|result| !result.success) {
-        tracing::debug!("session-start now-playing forward partially failed");
-    }
+    deps.sinks.report_now_playing(user_id, &report, targets);
 }
 
 /// Timestamp bounds (v2 `ScrobbleRequest.__post_init__`: no future beyond

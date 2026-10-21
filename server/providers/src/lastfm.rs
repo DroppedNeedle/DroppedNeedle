@@ -20,6 +20,8 @@
 
 use std::time::Duration;
 
+mod models;
+
 use crate::RequestPriority;
 use crate::degradation::{IntegrationStatus, record_current};
 use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
@@ -365,9 +367,9 @@ impl LastFmClient {
         })
     }
 
-    /// A signed form post for the session in `creds` (`track.scrobble`,
-    /// `track.updateNowPlaying`). Sent once: a post is never repeated
-    /// here, the caller's queue decides about another try.
+    /// A signed form post for the session in `creds` whose answer matters
+    /// only as success or failure (`track.updateNowPlaying`). Sent once: a
+    /// post is never repeated here.
     ///
     /// # Errors
     ///
@@ -382,6 +384,31 @@ impl LastFmClient {
     ) -> Result<(), ProviderError> {
         let request = self.call(method, creds, params, Signed::Post)?;
         self.send(request, priority).await.map(|_| ())
+    }
+
+    /// One signed `track.scrobble` for the session in `creds`, and what
+    /// Last.fm did with it. Sent once: the caller's queue decides about
+    /// another try. Last.fm answers a scrobble it turns away with a success
+    /// that names why (see the models file), so a delivered request is not
+    /// always a kept play.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::NotConfigured`] without a key or secret, a
+    /// [`ProviderError::Payload`] when a success does not say what became
+    /// of the play, otherwise the typed failure of the call.
+    pub async fn scrobble(
+        &self,
+        creds: &LastFmCredentials,
+        params: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<ScrobbleAnswer, ProviderError> {
+        let request = self.call("track.scrobble", creds, params, Signed::Post)?;
+        let reply = self.send(request, priority).await?;
+        let wire: models::WireScrobbleReply = reply
+            .json()
+            .inspect_err(|error| note_shape(&error.to_string()))?;
+        Ok(scrobble_answer(&wire))
     }
 
     /// `artist.getInfo` by name or, when given, by MusicBrainz id. `None`
@@ -882,6 +909,57 @@ impl LastFmClient {
     }
 }
 
+/// What Last.fm did with one scrobble.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrobbleAnswer {
+    /// Kept.
+    Accepted,
+    /// Turned away, for this reason.
+    Ignored(IgnoredReason),
+}
+
+/// Why Last.fm turned a scrobble away: its `ignoredMessage` code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IgnoredReason {
+    /// 1: the artist is filtered.
+    ArtistIgnored,
+    /// 2: the track is filtered.
+    TrackIgnored,
+    /// 3: the play time is too far in the past.
+    TooOld,
+    /// 4: the play time is too far in the future.
+    TooNew,
+    /// 5: the account's daily scrobble limit is reached.
+    DailyLimit,
+    /// Any other code, or none given while nothing was accepted.
+    Other(i64),
+}
+
+/// Read one decoded `track.scrobble` answer: accepted when Last.fm counts
+/// it, else the first scrobble's ignored code.
+fn scrobble_answer(wire: &models::WireScrobbleReply) -> ScrobbleAnswer {
+    if wire.scrobbles.counts.accepted.value().unwrap_or(0) > 0 {
+        return ScrobbleAnswer::Accepted;
+    }
+    let code = wire
+        .scrobbles
+        .scrobble
+        .as_ref()
+        .and_then(models::OneOrMany::first)
+        .and_then(|scrobble| scrobble.ignored_message.as_ref())
+        .and_then(|message| message.code.as_ref())
+        .and_then(models::Lenient::value)
+        .unwrap_or(0);
+    ScrobbleAnswer::Ignored(match code {
+        1 => IgnoredReason::ArtistIgnored,
+        2 => IgnoredReason::TrackIgnored,
+        3 => IgnoredReason::TooOld,
+        4 => IgnoredReason::TooNew,
+        5 => IgnoredReason::DailyLimit,
+        other => IgnoredReason::Other(other),
+    })
+}
+
 /// How one call is built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Signed {
@@ -1257,6 +1335,33 @@ fn parse_similar_artist(item: &serde_json::Value) -> SimilarArtist {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scrobble_answer_says_whether_the_play_was_kept() {
+        let read = |body: &str| {
+            serde_json::from_str::<models::WireScrobbleReply>(body)
+                .map(|wire| scrobble_answer(&wire))
+                .ok()
+        };
+        assert_eq!(
+            read(r#"{"scrobbles":{"@attr":{"accepted":1,"ignored":0}}}"#),
+            Some(ScrobbleAnswer::Accepted)
+        );
+        assert_eq!(
+            read(
+                r##"{"scrobbles":{"scrobble":{"ignoredMessage":{"code":"5","#text":"Daily scrobble limit exceeded"}},"@attr":{"accepted":"0","ignored":"1"}}}"##
+            ),
+            Some(ScrobbleAnswer::Ignored(IgnoredReason::DailyLimit))
+        );
+        assert_eq!(
+            read(
+                r#"{"scrobbles":{"scrobble":[{"ignoredMessage":{"code":3}}],"@attr":{"accepted":0,"ignored":1}}}"#
+            ),
+            Some(ScrobbleAnswer::Ignored(IgnoredReason::TooOld))
+        );
+        assert_eq!(read(r#"{"scrobbles":{}}"#), None, "no count, no answer");
+        assert_eq!(read(r#"{"status":"ok"}"#), None);
+    }
 
     #[test]
     fn malformed_mbids_read_as_absent() {

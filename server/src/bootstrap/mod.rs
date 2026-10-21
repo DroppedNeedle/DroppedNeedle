@@ -372,6 +372,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         outbound.ffmpeg.clone(),
         &providers,
         mix_hooks.clone(),
+        queues.queue().clone(),
+        queues.clock(),
     )
     .map_err(stage("media setup"))?;
     // Startup recovery before serving traffic. Re-running after a clean
@@ -441,6 +443,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         scans.clone(),
     )
     .with_queue(queues)
+    .with_jobs(media.scrobble_jobs())
     .with_job(
         droppedneedle_library::contrib::worker::SPEC,
         library.contrib_worker.handler(),

@@ -100,7 +100,7 @@ function createScrobbleManager() {
 	let active = $state(false);
 	// Forwarding to Last.fm or ListenBrainz is on.
 	let enabled = $state(false);
-	let lastServiceDetail = $state<Record<string, { success: boolean }> | null>(null);
+	let lastServiceDetail = $state<Record<string, { queued: boolean }> | null>(null);
 	let track: TrackState | null = null;
 	let settingsCache: ScrobbleSettings | null = null;
 	let lastSettingsFetch = 0;
@@ -156,7 +156,7 @@ function createScrobbleManager() {
 			const body = makeScrobbleSubmission(play, durationMs, timestamp);
 			const data = await submitScrobble(body);
 			lastServiceDetail = Object.fromEntries(
-				Object.entries(data.services ?? {}).map(([k, v]) => [k, { success: v.success }])
+				Object.entries(data.services ?? {}).map(([k, v]) => [k, { queued: v.queued }])
 			);
 			if (data.accepted) {
 				status = 'scrobbled';

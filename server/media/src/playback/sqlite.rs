@@ -15,18 +15,23 @@
 //! closed (misses and defaults, never an error to the player) and log what
 //! failed. A play the lane refuses is logged at error level with its
 //! details, so no play disappears silently.
+//!
+//! A play and its scrobble jobs (one per service it goes to) are written
+//! in one transaction: the jobs exist exactly when the play does.
 
 use std::sync::Arc;
 
-use droppedneedle_auth::times::to_iso;
-use droppedneedle_auth::users::stores::LastFmSwitch;
+use droppedneedle_auth::times::{parse_iso, to_iso};
+use droppedneedle_auth::users::stores::{LastFmKeys, LastFmSwitch};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_library::repairs::plays::{Matched, PlayKeys, match_play};
 use rusqlite::OptionalExtension;
 
+use super::forwarding::{ScrobblePayload, Service};
 use super::listening::{LastFmSession, ListeningStore, ScrobblePrefs};
 use super::ports::{PlayRecord, ProviderFailure, ScrobbleTargets, TrackInfo};
 use super::sql;
@@ -36,19 +41,47 @@ pub struct PlaybackStore {
     db: Db,
     ids: Arc<dyn IdGenerator>,
     listening: ListeningStore,
+    jobs: JobQueue,
+}
+
+/// One stored play, as a scrobble of it is sent: every send of a play is
+/// built from this row, so each is the same request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredPlay {
+    /// Whose play.
+    pub user_id: String,
+    /// Track title.
+    pub track_name: String,
+    /// Artist name.
+    pub artist_name: String,
+    /// Album title, when known.
+    pub album_name: Option<String>,
+    /// Recording MBID, when known.
+    pub recording_mbid: Option<String>,
+    /// Track length in milliseconds (0 when unknown).
+    pub duration_ms: i64,
+    /// Play time, unix seconds.
+    pub played_at: i64,
 }
 
 impl PlaybackStore {
     /// Playback reads and writes on `db`: plays take their ids from `ids`,
-    /// links open under `crypto`, preference saves are dated by `clock`.
+    /// links open under `crypto`, preference saves are dated by `clock`,
+    /// and scrobble jobs go on `jobs`.
     pub fn new(
         db: Db,
         ids: Arc<dyn IdGenerator>,
         crypto: Arc<Crypto>,
         clock: Arc<dyn Clock>,
+        jobs: JobQueue,
     ) -> Self {
         let listening = ListeningStore::new(db.clone(), crypto, clock);
-        Self { db, ids, listening }
+        Self {
+            db,
+            ids,
+            listening,
+            jobs,
+        }
     }
 
     /// The listening preferences and links this store reads.
@@ -63,10 +96,75 @@ impl PlaybackStore {
         off_worker(|| or_logged("playback-track", self.read_track(track_id), || None))
     }
 
-    /// Record one play for the user. Every accepted play lands here
-    /// whatever the user linked (v2 `PlayHistoryStore` rule).
-    pub fn record(&self, user_id: &str, record: &PlayRecord) {
-        off_worker(|| self.write_play(user_id, record));
+    /// Record one play for the user, with a scrobble job for each service
+    /// in `forward`. Every accepted play lands here whatever the user
+    /// linked (v2 `PlayHistoryStore` rule). False when the write failed:
+    /// the play and its jobs are then not kept.
+    pub fn record(&self, user_id: &str, record: &PlayRecord, forward: ScrobbleTargets) -> bool {
+        off_worker(|| self.write_play(user_id, record, forward))
+    }
+
+    /// One stored play by id; `None` when it is gone.
+    pub async fn play(&self, play_id: &str) -> Result<Option<StoredPlay>, DbError> {
+        let id = play_id.to_owned();
+        self.db
+            .read("playback-scrobble-play", move |conn| {
+                Ok(conn
+                    .query_row(sql::PLAY.text(), [id], |row| {
+                        Ok((
+                            StoredPlay {
+                                user_id: row.get(0)?,
+                                track_name: row.get(1)?,
+                                artist_name: row.get(2)?,
+                                album_name: row.get(3)?,
+                                recording_mbid: row.get(4)?,
+                                duration_ms: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                                played_at: 0,
+                            },
+                            row.get::<_, String>(6)?,
+                        ))
+                    })
+                    .optional()?)
+            })
+            .await
+            .map(|found| {
+                found.and_then(|(play, played_at)| {
+                    let played_at = parse_iso(&played_at)?;
+                    Some(StoredPlay { played_at, ..play })
+                })
+            })
+    }
+
+    /// The user's ListenBrainz token, failure included: `None` is a link
+    /// that is missing or does not open.
+    pub fn listenbrainz_token_checked(&self, user_id: &str) -> Result<Option<String>, DbError> {
+        off_worker(|| self.listening.listenbrainz_token_checked(user_id))
+    }
+
+    /// The user's Last.fm signing material, failure included, with
+    /// `instance_keys` for a user without their own pair: `None` is a link
+    /// that is missing or does not open.
+    pub fn lastfm_session_checked(
+        &self,
+        user_id: &str,
+        instance_keys: Option<&LastFmKeys>,
+    ) -> Result<Option<LastFmSession>, DbError> {
+        off_worker(|| {
+            self.listening
+                .lastfm_session_checked(user_id, instance_keys)
+        })
+    }
+
+    /// The user's listening preferences and the scrobble services they
+    /// linked, failure included: a scrobble job must not read a failed read
+    /// as "switched off".
+    pub fn forwarding(&self, user_id: &str) -> Result<(ScrobblePrefs, ScrobbleTargets), DbError> {
+        off_worker(|| {
+            Ok((
+                self.listening.prefs_blocking(user_id)?,
+                self.read_links(user_id)?,
+            ))
+        })
     }
 
     /// The user's listening preferences; the column defaults when the
@@ -205,7 +303,11 @@ impl PlaybackStore {
     /// A play made on a connected server or as a preview names no library
     /// track. It is filed the same way when it clearly matches one: see
     /// [`remote_match`], which reads on the write's own transaction.
-    fn write_play(&self, user_id: &str, record: &PlayRecord) {
+    ///
+    /// Each service in `forward` gets a scrobble job keyed by the play's id
+    /// in the same transaction, so a play is forwarded only once it is kept
+    /// and a kept play is never forgotten by a restart.
+    fn write_play(&self, user_id: &str, record: &PlayRecord, forward: ScrobbleTargets) -> bool {
         let id = self.ids.new_id();
         let outcome = self
             .db
@@ -233,17 +335,29 @@ impl PlaybackStore {
                         to_iso(record.played_at),
                     ],
                 )?;
-                Ok::<_, DbError>(())
+                let payload = ScrobblePayload {
+                    play_id: id.clone(),
+                };
+                for service in Service::ALL {
+                    if forward.wants(service) {
+                        self.jobs.enqueue(tx, service.kind(), &id, &payload)?;
+                    }
+                }
+                Ok::<_, JobError>(())
             });
-        if let Err(error) = outcome {
-            tracing::error!(
-                %error,
-                user_id,
-                track = %record.track_name,
-                artist = %record.artist_name,
-                played_at = record.played_at,
-                "play history write failed; the play is not recorded"
-            );
+        match outcome {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    user_id,
+                    track = %record.track_name,
+                    artist = %record.artist_name,
+                    played_at = record.played_at,
+                    "play history write failed; the play is not recorded"
+                );
+                false
+            }
         }
     }
 }

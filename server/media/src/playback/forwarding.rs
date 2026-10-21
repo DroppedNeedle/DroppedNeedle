@@ -1,50 +1,119 @@
-//! Scrobble forwarding to each user's linked Last.fm and ListenBrainz
-//! accounts.
+//! Sending plays to each user's linked Last.fm and ListenBrainz accounts.
 //!
-//! The reporting services are synchronous and must never wait on the
-//! network, so [`ScrobbleForwarder`] checks which services the user linked,
-//! queues one job per wanted service on that service's bounded channel, and
-//! answers at once; [`ForwardWorker`] (spawned at boot) delivers each
-//! service's jobs in its own lane, so a slow service never holds up the
-//! other. The name
-//! dedup and the history write happen before a job is queued, so a retry
-//! never records a play twice.
+//! **Scrobbles** wait in the jobs table. A counted play is written with one
+//! job per service it goes to (kinds `scrobble.lastfm` and
+//! `scrobble.listenbrainz`, keyed by the play's id, the id as payload), so
+//! a scrobble outlives a restart and an outage. [`ScrobbleJobs`] sends one:
+//! the request is built from the stored play, so every send of a play is
+//! the same request. A job fails for good when its play is gone, when the
+//! play is older than [`WINDOW_SECS`], when the user has turned that
+//! service off or unlinked it, when the service refuses the user's
+//! credential, and when it refuses the listen itself. Anything passing (no
+//! answer, 5xx, a rate limit, Last.fm's offline codes and daily limit,
+//! ListenBrainz's policy block) is tried again, backing off to once an
+//! hour, after a longer wait the service named, while the play is inside
+//! the window. One user's failure goes back to wait its turn; other users'
+//! jobs go first.
 //!
-//! Delivery follows v2's clients: ListenBrainz `POST /1/submit-listens`
-//! with `Authorization: Token`, Last.fm signed `track.updateNowPlaying` and
-//! `track.scrobble` form posts. Scrobbles that fail for a passing reason
-//! (no answer, 5xx, 429, Last.fm codes 11/16/29) are retried with backoff,
-//! up to [`SCROBBLE_ATTEMPTS`] tries; a rejected credential or a refused
-//! play is dropped with a log line. Now-playing reports are not retried: a
-//! late one is wrong. Each service's posts go through its one provider
-//! client at background priority, so they take their tokens from the same
-//! bucket as every other call to that service.
+//! The window is Last.fm's: a scrobble older than about two weeks comes
+//! back "ignored, timestamp too old" (ignored code 3,
+//! https://www.last.fm/api/show/track.scrobble). The docs name the code but
+//! no day count; two weeks is what clients report
+//! (https://redmine.audacious-media-player.org/issues/260, read
+//! 2026-10-21) and the age the scrobble route accepts. ListenBrainz takes
+//! listens back to 2002 (`LISTEN_MINIMUM_TS`,
+//! https://listenbrainz.readthedocs.io/en/latest/users/api/core.html), and
+//! keeps the same window so a play is either sent to both or to neither.
+//!
+//! Order: first tries go in play order. A retried play may land after
+//! later ones; each listen carries its own play time. ListenBrainz keys and
+//! sorts listens by that time. Last.fm's scrobbling page asks for cached
+//! scrobbles before new ones (https://www.last.fm/api/scrobbling), but its
+//! only time rule is the too-old and too-new ignore, so one failing play is
+//! never allowed to hold the rest back.
+//!
+//! Repeats: a crash after the service answered and before the job is
+//! marked done sends that play once more. ListenBrainz drops it: it stores
+//! listens with `ON CONFLICT (listened_at, user_id, recording_msid) DO
+//! NOTHING` (listenbrainz-server `listenstore/timescale_listenstore.py`,
+//! read 2026-10-21) and the body is the same. Last.fm documents nothing, so
+//! that one play may show twice. Each kind runs one job at a time, so a
+//! crash costs at most one play per service.
+//!
+//! **Now-playing** reports are not history: they stay in memory, one slot
+//! per user and service where the latest report wins, sent once by
+//! [`NowPlayingWorker`] and dropped at shutdown. Both paths go through the
+//! service's one provider client at background priority, sharing its
+//! bucket with every other call to it. No token reaches a log line.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::time::Instant;
+use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 use droppedneedle_auth::users::stores::LastFmSwitch;
+use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::CancellationToken;
-use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
+use droppedneedle_kernel::jobs::queue::{
+    JobCtx, JobHandler, JobKind, KindSpec, Outcome, PAYLOAD_INVALID,
+};
+use droppedneedle_providers::lastfm::{
+    IgnoredReason, LastFmClient, LastFmCredentials, ScrobbleAnswer,
+};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority};
 
 use super::listening::LastFmSession;
-use super::ports::{ReportTrack, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
+use super::ports::{ReportTrack, ScrobbleSinks, ScrobbleTargets};
+use super::report::SCROBBLE_TIMESTAMP_MAX_AGE_SECS;
 use super::scrobble_models::{AdditionalInfo, Listen, SubmitListens, TrackMetadata};
-use super::sqlite::PlaybackStore;
+use super::sqlite::{PlaybackStore, StoredPlay};
 
-/// Jobs waiting per service. A burst past this answers "queue full".
-pub const FORWARD_QUEUE_DEPTH: usize = 512;
-/// Tries per scrobble, the first one included.
-pub const SCROBBLE_ATTEMPTS: u32 = 4;
-/// First retry delay; each later one triples, capped at [`MAX_BACKOFF`].
-pub const BASE_BACKOFF: Duration = Duration::from_secs(5);
+/// How long after a play its scrobble may still be sent, in seconds.
+pub const WINDOW_SECS: i64 = SCROBBLE_TIMESTAMP_MAX_AGE_SECS;
+/// First retry delay; each later one doubles, up to [`BACKOFF_CAP`].
+pub const BACKOFF_FIRST: Duration = Duration::from_secs(60);
 /// Longest retry delay.
-pub const MAX_BACKOFF: Duration = Duration::from_secs(300);
+pub const BACKOFF_CAP: Duration = Duration::from_secs(3600);
+/// Tries per scrobble. Without jitter the ladder needs 342 tries to cover
+/// the window (six retries reach an hour, then one an hour); the rest
+/// cover restarts, which requeue a running job at once. The window, not
+/// this count, is what ends a waiting job.
+pub const MAX_ATTEMPTS: u32 = 400;
+
+/// The play's row is gone (the user was deleted).
+pub const PLAY_GONE: &str = "PLAY_GONE";
+/// The play is older than the window, or the service said it is too old.
+pub const WINDOW_PASSED: &str = "WINDOW_PASSED";
+/// The user turned forwarding to this service off.
+pub const FORWARDING_OFF: &str = "FORWARDING_OFF";
+/// The user has no usable link to this service.
+pub const NOT_LINKED: &str = "NOT_LINKED";
+/// The admin has Last.fm switched off.
+pub const LASTFM_OFF: &str = "LASTFM_OFF";
+/// The service refused the user's credential.
+pub const CREDENTIAL_REFUSED: &str = "CREDENTIAL_REFUSED";
+/// The service refused the listen itself.
+pub const LISTEN_REFUSED: &str = "LISTEN_REFUSED";
+/// ListenBrainz switched the endpoint off upstream for now.
+pub const POLICY_BLOCKED: &str = "POLICY_BLOCKED";
+/// No answer, or a server error.
+pub const SERVICE_UNAVAILABLE: &str = "SERVICE_UNAVAILABLE";
+/// The service asked us to slow down.
+pub const RATE_LIMITED: &str = "RATE_LIMITED";
+/// The user's Last.fm account reached its daily scrobble limit.
+pub const DAILY_LIMIT: &str = "DAILY_LIMIT";
+/// Last.fm refused the admin's API key, which the user's session runs on:
+/// waits for the admin to fix the key.
+pub const INSTANCE_KEY_REFUSED: &str = "INSTANCE_KEY_REFUSED";
+/// The database read failed.
+pub const STORE_FAILED: &str = "STORE_FAILED";
+/// The admin's Last.fm settings cannot be read: waits until they can.
+pub const SETTINGS_UNREADABLE: &str = "SETTINGS_UNREADABLE";
 
 /// One external scrobble service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,435 +125,521 @@ pub enum Service {
 }
 
 impl Service {
-    /// Wire name, also the outcome map key.
+    /// Both services.
+    pub const ALL: [Self; 2] = [Self::LastFm, Self::ListenBrainz];
+
+    /// Wire name, also the response map key.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::LastFm => "lastfm",
             Self::ListenBrainz => "listenbrainz",
         }
     }
-}
 
-/// What a job reports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForwardKind {
-    /// The track just started.
-    NowPlaying,
-    /// The play counted.
-    Scrobble,
-}
-
-impl ForwardKind {
-    fn attempts(self) -> u32 {
+    /// The job kind its scrobbles wait as.
+    pub const fn kind(self) -> JobKind {
         match self {
-            Self::NowPlaying => 1,
-            Self::Scrobble => SCROBBLE_ATTEMPTS,
+            Self::LastFm => JobKind::new("scrobble.lastfm"),
+            Self::ListenBrainz => JobKind::new("scrobble.listenbrainz"),
         }
+    }
+
+    /// How its scrobble jobs run.
+    pub const fn spec(self) -> KindSpec {
+        KindSpec::new(self.kind())
+            .max_attempts(MAX_ATTEMPTS)
+            .backoff(BACKOFF_FIRST, BACKOFF_CAP)
+            .keep_done(Duration::from_secs(24 * 3600))
     }
 }
 
-/// One queued forward.
-#[derive(Debug, Clone)]
-pub struct ForwardJob {
-    /// Whose account.
-    pub user_id: String,
-    /// Which service.
-    pub service: Service,
-    /// Now-playing or scrobble.
-    pub kind: ForwardKind,
-    /// The play.
-    pub track: ReportTrack,
-    /// Tries so far.
-    pub attempt: u32,
+/// A scrobble job's payload: the play to send.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScrobblePayload {
+    /// The play's id in `library_play_history`.
+    pub play_id: String,
 }
 
-/// The production sink: queue a job per wanted, linked service.
-pub struct ScrobbleForwarder {
-    lastfm_tx: tokio::sync::mpsc::Sender<ForwardJob>,
-    listenbrainz_tx: tokio::sync::mpsc::Sender<ForwardJob>,
-    links: Arc<PlaybackStore>,
+/// Makes the calls to both services. Credentials are read per send, so a
+/// link made or removed since the play counts.
+pub struct Courier {
+    listenbrainz: ListenBrainzClient,
+    lastfm: LastFmClient,
+    store: Arc<PlaybackStore>,
     lastfm_switch: Arc<dyn LastFmSwitch>,
+    clock: Arc<dyn Clock>,
 }
 
-/// The per-service queues the worker drains, with the store and switch
-/// its credentials come from.
-pub struct ForwardQueues {
-    lastfm: tokio::sync::mpsc::Receiver<ForwardJob>,
-    listenbrainz: tokio::sync::mpsc::Receiver<ForwardJob>,
+impl Courier {
+    /// Send through the one ListenBrainz client and the one Last.fm client,
+    /// reading plays and links from `store`. `clock` is the jobs table's:
+    /// the window is measured on it.
+    pub fn new(
+        listenbrainz: ListenBrainzClient,
+        lastfm: LastFmClient,
+        store: Arc<PlaybackStore>,
+        lastfm_switch: Arc<dyn LastFmSwitch>,
+        clock: Arc<dyn Clock>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            listenbrainz,
+            lastfm,
+            store,
+            lastfm_switch,
+            clock,
+        })
+    }
+}
+
+/// The scrobble job handler of one service.
+pub struct ScrobbleJobs {
+    service: Service,
+    courier: Arc<Courier>,
+}
+
+impl ScrobbleJobs {
+    /// Both services' kinds and handlers, for the builder to register.
+    pub fn handlers(courier: &Arc<Courier>) -> Vec<(KindSpec, Arc<dyn JobHandler>)> {
+        Service::ALL
+            .into_iter()
+            .map(|service| {
+                let handler: Arc<dyn JobHandler> = Arc::new(Self {
+                    service,
+                    courier: courier.clone(),
+                });
+                (service.spec(), handler)
+            })
+            .collect()
+    }
+}
+
+impl JobHandler for ScrobbleJobs {
+    fn run(&self, job: JobCtx) -> BoxFuture<'static, Outcome> {
+        let (service, courier) = (self.service, self.courier.clone());
+        Box::pin(async move {
+            let outcome = courier.scrobble(service, &job).await;
+            if let Outcome::Fail { code } = outcome {
+                tracing::info!(service = service.as_str(), code, "scrobble not sent");
+            }
+            outcome
+        })
+    }
+}
+
+impl Courier {
+    /// Send one waiting scrobble, or say why not.
+    async fn scrobble(&self, service: Service, job: &JobCtx) -> Outcome {
+        let Ok(payload) = job.payload::<ScrobblePayload>() else {
+            return fail(PAYLOAD_INVALID);
+        };
+        let play = match self.store.play(&payload.play_id).await {
+            Ok(Some(play)) => play,
+            Ok(None) => return fail(PLAY_GONE),
+            Err(error) => return store_failed(&error),
+        };
+        if play
+            .played_at
+            .saturating_add(WINDOW_SECS)
+            .saturating_mul(1000)
+            < self.clock.now_ms()
+        {
+            return fail(WINDOW_PASSED);
+        }
+        let (prefs, links) = match self.store.forwarding(&play.user_id) {
+            Ok(read) => read,
+            Err(error) => return store_failed(&error),
+        };
+        let on = match service {
+            Service::LastFm => prefs.scrobble_to_lastfm,
+            Service::ListenBrainz => prefs.scrobble_to_listenbrainz,
+        };
+        if !on {
+            return fail(FORWARDING_OFF);
+        }
+        // Only a section that reads as off drops Last.fm's scrobbles; one
+        // that cannot be read holds them until it can.
+        let lastfm = match service {
+            Service::LastFm => match self.lastfm_switch.read() {
+                Ok(state) if state.enabled => Some(state),
+                Ok(_) => return fail(LASTFM_OFF),
+                Err(_) => return retry(SETTINGS_UNREADABLE, None),
+            },
+            Service::ListenBrainz => None,
+        };
+        if !links.wants(service) {
+            return fail(NOT_LINKED);
+        }
+        // A read that fails waits; only a link that reads but does not open
+        // ends the job.
+        match lastfm {
+            None => match self.store.listenbrainz_token_checked(&play.user_id) {
+                Ok(Some(token)) => self.send_listen(&play, &token, job.attempt()).await,
+                Ok(None) => fail(NOT_LINKED),
+                Err(error) => store_failed(&error),
+            },
+            Some(state) => {
+                let instance = state.instance_keys.as_ref();
+                match self.store.lastfm_session_checked(&play.user_id, instance) {
+                    Ok(Some(session)) => {
+                        let on_instance =
+                            instance.is_some_and(|keys| keys.api_key == session.api_key);
+                        self.send_scrobble(&play, &session, on_instance, job.attempt())
+                            .await
+                    }
+                    Ok(None) => fail(NOT_LINKED),
+                    Err(error) => store_failed(&error),
+                }
+            }
+        }
+    }
+
+    async fn send_listen(&self, play: &StoredPlay, token: &str, attempt: u32) -> Outcome {
+        let body = SubmitListens {
+            listen_type: "single",
+            payload: vec![Listen {
+                listened_at: Some(play.played_at),
+                track_metadata: metadata(
+                    &play.artist_name,
+                    &play.track_name,
+                    play.album_name.as_deref(),
+                    play.duration_ms,
+                    play.recording_mbid.as_deref(),
+                ),
+            }],
+        };
+        let Ok(body) = serde_json::to_vec(&body) else {
+            return fail(LISTEN_REFUSED);
+        };
+        let sent = self
+            .listenbrainz
+            .submit_listens(token, body, RequestPriority::BackgroundSync)
+            .await;
+        match sent {
+            Ok(()) => Outcome::Done,
+            // A stored token that cannot ride in a header.
+            Err(ProviderError::Invalid { .. }) => fail(CREDENTIAL_REFUSED),
+            Err(ProviderError::Disabled { .. }) => retry(POLICY_BLOCKED, None),
+            Err(error) => self.answer(Service::ListenBrainz, &error, attempt),
+        }
+    }
+
+    async fn send_scrobble(
+        &self,
+        play: &StoredPlay,
+        session: &LastFmSession,
+        on_instance_key: bool,
+        attempt: u32,
+    ) -> Outcome {
+        let timestamp = play.played_at.to_string();
+        let duration = (play.duration_ms / 1_000).to_string();
+        let mut params: Vec<(&str, &str)> = vec![
+            ("artist", &play.artist_name),
+            ("track", &play.track_name),
+            ("timestamp", &timestamp),
+        ];
+        if let Some(album) = play.album_name.as_deref().filter(|name| !name.is_empty()) {
+            params.push(("album", album));
+        }
+        if play.duration_ms >= 1_000 {
+            params.push(("duration", &duration));
+        }
+        let mbid = recording(play.recording_mbid.as_deref());
+        if let Some(mbid) = mbid.as_deref() {
+            params.push(("mbid", mbid));
+        }
+        let sent = self
+            .lastfm
+            .scrobble(
+                &credentials(session),
+                &params,
+                RequestPriority::BackgroundSync,
+            )
+            .await;
+        match sent {
+            Ok(ScrobbleAnswer::Accepted) => Outcome::Done,
+            Ok(ScrobbleAnswer::Ignored(IgnoredReason::DailyLimit)) => retry(DAILY_LIMIT, None),
+            Ok(ScrobbleAnswer::Ignored(IgnoredReason::TooOld)) => fail(WINDOW_PASSED),
+            Ok(ScrobbleAnswer::Ignored(reason)) => {
+                tracing::debug!(?reason, "Last.fm ignored the scrobble");
+                fail(LISTEN_REFUSED)
+            }
+            // A success whose answer does not read: the play most likely
+            // landed, and a resend could show it twice.
+            Err(ProviderError::Payload {
+                kind: PayloadKind::Decode | PayloadKind::Contract,
+                ..
+            }) => {
+                tracing::warn!("Last.fm took a scrobble with an answer that did not read");
+                Outcome::Done
+            }
+            // An answer too large to read says nothing; try again.
+            Err(ProviderError::Payload { .. }) => retry(SERVICE_UNAVAILABLE, None),
+            // Users without their own key pair scrobble on the admin's. A
+            // key or signature refusal is then the admin's to fix: the play
+            // waits for it rather than failing.
+            Err(ProviderError::Unauthorized { .. }) if on_instance_key => {
+                retry(INSTANCE_KEY_REFUSED, None)
+            }
+            Err(error) => self.answer(Service::LastFm, &error, attempt),
+        }
+    }
+
+    /// The outcome of a failed send that each service reads alike.
+    fn answer(&self, service: Service, error: &ProviderError, attempt: u32) -> Outcome {
+        tracing::debug!(service = service.as_str(), %error, "scrobble send failed");
+        match error {
+            ProviderError::RateLimited { .. } => retry(RATE_LIMITED, self.retry_at(error, attempt)),
+            error if error.is_retriable() => {
+                retry(SERVICE_UNAVAILABLE, self.retry_at(error, attempt))
+            }
+            ProviderError::Unauthorized { .. }
+            | ProviderError::Forbidden { .. }
+            | ProviderError::NotConfigured { .. } => fail(CREDENTIAL_REFUSED),
+            _ => fail(LISTEN_REFUSED),
+        }
+    }
+
+    /// When to try again after `error`: the wait the service named, when
+    /// it is longer than the ladder's own step; else the ladder.
+    fn retry_at(&self, error: &ProviderError, attempt: u32) -> Option<i64> {
+        let wait = error.retry_after()?;
+        (wait > step(attempt)).then(|| {
+            self.clock
+                .now_ms()
+                .saturating_add(i64::try_from(wait.as_millis()).unwrap_or(i64::MAX))
+        })
+    }
+}
+
+/// The ladder's delay after the `attempt`th try, before jitter.
+fn step(attempt: u32) -> Duration {
+    BACKOFF_FIRST
+        .saturating_mul(1_u32 << attempt.saturating_sub(1).min(30))
+        .min(BACKOFF_CAP)
+}
+
+fn fail(code: &'static str) -> Outcome {
+    Outcome::Fail { code }
+}
+
+fn retry(code: &'static str, at: Option<i64>) -> Outcome {
+    Outcome::Retry { code, at }
+}
+
+/// A failed store read: busy waits without spending the try.
+fn store_failed(error: &DbError) -> Outcome {
+    if matches!(error, DbError::Busy { .. }) {
+        return Outcome::Busy;
+    }
+    tracing::warn!(%error, "scrobble job could not read its play");
+    retry(STORE_FAILED, None)
+}
+
+/// The recording id as both services take it: a UUID, else nothing.
+fn recording(mbid: Option<&str>) -> Option<String> {
+    AdditionalInfo::of(0, mbid).and_then(|info| info.recording_mbid)
+}
+
+fn metadata(
+    artist: &str,
+    track: &str,
+    album: Option<&str>,
+    duration_ms: i64,
+    recording_mbid: Option<&str>,
+) -> TrackMetadata {
+    TrackMetadata {
+        artist_name: artist.to_owned(),
+        track_name: track.to_owned(),
+        release_name: album.filter(|name| !name.is_empty()).map(str::to_owned),
+        additional_info: AdditionalInfo::of(duration_ms, recording_mbid),
+    }
+}
+
+fn credentials(session: &LastFmSession) -> LastFmCredentials {
+    LastFmCredentials {
+        api_key: session.api_key.clone(),
+        shared_secret: session.shared_secret.clone(),
+        username: None,
+        session_key: Some(session.session_key.clone()),
+    }
+}
+
+/// One service's latest now-playing report per user.
+#[derive(Default)]
+struct Slot {
+    latest: Mutex<HashMap<String, ReportTrack>>,
+    ready: Notify,
+}
+
+impl Slot {
+    fn put(&self, user_id: &str, track: &ReportTrack) {
+        if let Ok(mut latest) = self.latest.lock() {
+            latest.insert(user_id.to_owned(), track.clone());
+        }
+        self.ready.notify_one();
+    }
+
+    fn take(&self) -> Vec<(String, ReportTrack)> {
+        self.latest
+            .lock()
+            .map(|mut latest| latest.drain().collect())
+            .unwrap_or_default()
+    }
+}
+
+/// The production now-playing sink: keeps each linked, wanted service's
+/// latest report per user for [`NowPlayingWorker`] to send.
+pub struct NowPlayingSender {
+    slots: [Arc<Slot>; 2],
     store: Arc<PlaybackStore>,
     lastfm_switch: Arc<dyn LastFmSwitch>,
 }
 
-impl ScrobbleForwarder {
-    /// Build the sink and the queues its worker drains. Links and
-    /// credentials are read from `links`; Last.fm forwards also need the
-    /// admin's Last.fm master switch on.
+/// The slots the worker drains.
+pub struct NowPlayingSlots {
+    slots: [Arc<Slot>; 2],
+}
+
+impl NowPlayingSender {
+    /// The sink and the slots its worker drains. Links are read from
+    /// `store`; Last.fm also needs the admin's switch on.
     pub fn channel(
-        links: Arc<PlaybackStore>,
+        store: Arc<PlaybackStore>,
         lastfm_switch: Arc<dyn LastFmSwitch>,
-    ) -> (Self, ForwardQueues) {
-        let (lastfm_tx, lastfm) = tokio::sync::mpsc::channel(FORWARD_QUEUE_DEPTH);
-        let (listenbrainz_tx, listenbrainz) = tokio::sync::mpsc::channel(FORWARD_QUEUE_DEPTH);
+    ) -> (Self, NowPlayingSlots) {
+        let slots = [Arc::new(Slot::default()), Arc::new(Slot::default())];
         (
             Self {
-                lastfm_tx,
-                listenbrainz_tx,
-                links: links.clone(),
-                lastfm_switch: lastfm_switch.clone(),
-            },
-            ForwardQueues {
-                lastfm,
-                listenbrainz,
-                store: links,
+                slots: slots.clone(),
+                store,
                 lastfm_switch,
             },
+            NowPlayingSlots { slots },
         )
-    }
-
-    fn enqueue(
-        &self,
-        user_id: &str,
-        track: &ReportTrack,
-        targets: ScrobbleTargets,
-        kind: ForwardKind,
-    ) -> HashMap<String, ServiceOutcome> {
-        let mut linked = self.links.linked(user_id);
-        linked.lastfm &= self.lastfm_switch.enabled();
-        let mut outcomes = HashMap::new();
-        for (service, wanted, has_link) in [
-            (Service::LastFm, targets.lastfm, linked.lastfm),
-            (
-                Service::ListenBrainz,
-                targets.listenbrainz,
-                linked.listenbrainz,
-            ),
-        ] {
-            if !wanted || !has_link {
-                continue;
-            }
-            let job = ForwardJob {
-                user_id: user_id.to_owned(),
-                service,
-                kind,
-                track: track.clone(),
-                attempt: 0,
-            };
-            let tx = match service {
-                Service::LastFm => &self.lastfm_tx,
-                Service::ListenBrainz => &self.listenbrainz_tx,
-            };
-            let outcome = match tx.try_send(job) {
-                Ok(()) => ServiceOutcome {
-                    success: true,
-                    error: None,
-                },
-                Err(_) => {
-                    tracing::warn!(
-                        service = service.as_str(),
-                        "scrobble forward queue full; dropping the forward"
-                    );
-                    ServiceOutcome {
-                        success: false,
-                        error: Some("Forwarding is busy; try again shortly".to_owned()),
-                    }
-                }
-            };
-            outcomes.insert(service.as_str().to_owned(), outcome);
-        }
-        outcomes
     }
 }
 
-impl ScrobbleSinks for ScrobbleForwarder {
+impl ScrobbleSinks for NowPlayingSender {
     fn report_now_playing(
         &self,
         user_id: &str,
         track: &ReportTrack,
         targets: ScrobbleTargets,
-    ) -> HashMap<String, ServiceOutcome> {
-        self.enqueue(user_id, track, targets, ForwardKind::NowPlaying)
+    ) -> ScrobbleTargets {
+        let mut linked = self.store.linked(user_id);
+        linked.lastfm &= self.lastfm_switch.enabled();
+        let handed = targets.and(linked);
+        for (service, slot) in Service::ALL.into_iter().zip(&self.slots) {
+            if handed.wants(service) {
+                slot.put(user_id, track);
+            }
+        }
+        handed
+    }
+}
+
+/// Sends the latest now-playing reports, once each, until the stop.
+pub struct NowPlayingWorker {
+    slots: NowPlayingSlots,
+    courier: Arc<Courier>,
+}
+
+impl NowPlayingWorker {
+    /// The worker over the sender's slots, sending through `courier`.
+    pub fn new(slots: NowPlayingSlots, courier: Arc<Courier>) -> Self {
+        Self { slots, courier }
     }
 
-    fn submit_scrobble(
-        &self,
-        user_id: &str,
-        track: &ReportTrack,
-        targets: ScrobbleTargets,
-    ) -> HashMap<String, ServiceOutcome> {
-        self.enqueue(user_id, track, targets, ForwardKind::Scrobble)
-    }
-}
-
-/// How one delivery ended.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Delivery {
-    /// The service took it.
-    Done,
-    /// A passing failure; try again after the hinted delay, if any.
-    Retry(Option<Duration>, String),
-    /// A failure retrying cannot fix.
-    Drop(String),
-}
-
-/// Drains the forward queues until every sink handle drops.
-pub struct ForwardWorker {
-    queues: ForwardQueues,
-    courier: Courier,
-}
-
-/// Makes the upstream calls; shared by both service lanes. Credentials are
-/// read per job, so a link made or removed since the play counts.
-struct Courier {
-    listenbrainz: ListenBrainzClient,
-    lastfm: LastFmClient,
-    store: Arc<PlaybackStore>,
-    lastfm_switch: Arc<dyn LastFmSwitch>,
-}
-
-impl ForwardWorker {
-    /// Build the worker over the forwarder's queues, sending through the
-    /// one ListenBrainz client and the one Last.fm client.
-    pub fn new(
-        queues: ForwardQueues,
-        listenbrainz: ListenBrainzClient,
-        lastfm: LastFmClient,
-    ) -> Self {
-        let courier = Courier {
-            listenbrainz,
-            lastfm,
-            store: queues.store.clone(),
-            lastfm_switch: queues.lastfm_switch.clone(),
-        };
-        Self { queues, courier }
-    }
-
-    /// Deliver both services' jobs side by side, each paced by its own
-    /// client, until the queues close or `stop` is cancelled; what was
-    /// queued before the stop is still delivered.
+    /// Send each service's reports side by side until `stop`; what is
+    /// still waiting then is dropped.
     pub async fn run(self, stop: CancellationToken) {
-        let Self { queues, courier } = self;
+        let Self { slots, courier } = self;
+        let [lastfm, listenbrainz] = slots.slots;
         tokio::join!(
-            lane(&courier, Service::LastFm, queues.lastfm, &stop),
-            lane(&courier, Service::ListenBrainz, queues.listenbrainz, &stop),
+            now_playing_lane(&courier, Service::LastFm, &lastfm, &stop),
+            now_playing_lane(&courier, Service::ListenBrainz, &listenbrainz, &stop),
         );
     }
 }
 
-/// One service's delivery loop: jobs in order, retries held until they
-/// come due.
-async fn lane(
+async fn now_playing_lane(
     courier: &Courier,
     service: Service,
-    mut rx: tokio::sync::mpsc::Receiver<ForwardJob>,
+    slot: &Slot,
     stop: &CancellationToken,
 ) {
-    let mut retries: Vec<(Instant, ForwardJob)> = Vec::new();
     loop {
-        let next_due = retries.iter().map(|(due, _)| *due).min();
-        let job = tokio::select! {
-            received = super::reports::next_queued(&mut rx, stop) => match received {
-                Some(job) => job,
-                None => break,
-            },
-            () = sleep_until(next_due), if next_due.is_some() => {
-                let now = Instant::now();
-                let Some(index) = retries.iter().position(|(due, _)| *due <= now) else {
-                    continue;
-                };
-                retries.swap_remove(index).1
-            }
-        };
-        let mut job = job;
-        job.attempt += 1;
-        match courier.deliver(&job).await {
-            Delivery::Done => {}
-            Delivery::Retry(hint, cause) if job.attempt < job.kind.attempts() => {
-                let delay = hint.unwrap_or_else(|| backoff(job.attempt));
-                tracing::debug!(
-                    service = job.service.as_str(),
-                    attempt = job.attempt,
-                    %cause,
-                    "scrobble forward failed; retrying"
-                );
-                retries.push((Instant::now() + delay, job));
-            }
-            Delivery::Retry(_, cause) => tracing::warn!(
-                service = job.service.as_str(),
-                attempts = job.attempt,
-                kind = ?job.kind,
-                %cause,
-                "scrobble forward failed; giving up"
-            ),
-            Delivery::Drop(cause) => tracing::warn!(
-                service = job.service.as_str(),
-                kind = ?job.kind,
-                %cause,
-                "scrobble forward refused; dropping it"
-            ),
+        tokio::select! {
+            biased;
+            () = stop.cancelled() => return,
+            () = slot.ready.notified() => {}
         }
-    }
-    if !retries.is_empty() {
-        tracing::warn!(
-            service = service.as_str(),
-            pending = retries.len(),
-            "scrobble forwarding stopped with retries pending; they are dropped"
-        );
+        for (user_id, track) in slot.take() {
+            if stop.is_cancelled() {
+                return;
+            }
+            courier.now_playing(service, &user_id, &track).await;
+        }
     }
 }
 
 impl Courier {
-    async fn deliver(&self, job: &ForwardJob) -> Delivery {
-        match job.service {
+    /// Send one now-playing report, once. A failure is only logged: a late
+    /// one would be wrong.
+    async fn now_playing(&self, service: Service, user_id: &str, track: &ReportTrack) {
+        let sent = match service {
             Service::ListenBrainz => {
-                let Some(token) = self.store.listenbrainz_token(&job.user_id) else {
-                    return Delivery::Drop("ListenBrainz is not linked".to_owned());
+                let Some(token) = self.store.listenbrainz_token(user_id) else {
+                    return;
                 };
-                self.listenbrainz(job, &token).await
+                let body = SubmitListens {
+                    listen_type: "playing_now",
+                    payload: vec![Listen {
+                        listened_at: None,
+                        track_metadata: metadata(
+                            &track.artist_name,
+                            &track.track_name,
+                            track.album_name.as_deref(),
+                            track.duration_ms,
+                            track.mbid.as_deref(),
+                        ),
+                    }],
+                };
+                let Ok(body) = serde_json::to_vec(&body) else {
+                    return;
+                };
+                self.listenbrainz
+                    .submit_listens(&token, body, RequestPriority::BackgroundSync)
+                    .await
             }
             Service::LastFm => {
                 let Some(session) = self
                     .store
-                    .lastfm_session(&job.user_id, self.lastfm_switch.as_ref())
+                    .lastfm_session(user_id, self.lastfm_switch.as_ref())
                 else {
-                    return Delivery::Drop("Last.fm is not linked".to_owned());
+                    return;
                 };
-                self.lastfm(job, &session).await
+                let duration = (track.duration_ms / 1_000).to_string();
+                let mut params: Vec<(&str, &str)> =
+                    vec![("artist", &track.artist_name), ("track", &track.track_name)];
+                if let Some(album) = track.album_name.as_deref().filter(|name| !name.is_empty()) {
+                    params.push(("album", album));
+                }
+                if track.duration_ms >= 1_000 {
+                    params.push(("duration", &duration));
+                }
+                self.lastfm
+                    .submit(
+                        "track.updateNowPlaying",
+                        &credentials(&session),
+                        &params,
+                        RequestPriority::BackgroundSync,
+                    )
+                    .await
             }
-        }
-    }
-
-    async fn listenbrainz(&self, job: &ForwardJob, token: &str) -> Delivery {
-        let track = &job.track;
-        let body = SubmitListens {
-            listen_type: match job.kind {
-                ForwardKind::NowPlaying => "playing_now",
-                ForwardKind::Scrobble => "single",
-            },
-            payload: vec![Listen {
-                listened_at: match job.kind {
-                    ForwardKind::NowPlaying => None,
-                    ForwardKind::Scrobble => track.played_at,
-                },
-                track_metadata: TrackMetadata {
-                    artist_name: track.artist_name.clone(),
-                    track_name: track.track_name.clone(),
-                    release_name: track.album_name.clone().filter(|name| !name.is_empty()),
-                    additional_info: (track.duration_ms > 0).then_some(AdditionalInfo {
-                        duration_ms: track.duration_ms,
-                    }),
-                },
-            }],
         };
-        let Ok(payload) = serde_json::to_vec(&body) else {
-            return Delivery::Drop("listen body failed to render".to_owned());
-        };
-        match self
-            .listenbrainz
-            .submit_listens(token, payload, RequestPriority::BackgroundSync)
-            .await
-        {
-            Ok(()) => Delivery::Done,
-            Err(ProviderError::Invalid { .. }) => {
-                Delivery::Drop("stored ListenBrainz token is not header-safe".to_owned())
-            }
-            // A passing failure, or an endpoint switched off for now: the
-            // queue's own ladder tries again, after the wait ListenBrainz
-            // named, if any.
-            Err(error)
-                if error.is_retriable() || matches!(error, ProviderError::Disabled { .. }) =>
-            {
-                Delivery::Retry(
-                    error.retry_after().map(|wait| wait.min(MAX_BACKOFF)),
-                    error.to_string(),
-                )
-            }
-            Err(error) => Delivery::Drop(format!("ListenBrainz refused the listen: {error}")),
+        if let Err(error) = sent {
+            tracing::debug!(service = service.as_str(), %error, "now-playing report not sent");
         }
-    }
-
-    async fn lastfm(&self, job: &ForwardJob, session: &LastFmSession) -> Delivery {
-        let track = &job.track;
-        let method = match job.kind {
-            ForwardKind::NowPlaying => "track.updateNowPlaying",
-            ForwardKind::Scrobble => "track.scrobble",
-        };
-        let timestamp;
-        let duration;
-        let mut params: Vec<(&str, &str)> =
-            vec![("artist", &track.artist_name), ("track", &track.track_name)];
-        if job.kind == ForwardKind::Scrobble {
-            let Some(played_at) = track.played_at else {
-                return Delivery::Drop("scrobble has no play time".to_owned());
-            };
-            timestamp = played_at.to_string();
-            params.push(("timestamp", &timestamp));
-        }
-        if let Some(album) = track.album_name.as_deref().filter(|name| !name.is_empty()) {
-            params.push(("album", album));
-        }
-        if track.duration_ms >= 1_000 {
-            duration = (track.duration_ms / 1_000).to_string();
-            params.push(("duration", &duration));
-        }
-        if let Some(mbid) = track.mbid.as_deref().filter(|mbid| !mbid.is_empty()) {
-            params.push(("mbid", mbid));
-        }
-        let creds = LastFmCredentials {
-            api_key: session.api_key.clone(),
-            shared_secret: session.shared_secret.clone(),
-            username: None,
-            session_key: Some(session.session_key.clone()),
-        };
-        match self
-            .lastfm
-            .submit(method, &creds, &params, RequestPriority::BackgroundSync)
-            .await
-        {
-            Ok(()) => Delivery::Done,
-            // No answer, a server error, a rate limit (HTTP 429 or error
-            // 29), Last.fm offline for now (errors 11 and 16) or an answer
-            // too large to read: the queue's own ladder tries again. A wait
-            // Last.fm named counts only when it is longer than the ladder's
-            // own step.
-            Err(error)
-                if error.is_retriable()
-                    || matches!(
-                        error,
-                        ProviderError::Payload {
-                            kind: PayloadKind::TooLarge,
-                            ..
-                        }
-                    ) =>
-            {
-                Delivery::Retry(
-                    error
-                        .retry_after()
-                        .map(|wait| wait.max(backoff(job.attempt)).min(MAX_BACKOFF)),
-                    error.to_string(),
-                )
-            }
-            Err(error) => Delivery::Drop(format!("Last.fm refused the scrobble: {error}")),
-        }
-    }
-}
-
-/// Retry delay for the nth failed try: 5s, 15s, 45s, ... capped at five
-/// minutes, plus up to a second of jitter.
-fn backoff(attempt: u32) -> Duration {
-    let factor = 3u32.saturating_pow(attempt.saturating_sub(1));
-    let base = BASE_BACKOFF.saturating_mul(factor).min(MAX_BACKOFF);
-    let mut jitter = [0u8; 2];
-    let jitter_ms = if getrandom::fill(&mut jitter).is_ok() {
-        u64::from(u16::from_le_bytes(jitter)) % 1_000
-    } else {
-        0
-    };
-    base + Duration::from_millis(jitter_ms)
-}
-
-async fn sleep_until(due: Option<Instant>) {
-    match due {
-        Some(due) => tokio::time::sleep_until(due).await,
-        None => std::future::pending::<()>().await,
     }
 }

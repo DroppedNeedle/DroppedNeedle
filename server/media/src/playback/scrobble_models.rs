@@ -1,12 +1,18 @@
-//! Wire shapes for scrobble forwarding to ListenBrainz and Last.fm.
+//! Wire shapes for scrobble forwarding to ListenBrainz. Last.fm takes form
+//! parameters, and its answers are read by its client.
 //!
 //! ListenBrainz takes a JSON body on `POST /1/submit-listens`; the fields
 //! and the `playing_now`/`single` listen types follow v2's repository and
-//! the ListenBrainz API docs. Last.fm takes form parameters on
-//! `POST /2.0/` and reports application errors as HTTP 200 bodies with an
-//! integer `error` code, so the error body is the one shape we decode.
+//! the submission format at
+//! https://listenbrainz.readthedocs.io/en/latest/users/json.html, read
+//! 2026-10-21: `listened_at` is the play's start in unix seconds and is
+//! left out for `playing_now`; `additional_info` takes `duration_ms` and
+//! `recording_mbid` ("A MusicBrainz Recording ID of the recording that was
+//! played"), among others. The server refuses an id that is not a UUID
+//! with a 400 ("recording_mbid MBID format invalid."), so only a UUID is
+//! sent.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// `POST /1/submit-listens` body.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -37,7 +43,7 @@ pub struct TrackMetadata {
     /// Album title, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release_name: Option<String>,
-    /// Duration, when known.
+    /// Length and recording, when either is known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub additional_info: Option<AdditionalInfo>,
 }
@@ -46,15 +52,23 @@ pub struct TrackMetadata {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AdditionalInfo {
     /// Track length in milliseconds.
-    pub duration_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    /// The MusicBrainz recording played.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording_mbid: Option<String>,
 }
 
-/// A Last.fm application error. Success bodies carry no `error` field.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct LastFmError {
-    /// Last.fm error code.
-    pub error: i64,
-    /// Human message.
-    #[serde(default)]
-    pub message: String,
+impl AdditionalInfo {
+    /// The extras worth sending: a positive length and a recording id that
+    /// is a UUID. `None` when neither is.
+    pub fn of(duration_ms: i64, recording_mbid: Option<&str>) -> Option<Self> {
+        let info = Self {
+            duration_ms: (duration_ms > 0).then_some(duration_ms),
+            recording_mbid: recording_mbid
+                .and_then(|mbid| uuid::Uuid::parse_str(mbid.trim()).ok())
+                .map(|mbid| mbid.hyphenated().to_string()),
+        };
+        (info.duration_ms.is_some() || info.recording_mbid.is_some()).then_some(info)
+    }
 }

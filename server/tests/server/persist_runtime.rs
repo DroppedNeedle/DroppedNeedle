@@ -819,6 +819,10 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
         Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_kernel::jobs::queue::JobQueue::new(
+            runtime.db().clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
     );
     let (held_tx, held_rx) = std::sync::mpsc::channel();
     let holder_db = runtime.db().clone();
@@ -845,6 +849,7 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
             source: None,
             played_at: 1_700_000_000,
         },
+        Default::default(),
     );
     holder.join().unwrap().unwrap();
     let plays: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_play_history")

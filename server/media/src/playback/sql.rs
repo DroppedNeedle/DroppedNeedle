@@ -31,6 +31,9 @@ droppedneedle_kernel::sql! {
          FROM (SELECT 1) \
          LEFT JOIN local_tracks t ON t.id = ?3 \
          LEFT JOIN local_albums a ON a.id = t.local_album_id";
+    /// One play as a scrobble of it is sent.
+    pub(super) PLAY = "SELECT user_id, track_name, artist_name, album_name, recording_mbid, \
+         duration_ms, played_at FROM library_play_history WHERE id = ?1";
     /// One user's listening preferences.
     pub(super) PREFS = "SELECT scrobble_to_lastfm, scrobble_to_listenbrainz, \
          navidrome_handles_external_scrobbles, primary_music_source, \

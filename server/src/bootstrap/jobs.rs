@@ -269,11 +269,18 @@ pub struct JobsSetup {
 /// The jobs table handle the areas enqueue through, built once beside the
 /// supervisor. Under test hooks its clock is a manual one and it carries
 /// the scripted test kind.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct QueueSetup {
     queue: JobQueue,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     #[cfg(any(test, feature = "test-support"))]
     scripted: Option<scripted::ScriptedJobs>,
+}
+
+impl std::fmt::Debug for QueueSetup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("QueueSetup").finish_non_exhaustive()
+    }
 }
 
 impl QueueSetup {
@@ -287,11 +294,13 @@ impl QueueSetup {
             let clock = ManualClock::at(SystemClock.now_ms());
             return Self {
                 queue: JobQueue::new(db, Arc::new(clock.clone())),
+                clock: Arc::new(clock.clone()),
                 scripted: Some(scripted::ScriptedJobs::new(clock)),
             };
         }
         Self {
             queue: JobQueue::new(db, platform.clock.clone()),
+            clock: platform.clock.clone(),
             #[cfg(any(test, feature = "test-support"))]
             scripted: None,
         }
@@ -300,6 +309,12 @@ impl QueueSetup {
     /// The jobs table.
     pub fn queue(&self) -> &JobQueue {
         &self.queue
+    }
+
+    /// The clock the jobs table runs on, for a handler that measures time
+    /// against its jobs' due times.
+    pub fn clock(&self) -> Arc<dyn droppedneedle_kernel::clock::Clock> {
+        self.clock.clone()
     }
 }
 
@@ -354,6 +369,12 @@ impl JobsSetup {
         self.handlers = self.handlers.with(spec, handler);
         self.kinds += 1;
         self
+    }
+
+    /// Register several kinds' handlers, as [`JobsSetup::with_job`] does.
+    pub fn with_jobs(self, jobs: Vec<(KindSpec, Arc<dyn JobHandler>)>) -> Self {
+        jobs.into_iter()
+            .fold(self, |setup, (spec, handler)| setup.with_job(spec, handler))
     }
 
     /// The jobs table, once [`JobsSetup::with_queue`] gave it one.

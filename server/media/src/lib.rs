@@ -5,9 +5,10 @@
 //! connections and Navidrome folder preferences are SQLite rows; the admin
 //! servers are read from the config store on every call. Playback catalog,
 //! history, listening preferences, links and display names read the
-//! database through the one playback store. Remote attribution and scrobble
-//! forwarding drain through [`MediaWorkers`], one job on the loop
-//! supervisor.
+//! database through the one playback store. Remote attribution and
+//! now-playing reports drain through [`MediaWorkers`], one job on the loop
+//! supervisor. Scrobbles wait as jobs on the jobs table; their handlers are
+//! [`MediaSetup::scrobble_jobs`], registered by the builder.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -22,7 +23,7 @@ use std::sync::Arc;
 use axum::extract::FromRef;
 
 use crate::playback::PlaybackDeps;
-use crate::playback::forwarding::{ForwardWorker, ScrobbleForwarder};
+use crate::playback::forwarding::{Courier, NowPlayingSender, NowPlayingWorker, ScrobbleJobs};
 use crate::playback::listening_routes::{ListeningDeps, MixGrants};
 use crate::playback::presence::PresenceRegistry;
 use crate::playback::report::{MixedDedup, ScrobbleDedup};
@@ -46,8 +47,10 @@ use crate::stream::transcode::{
     FfmpegTranscoder, LocalTranscodeGate, OutFormat, StdFfmpegSpawner, TranscodeSettings,
 };
 use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::jobs::CancellationToken;
+use droppedneedle_kernel::jobs::queue::{JobHandler, JobQueue, KindSpec};
 use droppedneedle_kernel::mount::Routes;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Live;
@@ -72,6 +75,8 @@ pub struct MediaSetup {
     pub playback: PlaybackDeps,
     /// Listening-settings route deps.
     pub listening: ListeningDeps,
+    /// The scrobble job handlers, one per service.
+    scrobble_jobs: Vec<(KindSpec, Arc<dyn JobHandler>)>,
 }
 
 /// The media drains' name on the supervisor.
@@ -80,24 +85,24 @@ pub const MEDIA_WORKERS: &str = "media-workers";
 /// Every always-on media loop, by name.
 pub const LOOPS: &[&str] = &[MEDIA_WORKERS];
 
-/// The media background drains: remote attribution and scrobble
-/// forwarding, one [`MEDIA_WORKERS`] job on the supervisor. Both end on the
-/// stop after delivering what was queued, or once every queue handle in
-/// the app drops.
+/// The media background drains: remote attribution and now-playing
+/// reports, one [`MEDIA_WORKERS`] job on the supervisor. Attribution ends
+/// on the stop after delivering what was queued, or once every queue handle
+/// in the app drops; now-playing reports still waiting at the stop are
+/// dropped, as a late one would be wrong.
 pub struct MediaWorkers {
     reports: tokio::sync::mpsc::Receiver<crate::playback::reports::QueuedReport>,
     http: reqwest::Client,
     resolver: Arc<ConnectionResolver>,
-    forwards: ForwardWorker,
+    now_playing: NowPlayingWorker,
 }
 
 impl MediaWorkers {
-    /// Drain both queues until `stop` is cancelled or the app drops its
-    /// handles.
+    /// Drain both until `stop` is cancelled.
     pub async fn run(self, stop: CancellationToken) {
         tokio::join!(
             run_report_worker(self.reports, self.http, self.resolver, stop.clone()),
-            self.forwards.run(stop),
+            self.now_playing.run(stop),
         );
     }
 }
@@ -115,11 +120,12 @@ impl MediaSetup {
     /// accepted plays and serves `streaming_source` plugin streams;
     /// `plex_tv` is the plex.tv root; `ffmpeg` is the program transcodes
     /// run, and with none the server streams every file as it is;
-    /// scrobbles are forwarded through the one ListenBrainz client and the
-    /// one Last.fm client of `providers`, and that ListenBrainz client
-    /// checks a link before it is stored;
-    /// `mix` is the personal-mix standing grant the listening settings
-    /// report and feed.
+    /// scrobbles and now-playing reports go through the one ListenBrainz
+    /// client and the one Last.fm client of `providers`, and that
+    /// ListenBrainz client checks a link before it is stored; `mix` is the
+    /// personal-mix standing grant the listening settings report and feed.
+    /// Scrobbles wait on `jobs`, whose clock `jobs_clock` measures their
+    /// window.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         platform: &Platform,
@@ -131,6 +137,8 @@ impl MediaSetup {
         ffmpeg: Option<PathBuf>,
         providers: &droppedneedle_providers::Providers,
         mix: Arc<dyn MixGrants>,
+        jobs: JobQueue,
+        jobs_clock: Arc<dyn Clock>,
     ) -> Result<(Self, MediaWorkers), String> {
         let (db, app_config, config) = (&platform.db, &platform.config, &*platform.settings);
         let (http_factory, ids, crypto) = (
@@ -187,15 +195,18 @@ impl MediaSetup {
             ids,
             crypto,
             platform.clock.clone(),
+            jobs,
         ));
         let (queue, rx) = ReportQueue::channel();
-        let (forwarder, forwards) =
-            ScrobbleForwarder::channel(store.clone(), users.lastfm_switch.clone());
-        let forwards = ForwardWorker::new(
-            forwards,
+        let courier = Courier::new(
             providers.listenbrainz.clone(),
             providers.lastfm.clone(),
+            store.clone(),
+            users.lastfm_switch.clone(),
+            jobs_clock,
         );
+        let (now_playing, slots) =
+            NowPlayingSender::channel(store.clone(), users.lastfm_switch.clone());
         let presence = PresenceRegistry::new(platform.events.clone());
         let listening = ListeningDeps {
             store: store.listening().clone(),
@@ -205,7 +216,8 @@ impl MediaSetup {
         };
         let playback = PlaybackDeps {
             store,
-            sinks: Arc::new(forwarder),
+            sinks: Arc::new(now_playing),
+            lastfm_switch: users.lastfm_switch.clone(),
             remotes: Arc::new(queue),
             sessions: SessionStore::new(),
             presence,
@@ -218,7 +230,7 @@ impl MediaSetup {
             reports: rx,
             http,
             resolver,
-            forwards,
+            now_playing: NowPlayingWorker::new(slots, courier.clone()),
         };
         Ok((
             Self {
@@ -227,9 +239,16 @@ impl MediaSetup {
                 download,
                 playback,
                 listening,
+                scrobble_jobs: ScrobbleJobs::handlers(&courier),
             },
             worker,
         ))
+    }
+
+    /// The scrobble job kinds and their handlers, for the builder to
+    /// register with the jobs table.
+    pub fn scrobble_jobs(&self) -> Vec<(KindSpec, Arc<dyn JobHandler>)> {
+        self.scrobble_jobs.clone()
     }
 }
 

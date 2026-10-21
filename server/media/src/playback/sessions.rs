@@ -356,7 +356,7 @@ pub fn stop_playback(
             scrobbled: false,
         });
     }
-    submit_session_scrobble(
+    let counted = submit_session_scrobble(
         deps,
         user_id,
         &key,
@@ -366,6 +366,13 @@ pub fn stop_playback(
         Some(finish.started_at),
         now,
     );
+    // A play that was not saved is not scrobbled: a stop sent again counts it.
+    if !counted.accepted {
+        return Ok(PlaybackStopResponse {
+            accepted: true,
+            scrobbled: false,
+        });
+    }
     deps.sessions.mark_submitted(&key);
     attribute(deps, source.as_deref(), |remotes, source| {
         remotes.scrobble(source, &report)

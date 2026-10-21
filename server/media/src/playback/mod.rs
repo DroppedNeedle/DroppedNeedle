@@ -7,6 +7,8 @@
 //! count a scrobble past threshold. Direct submits and now-playing forwards
 //! carry the by-name native path to Last.fm/ListenBrainz. Presence writes
 //! and the live snapshot live here too, backed by the in-memory registry.
+//! A counted play is written with one scrobble job per service it goes
+//! to, so a scrobble survives a restart and a service outage.
 //!
 //! ## V2 rule map
 //!
@@ -42,8 +44,9 @@
 //!
 //! The 4s presence poll loop (v2 `run_now_playing_presence_loop`) lives in
 //! `jobs::presence`; `remotes::presence_feed` feeds it this registry and the
-//! Jellyfin/Navidrome/Plex session pollers. Scrobble forwarding to Last.fm
-//! and ListenBrainz drains through `forwarding`. Not built yet: the SSE
+//! Jellyfin/Navidrome/Plex session pollers. Scrobble jobs and now-playing
+//! reports to Last.fm and ListenBrainz are sent by `forwarding`. Not built
+//! yet: the SSE
 //! fan-out that would consume the registry's generation.
 
 pub mod error;
@@ -66,6 +69,7 @@ pub mod warmup;
 
 use std::sync::Arc;
 
+use droppedneedle_auth::users::stores::LastFmSwitch;
 use droppedneedle_kernel::clock::Clock;
 
 pub use handlers::routes;
@@ -85,8 +89,10 @@ use sqlite::PlaybackStore;
 pub struct PlaybackDeps {
     /// Tracks, play history, listening preferences and display names.
     pub store: Arc<PlaybackStore>,
-    /// External scrobble sinks (Last.fm / ListenBrainz).
+    /// External now-playing sinks (Last.fm / ListenBrainz).
     pub sinks: Arc<dyn ScrobbleSinks>,
+    /// The admin's Last.fm switch: plays go to Last.fm only while it is on.
+    pub lastfm_switch: Arc<dyn LastFmSwitch>,
     /// Outbound remote attribution (Jellyfin / Navidrome / Plex).
     pub remotes: Arc<dyn RemoteReporters>,
     /// Bounded playback sessions.

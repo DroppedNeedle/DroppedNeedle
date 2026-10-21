@@ -7,7 +7,7 @@
 //! fallible method returns a plain string cause: provider detail stays in
 //! the log, never on the wire.
 
-use std::collections::HashMap;
+use super::forwarding::Service;
 
 /// Failure talking to a provider. The string is a log-only cause.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,15 +59,6 @@ pub struct ReportTrack {
     pub played_at: Option<i64>,
 }
 
-/// Outcome of one external forward.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServiceOutcome {
-    /// True when that service accepted the report.
-    pub success: bool,
-    /// Failure text, when the service refused or errored.
-    pub error: Option<String>,
-}
-
 /// Which external services one forward may go to, from the user's
 /// scrobble preferences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -83,27 +74,38 @@ impl ScrobbleTargets {
     pub fn is_empty(self) -> bool {
         !self.lastfm && !self.listenbrainz
     }
+
+    /// Whether `service` is wanted.
+    pub fn wants(self, service: Service) -> bool {
+        match service {
+            Service::LastFm => self.lastfm,
+            Service::ListenBrainz => self.listenbrainz,
+        }
+    }
+
+    /// The services both sets want.
+    #[must_use]
+    pub fn and(self, other: Self) -> Self {
+        Self {
+            lastfm: self.lastfm && other.lastfm,
+            listenbrainz: self.listenbrainz && other.listenbrainz,
+        }
+    }
 }
 
-/// External scrobble sinks (Last.fm / ListenBrainz). Sinks forward only to
-/// the `targets` asked for, and only for accounts the user linked. The map
-/// key is the service name; an empty map means no linked account, not a
-/// failure. A trait because it stands for two outside services.
+/// External now-playing sinks (Last.fm / ListenBrainz). A report goes only
+/// to the `targets` asked for, and only to accounts the user linked; the
+/// answer is the services it was handed to. Scrobbles do not come here:
+/// they wait as jobs written with the play. A trait because it stands for
+/// two outside services.
 pub trait ScrobbleSinks: Send + Sync {
-    /// Forward a now-playing report for the user's linked accounts.
+    /// Hand a now-playing report on for the user's linked accounts.
     fn report_now_playing(
         &self,
         user_id: &str,
         track: &ReportTrack,
         targets: ScrobbleTargets,
-    ) -> HashMap<String, ServiceOutcome>;
-    /// Forward one scrobble for the user's linked accounts.
-    fn submit_scrobble(
-        &self,
-        user_id: &str,
-        track: &ReportTrack,
-        targets: ScrobbleTargets,
-    ) -> HashMap<String, ServiceOutcome>;
+    ) -> ScrobbleTargets;
 }
 
 /// One outbound session report to a remote music server.

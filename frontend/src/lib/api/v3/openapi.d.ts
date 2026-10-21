@@ -21177,9 +21177,10 @@ export interface components {
         /** @description Answer to a scrobble or now-playing forward (v2 `ScrobbleResponse`). */
         ScrobbleResponse: {
             /**
-             * @description Whether the play counted. Submit is true whenever history recorded,
-             *     even with no linked account; now-playing is true only when at least
-             *     one service queued it (the v2 accepted-quirk, kept).
+             * @description Whether the play counted. Submit is true when history recorded it,
+             *     even with no linked account, and false when the play could not be
+             *     saved; now-playing is true only when at least one service has it
+             *     (the v2 accepted-quirk, kept).
              */
             accepted: boolean;
             /** @description Per-service outcomes, keyed by service name. */
@@ -21580,18 +21581,18 @@ export interface components {
             title: string;
         };
         /**
-         * @description Per-service forwarding outcome (v2 `ServiceResult`). Forwarding runs in
-         *     the background, so `success` means the report was queued for delivery,
-         *     not that the service has accepted it (v2 waited for the service).
+         * @description Per-service forwarding outcome. Delivery runs in the background, so this
+         *     says the report is waiting to be sent, not that the service took it.
          */
         ServiceResult: {
-            /** @description Why the report was not queued (the forwarding queue was full). */
+            /** @description Why the report is not waiting (the play was not saved). */
             error?: string | null;
             /**
-             * @description True when the report was queued for that service. Delivery happens
-             *     afterwards with retries; a later refusal is logged, not reported.
+             * @description True when the report is waiting for that service. A scrobble waits
+             *     in a kept queue and is sent, retried while the service is down,
+             *     within two weeks of the play; a now-playing report is sent once.
              */
-            success: boolean;
+            queued: boolean;
         };
         /**
          * @description Session kind, v2 `session_kind` values kept verbatim.
