@@ -9,7 +9,9 @@
 //! - enqueue: queued tasks below the concurrency cap search and enqueue
 //!   through the source order, journaling each attempt;
 //! - poll: live attempts report progress through the [`Watchdog`], whose
-//!   verdicts complete, fail over, or requeue their tasks;
+//!   verdicts complete, fail over, or requeue their tasks. Each source is
+//!   polled side by side with the others, and a client that stops
+//!   answering is polled again only after a jittered backoff;
 //! - retry: terminal tasks whose backoff elapsed spawn successors;
 //! - cleanup: claimed journal rows abort and discard client records and
 //!   settle; downloads whose cleanup keeps failing show on service health;
@@ -81,6 +83,14 @@ const CLEANUP_HEALTH_TTL: Duration = Duration::from_secs(90);
 
 /// Enqueue backoff after a pass where no source could serve a task.
 const ENQUEUE_BACKOFF_SECONDS: f64 = 15.0 * 60.0;
+
+/// First wait before polling a source again after its client stopped
+/// answering; it doubles while the client keeps failing.
+const POLL_BACKOFF_BASE_SECONDS: f64 = 30.0;
+
+/// Longest wait between polls of a client that keeps failing, so one that
+/// comes back is polled again within a few minutes.
+const POLL_BACKOFF_CAP_SECONDS: f64 = 5.0 * 60.0;
 
 /// Current unix time as float seconds.
 fn now_unix_f64() -> f64 {
@@ -506,6 +516,44 @@ struct Attempt {
     handle: Option<SourceHandle>,
 }
 
+/// A source whose client stopped answering polls: how many poll passes
+/// failed in a row and when it is polled again.
+#[derive(Debug, Clone, Copy)]
+struct PollBackoff {
+    failures: u32,
+    not_before: f64,
+}
+
+impl PollBackoff {
+    /// The backoff after one more failed poll at `now`: the base doubled
+    /// per failure, capped, then spread by up to 20% so sources that went
+    /// down together are not retried together.
+    fn after_failure(previous: Option<Self>, now: f64) -> Self {
+        let failures = previous
+            .map_or(0, |backoff| backoff.failures)
+            .saturating_add(1);
+        let grown = POLL_BACKOFF_BASE_SECONDS * 2_f64.powi(failures.min(16) as i32 - 1);
+        let mut byte = [0u8; 1];
+        let spread = if getrandom::fill(&mut byte).is_ok() {
+            f64::from(byte[0]) / 255.0 * 0.2
+        } else {
+            0.0
+        };
+        Self {
+            failures,
+            not_before: now + grown.min(POLL_BACKOFF_CAP_SECONDS) * (1.0 + spread),
+        }
+    }
+}
+
+/// What one task's poll learned about its source.
+enum Polled {
+    /// The client answered (or the task needed no poll).
+    Answered,
+    /// The client did not answer.
+    Unavailable(SourceTag),
+}
+
 /// Per-task poll memory: byte progress across passes.
 #[derive(Debug, Clone)]
 struct PollMemory {
@@ -521,6 +569,9 @@ pub struct DownloadWorker {
     inputs: Inputs,
     ownership: JournalOwnership,
     poll_cache: Mutex<HashMap<String, PollMemory>>,
+    /// Sources whose client stopped answering, polled again only once
+    /// their backoff lapses.
+    poll_backoff: Mutex<HashMap<SourceTag, PollBackoff>>,
     enqueue_not_before: Mutex<HashMap<String, f64>>,
     unsearchable_warned: Mutex<HashSet<String>>,
     plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
@@ -569,6 +620,7 @@ impl DownloadWorker {
             inputs,
             ownership,
             poll_cache: Mutex::new(HashMap::new()),
+            poll_backoff: Mutex::new(HashMap::new()),
             enqueue_not_before: Mutex::new(HashMap::new()),
             unsearchable_warned: Mutex::new(HashSet::new()),
             plugins: None,
@@ -1142,7 +1194,9 @@ impl DownloadWorker {
         }
     }
 
-    /// Poll every live task through the watchdog.
+    /// Poll every live task through the watchdog. Each source's tasks are
+    /// polled in their own round, the rounds side by side, so a client that
+    /// stops answering only holds up its own tasks.
     async fn poll_pass(self: &Arc<Self>, pass: &Pass) {
         let Some(tasks) = self
             .read_step("downloads.live", |store| {
@@ -1156,33 +1210,79 @@ impl DownloadWorker {
         if let Ok(mut cache) = self.poll_cache.lock() {
             cache.retain(|task_id, _| live.contains(task_id.as_str()));
         }
-        for task in &tasks {
-            self.poll_one(pass, task).await;
+        if let Ok(mut backoff) = self.poll_backoff.lock() {
+            backoff.retain(|tag, _| pass.sources.iter().any(|source| source.tag() == *tag));
         }
+        // Grouped by the source of each task's live attempt; the task row's
+        // own source names only a candidate a person picked.
+        let mut rounds: HashMap<Option<SourceTag>, Vec<&TaskRow>> = HashMap::new();
+        for task in &tasks {
+            let Some(attempts) = self.attempts(&task.id).await else {
+                continue;
+            };
+            let tag = live_attempt(&attempts).map(|attempt| attempt.row.source.clone());
+            rounds.entry(tag).or_default().push(task);
+        }
+        futures_util::future::join_all(
+            rounds
+                .into_values()
+                .map(|round| self.poll_round(pass, round)),
+        )
+        .await;
+    }
+
+    /// Poll one source's tasks in turn. The first poll its client does not
+    /// answer backs the source off; its other tasks wait for a later pass,
+    /// and their stall clocks keep running.
+    async fn poll_round(self: &Arc<Self>, pass: &Pass, tasks: Vec<&TaskRow>) {
+        for task in tasks {
+            match self.poll_one(pass, task).await {
+                Polled::Answered => {}
+                Polled::Unavailable(tag) => {
+                    if let Ok(mut backoff) = self.poll_backoff.lock() {
+                        let next = PollBackoff::after_failure(backoff.get(&tag).copied(), pass.now);
+                        tracing::warn!(
+                            source = %tag,
+                            failures = next.failures,
+                            retry_in_seconds = (next.not_before - pass.now).round(),
+                            "download client not answering; polls back off"
+                        );
+                        backoff.insert(tag, next);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether `tag`'s client is backing off at `now`.
+    fn backing_off(&self, tag: &SourceTag, now: f64) -> bool {
+        self.poll_backoff
+            .lock()
+            .is_ok_and(|backoff| backoff.get(tag).is_some_and(|wait| now < wait.not_before))
     }
 
     /// Poll one live task: judge the sample, then complete, fail over, or
     /// keep waiting. Poll errors never fail the task directly; the stall
     /// math ages a dead client out into failover instead.
-    async fn poll_one(self: &Arc<Self>, pass: &Pass, task: &TaskRow) {
+    async fn poll_one(self: &Arc<Self>, pass: &Pass, task: &TaskRow) -> Polled {
         let now = pass.now;
         if self.landing_in_flight(&task.id) {
-            return;
+            return Polled::Answered;
         }
         // The pass listed its tasks before any of them were polled; a
         // landing that settled since then must not be seen as live again.
         let task = match self.journal.read_task(&task.id).await {
             Ok(Some(fresh)) if fresh.status == task.status => fresh,
-            Ok(_) => return,
+            Ok(_) => return Polled::Answered,
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "task re-read failed; poll skipped");
-                return;
+                return Polled::Answered;
             }
         };
         let task = &task;
         let Some(attempts) = self.attempts(&task.id).await else {
             // A read failure is not "no attempt": leave the task alone.
-            return;
+            return Polled::Answered;
         };
         if task.status == TaskStatus::Processing
             && live_attempt(&attempts).is_none()
@@ -1191,7 +1291,7 @@ impl DownloadWorker {
             // A landing the last process left running (a reimport whose
             // attempt is no longer live) picks up again instead of the
             // task being requeued for a fresh download.
-            return;
+            return Polled::Answered;
         }
         let Some(attempt) = live_attempt(&attempts).cloned() else {
             // No pollable attempt: back to queued for a fresh enqueue.
@@ -1200,16 +1300,19 @@ impl DownloadWorker {
                 store.transition_task(&task_id, TaskStatus::Queued, now, None)
             })
             .await;
-            return;
+            return Polled::Answered;
         };
         let Some(handle) = attempt.handle.clone() else {
-            return;
+            return Polled::Answered;
         };
         let Some(source) = pass.source_for(&attempt.row.source) else {
             // Plugin sources have no adapter yet; leave the row for a
             // worker that knows them rather than failing it here.
-            return;
+            return Polled::Answered;
         };
+        if self.backing_off(&attempt.row.source, now) {
+            return Polled::Answered;
+        }
         let mut memory = self.poll_memory(&task.id, task, now);
         match source.poll(&handle).await {
             Ok(progress) => {
@@ -1235,6 +1338,8 @@ impl DownloadWorker {
                 self.store_poll_memory(&task.id, &memory);
                 self.apply_verdict(pass, task, &attempt.row, source, &handle, progress, sample)
                     .await;
+                self.clear_backoff(&attempt.row.source);
+                Polled::Answered
             }
             Err(SourceError::Rejected(detail)) => {
                 self.fail_over(
@@ -1247,18 +1352,32 @@ impl DownloadWorker {
                     Some(QuarantineReason::DownloadFailed),
                 )
                 .await;
+                self.clear_backoff(&attempt.row.source);
+                Polled::Answered
             }
             Err(error) => {
                 // Unavailable or local fault: stamp the poll and let the
                 // stall math age the task out; a momentary outage must
-                // not fail a healthy transfer.
+                // not fail a healthy transfer. Only a client that does not
+                // answer backs its source off.
                 tracing::warn!(task_id = %task.id, %error, "download poll failed");
                 let task_id = task.id.clone();
                 self.step("downloads.touch_poll", move |store| {
                     store.touch_poll(&task_id, now)
                 })
                 .await;
+                match error {
+                    SourceError::Unavailable(_) => Polled::Unavailable(attempt.row.source.clone()),
+                    _ => Polled::Answered,
+                }
             }
+        }
+    }
+
+    /// Forget a source's backoff once its client answers again.
+    fn clear_backoff(&self, tag: &SourceTag) {
+        if let Ok(mut backoff) = self.poll_backoff.lock() {
+            backoff.remove(tag);
         }
     }
 
