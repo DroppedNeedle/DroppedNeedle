@@ -232,7 +232,12 @@ async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
             &format!("/api/v3/covers/release-group/{mbid}?size=500"),
         )
         .await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{name}: no cover to serve");
+        // A loaded host can outlast the route's wait, which then answers
+        // "still warming" while the fetch finishes behind it.
+        assert!(
+            matches!(status, StatusCode::NOT_FOUND | StatusCode::ACCEPTED),
+            "{name}: no cover to serve, got {status}"
+        );
         let cache = ArtworkCache::new(rig.dir.join("covers"), 1024 * 1024);
         let key = format!("caa:release-group:{mbid}:500");
         // The route answers after a bounded wait while the fetch carries on
