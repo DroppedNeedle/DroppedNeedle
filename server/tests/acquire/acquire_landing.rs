@@ -2289,6 +2289,107 @@ async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
     }
 }
 
+// A plain download skips a first library folder that keeps its own tags
+// for the first one with automatic tags, and is tagged there. When every
+// folder keeps its own tags, it lands in the first, as it came. Missing
+// tracks of an album the first folder already holds stay with it.
+#[tokio::test]
+async fn a_plain_download_prefers_a_folder_with_automatic_tags() {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        IdentificationPolicy, TypedLibrary,
+    };
+    use sha2::{Digest as _, Sha256};
+    let sha256 = |path: &Path| -> String {
+        Sha256::digest(std::fs::read(path).expect("file reads"))
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    for (second, owned) in [
+        (EffectivePolicy::Automatic, false),
+        (EffectivePolicy::LocalMetadata, false),
+        (EffectivePolicy::Automatic, true),
+    ] {
+        let case = format!("second folder {second:?}, album already held {owned}");
+        let lengths = fixture_lengths();
+        let e = editions(1, &lengths);
+        let rig = join_rig(vec![e.new2.clone()]).await;
+        rig.library
+            .settings
+            .store()
+            .update_secret_blocking::<TypedLibrary, String, _>(|stored| {
+                let mut library = stored.into_inner();
+                for root in &mut library.library_roots {
+                    root.policy = IdentificationPolicy::LocalMetadata;
+                }
+                Ok(library)
+            })
+            .expect("first folder keeps its own tags");
+        let second_dir = rig.music.with_file_name("second");
+        std::fs::create_dir_all(&second_dir).expect("second root");
+        rig.library
+            .add_root(
+                Some("second".to_owned()),
+                second_dir.to_string_lossy().into_owned(),
+                second,
+            )
+            .expect("second root adds");
+        if owned {
+            rig.plant(&copy_rel(1, MYSTERONS), 0, &e.new2);
+            rig.scan().await;
+        }
+        rig.ask(
+            "t-plain",
+            &e.group,
+            &e.new2.title,
+            "user",
+            Some(&e.new2.id),
+            None,
+            &[],
+        )
+        .await;
+        let wanted = if owned { 1..2 } else { 0..2 };
+        let files: Vec<PathBuf> = wanted
+            .map(|index| rig.landed("t-plain", &e.new2, index, FIXTURES[index]))
+            .collect();
+        let downloaded: Vec<String> = files.iter().map(|file| sha256(file)).collect();
+        rig.land(files).await;
+
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT root_id, relative_path, applied_policy FROM local_tracks \
+             ORDER BY relative_path",
+        )
+        .fetch_all(rig.acquire.db.pool())
+        .await
+        .expect("tracks");
+        assert_eq!(rows.len(), 2, "{case}: {rows:?}");
+        if owned {
+            for (root, _, _) in &rows {
+                assert_eq!(root, "music", "{case}: {rows:?}");
+            }
+            continue;
+        }
+        for (row, downloaded) in rows.iter().zip(&downloaded) {
+            let (root, rel, policy) = row;
+            if second == EffectivePolicy::Automatic {
+                assert_eq!(
+                    (root.as_str(), policy.as_str()),
+                    ("second", "automatic"),
+                    "{case}"
+                );
+                assert_ne!(&sha256(&second_dir.join(rel)), downloaded, "{case}");
+            } else {
+                assert_eq!(
+                    (root.as_str(), policy.as_str()),
+                    ("music", "local_metadata"),
+                    "{case}"
+                );
+                assert_eq!(&sha256(&rig.music.join(rel)), downloaded, "{case}");
+            }
+        }
+    }
+}
+
 // An upgrade lands in the album its old copy was on, on the edition a
 // person chose, even when the copy's files carry another edition's tags;
 // the old copy's play follows. With two copies of the album, "Get missing

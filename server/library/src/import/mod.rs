@@ -10,6 +10,10 @@
 //!    root it is going to (`.droppedneedle-management-import/<task>/`).
 //!    The scan skips the hidden prefix, and the publisher's rename then
 //!    never crosses a filesystem, whatever disk the download client used.
+//!    A plain download goes to the first root whose policy at every
+//!    file's destination is Automatic, else to the first root that is not
+//!    Excluded; joins, upgrades, drop imports and downloads for an album
+//!    the library already holds always go to the latter.
 //! 2. One bundle moves every copy to the path the import naming script gives
 //!    and writes the release's full tag set on the way. A file whose
 //!    destination is in a folder that keeps its own tags (the Local
@@ -67,6 +71,7 @@ use droppedneedle_kernel::db::Lane;
 
 use super::clock::{now_ms, today_day};
 use super::matching::Release;
+use super::publish::paths::{ResolvedRoot, left_out};
 use super::publish::planner::{
     AlbumJoin, Capability, FileFingerprint, JoinedTrack, PlanBundle, PlanItem, PlanKind,
     ReleaseIdentity, Removal, RemoveItem, SealRecheck, SealedPreview,
@@ -76,7 +81,7 @@ use super::publish::remove::{self, Probe, Refusal, Target};
 use super::publish::snapshots::sha256_hex;
 use super::publish::{HIDDEN_PREFIX, PublishError};
 use super::scan::models::EffectivePolicy;
-use super::scan::roots::RootRegistry;
+use super::scan::roots::{LibraryRoot, RootRegistry};
 use super::wiring::LibrarySetup;
 
 /// Revisions the seal pins while profiles and naming have no store (the
@@ -228,12 +233,6 @@ impl LibrarySetup {
             return Err(fault("nothing to import".to_owned()));
         }
         let registry = self.live_registry();
-        let root = registry
-            .roots()
-            .iter()
-            .find(|root| root.policy != EffectivePolicy::Excluded)
-            .cloned()
-            .ok_or_else(|| fault("no library root takes imports".to_owned()))?;
         // Settings that do not read never mean the default layout.
         let script = self
             .settings
@@ -242,7 +241,6 @@ impl LibrarySetup {
             .ok_or_else(|| fault("the library settings cannot be read".to_owned()))?
             .naming_script
             .clone();
-        let root_path = root.path.to_string_lossy().into_owned();
         let task_dir = staging_rel(import.staging.as_deref().unwrap_or(&import.task_id));
         let mut sources = Vec::with_capacity(import.files.len() + import.extras.len());
         for file in &import.files {
@@ -267,25 +265,102 @@ impl LibrarySetup {
             .iter()
             .map(|(_, _, replaces)| self.old_copies(&registry, replaces))
             .collect::<Result<_, _>>()?;
+        let mut formats = Vec::with_capacity(sources.len());
+        for (path, _, _) in &sources {
+            formats.push(
+                super::tags::format_for_path(path)
+                    .map_err(|error| fault(format!("unsupported file: {error}")))?
+                    .as_str()
+                    .to_owned(),
+            );
+        }
+        let render = |root: &LibraryRoot| -> Result<Vec<String>, ImportError> {
+            let root_path = root.path.to_string_lossy();
+            sources
+                .iter()
+                .zip(&formats)
+                .map(|((_, track, _), format)| {
+                    let named = super::matching::ReleaseTrack {
+                        disc: track.disc.max(1),
+                        ..track.clone()
+                    };
+                    naming::render(
+                        &script,
+                        &naming::variables(&import.release, &named, format),
+                        &root_path,
+                    )
+                    .map_err(|error| ImportError::NamingScript(error.to_string()))
+                })
+                .collect()
+        };
+        // Joins, upgrades, drop imports and downloads for an album the
+        // library already holds take the first folder that is not
+        // excluded. A plain download takes the first folder whose policy
+        // is automatic tags at every file's destination, else that same
+        // first folder, where it keeps the tags it came with.
+        let usable: Vec<&LibraryRoot> = registry
+            .roots()
+            .iter()
+            .filter(|root| root.policy != EffectivePolicy::Excluded)
+            .collect();
+        let first = *usable
+            .first()
+            .ok_or_else(|| fault("no library root takes imports".to_owned()))?;
+        let plain = join.is_none()
+            && import.origin == ImportOrigin::Download
+            && import.files.iter().all(|file| file.replaces.is_empty())
+            && !self
+                .db
+                .read_blocking("import.group_held", |conn| {
+                    Ok::<_, PublishError>(group_held(conn, &import.release.release_group_id)?)
+                })
+                .map_err(|error| fault(error.to_string()))?;
+        let tagged = plain
+            .then(|| {
+                // A folder reached through a link into another takes no
+                // managed writes.
+                let resolved: Vec<ResolvedRoot> = registry
+                    .roots()
+                    .iter()
+                    .map(|root| ResolvedRoot::of(&root.id, &root.path))
+                    .collect();
+                let left_out = left_out(&resolved);
+                usable
+                    .iter()
+                    .filter(|root| !left_out.contains(&root.id))
+                    .find_map(|root| {
+                        let dests = render(root)
+                            .inspect_err(|error| {
+                                tracing::info!(
+                                    root = root.id,
+                                    ?error,
+                                    "a download skips a folder the naming script gives no path in"
+                                );
+                            })
+                            .ok()?;
+                        dests
+                            .iter()
+                            .all(|dest| {
+                                root.policy_for(&root.path.join(dest)) == EffectivePolicy::Automatic
+                            })
+                            .then_some((*root, dests))
+                    })
+            })
+            .flatten();
+        let (root, dests) = match tagged {
+            Some(chosen) => chosen,
+            None => (first, render(first)?),
+        };
+        let root = root.clone();
         let mut placements = Vec::with_capacity(sources.len());
-        for (ordinal, ((path, track, _), replaces)) in
-            sources.into_iter().zip(old_copies).enumerate()
+        for (ordinal, ((((path, track, _), replaces), format), dest_rel)) in sources
+            .into_iter()
+            .zip(old_copies)
+            .zip(formats)
+            .zip(dests)
+            .enumerate()
         {
             let track = &track;
-            let format = super::tags::format_for_path(path)
-                .map_err(|error| fault(format!("unsupported file: {error}")))?
-                .as_str()
-                .to_owned();
-            let named = super::matching::ReleaseTrack {
-                disc: track.disc.max(1),
-                ..track.clone()
-            };
-            let dest_rel = naming::render(
-                &script,
-                &naming::variables(&import.release, &named, &format),
-                &root_path,
-            )
-            .map_err(|error| ImportError::NamingScript(error.to_string()))?;
             let mut tags = super::tags::picard::release_tags(&import.release, track);
             tags.retain(|name, values| {
                 super::tags::TagField::from_name(name).is_some_and(|field| {
@@ -1077,6 +1152,25 @@ fn staging_settled(conn: &rusqlite::Connection, task_dir: &str) -> rusqlite::Res
         |row| row.get(0),
     )?;
     Ok(!unsettled)
+}
+
+/// Whether the library holds an indexed album of release group `group`
+/// (its sealed identity, else its files' own tags), as the landing reads
+/// what is already owned. An empty group is held by nothing.
+fn group_held(conn: &rusqlite::Connection, group: &str) -> rusqlite::Result<bool> {
+    if group.is_empty() {
+        return Ok(false);
+    }
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM local_tracks t \
+         JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
+         LEFT JOIN local_album_external_identities ai ON ai.local_album_id = b.id \
+         WHERE t.availability = 'indexed' \
+         AND (lower(ai.release_group_mbid) = ?1 \
+         OR (ai.local_album_id IS NULL AND lower(t.embedded_release_group_mbid) = ?1)))",
+        rusqlite::params![group.to_ascii_lowercase()],
+        |row| row.get(0),
+    )
 }
 
 /// The one folder of `root_id` that holds the album's indexed files on
