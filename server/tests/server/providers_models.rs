@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use droppedneedle_providers::coverart::{DownloadSize, EntityKind};
 use droppedneedle_providers::executor::ScriptedWire;
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::{
@@ -33,6 +34,8 @@ enum Provider {
     CommonsImage,
     WikidataRedirect,
     GithubReleases,
+    CoverArtRelease,
+    CoverArtReleaseGroup,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -51,6 +54,11 @@ const COMMONS_IMAGE_URL: &str = "http://fake/commons/w/api.php";
 const WIKIDATA_REDIRECT_URL: &str = "http://fake/wikidata/wiki/Special:EntityData/Q13165295.json";
 /// The GitHub releases list the release check reads.
 const GITHUB_RELEASES_URL: &str = "http://fake/github/releases";
+/// The release group of OK Computer, and the release its listing names as the
+/// source of its images. The two listings hold the same two images.
+const COVER_ART_RELEASE_GROUP_MBID: &str = "b1392450-e666-3926-a536-22c65f834433";
+/// The release the release group's listing names.
+const COVER_ART_RELEASE_MBID: &str = "30702389-5c67-4438-9ea0-2351c8de0f1d";
 
 /// One recorded answer.
 struct Row {
@@ -177,6 +185,30 @@ const ROWS: &[Row] = &[
         provider: Provider::GithubReleases,
         body: include_str!("../fixtures/github/releases_list.json"),
         identity: "/0/tag_name",
+    },
+    Row {
+        name: "coverartarchive /release/{mbid}, image list",
+        provider: Provider::CoverArtRelease,
+        body: include_str!("../fixtures/coverartarchive/release_found.json"),
+        identity: "/images",
+    },
+    Row {
+        name: "coverartarchive /release/{mbid}, image id",
+        provider: Provider::CoverArtRelease,
+        body: include_str!("../fixtures/coverartarchive/release_found.json"),
+        identity: "/images/0/id",
+    },
+    Row {
+        name: "coverartarchive /release-group/{mbid}, image list",
+        provider: Provider::CoverArtReleaseGroup,
+        body: include_str!("../fixtures/coverartarchive/release_group_found.json"),
+        identity: "/images",
+    },
+    Row {
+        name: "coverartarchive /release-group/{mbid}, image id",
+        provider: Provider::CoverArtReleaseGroup,
+        body: include_str!("../fixtures/coverartarchive/release_group_found.json"),
+        identity: "/images/0/id",
     },
 ];
 
@@ -360,7 +392,37 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
             let releases = providers.github.fetch(PRIORITY).await?;
             Ok(!releases.is_empty())
         }
+        Provider::CoverArtRelease => {
+            cover_art(EntityKind::Release, COVER_ART_RELEASE_MBID, body).await
+        }
+        Provider::CoverArtReleaseGroup => {
+            cover_art(EntityKind::ReleaseGroup, COVER_ART_RELEASE_GROUP_MBID, body).await
+        }
     }
+}
+
+/// Serves `body` from the archive's listing address for the entity and reads
+/// it through the archive's client.
+async fn cover_art(entity: EntityKind, mbid: &str, body: &str) -> Result<bool, ProviderError> {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("http://fake/coverart/{}/{mbid}", entity.path()),
+        200,
+        &[],
+        body.as_bytes().to_vec(),
+    );
+    let providers = Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            coverart: "http://fake/coverart".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let images = providers
+        .coverart
+        .list_artwork(entity, mbid, DownloadSize::Full, PRIORITY)
+        .await?;
+    Ok(!images.is_empty())
 }
 
 /// Serves each `(path, body)` from the Deezer origin and returns the providers

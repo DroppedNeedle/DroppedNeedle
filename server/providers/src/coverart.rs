@@ -1,10 +1,8 @@
 //! Cover Art Archive provider client: metadata listing, downloads and
 //! front covers.
 //!
-//! The live provider boundary was probed on 2026-07-21 against
-//! coverartarchive.org and is recorded in `coverart_MANAGEMENT_API_NOTES.md`;
-//! every handler below cites it. Image bytes pass through untouched:
-//! originals may be PNG, so the client never assumes JPEG.
+//! Image bytes pass through untouched: originals may be PNG, so the client
+//! never assumes JPEG.
 //!
 //! Every request goes through the archive's [`Executor`], which paces at
 //! the `coverartarchive` row of the rate table and the caller's priority.
@@ -14,14 +12,16 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
-
 use crate::RequestPriority;
 use crate::error::{PayloadKind, ProviderError};
 use crate::executor::{
     Backoff, Executor, RedirectRule, Redirects, Reply, Request, Spec, Url, standard_classify,
 };
 use crate::musicbrainz::is_valid_mbid;
+
+mod models;
+
+use models::{CaaImage, CaaResponse};
 
 /// Cover Art Archive root.
 pub const COVER_ART_ARCHIVE_BASE: &str = "https://coverartarchive.org";
@@ -55,74 +55,13 @@ static HOPS: RedirectRule = RedirectRule {
     next: |_, next| check_redirect_hop(next),
 };
 
-// ---------------------------------------------------------------------------
-// Wire models: the `{images: [...]}` document. Each image carries approved,
-// front, back, comment, numeric id, the original image URL, a thumbnails
-// object (observed `250`, `500`, `1200`), and a types array (live
-// 2026-07-21, `coverart_MANAGEMENT_API_NOTES.md`). Unknown fields are
-// ignored; the numeric id is required identity.
-// ---------------------------------------------------------------------------
-
-/// Thumbnail URLs keyed by pixel width.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-pub struct CaaThumbnails {
-    /// 1200px thumbnail, when the archive generated one.
-    #[serde(rename = "1200", default)]
-    pub size_1200: Option<String>,
-    /// 500px thumbnail, when the archive generated one.
-    #[serde(rename = "500", default)]
-    pub size_500: Option<String>,
-    /// 250px thumbnail, when the archive generated one.
-    #[serde(rename = "250", default)]
-    pub size_250: Option<String>,
-}
-
-/// One artwork image in the archive's listing.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct CaaImage {
-    /// Whether MusicBrainz editors approved this image.
-    #[serde(default)]
-    pub approved: bool,
-    /// Whether this image serves as the back cover.
-    #[serde(default)]
-    pub back: bool,
-    /// Editor comment.
-    #[serde(default)]
-    pub comment: String,
-    /// Whether this image serves as the front cover.
-    #[serde(default)]
-    pub front: bool,
-    /// Numeric image id: required identity.
-    pub id: u64,
-    /// Original-file URL (observed with an `http` scheme and PNG
-    /// originals: upgrade, never assume).
-    #[serde(default)]
-    pub image: String,
-    /// Thumbnails by width.
-    #[serde(default)]
-    pub thumbnails: CaaThumbnails,
-    /// Type labels (`Front`, `Back`, `Spine`, `Booklet`; one image may
-    /// carry several).
-    #[serde(default)]
-    pub types: Vec<String>,
-}
-
-/// Archive listing for one release or release group.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct CaaResponse {
-    /// Listed images, in archive order.
-    #[serde(default)]
-    pub images: Vec<CaaImage>,
-}
-
 /// Which entity the artwork was listed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityKind {
     /// Exact release: artwork belongs to this edition.
     Release,
     /// Release group: images come from a representative release and must
-    /// be labelled release-group fallback, never exact-edition artwork
-    /// (live 2026-07-21).
+    /// be labelled release-group fallback, never exact-edition artwork.
     ReleaseGroup,
 }
 
@@ -251,9 +190,8 @@ pub struct ArtworkBytes {
 /// Validate an archive artwork URL and upgrade it to https:
 /// only `coverartarchive.org` over http/https,
 /// no credentials, default ports only, absolute path. Query strings
-/// survive; fragments do not. Anything else is `None`, since response
-/// image URLs arrive with an `http` scheme (live 2026-07-21) and only
-/// validated archive URLs may be upgraded.
+/// survive; fragments do not. Anything else is `None`: a listing may name
+/// artwork over http, so only validated archive URLs may be upgraded.
 pub fn upgrade_artwork_url(url: &str) -> Option<String> {
     let (scheme, authority, path_and_query) = split_artwork_url(url)?;
     if scheme != "http" && scheme != "https" {
@@ -459,6 +397,10 @@ impl CaaClient {
         for image in &listing.images {
             let selected = size.select(image);
             if selected.is_empty() {
+                tracing::warn!(
+                    image_id = image.id,
+                    "skipping a Cover Art Archive image with no file URL for this size"
+                );
                 continue;
             }
             let locator = upgrade_artwork_url(selected)
