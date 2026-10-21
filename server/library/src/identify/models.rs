@@ -6,31 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::matching::{PenaltyShare, Release};
 
-/// Who last set an identity row. Ported verbatim from v2: automatic rows
-/// are revisable, manual and legacy-import rows are curator-protected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DecisionSource {
-    Automatic,
-    Manual,
-    LegacyImport,
-}
-
-impl DecisionSource {
-    /// Only automatic rows may be overwritten by a later automatic pass.
-    /// Manual and legacy-import rows survive rescans, moves, and re-id.
-    pub fn automatic_may_overwrite(self) -> bool {
-        matches!(self, DecisionSource::Automatic)
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            DecisionSource::Automatic => "automatic",
-            DecisionSource::Manual => "manual",
-            DecisionSource::LegacyImport => "legacy_import",
-        }
-    }
-}
+pub use crate::identity::DecisionSource;
 
 /// Per-track verdict against one candidate, ported from v2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -201,6 +177,11 @@ pub struct IdentifyJob {
     pub input_revision: String,
     pub requested_by_user_id: Option<String>,
     pub failure_code: Option<String>,
+    /// When the claim that holds the job runs out (ms); `None` unless it
+    /// is running. A landing names it, so an attempt whose lease another
+    /// worker took over lands nothing.
+    #[serde(default)]
+    pub lease_expires_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -289,6 +270,9 @@ pub struct LocalAlbumFacts {
     pub locked_track_ids: Vec<String>,
     /// Compilation flag from tags; composite credits need care.
     pub is_compilation: bool,
+    /// The album's input revision, read with these facts.
+    #[serde(default)]
+    pub input_revision: String,
 }
 
 /// Local track facts the matcher reads.

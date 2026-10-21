@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use droppedneedle_kernel::db::{Db, Lane};
+use droppedneedle_kernel::db::{Db, DbError, Lane};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use sha2::{Digest as _, Sha256};
 
@@ -31,15 +31,14 @@ use super::models::{
 };
 use super::queue::{PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::sources::ArtistAnswer;
-use super::sql::{
-    ALBUM_IDENTITY, REVISABLE, SAVE_ALBUM_IDENTITY, SAVE_TRACK_IDENTITY, TRACK_IDENTITY,
-};
-use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
+use super::sql::{ALBUM_IDENTITY, SAVE_ALBUM_IDENTITY, SAVE_TRACK_IDENTITY, TRACK_IDENTITY};
+use super::stores::{Approval, AttemptLanding, RELEASE_FRESH_SECS, StoreError, land_job};
 use crate::corrections::artist_convergence::{
     any_waiting, converge_ids, follow_moved, follow_waiting,
 };
 use crate::corrections::continuation::{DRAIN_BOUND, Scope, continue_tracks, drain_continuations};
 use crate::corrections::release_join::join_replaced;
+use crate::identity::{self, AutomaticOutcome, Inputs, write_match_flag};
 use crate::matching::Release;
 use crate::operations::choice::RemapOrigin;
 
@@ -119,21 +118,19 @@ fn review_state_from(raw: &str) -> ReviewState {
     }
 }
 
-/// `embedded` rows (tags carried the ids) are revisable like automatic ones.
-pub(crate) fn decision_from(raw: &str) -> DecisionSource {
-    match raw {
-        "manual" => DecisionSource::Manual,
-        "legacy_import" => DecisionSource::LegacyImport,
-        _ => DecisionSource::Automatic,
-    }
-}
-
 fn idempotency_key(local_album_id: &str, input_revision: &str) -> String {
     format!("{local_album_id}:{input_revision}")
 }
 
 const JOB_COLUMNS: &str = "id, local_album_id, kind, priority, state, attempts, not_before_ms, \
-     input_revision, requested_by_user_id, failure_code";
+     input_revision, requested_by_user_id, failure_code, lease_expires_ms";
+
+/// Land a claimed job, only while the claim that ran it still holds it:
+/// a lease another worker took over after this one lapsed lands nothing.
+const LAND_JOB: &str = "UPDATE library_identify_jobs SET state = ?1, attempts = ?2, \
+     not_before_ms = ?3, input_revision = ?4, idempotency_key = ?5, failure_code = ?6, \
+     priority = ?7, updated_ms = ?8, lease_expires_ms = NULL \
+     WHERE id = ?9 AND state = 'running' AND lease_expires_ms = ?10";
 
 /// Store one identify job. A live job on the same album and input
 /// revision (the partial unique index on its key) keeps its place.
@@ -154,6 +151,7 @@ fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentifyJob> {
         input_revision: row.get(7)?,
         requested_by_user_id: row.get(8)?,
         failure_code: row.get(9)?,
+        lease_expires_ms: row.get::<_, Option<i64>>(10)?.map(|at| at.max(0) as u64),
     })
 }
 
@@ -405,7 +403,7 @@ pub(crate) fn read_album_identity(
                 provider: PROVIDER.to_owned(),
                 release_group_mbid: Some(row.get(0)?),
                 release_mbid: row.get(1)?,
-                decision_source: decision_from(&row.get::<_, String>(2)?),
+                decision_source: row.get(2)?,
                 row_revision: row.get::<_, i64>(3)? as u64,
             })
         })
@@ -424,7 +422,7 @@ pub(crate) fn read_track_identity(
                 provider: PROVIDER.to_owned(),
                 recording_mbid: Some(row.get(0)?),
                 release_track_mbid: row.get(1)?,
-                decision_source: decision_from(&row.get::<_, String>(2)?),
+                decision_source: row.get(2)?,
                 row_revision: row.get::<_, i64>(3)? as u64,
             })
         })
@@ -545,26 +543,6 @@ impl SqliteIdentifyStore {
             .map(|written| self.landed(written))
     }
 
-    pub fn clear_album_identity(&self, local_album_id: &str) -> Result<(), StoreError> {
-        // Only automatic passes retract; a curator's row is never removed
-        // here, even if one landed after the attempt read the album.
-        self.db
-            .write_blocking(Lane::Background, "identify.clear_album_identity", |tx| {
-                changing(tx, |tx| {
-                    tx.execute(
-                        &format!(
-                            "DELETE FROM local_album_external_identities \
-                             WHERE local_album_id = ?1 AND provider = ?2 \
-                             AND decision_source IN {REVISABLE}"
-                        ),
-                        params![local_album_id, PROVIDER],
-                    )?;
-                    Ok(())
-                })
-            })
-            .map(|written| self.landed(written))
-    }
-
     pub fn track_identity(
         &self,
         local_track_id: &str,
@@ -594,16 +572,102 @@ impl SqliteIdentifyStore {
             .map(|written| self.landed(written))
     }
 
-    /// Seal an automatic win: the album row and the given track rows, never
-    /// over a curator's row, in one transaction. For an exact edition it
-    /// keeps what it replaced so an administrator can undo it. `false`
-    /// when a curator's row holds the album (nothing is written).
+    /// Seal an automatic match on the album's files as they are now, as
+    /// [`identity::seal_automatic`] does. `false` when a person's match
+    /// holds the album (nothing is written).
     pub fn seal_automatic(&self, seal: &AutomaticSeal) -> Result<bool, StoreError> {
         self.db
             .write_blocking(Lane::Background, "identify.seal_automatic", |tx| {
-                changing(tx, |tx| Ok(seal_automatic_tx(tx, seal)?))
+                changing(tx, |tx| {
+                    let revision = album_input_revision(tx, &seal.local_album_id)?;
+                    let inputs = Inputs {
+                        input_revision: &revision,
+                        now: now_secs(),
+                    };
+                    Ok(identity::seal_automatic(tx, seal, inputs)? == AutomaticOutcome::Done)
+                })
             })
             .map(|sealed| self.landed(sealed))
+    }
+
+    /// Seal identification's match for a claimed job and land the job, in
+    /// one transaction. `input_revision` is the one the job's facts were
+    /// read at: when the files moved since, nothing is sealed, the album is
+    /// offered again and the job lands as `INPUT_MOVED`. `None` when the
+    /// job's lease was lost: nothing is written.
+    pub fn seal_and_land(
+        &self,
+        seal: &AutomaticSeal,
+        input_revision: &str,
+        job: &IdentifyJob,
+    ) -> Result<Option<(AutomaticOutcome, IdentifyJob)>, StoreError> {
+        self.land_with("identify.seal_automatic", job, |tx| {
+            identity::seal_automatic(
+                tx,
+                seal,
+                Inputs {
+                    input_revision,
+                    now: now_secs(),
+                },
+            )
+        })
+    }
+
+    /// Settle an album identification matched to nothing and land the job,
+    /// in one transaction ([`identity::retract`]); as
+    /// [`seal_and_land`](Self::seal_and_land) for moved files and a lost
+    /// lease.
+    pub fn retract_and_land(
+        &self,
+        local_album_id: &str,
+        contradicted: bool,
+        flag: &MatchFlag,
+        input_revision: &str,
+        job: &IdentifyJob,
+    ) -> Result<Option<(AutomaticOutcome, IdentifyJob)>, StoreError> {
+        self.land_with("identify.retract", job, |tx| {
+            identity::retract(
+                tx,
+                local_album_id,
+                contradicted,
+                flag,
+                Inputs {
+                    input_revision,
+                    now: now_secs(),
+                },
+            )
+        })
+    }
+
+    /// Run `work` and land `job` after it on one transaction. Files that
+    /// moved land the job as `INPUT_MOVED`, a terminal failure: the job
+    /// the move queued takes over. A lost lease rolls `work` back too.
+    fn land_with(
+        &self,
+        label: &'static str,
+        job: &IdentifyJob,
+        work: impl FnOnce(&Transaction<'_>) -> rusqlite::Result<AutomaticOutcome>,
+    ) -> Result<Option<(AutomaticOutcome, IdentifyJob)>, StoreError> {
+        let landed = self.db.write_blocking(Lane::Background, label, |tx| {
+            let before = tx.total_changes();
+            let outcome = work(tx)?;
+            let mut landed = job.clone();
+            if outcome == AutomaticOutcome::InputMoved {
+                land_job(
+                    &mut landed,
+                    AttemptLanding::Failed,
+                    now_ms().max(0) as u64,
+                    Some("INPUT_MOVED"),
+                );
+            }
+            land_tx(tx, &landed)?;
+            Ok(((outcome, landed), tx.total_changes() != before))
+        });
+        match landed {
+            Ok(written) => Ok(Some(self.landed(written))),
+            Err(Landing::LeaseLost) => Ok(None),
+            Err(Landing::Store(error)) => Err(error),
+        }
     }
 
     /// Seal what an import's download names, in one transaction: the
@@ -652,22 +716,61 @@ impl SqliteIdentifyStore {
                 .optional()?)
         })
     }
+}
 
-    /// Record (or with `None`, clear) the album's match flag.
-    pub fn set_match_flag(
-        &self,
-        local_album_id: &str,
-        flag: Option<&MatchFlag>,
-    ) -> Result<(), StoreError> {
-        self.db
-            .write_blocking(Lane::Background, "identify.match_flag", |tx| {
-                changing(tx, |tx| {
-                    write_match_flag(tx, local_album_id, flag)?;
-                    Ok(())
-                })
-            })
-            .map(|written| self.landed(written))
+/// Why a landing wrote nothing.
+enum Landing {
+    Store(StoreError),
+    /// Another worker holds the job now.
+    LeaseLost,
+}
+
+impl std::fmt::Display for Landing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Store(error) => error.fmt(f),
+            Self::LeaseLost => write!(f, "identify job's lease was taken over"),
+        }
     }
+}
+
+impl From<DbError> for Landing {
+    fn from(error: DbError) -> Self {
+        Self::Store(error.into())
+    }
+}
+
+impl From<rusqlite::Error> for Landing {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Store(error.into())
+    }
+}
+
+/// Land a claimed job on `tx`, under the lease it was claimed with.
+fn land_tx(tx: &Transaction<'_>, job: &IdentifyJob) -> Result<(), Landing> {
+    let key = idempotency_key(&job.local_album_id, &job.input_revision);
+    let landed = tx.prepare_cached(LAND_JOB)?.execute(params![
+        state_str(job.state),
+        job.attempts as i64,
+        job.not_before_ms as i64,
+        job.input_revision,
+        key,
+        job.failure_code,
+        job.priority as i64,
+        now_ms(),
+        job.id,
+        job.lease_expires_ms.map(|at| at as i64),
+    ])?;
+    if landed != 1 {
+        tracing::warn!(
+            job_id = job.id,
+            album_id = job.local_album_id,
+            "identify job's lease was taken over; this attempt lands nothing"
+        );
+        return Err(Landing::LeaseLost);
+    }
+    bump_identification_stream(tx)?;
+    Ok(())
 }
 
 /// [`SqliteIdentifyStore::seal_import`] on its transaction.
@@ -700,7 +803,7 @@ fn seal_import_tx(tx: &Transaction<'_>, seal: &ImportSeal<'_>) -> Result<ImportS
     store_release(tx, seal.release, stored, now)?;
     if current
         .as_ref()
-        .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
+        .is_some_and(|row| !row.decision_source.is_revisable())
     {
         return Ok(ImportSealed::ChosenKept);
     }
@@ -731,12 +834,12 @@ fn seal_import_tx(tx: &Transaction<'_>, seal: &ImportSeal<'_>) -> Result<ImportS
                 row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
             },
         )? > 0;
-        wrote |= write_match_flag(tx, album, None)? > 0;
+        wrote |= write_match_flag(tx, album, None, now)? > 0;
     }
     for (track, current) in seal.tracks.iter().zip(&current_tracks) {
         if current
             .as_ref()
-            .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
+            .is_some_and(|row| !row.decision_source.is_revisable())
         {
             continue;
         }
@@ -815,156 +918,6 @@ pub fn track_identity_rows(
     .collect()
 }
 
-fn to_json<T: serde::Serialize>(value: &T) -> rusqlite::Result<String> {
-    serde_json::to_string(value)
-        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))
-}
-
-/// Record (or with `None`, clear) one album's match flag.
-fn write_match_flag(
-    tx: &rusqlite::Transaction<'_>,
-    local_album_id: &str,
-    flag: Option<&MatchFlag>,
-) -> rusqlite::Result<usize> {
-    match flag {
-        None => tx.execute(
-            "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
-            params![local_album_id],
-        ),
-        Some(flag) => tx.execute(
-            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
-             release_mbid, candidates_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-             ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state, \
-             reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
-             candidates_json = excluded.candidates_json, updated_at = excluded.updated_at",
-            params![
-                local_album_id,
-                flag.state.as_str(),
-                flag.reason_code,
-                flag.release_mbid,
-                to_json(&flag.candidates)?,
-                now_ms() as f64 / 1000.0,
-            ],
-        ),
-    }
-}
-
-/// One automatic seal in one transaction: read what is there, refuse a
-/// curator's album row, write the album and the revisable track rows, and
-/// for an exact edition keep the rows it replaced for undo.
-fn seal_automatic_tx(
-    tx: &rusqlite::Transaction<'_>,
-    seal: &AutomaticSeal,
-) -> rusqlite::Result<bool> {
-    let album = &seal.local_album_id;
-    let prior = album_identity_row(tx, album)?;
-    let revisable = |source: Option<&str>| matches!(source, Some("automatic" | "embedded"));
-    if prior
-        .as_ref()
-        .is_some_and(|row| !revisable(row.decision_source.as_deref()))
-    {
-        return Ok(false);
-    }
-    let prior_tracks = track_identity_rows(tx, album)?;
-    let now = now_secs();
-    let written = tx.execute(
-        &format!(
-            "INSERT INTO local_album_external_identities (local_album_id, provider, \
-             release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
-             VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, 1) \
-             ON CONFLICT (local_album_id, provider) DO UPDATE SET \
-             release_group_mbid = excluded.release_group_mbid, \
-             release_mbid = excluded.release_mbid, decision_source = 'automatic', \
-             matcher_version = NULL, attempt_id = NULL, selected_by_user_id = NULL, \
-             selected_at = excluded.selected_at, row_revision = row_revision + 1 \
-             WHERE local_album_external_identities.decision_source IN {REVISABLE}"
-        ),
-        params![
-            album,
-            PROVIDER,
-            seal.release_group_mbid,
-            seal.release_mbid,
-            now
-        ],
-    )?;
-    if written != 1 {
-        return Ok(false);
-    }
-    // The flag lands with the seal, so a best guess is never applied
-    // without it (and a confident match never keeps a stale one).
-    write_match_flag(tx, album, seal.flag.as_ref())?;
-    for track in &seal.tracks {
-        let Some(recording) = track.recording_mbid.as_deref() else {
-            continue;
-        };
-        tx.execute(
-            &format!(
-                "INSERT INTO local_track_external_identities (local_track_id, provider, \
-                 recording_mbid, release_mbid, release_track_mbid, decision_source, \
-                 selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, ?5, 'automatic', ?6, 1) \
-                 ON CONFLICT (local_track_id, provider) DO UPDATE SET \
-                 recording_mbid = excluded.recording_mbid, \
-                 release_mbid = excluded.release_mbid, \
-                 release_track_mbid = excluded.release_track_mbid, \
-                 medium_position = NULL, release_track_position = NULL, \
-                 decision_source = 'automatic', attempt_id = NULL, \
-                 selected_at = excluded.selected_at, row_revision = row_revision + 1 \
-                 WHERE local_track_external_identities.decision_source IN {REVISABLE}"
-            ),
-            params![
-                track.local_track_id,
-                PROVIDER,
-                recording,
-                seal.release_mbid,
-                track.release_track_mbid,
-                now,
-            ],
-        )?;
-    }
-    if seal.release_mbid.is_some() {
-        keep_automatic_undo(tx, album, prior.as_ref(), &prior_tracks, now)?;
-    }
-    join_replaced(tx, Scope::Album(album), now)?;
-    continue_tracks(tx, Scope::Album(album), now)?;
-    Ok(true)
-}
-
-/// One live undo per album: a later automatic seal replaces it.
-fn keep_automatic_undo(
-    tx: &rusqlite::Transaction<'_>,
-    album: &str,
-    prior: Option<&PriorAlbumIdentity>,
-    prior_tracks: &[PriorTrackIdentity],
-    now: f64,
-) -> rusqlite::Result<()> {
-    tx.execute(
-        "INSERT INTO library_automatic_edition_undo (id, local_album_id, \
-         prior_identity_json, prior_track_identities_json, expected_post_album_revision, \
-         expected_post_identity_revision, reason_code, created_at) \
-         SELECT ?1, a.id, ?2, ?3, a.row_revision, i.row_revision, \
-         'AUTOMATIC_EXACT_EDITION', ?4 FROM local_albums a \
-         JOIN local_album_external_identities i \
-         ON i.local_album_id = a.id AND i.provider = ?6 WHERE a.id = ?5 \
-         ON CONFLICT (local_album_id) DO UPDATE SET id = excluded.id, \
-         job_id = NULL, evidence_id = NULL, \
-         prior_identity_json = excluded.prior_identity_json, \
-         prior_track_identities_json = excluded.prior_track_identities_json, \
-         expected_post_album_revision = excluded.expected_post_album_revision, \
-         expected_post_identity_revision = excluded.expected_post_identity_revision, \
-         reason_code = excluded.reason_code, created_at = excluded.created_at, \
-         consumed_at = NULL, consumed_action_id = NULL",
-        params![
-            uuid::Uuid::new_v4().to_string(),
-            prior.map(to_json).transpose()?,
-            to_json(&prior_tracks)?,
-            now,
-            album,
-            PROVIDER,
-        ],
-    )?;
-    Ok(())
-}
-
 /// Local album facts the matcher reads, from the catalog the scan
 /// writes.
 impl SqliteIdentifyStore {
@@ -989,6 +942,9 @@ impl SqliteIdentifyStore {
             let Some((title, album_artist_name, is_compilation, year)) = album else {
                 return Ok(None);
             };
+            // In the same read as the facts, so a seal can tell whether the
+            // files moved after they were read.
+            let input_revision = album_input_revision(conn, local_album_id)?;
             let mut stmt = conn.prepare(
                 "SELECT t.id, t.title, COALESCE(t.artist_name, ''), t.track_number, \
                  t.disc_number, t.duration_seconds, t.embedded_recording_mbid, \
@@ -1050,6 +1006,7 @@ impl SqliteIdentifyStore {
                 tracks,
                 locked_track_ids: locked,
                 is_compilation,
+                input_revision,
             }))
         })
     }
@@ -1697,7 +1654,7 @@ struct AlbumMatch {
     release_group: String,
     /// `None` for a match that names only the release group.
     release: Option<String>,
-    source: String,
+    source: DecisionSource,
 }
 
 impl AlbumMatch {
@@ -1721,7 +1678,7 @@ impl AlbumMatch {
     /// Automatic and embedded matches stay revisable. A person's is one
     /// made by hand or one carried over from v2.
     fn revisable(&self) -> bool {
-        matches!(self.source.as_str(), "automatic" | "embedded")
+        self.source.is_revisable()
     }
 
     /// Whether this match and `other`, both a person's, are two different
@@ -1737,7 +1694,7 @@ impl AlbumMatch {
         if self.release_group != other.release_group {
             return true;
         }
-        let imported = |chosen: &Self| chosen.source == "legacy_import";
+        let imported = |chosen: &Self| chosen.source == DecisionSource::LegacyImport;
         match (&self.release, &other.release) {
             (None, Some(_)) => !imported(self),
             (Some(_), None) => !imported(other),
@@ -1805,9 +1762,8 @@ pub(crate) fn stored_release(
 /// or carried over from v2, and naming a release. An automatic match does
 /// not count, though it names a release too.
 pub(crate) fn release_chosen(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
-    Ok(AlbumMatch::of(conn, album_id)?.is_some_and(|chosen| {
-        matches!(chosen.source.as_str(), "manual" | "legacy_import") && chosen.release.is_some()
-    }))
+    Ok(AlbumMatch::of(conn, album_id)?
+        .is_some_and(|chosen| chosen.source.is_persons_choice() && chosen.release.is_some()))
 }
 
 /// Whether the album's match is one a person chose or v2 carried, naming
@@ -2169,39 +2125,30 @@ impl SqliteIdentifyStore {
                     )?;
                     bump_identification_stream(tx)?;
                     job.state = JobState::Running;
+                    job.lease_expires_ms = Some((now + lease_ms as i64).max(0) as u64);
                     Ok(Some(job))
                 })
             })
             .map(|written| self.landed(written))
     }
 
-    pub fn update(&self, job: IdentifyJob) -> Result<(), StoreError> {
-        let key = idempotency_key(&job.local_album_id, &job.input_revision);
-        self.db
-            .write_blocking(Lane::Background, "identify.update", |tx| {
-                changing(tx, |tx| {
-                    tx.execute(
-                        "UPDATE library_identify_jobs SET state = ?1, attempts = ?2, \
-                         not_before_ms = ?3, input_revision = ?4, idempotency_key = ?5, \
-                         failure_code = ?6, priority = ?7, updated_ms = ?8, \
-                         lease_expires_ms = CASE WHEN ?1 = 'running' THEN lease_expires_ms END \
-                         WHERE id = ?9",
-                        params![
-                            state_str(job.state),
-                            job.attempts as i64,
-                            job.not_before_ms as i64,
-                            job.input_revision,
-                            key,
-                            job.failure_code,
-                            job.priority as i64,
-                            now_ms(),
-                            job.id,
-                        ],
-                    )?;
-                    Ok(bump_identification_stream(tx)?)
-                })
-            })
-            .map(|written| self.landed(written))
+    /// Land a claimed job (its result, a deferral, or a put-back) under
+    /// the lease it was claimed with. `false` when another worker took the
+    /// job over after its lease lapsed: nothing is written.
+    pub fn land(&self, job: &IdentifyJob) -> Result<bool, StoreError> {
+        let landed = self
+            .db
+            .write_blocking(Lane::Background, "identify.land", |tx| {
+                land_tx(tx, job).map(|()| ((), true))
+            });
+        match landed {
+            Ok(written) => {
+                self.landed(written);
+                Ok(true)
+            }
+            Err(Landing::LeaseLost) => Ok(false),
+            Err(Landing::Store(error)) => Err(error),
+        }
     }
 
     pub fn job(&self, job_id: &str) -> Result<Option<IdentifyJob>, StoreError> {

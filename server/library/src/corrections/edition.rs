@@ -1,7 +1,7 @@
 //! What a membership change does to album editions.
 //!
 //! An album's edition is its MusicBrainz identity row; a person's choice
-//! (a pin) is that row with `decision_source = 'manual'`. The rules:
+//! (a pin) is that row decided by a person, now or in v2. The rules:
 //!
 //! - an album that keeps its id keeps its edition (a split or move leaves
 //!   the source's pin where it is);
@@ -31,6 +31,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_f
 use super::models::{DroppedEdition, EditionChange, EditionChangeKind, IdentityChoice};
 use super::reasons;
 use crate::identify::models::CandidateEvidence;
+use crate::identity::{self, DecisionSource};
 use crate::operations::choice::queue_placement;
 use crate::operations::reasons::Reason;
 
@@ -58,7 +59,7 @@ impl Identity {
     }
 
     fn pinned(&self) -> bool {
-        self.decision_source == "manual"
+        DecisionSource::parse(&self.decision_source).is_some_and(DecisionSource::is_persons_choice)
     }
 
     fn dropped(&self) -> DroppedEdition {
@@ -349,8 +350,10 @@ pub(super) fn drop_scattered(
 }
 
 /// Move `from`'s edition, with its match state and pending remap, onto
-/// `to` (which has none).
+/// `to` (which has none). Undo rows `to` kept from an earlier edition go
+/// first: they name revisions the moved row could reach.
 fn move_edition(tx: &Transaction<'_>, from: &str, to: &str) -> rusqlite::Result<()> {
+    identity::delete_album_row(tx, to, identity::Rows::Any)?;
     tx.execute(
         "UPDATE local_album_external_identities SET local_album_id = ?2, \
          row_revision = row_revision + 1 WHERE local_album_id = ?1 AND provider = ?3",
@@ -501,5 +504,26 @@ mod tests {
         let two_pins = [edition("a", "r2", "manual"), edition("b", "r3", "manual")];
         assert_eq!(case(None, &two_pins, RetainManual), "drop");
         assert_eq!(case(Some(&auto_own), &two_pins, RetainManual), "drop");
+    }
+
+    /// An edition carried over from v2 is a person's choice: in a merge
+    /// conflict against an automatic edition it wins under either
+    /// conflict choice, on the receiving album or arriving at it.
+    #[test]
+    fn a_v2_edition_survives_a_conflict_with_an_automatic_one() {
+        let v2_own = edition("dest", "r1", "legacy_import");
+        let auto_own = edition("dest", "r1", "automatic");
+        let v2_in = [edition("src", "r2", "legacy_import")];
+        let auto_in = [edition("src", "r2", "automatic")];
+        for choice in [IdentityChoice::Detach, IdentityChoice::RetainManual] {
+            assert!(matches!(
+                decide(Some(&v2_own), &auto_in, 2, choice),
+                Verdict::KeepOwn(_)
+            ));
+            assert!(matches!(
+                decide(Some(&auto_own), &v2_in, 2, choice),
+                Verdict::Take(0, _)
+            ));
+        }
     }
 }

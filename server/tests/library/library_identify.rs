@@ -412,9 +412,51 @@ fn automatic_writes_never_replace_a_curators_row() {
             ..chosen.clone()
         })
         .unwrap();
-    rig.store.clear_album_identity("album-1").unwrap();
 
     assert_eq!(rig.store.album_identity("album-1").unwrap(), Some(chosen));
+}
+
+/// A retraction that lands after a person's match did leaves that match
+/// and both its undo rows alone, whether the person chose it now or in v2.
+#[test]
+fn retract_never_takes_a_persons_match() {
+    use droppedneedle_library::identify::models::{MatchFlag, MatchFlagState};
+    use droppedneedle_library::identity::{Inputs, retract};
+
+    let rig = rig_with_recall(RecallResult::default());
+    let albums = [("album-1", "manual"), ("album-2", "legacy_import")];
+    for (album, source) in albums {
+        rig.seed_album(&album_facts(album, &[]));
+        rig.carried(album, RELEASE_A1, source, 2);
+    }
+    let tables = || albums.map(|(album, _)| rig.identity_tables(album));
+    let before = tables();
+    let flag = MatchFlag {
+        state: MatchFlagState::Unmatched,
+        reason_code: "CONFLICTING_TRACK_EVIDENCE".to_owned(),
+        release_mbid: None,
+        candidates: Vec::new(),
+    };
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&rig.path()).expect("db opens");
+    db.write_blocking(
+        droppedneedle_kernel::db::Lane::Background,
+        "test.retract",
+        |tx| {
+            for (album, _) in albums {
+                let revision = identify::sqlite::album_input_revision(tx, album)?;
+                let inputs = Inputs {
+                    input_revision: &revision,
+                    now: 1.0,
+                };
+                retract(tx, album, true, &flag, inputs)?;
+            }
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(tables(), before);
+    assert_eq!(before[1].len(), 3, "{before:?}");
 }
 
 #[tokio::test]
@@ -884,18 +926,22 @@ fn brief_carries_the_whole_case() {
 
 #[test]
 fn job_landings_cover_done_fail_attention_defer() {
-    let mut job = IdentifyJob {
-        id: "job-1".to_owned(),
-        local_album_id: "album-1".to_owned(),
-        kind: IdentifyKind::Automatic,
-        priority: PRIORITY_NEW_OR_CHANGED,
-        state: identify::models::JobState::Running,
-        attempts: 0,
-        not_before_ms: 0,
-        input_revision: "r".to_owned(),
-        requested_by_user_id: None,
-        failure_code: None,
-    };
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[]));
+    let mut job: IdentifyJob = rig
+        .service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "r",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    assert_eq!(job.priority, PRIORITY_NEW_OR_CHANGED);
+    job.state = JobState::Running;
     land_job(&mut job, AttemptLanding::Done, 0, None);
     assert_eq!(job.state, JobState::Succeeded);
     land_job(&mut job, AttemptLanding::Failed, 0, Some("boom"));
@@ -1979,4 +2025,472 @@ fn a_continuation_backlog_moves_in_bounded_turns() {
         )
         .expect("plays count");
     assert_eq!(on_live, backlog);
+}
+
+// ---------------------------------------------------------------------------
+// The identity commands, through the real store: what each leaves in the
+// album's match, its files' matches, its match flag and its two undo rows,
+// and that the catalog revision moved.
+// ---------------------------------------------------------------------------
+
+impl Rig {
+    fn path(&self) -> std::path::PathBuf {
+        self._dir.join("app.db")
+    }
+
+    fn run(&self, sql: &str) {
+        self.db.execute_batch(sql).expect("seed lands");
+    }
+
+    fn catalog_revision(&self) -> i64 {
+        self.db
+            .query_row(
+                "SELECT COALESCE((SELECT value FROM library_catalog_revision), 0)",
+                [],
+                |row| row.get(0),
+            )
+            .expect("revision reads")
+    }
+
+    fn texts(&self, sql: &str, album: &str) -> Vec<String> {
+        self.db
+            .prepare(sql)
+            .expect("query prepares")
+            .query_map(params![album], |row| row.get(0))
+            .expect("query runs")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows read")
+    }
+
+    /// The album's rows in the five identity tables, one line each.
+    fn identity_tables(&self, album: &str) -> Vec<String> {
+        let mut lines = self.texts(
+            "SELECT 'album ' || release_group_mbid || ' ' || COALESCE(release_mbid, '-') \
+             || ' ' || decision_source || ' ' || row_revision \
+             FROM local_album_external_identities WHERE local_album_id = ?1",
+            album,
+        );
+        lines.extend(self.texts(
+            "SELECT 'track ' || i.local_track_id || ' ' || i.recording_mbid || ' ' \
+             || COALESCE(i.release_mbid, '-') || ' ' || COALESCE(i.release_track_mbid, '-') \
+             || ' ' || COALESCE(i.medium_position, '-') || '/' \
+             || COALESCE(i.release_track_position, '-') || ' ' || i.decision_source || ' ' \
+             || i.row_revision FROM local_track_external_identities i \
+             JOIN local_tracks t ON t.id = i.local_track_id \
+             WHERE t.local_album_id = ?1 ORDER BY i.local_track_id",
+            album,
+        ));
+        lines.extend(self.texts(
+            "SELECT 'flag ' || state || ' ' || reason_code FROM library_album_match_state \
+             WHERE local_album_id = ?1",
+            album,
+        ));
+        lines.extend(self.texts(
+            "SELECT 'automatic undo ' || reason_code || ' ' || expected_post_identity_revision \
+             || ' ' || COALESCE(json_extract(prior_identity_json, '$.decision_source'), '-') \
+             || ' ' || COALESCE(consumed_at, 'live') \
+             FROM library_automatic_edition_undo WHERE local_album_id = ?1",
+            album,
+        ));
+        lines.extend(self.texts(
+            "SELECT 'choice undo ' || expected_identity_revision \
+             FROM library_edition_choice_undo WHERE local_album_id = ?1",
+            album,
+        ));
+        lines
+    }
+
+    /// The album's identity row as v2 carried it, with both undo rows a
+    /// change before it left, naming revision `revision`.
+    fn carried(&self, album: &str, release: &str, source: &str, revision: i64) {
+        self.run(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+             VALUES ('{album}', 'musicbrainz', '{GROUP_A}', '{release}', '{source}', 0, \
+             {revision}); \
+             INSERT INTO library_automatic_edition_undo (id, local_album_id, \
+             prior_track_identities_json, expected_post_album_revision, \
+             expected_post_identity_revision, reason_code, created_at) \
+             VALUES ('auto-{album}', '{album}', '[]', 1, {revision}, 'OLD', 0); \
+             INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
+             prior_tracks_json, expected_identity_revision, created_at) \
+             VALUES ('choice-{album}', '{album}', 'action-old', '[]', {revision}, 0);"
+        ));
+    }
+
+    /// Enqueue `job` for `album`, claim it, and run it through `service`.
+    async fn attempt(
+        &self,
+        service: &IdentifyService,
+        job: &str,
+        album: &str,
+    ) -> Option<identify::service::AttemptReport> {
+        service
+            .enqueue_album(
+                job,
+                album,
+                IdentifyKind::Automatic,
+                "rev-1",
+                None,
+                0,
+                droppedneedle_kernel::db::Lane::Background,
+            )
+            .unwrap();
+        self.store.claim(0, 60_000).unwrap();
+        service.run_claimed_job(job, 0).await.unwrap()
+    }
+}
+
+/// Recalls a scripted answer, and while it does, runs `sql` on the
+/// database the way another writer would mid-attempt.
+struct DuringRecall {
+    recall: RecallResult,
+    path: std::path::PathBuf,
+    sql: String,
+}
+
+impl identify::providers::IdentifyProviders for DuringRecall {
+    fn recall_candidates(
+        &self,
+        _facts: &LocalAlbumFacts,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = identify::providers::RecallOutcome> + Send + '_>,
+    > {
+        droppedneedle_kernel::db::open_connection(&self.path)
+            .expect("writer opens")
+            .execute_batch(&self.sql)
+            .expect("mid-attempt write lands");
+        let result = self.recall.clone();
+        Box::pin(async move {
+            identify::providers::RecallOutcome {
+                result,
+                recall_criticality: None,
+            }
+        })
+    }
+}
+
+fn service_during_recall(rig: &Rig, recall: RecallResult, sql: &str) -> IdentifyService {
+    IdentifyService::new(IdentifyDeps {
+        store: rig.store.clone(),
+        providers: Arc::new(DuringRecall {
+            recall,
+            path: rig.path(),
+            sql: sql.to_owned(),
+        }),
+    })
+}
+
+/// Identification seals over a match v2 took from the files' tags
+/// (`embedded`): the album row turns automatic on the new release, the
+/// supported files are placed on it, the unsure flag clears, the replaced
+/// row is kept as the automatic-edition undo, the edition-choice undo is
+/// left as it was, and the catalog revision moves.
+#[tokio::test]
+async fn seal_automatic_replaces_an_embedded_match() {
+    let rig = rig_with_recall(recall(vec![release(
+        GROUP_A,
+        RELEASE_A1,
+        &[RECORDING_1, RECORDING_2],
+    )]));
+    rig.seed_album(&album_facts(
+        "album-1",
+        &[("t1", Some(RECORDING_1)), ("t2", Some(RECORDING_2))],
+    ));
+    rig.carried("album-1", RELEASE_A2, "embedded", 4);
+    rig.run(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES ('album-1', 'unconfirmed', 'OLD_GUESS', '[]', 0);",
+    );
+    let before = rig.catalog_revision();
+
+    let report = rig
+        .attempt(&rig.service, "job-1", "album-1")
+        .await
+        .expect("report");
+
+    assert_eq!(report.outcome, IdentificationOutcome::Identified);
+    assert_eq!(report.job.state, JobState::Succeeded);
+    assert_eq!(
+        rig.identity_tables("album-1"),
+        vec![
+            format!("album {GROUP_A} {RELEASE_A1} automatic 5"),
+            format!("track t1 {RECORDING_1} {RELEASE_A1} {RELEASE_A1}-0 -/- automatic 1"),
+            format!("track t2 {RECORDING_2} {RELEASE_A1} {RELEASE_A1}-1 -/- automatic 1"),
+            "automatic undo AUTOMATIC_EXACT_EDITION 5 embedded live".to_owned(),
+            "choice undo 4".to_owned(),
+        ]
+    );
+    assert!(
+        rig.catalog_revision() > before,
+        "the seal moves the catalog revision"
+    );
+}
+
+/// New evidence contradicts a match v2 took from the files' tags: the
+/// match goes like an automatic one, the album is flagged unmatched, both
+/// undo rows go with the match (an undo kept for it could otherwise match
+/// the album's next match and put this one back), the files' rows stay,
+/// and the catalog revision moves.
+#[tokio::test]
+async fn retract_takes_an_embedded_match_and_both_its_undos() {
+    let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_2])]));
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.carried("album-1", RELEASE_A1, "embedded", 2);
+    rig.run(&format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, decision_source, selected_at) \
+         VALUES ('t1', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A1}', 'embedded', 0);"
+    ));
+    let before = rig.catalog_revision();
+
+    let report = rig
+        .attempt(&rig.service, "job-1", "album-1")
+        .await
+        .expect("report");
+
+    assert_eq!(report.outcome, IdentificationOutcome::Contradictory);
+    assert_eq!(
+        rig.identity_tables("album-1"),
+        vec![
+            format!("track t1 {RECORDING_1} {RELEASE_A1} - -/- embedded 1"),
+            "flag unmatched CONFLICTING_TRACK_EVIDENCE".to_owned(),
+        ]
+    );
+    assert!(
+        rig.catalog_revision() > before,
+        "the retraction moves the catalog revision"
+    );
+}
+
+/// A recheck's automatic acceptance never replaces an edition carried over
+/// from v2. On an automatic match it places the files on the accepted
+/// release, unplaces the rest, clears the flag and the waiting placement,
+/// keeps both undo rows, and moves the catalog revision.
+#[test]
+fn accept_automatic_keeps_a_v2_choice_and_seals_an_automatic_match() {
+    use droppedneedle_library::identify::models::{EvidenceClass, TrackEvidence};
+    use droppedneedle_library::operations::choice::accept_automatic;
+    use droppedneedle_library::operations::models::{CandidateTrack, ReidentificationCandidate};
+
+    let rig = rig_with_recall(RecallResult::default());
+    for album in ["album-1", "album-2"] {
+        let tracks = if album == "album-1" {
+            [("t1", None), ("t2", None)]
+        } else {
+            [("t3", None), ("t4", None)]
+        };
+        rig.seed_album(&album_facts(album, &tracks));
+    }
+    rig.carried("album-1", RELEASE_A2, "legacy_import", 3);
+    rig.carried("album-2", RELEASE_A2, "automatic", 3);
+    rig.run(&format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('t4', 'musicbrainz', '{RECORDING_2}', '{RELEASE_A2}', 'old-rt', \
+         'automatic', 0); \
+         INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES ('album-2', 'unconfirmed', 'OLD_GUESS', '[]', 0); \
+         INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, origin, \
+         queued_at) VALUES ('album-2', '{RELEASE_A2}', 'place_only', 0);"
+    ));
+    let candidate = |track: &str, other: &str| ReidentificationCandidate {
+        candidate_key: RELEASE_A1.to_owned(),
+        automatic_safe: true,
+        evidence: identify::models::CandidateEvidence {
+            candidate_key: RELEASE_A1.to_owned(),
+            release_group_mbid: GROUP_A.to_owned(),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            album_title: "Some Album".to_owned(),
+            album_artist_name: "Some Artist".to_owned(),
+            track_evidence: vec![TrackEvidence {
+                local_track_id: track.to_owned(),
+                classification: EvidenceClass::Supported,
+                evidence_kinds: Vec::new(),
+                recording_mbid: Some(RECORDING_1.to_owned()),
+                release_track_mbid: Some("rt-1".to_owned()),
+            }],
+            score: 1.0,
+            reason_code: "SUPPORTED".to_owned(),
+            distance: 0.0,
+            penalties: Vec::new(),
+        },
+        artist_mbid: None,
+        release_type: None,
+        release_date: None,
+        local_album_title: "Some Album".to_owned(),
+        local_album_artist_name: "Some Artist".to_owned(),
+        album_title_classification: EvidenceClass::Supported,
+        album_artist_classification: EvidenceClass::Supported,
+        tracks: [track, other]
+            .iter()
+            .enumerate()
+            .map(|(index, id)| CandidateTrack {
+                local_track_id: (*id).to_owned(),
+                title: None,
+                disc_number: Some(1),
+                position: Some(index as u32 + 1),
+            })
+            .collect(),
+        unmatched_expected_tracks: Vec::new(),
+    };
+    let before = rig.catalog_revision();
+    let kept = rig.identity_tables("album-1");
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&rig.path()).expect("db opens");
+
+    let accepted = db
+        .write_blocking(
+            droppedneedle_kernel::db::Lane::Background,
+            "test.accept",
+            |tx| {
+                Ok::<_, droppedneedle_library::operations::models::OperationError>((
+                    accept_automatic(tx, "album-1", &candidate("t1", "t2"), "R", None, 1.0)?,
+                    accept_automatic(tx, "album-2", &candidate("t3", "t4"), "R", None, 1.0)?,
+                ))
+            },
+        )
+        .unwrap();
+
+    assert!(accepted.0.is_none(), "a v2 choice is a person's");
+    assert!(accepted.1.is_some());
+    assert_eq!(rig.identity_tables("album-1"), kept);
+    assert_eq!(
+        rig.identity_tables("album-2"),
+        vec![
+            format!("album {GROUP_A} {RELEASE_A1} automatic 4"),
+            format!("track t3 {RECORDING_1} {RELEASE_A1} rt-1 1/1 automatic 1"),
+            format!("track t4 {RECORDING_2} - - -/- automatic 2"),
+            "automatic undo R 4 automatic live".to_owned(),
+            "choice undo 4".to_owned(),
+        ]
+    );
+    assert_eq!(
+        rig.texts(
+            "SELECT local_album_id FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            "album-2"
+        ),
+        Vec::<String>::new()
+    );
+    assert!(
+        rig.catalog_revision() > before,
+        "the acceptance moves the catalog revision"
+    );
+}
+
+/// The existing-matches repair never rechecks an edition carried over from
+/// v2 for removal, and reports one whose files contradict its release as a
+/// person's identity, never as safe to detach.
+#[test]
+fn the_existing_matches_repair_reports_a_v2_choice_as_a_persons() {
+    use droppedneedle_library::identify::models::{EvidenceClass, TrackEvidence};
+    use droppedneedle_library::operations::models::{CandidateTrack, ReidentificationCandidate};
+    use droppedneedle_library::repairs::{classify, store};
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.carried("album-1", RELEASE_A1, "legacy_import", 1);
+
+    let estimate = store::estimate_repair(&rig.db, &[]).expect("estimate reads");
+    assert_eq!(
+        estimate.identity_count, 0,
+        "a v2 choice is not rechecked for removal"
+    );
+
+    let subject = store::subject(&rig.db, "album-1")
+        .expect("subject reads")
+        .expect("album checked");
+    let identity = subject.identity.expect("identity");
+    let contradicted = ReidentificationCandidate {
+        candidate_key: RELEASE_A1.to_owned(),
+        automatic_safe: false,
+        evidence: identify::models::CandidateEvidence {
+            candidate_key: RELEASE_A1.to_owned(),
+            release_group_mbid: GROUP_A.to_owned(),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            album_title: "Some Album".to_owned(),
+            album_artist_name: "Some Artist".to_owned(),
+            track_evidence: vec![TrackEvidence {
+                local_track_id: "t1".to_owned(),
+                classification: EvidenceClass::Contradictory,
+                evidence_kinds: Vec::new(),
+                recording_mbid: None,
+                release_track_mbid: None,
+            }],
+            score: 0.0,
+            reason_code: "CONFLICTING_TRACK_EVIDENCE".to_owned(),
+            distance: 1.0,
+            penalties: Vec::new(),
+        },
+        artist_mbid: None,
+        release_type: None,
+        release_date: None,
+        local_album_title: "Some Album".to_owned(),
+        local_album_artist_name: "Some Artist".to_owned(),
+        album_title_classification: EvidenceClass::Supported,
+        album_artist_classification: EvidenceClass::Supported,
+        tracks: vec![CandidateTrack {
+            local_track_id: "t1".to_owned(),
+            title: None,
+            disc_number: Some(1),
+            position: Some(1),
+        }],
+        unmatched_expected_tracks: Vec::new(),
+    };
+    let verdict = classify::existing_match(&identity, Some(&contradicted), 1, 1);
+    assert_eq!(verdict.finding_code, "manual_identity");
+}
+
+/// A rescan changes the album's files while identification is recalling
+/// candidates: the attempt writes nothing for files it never read, lands
+/// as `INPUT_MOVED`, and the album is queued again on its new files.
+#[tokio::test]
+async fn an_attempt_on_files_that_moved_writes_nothing_and_queues_them() {
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    let service = service_during_recall(
+        &rig,
+        recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]),
+        "UPDATE local_tracks SET stat_revision = 'stat-2' WHERE local_album_id = 'album-1'",
+    );
+
+    let report = rig
+        .attempt(&service, "job-1", "album-1")
+        .await
+        .expect("report");
+
+    assert_eq!(report.reason_code, "INPUT_MOVED");
+    assert_eq!(report.job.state, JobState::Failed);
+    assert_eq!(rig.identity_tables("album-1"), Vec::<String>::new());
+    let queued = rig.texts(
+        "SELECT id FROM library_identify_jobs WHERE local_album_id = ?1 AND state = 'queued'",
+        "album-1",
+    );
+    assert_eq!(queued.len(), 1, "the new files are queued: {queued:?}");
+    assert_ne!(queued[0], "job-1");
+}
+
+/// The attempt's lease lapsed and another worker claimed the job while it
+/// was recalling: the attempt lands nothing, its seal included, and the
+/// job stays with the worker that holds it now.
+#[tokio::test]
+async fn an_attempt_whose_lease_was_taken_over_lands_nothing() {
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    let service = service_during_recall(
+        &rig,
+        recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]),
+        "UPDATE library_identify_jobs SET lease_expires_ms = 120000 WHERE id = 'job-1'",
+    );
+
+    let report = rig.attempt(&service, "job-1", "album-1").await;
+
+    assert!(report.is_none(), "{report:?}");
+    assert_eq!(rig.identity_tables("album-1"), Vec::<String>::new());
+    assert_eq!(
+        rig.texts(
+            "SELECT state || ' ' || lease_expires_ms FROM library_identify_jobs WHERE id = ?1",
+            "job-1"
+        ),
+        vec!["running 120000".to_owned()]
+    );
 }

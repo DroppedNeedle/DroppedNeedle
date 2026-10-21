@@ -31,6 +31,8 @@ use super::merged_ids;
 use super::sqlite::stored_release;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::accepted_release;
+use crate::identity::DecisionSource;
+use crate::identity::sql::REVISABLE;
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 use droppedneedle_kernel::db::fold_text;
@@ -152,10 +154,13 @@ const STALE_ALBUMS: &str = "SELECT a.id FROM local_album_external_identities e \
 
 /// The rows the app linked, in id order after `?1`, at most `?2`. Every
 /// link is MusicBrainz's (a CHECK), so the walk goes by the primary key.
-const AUTOMATIC_LINKS_AFTER: &str = "SELECT local_artist_id \
-     FROM local_artist_external_identities \
-     WHERE decision_source IN ('automatic', 'embedded') AND local_artist_id > ?1 \
-     ORDER BY local_artist_id LIMIT ?2";
+fn automatic_links_after_sql() -> String {
+    format!(
+        "SELECT local_artist_id FROM local_artist_external_identities \
+         WHERE decision_source IN {REVISABLE} AND local_artist_id > ?1 \
+         ORDER BY local_artist_id LIMIT ?2"
+    )
+}
 
 /// The ids row `?1` is proven to be: up to two of its current proofs'
 /// ids, and the lowest and highest ids its credits' files hold.
@@ -205,7 +210,7 @@ pub fn automatic_links_after(
     cursor: &str,
     limit: usize,
 ) -> rusqlite::Result<Vec<String>> {
-    conn.prepare_cached(AUTOMATIC_LINKS_AFTER)?
+    conn.prepare_cached(&automatic_links_after_sql())?
         .query_map(params![cursor, limit as i64], |row| row.get(0))?
         .collect()
 }
@@ -887,7 +892,7 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
         let Some((created, provable)) = row else {
             continue;
         };
-        let link: Option<(String, String)> = conn
+        let link: Option<(String, DecisionSource)> = conn
             .prepare_cached(
                 "SELECT lower(provider_artist_id), decision_source \
                  FROM local_artist_external_identities \
@@ -901,7 +906,7 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
             BTreeSet::new()
         };
         if let Some((linked, source)) = &link
-            && matches!(source.as_str(), "manual" | "legacy_import")
+            && source.is_persons_choice()
         {
             if ids.iter().any(|id| id != linked) {
                 conflicts.insert(linked.clone());
@@ -1001,10 +1006,10 @@ pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::R
     for change in &changes {
         if let LinkChange::Unlink { artist } = change {
             let removed = tx
-                .prepare_cached(
+                .prepare_cached(&format!(
                     "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1 \
-                     AND provider = 'musicbrainz' AND decision_source IN ('automatic', 'embedded')",
-                )?
+                     AND provider = 'musicbrainz' AND decision_source IN {REVISABLE}"
+                ))?
                 .execute(params![artist])?;
             if removed > 0 {
                 touch(artist)?;
@@ -1015,7 +1020,7 @@ pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::R
     for change in &changes {
         if let LinkChange::Link { artist, mbid } = change {
             let written = tx
-                .prepare_cached(
+                .prepare_cached(&format!(
                     "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
                      provider_artist_id, decision_source, selected_at) \
                      VALUES (?1, 'musicbrainz', ?2, 'automatic', ?3) \
@@ -1025,8 +1030,8 @@ pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::R
                      selected_by_user_id = NULL, selected_at = excluded.selected_at, \
                      row_revision = local_artist_external_identities.row_revision + 1 \
                      WHERE local_artist_external_identities.decision_source \
-                     IN ('automatic', 'embedded')",
-                )?
+                     IN {REVISABLE}"
+                ))?
                 .execute(params![artist, mbid, now])?;
             if written > 0 {
                 touch(artist)?;

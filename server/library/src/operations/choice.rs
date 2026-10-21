@@ -28,6 +28,7 @@ use crate::corrections::continuation::{Scope, continue_replaced, continue_tracks
 use crate::corrections::release_join::join_replaced;
 use crate::identify::models::{EvidenceClass, PriorAlbumIdentity, PriorTrackIdentity};
 use crate::identify::sqlite::{album_identity_row, stored_release, track_identity_rows};
+use crate::identity::{self, DecisionSource};
 
 /// An album's match state row, as the undo snapshot keeps it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -750,90 +751,38 @@ pub fn accept_automatic(
         return Ok(None);
     };
     let before = snapshot(tx, album_id)?;
-    if before
-        .identity
-        .as_ref()
-        .is_some_and(|identity| identity.decision_source.as_deref() == Some("manual"))
-    {
-        return Ok(None);
-    }
     let indexed = indexed_track_ids(tx, album_id)?;
     let (placed, extra) = place(&indexed, candidate);
     if placed.is_empty() {
         return Ok(None);
     }
     let group = candidate.evidence.release_group_mbid.clone();
-    tx.execute(
-        "INSERT INTO local_album_external_identities (local_album_id, provider, \
-         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
-         VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, 1) \
-         ON CONFLICT (local_album_id, provider) DO UPDATE SET \
-         release_group_mbid = excluded.release_group_mbid, \
-         release_mbid = excluded.release_mbid, decision_source = 'automatic', \
-         selected_by_user_id = NULL, selected_at = excluded.selected_at, \
-         row_revision = row_revision + 1",
-        params![album_id, PROVIDER, group, release, now],
-    )?;
-    for placement in &placed {
-        upsert_track_identity(
-            tx,
-            &TrackRow {
-                local_track_id: &placement.local_track_id,
-                recording_mbid: &placement.recording_mbid,
-                release_mbid: Some(&release),
-                release_track_mbid: Some(&placement.release_track_mbid),
-                medium_position: Some(placement.disc),
-                release_track_position: Some(placement.position),
-                decision_source: "automatic",
-            },
-            now,
-        )?;
-    }
-    for track_id in &extra {
-        tx.execute(
-            "UPDATE local_track_external_identities SET release_mbid = NULL, \
-             release_track_mbid = NULL, medium_position = NULL, \
-             release_track_position = NULL, selected_at = ?2, \
-             row_revision = row_revision + 1 WHERE local_track_id = ?1 AND provider = ?3",
-            params![track_id, now, PROVIDER],
-        )?;
-    }
-    tx.execute(
-        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
-        params![album_id],
-    )?;
-    // A confident match: applied fully, so no unconfirmed flag remains.
-    tx.execute(
-        "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
-        params![album_id],
-    )?;
-    // The automatic-edition undo, as an automatic seal keeps it.
-    tx.execute(
-        "INSERT INTO library_automatic_edition_undo (id, local_album_id, job_id, \
-         prior_identity_json, prior_track_identities_json, expected_post_album_revision, \
-         expected_post_identity_revision, reason_code, created_at) \
-         SELECT ?1, a.id, ?2, ?3, ?4, a.row_revision, i.row_revision, ?5, ?6 \
-         FROM local_albums a JOIN local_album_external_identities i \
-         ON i.local_album_id = a.id AND i.provider = ?8 WHERE a.id = ?7 \
-         ON CONFLICT (local_album_id) DO UPDATE SET id = excluded.id, \
-         job_id = excluded.job_id, evidence_id = NULL, \
-         prior_identity_json = excluded.prior_identity_json, \
-         prior_track_identities_json = excluded.prior_track_identities_json, \
-         expected_post_album_revision = excluded.expected_post_album_revision, \
-         expected_post_identity_revision = excluded.expected_post_identity_revision, \
-         reason_code = excluded.reason_code, created_at = excluded.created_at, \
-         consumed_at = NULL, consumed_action_id = NULL",
-        params![
-            uuid::Uuid::new_v4().to_string(),
+    let placed: Vec<identity::Placed> = placed
+        .into_iter()
+        .map(|placement| identity::Placed {
+            local_track_id: placement.local_track_id,
+            recording_mbid: placement.recording_mbid,
+            release_track_mbid: placement.release_track_mbid,
+            disc: placement.disc,
+            position: placement.position,
+        })
+        .collect();
+    let accepted = identity::accept_automatic(
+        tx,
+        album_id,
+        &identity::Accepted {
+            release_group_mbid: &group,
+            release_mbid: &release,
+            placed: &placed,
+            extra: &extra,
             job_id,
-            before.identity.as_ref().map(to_json).transpose()?,
-            to_json(&before.tracks)?,
             reason_code,
             now,
-            album_id,
-            PROVIDER,
-        ],
+        },
     )?;
+    if accepted != identity::AutomaticOutcome::Done {
+        return Ok(None);
+    }
     let action = record_action(
         tx,
         CatalogAction {
@@ -853,7 +802,6 @@ pub fn accept_automatic(
         now,
     )?;
     keep_undo(tx, album_id, &before, &action, now)?;
-    bump_catalog(tx)?;
     Ok(Some(action))
 }
 
@@ -899,7 +847,12 @@ fn detach_identity(
     let Some(identity) = before.identity.clone() else {
         return Ok(None);
     };
-    if !include_manual && identity.decision_source.as_deref() == Some("manual") {
+    let persons = identity
+        .decision_source
+        .as_deref()
+        .and_then(DecisionSource::parse)
+        .is_some_and(DecisionSource::is_persons_choice);
+    if !include_manual && persons {
         return Ok(None);
     }
     tx.execute(
@@ -1109,11 +1062,7 @@ pub fn undo(
             )?;
         }
         None => {
-            tx.execute(
-                "DELETE FROM local_album_external_identities \
-                 WHERE local_album_id = ?1 AND provider = ?2",
-                params![album_id, PROVIDER],
-            )?;
+            identity::delete_album_row(tx, album_id, identity::Rows::Any)?;
         }
     }
     for track_id in indexed_track_ids(tx, album_id)? {

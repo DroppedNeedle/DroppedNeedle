@@ -7,12 +7,12 @@
 
 use super::models::{DecisionSource, IdentificationOutcome};
 
-/// Overwrite protection: an automatic pass may only touch automatic rows.
+/// Overwrite protection: an automatic pass may only touch revisable rows.
 /// Manual and legacy-import rows survive rescans, moves, and re-id; when a
 /// new attempt disagrees with one, the right move is a review, not a write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverwriteVerdict {
-    /// Safe to write: no row yet, or the row is automatic.
+    /// Safe to write: no row yet, or the row is revisable.
     MayWrite,
     /// The row is curator-protected; file a review instead.
     ProtectedFileReview,
@@ -29,7 +29,7 @@ pub fn evaluate_overwrite(
 ) -> OverwriteVerdict {
     match current {
         None => OverwriteVerdict::MayWrite,
-        Some(source) if source.automatic_may_overwrite() => OverwriteVerdict::MayWrite,
+        Some(source) if source.is_revisable() => OverwriteVerdict::MayWrite,
         Some(_) => {
             // Agreement is computed from the two release-group MBIDs:
             // a protected row the new evidence agrees with quietly
@@ -48,12 +48,12 @@ pub fn evaluate_overwrite(
     }
 }
 
-/// Automatic identities retract when contradiction arrives; protected ones
+/// Revisable identities retract when contradiction arrives; protected ones
 /// never do. Returns true when the stored identity must be cleared.
 pub fn retracts_on_contradiction(
     current: Option<DecisionSource>,
     outcome: IdentificationOutcome,
 ) -> bool {
     matches!(outcome, IdentificationOutcome::Contradictory)
-        && matches!(current, Some(DecisionSource::Automatic))
+        && current.is_some_and(DecisionSource::is_revisable)
 }

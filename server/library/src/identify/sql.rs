@@ -2,10 +2,9 @@
 //! MusicBrainz match: the reads the import seal makes on its own
 //! transaction, and the guarded writes it shares with the store's saves.
 
+use crate::identity::sql::REVISABLE;
+
 droppedneedle_kernel::sql! {
-    /// Decision sources an automatic pass may replace: its own rows and
-    /// ids the tags carried.
-    pub(super) fragment REVISABLE = "('automatic','embedded')";
     /// One album's match (`?1`, provider `?2`).
     pub(super) ALBUM_IDENTITY = "SELECT release_group_mbid, release_mbid, decision_source, \
              row_revision FROM local_album_external_identities \

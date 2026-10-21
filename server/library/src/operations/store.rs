@@ -20,7 +20,8 @@ use super::models::{
     Control, Evaluation, OperationError, OperationJob, OperationKind, OperationState, WorkResult,
 };
 use super::reasons;
-use crate::identify::sqlite::{album_identity_row, album_input_revision, decision_from};
+use crate::identify::sqlite::{album_identity_row, album_input_revision};
+use crate::identity::DecisionSource;
 use crate::jobs::{self, ControlChange, NewJob, NewWork, Tally, WorkState};
 use crate::management::profile::root_assignment;
 use droppedneedle_kernel::runtime_config::Live;
@@ -241,9 +242,9 @@ pub(super) fn retry_gate(
     // Identification keeps an edition someone chose or imported, so a
     // retry would change nothing.
     if album_identity_row(conn, album_id)?.is_some_and(|row| {
-        row.decision_source
-            .as_deref()
-            .is_some_and(|raw| !decision_from(raw).automatic_may_overwrite())
+        row.decision_source.as_deref().is_some_and(|raw| {
+            DecisionSource::parse(raw).is_some_and(DecisionSource::is_persons_choice)
+        })
     }) {
         return Err(OperationError::Conflict(reasons::EDITION_IS_CHOSEN));
     }

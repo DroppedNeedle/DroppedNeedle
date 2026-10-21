@@ -288,7 +288,7 @@ impl LibrarySetup {
                     break;
                 }
             };
-            let attempt = self.identify.run_claimed_job(&job.id, now_ms());
+            let attempt = self.identify.run_claimed(job.clone(), now_ms());
             tokio::select! {
                 biased;
                 () = stop.cancelled() => break,
@@ -390,12 +390,21 @@ impl LibrarySetup {
                 );
             }
         }
-        if let Err(error) = self.identify_store.update(job.clone()) {
-            tracing::warn!(
-                %error,
-                job_id = job.id,
-                "identify job not put back; its lease brings it back"
-            );
+        match self.identify_store.land(&job) {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    "identify job taken over by another claim; left to it"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    job_id = job.id,
+                    "identify job not put back; its lease brings it back"
+                );
+            }
         }
     }
 

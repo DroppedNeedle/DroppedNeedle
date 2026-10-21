@@ -18,6 +18,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::artist_links::{mark_stale, placeholder, settle, touch_artist};
 use super::sources::ArtistAnswer;
+use crate::identity::sql::{PERSONS, REVISABLE};
 use crate::operations::decisions::{ArtistAction, record_artist_action};
 
 /// A kept id is asked about again after this long, while it still
@@ -167,11 +168,11 @@ fn not_followed(
         return Ok(Some("no artist record held the id beside another"));
     }
     let linked: Vec<String> = tx
-        .prepare_cached(
+        .prepare_cached(&format!(
             "SELECT local_artist_id FROM local_artist_external_identities \
-             WHERE provider = 'musicbrainz' AND decision_source IN ('manual', 'legacy_import') \
-             AND lower(provider_artist_id) = ?1",
-        )?
+             WHERE provider = 'musicbrainz' AND decision_source IN {PERSONS} \
+             AND lower(provider_artist_id) = ?1"
+        ))?
         .query_map(params![retired], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let stays = match linked.as_slice() {
@@ -185,11 +186,11 @@ fn not_followed(
 /// Whether a row other than `artist` holds `mbid` by a person's or v2's
 /// link.
 fn person_link_elsewhere(conn: &Connection, artist: &str, mbid: &str) -> rusqlite::Result<bool> {
-    conn.prepare_cached(
+    conn.prepare_cached(&format!(
         "SELECT EXISTS (SELECT 1 FROM local_artist_external_identities \
-         WHERE provider = 'musicbrainz' AND decision_source IN ('manual', 'legacy_import') \
-         AND lower(provider_artist_id) = ?1 AND local_artist_id <> ?2)",
-    )?
+         WHERE provider = 'musicbrainz' AND decision_source IN {PERSONS} \
+         AND lower(provider_artist_id) = ?1 AND local_artist_id <> ?2)"
+    ))?
     .query_row(params![mbid, artist], |row| row.get(0))
 }
 
@@ -294,11 +295,11 @@ pub(crate) fn follow_person_links(
     let mut moved = false;
     for artist in rows {
         let link: Option<String> = tx
-            .prepare_cached(
+            .prepare_cached(&format!(
                 "SELECT lower(provider_artist_id) FROM local_artist_external_identities \
                  WHERE local_artist_id = ?1 AND provider = 'musicbrainz' \
-                 AND decision_source IN ('manual', 'legacy_import')",
-            )?
+                 AND decision_source IN {PERSONS}"
+            ))?
             .query_row(params![artist], |row| row.get(0))
             .optional()?;
         let Some(retired) = link else { continue };
@@ -315,11 +316,11 @@ pub(crate) fn follow_person_links(
             continue;
         }
         let giving_way: Vec<String> = tx
-            .prepare_cached(
+            .prepare_cached(&format!(
                 "SELECT local_artist_id FROM local_artist_external_identities \
-                 WHERE provider = 'musicbrainz' AND decision_source IN ('automatic', 'embedded') \
-                 AND lower(provider_artist_id) = ?1 AND local_artist_id <> ?2",
-            )?
+                 WHERE provider = 'musicbrainz' AND decision_source IN {REVISABLE} \
+                 AND lower(provider_artist_id) = ?1 AND local_artist_id <> ?2"
+            ))?
             .query_map(params![current, artist], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         for other in &giving_way {

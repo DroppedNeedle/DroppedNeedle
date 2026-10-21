@@ -27,6 +27,7 @@ use super::sources::{EditionPage, EditionQuery, SourceError};
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
 use crate::edition_prefs::{LivePreferences, Preferences};
+use crate::identity::AutomaticOutcome;
 use crate::matching::decide::{EDITION_COHORT, eligible};
 use crate::matching::{EditionPrefs, LocalAlbum, ReleaseMatch, Verdict, decide, match_release};
 
@@ -108,53 +109,60 @@ impl IdentifyService {
             input_revision: input_revision.to_owned(),
             requested_by_user_id: requested_by_user_id.map(str::to_owned),
             failure_code: None,
+            lease_expires_ms: None,
         };
         self.deps.store.enqueue(job, lane)
     }
 
-    /// Run one claimed job to a terminal landing. Async only because the
-    /// provider seam is async; every rule inside is sync and pure. `None`
-    /// when the job is gone. A store error leaves the job where it was:
-    /// the caller decides what happens to it.
+    /// Run the claimed job `job_id` to a landing, under the lease the job
+    /// holds now ([`run_claimed`](Self::run_claimed)). `None` when the job
+    /// is gone.
     pub async fn run_claimed_job(
         &self,
         job_id: &str,
         now_ms: u64,
     ) -> Result<Option<AttemptReport>, StoreError> {
-        let Some(mut job) = self.deps.store.job(job_id)? else {
+        let Some(job) = self.deps.store.job(job_id)? else {
             return Ok(None);
         };
+        self.run_claimed(job, now_ms).await
+    }
+
+    /// Run one claimed job to a terminal landing. Async only because the
+    /// provider seam is async; every rule inside is sync and pure. Every
+    /// landing names the lease `job` was claimed with, and what the attempt
+    /// writes lands in the same transaction. `None` when the job went back
+    /// to the queue, or another worker took it over after its lease
+    /// lapsed (nothing of this attempt is written). A store error leaves
+    /// the job where it was: the caller decides what happens to it.
+    pub async fn run_claimed(
+        &self,
+        mut job: IdentifyJob,
+        now_ms: u64,
+    ) -> Result<Option<AttemptReport>, StoreError> {
         let Some(facts) = self.deps.store.album_facts(&job.local_album_id)? else {
             // The album left the catalog: nothing to identify.
             land_job(&mut job, AttemptLanding::Failed, now_ms, Some("ALBUM_GONE"));
-            self.deps.store.update(job.clone())?;
-            return Ok(Some(AttemptReport {
-                job,
-                outcome: IdentificationOutcome::Failed,
-                reason_code: "ALBUM_GONE".to_owned(),
-                review_id: None,
-            }));
+            return self.land(job, IdentificationOutcome::Failed, "ALBUM_GONE");
         };
         let current = self.deps.store.album_identity(&facts.local_album_id)?;
         // A person's choice is final: automatic passes never look again.
         if current
             .as_ref()
-            .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
+            .is_some_and(|row| row.decision_source.is_persons_choice())
         {
             land_job(&mut job, AttemptLanding::Done, now_ms, None);
-            self.deps.store.update(job.clone())?;
-            return Ok(Some(AttemptReport {
+            return self.land(
                 job,
-                outcome: IdentificationOutcome::Identified,
-                reason_code: "CHOSEN_EDITION_KEPT".to_owned(),
-                review_id: None,
-            }));
+                IdentificationOutcome::Identified,
+                "CHOSEN_EDITION_KEPT",
+            );
         }
         // Preferences that do not read put the job back as it was, with no
         // attempt spent; the loop claims nothing until they read again.
         let Some(preferences) = self.preferences() else {
             job.state = JobState::Queued;
-            self.deps.store.update(job)?;
+            self.deps.store.land(&job)?;
             return Ok(None);
         };
         let RecallOutcome {
@@ -184,21 +192,36 @@ impl IdentifyService {
                 now_ms,
                 recall.failure_code.as_deref(),
             );
-            self.deps.store.update(job.clone())?;
-            return Ok(Some(AttemptReport {
+            return self.land(
                 job,
-                outcome: IdentificationOutcome::ProviderDeferred,
-                reason_code: "PROVIDER_DEFERRED".to_owned(),
-                review_id: None,
-            }));
+                IdentificationOutcome::ProviderDeferred,
+                "PROVIDER_DEFERRED",
+            );
         }
         // Every candidate's document stays on file: the identity's release
         // for tagging, the others because a curator may approve them.
         keep_releases(&self.deps.store, recall.releases.clone(), Lane::Background).await?;
         let (ranking, decision) = self.ranked(&facts, &recall, held.as_deref(), &preferences);
-        let report = self.apply_decision(&mut job, &facts, &ranking, decision, now_ms)?;
-        self.deps.store.update(job)?;
-        Ok(Some(report))
+        self.apply_decision(job, &facts, &ranking, decision, now_ms)
+    }
+
+    /// Land `job` with nothing else written, and report it. `None` when
+    /// its lease was lost.
+    fn land(
+        &self,
+        job: IdentifyJob,
+        outcome: IdentificationOutcome,
+        reason: &str,
+    ) -> Result<Option<AttemptReport>, StoreError> {
+        if !self.deps.store.land(&job)? {
+            return Ok(None);
+        }
+        Ok(Some(AttemptReport {
+            job,
+            outcome,
+            reason_code: reason.to_owned(),
+            review_id: None,
+        }))
     }
 
     /// Recall candidates for one album outside the queue: every release
@@ -413,41 +436,62 @@ impl IdentifyService {
         (ranking, decision)
     }
 
-    /// Apply a decision. Always pick: a confident match seals; a close
-    /// call, weak evidence or a lone candidate seals the best guess with an
-    /// "unconfirmed" flag; only when every candidate is ruled out does the
-    /// album keep its own tags, flagged unmatched with the closest
-    /// candidates. Nothing waits in a blocking review.
+    /// Apply a decision and land the job with it, in one transaction.
+    /// Always pick: a confident match seals; a close call, weak evidence or
+    /// a lone candidate seals the best guess with an "unconfirmed" flag;
+    /// only when every candidate is ruled out does the album keep its own
+    /// tags, flagged unmatched with the closest candidates. Nothing waits
+    /// in a blocking review. Files that changed since the facts were read
+    /// get nothing written: the job lands as `INPUT_MOVED` and the album
+    /// is identified again.
     fn apply_decision(
         &self,
-        job: &mut IdentifyJob,
+        mut job: IdentifyJob,
         facts: &LocalAlbumFacts,
         ranking: &Ranking,
         decision: Decision,
         now_ms: u64,
-    ) -> Result<AttemptReport, StoreError> {
+    ) -> Result<Option<AttemptReport>, StoreError> {
         let scored = &ranking.candidates;
         let album = facts.local_album_id.as_str();
         let current = self.deps.store.album_identity(album)?;
         let outcome = decision.outcome();
         let reason_code = decision.reason_code();
         let closest: Vec<CandidateEvidence> = scored.iter().take(CLOSEST).cloned().collect();
-        land_job(job, AttemptLanding::Done, now_ms, None);
-        let report = |reason: &str| AttemptReport {
-            job: job.clone(),
-            outcome,
-            reason_code: reason.to_owned(),
-            review_id: None,
+        land_job(&mut job, AttemptLanding::Done, now_ms, None);
+        let report = |landed: Option<(AutomaticOutcome, IdentifyJob)>, reason: &str| {
+            landed.map(|(written, job)| {
+                if written == AutomaticOutcome::InputMoved {
+                    return AttemptReport {
+                        job,
+                        outcome: IdentificationOutcome::Failed,
+                        reason_code: "INPUT_MOVED".to_owned(),
+                        review_id: None,
+                    };
+                }
+                if written == AutomaticOutcome::PersonsChoice {
+                    tracing::info!(
+                        album,
+                        "a curator decided this album meanwhile; automatic seal skipped"
+                    );
+                }
+                AttemptReport {
+                    job,
+                    outcome,
+                    reason_code: reason.to_owned(),
+                    review_id: None,
+                }
+            })
         };
         if let Decision::Identified(index) = decision {
-            self.seal_automatic(facts, &scored[index], None)?;
-            return Ok(report("SUPPORTED"));
+            let landed = self.seal_automatic(&job, facts, &scored[index], None)?;
+            return Ok(report(landed, "SUPPORTED"));
         }
         // A confirmed automatic edition stays unless the new evidence rules
         // it out: a weaker pass never demotes or replaces it.
         let confirmed_exact = match current.as_ref() {
             Some(row)
-                if row.decision_source == DecisionSource::Automatic
+                if row.decision_source.is_revisable()
                     && self.deps.store.match_flag(album)?.is_none() =>
             {
                 row.release_mbid.clone()
@@ -457,10 +501,11 @@ impl IdentifyService {
         if let Some(held) = confirmed_exact.as_deref()
             && !ruled_out(ranking, held)
         {
-            return Ok(report("QUIET_RECONFIRM"));
+            return self.land(job, outcome, "QUIET_RECONFIRM");
         }
         if let Some(guess) = ranking.guess.and_then(|index| scored.get(index)) {
-            self.seal_automatic(
+            let landed = self.seal_automatic(
+                &job,
                 facts,
                 guess,
                 Some(MatchFlag {
@@ -470,40 +515,39 @@ impl IdentifyService {
                     candidates: closest,
                 }),
             )?;
-            return Ok(report(&reason_code));
+            return Ok(report(landed, &reason_code));
         }
-        if matches!(decision, Decision::Contradictory)
+        let contradicted = matches!(decision, Decision::Contradictory)
             && retracts_on_contradiction(
                 current.as_ref().map(|row| row.decision_source),
                 IdentificationOutcome::Contradictory,
-            )
-        {
-            self.deps.store.clear_album_identity(album)?;
-        }
-        if self.deps.store.album_identity(album)?.is_none() {
-            self.deps.store.set_match_flag(
-                album,
-                Some(&MatchFlag {
-                    state: MatchFlagState::Unmatched,
-                    reason_code: reason_code.clone(),
-                    release_mbid: None,
-                    candidates: closest,
-                }),
-            )?;
-        }
-        Ok(report(&reason_code))
+            );
+        let landed = self.deps.store.retract_and_land(
+            album,
+            contradicted,
+            &MatchFlag {
+                state: MatchFlagState::Unmatched,
+                reason_code: reason_code.clone(),
+                release_mbid: None,
+                candidates: closest,
+            },
+            &facts.input_revision,
+            &job,
+        )?;
+        Ok(report(landed, &reason_code))
     }
 
-    /// Seal an automatic win: album row and supported track rows (curator
-    /// tracks keep theirs). The store writes them together, never over a
-    /// curator's album row, and an exact edition keeps what it replaced so
-    /// an administrator can undo it.
+    /// Seal an automatic win and land `job` with it: album row and
+    /// supported track rows (curator tracks keep theirs). The store writes
+    /// them together, never over a curator's album row, and an exact
+    /// edition keeps what it replaced so an administrator can undo it.
     fn seal_automatic(
         &self,
+        job: &IdentifyJob,
         facts: &LocalAlbumFacts,
         winner: &CandidateEvidence,
         flag: Option<MatchFlag>,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<Option<(AutomaticOutcome, IdentifyJob)>, StoreError> {
         let tracks = winner
             .track_evidence
             .iter()
@@ -519,20 +563,17 @@ impl IdentifyService {
                 })
             })
             .collect();
-        let sealed = self.deps.store.seal_automatic(&AutomaticSeal {
-            local_album_id: facts.local_album_id.clone(),
-            release_group_mbid: winner.release_group_mbid.clone(),
-            release_mbid: winner.release_mbid.clone(),
-            tracks,
-            flag,
-        })?;
-        if !sealed {
-            tracing::info!(
-                album = facts.local_album_id,
-                "a curator decided this album meanwhile; automatic seal skipped"
-            );
-        }
-        Ok(sealed)
+        self.deps.store.seal_and_land(
+            &AutomaticSeal {
+                local_album_id: facts.local_album_id.clone(),
+                release_group_mbid: winner.release_group_mbid.clone(),
+                release_mbid: winner.release_mbid.clone(),
+                tracks,
+                flag,
+            },
+            &facts.input_revision,
+            job,
+        )
     }
 
     /// A curator approves a review: the chosen candidate seals as a manual
@@ -601,11 +642,11 @@ impl IdentifyService {
         let pending = self.deps.store.pending_for_album(local_album_id)?;
         let revisable = identity
             .as_ref()
-            .is_none_or(|row| row.decision_source.automatic_may_overwrite());
+            .is_none_or(|row| row.decision_source.is_revisable());
         Ok(IdentityBrief {
             local_album_id: local_album_id.to_owned(),
             protected_source: identity.as_ref().and_then(|row| {
-                (!row.decision_source.automatic_may_overwrite()).then_some(row.decision_source)
+                (!row.decision_source.is_revisable()).then_some(row.decision_source)
             }),
             reason_code: pending
                 .first()

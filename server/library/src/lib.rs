@@ -30,6 +30,7 @@ pub mod corrections;
 pub mod edition_prefs;
 pub mod http;
 pub mod identify;
+pub mod identity;
 pub mod import;
 pub mod jobs;
 mod loops;
@@ -57,6 +58,7 @@ pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFi
     vec![
         scan::sql::registered(),
         identify::sql::registered(),
+        identity::sql::registered(),
         contrib::sql::registered(),
         publish::sql::registered(),
         catalog_revision::sql::registered(),

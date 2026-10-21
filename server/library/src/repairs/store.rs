@@ -19,6 +19,8 @@ use super::models::{
     Purpose, RepairEstimate, Scope, Summary, Verdict,
 };
 use super::reasons;
+use crate::identity::DecisionSource;
+use crate::identity::sql::REVISABLE;
 use crate::jobs::{self, NewJob, OperationState, Tally, WorkState};
 use crate::operations::decisions::live_automatic_edition_undo;
 use crate::operations::models::{OperationError, OperationJob, OperationKind};
@@ -112,8 +114,9 @@ fn scope_sql(
                     values.push(Value::Text(version.to_owned()));
                     "AND i.matcher_version = ?".to_owned()
                 }
-                // A person's choice is never rechecked for removal.
-                None => "AND i.decision_source IN ('automatic','legacy_import')".to_owned(),
+                // A person's choice, made now or carried over from v2, is
+                // never rechecked for removal.
+                None => format!("AND i.decision_source IN {REVISABLE}"),
             };
             format!(
                 "FROM local_albums a JOIN local_album_external_identities i \
@@ -409,14 +412,14 @@ pub fn track_id_backfill_done(conn: &Connection) -> rusqlite::Result<bool> {
 /// an album a person decided: a chosen or imported identity, a match taken
 /// off, or a review a person settled.
 pub fn track_id_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT a.id FROM local_albums a \
          LEFT JOIN local_album_external_identities i \
              ON i.local_album_id = a.id AND i.provider = ?1 \
          LEFT JOIN library_album_match_state m ON m.local_album_id = a.id \
          WHERE a.retired_into_album_id IS NULL \
          AND (i.local_album_id IS NOT NULL OR m.local_album_id IS NOT NULL) \
-         AND (i.decision_source IS NULL OR i.decision_source IN ('automatic','embedded')) \
+         AND (i.decision_source IS NULL OR i.decision_source IN {REVISABLE}) \
          AND COALESCE(m.reason_code, '') != 'DETACHED_BY_PERSON' \
          AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
              WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
@@ -442,8 +445,8 @@ pub fn track_id_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<Strin
              json_each(candidate.value, '$.track_evidence') track, \
              json_each(track.value, '$.evidence_kinds') kind \
              WHERE kind.value = 'release_track_mbid_conflict')) \
-         ORDER BY a.id",
-    )?;
+         ORDER BY a.id"
+    ))?;
     stmt.query_map(params![PROVIDER], |row| row.get(0))?
         .collect()
 }
@@ -631,7 +634,7 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
                     IdentityState {
                         release_group_mbid: row.get(0)?,
                         release_mbid: row.get(1)?,
-                        manual: row.get::<_, String>(2)? == "manual",
+                        manual: row.get::<_, DecisionSource>(2)?.is_persons_choice(),
                     },
                     row.get(3)?,
                 ))
