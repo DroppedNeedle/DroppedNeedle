@@ -838,11 +838,13 @@ pub struct RestoreExtrasBody {
     pub action_id: String,
 }
 
-/// Whether the files went back.
+/// What did not go back.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RestoreExtrasView {
-    /// False when a file could not be put back; it stays in the recycle bin.
-    pub restored: bool,
+    /// Files that were not put back because their copy is gone from the
+    /// recycle bin or changed there, as paths inside their library folder.
+    /// Empty when every file went back.
+    pub missing: Vec<String>,
 }
 
 /// Move files the album's edition has no place for (second copies, other
@@ -908,11 +910,13 @@ pub async fn remove_extras(
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = RestoreExtrasBody,
     responses(
-        (status = 200, description = "Files put back and rescanned", body = RestoreExtrasView),
+        (status = 200, description = "Files put back and indexed", body = RestoreExtrasView),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Nothing to take back"),
-        (status = 409, description = "Another file now sits at an old path; nothing was put back"),
+        (status = 409, description = "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back"),
+        (status = 422, description = "The files could not be put back; they stay in the recycle bin"),
+        (status = 503, description = "The server is busy; try again"),
     )
 )]
 pub async fn restore_extras(
@@ -922,12 +926,12 @@ pub async fn restore_extras(
     ValidJson(body): ValidJson<RestoreExtrasBody>,
 ) -> Result<Json<RestoreExtrasView>, ApiError> {
     let actor = caller.user_id().to_owned();
-    let restored = tokio::task::spawn_blocking(move || {
+    let missing = tokio::task::spawn_blocking(move || {
         Mutations::new(&state).restore_recycled(&album_id, &body.action_id, &actor)
     })
     .await
     .map_err(ApiError::internal)??;
-    Ok(Json(RestoreExtrasView { restored }))
+    Ok(Json(RestoreExtrasView { missing }))
 }
 
 /// Albums whose match is a best guess waiting for a look (or, with

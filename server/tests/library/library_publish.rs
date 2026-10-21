@@ -285,6 +285,7 @@ fn two_track_bundle(fix: &Fixture, kind: PlanKind) -> (PlanBundle, BTreeMap<Stri
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -2046,6 +2047,7 @@ fn generated_files_land_and_go_away_journaled() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -2131,6 +2133,7 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -2451,6 +2454,7 @@ fn removal_bundle(
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: Some(removal),
     }
 }
@@ -2718,6 +2722,7 @@ fn upgrade_bundle(
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: Some(removal),
     };
     let mut docs = BTreeMap::new();
@@ -2976,7 +2981,7 @@ fn a_removed_file_edited_in_place_still_reaches_the_bin() {
 
 /// A copy to another disk that stops part way leaves nothing behind: no
 /// file at the destination, no hidden temp, and the source keeps its
-/// bytes. The move into the bin and Put back both copy this way.
+/// bytes. The move into the bin copies this way.
 #[test]
 fn a_copy_that_fails_part_way_leaves_nothing_behind() {
     let fix = fixture("copy-short");
@@ -3066,6 +3071,7 @@ fn a_remove_only_root_takes_removals_only() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: None,
     };
     let (sealed, live) = seal(&bundle);
@@ -3141,6 +3147,7 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -3893,6 +3900,7 @@ fn retag_bundle(
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -3916,6 +3924,7 @@ fn a_240_byte_file_name_is_published_and_retagged() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -4145,6 +4154,7 @@ fn mp3_unknown_frames_survive_publish_staging() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        put_back: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();

@@ -125,6 +125,10 @@ pub enum JournalKind {
     /// hidden name, then moved to its recycle bin entry after the commit.
     /// Its copy is never deleted, and goes home on any unwind.
     Remove,
+    /// A removed file going home: its recycled copy is copied to the
+    /// row's hidden temp beside home and placed there. The copy is never
+    /// touched before the commit.
+    PutBack,
 }
 
 impl JournalKind {
@@ -137,6 +141,7 @@ impl JournalKind {
             Self::Output => "output",
             Self::Delete => "delete",
             Self::Remove => "remove",
+            Self::PutBack => "put_back",
         }
     }
 
@@ -149,6 +154,7 @@ impl JournalKind {
             "output" => Ok(Self::Output),
             "delete" => Ok(Self::Delete),
             "remove" => Ok(Self::Remove),
+            "put_back" => Ok(Self::PutBack),
             other => Err(PublishError::Journal(format!(
                 "unknown journal kind {other}"
             ))),

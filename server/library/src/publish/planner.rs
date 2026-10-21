@@ -300,10 +300,69 @@ pub struct PlanBundle {
     pub naming_revision: u64,
     /// Global typed-library policy revision.
     pub policy_revision: u64,
-    /// Library files this bundle takes away to the recycle bin. A bundle
-    /// carries either items or a removal, never both.
+    /// Library files this bundle takes away to the recycle bin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removal: Option<Removal>,
+    /// Removed files this bundle puts back. A bundle that carries one
+    /// carries nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub put_back: Option<PutBack>,
+}
+
+/// Remove extras' undo: files one removal took to the recycle bin, going
+/// back where they were.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PutBack {
+    /// The `edition_extras_recycled` action this undoes.
+    pub action_id: String,
+    pub album_id: String,
+    /// The account the restored action names, when a person asked.
+    pub actor: Option<String>,
+    /// The removal's bundle, whose rows say where each file was and is.
+    pub removal_bundle: String,
+    pub items: Vec<PutBackItem>,
+    /// Root-relative paths of removed files that are not coming back:
+    /// their copy is gone, or no longer holds the removed bytes.
+    pub missing: Vec<String>,
+}
+
+/// One removed file going home.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PutBackItem {
+    pub track_id: String,
+    /// Where the file was: the removal row's place.
+    pub root_id: String,
+    pub relative_path: String,
+    /// Where the track row is now: its old path, or the hidden name it
+    /// gave the path up for while another file stood there.
+    pub track_rel: String,
+    /// The copy the file comes back from, absolute.
+    pub copy: String,
+    pub copy_in: CopyIn,
+    /// The removed bytes.
+    pub fingerprint: FileFingerprint,
+    /// The copy's identity when the plan checked it.
+    pub copy_stat: super::paths::FileStat,
+    /// How the file is indexed once home.
+    pub policy: crate::scan::models::EffectivePolicy,
+    pub policy_revision: String,
+    /// The file is home already (someone put it back by hand): nothing is
+    /// copied or deleted, and the commit only lists its track again.
+    #[serde(default)]
+    pub home_already: bool,
+}
+
+/// Where a removed file's copy is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CopyIn {
+    /// An entry of one of the session's bins. Deleted once home.
+    Bin,
+    /// An entry of a bin that is no longer set. Copied home, never
+    /// deleted.
+    OldBin,
+    /// The removal's hidden name beside home, its move into the bin still
+    /// pending. Deleted once home.
+    Aside,
 }
 
 /// Tracks a bundle takes out of the library, with their files.
@@ -943,6 +1002,10 @@ impl DiskPreflight {
         let mut per_root: BTreeMap<&str, u64> = BTreeMap::new();
         for item in bundle.items.iter() {
             *per_root.entry(item.dest_root.as_str()).or_insert(0) += item.staged_bytes_estimate;
+        }
+        let put_backs = bundle.put_back.iter().flat_map(|put_back| &put_back.items);
+        for item in put_backs.filter(|item| !item.home_already) {
+            *per_root.entry(item.root_id.as_str()).or_insert(0) += item.fingerprint.size;
         }
         for (root, needed) in per_root {
             let free = probe.free_bytes(root)?;

@@ -20284,10 +20284,14 @@ export interface components {
         RestoreExtrasBody: {
             action_id: string;
         };
-        /** @description Whether the files went back. */
+        /** @description What did not go back. */
         RestoreExtrasView: {
-            /** @description False when a file could not be put back; it stays in the recycle bin. */
-            restored: boolean;
+            /**
+             * @description Files that were not put back because their copy is gone from the
+             *     recycle bin or changed there, as paths inside their library folder.
+             *     Empty when every file went back.
+             */
+            missing: string[];
         };
         /**
          * @description Pre-restore verification report. Read-only: nothing here writes or moves
@@ -29867,7 +29871,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Files put back and rescanned */
+            /** @description Files put back and indexed */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -29903,8 +29907,26 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Another file now sits at an old path; nothing was put back */
+            /** @description Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The files could not be put back; they stay in the recycle bin */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

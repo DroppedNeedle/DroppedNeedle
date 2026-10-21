@@ -585,6 +585,7 @@ impl LibrarySetup {
                 profile_revision: PINNED_REVISION,
                 naming_revision: PINNED_REVISION,
                 policy_revision: super::manage::policy_revision_u64(&registry),
+                put_back: None,
                 removal: (!removals.is_empty()).then(|| Removal {
                     reason_code: "FILE_RECYCLED".to_owned(),
                     actor: import.actor.clone(),

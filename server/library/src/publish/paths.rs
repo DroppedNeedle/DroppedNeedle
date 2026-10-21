@@ -31,8 +31,9 @@ pub enum RootKind {
     Bin { serves: Option<String> },
     /// A library folder whose policy keeps DroppedNeedle's writes out of
     /// it, though files in its included subfolders are in the catalog. A
-    /// person can still remove those files: only a removal's own steps
-    /// resolve paths here, and every other write is refused.
+    /// person can still remove those files and put them back: only a
+    /// removal's and its put-back's own steps resolve paths here, and every
+    /// other write is refused.
     RemoveOnly,
 }
 
@@ -57,7 +58,7 @@ impl Root {
         }
     }
 
-    /// A library folder only removals may take files from.
+    /// A library folder only removals and their put-backs may touch.
     pub fn remove_only(id: impl Into<String>, dir: impl Into<PathBuf>) -> Self {
         Self {
             id: id.into(),
@@ -105,7 +106,7 @@ impl Root {
 #[derive(Debug, Clone)]
 pub struct Sandbox {
     roots: Vec<Root>,
-    /// Library folders only removals may take files from.
+    /// Library folders only removals and their put-backs may touch.
     remove_only: Vec<Root>,
     /// `Err` with the cause while the bins are unknown (a setting they
     /// come from cannot be read): nothing then moves into a bin, and no
@@ -339,8 +340,9 @@ impl Sandbox {
         Ok(path)
     }
 
-    /// The folder of a root a removal may take files from: a library root
-    /// or a remove-only one. Only a removal's own steps call this.
+    /// The folder of a root a removal may take files from and its put-back
+    /// return them to: a library root or a remove-only one. Only a
+    /// removal's and a put-back's own steps call this.
     pub fn removal_root_dir(&self, id: &str) -> Result<&Path, PublishError> {
         self.roots
             .iter()
@@ -350,9 +352,10 @@ impl Sandbox {
             .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {id}")))
     }
 
-    /// [`Self::resolve_no_symlink`] for a file a removal takes away, which
-    /// may also sit under a remove-only root. Only a removal's own steps
-    /// call this; every other write resolves through the library roots.
+    /// [`Self::resolve_no_symlink`] for a file a removal takes away or its
+    /// put-back returns, which may also sit under a remove-only root. Only
+    /// a removal's and a put-back's own steps call this; every other write
+    /// resolves through the library roots.
     pub fn resolve_removal(&self, root_id: &str, relative: &str) -> Result<PathBuf, PublishError> {
         let root_dir = self.removal_root_dir(root_id)?.to_path_buf();
         let path = self.resolve_under(&root_dir, relative)?;
@@ -360,8 +363,8 @@ impl Sandbox {
         Ok(path)
     }
 
-    /// [`Self::ensure_under_roots`] for a removal's own paths, which may
-    /// also sit under a remove-only root.
+    /// [`Self::ensure_under_roots`] for a removal's or a put-back's own
+    /// paths, which may also sit under a remove-only root.
     pub fn ensure_under_removal_roots(&self, path: &Path) -> Result<(), PublishError> {
         if self.in_a_bin(path) {
             return Err(PublishError::UnsafePath(
@@ -382,7 +385,8 @@ impl Sandbox {
     }
 
     /// [`Self::probe_placement`] for a root a removal sets a file aside
-    /// under, which may be a remove-only root.
+    /// under or a put-back places one under, which may be a remove-only
+    /// root.
     pub fn probe_removal_placement(&self, root_id: &str) -> Result<PlacementMode, PublishError> {
         let known = self.placement_mode(root_id);
         if known != PlacementMode::Unknown {
@@ -934,26 +938,6 @@ pub fn recycle_backup(
         tracing::warn!(%error, "recycle bin folder sync failed");
     }
     Ok(true)
-}
-
-/// Move a file out of a recycle bin back to `home`, for the put-back that
-/// stays until it goes through the publisher. The steps are
-/// [`recycle_backup`]'s: never onto a taken name (the placing call refuses
-/// it), and on another disk a copy verified, with the file's permission
-/// bits, before the bin copy goes. `PlacementMode::Check` keeps
-/// check-then-rename as the last step, as the plain rename it replaces
-/// did. The bin copy is read once. False when it was gone.
-pub fn put_home(bin_file: &Path, home: &Path) -> Result<bool, PublishError> {
-    let known = FileStat::read(bin_file).map_err(PublishError::from)?;
-    let sha256 = super::snapshots::sha256_hex(&read_regular_file(bin_file)?);
-    recycle_backup(
-        PlacementMode::Check,
-        Seams::default(),
-        bin_file,
-        home,
-        &sha256,
-        Some(known),
-    )
 }
 
 fn taken(recycle_to: &Path) -> PublishError {

@@ -410,12 +410,6 @@ pub(super) fn commit(
         }
     }
     if let Some(extras) = &removal.extras_action {
-        let moves: Vec<[&str; 2]> = removal
-            .items
-            .iter()
-            .filter_map(|item| item.file.as_ref())
-            .map(|file| [file.path.as_str(), file.recycle_to.as_str()])
-            .collect();
         let track_ids: Vec<&str> = removal
             .items
             .iter()
@@ -431,7 +425,6 @@ pub(super) fn commit(
                 track_id: None,
                 before: "{}",
                 after: &serde_json::json!({
-                    "moves": moves,
                     "track_ids": track_ids,
                     "bundle_id": bundle_id,
                 })
@@ -483,19 +476,19 @@ pub(crate) fn mark_removed(
     Ok(true)
 }
 
-struct Action<'a> {
-    id: &'a str,
-    actor: Option<&'a str>,
-    kind: &'a str,
-    album_id: &'a str,
-    track_id: Option<&'a str>,
-    before: &'a str,
-    after: &'a str,
-    reason_code: &'a str,
-    at: f64,
+pub(super) struct Action<'a> {
+    pub id: &'a str,
+    pub actor: Option<&'a str>,
+    pub kind: &'a str,
+    pub album_id: &'a str,
+    pub track_id: Option<&'a str>,
+    pub before: &'a str,
+    pub after: &'a str,
+    pub reason_code: &'a str,
+    pub at: f64,
 }
 
-fn record_action(conn: &Connection, action: &Action<'_>) -> rusqlite::Result<()> {
+pub(super) fn record_action(conn: &Connection, action: &Action<'_>) -> rusqlite::Result<()> {
     conn.prepare_cached(sql::CATALOG_ACTION_INSERT.text())?
         .execute(rusqlite::params![
             action.id,

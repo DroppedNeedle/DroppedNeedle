@@ -82,6 +82,9 @@
 //!   aside under its row, its track is marked missing in the catalog
 //!   commit, and only then does it move into its recycle bin. It is never
 //!   deleted, and an unwind puts it back.
+//! - Remove extras' undo (`put_back` rows, see [`put_back`]) copies each
+//!   recycled file home under its row and re-indexes its track in the
+//!   commit; the recycled copy goes only after that.
 
 pub mod archive;
 pub mod bin;
@@ -93,6 +96,7 @@ pub mod place;
 pub mod planner;
 pub mod plugin_files;
 pub mod publisher;
+pub mod put_back;
 pub mod record;
 pub mod recovery;
 pub mod remove;

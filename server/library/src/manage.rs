@@ -1210,6 +1210,7 @@ impl LibrarySetup {
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
             policy_revision: policy_revision_u64(&registry),
+            put_back: None,
             removal: None,
         };
         // The tracks' rows as previewed: Apply is refused if they move.
@@ -1413,6 +1414,28 @@ impl LibrarySetup {
         }
     }
 
+    /// Run `before_place` on the open publisher just before each file is
+    /// placed, and `before_set_aside` just before each file is set aside,
+    /// so a test can put something in the way. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_publish_hooks(
+        &self,
+        before_place: Option<super::publish::publisher::BeforePlace>,
+        before_set_aside: Option<super::publish::publisher::BeforePlace>,
+    ) {
+        let registry = self.live_registry();
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cell.refresh(&registry, &self.root_dirs).is_ok()
+            && let Ok(open) = cell.open()
+        {
+            open.publisher.set_before_place(before_place);
+            open.publisher.set_before_set_aside(before_set_aside);
+        }
+    }
+
     /// Run publish recovery now: reopen (and reconcile) when the roots
     /// changed, and retry any held bundle, so a bundle a crash left half
     /// way is finished or unwound before anyone asks how it ended.
@@ -1553,6 +1576,7 @@ impl LibrarySetup {
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
             policy_revision,
+            put_back: None,
             removal: Some(removal),
         };
         let token_hash = sha256_hex(self.ids.new_id().as_bytes());
@@ -1621,6 +1645,103 @@ impl LibrarySetup {
         })
     }
 
+    /// Put back what the removal of extras `action_id` took from album
+    /// `album_id`, as one put-back bundle planned, sealed and published
+    /// under the publish lock and the guards of the folders the files came
+    /// from. A person is waiting: a lock or folder another write holds
+    /// answers busy at once. A put-back whose commit landed answers what
+    /// did not come back even when a later step failed: recovery finishes
+    /// it. Answers the root-relative paths of the files that did not come
+    /// back. Blocking.
+    pub(crate) fn publish_put_back(
+        &self,
+        action_id: &str,
+        album_id: &str,
+        actor: &str,
+    ) -> Result<Vec<String>, super::publish::put_back::Refusal> {
+        use super::publish::put_back::{self, Refusal};
+        let roots = put_back::roots_of(&self.db, action_id, album_id)?;
+        let mut cell = match self.publish.try_lock() {
+            Ok(cell) => cell,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Err(Refusal::Busy),
+        };
+        let registry = self.live_registry();
+        let session = cell.session(&registry);
+        // A reopen reconciles, which may touch any root.
+        let mut ids: Vec<String> = if cell.needs_refresh(&session) {
+            PublishCell::guarded_ids(&registry)
+        } else {
+            roots.clone()
+        };
+        ids.sort();
+        ids.dedup();
+        let _guards = ids
+            .iter()
+            .map(|id| self.fs.try_write(id).ok_or(Refusal::Busy))
+            .collect::<Result<Vec<_>, _>>()?;
+        cell.refresh_to(session, &self.root_dirs)?;
+        let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;
+        let bundle_id = uuid::Uuid::new_v4().to_string();
+        let plan = put_back::plan(
+            &self.db,
+            &open.sandbox,
+            &registry,
+            &bundle_id,
+            action_id,
+            album_id,
+            Some(actor),
+            &roots,
+        )?;
+        let missing = plan.missing.clone();
+        let policy_revision = policy_revision_u64(&registry);
+        let bundle = PlanBundle {
+            id: bundle_id,
+            items: Vec::new(),
+            profile_revision: PINNED_REVISION,
+            naming_revision: PINNED_REVISION,
+            policy_revision,
+            removal: None,
+            put_back: Some(plan),
+        };
+        let token_hash = sha256_hex(self.ids.new_id().as_bytes());
+        let sealed = SealedPreview::seal(
+            bundle,
+            token_hash.clone(),
+            PINNED_REVISION,
+            today_day() + PREVIEW_TTL_DAYS,
+        );
+        let live = SealRecheck {
+            fingerprints: BTreeMap::new(),
+            identities: BTreeMap::new(),
+            overrides: BTreeMap::new(),
+            profile_revision: PINNED_REVISION,
+            naming_revision: PINNED_REVISION,
+            policy_revision,
+            settings_revision: PINNED_REVISION,
+            today_day: today_day(),
+            token_hash,
+        };
+        if let Err(error) = open
+            .publisher
+            .publish_as(&sealed, &live, &BTreeMap::new(), None)
+        {
+            let bundle_id = sealed.bundle.id.as_str();
+            let committed = self
+                .held_bundles
+                .committed(bundle_id)
+                .unwrap_or_else(|read| {
+                    tracing::warn!(%read, bundle_id, "could not tell whether a failed put-back committed");
+                    false
+                });
+            if !committed {
+                return Err(Refusal::Publish(error));
+            }
+            tracing::warn!(%error, bundle_id, "put-back committed; recovery finishes the rest");
+        }
+        Ok(missing)
+    }
+
     /// Publish one album a management job planned. The tags to write and
     /// the destinations were fixed at planning; the before-state is read
     /// now, and the seal refuses any file, identity, override or revision
@@ -1658,6 +1779,7 @@ impl LibrarySetup {
             profile_revision: pins.profile,
             naming_revision: pins.naming,
             policy_revision: policy_revision_u64(&registry),
+            put_back: None,
             removal: None,
         };
         // What moved since planning is caught by the seal recheck below;
@@ -2306,6 +2428,7 @@ impl LibrarySetup {
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
             policy_revision: policy_revision_u64(&self.live_registry()),
+            put_back: None,
             removal: None,
         };
         super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;

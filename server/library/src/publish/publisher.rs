@@ -86,6 +86,8 @@ pub struct BundleCommit {
     pub tracks: Vec<TrackCommit>,
     /// The tracks a removal marks missing, checked against their seals.
     pub removal: Option<super::planner::Removal>,
+    /// The tracks a put-back indexes again.
+    pub put_back: Option<super::put_back::PutBackCommit>,
 }
 
 /// Catalog port: where a managed track lives and what the publisher
@@ -176,6 +178,9 @@ impl Catalog for SqliteCatalog {
         let conn: &Connection = tx;
         if let Some(removal) = &commit.removal {
             super::remove::commit(conn, &commit.bundle_id, removal, now_secs())?;
+        }
+        if let Some(put_back) = &commit.put_back {
+            super::put_back::commit(conn, &commit.bundle_id, put_back, now_secs())?;
         }
         // The bundle's own rows, read in this transaction: a scan or an
         // identification that changed one since the seal refuses the
@@ -346,30 +351,41 @@ fn give_up_destination(conn: &Connection, track: &TrackCommit) -> Result<(), Pub
             track.track_id
         )));
     }
-    let hidden = format!(
-        "{}gone/{}/{}",
-        super::HIDDEN_PREFIX,
-        occupant,
-        track.rel_path
-    );
-    // The hidden name under the same root, so the old row never points
-    // at the file placed on its old path.
-    let depth = Path::new(&track.rel_path).components().count();
-    let root_dir = Path::new(&track.file_path)
-        .ancestors()
-        .nth(depth)
-        .ok_or_else(|| PublishError::Catalog(format!("track {} has no root", track.track_id)))?;
-    let file_path = root_dir.join(&hidden).to_string_lossy().into_owned();
-    conn.execute(
-        "UPDATE local_tracks SET relative_path = ?2, file_path = ?3, path_hash = ?4, \
-         row_revision = row_revision + 1 WHERE id = ?1",
-        rusqlite::params![occupant, hidden, file_path, sha256_hex(hidden.as_bytes())],
-    )?;
+    give_up(conn, &occupant, &track.rel_path, &track.file_path)?;
     tracing::info!(
         track_id = %occupant,
         placed = %track.track_id,
         "a track whose file is gone gave up its path"
     );
+    Ok(())
+}
+
+/// Move the row of `occupant`, whose file is gone, off `rel_path` onto a
+/// hidden name of its own under the same root, keeping everything else.
+/// `file_path` is the absolute path of the file now placed at `rel_path`,
+/// which names the root.
+pub(super) fn give_up(
+    conn: &Connection,
+    occupant: &str,
+    rel_path: &str,
+    file_path: &str,
+) -> Result<(), PublishError> {
+    let hidden = format!("{}gone/{}/{}", super::HIDDEN_PREFIX, occupant, rel_path);
+    // The hidden name under the same root, so the old row never points
+    // at the file placed on its old path.
+    let depth = Path::new(rel_path).components().count();
+    let root_dir = Path::new(file_path)
+        .ancestors()
+        .nth(depth)
+        .ok_or_else(|| PublishError::Catalog(format!("{rel_path} has no root")))?;
+    let hidden_path = root_dir.join(&hidden).to_string_lossy().into_owned();
+    conn.prepare_cached(super::sql::TRACK_SET_PATH.text())?
+        .execute(rusqlite::params![
+            occupant,
+            hidden,
+            hidden_path,
+            sha256_hex(hidden.as_bytes())
+        ])?;
     Ok(())
 }
 
@@ -552,38 +568,53 @@ fn adopt_track(
 /// catalog indexes it as, exactly as a scan would. The transaction then
 /// never waits on a disk or a share.
 pub(super) fn read_adopted(tracks: &mut [TrackCommit]) -> Result<(), PublishError> {
-    use crate::scan::seams::ScannedTags;
-    use crate::scan::store::CommitIndexedItem;
-
     for track in tracks.iter_mut() {
         let Some(adoption) = &track.adopt else {
             continue;
         };
-        let path = Path::new(&track.file_path);
-        // The stat comes before the tag read: a scan re-reads a file whose
-        // size or modified time differs from the recorded stat, so a change
-        // made after this point is still caught.
-        let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
-        let format = crate::tags::format_for_path(path)
-            .map_err(|error| PublishError::Catalog(error.to_string()))?;
-        let (tag, header) =
-            crate::tags::read::read_scan_metadata(path, format).map_err(|error| {
-                PublishError::Catalog(format!("published file unreadable: {error}"))
-            })?;
-        track.indexed = Some(CommitIndexedItem {
-            root_id: track.root_id.clone(),
-            relative_path: track.rel_path.clone(),
-            absolute_path: track.file_path.clone(),
-            size_bytes: meta.len(),
-            mtime_ns: crate::scan::revision::mtime_ns_from_metadata(&meta),
-            tags_read_at: now_secs(),
-            tags: ScannedTags { tag, header },
-            effective_policy: adoption.policy,
-            policy_revision: adoption.policy_revision.clone(),
-            verdict_counter: "new_count",
-        });
+        track.indexed = Some(index_file(
+            &track.root_id,
+            &track.rel_path,
+            Path::new(&track.file_path),
+            adoption.policy,
+            &adoption.policy_revision,
+        )?);
     }
     Ok(())
+}
+
+/// What the published file at `path` (`root_id:rel_path`) indexes as,
+/// read exactly as a scan would.
+pub(super) fn index_file(
+    root_id: &str,
+    rel_path: &str,
+    path: &Path,
+    policy: crate::scan::models::EffectivePolicy,
+    policy_revision: &str,
+) -> Result<crate::scan::store::CommitIndexedItem, PublishError> {
+    use crate::scan::seams::ScannedTags;
+    use crate::scan::store::CommitIndexedItem;
+
+    // The stat comes before the tag read: a scan re-reads a file whose
+    // size or modified time differs from the recorded stat, so a change
+    // made after this point is still caught.
+    let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
+    let format = crate::tags::format_for_path(path)
+        .map_err(|error| PublishError::Catalog(error.to_string()))?;
+    let (tag, header) = crate::tags::read::read_scan_metadata(path, format)
+        .map_err(|error| PublishError::Catalog(format!("published file unreadable: {error}")))?;
+    Ok(CommitIndexedItem {
+        root_id: root_id.to_owned(),
+        relative_path: rel_path.to_owned(),
+        absolute_path: path.to_string_lossy().into_owned(),
+        size_bytes: meta.len(),
+        mtime_ns: crate::scan::revision::mtime_ns_from_metadata(&meta),
+        tags_read_at: now_secs(),
+        tags: ScannedTags { tag, header },
+        effective_policy: policy,
+        policy_revision: policy_revision.to_owned(),
+        verdict_counter: "new_count",
+    })
 }
 
 /// Crash-injection point between durable steps. Each variant names the
@@ -682,6 +713,9 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     bin_seams: super::place::Seams,
     before_place: Option<BeforePlace>,
     before_set_aside: Option<BeforePlace>,
+    /// Each put-back temp's identity as this publish wrote it, by journal
+    /// id: publish and cleanup check it instead of reading the file again.
+    temps: BTreeMap<String, paths::FileStat>,
     /// Unix milliseconds, read at the start of each publish: a publisher
     /// stays open for as long as the root set does.
     clock: Box<dyn Fn() -> i64 + Send>,
@@ -765,6 +799,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             bin_seams: super::place::Seams::default(),
             before_place: None,
             before_set_aside: None,
+            temps: BTreeMap::new(),
             now_ms,
             today_day: day_of(now_ms),
             clock: Box::new(clock),
@@ -843,6 +878,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         applied_by: Option<&str>,
     ) -> Result<PublishOutcome, PublishError> {
         let bundle = &sealed.bundle;
+        self.temps.clear();
         self.now_ms = (self.clock)();
         self.today_day = day_of(self.now_ms);
         self.run_pregates(sealed, live)?;
@@ -891,6 +927,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// is staged until all pass.
     fn run_pregates(&self, sealed: &SealedPreview, live: &SealRecheck) -> Result<(), PublishError> {
         let removal = sealed.bundle.removal.as_ref();
+        let put_back = sealed.bundle.put_back.as_ref();
+        if put_back.is_some() && (removal.is_some() || !sealed.bundle.items.is_empty()) {
+            return Err(PublishError::Journal(
+                "a put-back bundle carries nothing else".into(),
+            ));
+        }
         sealed.recheck(live).map_err(|err| match err {
             SealError::StaleFile(text) | SealError::StaleIdentity(text) => {
                 PublishError::Validation(text)
@@ -923,6 +965,47 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     )));
                 }
                 for item in &removal.items {
+                    if let Some(held) =
+                        journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
+                    {
+                        return Err(PublishError::Journal(format!(
+                            "track {} has an unfinished managed write (bundle {held}) waiting \
+                             for recovery",
+                            item.track_id
+                        )));
+                    }
+                }
+            }
+            if let Some(put_back) = put_back {
+                let spent: bool = conn
+                    .prepare_cached(super::sql::RESTORED_MARKER_EXISTS.text())?
+                    .query_row(
+                        rusqlite::params![super::put_back::marker(&put_back.action_id)],
+                        |row| row.get(0),
+                    )?;
+                if spent {
+                    return Err(PublishError::Validation(
+                        "the removal was already put back".into(),
+                    ));
+                }
+                for item in &put_back.items {
+                    let place: Option<(String, String, String)> = conn
+                        .prepare_cached(super::sql::TRACK_PLACE.text())?
+                        .query_row(rusqlite::params![item.track_id], |row| {
+                            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                        })
+                        .optional()?;
+                    let ready = place.is_some_and(|(root, rel, availability)| {
+                        root == item.root_id
+                            && rel == item.track_rel
+                            && super::put_back::ready(&availability, &rel, &item.relative_path)
+                    });
+                    if !ready {
+                        return Err(PublishError::Validation(format!(
+                            "track {} changed under the preview",
+                            item.track_id
+                        )));
+                    }
                     if let Some(held) =
                         journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
                     {
@@ -984,6 +1067,18 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             }
             self.sandbox.ensure_under_bin(Path::new(recycle_to))?;
         }
+        let bin_copies = put_back
+            .into_iter()
+            .flat_map(|put_back| &put_back.items)
+            .filter(|item| !item.home_already && item.copy_in == super::planner::CopyIn::Bin);
+        for item in bin_copies {
+            if let Some(cause) = self.sandbox.bins_unknown() {
+                return Err(PublishError::Interrupted(format!(
+                    "no recycle bin is known while {cause}"
+                )));
+            }
+            self.sandbox.ensure_under_bin(Path::new(&item.copy))?;
+        }
         CollisionGate::check_bundle(&self.sandbox, &sealed.bundle)?;
         DiskPreflight::check(&sealed.bundle, &self.space)?;
         Ok(())
@@ -1025,6 +1120,20 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             for (count, (index, item, file)) in files.iter().enumerate() {
                 self.prepare_remove(bundle, *index, item, file)?;
                 if count == 0 && (files.len() > 1 || !bundle.items.is_empty()) {
+                    self.maybe_crash(CrashPoint::AfterFirstFileStaged)?;
+                }
+            }
+        }
+        if let Some(put_back) = &bundle.put_back {
+            let copies: Vec<_> = put_back
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| !item.home_already)
+                .collect();
+            for (count, (index, item)) in copies.iter().enumerate() {
+                self.prepare_put_back(bundle, *index, item)?;
+                if count == 0 && copies.len() > 1 {
                     self.maybe_crash(CrashPoint::AfterFirstFileStaged)?;
                 }
             }
@@ -1439,6 +1548,66 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         })
     }
 
+    /// Journal one file a put-back brings home, then copy its recycled
+    /// copy into the row's hidden temp beside home with the copy's
+    /// permission bits: read once, hashed once, read back once.
+    fn prepare_put_back(
+        &mut self,
+        bundle: &PlanBundle,
+        index: usize,
+        item: &super::planner::PutBackItem,
+    ) -> Result<(), PublishError> {
+        let journal_id = super::put_back::journal_id(&bundle.id, index);
+        let home = self
+            .sandbox
+            .resolve_removal(&item.root_id, &item.relative_path)?;
+        if let Some(parent) = home.parent() {
+            std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+        }
+        let temp = self.sandbox.temp_path_for(&home, &journal_id)?;
+        self.sandbox.ensure_under_removal_roots(&temp)?;
+        self.journal_insert(&FileJournal {
+            id: journal_id.clone(),
+            bundle_id: bundle.id.clone(),
+            kind: JournalKind::PutBack,
+            source: None,
+            dest_root: item.root_id.clone(),
+            dest_rel: item.relative_path.clone(),
+            staged: temp.to_string_lossy().to_string(),
+            backup: None,
+            source_sha256: Some(item.fingerprint.sha256.clone()),
+            staged_sha256: item.fingerprint.sha256.clone(),
+            track_id: Some(item.track_id.clone()),
+            mgmt_state: None,
+            state: JournalState::Prepared,
+            seq: 0,
+            replaces: None,
+        })?;
+        let bytes = super::put_back::read_copy(&self.sandbox, item)?;
+        let copy = std::fs::symlink_metadata(&item.copy).map_err(PublishError::from)?;
+        let bits = {
+            use std::os::unix::fs::PermissionsExt as _;
+            copy.permissions().mode() & 0o777
+        };
+        write_staged_temp(&temp, &bytes, Some(bits))?;
+        // The file comes home with the time it was last changed, not today.
+        let dated = copy.modified().and_then(|modified| {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&temp)?
+                .set_modified(modified)
+        });
+        if let Err(error) = dated {
+            tracing::warn!(%error, "a file put back keeps today's modified time");
+        }
+        self.temps
+            .insert(journal_id.clone(), paths::FileStat::read(&temp)?);
+        self.maybe_crash(CrashPoint::AfterTempWritten)?;
+        self.journal_staged(&journal_id)
+    }
+
     /// Publish renames plus the atomic catalog commit, then cleanup.
     fn publish_and_commit(
         &mut self,
@@ -1509,6 +1678,20 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         if current.kind == JournalKind::Remove {
             return self.publish_remove(bundle, &current);
         }
+        if current.kind == JournalKind::PutBack {
+            let hook = self
+                .before_place
+                .as_deref()
+                .map(|hook| hook as &dyn Fn(&Path));
+            super::put_back::place(
+                &self.sandbox,
+                &current,
+                self.temps.get(&current.id).copied(),
+                self.place_seams,
+                hook,
+            )?;
+            return self.journal_published(&current.id);
+        }
         let dest = self
             .sandbox
             .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
@@ -1527,9 +1710,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 )?;
                 return self.journal_published(&journal.id);
             }
-            JournalKind::Remove => {
+            JournalKind::Remove | JournalKind::PutBack => {
                 return Err(PublishError::Journal(format!(
-                    "journal {} is a removal",
+                    "journal {} is not a placement",
                     journal.id
                 )));
             }
@@ -1696,10 +1879,16 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             });
         }
         read_adopted(&mut tracks)?;
+        let put_back = bundle
+            .put_back
+            .as_ref()
+            .map(|put_back| super::put_back::read_placed(&self.sandbox, put_back))
+            .transpose()?;
         let commit = BundleCommit {
             bundle_id: bundle.id.clone(),
             tracks,
             removal: bundle.removal.clone(),
+            put_back,
         };
         durable(&self.db, "publish.bundle_commit", |tx| {
             self.catalog.commit_bundle(tx, &commit)?;
@@ -1839,6 +2028,18 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     tracing::warn!(journal_id = %journal.id, "a removed file's hidden copy is gone");
                 }
                 return Ok(());
+            }
+            JournalKind::PutBack => {
+                let item = bundle
+                    .put_back
+                    .as_ref()
+                    .and_then(|put_back| super::put_back::item_of(put_back, journal));
+                return super::put_back::drop_copy(
+                    &self.sandbox,
+                    journal,
+                    item,
+                    self.temps.get(&journal.id).copied(),
+                );
             }
             JournalKind::Audio
             | JournalKind::Sidecar
@@ -1986,7 +2187,9 @@ fn removal_journal_id(audio_journal_id: &str, index: usize) -> String {
 /// take: a removal's root may be a remove-only one.
 pub(super) fn probe_root(sandbox: &Sandbox, journal: &FileJournal) -> Result<(), PublishError> {
     match journal.kind {
-        JournalKind::Remove => sandbox.probe_removal_placement(&journal.dest_root)?,
+        JournalKind::Remove | JournalKind::PutBack => {
+            sandbox.probe_removal_placement(&journal.dest_root)?
+        }
         JournalKind::Audio
         | JournalKind::Sidecar
         | JournalKind::Artwork
@@ -2003,6 +2206,9 @@ pub(super) fn journal_ids(bundle: &PlanBundle) -> Vec<String> {
         .as_ref()
         .map(|removal| super::remove::journal_ids(&bundle.id, removal))
         .unwrap_or_default();
+    if let Some(put_back) = &bundle.put_back {
+        ids.extend(super::put_back::journal_ids(&bundle.id, put_back));
+    }
     for (ordinal, item) in bundle.items.iter().enumerate() {
         let audio = audio_journal_id(&bundle.id, ordinal);
         ids.extend((0..item.sidecars.len()).map(|index| sidecar_journal_id(&audio, index)));

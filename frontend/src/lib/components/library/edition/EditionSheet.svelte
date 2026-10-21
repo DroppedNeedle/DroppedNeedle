@@ -501,8 +501,8 @@
 				actionId: lastRemoval.actionId
 			});
 			lastRemoval = null;
-			if (!answer.restored) {
-				actionError = 'Some files could not be put back; they are still in the recycle bin.';
+			if (answer.missing.length > 0) {
+				actionError = `Not in the recycle bin as it was, so not put back: ${answer.missing.join(', ')}`;
 			}
 		} catch (error) {
 			actionError = failureSentence(error, "The files couldn't be put back.");

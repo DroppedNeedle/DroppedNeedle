@@ -9537,7 +9537,7 @@
         },
         "responses": {
           "200": {
-            "description": "Files put back and rescanned",
+            "description": "Files put back and indexed",
             "content": {
               "application/json": {
                 "schema": {
@@ -9577,7 +9577,27 @@
             }
           },
           "409": {
-            "description": "Another file now sits at an old path; nothing was put back",
+            "description": "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The files could not be put back; they stay in the recycle bin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
             "content": {
               "application/json": {
                 "schema": {
@@ -58452,14 +58472,17 @@
       },
       "RestoreExtrasView": {
         "type": "object",
-        "description": "Whether the files went back.",
+        "description": "What did not go back.",
         "required": [
-          "restored"
+          "missing"
         ],
         "properties": {
-          "restored": {
-            "type": "boolean",
-            "description": "False when a file could not be put back; it stays in the recycle bin."
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files that were not put back because their copy is gone from the\nrecycle bin or changed there, as paths inside their library folder.\nEmpty when every file went back."
           }
         }
       },

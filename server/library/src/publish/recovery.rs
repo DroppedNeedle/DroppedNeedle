@@ -361,7 +361,7 @@ fn unusable_root(sandbox: &Sandbox, journals: &[FileJournal]) -> Option<String> 
         })
         .find(|(kind, root)| {
             let dir = match kind {
-                JournalKind::Remove => sandbox.removal_root_dir(root),
+                JournalKind::Remove | JournalKind::PutBack => sandbox.removal_root_dir(root),
                 JournalKind::Audio
                 | JournalKind::Sidecar
                 | JournalKind::Artwork
@@ -521,7 +521,8 @@ fn put_back_refused(sandbox: &Sandbox, journals: &[FileJournal]) -> bool {
                 JournalKind::Audio
                 | JournalKind::Sidecar
                 | JournalKind::Artwork
-                | JournalKind::Output => (
+                | JournalKind::Output
+                | JournalKind::PutBack => (
                     journal.backup.as_deref(),
                     journal.backup_sha256(),
                     paths::backup_home(
@@ -605,6 +606,16 @@ fn inspect_bundle(
                 }
                 continue;
             }
+            JournalKind::PutBack => {
+                match super::put_back::evidence(sandbox, journal) {
+                    super::put_back::Evidence::Resume => {}
+                    super::put_back::Evidence::Unwind => resumeable = false,
+                    super::put_back::Evidence::Ambiguous(reason) => {
+                        return Ok(BundleEvidence::Ambiguous(reason));
+                    }
+                }
+                continue;
+            }
             JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
@@ -633,6 +644,7 @@ fn inspect_bundle(
         let generated = match journal.kind {
             JournalKind::Delete => true,
             JournalKind::Remove
+            | JournalKind::PutBack
             | JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
@@ -927,7 +939,7 @@ fn resume_precommit<C: Catalog>(
             });
         }
     }
-    if tracks.is_empty() && recorded.removal.is_none() {
+    if tracks.is_empty() && recorded.removal.is_none() && recorded.put_back.is_none() {
         return Err(PublishError::Journal(
             "bundle has no committable track".into(),
         ));
@@ -936,21 +948,31 @@ fn resume_precommit<C: Catalog>(
         bundle_id: bundle_id.to_string(),
         tracks,
         removal: recorded.removal.clone(),
+        put_back: None,
     };
-    let committed = read_adopted(&mut commit.tracks).and_then(|()| {
-        durable(db, "publish.recover_commit", |tx| {
-            catalog.commit_bundle(tx, &commit)?;
-            let writer = JournalWriter::new(tx);
-            for journal in refreshed.iter() {
-                writer.advance(
-                    &journal.id,
-                    JournalState::Published,
-                    JournalState::Committed,
-                )?;
-            }
+    let committed = read_adopted(&mut commit.tracks)
+        .and_then(|()| {
+            commit.put_back = recorded
+                .put_back
+                .as_ref()
+                .map(|put_back| super::put_back::read_placed(sandbox, put_back))
+                .transpose()?;
             Ok(())
         })
-    });
+        .and_then(|()| {
+            durable(db, "publish.recover_commit", |tx| {
+                catalog.commit_bundle(tx, &commit)?;
+                let writer = JournalWriter::new(tx);
+                for journal in refreshed.iter() {
+                    writer.advance(
+                        &journal.id,
+                        JournalState::Published,
+                        JournalState::Committed,
+                    )?;
+                }
+                Ok(())
+            })
+        });
     if let Err(err) = committed {
         // Nothing committed. A database that refused the call would refuse
         // the unwind's rows too, so the bundle waits for the next pass.
@@ -1012,6 +1034,25 @@ fn resume_rename(
                 ) => {
                     return Ok(Some(format!(
                         "journal {} could not set its file aside: {error}",
+                        journal.id
+                    )));
+                }
+                Err(error) => return Err(error),
+            }
+            record_published(db, &journal.id, journal.state)?;
+            return Ok(None);
+        }
+        JournalKind::PutBack => {
+            match super::put_back::place(sandbox, journal, None, seams, None) {
+                Ok(()) => {}
+                Err(
+                    error @ (PublishError::NotLinkable(_)
+                    | PublishError::NoSafePlacement(_)
+                    | PublishError::Collision(_)
+                    | PublishError::Validation(_)),
+                ) => {
+                    return Ok(Some(format!(
+                        "journal {} could not put its file back: {error}",
                         journal.id
                     )));
                 }
@@ -1190,6 +1231,36 @@ fn reconcile_committed<C: Catalog>(
             // set-aside copy of a generated file, and moves a removed
             // file's copy to its bin. Neither ever goes back.
             JournalKind::Delete | JournalKind::Remove => continue,
+            // The file put back must be home; its copy is kept until it is.
+            JournalKind::PutBack => {
+                let home = sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel)?;
+                if super::remove::holds(&home, &journal.staged_sha256, None) {
+                    continue;
+                }
+                let staged = Path::new(&journal.staged);
+                let free = matches!(
+                    std::fs::symlink_metadata(&home),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                );
+                if free
+                    && sandbox.ensure_under_removal_roots(staged).is_ok()
+                    && super::remove::holds(staged, &journal.staged_sha256, None)
+                    && place_from_hidden(sandbox.placement_mode(&journal.dest_root), staged, &home)
+                        .is_ok()
+                {
+                    continue;
+                }
+                durable(db, "publish.recover_put_back_lost", |tx| {
+                    if let Some(track_id) = journal.track_id.as_deref() {
+                        catalog.mark_missing(tx, track_id)?;
+                    }
+                    flag_rows(tx, journals)
+                })?;
+                return Ok(RecoveryAction::NeedsAttention(format!(
+                    "the file put back by journal {} is not home",
+                    journal.id
+                )));
+            }
             JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
@@ -1288,9 +1359,10 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
     })?;
     // A removal's files as its plan read them: a set-aside file that is
     // still that file goes to its bin without being read again.
-    let removal = operation
-        .and_then(|json| serde_json::from_str::<super::planner::PlanBundle>(&json).ok())
-        .and_then(|bundle| bundle.removal);
+    let recorded =
+        operation.and_then(|json| serde_json::from_str::<super::planner::PlanBundle>(&json).ok());
+    let put_back = recorded.as_ref().and_then(|bundle| bundle.put_back.clone());
+    let removal = recorded.and_then(|bundle| bundle.removal);
     for journal in journals {
         if !matches!(
             journal.state,
@@ -1319,6 +1391,16 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
                     None
                 }
             },
+            JournalKind::PutBack => {
+                let item = put_back
+                    .as_ref()
+                    .and_then(|put_back| super::put_back::item_of(put_back, &journal));
+                if let Err(error) = super::put_back::drop_copy(sandbox, &journal, item, None) {
+                    tracing::warn!(journal_id = %journal.id, %error, "removed copy not deleted yet");
+                    failed = true;
+                }
+                None
+            }
             JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
@@ -1523,11 +1605,37 @@ fn unwind_row(
             );
         }
         JournalKind::Delete => true,
-        JournalKind::Audio | JournalKind::Sidecar | JournalKind::Artwork | JournalKind::Output => {
-            false
+        JournalKind::Audio
+        | JournalKind::Sidecar
+        | JournalKind::Artwork
+        | JournalKind::Output
+        | JournalKind::PutBack => false,
+    };
+    let dest = match journal.kind {
+        // A put-back may go home under a remove-only root.
+        JournalKind::PutBack => {
+            let dest = sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel)?;
+            let staged = Path::new(&journal.staged);
+            sandbox.ensure_under_removal_roots(staged)?;
+            // Its temp is new under the row's own name: one still being
+            // written is a part copy, and goes.
+            if journal.state == JournalState::Prepared
+                && std::fs::symlink_metadata(staged).is_ok()
+                && !paths::same_file(staged, &dest)
+            {
+                std::fs::remove_file(staged).map_err(PublishError::from)?;
+            }
+            dest
+        }
+        JournalKind::Audio
+        | JournalKind::Sidecar
+        | JournalKind::Artwork
+        | JournalKind::Output
+        | JournalKind::Delete
+        | JournalKind::Remove => {
+            sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?
         }
     };
-    let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
     if is_delete {
         // A delete journal's staged copy is the generated file itself.
         let put_back = super::generated::put_back(

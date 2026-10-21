@@ -68,6 +68,24 @@ droppedneedle_kernel::sql! {
              action_kind, local_album_id, local_track_id, before_json, after_json, reason_code, \
              created_at) VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, \
              ?7, ?8, ?9)";
+    /// A removal of extras (`?1`) on album `?2` whose undo is not spent
+    /// (no restored action names `?3`, its marker): its `after_json`.
+    pub(super) EXTRAS_ACTION_OPEN = "SELECT after_json FROM library_catalog_actions \
+             WHERE id = ?1 AND local_album_id = ?2 AND action_kind = 'edition_extras_recycled' \
+             AND NOT EXISTS (SELECT 1 FROM library_catalog_actions r \
+             WHERE r.action_kind = 'edition_extras_restored' AND r.before_json = ?3)";
+    /// Whether a restored action carries the marker `?1`.
+    pub(super) RESTORED_MARKER_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_catalog_actions \
+             WHERE action_kind = 'edition_extras_restored' AND before_json = ?1)";
+    /// A track's (`?1`) root, relative path and availability.
+    pub(super) TRACK_PLACE = "SELECT root_id, relative_path, availability FROM local_tracks \
+             WHERE id = ?1";
+    /// The track at root `?1`, path `?2`, with its availability.
+    pub(super) TRACK_AT = "SELECT id, availability FROM local_tracks \
+             WHERE root_id = ?1 AND relative_path = ?2";
+    /// Move a track (`?1`) to path `?2` (absolute `?3`, hash `?4`).
+    pub(super) TRACK_SET_PATH = "UPDATE local_tracks SET relative_path = ?2, file_path = ?3, \
+             path_hash = ?4, row_revision = row_revision + 1 WHERE id = ?1";
     /// Whether any bundle has unsettled rows.
     pub(crate) ANY_ACTIVE = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
              WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention'))";

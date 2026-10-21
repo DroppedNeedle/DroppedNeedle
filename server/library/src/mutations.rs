@@ -35,6 +35,7 @@ use super::publish::PublishError;
 use super::publish::bin::{fresh_entry, serving};
 use super::publish::paths::Root;
 use super::publish::planner::ExtrasAction;
+use super::publish::put_back::Refusal as PutBackRefusal;
 use super::publish::remove::{self, Refusal, Target};
 use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
@@ -144,11 +145,41 @@ pub const RESTORE_PATH_OCCUPIED: Reason = reason(
     "Another file now sits where a removed file was, so nothing was put back.",
     "Move or rename the file that is in the way, then put the files back again. The removed files are still in the recycle bin.",
 );
-
-/// The `before_json` a restore records, naming the removal it undid.
-fn restored_marker(action_id: &str) -> String {
-    serde_json::json!({ "undoes": action_id }).to_string()
-}
+pub const RESTORE_CHANGED: Reason = reason(
+    "RESTORE_CHANGED",
+    "A removed file or its track changed while it was being put back, so nothing was put back.",
+    "Reload the page and try again.",
+);
+pub const RECYCLED_FILES_GONE: Reason = reason(
+    "RECYCLED_FILES_GONE",
+    "None of the removed files are in the recycle bin as they were, so nothing was put back.",
+    "If you moved them back by hand, rescan the album.",
+);
+pub const RESTORE_FOLDER_EXCLUDED: Reason = reason(
+    "RESTORE_FOLDER_EXCLUDED",
+    "The folder these files came from is now excluded from the library, so nothing was put back.",
+    "Include the folder again under Settings > Library, or move the files back by hand.",
+);
+pub const RESTORE_TRACK_ELSEWHERE: Reason = reason(
+    "RESTORE_TRACK_ELSEWHERE",
+    "A removed file's track is listed somewhere else in the library now, so nothing was put back.",
+    "Remove that copy of the track first, or move the files back by hand.",
+);
+pub const RESTORE_NEEDS_ATTENTION: Reason = reason(
+    "RESTORE_NEEDS_ATTENTION",
+    "The removal of these files needs an admin's look first, so nothing was put back.",
+    "Settle it under \"Some file writes need you\" on the Library Management page, then try again.",
+);
+pub const RECYCLED_COPY_UNREADABLE: Reason = reason(
+    "RECYCLED_COPY_UNREADABLE",
+    "A removed file's copy in the recycle bin can't be read, so nothing was put back.",
+    "Check that the server can read the recycle bin, then try again.",
+);
+pub const PUT_BACK_FAILED: Reason = reason(
+    "PUT_BACK_FAILED",
+    "The files could not be put back. They are still in the recycle bin.",
+    "Check that the server can write to the library folder, then try again.",
+);
 
 /// Why a mutation did not happen.
 #[derive(Debug)]
@@ -438,74 +469,26 @@ impl<'a> Mutations<'a> {
             .ok_or(MutationError::NotFound(TRACK_NOT_FOUND))
     }
 
-    /// Put back the files one [`Self::recycle_album_files`] moved, then
-    /// rescan their folders. Refused as a whole, and still there to take
-    /// back later, when another file now sits at one of the old paths,
-    /// unless that file's recycled copy is gone from the bin (someone
-    /// moved it back by hand). Answers false when a file could not be put
-    /// back (it stays in the recycle bin).
+    /// Put back the files one [`Self::recycle_album_files`] moved,
+    /// through the publisher. Their tracks are indexed again in the same
+    /// commit. A file whose copy is gone from the recycle bin, or changed
+    /// there, stays out;
+    /// the rest come back, and the answer names the ones that did not
+    /// (paths relative to their library folder). Refused as a whole, and
+    /// still there to take back later, when another file now sits where a
+    /// removed file was and its copy is still in the bin.
     pub fn restore_recycled(
         &self,
         album_id: &str,
         action_id: &str,
         actor: &str,
-    ) -> Result<bool, MutationError> {
-        let after: String = self
+    ) -> Result<Vec<String>, MutationError> {
+        let missing = self
             .setup
-            .db
-            .read_blocking("mutations.recycled_moves", |conn| {
-                conn.query_row(
-                    "SELECT after_json FROM library_catalog_actions WHERE id = ?1 \
-                     AND local_album_id = ?2 AND action_kind = 'edition_extras_recycled' \
-                     AND NOT EXISTS (SELECT 1 FROM library_catalog_actions r \
-                       WHERE r.action_kind = 'edition_extras_restored' AND r.before_json = ?3)",
-                    params![action_id, album_id, restored_marker(action_id)],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(MutationError::from)
-            })?
-            .ok_or(MutationError::NotFound(NOTHING_TO_RESTORE))?;
-        let moves: Vec<(PathBuf, PathBuf)> = serde_json::from_str::<serde_json::Value>(&after)
-            .ok()
-            .and_then(|value| value.get("moves").cloned())
-            .and_then(|moves| serde_json::from_value::<Vec<[String; 2]>>(moves).ok())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|[from, to]| (PathBuf::from(from), PathBuf::from(to)))
-            .collect();
-        // A file the person already moved back by hand has no copy left in
-        // the bin, and must not block the undo.
-        if let Some((original, _)) = moves
-            .iter()
-            .find(|(original, recycled)| recycled.exists() && occupied(original))
-        {
-            tracing::warn!(
-                file = %original.file_name().unwrap_or_default().to_string_lossy(),
-                unreadable = ?std::fs::symlink_metadata(original).err().map(|error| error.kind()),
-                "a file sits where a recycled file was; nothing was put back"
-            );
-            return Err(MutationError::Conflict(RESTORE_PATH_OCCUPIED));
-        }
-        self.setup
-            .db
-            .write_blocking(Lane::Foreground, "mutations.record_restored", |tx| {
-                tx.execute(
-                    "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, \
-                 local_album_id, before_json, after_json, reason_code, created_at) VALUES \
-                 (?1, (SELECT id FROM auth_users WHERE id = ?2), 'edition_extras_restored', ?3, \
-                 ?4, '{}', 'EDITION_EXTRA_RESTORED', ?5)",
-                    params![
-                        uuid::Uuid::new_v4().to_string(),
-                        actor,
-                        album_id,
-                        restored_marker(action_id),
-                        now_secs(),
-                    ],
-                )?;
-                Ok::<_, MutationError>(())
-            })?;
-        Ok(self.put_back(&moves, actor))
+            .publish_put_back(action_id, album_id, actor)
+            .map_err(put_back_refusal)?;
+        tracing::info!(missing = missing.len(), "removed extras put back");
+        Ok(missing)
     }
 
     /// The recycle bin a file of this library folder goes to: the
@@ -533,56 +516,6 @@ impl<'a> Mutations<'a> {
             name,
             SystemTime::now(),
         ))
-    }
-
-    /// Undo recycle moves (Remove extras' put back): each file goes back
-    /// where it was, then the folders are rescanned so
-    /// the catalog lists them again. Answers false when a file could not
-    /// be put back, or another file now sits at its old path; it stays in
-    /// the recycle bin and the error is logged.
-    pub fn put_back(&self, moved: &[(PathBuf, PathBuf)], actor: &str) -> bool {
-        let restored = restore(moved);
-        let registry = self.setup.live_registry();
-        let mut scopes: BTreeMap<(String, String), ScanScope> = BTreeMap::new();
-        for (original, _) in moved {
-            let Some(root) = registry
-                .roots()
-                .iter()
-                .find(|root| original.starts_with(&root.path))
-            else {
-                continue;
-            };
-            let relative = original
-                .parent()
-                .and_then(|parent| parent.strip_prefix(&root.path).ok())
-                .map(|parent| parent.to_string_lossy().replace('\\', "/"))
-                .filter(|parent| !parent.is_empty())
-                .unwrap_or_else(|| ".".to_owned());
-            let full = root.path.join(&relative);
-            scopes
-                .entry((root.id.clone(), relative.clone()))
-                .or_insert_with(|| ScanScope {
-                    root_id: root.id.clone(),
-                    scope_id: Some(format!("restore:{relative}")),
-                    relative_path: relative,
-                    root_path: Some(root.path.to_string_lossy().into_owned()),
-                    effective_policy: root.policy_for(&full),
-                    policy_revision: registry.policy_revision().to_owned(),
-                    estimated_count: None,
-                });
-        }
-        if !scopes.is_empty()
-            && let Err(error) = self.setup.coordinator.request_run(&ScanRequest {
-                kind: ScanKind::RescanFiles,
-                trigger: ScanTrigger::Manual,
-                scopes: scopes.into_values().collect(),
-                requested_by_user_id: Some(actor.to_owned()),
-                policy_revision: registry.policy_revision().to_owned(),
-            })
-        {
-            tracing::warn!(%error, "rescan after putting files back was refused; run a scan");
-        }
-        restored
     }
 
     /// Queue a file rescan over the folders holding the album's files.
@@ -954,43 +887,58 @@ fn refusal(refused: Refusal) -> MutationError {
     }
 }
 
-/// Whether anything sits at `path`, a dangling link included. A path
-/// that cannot be read counts as taken.
-fn occupied(path: &Path) -> bool {
-    !matches!(
-        std::fs::symlink_metadata(path),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound
-    )
-}
-
-/// Put files back from the recycle bin, newest first, never onto a path
-/// something else has taken: the placing call refuses one, and a copy to
-/// another disk is verified before the bin copy goes. False when a file
-/// could not be put back; it stays in the bin and the error is logged.
-fn restore(moved: &[(PathBuf, PathBuf)]) -> bool {
-    let mut restored = true;
-    for (original, destination) in moved.iter().rev() {
-        if occupied(original) {
-            restored = false;
-            tracing::error!(
-                file = %original.file_name().unwrap_or_default().to_string_lossy(),
-                "a file sits where a recycled file was; left it in the recycle bin"
-            );
-            continue;
+/// A put-back's refusal as the page reads it.
+fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
+    match refused {
+        PutBackRefusal::Busy => MutationError::Conflict(LIBRARY_BUSY),
+        PutBackRefusal::NothingToRestore => MutationError::NotFound(NOTHING_TO_RESTORE),
+        PutBackRefusal::Changed => MutationError::Conflict(RESTORE_CHANGED),
+        PutBackRefusal::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),
+        PutBackRefusal::FolderMissing => MutationError::Conflict(LIBRARY_FOLDER_MISSING),
+        PutBackRefusal::Excluded => MutationError::Conflict(RESTORE_FOLDER_EXCLUDED),
+        PutBackRefusal::BinsUnknown(cause) => {
+            tracing::debug!(cause, "no recycle bin is known");
+            MutationError::Conflict(RECYCLE_BIN_UNKNOWN)
         }
-        match super::publish::paths::put_home(destination, original) {
-            Ok(true) => {}
-            Ok(false) => {
-                restored = false;
-                tracing::error!("a recycled file to put back is gone from the recycle bin");
+        PutBackRefusal::Occupied => MutationError::Conflict(RESTORE_PATH_OCCUPIED),
+        PutBackRefusal::AllGone => MutationError::Conflict(RECYCLED_FILES_GONE),
+        PutBackRefusal::TrackElsewhere => MutationError::Conflict(RESTORE_TRACK_ELSEWHERE),
+        PutBackRefusal::RemovalNeedsAttention => MutationError::Conflict(RESTORE_NEEDS_ATTENTION),
+        PutBackRefusal::CopyUnreadable => MutationError::Files(RECYCLED_COPY_UNREADABLE),
+        PutBackRefusal::Publish(error) => match error {
+            PublishError::Interrupted(cause) => MutationError::Busy(cause),
+            PublishError::Collision(_) => {
+                tracing::info!(%error, "a file took a removed file's place during its put-back");
+                MutationError::Conflict(RESTORE_PATH_OCCUPIED)
             }
-            Err(error) => {
-                restored = false;
-                tracing::error!(%error, "could not restore a recycled file");
+            PublishError::Validation(_) | PublishError::Catalog(_) => {
+                tracing::info!(%error, "a put-back found its files or tracks changed");
+                MutationError::Conflict(RESTORE_CHANGED)
             }
-        }
+            PublishError::UnsafePath(_) => {
+                tracing::warn!(%error, "a put-back refused a path");
+                MutationError::Conflict(FILE_OUTSIDE_ROOT)
+            }
+            PublishError::FolderMissing => MutationError::Conflict(LIBRARY_FOLDER_MISSING),
+            PublishError::NoSafePlacement(_)
+            | PublishError::NotLinkable(_)
+            | PublishError::Cleanup(_)
+            | PublishError::Space(_)
+            | PublishError::Capability(_)
+            | PublishError::Snapshot(_)
+            | PublishError::Archive(_)
+            | PublishError::Io(_) => {
+                tracing::warn!(%error, "a put-back placed nothing");
+                MutationError::Files(PUT_BACK_FAILED)
+            }
+            // The plan already waited out other writes on these tracks, so
+            // a journal refusal here is an internal fault.
+            PublishError::Journal(_)
+            | PublishError::Store(_)
+            | PublishError::TimedOut(_)
+            | PublishError::InjectedCrash(_) => MutationError::Store(error.to_string()),
+        },
     }
-    restored
 }
 
 /// Mark indexed tracks missing, one catalog action each; rows and
