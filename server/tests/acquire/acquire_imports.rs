@@ -18,7 +18,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::Journal;
+use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::probes::{LiveProbes, ProbeCache, refresh_probes};
 use droppedneedle_acquire::settings::ConfigSpotifySettings;
 use droppedneedle_acquire::target::Targets;

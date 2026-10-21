@@ -28,6 +28,7 @@ pub mod held;
 pub mod held_http;
 pub mod held_rows;
 pub mod http;
+pub mod journal;
 pub mod landing_rows;
 pub mod manifest;
 pub mod orphans;

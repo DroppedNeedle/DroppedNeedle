@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use super::dispatch::Journal;
+use super::downloads::journal::Journal;
 use super::requests::sqlite::WantedStore;
 use droppedneedle_library::mutations::AlbumRemovalHook;
 

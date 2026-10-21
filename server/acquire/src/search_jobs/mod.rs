@@ -32,7 +32,7 @@ use self::store::{
     PickedTask, SEARCHING,
 };
 use super::db::now_epoch;
-use super::dispatch::Journal;
+use super::downloads::journal::Journal;
 use super::downloads::store::{NewTask, TaskDetails, TaskRow};
 use super::edition::library_holds;
 use super::requests::dispatch::DispatchOrigin;

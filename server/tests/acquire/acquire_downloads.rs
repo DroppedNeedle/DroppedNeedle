@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::Journal;
+use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
 use droppedneedle_providers::health::ServiceHealth;
 

@@ -49,7 +49,7 @@ use self::matching::{FilePlan, FoundRelease, MatchSummary, find};
 use self::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary};
 use self::probe::{LandedFile, Landing};
 use self::specs::{Check, Disposition, QualityPolicy, Rejection, Target, Verdict};
-use super::dispatch::Journal;
+use super::downloads::journal::Journal;
 use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
 use super::downloads::manifest::DownloadManifest;
 use super::downloads::store::{TaskDetails, TaskRow};

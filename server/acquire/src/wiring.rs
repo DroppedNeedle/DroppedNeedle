@@ -18,7 +18,8 @@ use axum::Router;
 use futures_util::future::BoxFuture;
 
 use super::db::AcquireDb;
-use super::dispatch::{Journal, UnifiedDispatch};
+use super::dispatch::UnifiedDispatch;
+use super::downloads::journal::Journal;
 use super::downloads::orphans::RecycleBin;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::drop_import::DropImports;

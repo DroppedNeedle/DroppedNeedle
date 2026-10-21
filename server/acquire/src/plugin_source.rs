@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::dispatch::Journal;
+use super::downloads::journal::Journal;
 use super::downloads::quarantine::QUARANTINE_TTL_SECONDS;
 use super::downloads::sources::{
     DownloadSource, Materialization, SourceError, SourceHandle, TransferProgress,

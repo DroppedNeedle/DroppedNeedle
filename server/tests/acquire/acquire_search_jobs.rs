@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::Journal;
+use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::manifest::ManifestCodec;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskDetails};

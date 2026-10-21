@@ -718,7 +718,7 @@ fn slskd_http_debug_redacts_key() {
 #[tokio::test]
 async fn failover_walks_every_peer() {
     use droppedneedle_acquire::db::AcquireDb;
-    use droppedneedle_acquire::dispatch::Journal;
+    use droppedneedle_acquire::downloads::journal::Journal;
     use droppedneedle_acquire::downloads::sources::DownloadSource as _;
     use droppedneedle_acquire::downloads::state::AttemptState;
     use droppedneedle_acquire::downloads::store::NewTask;

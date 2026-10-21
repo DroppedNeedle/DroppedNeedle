@@ -100,7 +100,8 @@ impl RequestsState {
     /// read and settle its tasks). Call inside a tokio runtime.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests() -> Result<(Self, AcquireDb, Arc<crate::dispatch::UnifiedDispatch>), String> {
-        use crate::dispatch::{Journal, UnifiedDispatch};
+        use crate::dispatch::UnifiedDispatch;
+        use crate::downloads::journal::Journal;
 
         let db = AcquireDb::scratch()?;
         let dir = db

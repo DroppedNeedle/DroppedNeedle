@@ -10,7 +10,8 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::{Journal, UnifiedDispatch};
+use droppedneedle_acquire::dispatch::UnifiedDispatch;
+use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::{
     http::downloads_router,
     state::{AttemptState, TaskStatus},

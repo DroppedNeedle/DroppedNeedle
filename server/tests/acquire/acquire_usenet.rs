@@ -1516,7 +1516,7 @@ fn usenet_secrets_never_logged() {
 /// runs and reports no candidate.
 #[tokio::test]
 async fn usenet_enqueue_reattaches_to_existing_job() {
-    use droppedneedle_acquire::dispatch::Journal;
+    use droppedneedle_acquire::downloads::journal::Journal;
     use droppedneedle_acquire::downloads::sources::{DownloadSource, SourceError};
     use droppedneedle_acquire::downloads::store::NewTask;
     use droppedneedle_acquire::sources::SabnzbdSource;

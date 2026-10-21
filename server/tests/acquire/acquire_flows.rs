@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::dispatch::{Journal, UnifiedDispatch};
+use droppedneedle_acquire::dispatch::UnifiedDispatch;
+use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskRow};
 use droppedneedle_acquire::flows::{

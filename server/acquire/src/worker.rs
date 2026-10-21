@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::dispatch::Journal;
+use super::downloads::journal::Journal;
 use super::downloads::manifest::{DownloadManifest, ExpectedFile, ManifestCodec};
 use super::downloads::orphans::{
     OrphanDecision, OrphanEvidence, RecycleBin, evaluate_orphan, job_name_parts,

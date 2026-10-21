@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use self::lookup::{AlbumLookup, AlbumRelease};
 use self::reasons::TrackReason;
-use super::dispatch::Journal;
+use super::downloads::journal::Journal;
 use super::downloads::manifest::{
     DownloadManifest, ExpectedTrack, ManifestCodec, TrackAlbumContext, TrackPosition,
 };

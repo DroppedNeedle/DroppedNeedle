@@ -8,7 +8,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::dispatch::Journal;
+use crate::downloads::journal::Journal;
 use crate::downloads::landing_rows::HeldFile;
 
 /// One file to hold and what to record about it.
