@@ -126,7 +126,7 @@ impl Catalog {
         &self.inner.upstream
     }
 
-    fn local(&self) -> &LocalCatalog {
+    pub(crate) fn local(&self) -> &LocalCatalog {
         &self.inner.local
     }
 

@@ -18466,7 +18466,7 @@ fn texts(db: &rusqlite::Connection, sql: &str) -> Vec<String> {
 /// the artist is the same record, with its favorite and play.
 #[tokio::test]
 async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
-    use droppedneedle_catalog::reads::library::sqlite::LibraryCatalog;
+    use droppedneedle_catalog::reads::library::store::LocalCatalog;
     use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
@@ -18578,21 +18578,15 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
         ),
         vec![artist.clone(); 2]
     );
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(
-            sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(managed.scratch.to_path_buf().join("app.db")),
-        )
-        .await
-        .expect("reader opens");
-    let read = LibraryCatalog::new(&pool)
+    let reader =
+        droppedneedle_kernel::db::Db::open_for_tests(&managed.scratch.to_path_buf().join("app.db"))
+            .expect("reader opens");
+    let read = LocalCatalog::new(reader)
         .get_artist(&artist)
         .await
         .expect("artist reads")
         .expect("artist found");
     assert_eq!(read.artist_mbid.as_deref(), Some(SAKAMOTO));
-    pool.close().await;
     assert_eq!(
         texts(
             &db,

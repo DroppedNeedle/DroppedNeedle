@@ -106,7 +106,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
         settings,
         pool: inputs.db.sqlx().clone(),
-        catalog: Catalog::new(upstream, LocalCatalog::new(inputs.db.sqlx().clone())),
+        catalog: Catalog::new(upstream, LocalCatalog::new(inputs.db.clone())),
         previews: inputs.providers.previews.clone(),
     });
     let batches = batches::LiveBatches::new(inputs.db.clone(), Some(inputs.batch_requests.clone()));

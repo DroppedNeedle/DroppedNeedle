@@ -14,23 +14,19 @@ use std::sync::Arc;
 use droppedneedle_library::tags::lyrics::read_file_lyrics;
 use droppedneedle_media::stream::local_files::{LibraryFiles, LocateError};
 
-use super::sqlite::LibraryCatalog;
+use super::store::LocalCatalog;
 use super::stores::{BoxFuture, LyricDoc, LyricsPort, StoreError};
 
 /// File lyrics first, then the wrapped port.
 pub struct FileLyrics {
-    catalog: LibraryCatalog,
+    catalog: LocalCatalog,
     files: LibraryFiles,
     fallback: Arc<dyn LyricsPort>,
 }
 
 impl FileLyrics {
     /// Serve marked tracks from their files, everything else from `fallback`.
-    pub fn new(
-        catalog: LibraryCatalog,
-        files: LibraryFiles,
-        fallback: Arc<dyn LyricsPort>,
-    ) -> Self {
+    pub fn new(catalog: LocalCatalog, files: LibraryFiles, fallback: Arc<dyn LyricsPort>) -> Self {
         Self {
             catalog,
             files,

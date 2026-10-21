@@ -10,6 +10,13 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::stores::{AlbumRecord, ArtistRecord, TrackRecord};
+
+/// `linked` when an identity row exists, else `local_only`.
+fn identity_state(linked: bool) -> String {
+    if linked { "linked" } else { "local_only" }.to_owned()
+}
+
 /// One catalog album.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AlbumView {
@@ -52,6 +59,33 @@ pub struct AlbumView {
     /// That contribution's state: `draft`, `ready`, `seeded`, `verifying`
     /// or `needs_review`.
     pub contribution_state: Option<String>,
+}
+
+/// A library album with whether the caller favorited it.
+impl From<(AlbumRecord, bool)> for AlbumView {
+    fn from((album, favorite): (AlbumRecord, bool)) -> Self {
+        Self {
+            id: album.id,
+            title: album.title,
+            artist_name: album.artist_name,
+            artist_id: album.artist_id,
+            release_group_mbid: album.release_group_mbid,
+            release_mbid: album.release_mbid,
+            artist_mbid: album.artist_mbid,
+            identity_state: identity_state(album.linked),
+            track_count: album.track_count,
+            total_duration_seconds: album.total_duration_seconds,
+            total_size_bytes: album.total_size_bytes,
+            format: album.format,
+            year: album.year,
+            is_compilation: album.is_compilation,
+            cover_available: album.cover_available,
+            date_added: album.date_added,
+            favorite,
+            contribution_id: album.contribution_id,
+            contribution_state: album.contribution_state,
+        }
+    }
 }
 
 /// Why library management leaves an album's files alone.
@@ -156,6 +190,24 @@ pub struct ArtistView {
     pub favorite: bool,
 }
 
+/// A library artist with whether the caller favorited it.
+impl From<(ArtistRecord, bool)> for ArtistView {
+    fn from((artist, favorite): (ArtistRecord, bool)) -> Self {
+        Self {
+            id: artist.id,
+            name: artist.name,
+            artist_mbid: artist.artist_mbid,
+            identity_state: identity_state(artist.linked),
+            album_count: artist.album_count,
+            track_count: artist.track_count,
+            appearance_album_count: artist.appearance_album_count,
+            appearance_track_count: artist.appearance_track_count,
+            date_added: artist.date_added,
+            favorite,
+        }
+    }
+}
+
 /// One page of catalog artists, with scope totals.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ArtistPage {
@@ -249,6 +301,40 @@ pub struct TrackView {
     pub cover_available: bool,
     /// True when the caller favorited this track.
     pub favorite: bool,
+}
+
+/// A library track with whether the caller favorited it.
+impl From<(TrackRecord, bool)> for TrackView {
+    fn from((track, favorite): (TrackRecord, bool)) -> Self {
+        Self {
+            id: track.id,
+            title: track.title,
+            album_id: track.album_id,
+            album_title: track.album_title,
+            artist_name: track.artist_name,
+            artist_id: track.artist_id,
+            album_artist_name: track.album_artist_name,
+            album_artist_id: track.album_artist_id,
+            recording_mbid: track.recording_mbid,
+            release_group_mbid: track.release_group_mbid,
+            artist_mbid: track.artist_mbid,
+            album_artist_mbid: track.album_artist_mbid,
+            disc_number: track.disc_number,
+            track_number: track.track_number,
+            year: track.year,
+            genre: track.genre,
+            duration_seconds: track.duration_seconds,
+            format: track.format,
+            bit_rate: track.bit_rate,
+            sample_rate: track.sample_rate,
+            bit_depth: track.bit_depth,
+            channels: track.channels,
+            file_size_bytes: track.file_size_bytes,
+            date_added: track.date_added,
+            cover_available: track.cover_available,
+            favorite,
+        }
+    }
 }
 
 /// One page of catalog tracks.
@@ -358,6 +444,24 @@ pub struct AlbumCard {
     pub date_added: Option<f64>,
 }
 
+impl From<AlbumRecord> for AlbumCard {
+    fn from(album: AlbumRecord) -> Self {
+        Self {
+            id: album.id,
+            title: album.title,
+            artist_name: album.artist_name,
+            artist_mbid: album.artist_mbid,
+            release_group_mbid: album.release_group_mbid,
+            year: album.year,
+            track_count: album.track_count,
+            total_size_bytes: album.total_size_bytes,
+            primary_format: album.format,
+            cover_available: album.cover_available,
+            date_added: album.date_added,
+        }
+    }
+}
+
 /// One page of album cards.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AlbumCardPage {
@@ -432,6 +536,24 @@ pub struct SuggestionTrack {
     pub duration_seconds: Option<f64>,
     /// `recent`, `rediscover`, `surprise`, or `same_era`.
     pub reason: String,
+}
+
+/// A library track with why it was suggested.
+impl From<(TrackRecord, &str)> for SuggestionTrack {
+    fn from((track, reason): (TrackRecord, &str)) -> Self {
+        Self {
+            track_id: track.id,
+            title: track.title,
+            album_title: track.album_title,
+            artist_name: track.artist_name,
+            album_id: track.album_id,
+            cover_available: track.cover_available,
+            format: track.format,
+            year: track.year,
+            duration_seconds: track.duration_seconds,
+            reason: reason.to_owned(),
+        }
+    }
 }
 
 /// Suggestion listing.

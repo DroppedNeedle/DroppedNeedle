@@ -14,12 +14,12 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
+use droppedneedle_kernel::db::Db;
 use droppedneedle_library::scan::coordinator::SharedResolver;
 use droppedneedle_media::stream::local_files::LibraryFiles;
 use library::LibraryDeps;
 use library::file_lyrics::{FileLyrics, NoOnlineLyrics};
-use library::lookups::LibraryLookups;
-use library::sqlite::{FavoriteReads, LibraryCatalog};
+use library::store::LocalCatalog;
 use library::stores::{
     AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricDoc, LyricsPort, StoreError,
     TrackFilter, TrackSort,
@@ -51,16 +51,14 @@ fn scripted_lyrics() -> ScriptedLyrics {
     )]))
 }
 
-/// The production library deps over one pool, with `online` behind the
-/// lyrics files carry.
-fn deps(pool: &SqlitePool, online: Arc<dyn LyricsPort>) -> LibraryDeps {
-    let catalog = LibraryCatalog::new(pool);
-    let files = LibraryFiles::new(pool.clone(), SharedResolver::default());
+/// The production library deps over one database, with `online` behind
+/// the lyrics files carry.
+fn deps(db: &Db, online: Arc<dyn LyricsPort>) -> LibraryDeps {
+    let catalog = LocalCatalog::new(db.clone());
+    let files = LibraryFiles::new(db.sqlx().clone(), SharedResolver::default());
     LibraryDeps {
         lyrics: Arc::new(FileLyrics::new(catalog.clone(), files.clone(), online)),
         catalog,
-        favorites: FavoriteReads::new(pool),
-        lookups: LibraryLookups::new(pool),
         upgrade_policy: None,
         tags: FileTagReader::new(files),
     }
@@ -127,7 +125,10 @@ const ROUTES: &[&str] = &[
 #[tokio::test]
 async fn bad_input_stays_in_the_envelope() {
     let fixture = sqlite_fixture().await;
-    let app = app(deps(&fixture.pool, Arc::new(scripted_lyrics())), Some(ADA));
+    let app = app(
+        deps(fixture.runtime.db(), Arc::new(scripted_lyrics())),
+        Some(ADA),
+    );
     for path in [
         "/api/v3/library/albums?sort=nope",
         "/api/v3/library/albums?order=sideways",
@@ -150,7 +151,7 @@ async fn bad_input_stays_in_the_envelope() {
 #[tokio::test]
 async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
     let fixture = sqlite_fixture().await;
-    let deps = deps(&fixture.pool, Arc::new(scripted_lyrics()));
+    let deps = deps(fixture.runtime.db(), Arc::new(scripted_lyrics()));
     let authenticated = app(deps.clone(), Some(ADA));
     let anonymous = app(deps.clone(), None);
     for path in ROUTES {
@@ -185,16 +186,12 @@ async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
 #[tokio::test]
 async fn every_route_hides_store_faults() {
     let scope = TestApp::start("reads-library-faults").await;
-    // A database file that cannot be opened: every store read fails, and
-    // the error text carries the path.
+    // A database without the catalog's tables: every store read fails.
     let dir = ScratchDir::new("reads-library-faults");
     let secret = dir.join("secret-library.db");
-    let pool = SqlitePool::connect_lazy_with(
-        sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&secret)
-            .create_if_missing(false),
-    );
-    let app = scope.request_scope(app(deps(&pool, Arc::new(NoOnlineLyrics)), Some(ADA)));
+    std::fs::write(&secret, b"").expect("empty database file writes");
+    let db = Db::open_for_tests(&secret).expect("empty database opens");
+    let app = scope.request_scope(app(deps(&db, Arc::new(NoOnlineLyrics)), Some(ADA)));
     for path in ROUTES {
         let response = app
             .clone()
@@ -218,26 +215,23 @@ async fn every_route_hides_store_faults() {
             .await
             .expect("body reads");
         let text = String::from_utf8(bytes.to_vec()).expect("body is text");
-        assert!(!text.contains("secret-library"), "path leaked on {path}");
+        assert!(!text.contains("no such table"), "cause leaked on {path}");
         let json: Value = serde_json::from_str(&text).expect("body is json");
-        assert_eq!(json["error"]["code"], "INTERNAL_ERROR", "for {path}");
         assert_eq!(
-            json["error"]["message"], "Internal server error",
-            "for {path}"
-        );
-        assert_eq!(
-            json["error"]["details"]["error_id"], request_id,
+            json,
+            serde_json::json!({"error": {
+                "code": "INTERNAL_ERROR",
+                "message": "Internal server error",
+                "details": {"error_id": request_id},
+            }}),
             "for {path}"
         );
     }
 }
 
 struct SqliteFixture {
-    #[allow(dead_code)]
     runtime: droppedneedle_kernel::db::DbRuntime,
-    pool: SqlitePool,
-    catalog: LibraryCatalog,
-    favorites: FavoriteReads,
+    catalog: LocalCatalog,
     /// Declared last so the database closes before the directory goes.
     _scratch: ScratchDir,
 }
@@ -245,7 +239,6 @@ struct SqliteFixture {
 async fn sqlite_fixture() -> SqliteFixture {
     let dir = ScratchDir::new("reads-library");
     let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    let pool = runtime.db().sqlx().clone();
     let seed = [
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) VALUES \
          ('a1', 'Aurora', 'aurora', 'group', 1000, 1000), \
@@ -314,10 +307,8 @@ async fn sqlite_fixture() -> SqliteFixture {
         .await
         .expect("seed batch runs");
     SqliteFixture {
+        catalog: LocalCatalog::new(runtime.db().clone()),
         runtime,
-        catalog: LibraryCatalog::new(&pool),
-        favorites: FavoriteReads::new(&pool),
-        pool,
         _scratch: dir,
     }
 }
@@ -550,7 +541,7 @@ async fn sqlite_artists_scopes_and_credits() {
 
     let (led_albums, total) = fixture
         .catalog
-        .artist_albums("a1", 50, 0)
+        .led_albums("a1", 50, 0)
         .await
         .expect("led list");
     assert_eq!(total, 3);
@@ -568,7 +559,7 @@ async fn sqlite_artists_scopes_and_credits() {
 #[tokio::test]
 async fn appearances_answer_by_musicbrainz_id_as_by_library_id() {
     let fixture = sqlite_fixture().await;
-    let deps = deps(&fixture.pool, Arc::new(NoOnlineLyrics));
+    let deps = deps(fixture.runtime.db(), Arc::new(NoOnlineLyrics));
     let (status, by_id) = get(
         app(deps.clone(), Some(ADA)),
         "/api/v3/library/artists/a3/appearances",
@@ -705,19 +696,19 @@ async fn sqlite_favorites_flags_and_counts() {
     let fixture = sqlite_fixture().await;
     let ids = ["al1".to_owned(), "al2".to_owned()];
     let marked = fixture
-        .favorites
+        .catalog
         .filter_favorites("u1", "album", &ids)
         .await
         .expect("filter runs");
     assert_eq!(marked, std::collections::HashSet::from(["al1".to_owned()]));
     let counts = fixture
-        .favorites
+        .catalog
         .favorite_counts("u1")
         .await
         .expect("counts read");
     assert_eq!(counts, (1, 1, 1));
     let counts = fixture
-        .favorites
+        .catalog
         .favorite_counts("nobody")
         .await
         .expect("counts read");

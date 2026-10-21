@@ -8,8 +8,9 @@
 //!
 //! Layout mirrors the users routes: `handlers` are thin, `services` hold the
 //! domain logic and return [`services::LibraryFailure`], `stores` holds the
-//! records and the lyrics port, and `sqlite` and `lookups` read them over
-//! the reader pool. Status mapping lives only in `error`.
+//! domain structs and the lyrics port, and [`store::LocalCatalog`] reads
+//! them over the request pool, its statements in `sql`. Status mapping
+//! lives only in `error`.
 //!
 //! Wiring: the app mounts [`routes`], which also registers the paths in
 //! the API document.
@@ -23,8 +24,11 @@ pub mod models;
 #[cfg(test)]
 mod perf_tests;
 pub mod player;
+pub mod pool_bridge;
 pub mod services;
+pub(crate) mod sql;
 pub mod sqlite;
+pub mod store;
 pub mod stores;
 pub mod tags;
 
@@ -36,14 +40,11 @@ use stores::LyricsPort;
 /// Every dependency the library reads need, injected by constructor.
 #[derive(Clone)]
 pub struct LibraryDeps {
-    /// Catalog reads over the `local_*` tables.
-    pub catalog: sqlite::LibraryCatalog,
-    /// Favorite flags and counts for the caller.
-    pub favorites: sqlite::FavoriteReads,
+    /// The local catalog: library pages, favorite flags and counts,
+    /// membership, album status, track resolution and stats extras.
+    pub catalog: store::LocalCatalog,
     /// Stored-lyrics reads; the provider fetch sits behind this port too.
     pub lyrics: Arc<dyn LyricsPort>,
-    /// Membership, album status, track resolution and stats extras.
-    pub lookups: lookups::LibraryLookups,
     /// The download policy album status reads its upgrade cutoff from, per
     /// call; `None` shows no upgrades.
     pub upgrade_policy: Option<

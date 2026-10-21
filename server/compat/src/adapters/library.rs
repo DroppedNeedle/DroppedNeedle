@@ -23,7 +23,7 @@ use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayStat, PlayedValues, PlayerAlbum, PlayerCatalog, PlayerIds,
     PlayerTrack, ShuffleSeeds, TrackOrder, TrackQuery,
 };
-use droppedneedle_catalog::reads::library::sqlite::LibraryCatalog;
+use droppedneedle_catalog::reads::library::store::LocalCatalog;
 use droppedneedle_catalog::reads::library::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LyricDoc, LyricsPort, StoreError,
 };
@@ -127,7 +127,7 @@ pub type ImageBytes = (Vec<u8>, String);
 #[derive(Clone)]
 pub struct CompatLibrary {
     /// Native catalog reads (artists, genres, single albums and artists).
-    pub catalog: LibraryCatalog,
+    pub catalog: LocalCatalog,
     /// Player reads (rich tracks, filtered pages, history).
     pub player: Arc<dyn PlayerCatalog>,
     /// Shared playlists and favorites.
@@ -485,23 +485,7 @@ impl CompatLibrary {
     /// Playable tracks and the folders holding at least one, across every
     /// library folder. A track is playable while its file is indexed.
     pub async fn playable_counts(&self) -> Result<(i64, i64), CompatError> {
-        let pool = self.collections.db.pool()?;
-        // `rtrim` with the path's own non-slash characters cuts the file
-        // name off, leaving the folder.
-        let counts = sqlx::query_as(
-            "SELECT COALESCE(SUM(tracks), 0), COUNT(*) FROM (SELECT COUNT(*) AS tracks \
-             FROM local_tracks WHERE availability = 'indexed' \
-             GROUP BY root_id, rtrim(relative_path, replace(relative_path, '/', '')))",
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|error| {
-            droppedneedle_catalog::reads::collections::db::StoreError::read(
-                "compat.playable_counts",
-                error,
-            )
-        })?;
-        Ok(counts)
+        Ok(self.catalog.playable_counts().await?)
     }
 
     /// Every playlist with what the user may see of it.

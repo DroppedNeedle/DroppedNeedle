@@ -5123,3 +5123,108 @@ fn now_ms() -> i64 {
         .unwrap();
     i64::try_from(elapsed.as_millis()).unwrap()
 }
+
+/// Migration 0005 lands its objects on fresh databases and backfills them
+/// over catalogs migrated through 0004: the FTS oracle finds pre-existing
+/// text, the format totals match live aggregation, and later writes stay
+/// maintained through the triggers.
+#[tokio::test]
+async fn migration_0005_backfills_on_upgrade() {
+    assert!(latest_version() >= 5);
+    let pool = migrated_pool().await;
+    for name in [
+        "idx_local_albums_artist_id",
+        "idx_local_tracks_availability_title",
+        "idx_local_tracks_id_availability_album",
+        "local_tracks_fts",
+        "local_tracks_fts_data",
+        "local_tracks_fts_idx",
+        "local_tracks_fts_docsize",
+        "local_tracks_fts_config",
+        "library_track_format_stats",
+        "trg_tracks_fts_insert",
+        "trg_tracks_fts_delete",
+        "trg_tracks_fts_update",
+        "trg_track_stats_insert",
+        "trg_track_stats_delete",
+        "trg_track_stats_remove",
+        "trg_track_stats_add",
+    ] {
+        let found: Option<String> =
+            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE name = ?")
+                .bind(name)
+                .fetch_optional(&pool)
+                .await
+                .expect("master reads");
+        assert_eq!(found.as_deref(), Some(name), "object {name} exists");
+    }
+
+    let pool = scratch_pool().await;
+    migrator_through(4).run(&pool).await.unwrap();
+    for seed in [
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'Aurora', 'aurora', 'person', 1000, 1000)",
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, year, grouping_source, \
+         created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'First Light', 'first light', 'Aurora', 'aurora', 'a1', 1994, \
+         'automatic', 1000, 1000)",
+        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, disc_number, track_number, duration_seconds, \
+         file_format, availability, ingest_source, imported_at, membership_source) VALUES \
+         ('t1', 'al1', 'r1', '/m/t1', 't1', 'h1', 400, 1, 's1', 'Opener', 'opener', \
+         'First Light', 'first light', 1, 1, 200.0, 'flac', 'indexed', 'scan', 1000.0, 'automatic'), \
+         ('t2', 'al1', 'r1', '/m/t2', 't2', 'h2', 300, 1, 's2', 'B-Side', 'b-side', \
+         'First Light', 'first light', 1, 2, 180.0, 'mp3', 'indexed', 'scan', 1100.0, 'automatic'), \
+         ('t3', 'al1', 'r1', '/m/t3', 't3', 'h3', 999, 1, 's3', 'Gone', 'gone', \
+         'First Light', 'first light', 1, 3, 200.0, 'flac', 'missing', 'scan', 1150.0, 'automatic')",
+    ] {
+        sqlx::query(seed)
+            .execute(&pool)
+            .await
+            .expect("v4 catalog seeds");
+    }
+    apply_migrations(&pool).await.expect("upgrade migrates");
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .expect("stamp reads");
+    assert_eq!(version, latest_version());
+    let fts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM local_tracks_fts WHERE local_tracks_fts MATCH ?")
+            .bind("\"b-side\"")
+            .fetch_one(&pool)
+            .await
+            .expect("oracle reads");
+    assert_eq!(fts, 1);
+    let miss: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM local_tracks_fts WHERE local_tracks_fts MATCH ?)",
+    )
+    .bind("\"zzz-no-such-thing\"")
+    .fetch_one(&pool)
+    .await
+    .expect("oracle reads");
+    assert!(!miss);
+    let formats: Vec<(String, i64, i64)> =
+        sqlx::query_as("SELECT file_format, indexed_tracks, indexed_bytes FROM library_track_format_stats ORDER BY 1")
+            .fetch_all(&pool)
+            .await
+            .expect("stats read");
+    assert_eq!(
+        formats,
+        vec![("flac".to_owned(), 1, 400), ("mp3".to_owned(), 1, 300),]
+    );
+    // Writes after the upgrade stay maintained.
+    sqlx::query("UPDATE local_tracks SET availability = 'indexed' WHERE id = 't3'")
+        .execute(&pool)
+        .await
+        .expect("transition writes");
+    let flac: (i64, i64) = sqlx::query_as(
+        "SELECT indexed_tracks, indexed_bytes FROM library_track_format_stats WHERE file_format = 'flac'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("stats re-read");
+    assert_eq!(flac, (2, 1399));
+}

@@ -1,26 +1,25 @@
-//! Local library reads behind the catalog pages: which MusicBrainz ids the
-//! library holds, which albums have open requests, edition evidence, and
-//! the local copy a page falls back to when MusicBrainz is down.
+//! Local library reads behind the catalog pages, on the local catalog:
+//! which MusicBrainz ids the library holds, which albums have open
+//! requests, edition evidence, and the local copy a page falls back to when
+//! MusicBrainz is down.
 //!
-//! Every read is an indexed lookup over the reader pool, so these parts of
+//! Every read is an indexed lookup over the request pool, so these parts of
 //! a page stay inside the local read budget whatever the providers do.
 //! Ids compare lowercase: MusicBrainz always sends lowercase, tags may not.
 
 use std::collections::HashSet;
 
-use sqlx::{Row, SqlitePool};
+use droppedneedle_kernel::db::statement::ListLen;
+use rusqlite::types::Value;
 
-use crate::reads::library::definitions::{
-    copy_order, live_album, musicbrainz, owned_album, owned_artist, owned_release_groups,
-    recording_mbid,
-};
+use crate::reads::library::sql;
+use crate::reads::library::store::{first, rows, texts, track_row};
+use crate::reads::library::stores::{StoreError, TrackRecord};
+
+pub use crate::reads::library::store::LocalCatalog;
 
 /// Most ids bound into one `IN (...)` list.
 const MAX_BINDS: usize = 500;
-
-/// Request statuses that count as "requested" on catalog pages (open, not
-/// finished): the same set the requests module dedupes against.
-const OPEN_REQUEST_STATUSES: &str = "'pending','downloading','queued','awaiting_approval'";
 
 /// A local artist row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +46,7 @@ pub struct LocalAlbum {
     pub tracks: Vec<LocalTrack>,
 }
 
-/// One indexed local track.
+/// One indexed local track, as the catalog pages show it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalTrack {
     /// Disc number.
@@ -60,6 +59,21 @@ pub struct LocalTrack {
     pub length_ms: Option<u64>,
     /// Recording MBID, when identified.
     pub recording_mbid: Option<String>,
+}
+
+impl From<TrackRecord> for LocalTrack {
+    fn from(track: TrackRecord) -> Self {
+        Self {
+            disc_number: u32::try_from(track.disc_number.max(1)).unwrap_or(1),
+            track_number: u32::try_from(track.track_number.max(0)).unwrap_or(0),
+            title: track.title,
+            length_ms: track
+                .duration_seconds
+                .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+                .map(|seconds| (seconds * 1000.0).round() as u64),
+            recording_mbid: track.recording_mbid,
+        }
+    }
 }
 
 /// One local album of an artist, for the discography fallback.
@@ -84,16 +98,6 @@ pub struct EditionEvidence {
     pub file_count: Option<u32>,
 }
 
-/// Local catalog reads over one pool. Clone shares the pool.
-#[derive(Debug, Clone)]
-pub struct LocalCatalog {
-    pool: SqlitePool,
-}
-
-fn placeholders(count: usize) -> String {
-    vec!["?"; count].join(",")
-}
-
 fn lowered(ids: &[String]) -> Vec<String> {
     let mut seen = HashSet::new();
     ids.iter()
@@ -102,306 +106,187 @@ fn lowered(ids: &[String]) -> Vec<String> {
         .collect()
 }
 
-impl LocalCatalog {
-    /// Read from this pool.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
-    }
+/// The `IN (...)` statements the id-set reads run, one per chunk.
+#[derive(Clone, Copy)]
+enum IdSet {
+    /// Owned albums by release group.
+    OwnedGroups,
+    /// Owned albums by release.
+    OwnedReleases,
+    /// Owned artists.
+    OwnedArtists,
+    /// Albums with an open request.
+    Requested,
+}
 
-    /// Run one `IN (...)` query per chunk and gather the first column.
-    async fn collect_ids(&self, sql: &str, ids: &[String]) -> Result<HashSet<String>, sqlx::Error> {
+impl LocalCatalog {
+    /// The lowercase ids among `ids` one id-set read finds, one read per
+    /// chunk.
+    async fn collect_ids(&self, set: IdSet, ids: &[String]) -> Result<HashSet<String>, StoreError> {
         let mut found = HashSet::new();
         for chunk in lowered(ids).chunks(MAX_BINDS) {
-            let query = sql.replace("{ids}", &placeholders(chunk.len()));
-            let mut statement = sqlx::query(&query);
-            for id in chunk {
-                statement = statement.bind(id);
-            }
-            for row in statement.fetch_all(&self.pool).await? {
-                let id: String = row.try_get(0)?;
-                found.insert(id.to_ascii_lowercase());
-            }
+            let values = texts(chunk);
+            let chunk_found: Vec<String> = self
+                .read("catalog.library.ids", move |conn| {
+                    let len = ListLen::new(values.len());
+                    // The owners statements answer the album id first and
+                    // the matched id second.
+                    let (text, column) = match set {
+                        IdSet::OwnedGroups => (sql::owners_by_group(len), 1),
+                        IdSet::OwnedReleases => (sql::owners_by_release(len), 1),
+                        IdSet::OwnedArtists => (sql::owned_artists_in(len), 0),
+                        IdSet::Requested => (sql::requested_in(len), 0),
+                    };
+                    rows(conn, &text, &values, |row| row.get::<_, String>(column))
+                })
+                .await?;
+            found.extend(chunk_found.into_iter().map(|id| id.to_ascii_lowercase()));
         }
         Ok(found)
     }
 
     /// Every identified artist credited on an owned album: (lowercase MBID,
     /// display name), by name.
-    pub async fn identified_artists(&self) -> Result<Vec<(String, String)>, sqlx::Error> {
-        let rows = sqlx::query(concat!(
-            "SELECT lower(e.provider_artist_id), MIN(a.display_name) \
-             FROM local_artist_external_identities e \
-             JOIN local_artists a ON a.id = e.local_artist_id \
-             JOIN local_album_artists credit ON credit.local_artist_id = e.local_artist_id \
-             JOIN local_albums b ON b.id = credit.local_album_id \
-             WHERE a.retired_into_artist_id IS NULL AND ",
-            musicbrainz!("e"),
-            " AND ",
-            owned_album!("b"),
-            " GROUP BY lower(e.provider_artist_id) ORDER BY 2"
-        ))
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter()
-            .map(|row| Ok((row.try_get(0)?, row.try_get(1)?)))
-            .collect()
+    pub async fn identified_artists(&self) -> Result<Vec<(String, String)>, StoreError> {
+        self.read("catalog.library.identified_artists", |conn| {
+            rows(conn, sql::IDENTIFIED_ARTISTS.text(), &[], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+        })
+        .await
     }
 
     /// Every identified owned album: (lowercase release-group MBID, title,
     /// album artist name).
-    pub async fn identified_albums(&self) -> Result<Vec<(String, String, String)>, sqlx::Error> {
-        let rows = sqlx::query(concat!(
-            "SELECT lower(e.release_group_mbid), MIN(b.title), \
-             MIN(COALESCE(b.album_artist_name, '')) \
-             FROM local_album_external_identities e \
-             JOIN local_albums b ON b.id = e.local_album_id WHERE ",
-            musicbrainz!("e"),
-            " AND ",
-            owned_album!("b"),
-            " GROUP BY lower(e.release_group_mbid) ORDER BY 3, 2"
-        ))
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter()
-            .map(|row| Ok((row.try_get(0)?, row.try_get(1)?, row.try_get(2)?)))
-            .collect()
+    pub async fn identified_albums(&self) -> Result<Vec<(String, String, String)>, StoreError> {
+        self.read("catalog.library.identified_albums", |conn| {
+            rows(conn, sql::IDENTIFIED_ALBUMS.text(), &[], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+        })
+        .await
     }
 
     /// The artist MBIDs (lowercase) the library holds: owned artists, live
     /// and credited on an owned album (v2
     /// `target_provider_artist_relationship`, owned half).
-    pub async fn owned_artists(&self, mbids: &[String]) -> Result<HashSet<String>, sqlx::Error> {
-        self.collect_ids(
-            concat!(
-                "SELECT DISTINCT lower(e.provider_artist_id) \
-                 FROM local_artist_external_identities e \
-                 JOIN local_artists a ON a.id = e.local_artist_id \
-                 WHERE lower(e.provider_artist_id) IN ({ids}) AND ",
-                musicbrainz!("e"),
-                " AND ",
-                owned_artist!("a")
-            ),
-            mbids,
-        )
-        .await
+    pub async fn owned_artists(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
+        self.collect_ids(IdSet::OwnedArtists, mbids).await
     }
 
     /// Whether the artist only appears on the library's tracks (a featured
     /// or guest credit on someone else's album) without an album of their
     /// own (v2 `target_provider_artist_relationship`, appears half).
-    pub async fn artist_appears(&self, mbid: &str) -> Result<bool, sqlx::Error> {
-        let row = sqlx::query(concat!(
-            "SELECT 1 FROM local_artist_external_identities e \
-             JOIN local_artists a ON a.id = e.local_artist_id \
-             JOIN local_track_artists credit ON credit.local_artist_id = e.local_artist_id \
-             JOIN local_tracks t ON t.id = credit.local_track_id \
-             JOIN local_albums b ON b.id = t.local_album_id \
-             WHERE lower(e.provider_artist_id) = ? AND ",
-            musicbrainz!("e"),
-            " AND a.retired_into_artist_id IS NULL AND ",
-            live_album!("b"),
-            " AND t.availability = 'indexed' AND NOT EXISTS ( \
-             SELECT 1 FROM local_album_artists album_credit \
-             WHERE album_credit.local_album_id = t.local_album_id \
-             AND album_credit.local_artist_id = credit.local_artist_id) LIMIT 1"
-        ))
-        .bind(mbid.to_ascii_lowercase())
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.is_some())
+    pub async fn artist_appears(&self, mbid: &str) -> Result<bool, StoreError> {
+        let values = vec![Value::Text(mbid.to_ascii_lowercase())];
+        let found: Option<i64> = self
+            .read("catalog.library.artist_appears", move |conn| {
+                first(conn, sql::ARTIST_APPEARS.text(), &values, |row| row.get(0))
+            })
+            .await?;
+        Ok(found.is_some())
     }
 
     /// The release-group MBIDs (lowercase) of owned albums. A release MBID
     /// passed in also matches, returning the release MBID, so callers
     /// holding either id get an answer.
-    pub async fn owned_albums(&self, mbids: &[String]) -> Result<HashSet<String>, sqlx::Error> {
-        let by_group = self
-            .collect_ids(
-                concat!(
-                    "SELECT lower(e.release_group_mbid) FROM local_album_external_identities e \
-                     JOIN local_albums b ON b.id = e.local_album_id \
-                     WHERE lower(e.release_group_mbid) IN ({ids}) AND ",
-                    musicbrainz!("e"),
-                    " AND ",
-                    owned_album!("b")
-                ),
-                mbids,
-            )
-            .await?;
-        let by_release = self
-            .collect_ids(
-                concat!(
-                    "SELECT lower(e.release_mbid) FROM local_album_external_identities e \
-                     JOIN local_albums b ON b.id = e.local_album_id \
-                     WHERE e.release_mbid IS NOT NULL AND lower(e.release_mbid) IN ({ids}) AND ",
-                    musicbrainz!("e"),
-                    " AND ",
-                    owned_album!("b")
-                ),
-                mbids,
-            )
-            .await?;
+    pub async fn owned_albums(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
+        let by_group = self.collect_ids(IdSet::OwnedGroups, mbids).await?;
+        let by_release = self.collect_ids(IdSet::OwnedReleases, mbids).await?;
         Ok(by_group.union(&by_release).cloned().collect())
     }
 
     /// Every owned release-group MBID (lowercase, sorted): the unfiltered
     /// form of [`Self::owned_albums`].
-    pub async fn all_owned_release_groups(&self) -> Result<Vec<String>, sqlx::Error> {
-        sqlx::query_scalar(concat!(
-            "SELECT DISTINCT * FROM (",
-            owned_release_groups!(),
-            ") ORDER BY 1"
-        ))
-        .fetch_all(&self.pool)
+    pub async fn all_owned_release_groups(&self) -> Result<Vec<String>, StoreError> {
+        self.read("catalog.library.owned_groups", |conn| {
+            rows(conn, sql::OWNED_GROUPS.text(), &[], |row| row.get(0))
+        })
         .await
     }
 
     /// Every album MBID (lowercase, sorted) with an open acquisition
     /// request: the unfiltered form of [`Self::requested_albums`].
-    pub async fn all_requested_albums(&self) -> Result<Vec<String>, sqlx::Error> {
-        sqlx::query_scalar(&format!(
-            "SELECT DISTINCT musicbrainz_id_lower FROM request_history \
-             WHERE request_kind = 'album' AND status IN ({OPEN_REQUEST_STATUSES}) \
-             ORDER BY 1"
-        ))
-        .fetch_all(&self.pool)
+    pub async fn all_requested_albums(&self) -> Result<Vec<String>, StoreError> {
+        self.read("catalog.library.requested_groups", |conn| {
+            rows(conn, sql::REQUESTED_GROUPS.text(), &[], |row| row.get(0))
+        })
         .await
     }
 
     /// The album MBIDs (lowercase) with an open acquisition request.
-    pub async fn requested_albums(&self, mbids: &[String]) -> Result<HashSet<String>, sqlx::Error> {
-        let sql = format!(
-            "SELECT musicbrainz_id_lower FROM request_history \
-             WHERE request_kind = 'album' AND status IN ({OPEN_REQUEST_STATUSES}) \
-             AND musicbrainz_id_lower IN ({{ids}})"
-        );
-        self.collect_ids(&sql, mbids).await
+    pub async fn requested_albums(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
+        self.collect_ids(IdSet::Requested, mbids).await
     }
 
     /// The live local artist behind one MBID.
-    pub async fn artist(&self, mbid: &str) -> Result<Option<LocalArtist>, sqlx::Error> {
-        let row = sqlx::query(
-            "SELECT a.display_name FROM local_artist_external_identities e \
-             JOIN local_artists a ON a.id = e.local_artist_id \
-             WHERE e.provider = 'musicbrainz' AND a.retired_into_artist_id IS NULL \
-             AND lower(e.provider_artist_id) = ? LIMIT 1",
-        )
-        .bind(mbid.to_ascii_lowercase())
-        .fetch_optional(&self.pool)
-        .await?;
-        row.map(|row| {
-            Ok(LocalArtist {
-                name: row.try_get(0)?,
+    pub async fn artist(&self, mbid: &str) -> Result<Option<LocalArtist>, StoreError> {
+        let values = vec![Value::Text(mbid.to_ascii_lowercase())];
+        self.read("catalog.library.artist", move |conn| {
+            first(conn, sql::LOCAL_ARTIST.text(), &values, |row| {
+                Ok(LocalArtist { name: row.get(0)? })
             })
         })
-        .transpose()
+        .await
     }
 
     /// The identified owned albums led by one artist MBID, newest first.
-    pub async fn artist_albums(&self, mbid: &str) -> Result<Vec<LocalArtistAlbum>, sqlx::Error> {
-        let rows = sqlx::query(concat!(
-            "SELECT e.release_group_mbid, b.title, b.year \
-             FROM local_artist_external_identities ae \
-             JOIN local_albums b ON b.album_artist_id = ae.local_artist_id \
-             JOIN local_album_external_identities e ON e.local_album_id = b.id AND ",
-            musicbrainz!("e"),
-            " WHERE lower(ae.provider_artist_id) = ? AND ",
-            musicbrainz!("ae"),
-            " AND ",
-            owned_album!("b"),
-            " ORDER BY b.year IS NULL, b.year DESC, b.title_folded"
-        ))
-        .bind(mbid.to_ascii_lowercase())
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter()
-            .map(|row| {
+    pub async fn artist_albums(&self, mbid: &str) -> Result<Vec<LocalArtistAlbum>, StoreError> {
+        let values = vec![Value::Text(mbid.to_ascii_lowercase())];
+        self.read("catalog.library.artist_albums", move |conn| {
+            rows(conn, sql::LOCAL_ARTIST_ALBUMS.text(), &values, |row| {
                 Ok(LocalArtistAlbum {
-                    release_group_mbid: row.try_get(0)?,
-                    title: row.try_get(1)?,
-                    year: row.try_get(2)?,
+                    release_group_mbid: row.get(0)?,
+                    title: row.get(1)?,
+                    year: row.get(2)?,
                 })
             })
-            .collect()
+        })
+        .await
     }
 
     /// The local copy of one release group, live with or without files
     /// (the oldest copy with files, else the oldest copy), with its
     /// indexed tracks.
-    pub async fn album(&self, release_group_mbid: &str) -> Result<Option<LocalAlbum>, sqlx::Error> {
-        let row = sqlx::query(concat!(
-            "SELECT b.id, b.title, COALESCE(b.album_artist_name, ''), b.year, \
-             (SELECT ae.provider_artist_id FROM local_artist_external_identities ae \
-              WHERE ae.local_artist_id = b.album_artist_id AND ",
-            musicbrainz!("ae"),
-            "), b.has_indexed_track \
-             FROM local_album_external_identities e \
-             JOIN local_albums b ON b.id = e.local_album_id \
-             WHERE lower(e.release_group_mbid) = ? AND ",
-            musicbrainz!("e"),
-            " AND ",
-            live_album!("b"),
-            " ORDER BY ",
-            copy_order!("b"),
-            " LIMIT 1"
-        ))
-        .bind(release_group_mbid.to_ascii_lowercase())
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(row) = row else {
+    pub async fn album(&self, release_group_mbid: &str) -> Result<Option<LocalAlbum>, StoreError> {
+        let values = vec![Value::Text(release_group_mbid.to_ascii_lowercase())];
+        let found = self
+            .read("catalog.library.album", move |conn| {
+                first(conn, sql::LOCAL_ALBUM.text(), &values, |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        LocalAlbum {
+                            title: row.get(1)?,
+                            artist_name: row.get(2)?,
+                            year: row.get(3)?,
+                            artist_mbid: row.get(4)?,
+                            owned: row.get(5)?,
+                            tracks: Vec::new(),
+                        },
+                    ))
+                })
+            })
+            .await?;
+        let Some((album_id, mut album)) = found else {
             return Ok(None);
         };
-        let album_id: String = row.try_get(0)?;
-        let tracks = sqlx::query(concat!(
-            "SELECT t.disc_number, t.track_number, t.title, t.duration_seconds, ",
-            recording_mbid!("e", "t"),
-            " FROM local_tracks t \
-             LEFT JOIN local_track_external_identities e ON e.local_track_id = t.id AND ",
-            musicbrainz!("e"),
-            " WHERE t.local_album_id = ? AND t.availability = 'indexed' \
-             ORDER BY t.disc_number, t.track_number, t.title_folded"
-        ))
-        .bind(&album_id)
-        .fetch_all(&self.pool)
-        .await?
-        .iter()
-        .map(|track| {
-            let disc: i64 = track.try_get(0)?;
-            let number: i64 = track.try_get(1)?;
-            let seconds: Option<f64> = track.try_get(3)?;
-            Ok(LocalTrack {
-                disc_number: u32::try_from(disc.max(1)).unwrap_or(1),
-                track_number: u32::try_from(number.max(0)).unwrap_or(0),
-                title: track.try_get(2)?,
-                length_ms: seconds
-                    .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
-                    .map(|seconds| (seconds * 1000.0).round() as u64),
-                recording_mbid: track.try_get(4)?,
+        let values = vec![Value::Text(album_id)];
+        let tracks = self
+            .read("catalog.library.album.tracks", move |conn| {
+                rows(conn, sql::LOCAL_ALBUM_TRACKS.text(), &values, track_row)
             })
-        })
-        .collect::<Result<Vec<_>, sqlx::Error>>()?;
-        Ok(Some(LocalAlbum {
-            title: row.try_get(1)?,
-            artist_name: row.try_get(2)?,
-            year: row.try_get(3)?,
-            artist_mbid: row.try_get(4)?,
-            owned: row.try_get(5)?,
-            tracks,
-        }))
+            .await?;
+        album.tracks = tracks.into_iter().map(LocalTrack::from).collect();
+        Ok(Some(album))
     }
 
     /// The release group a library album (or the album it was merged
     /// into) is identified as.
-    pub async fn group_for_album(&self, album_id: &str) -> Result<Option<String>, sqlx::Error> {
-        sqlx::query_scalar(concat!(
-            "SELECT e.release_group_mbid FROM local_albums b \
-             JOIN local_album_external_identities e \
-               ON e.local_album_id = COALESCE(b.retired_into_album_id, b.id) AND ",
-            musicbrainz!("e"),
-            " WHERE b.id = ? LIMIT 1"
-        ))
-        .bind(album_id)
-        .fetch_optional(&self.pool)
+    pub async fn group_for_album(&self, album_id: &str) -> Result<Option<String>, StoreError> {
+        let values = vec![Value::Text(album_id.to_owned())];
+        self.read("catalog.library.group_for_album", move |conn| {
+            first(conn, sql::GROUP_FOR_ALBUM.text(), &values, |row| row.get(0))
+        })
         .await
     }
 
@@ -411,28 +296,18 @@ impl LocalCatalog {
     pub async fn edition_evidence(
         &self,
         release_group_mbid: &str,
-    ) -> Result<EditionEvidence, sqlx::Error> {
-        let row = sqlx::query(concat!(
-            "SELECT e.release_mbid, e.decision_source, \
-             (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = b.id \
-              AND t.availability = 'indexed') \
-             FROM local_album_external_identities e \
-             JOIN local_albums b ON b.id = e.local_album_id \
-             WHERE lower(e.release_group_mbid) = ? AND ",
-            musicbrainz!("e"),
-            " AND ",
-            live_album!("b"),
-            " ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1"
-        ))
-        .bind(release_group_mbid.to_ascii_lowercase())
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(row) = row else {
+    ) -> Result<EditionEvidence, StoreError> {
+        let values = vec![Value::Text(release_group_mbid.to_ascii_lowercase())];
+        let found: Option<(Option<String>, String, i64)> = self
+            .read("catalog.library.edition_evidence", move |conn| {
+                first(conn, sql::EDITION_EVIDENCE.text(), &values, |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+            })
+            .await?;
+        let Some((release, source, files)) = found else {
             return Ok(EditionEvidence::default());
         };
-        let files: i64 = row.try_get(2)?;
-        let release: Option<String> = row.try_get(0)?;
-        let source: String = row.try_get(1)?;
         Ok(EditionEvidence {
             chosen_release: release.clone().filter(|_| source == "manual"),
             owned_release: release,

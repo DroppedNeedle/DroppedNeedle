@@ -241,7 +241,7 @@ impl LiveBatches {
     /// The albums the library holds, lowercased.
     async fn owned(&self, mbids: &[String]) -> Result<HashSet<String>, String> {
         let lowered: Vec<String> = mbids.iter().map(|id| id.to_ascii_lowercase()).collect();
-        LocalCatalog::new(self.db.sqlx().clone())
+        LocalCatalog::new(self.db.clone())
             .owned_albums(&lowered)
             .await
             .map_err(|error| format!("batch library check: {error}"))
@@ -502,7 +502,7 @@ impl LiveBatches {
         // Fail closed: a batch must never request (and later recycle) an
         // album the library already holds because the check failed.
         let owned = self.owned(&ids).await.map_err(failed)?;
-        let active: HashSet<String> = LocalCatalog::new(self.db.sqlx().clone())
+        let active: HashSet<String> = LocalCatalog::new(self.db.clone())
             .requested_albums(&ids)
             .await
             .map_err(|error| failed(format!("batch request check: {error}")))?;

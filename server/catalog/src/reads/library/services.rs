@@ -157,111 +157,6 @@ fn check_decade(decade: Option<i64>) -> Result<Option<i64>, LibraryFailure> {
     }
 }
 
-fn identity_state(linked: bool) -> String {
-    if linked { "linked" } else { "local_only" }.to_owned()
-}
-
-fn album_view(record: &AlbumRecord, favorite: bool) -> AlbumView {
-    AlbumView {
-        id: record.id.clone(),
-        title: record.title.clone(),
-        artist_name: record.artist_name.clone(),
-        artist_id: record.artist_id.clone(),
-        release_group_mbid: record.release_group_mbid.clone(),
-        release_mbid: record.release_mbid.clone(),
-        artist_mbid: record.artist_mbid.clone(),
-        identity_state: identity_state(record.linked),
-        track_count: record.track_count,
-        total_duration_seconds: record.total_duration_seconds,
-        total_size_bytes: record.total_size_bytes,
-        format: record.format.clone(),
-        year: record.year,
-        is_compilation: record.is_compilation,
-        cover_available: record.cover_available,
-        date_added: record.date_added,
-        favorite,
-        contribution_id: record.contribution_id.clone(),
-        contribution_state: record.contribution_state.clone(),
-    }
-}
-
-fn album_card(record: &AlbumRecord) -> AlbumCard {
-    AlbumCard {
-        id: record.id.clone(),
-        title: record.title.clone(),
-        artist_name: record.artist_name.clone(),
-        artist_mbid: record.artist_mbid.clone(),
-        release_group_mbid: record.release_group_mbid.clone(),
-        year: record.year,
-        track_count: record.track_count,
-        total_size_bytes: record.total_size_bytes,
-        primary_format: record.format.clone(),
-        cover_available: record.cover_available,
-        date_added: record.date_added,
-    }
-}
-
-fn artist_view(record: &ArtistRecord, favorite: bool) -> ArtistView {
-    ArtistView {
-        id: record.id.clone(),
-        name: record.name.clone(),
-        artist_mbid: record.artist_mbid.clone(),
-        identity_state: identity_state(record.linked),
-        album_count: record.album_count,
-        track_count: record.track_count,
-        appearance_album_count: record.appearance_album_count,
-        appearance_track_count: record.appearance_track_count,
-        date_added: record.date_added,
-        favorite,
-    }
-}
-
-fn track_view(record: &TrackRecord, favorite: bool) -> TrackView {
-    TrackView {
-        id: record.id.clone(),
-        title: record.title.clone(),
-        album_id: record.album_id.clone(),
-        album_title: record.album_title.clone(),
-        artist_name: record.artist_name.clone(),
-        artist_id: record.artist_id.clone(),
-        album_artist_name: record.album_artist_name.clone(),
-        album_artist_id: record.album_artist_id.clone(),
-        recording_mbid: record.recording_mbid.clone(),
-        release_group_mbid: record.release_group_mbid.clone(),
-        artist_mbid: record.artist_mbid.clone(),
-        album_artist_mbid: record.album_artist_mbid.clone(),
-        disc_number: record.disc_number,
-        track_number: record.track_number,
-        year: record.year,
-        genre: record.genre.clone(),
-        duration_seconds: record.duration_seconds,
-        format: record.format.clone(),
-        bit_rate: record.bit_rate,
-        sample_rate: record.sample_rate,
-        bit_depth: record.bit_depth,
-        channels: record.channels,
-        file_size_bytes: record.file_size_bytes,
-        date_added: record.date_added,
-        cover_available: record.cover_available,
-        favorite,
-    }
-}
-
-fn suggestion_track(record: &TrackRecord, reason: &str) -> SuggestionTrack {
-    SuggestionTrack {
-        track_id: record.id.clone(),
-        title: record.title.clone(),
-        album_title: record.album_title.clone(),
-        artist_name: record.artist_name.clone(),
-        album_id: record.album_id.clone(),
-        cover_available: record.cover_available,
-        format: record.format.clone(),
-        year: record.year,
-        duration_seconds: record.duration_seconds,
-        reason: reason.to_owned(),
-    }
-}
-
 /// Favorite flags for one page of ids. Empty pages skip the store call.
 async fn favorites_for(
     deps: &LibraryDeps,
@@ -272,7 +167,7 @@ async fn favorites_for(
     if ids.is_empty() {
         return Ok(HashSet::new());
     }
-    deps.favorites
+    deps.catalog
         .filter_favorites(user_id, kind, ids)
         .await
         .map_err(LibraryFailure::from)
@@ -282,7 +177,7 @@ async fn favorites_for(
 /// answers for the album it was merged into. Unknown ids are 404.
 async fn album_record(deps: &LibraryDeps, id: &str) -> Result<AlbumRecord, LibraryFailure> {
     let current = deps
-        .lookups
+        .catalog
         .current_album(id)
         .await?
         .ok_or(LibraryFailure::NotFound)?;
@@ -296,13 +191,13 @@ async fn album_record(deps: &LibraryDeps, id: &str) -> Result<AlbumRecord, Libra
 /// or the artist linked to it when the id is a MusicBrainz artist id, so a
 /// provider artist page can ask by the id it holds. Unknown ids are 404.
 async fn artist_record(deps: &LibraryDeps, id: &str) -> Result<ArtistRecord, LibraryFailure> {
-    if let Some(current) = deps.lookups.current_artist(id).await?
+    if let Some(current) = deps.catalog.current_artist(id).await?
         && let Some(record) = deps.catalog.get_artist(&current).await?
     {
         return Ok(record);
     }
     let linked = deps
-        .lookups
+        .catalog
         .artist_for_mbid(id)
         .await?
         .ok_or(LibraryFailure::NotFound)?;
@@ -339,8 +234,11 @@ pub async fn list_albums(
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
     Ok(AlbumPage {
         items: records
-            .iter()
-            .map(|record| album_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                AlbumView::from((record, favorite))
+            })
             .collect(),
         total,
         offset,
@@ -358,8 +256,9 @@ pub async fn get_album(
     let record = album_record(deps, id).await?;
     let favorites = favorites_for(deps, user_id, "album", std::slice::from_ref(&record.id)).await?;
     let hold = deps.catalog.management_hold(&record.id).await?;
+    let favorite = favorites.contains(&record.id);
     Ok(AlbumDetailView {
-        album: album_view(&record, favorites.contains(&record.id)),
+        album: AlbumView::from((record, favorite)),
         management_hold: hold.map(|hold| ManagementHoldView {
             kind: hold.kind,
             held_at: hold.held_at,
@@ -383,8 +282,11 @@ pub async fn album_tracks(
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
     Ok(TrackPage {
         items: records
-            .iter()
-            .map(|record| track_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                TrackView::from((record, favorite))
+            })
             .collect(),
         total,
         offset,
@@ -403,7 +305,7 @@ pub async fn album_match(
     mbid: &str,
     query: &PageQuery,
 ) -> Result<TrackPage, LibraryFailure> {
-    let id = if let Some(current) = deps.lookups.current_album(mbid).await? {
+    let id = if let Some(current) = deps.catalog.current_album(mbid).await? {
         current
     } else {
         deps.catalog
@@ -429,8 +331,11 @@ pub async fn album_copies(
     let total = records.len() as u64;
     Ok(AlbumPage {
         items: records
-            .iter()
-            .map(|record| album_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                AlbumView::from((record, favorite))
+            })
             .collect(),
         total,
         offset: 0,
@@ -461,8 +366,11 @@ pub async fn list_artists(
     let favorites = favorites_for(deps, user_id, "artist", &ids).await?;
     Ok(ArtistPage {
         items: records
-            .iter()
-            .map(|record| artist_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                ArtistView::from((record, favorite))
+            })
             .collect(),
         total,
         album_artist_total,
@@ -482,7 +390,8 @@ pub async fn get_artist(
     let record = artist_record(deps, id).await?;
     let favorites =
         favorites_for(deps, user_id, "artist", std::slice::from_ref(&record.id)).await?;
-    Ok(artist_view(&record, favorites.contains(&record.id)))
+    let favorite = favorites.contains(&record.id);
+    Ok(ArtistView::from((record, favorite)))
 }
 
 /// One page of albums led by the artist. Unknown artists are 404.
@@ -494,16 +403,16 @@ pub async fn artist_albums(
 ) -> Result<AlbumPage, LibraryFailure> {
     let (limit, offset) = page(query.limit, query.offset, 200, 1000)?;
     let artist = artist_record(deps, artist_id).await?;
-    let (records, total) = deps
-        .catalog
-        .artist_albums(&artist.id, limit, offset)
-        .await?;
+    let (records, total) = deps.catalog.led_albums(&artist.id, limit, offset).await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
     Ok(AlbumPage {
         items: records
-            .iter()
-            .map(|record| album_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                AlbumView::from((record, favorite))
+            })
             .collect(),
         total,
         offset,
@@ -529,8 +438,11 @@ pub async fn artist_appearances(
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
     Ok(AlbumPage {
         items: records
-            .iter()
-            .map(|record| album_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                AlbumView::from((record, favorite))
+            })
             .collect(),
         total,
         offset,
@@ -565,8 +477,11 @@ pub async fn list_tracks(
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
     Ok(TrackPage {
         items: records
-            .iter()
-            .map(|record| track_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                TrackView::from((record, favorite))
+            })
             .collect(),
         total,
         offset,
@@ -587,15 +502,16 @@ pub async fn get_track(
         .await?
         .ok_or(LibraryFailure::NotFound)?;
     let favorites = favorites_for(deps, user_id, "track", std::slice::from_ref(&record.id)).await?;
-    Ok(track_view(&record, favorites.contains(&record.id)))
+    let favorite = favorites.contains(&record.id);
+    Ok(TrackView::from((record, favorite)))
 }
 
 /// Library totals plus the caller's favorite counts, the review queue,
 /// unidentified albums and the last finished scan.
 pub async fn stats(deps: &LibraryDeps, user_id: &str) -> Result<StatsView, LibraryFailure> {
     let record = deps.catalog.stats().await?;
-    let extras = deps.lookups.stats_extras().await?;
-    let (albums, artists, tracks) = deps.favorites.favorite_counts(user_id).await?;
+    let extras = deps.catalog.stats_extras().await?;
+    let (albums, artists, tracks) = deps.catalog.favorite_counts(user_id).await?;
     Ok(StatsView {
         total_albums: record.total_albums,
         total_artists: record.total_artists,
@@ -624,8 +540,11 @@ pub async fn recently_added(
     let total = records.len() as u64;
     Ok(AlbumPage {
         items: records
-            .iter()
-            .map(|record| album_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                AlbumView::from((record, favorite))
+            })
             .collect(),
         total,
         offset: 0,
@@ -668,8 +587,11 @@ pub async fn genre_tracks(
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
     Ok(TrackPage {
         items: records
-            .iter()
-            .map(|record| track_view(record, favorites.contains(&record.id)))
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                TrackView::from((record, favorite))
+            })
             .collect(),
         total,
         offset,
@@ -700,7 +622,7 @@ pub async fn browse_albums(
         )
         .await?;
     Ok(AlbumCardPage {
-        items: records.iter().map(album_card).collect(),
+        items: records.into_iter().map(AlbumCard::from).collect(),
         total,
         offset,
         limit,
@@ -736,10 +658,10 @@ pub async fn search_library(
         .list_tracks(&track_filter, TrackSort::Title, false, limit, 0)
         .await?;
     Ok(SearchResults {
-        albums: albums.iter().map(album_card).collect(),
+        albums: albums.into_iter().map(AlbumCard::from).collect(),
         tracks: tracks
-            .iter()
-            .map(|record| suggestion_track(record, "match"))
+            .into_iter()
+            .map(|record| SuggestionTrack::from((record, "match")))
             .collect(),
     })
 }
@@ -751,7 +673,7 @@ pub async fn recent_albums(
 ) -> Result<Vec<AlbumCard>, LibraryFailure> {
     let (limit, _) = page(query.limit, None, 20, 50)?;
     let records = deps.catalog.recently_added(limit).await?;
-    Ok(records.iter().map(album_card).collect())
+    Ok(records.into_iter().map(AlbumCard::from).collect())
 }
 
 /// Decade shelves, oldest first.
@@ -791,14 +713,14 @@ pub async fn suggestions(
     let mut seen = HashSet::new();
     let mut items = Vec::new();
     for (reason, records) in [
-        ("recent", &newest),
-        ("rediscover", &oldest),
-        ("surprise", &surprise),
-        ("same_era", &era),
+        ("recent", newest),
+        ("rediscover", oldest),
+        ("surprise", surprise),
+        ("same_era", era),
     ] {
         for record in records {
             if seen.insert(record.id.clone()) {
-                items.push(suggestion_track(record, reason));
+                items.push(SuggestionTrack::from((record, reason)));
             }
             if items.len() >= limit as usize {
                 break;
@@ -882,8 +804,8 @@ pub async fn membership(
         kept.sort();
         kept
     };
-    let owned = deps.lookups.owned_albums(&ids).await?;
-    let requested = deps.lookups.requested_albums(&ids).await?;
+    let owned = deps.catalog.owned_albums(&ids).await?;
+    let requested = deps.catalog.requested_albums(&ids).await?;
     Ok(LibraryMembershipResponse {
         owned_ids: keep(owned),
         requested_ids: keep(requested),
@@ -915,7 +837,7 @@ pub async fn track_tags(
 
 /// Every held release group and every open album request.
 pub async fn album_mbids(deps: &LibraryDeps) -> Result<LibraryMbids, LibraryFailure> {
-    let found = deps.lookups.all_album_mbids().await?;
+    let found = deps.catalog.all_album_mbids().await?;
     Ok(LibraryMbids {
         mbids: found.owned,
         requested_mbids: found.requested,
@@ -972,31 +894,32 @@ pub async fn album_status(
             "album id must not be blank".to_owned(),
         ));
     }
-    let album_ids = deps.lookups.status_albums(identifier).await?;
+    let album_ids = deps.catalog.status_albums(identifier).await?;
     let records = if album_ids.is_empty() {
         Vec::new()
     } else {
-        deps.lookups.album_tracks_batch(&album_ids).await?
+        deps.catalog.album_tracks_batch(&album_ids).await?
     };
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
     let policy = UpgradePolicy::read(deps.upgrade_policy.as_ref());
-    let tracks: Vec<LibraryStatusTrack> = records
-        .iter()
-        .map(|record| {
-            let tier = tier_for(&record.format, record.bit_rate, record.bit_depth);
-            LibraryStatusTrack {
-                track: track_view(record, favorites.contains(&record.id)),
-                current_tier: tier.to_owned(),
-                below_cutoff: below_cutoff(tier, &policy),
-            }
-        })
-        .collect();
     let album_id = records
         .first()
         .map(|record| record.album_id.clone())
         .or_else(|| album_ids.first().cloned())
         .unwrap_or_else(|| identifier.to_owned());
+    let tracks: Vec<LibraryStatusTrack> = records
+        .into_iter()
+        .map(|record| {
+            let tier = tier_for(&record.format, record.bit_rate, record.bit_depth);
+            let favorite = favorites.contains(&record.id);
+            LibraryStatusTrack {
+                track: TrackView::from((record, favorite)),
+                current_tier: tier.to_owned(),
+                below_cutoff: below_cutoff(tier, &policy),
+            }
+        })
+        .collect();
     Ok(LibraryAlbumStatus {
         in_library: !tracks.is_empty(),
         album_id,
@@ -1037,14 +960,14 @@ pub async fn resolve_tracks(
     if identifiers.is_empty() {
         return Ok(ResolveTracksResponse { items });
     }
-    let canonical = deps.lookups.resolve_albums(&identifiers).await?;
+    let canonical = deps.catalog.resolve_albums(&identifiers).await?;
     let mut album_ids: Vec<String> = canonical.values().cloned().collect();
     album_ids.sort();
     album_ids.dedup();
     if album_ids.is_empty() {
         return Ok(ResolveTracksResponse { items });
     }
-    let tracks = deps.lookups.album_tracks_batch(&album_ids).await?;
+    let tracks = deps.catalog.album_tracks_batch(&album_ids).await?;
     // First file wins per position: albums sort by disc, track, then id.
     let mut by_position: std::collections::HashMap<(&str, i64, i64), &TrackRecord> =
         std::collections::HashMap::new();

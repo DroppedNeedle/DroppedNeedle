@@ -47,7 +47,6 @@ use super::queue::sources::{ArtistRow, MusicSource, UserMusic};
 use super::queue::store::QueueDb;
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::error::CatalogError;
-use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::catalog::models::DiscoverySource;
 use crate::reads::discover::models::{
     ChartSection, ChartSource, PlaylistProfile, PlaylistSuggestionsRequest,
@@ -95,7 +94,6 @@ pub struct LiveRadio {
     sources: Arc<dyn PageSources>,
     queue_db: QueueDb,
     settings: Live<AdvancedSettings>,
-    pool: sqlx::SqlitePool,
     genres: LibraryReads,
     tracks: RadioLibrary,
     catalog: Catalog,
@@ -224,8 +222,7 @@ impl LiveRadio {
             queue_db: inputs.queue_db,
             settings: inputs.settings,
             genres: LibraryReads::new(inputs.pool.clone()),
-            tracks: RadioLibrary::new(inputs.pool.clone()),
-            pool: inputs.pool,
+            tracks: RadioLibrary::new(inputs.pool),
             catalog: inputs.catalog,
             previews: inputs.previews,
             lookups: LookupCache::default(),
@@ -268,7 +265,7 @@ impl LiveRadio {
             .iter()
             .map(|card| card.release_group_mbid.to_ascii_lowercase())
             .collect();
-        let local = LocalCatalog::new(self.pool.clone());
+        let local = self.catalog.local();
         let owned = local.owned_albums(&ids).await.unwrap_or_else(|error| {
             tracing::warn!(%error, "radio ownership read failed; rows show as not owned");
             HashSet::new()

@@ -76,10 +76,6 @@ const RULES: &[Rule] = &[
                 "library/src/tags/picard.rs",
                 "a compiled regular expression",
             ),
-            (
-                "catalog/src/reads/library/perf_tests.rs",
-                "the benchmarks' query trace, compiled into the unit tests only",
-            ),
         ],
     },
     Rule {

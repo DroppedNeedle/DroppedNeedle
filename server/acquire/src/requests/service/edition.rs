@@ -191,7 +191,7 @@ impl RequestsService {
             Some(gap) if !gap.artist_name.trim().is_empty() && !gap.title.trim().is_empty() => {
                 (gap.artist_name.clone(), gap.title.clone())
             }
-            _ => local_names(self.library.pool(), &mbid)
+            _ => local_names(self.library.db(), &mbid)
                 .await
                 .map_err(|error| RequestsError::internal(&error))?
                 .ok_or_else(|| RequestsError::InvalidInput {

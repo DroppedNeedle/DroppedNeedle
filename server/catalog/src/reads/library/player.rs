@@ -15,10 +15,9 @@ use sqlx::{Row as _, SqlitePool};
 use std::sync::{Arc, Mutex};
 
 use super::definitions::{live_album, musicbrainz, owned_album, recording_mbid};
-use super::sqlite::{
-    ALBUM_COLUMNS, ALBUM_JOINS, LED_PREDICATE, LibraryDb, TRACK_MISS_ORACLE, TextSearch,
-    hydrate_artists,
-};
+use super::pool_bridge::{LibraryDb, current_id, hydrate_artists};
+use super::sql::{ALBUM_COLUMNS, ALBUM_JOINS, LED_PREDICATE, TRACK_MISS_ORACLE};
+use super::sqlite::TextSearch;
 use super::stores::{AlbumRecord, ArtistRecord, BoxFuture, StoreError};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
@@ -2351,7 +2350,7 @@ impl PlayerCatalog for SqlitePlayerCatalog {
         kind: &'a str,
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
-        Box::pin(async move { super::lookups::current_id(self.pool()?, kind, id).await })
+        Box::pin(async move { current_id(self.pool()?, kind, id).await })
     }
 
     fn merged_ids<'a>(&'a self) -> BoxFuture<'a, Result<Vec<(&'static str, String)>, StoreError>> {

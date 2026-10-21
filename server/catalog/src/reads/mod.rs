@@ -84,7 +84,7 @@ pub fn artwork(
 
 impl ReadsSetup {
     /// Build the production bundle over `platform`: its database serves
-    /// library and search reads (through its sqlx pool) and discover's
+    /// library reads, search reads (through its sqlx pool) and discover's
     /// writes, and its settings hand out the live handles the reads hold
     /// on their sections;
     /// `users` gives wrapped its display names and discover its batch
@@ -135,7 +135,7 @@ impl ReadsSetup {
             ids,
             clock,
         );
-        let library = library_deps(pool, settings, enrichment.as_ref(), library_files);
+        let library = library_deps(db, settings, enrichment.as_ref(), library_files);
         let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
             Some(pair) => pair.search.clone(),
             None => Arc::new(search::ports::UnconfiguredEnrichment),
@@ -160,18 +160,18 @@ impl ReadsSetup {
     }
 }
 
-/// The library reads: the SQLite catalog, favorites and lookups over the
-/// reader pool, and tags and lyrics read from the files first. Without the
+/// The library reads: the local catalog over the request pool, and tags
+/// and lyrics read from the files first. Without the
 /// provider pair lyrics fall back to the empty port (404s); with it,
 /// catalog tracks resolve through live LRCLIB while the lyrics setting
 /// (read per call) is on, and read as absent while it is off.
 fn library_deps(
-    pool: &sqlx::SqlitePool,
+    db: &droppedneedle_kernel::db::Db,
     settings: &droppedneedle_kernel::runtime_config::ConfigStore,
     enrichment: Option<&enrichment::live::ProductionEnrichment>,
     files: droppedneedle_media::stream::local_files::LibraryFiles,
 ) -> library::LibraryDeps {
-    let catalog = library::sqlite::LibraryCatalog::new(pool);
+    let catalog = library::store::LocalCatalog::new(db.clone());
     let provider_lyrics: Arc<dyn library::stores::LyricsPort> = match enrichment {
         Some(pair) => Arc::new(
             enrichment::ProviderLyrics::new(
@@ -190,8 +190,6 @@ fn library_deps(
             provider_lyrics,
         )),
         catalog,
-        favorites: library::sqlite::FavoriteReads::new(pool),
-        lookups: library::lookups::LibraryLookups::new(pool),
         upgrade_policy: Some(settings.live()),
         tags: library::tags::FileTagReader::new(files),
     }

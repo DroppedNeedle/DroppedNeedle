@@ -299,6 +299,13 @@ impl CatalogSettings for TestSettings {
     }
 }
 
+/// The local catalog over the migrated database in `dir`.
+fn local_catalog(dir: &crate::common::ScratchDir) -> LocalCatalog {
+    LocalCatalog::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).expect("database opens"),
+    )
+}
+
 /// The library: Radiohead with OK Computer (identified as the CD edition,
 /// one indexed track), an unidentified bootleg, and an open request for
 /// Kid A.
@@ -360,7 +367,7 @@ async fn seed_library(pool: &SqlitePool) {
 /// and is signed in with [`TOKEN`]. Hold the rig and the app while the
 /// router serves: the rig's database and the request wrapper go with them.
 async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRig, TestApp)) {
-    let (pool, _dir) = crate::common::migrated_pool("reads-catalog").await;
+    let (pool, dir) = crate::common::migrated_pool("reads-catalog").await;
     seed_library(&pool).await;
     let rig = AuthRig::new("reads-catalog").await;
     rig.seed_user("ada", Role::User).await;
@@ -384,7 +391,7 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
         Arc::new(TestSettings { mb_url }),
         rig.deps.clone(),
     );
-    let catalog = Catalog::new(upstream, LocalCatalog::new(pool.clone()));
+    let catalog = Catalog::new(upstream, local_catalog(&dir));
     let search = SearchDeps::new(
         SearchService::new(pool).with_remote(catalog.clone()),
         Arc::new(search::ports::UnconfiguredEnrichment),
@@ -945,7 +952,7 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
             }),
             rig.deps.clone(),
         ),
-        LocalCatalog::new(pool.clone()),
+        local_catalog(&dir),
     );
     let config = crate::common::config_store(&dir.join("settings"));
     let artwork = ArtworkService::new(
@@ -1035,7 +1042,8 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
             ..ProviderEndpoints::closed()
         },
     ));
-    let (pool, _dir) = crate::common::migrated_pool("reads-catalog-busy-mb").await;
+    let dir = crate::common::ScratchDir::new("reads-catalog-busy-mb");
+    crate::common::migrated_db(&dir.join("app.db"));
     let rig = AuthRig::new("reads-catalog-busy-mb").await;
     let catalog = Catalog::new(
         Upstream::new(
@@ -1045,7 +1053,7 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
             }),
             rig.deps.clone(),
         ),
-        LocalCatalog::new(pool),
+        local_catalog(&dir),
     );
 
     // One request a second, resting two more: a page would wait three.
@@ -1144,7 +1152,7 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
             }),
             rig.deps.clone(),
         ),
-        LocalCatalog::new(pool.clone()),
+        local_catalog(&dir),
     );
     let config = crate::common::config_store(&dir.join("settings"));
     let artwork = ArtworkService::new(
@@ -1278,7 +1286,8 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
     // Puts are queued: a waited delete commits after every put before it,
     // so the second reads see whatever the first ones stored.
     let cache = providers.cache.clone();
-    let (pool, _dir) = crate::common::migrated_pool("reads-catalog-passing").await;
+    let dir = crate::common::ScratchDir::new("reads-catalog-passing");
+    crate::common::migrated_db(&dir.join("app.db"));
     let rig = AuthRig::new("reads-catalog-passing").await;
     let catalog = Catalog::new(
         Upstream::new(
@@ -1288,7 +1297,7 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
             }),
             rig.deps.clone(),
         ),
-        LocalCatalog::new(pool),
+        local_catalog(&dir),
     );
     tokio::time::pause();
 

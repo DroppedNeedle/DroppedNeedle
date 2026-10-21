@@ -3,7 +3,13 @@
 # its statements into sql.rs deletes its line.
 acquire/src/
 auth/src/
-catalog/src/reads/
+catalog/src/reads/collections/
+catalog/src/reads/discover/
+catalog/src/reads/library/definitions.rs
+catalog/src/reads/library/player.rs
+catalog/src/reads/platform/
+catalog/src/reads/search/
+catalog/src/reads/youtube/
 compat/src/
 kernel/src/events/
 kernel/src/jobs/

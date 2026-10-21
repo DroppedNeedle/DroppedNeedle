@@ -63,7 +63,6 @@ use droppedneedle_catalog::reads::{
         CollectionsState, db::CollectionsDb, remote_import::PlaylistImportSink, store::Stores,
     },
     enrichment::{library::LiveEnrichment, live::production_enrichment},
-    library::lookups::LibraryLookups,
     platform::artwork::ArtworkService,
 };
 use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
@@ -291,7 +290,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             Arc::new(LiveCatalogSettings::new(config_store)),
             auth.users.clone(),
         ),
-        LocalCatalog::new(db.sqlx().clone()),
+        LocalCatalog::new(db.clone()),
     )
     .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
     .with_details(Arc::new(PluginDetailsSource(plugin_host.clone())))
@@ -487,7 +486,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     {
         tracing::warn!("the settings effects loop was already running");
     }
-    let scans = Arc::new(LibraryLookups::new(db.sqlx()));
+    let scans = Arc::new(LocalCatalog::new(db.clone()));
     let settings = SettingsSetup::build(
         p,
         effects,

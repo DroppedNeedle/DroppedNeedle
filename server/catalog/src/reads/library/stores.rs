@@ -1,8 +1,8 @@
-//! The records the library reads return, their filters and errors, and
-//! the lyrics port (the provider fetch sits behind it). The stores that
-//! fill the records read the baseline tables in `sqlite.rs` and
-//! `lookups.rs`. Futures are boxed by hand because `async fn` is not
-//! object-safe.
+//! The domain structs the local catalog reads return (one per entity:
+//! [`AlbumRecord`], [`ArtistRecord`], [`TrackRecord`]), their filters and
+//! errors, and the lyrics port (the provider fetch sits behind it). The
+//! store that fills them is [`super::store::LocalCatalog`]. Futures are
+//! boxed by hand because `async fn` is not object-safe.
 //!
 //! Absence is `None` or an empty page, never failure. Counts are
 //! streamable-only: tracks with `availability` other than `indexed` are
@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
+use droppedneedle_kernel::db::DbError;
 use thiserror::Error;
 
 /// Boxed sendable future for object-safe async ports.
@@ -31,67 +32,73 @@ pub enum StoreError {
 }
 
 impl StoreError {
-    /// A read failure: busy stays busy, anything else is internal.
-    pub(crate) fn read(operation: &str, error: sqlx::Error) -> Self {
-        match droppedneedle_kernel::db::map_sqlx_busy(operation, error) {
-            droppedneedle_kernel::db::DbError::Busy { .. } => Self::Busy(operation.to_owned()),
+    /// A failed read named `operation`: busy stays busy, anything else is
+    /// internal.
+    pub(crate) fn db(operation: &str, error: DbError) -> Self {
+        match error {
+            DbError::Busy { .. } => Self::Busy(operation.to_owned()),
             error => Self::Internal(error.to_string()),
         }
     }
 }
 
-/// Album sort orders the list methods accept.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AlbumSort {
-    /// Title, case folded.
-    Name,
-    /// Import time.
-    DateAdded,
-    /// Release year, unknowns last.
-    Year,
-    /// Album artist, case folded.
-    Artist,
-    /// Database random order.
-    Random,
-    /// Oldest imports first.
-    Rediscover,
+droppedneedle_kernel::sql_choice! {
+    /// Album sort orders the list methods accept.
+    pub enum AlbumSort {
+        /// Title, case folded.
+        Name,
+        /// Import time.
+        DateAdded,
+        /// Release year, unknowns last.
+        Year,
+        /// Album artist, case folded.
+        Artist,
+        /// Database random order.
+        Random,
+        /// Oldest imports first.
+        Rediscover,
+    }
 }
 
-/// Artist sort orders the list method accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArtistSort {
-    /// Display name, case folded.
-    Name,
-    /// Album-artist album count.
-    AlbumCount,
-    /// Albums the artist appears on without leading.
-    AppearanceCount,
-    /// First import time.
-    DateAdded,
+droppedneedle_kernel::sql_choice! {
+    /// Artist sort orders the list method accepts.
+    pub enum ArtistSort {
+        /// Display name, case folded.
+        Name,
+        /// Album-artist album count.
+        AlbumCount,
+        /// Albums the artist appears on without leading.
+        AppearanceCount,
+        /// First import time.
+        DateAdded,
+    }
 }
 
-/// Track sort orders the list method accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrackSort {
-    /// Title, case folded.
-    Title,
-    /// Import time.
-    DateAdded,
+droppedneedle_kernel::sql_choice! {
+    /// Track sort orders the list method accepts.
+    pub enum TrackSort {
+        /// Title, case folded.
+        Title,
+        /// Import time.
+        DateAdded,
+    }
 }
 
-/// Which artists a listing covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ArtistScope {
-    /// Every credited artist.
-    #[default]
-    All,
-    /// Artists leading at least one album.
-    AlbumArtists,
-    /// Artists appearing without leading.
-    Contributors,
-    /// Artists leading an album or credited on a streamable track, which
-    /// leaves out empty rows such as an unused placeholder.
-    WithMusic,
+droppedneedle_kernel::sql_choice! {
+    /// Which artists a listing covers.
+    #[derive(Default)]
+    pub enum ArtistScope {
+        /// Every credited artist.
+        #[default]
+        All,
+        /// Artists leading at least one album.
+        AlbumArtists,
+        /// Artists appearing without leading.
+        Contributors,
+        /// Artists leading an album or credited on a streamable track, which
+        /// leaves out empty rows such as an unused placeholder.
+        WithMusic,
+    }
 }
 
 /// Album list filter, shared by the catalog and browse surfaces.
@@ -120,7 +127,8 @@ pub struct TrackFilter {
     pub genre: Option<String>,
 }
 
-/// One album row with its streamable-only aggregates.
+/// One library album with its streamable-only aggregates: what the album
+/// projection reads, and what every wire album is built from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlbumRecord {
     /// Local album id.
@@ -176,7 +184,9 @@ pub struct ManagementHoldRecord {
     pub handing_back: bool,
 }
 
-/// One artist row with its streamable-only aggregates.
+/// One library artist with its streamable-only aggregates: what the artist
+/// projection and its counts read, and what every wire artist is built
+/// from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArtistRecord {
     /// Local artist id.
@@ -199,7 +209,8 @@ pub struct ArtistRecord {
     pub date_added: Option<f64>,
 }
 
-/// One streamable track row.
+/// One streamable library track: what the track projection reads, and
+/// what every wire track is built from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackRecord {
     /// Local track id.

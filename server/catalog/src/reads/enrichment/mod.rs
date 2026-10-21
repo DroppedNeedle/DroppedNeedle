@@ -36,7 +36,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::reads::library::sqlite::LibraryCatalog;
+use crate::reads::library::store::LocalCatalog;
 use crate::reads::library::stores::{LyricDoc, LyricsPort, StoreError};
 use crate::reads::search::models::{
     AlbumEnrichment, ArtistEnrichment, Degradation, EnrichmentBatchRequest, EnrichmentResponse,
@@ -1331,7 +1331,7 @@ impl EnrichmentPort for AggregatingEnrichment {
 /// in `ReadsSetup::build` over live LRCLIB; without the pair, file lyrics
 /// fall back to `NoOnlineLyrics`.
 pub struct ProviderLyrics {
-    catalog: LibraryCatalog,
+    catalog: LocalCatalog,
     lyrics: Arc<dyn LyricsClient>,
     budgets: SourceBudgets,
     settings: Option<
@@ -1344,7 +1344,7 @@ pub struct ProviderLyrics {
 impl ProviderLyrics {
     /// Fetch provider lyrics for catalog tracks.
     pub fn new(
-        catalog: LibraryCatalog,
+        catalog: LocalCatalog,
         lyrics: Arc<dyn LyricsClient>,
         budgets: SourceBudgets,
     ) -> Self {

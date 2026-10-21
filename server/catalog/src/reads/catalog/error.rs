@@ -34,7 +34,7 @@ pub enum CatalogError {
 
 impl CatalogError {
     /// Wrap a local database failure.
-    pub fn database(error: sqlx::Error) -> Self {
+    pub fn database(error: crate::reads::library::stores::StoreError) -> Self {
         Self::Internal(format!("catalog database read: {error}"))
     }
 }

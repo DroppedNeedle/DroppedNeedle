@@ -74,10 +74,6 @@ const OPENS: &[Place] = &[
         "src/bootstrap/data_dirs.rs",
         "the read-only stamp probe of an existing database before the runtime opens it, and its tests",
     ),
-    place(
-        "catalog/src/reads/library/perf_tests.rs",
-        "migration and plan-recording fixtures of the read benchmarks, until the catalog reads have tests on real stores",
-    ),
 ];
 
 const TRANSACTIONS: &[Place] = &[DB, TOOL];
@@ -333,7 +329,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ),
     ("catalog/src/reads/enrichment/mod.rs", 1, FAN_OUT),
     ("catalog/src/reads/library/file_lyrics.rs", 1, REQUEST),
-    ("catalog/src/reads/library/perf_tests.rs", 5, BENCHMARKS),
+    ("catalog/src/reads/library/perf_tests.rs", 1, BENCHMARKS),
     ("catalog/src/reads/library/tags.rs", 1, REQUEST),
     ("catalog/src/reads/platform/artwork/cache.rs", 1, IMAGE_WORK),
     ("catalog/src/reads/platform/artwork/local.rs", 2, IMAGE_WORK),

@@ -146,7 +146,7 @@ pub fn reads_at(
             Arc::new(LiveCatalogSettings::new(&platform.settings)),
             users.clone(),
         ),
-        LocalCatalog::new(platform.db.sqlx().clone()),
+        LocalCatalog::new(platform.db.clone()),
     );
     let artwork = droppedneedle_catalog::reads::artwork(platform, &inputs, catalog.clone());
     let batch_requests: Arc<dyn BatchRequests> = match acquire {

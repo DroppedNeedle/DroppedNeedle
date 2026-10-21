@@ -23,7 +23,7 @@ use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
-use droppedneedle_catalog::reads::library::lookups::LibraryLookups;
+use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
@@ -56,7 +56,7 @@ pub struct SettingsSetup {
     bins: Option<BinSource>,
     /// The scan history the schedule shows its last scan from; test
     /// bundles have none.
-    scans: Option<Arc<LibraryLookups>>,
+    scans: Option<Arc<LocalCatalog>>,
     /// Test bundles own their scratch config directory and remove it
     /// when the last clone drops.
     #[cfg(any(test, feature = "test-support"))]
@@ -77,7 +77,7 @@ impl SettingsSetup {
         effects: Effects,
         outbound: &Outbound,
         management: Arc<LibraryManagementService>,
-        scans: Arc<LibraryLookups>,
+        scans: Arc<LocalCatalog>,
         providers: &Providers,
         bins: BinSource,
     ) -> Self {

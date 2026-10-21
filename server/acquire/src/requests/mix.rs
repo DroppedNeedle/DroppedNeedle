@@ -370,7 +370,7 @@ impl PersonalMixBuilder {
                 return Ok(MixOutcome::skipped(SkipReason::Fresh, existing));
             }
         }
-        let owned: HashSet<String> = LocalCatalog::new(self.requests.library.pool().clone())
+        let owned: HashSet<String> = LocalCatalog::new(self.requests.library.db().clone())
             .all_owned_release_groups()
             .await
             .map_err(|error| RequestsError::internal(&error))?

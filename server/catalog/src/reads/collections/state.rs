@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::db::CollectionsDb;
 use super::store::Stores;
 use crate::reads::library::player::SqlitePlayerCatalog;
-use crate::reads::library::sqlite::LibraryDb;
+use crate::reads::library::pool_bridge::LibraryDb;
 
 /// Auto-download state of one follow, as the routes show it.
 #[derive(

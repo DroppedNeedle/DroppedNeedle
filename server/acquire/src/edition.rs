@@ -117,10 +117,10 @@ pub async fn library_holds(
 /// Artist and title of the library's copy of one release group, for
 /// asks that arrive with only the group id.
 pub async fn local_names(
-    pool: &SqlitePool,
+    db: &droppedneedle_kernel::db::Db,
     release_group_mbid: &str,
-) -> Result<Option<(String, String)>, sqlx::Error> {
-    let album = droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(pool.clone())
+) -> Result<Option<(String, String)>, droppedneedle_catalog::reads::library::stores::StoreError> {
+    let album = droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(db.clone())
         .album(release_group_mbid)
         .await?;
     Ok(album
