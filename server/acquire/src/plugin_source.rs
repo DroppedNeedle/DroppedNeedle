@@ -3,8 +3,9 @@
 //!
 //! A plugin source is `plugin:<name>`: its own `download_client`, fed by
 //! every `indexer` plugin that targets it. Enqueue searches those indexers,
-//! ranks the results with [`rank_plugin_releases`], and hands the
-//! `candidate_index`-th automatic pick to the client; failover walks to the
+//! ranks the results with [`rank_plugin_releases`], and hands the best
+//! automatic pick this task has not tried to the client, recording the
+//! release identity on the handle; failover blocklists it and walks to the
 //! next pick, as with Usenet releases.
 //!
 //! "You rank your source; the app enforces policy": the plugin's own score
@@ -18,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::downloads::journal::Journal;
-use super::downloads::quarantine::QUARANTINE_TTL_SECONDS;
+use super::downloads::quarantine::Blocklist;
 use super::downloads::source_tag::SourceTag;
 use super::downloads::sources::{
     DownloadSource, Materialization, SourceError, SourceHandle, TransferProgress,
@@ -99,7 +100,7 @@ pub fn release_identity(release: &PluginSearchResult) -> String {
 pub fn rank_plugin_releases(
     releases: Vec<PluginSearchResult>,
     policy: &ReleasePolicy,
-    quarantined: &[String],
+    blocked: &Blocklist,
 ) -> Vec<ScoredRelease> {
     let lower_terms = |terms: &[String]| -> Vec<String> {
         terms
@@ -114,7 +115,7 @@ pub fn rank_plugin_releases(
         .into_iter()
         .filter_map(|release| {
             let title = release.title.to_lowercase();
-            if quarantined.contains(&release_identity(&release))
+            if blocked.blocks(&release_identity(&release))
                 || ignored.iter().any(|term| title.contains(term))
                 || !required.iter().all(|term| title.contains(term))
                 || !policy
@@ -200,23 +201,6 @@ impl PluginDownloadSource {
         self
     }
 
-    /// Blocklisted release identities for this source.
-    async fn quarantined(&self) -> Result<Vec<String>, SourceError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs_f64())
-            .unwrap_or(0.0);
-        Ok(self
-            .journal
-            .read_quarantine_set(now, QUARANTINE_TTL_SECONDS)
-            .await
-            .map_err(|error| SourceError::LocalFault(error.to_string()))?
-            .into_iter()
-            .filter(|(source, _)| self.tag == *source)
-            .map(|(_, identity)| identity)
-            .collect())
-    }
-
     /// The album's releases from this source's indexers.
     async fn album_releases(&self, target: &SearchTarget) -> Vec<PluginSearchResult> {
         self.host
@@ -259,6 +243,7 @@ impl PluginDownloadSource {
             nzo_id: handle.nzo_id,
             plugin_token: handle.plugin_token,
             sizes: Vec::new(),
+            release_identity: release_identity(release),
         })
     }
 
@@ -268,16 +253,14 @@ impl PluginDownloadSource {
         if !target.has_album() {
             return Ok(Vec::new());
         }
-        let quarantined = self.quarantined().await?;
-        Ok(rank_plugin_releases(
-            self.album_releases(target).await,
-            &self.policy,
-            &quarantined,
+        let blocked = super::sources::blocklist(&self.journal, &self.tag).await?;
+        Ok(
+            rank_plugin_releases(self.album_releases(target).await, &self.policy, &blocked)
+                .into_iter()
+                .take(MAX_PER_SOURCE)
+                .map(|scored| Candidate::from_plugin(&self.tag, scored))
+                .collect(),
         )
-        .into_iter()
-        .take(MAX_PER_SOURCE)
-        .map(|scored| Candidate::from_plugin(&self.tag, scored))
-        .collect())
     }
 
     fn plugin_handle(handle: &SourceHandle) -> PluginTaskHandle {
@@ -366,30 +349,30 @@ impl PluginDownloadSource {
             .map_err(|error| SourceError::LocalFault(error.to_string()))?
             .ok_or_else(|| SourceError::Rejected(format!("unknown download task {task_id}")))?;
         let target = super::sources::resolve_target(self.targets.as_ref(), &task).await?;
-        let quarantined = self.quarantined().await?;
+        let blocked = super::sources::blocklist(&self.journal, &self.tag).await?;
         let index = candidate_index.max(0) as usize;
         if let Some(Pin::Release { identity }) =
             pinned(&self.journal, &task, &self.tag, candidate_index).await
         {
             // The release a person picked from a manual search, found
             // again by its identity (any band: they judged it).
-            let release = rank_plugin_releases(
-                self.album_releases(&target).await,
-                &self.policy,
-                &quarantined,
-            )
-            .into_iter()
-            .find(|scored| release_identity(&scored.release) == identity)
-            .ok_or_else(|| {
-                SourceError::Rejected(format!(
-                    "The release you picked is no longer offered by {}.",
-                    self.key
-                ))
-            })?;
+            let release =
+                rank_plugin_releases(self.album_releases(&target).await, &self.policy, &blocked)
+                    .into_iter()
+                    .find(|scored| release_identity(&scored.release) == identity)
+                    .ok_or_else(|| {
+                        SourceError::Rejected(format!(
+                            "The release you picked is no longer offered by {}.",
+                            self.key
+                        ))
+                    })?;
             return self.enqueue_release(&task, &release.release, index).await;
         }
+        let tried = super::sources::tried_releases(&self.journal, task_id, &self.tag).await?;
+        let untried =
+            |release: &ScoredRelease| !tried.contains(&release_identity(&release.release));
         let automatic = |results: Vec<PluginSearchResult>| -> Vec<ScoredRelease> {
-            rank_plugin_releases(results, &self.policy, &quarantined)
+            rank_plugin_releases(results, &self.policy, &blocked)
                 .into_iter()
                 .filter(|release| release.band == Band::Auto)
                 .collect()
@@ -400,7 +383,7 @@ impl PluginDownloadSource {
             Vec::new()
         };
         let album_count = albums.len();
-        let mut pick = albums.into_iter().nth(index);
+        let mut pick = albums.into_iter().find(untried);
         if pick.is_none()
             && let Some(track) = target.track.as_ref()
         {
@@ -412,7 +395,7 @@ impl PluginDownloadSource {
                     .await,
             )
             .into_iter()
-            .nth(index - album_count);
+            .find(untried);
             if pick.is_some()
                 && let Some(targets) = self.targets.as_ref()
             {
@@ -602,7 +585,10 @@ mod tests {
                 huge,
             ],
             &policy,
-            &["bad-one".to_owned()],
+            &Blocklist::for_source(
+                &SourceTag::plugin("plugin:x"),
+                vec![("plugin:x".to_owned(), "bad-one".to_owned())],
+            ),
         );
         let titles: Vec<(&str, Band)> = ranked
             .iter()

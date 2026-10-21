@@ -44,6 +44,11 @@ pub struct SourceHandle {
     /// the source does not advertise sizes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sizes: Vec<i64>,
+    /// The identity of the Usenet or plugin release this attempt fetches,
+    /// which a failover blocklists. Empty for soulseek handles, which are
+    /// identified by peer and files.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub release_identity: String,
 }
 
 impl SourceHandle {
@@ -57,6 +62,7 @@ impl SourceHandle {
             nzo_id: String::new(),
             plugin_token: String::new(),
             sizes: Vec::new(),
+            release_identity: String::new(),
         }
     }
 }

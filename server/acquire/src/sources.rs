@@ -7,19 +7,20 @@
 //! side for the album, and enqueues one pick. slskd takes the best folder
 //! against the tracklist (see [`super::slskd::folders`]) that is neither
 //! blocklisted nor from a peer already tried for this task, and for a
-//! single track enqueues only that track's file. Usenet takes the
-//! `candidate_index`-th album release in tracklist order, where the index
-//! counts this source's own earlier attempts. The worker journals the
-//! returned handle and polls it; on failover it re-enqueues the task,
-//! which walks to the next folder or release. The adapters never
-//! blocklist on local faults.
+//! single track enqueues only that track's file. Usenet takes the first
+//! album release in tracklist order that is neither blocklisted nor
+//! already tried by this task, and records its identity on the handle.
+//! The worker journals the returned handle and polls it; on failover it
+//! blocklists what the handle fetched and re-enqueues the task, which
+//! walks to the next folder or release. Local faults are never
+//! blocklisted.
 //!
 //! A task started from a manual search fetches the candidate the person
 //! picked on its first attempt (see [`super::search_jobs`]); failover then
 //! searches as usual. Each adapter also answers a manual search with its
 //! ranked candidates.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -29,7 +30,7 @@ use futures_util::future::BoxFuture;
 use super::client_error::ClientError;
 use super::downloads::TrackPosition;
 use super::downloads::journal::Journal;
-use super::downloads::quarantine::{QUARANTINE_TTL_SECONDS, soulseek_hit_quarantined};
+use super::downloads::quarantine::Blocklist;
 use super::downloads::source_tag::SourceTag;
 use super::downloads::sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
@@ -83,6 +84,30 @@ fn sab_error(error: SabnzbdError) -> SourceError {
         | SabnzbdError::NzbRefused { .. }
         | SabnzbdError::AmbiguousIdentity => SourceError::Unavailable(error.to_string()),
     }
+}
+
+/// One source's live blocklist; a journal that cannot be read is a local
+/// fault.
+pub(super) async fn blocklist(
+    journal: &Journal,
+    source: &SourceTag,
+) -> Result<Blocklist, SourceError> {
+    journal
+        .read_blocklist(source, now_unix_f64())
+        .await
+        .map_err(|error| SourceError::LocalFault(error.to_string()))
+}
+
+/// The releases a task's attempts on one source already fetched.
+pub(super) async fn tried_releases(
+    journal: &Journal,
+    task_id: &str,
+    source: &SourceTag,
+) -> Result<HashSet<String>, SourceError> {
+    journal
+        .read_tried_releases(task_id, source)
+        .await
+        .map_err(|error| SourceError::LocalFault(error.to_string()))
 }
 
 /// Read one task row or fail the fetch as rejected (a fetch for a task
@@ -194,18 +219,14 @@ impl SlskdSource {
         if !self.repo.is_configured() {
             return Ok(Vec::new());
         }
-        let live = self
-            .journal
-            .read_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)
-            .await
-            .map_err(|error| SourceError::LocalFault(error.to_string()))?;
+        let blocked = blocklist(&self.journal, &SourceTag::Soulseek).await?;
         let hits: Vec<_> = self
             .repo
             .search_album(&target.artist, &target.album_title, target.year)
             .await
             .map_err(client_error)?
             .into_iter()
-            .filter(|hit| !soulseek_hit_quarantined(&hit.username, &hit.filename, &live))
+            .filter(|hit| !blocked.blocks_file(&hit.username, &hit.filename))
             .collect();
         let request = RankRequest {
             tracklist: &target.tracklist,
@@ -235,11 +256,7 @@ impl SlskdSource {
         // peer this task already tried: a failover walks to the best
         // remaining folder, so the list shrinking under quarantine never
         // skips a candidate.
-        let live = self
-            .journal
-            .read_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)
-            .await
-            .map_err(|error| SourceError::LocalFault(error.to_string()))?;
+        let blocked = blocklist(&self.journal, &SourceTag::Soulseek).await?;
         let mut tried = Vec::new();
         for json in self
             .journal
@@ -296,7 +313,7 @@ impl SlskdSource {
                 username, files, ..
             }) => files
                 .into_iter()
-                .filter(|file| !soulseek_hit_quarantined(&username, &file.filename, &live))
+                .filter(|file| !blocked.blocks_file(&username, &file.filename))
                 .map(|file| EnqueueFile {
                     username: username.clone(),
                     filename: file.filename,
@@ -307,8 +324,7 @@ impl SlskdSource {
         };
         let payload: Vec<EnqueueFile> = if picked.is_empty() {
             let keep = |hit: &super::slskd::SearchResult| {
-                !soulseek_hit_quarantined(&hit.username, &hit.filename, &live)
-                    && !tried.contains(&hit.username)
+                !blocked.blocks_file(&hit.username, &hit.filename) && !tried.contains(&hit.username)
             };
             let choice = soulseek::choose(self.repo.as_ref(), &target, keep)
                 .await
@@ -354,12 +370,9 @@ impl SlskdSource {
             .collect();
         Ok(SourceHandle {
             sizes,
-            source: SourceTag::Soulseek,
             username: handle.username,
             filenames: handle.filenames,
-            job_name: String::new(),
-            nzo_id: String::new(),
-            plugin_token: String::new(),
+            ..SourceHandle::new(SourceTag::Soulseek)
         })
     }
 
@@ -496,9 +509,8 @@ impl SabnzbdSource {
     /// positive password flag rejects (aggregators use negative for
     /// unknown, which never rejects), and retention plus size caps apply.
     /// Album results are ordered against the target's tracklist.
-    /// Usenet quarantine consult waits on release identity riding the
-    /// handle (failover records job-name rows for audit until then);
-    /// soulseek consults the live set at enqueue.
+    /// Blocklisted releases are left to the caller, which needs the count
+    /// found before them.
     async fn candidates(&self, query: &IndexerQuery<'_>) -> Vec<IndexerResult> {
         let found = futures_util::future::join_all(
             self.indexers.iter().map(|indexer| indexer.search(query)),
@@ -522,23 +534,29 @@ impl SabnzbdSource {
         }
     }
 
-    /// The `index`-th release for a task. Usenet has no folder search, so
-    /// a single track is fetched as part of an album release; only when
-    /// every album release is used up does the walk go on to releases
-    /// found for the track alone, with the reason recorded.
+    /// The best release for a task that is neither blocklisted nor already
+    /// tried by it. Usenet has no folder search, so a single track is
+    /// fetched as part of an album release; only when every album release
+    /// is used up does the walk go on to releases found for the track
+    /// alone, with the reason recorded.
     async fn pick(
         &self,
         task: &TaskRow,
         target: &SearchTarget,
-        index: usize,
+        blocked: &Blocklist,
+        tried: &HashSet<String>,
     ) -> Option<IndexerResult> {
+        let usable = |hit: &IndexerResult| {
+            let identity = usenet_identity(&hit.usenet.title, hit.usenet.size_bytes);
+            !blocked.blocks(&identity) && !tried.contains(&identity)
+        };
         let albums = if target.has_album() {
             self.candidates(&IndexerQuery::Album(target)).await
         } else {
             Vec::new()
         };
         let album_count = albums.len();
-        if let Some(pick) = albums.into_iter().nth(index) {
+        if let Some(pick) = albums.into_iter().find(usable) {
             return Some(pick);
         }
         let track = target.track.as_ref()?;
@@ -549,7 +567,7 @@ impl SabnzbdSource {
             })
             .await
             .into_iter()
-            .nth(index - album_count)?;
+            .find(usable)?;
         let reason = match (track.no_album, album_count) {
             (Some(reason), _) => reason,
             (None, 0) => TrackReason::NoAlbumRelease,
@@ -580,16 +598,34 @@ impl SabnzbdSource {
     }
 
     /// A manual search: the album's releases from every indexer, gated
-    /// and ordered as the automatic path orders them.
-    async fn search_album(&self, target: &SearchTarget) -> Vec<Candidate> {
+    /// and ordered as the automatic path orders them. Blocklisted releases
+    /// are left out.
+    async fn search_album(&self, target: &SearchTarget) -> Result<Vec<Candidate>, SourceError> {
         if !self.queue.is_configured() || !target.has_album() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        self.candidates(&IndexerQuery::Album(target))
+        let blocked = blocklist(&self.journal, &SourceTag::Usenet).await?;
+        Ok(self
+            .unblocked_albums(target, &blocked)
             .await
             .iter()
             .take(MAX_PER_SOURCE)
             .map(|hit| Candidate::from_release(hit, target))
+            .collect())
+    }
+
+    /// The album's releases minus the blocklisted ones.
+    async fn unblocked_albums(
+        &self,
+        target: &SearchTarget,
+        blocked: &Blocklist,
+    ) -> Vec<IndexerResult> {
+        self.candidates(&IndexerQuery::Album(target))
+            .await
+            .into_iter()
+            .filter(|hit| {
+                !blocked.blocks(&usenet_identity(&hit.usenet.title, hit.usenet.size_bytes))
+            })
             .collect()
     }
 
@@ -653,11 +689,12 @@ impl SabnzbdSource {
             Err(error) => return Err(sab_error(error)),
         }
         let target = resolve_target(self.targets.as_ref(), &task).await?;
+        let blocked = blocklist(&self.journal, &SourceTag::Usenet).await?;
         let pick = match pinned(&self.journal, &task, &SourceTag::Usenet, candidate_index).await {
             // The release a person picked, found again by its identity: the
             // NZB link is never stored.
             Some(Pin::Release { identity }) => self
-                .candidates(&IndexerQuery::Album(&target))
+                .unblocked_albums(&target, &blocked)
                 .await
                 .into_iter()
                 .find(|hit| usenet_identity(&hit.usenet.title, hit.usenet.size_bytes) == identity)
@@ -667,11 +704,16 @@ impl SabnzbdSource {
                             .to_owned(),
                     )
                 })?,
-            _ => self.pick(&task, &target, index).await.ok_or_else(|| {
-                SourceError::Rejected(format!(
-                    "usenet has no candidate {candidate_index} for {task_id}"
-                ))
-            })?,
+            _ => {
+                let tried = tried_releases(&self.journal, task_id, &SourceTag::Usenet).await?;
+                self.pick(&task, &target, &blocked, &tried)
+                    .await
+                    .ok_or_else(|| {
+                        SourceError::Rejected(format!(
+                            "usenet has no candidate {candidate_index} for {task_id}"
+                        ))
+                    })?
+            }
         };
         let category = self.category.as_deref().filter(|cat| *cat != "*");
         // Worker-built job name (v2 strategy): the counter keeps failover
@@ -703,6 +745,7 @@ impl SabnzbdSource {
         Ok(SourceHandle {
             job_name: handle.job_name,
             nzo_id: handle.nzo_id,
+            release_identity: usenet_identity(&pick.usenet.title, pick.usenet.size_bytes),
             ..SourceHandle::new(SourceTag::Usenet)
         })
     }
@@ -776,7 +819,7 @@ impl DownloadSource for SabnzbdSource {
         &'a self,
         target: &'a SearchTarget,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, SourceError>> {
-        Box::pin(async move { Ok(self.search_album(target).await) })
+        Box::pin(self.search_album(target))
     }
 
     fn enqueue<'a>(

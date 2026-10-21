@@ -2,13 +2,16 @@
 //! shared writer lane, both through [`DownloadStore`] and failing with
 //! [`StoreError`].
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use droppedneedle_kernel::db::Lane;
 
 use super::held_rows::HeldRow;
+use super::quarantine::{Blocklist, QUARANTINE_TTL_SECONDS};
 use super::queue_rows::{ActivitySummary, ListFilter, QueueTask, TaskFacts, Viewer};
 use super::source_tag::SourceTag;
+use super::sources::SourceHandle;
 use super::state::TaskStatus;
 use super::store::{
     AttemptRow, DownloadStore, QuarantineRow, RetryAnchor, StoreError, TaskDetails, TaskRow,
@@ -172,6 +175,40 @@ impl Journal {
             store.source_handles(&task_id, &source)
         })
         .await
+    }
+
+    /// The release identities a task's attempts on one source already
+    /// fetched, so its next attempt walks on to an untried release.
+    pub async fn read_tried_releases(
+        &self,
+        task_id: &str,
+        source: &SourceTag,
+    ) -> Result<HashSet<String>, StoreError> {
+        let mut tried = HashSet::new();
+        for json in self.read_source_handles(task_id, source).await? {
+            match serde_json::from_str::<SourceHandle>(&json) {
+                Ok(handle) if !handle.release_identity.is_empty() => {
+                    tried.insert(handle.release_identity);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(task_id, %error, "stored handle does not decode");
+                }
+            }
+        }
+        Ok(tried)
+    }
+
+    /// One source's live blocklist.
+    pub async fn read_blocklist(
+        &self,
+        source: &SourceTag,
+        now: f64,
+    ) -> Result<Blocklist, StoreError> {
+        let live = self
+            .read_quarantine_set(now, QUARANTINE_TTL_SECONDS)
+            .await?;
+        Ok(Blocklist::for_source(source, live))
     }
 
     /// The newest client handle a task's attempts recorded.

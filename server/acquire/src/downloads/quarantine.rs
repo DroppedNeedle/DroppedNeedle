@@ -10,14 +10,16 @@
 //! Suspect files themselves move into a quarantine directory only under
 //! tests, which point [`QuarantineDir`] at a throwaway sandbox.
 //!
-//! Coverage note: soulseek consults the live blocklist at enqueue; the
-//! usenet consult is deferred until release identity rides the handle
-//! (failover records job-name rows for audit until then). Wire the usenet
-//! consult the moment the handle carries release identity.
+//! Every source journals what it fetched on the attempt's handle (soulseek
+//! the peer and files, Usenet and plugin sources the release identity), so
+//! one write path blocklists any source's failed release and one filter,
+//! [`Blocklist`], keeps it out of every source's search and pick.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::source_tag::SourceTag;
+use super::sources::SourceHandle;
 
 /// Blocklist entry lifetime: 7 days.
 pub const QUARANTINE_TTL_SECONDS: f64 = 7.0 * 24.0 * 3600.0;
@@ -96,44 +98,67 @@ pub fn canonical_soulseek_identity(identity: &str) -> String {
 
 /// Blocklist identities for a failed fetch, from the journaled handle.
 /// Soulseek identifies by peer + filename (canonicalized, so older rows
-/// cannot evade the match), one row per enqueued file; usenet identifies
-/// by the deterministic job name, which scopes the row to this task's
-/// failover walk; the handle does not carry the release identity yet.
-/// Empty handles yield no identities and are never recorded.
-pub fn failover_identities(
-    source: &SourceTag,
-    username: &str,
-    filenames: &[String],
-    job_name: &str,
-) -> Vec<String> {
-    match source {
+/// cannot evade the match), one row per enqueued file; Usenet and plugin
+/// sources by the release identity the handle carries. A handle with
+/// neither yields no identities and nothing is recorded.
+pub fn failover_identities(handle: &SourceHandle) -> Vec<String> {
+    match handle.source {
         SourceTag::Soulseek => {
-            if username.is_empty() {
+            if handle.username.is_empty() {
                 return Vec::new();
             }
-            filenames
+            handle
+                .filenames
                 .iter()
                 .filter(|file| !file.is_empty())
-                .map(|file| canonical_soulseek_identity(&format!("{username}/{file}")))
+                .map(|file| soulseek_file_identity(&handle.username, file))
                 .collect()
         }
-        SourceTag::Usenet => {
-            if job_name.is_empty() {
+        SourceTag::Usenet | SourceTag::Plugin(_) => {
+            if handle.release_identity.is_empty() {
                 Vec::new()
             } else {
-                vec![job_name.to_owned()]
+                vec![handle.release_identity.clone()]
             }
         }
-        SourceTag::Plugin(_) => Vec::new(),
     }
 }
 
-/// Whether a soulseek hit is blocklisted: its canonical peer/file identity
-/// appears in the live set.
-pub fn soulseek_hit_quarantined(username: &str, filename: &str, live: &[(String, String)]) -> bool {
-    let identity = canonical_soulseek_identity(&format!("{username}/{filename}"));
-    live.iter()
-        .any(|(source, blocked)| SourceTag::Soulseek == *source && *blocked == identity)
+/// The blocklist identity of one soulseek file.
+fn soulseek_file_identity(username: &str, filename: &str) -> String {
+    canonical_soulseek_identity(&format!("{username}/{filename}"))
+}
+
+/// One source's live blocklist: the filter every source runs its search
+/// results and its picks through.
+#[derive(Debug, Clone, Default)]
+pub struct Blocklist {
+    identities: HashSet<String>,
+}
+
+impl Blocklist {
+    /// The rows of `live` that belong to `source`.
+    pub fn for_source(source: &SourceTag, live: Vec<(String, String)>) -> Self {
+        let identities = live
+            .into_iter()
+            .filter(|(tag, _)| *source == *tag)
+            .map(|(_, identity)| match source {
+                SourceTag::Soulseek => canonical_soulseek_identity(&identity),
+                _ => identity,
+            })
+            .collect();
+        Self { identities }
+    }
+
+    /// Whether the Usenet or plugin release with this identity is blocked.
+    pub fn blocks(&self, identity: &str) -> bool {
+        self.identities.contains(identity)
+    }
+
+    /// Whether a soulseek peer's file is blocked.
+    pub fn blocks_file(&self, username: &str, filename: &str) -> bool {
+        self.blocks(&soulseek_file_identity(username, filename))
+    }
 }
 
 /// A sandboxed directory for quarantined files.

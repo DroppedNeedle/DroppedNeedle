@@ -1538,12 +1538,7 @@ impl DownloadWorker {
         if is_local_fault(Some(reason)) {
             return;
         }
-        let identities = failover_identities(
-            &attempt.source,
-            &handle.username,
-            &handle.filenames,
-            &handle.job_name,
-        );
+        let identities = failover_identities(handle);
         if identities.is_empty() {
             return;
         }

@@ -16,7 +16,6 @@ acquire/src/follows/cursors.rs  to move: take time from the kernel clock
 acquire/src/imports/spotify_client.rs  to move: take time from the kernel clock
 acquire/src/landing/mod.rs  to move: take time from the kernel clock
 acquire/src/library_removal.rs  to move: take time from the kernel clock
-acquire/src/plugin_source.rs  to move: take time from the kernel clock
 acquire/src/requests/mix.rs  to move: take time from the kernel clock
 acquire/src/search_jobs/store.rs  to move: take time from the kernel clock
 acquire/src/sources.rs  to move: take time from the kernel clock
