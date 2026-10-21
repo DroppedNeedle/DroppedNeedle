@@ -345,7 +345,9 @@ impl DbRuntime {
     ///
     /// The read pools get what is left of that same grace, not one of their
     /// own: a read still running when it ends is named in the log and left,
-    /// the reclaim then fails fast and the WAL stays for the next start.
+    /// the reclaim then fails fast and the WAL stays for the next start. The
+    /// watch stop and the reclaim are bounded by that grace too: a step still
+    /// running when it ends is left to finish in the background.
     pub async fn shutdown(self) {
         let grace = self.shutdown_grace;
         self.shutdown_within(grace).await;
@@ -353,8 +355,11 @@ impl DbRuntime {
 
     /// [`DbRuntime::shutdown`] bounded by `grace` instead of the configured
     /// grace: the server gives it what is left of its one shutdown budget.
-    /// Closing the sqlx pool waits for connections still checked out, so it
-    /// gets what is left of the same bound and is left behind past it.
+    /// The watch stop, the read pool close and the WAL reclaim get what is
+    /// left of that bound, and a step still running past it is left to finish
+    /// in the background. Closing the sqlx pool waits for connections still
+    /// checked out, so it gets what is left of the same bound and is left
+    /// behind past it.
     pub async fn shutdown_within(self, grace: Duration) {
         // A grace too long to add to the clock is no bound at all.
         let deadline = Instant::now().checked_add(grace);
@@ -364,15 +369,25 @@ impl DbRuntime {
         // Stopping the watch can wait out a relief pass in flight, so it
         // happens off the runtime, and before the reclaim that pass would
         // otherwise block.
-        let _ = tokio::task::spawn_blocking(move || {
+        let blocking = tokio::task::spawn_blocking(move || {
             watch.stop();
             // Before the reclaim: it needs every reader gone, and SQLite
             // removes `-wal` and `-shm` only when the last handle to close
             // is a read-write one, which a pooled connection is not.
             pools.close(deadline);
             checkpoint.shutdown_truncate()
-        })
-        .await;
+        });
+        match deadline {
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if tokio::time::timeout(left, blocking).await.is_err() {
+                    tracing::warn!("database shutdown steps still running at the shutdown bound");
+                }
+            }
+            None => {
+                let _ = blocking.await;
+            }
+        }
         let close = self.db.sqlx().close();
         match deadline {
             Some(deadline) => {
@@ -520,4 +535,49 @@ async fn apply_pragmas(
         .execute(&mut *connection)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{db::scratch::ScratchDir, schema::template::copy_to};
+
+    /// Shutdown returns at its grace while a watch pass is still running.
+    /// The pass holds until the test releases it, and shutdown must not wait
+    /// for it.
+    #[tokio::test]
+    async fn shutdown_gives_up_on_a_watch_pass_at_the_grace() {
+        let dir = ScratchDir::new("factory-shutdown").unwrap();
+        let db = dir.join("library.db");
+        copy_to(&db).unwrap();
+        let mut runtime = open_runtime(&DbConfig::new(&db)).await.unwrap();
+
+        let shared = Arc::new(());
+        let (entered_tx, entered) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let held = Ticker::start(
+            "factory-held-pass",
+            Duration::from_millis(5),
+            &shared,
+            move |_| {
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+            },
+        )
+        .unwrap();
+        runtime.watch.add(held);
+        entered.recv_timeout(Duration::from_secs(10)).unwrap();
+
+        let grace = Duration::from_millis(200);
+        let finished = tokio::time::timeout(
+            grace + Duration::from_secs(2),
+            runtime.shutdown_within(grace),
+        )
+        .await;
+        let _ = release.send(());
+        assert!(
+            finished.is_ok(),
+            "shutdown waited on a watch pass past its grace"
+        );
+    }
 }
