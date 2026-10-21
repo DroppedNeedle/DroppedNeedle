@@ -121,4 +121,29 @@ droppedneedle_kernel::sql! {
              expected_post_identity_revision = excluded.expected_post_identity_revision, \
              reason_code = excluded.reason_code, created_at = excluded.created_at, \
              consumed_at = NULL, consumed_action_id = NULL";
+
+    /// The copy the library shows for one release group (`?1`, lowercase;
+    /// provider `?2`): a copy picked by hand (`manual`) first, then the
+    /// oldest, over live albums. Its release may be NULL. The unary plus
+    /// keeps the planner off the retired-album index, as the catalog's album
+    /// reads do.
+    pub(super) COPY_SHOWN = "SELECT e.release_mbid, e.decision_source, \
+             (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = b.id \
+              AND t.availability = 'indexed') \
+             FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE lower(e.release_group_mbid) = ?1 AND e.provider = ?2 \
+             AND +b.retired_into_album_id IS NULL \
+             ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1";
+    /// The copy acquisition fetches for one release group (`?1`, lowercase;
+    /// provider `?2`): the first live copy that names a release, in the
+    /// order of `COPY_SHOWN`.
+    pub(super) COPY_WITH_RELEASE = "SELECT e.release_mbid, e.decision_source, \
+             (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = b.id \
+              AND t.availability = 'indexed') \
+             FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE b.retired_into_album_id IS NULL AND e.provider = ?2 \
+             AND lower(e.release_group_mbid) = ?1 AND e.release_mbid IS NOT NULL \
+             ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1";
 }

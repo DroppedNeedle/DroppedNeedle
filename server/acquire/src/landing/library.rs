@@ -181,7 +181,7 @@ impl LandingLibrary for LibraryLanding {
 
     fn chosen_edition<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>> {
         Box::pin(async move {
-            match crate::edition::chosen_edition(&self.pool, release_group_mbid).await {
+            match crate::edition::chosen_edition(&self.library.db, release_group_mbid).await {
                 Ok(chosen) => chosen.map(|chosen| chosen.release_mbid),
                 Err(error) => {
                     tracing::warn!(%error, "chosen edition unreadable; the request's edition is used");

@@ -1781,7 +1781,7 @@ impl RequestsService {
     /// The edition the library has chosen for one album, when it holds
     /// the album. A read failure only loses the edition, never the ask.
     async fn chosen_release(&self, release_group_mbid: &str) -> Option<String> {
-        match chosen_edition(self.library.pool(), release_group_mbid).await {
+        match chosen_edition(self.library.db(), release_group_mbid).await {
             Ok(chosen) => chosen.map(|edition| edition.release_mbid),
             Err(error) => {
                 tracing::warn!(release_group_mbid, %error, "chosen edition unreadable");

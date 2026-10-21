@@ -503,16 +503,6 @@ droppedneedle_kernel::sql! {
         JOIN local_album_external_identities e \
           ON e.local_album_id = COALESCE(b.retired_into_album_id, b.id) AND "
         + (musicbrainz!("e")) + " WHERE b.id = ? LIMIT 1";
-    /// The library copy's edition, who chose it, and its file count, for
-    /// one lowercase release group: a person's choice first, then the
-    /// oldest.
-    pub(crate) EDITION_EVIDENCE = "SELECT e.release_mbid, e.decision_source, \
-        (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = b.id \
-         AND t.availability = 'indexed') \
-        FROM local_album_external_identities e \
-        JOIN local_albums b ON b.id = e.local_album_id \
-        WHERE lower(e.release_group_mbid) = ? AND " + (musicbrainz!("e")) + " AND "
-        + (live_album!("b")) + " ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1";
 }
 
 /// `?, ?, ...` for a list of `len` values.

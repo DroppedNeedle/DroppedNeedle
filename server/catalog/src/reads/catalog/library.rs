@@ -10,6 +10,8 @@
 use std::collections::HashSet;
 
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_library::identity::DecisionSource;
+use droppedneedle_library::identity::reads::{Pick, copy_for_group};
 use rusqlite::types::Value;
 
 use crate::reads::library::sql;
@@ -297,21 +299,24 @@ impl LocalCatalog {
         &self,
         release_group_mbid: &str,
     ) -> Result<EditionEvidence, StoreError> {
-        let values = vec![Value::Text(release_group_mbid.to_ascii_lowercase())];
-        let found: Option<(Option<String>, String, i64)> = self
+        let release_group_mbid = release_group_mbid.to_owned();
+        let copy = self
             .read("catalog.library.edition_evidence", move |conn| {
-                first(conn, sql::EDITION_EVIDENCE.text(), &values, |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })
+                copy_for_group(conn, &release_group_mbid, Pick::Shown)
             })
             .await?;
-        let Some((release, source, files)) = found else {
+        let Some(copy) = copy else {
             return Ok(EditionEvidence::default());
         };
         Ok(EditionEvidence {
-            chosen_release: release.clone().filter(|_| source == "manual"),
-            owned_release: release,
-            file_count: u32::try_from(files).ok().filter(|count| *count > 0),
+            chosen_release: copy
+                .release_mbid
+                .clone()
+                .filter(|_| copy.source == DecisionSource::Manual),
+            owned_release: copy.release_mbid,
+            file_count: u32::try_from(copy.file_count)
+                .ok()
+                .filter(|count| *count > 0),
         })
     }
 }

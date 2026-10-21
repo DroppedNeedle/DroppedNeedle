@@ -327,7 +327,7 @@ impl Targets {
         };
         let mut library = HashMap::new();
         for group in choose::groups_to_check(&candidates) {
-            match chosen_edition(self.journal.db().pool(), &group).await {
+            match chosen_edition(self.journal.db().db(), &group).await {
                 Ok(Some(edition)) => {
                     library.insert(group, edition);
                 }

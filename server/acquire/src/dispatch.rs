@@ -313,7 +313,7 @@ impl DownloadDispatch {
         // has chosen for that album (a single track resolves its album
         // when it is searched for).
         let chosen = match release_mbid {
-            None if !is_track => match chosen_edition(self.journal.db().pool(), key).await {
+            None if !is_track => match chosen_edition(self.journal.db().db(), key).await {
                 Ok(chosen) => chosen.map(|edition| edition.release_mbid),
                 Err(error) => {
                     tracing::warn!(key, %error, "chosen edition unreadable; dispatching the album");

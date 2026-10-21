@@ -15,6 +15,7 @@
 //! by automatic work.
 
 mod automatic;
+pub mod reads;
 pub(crate) mod sql;
 
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
