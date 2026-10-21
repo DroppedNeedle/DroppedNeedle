@@ -234,13 +234,22 @@ async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{name}: no cover to serve");
         let cache = ArtworkCache::new(rig.dir.join("covers"), 1024 * 1024);
-        let Some(KeyEntry::Miss { until }) =
-            cache.key(&format!("caa:release-group:{mbid}:500")).await
-        else {
-            panic!("{name}: a miss is remembered");
-        };
+        let key = format!("caa:release-group:{mbid}:500");
+        // The route answers after a bounded wait while the fetch carries on
+        // in the background, so the marker can land after the 404.
+        let until = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                if let Some(KeyEntry::Miss { until }) = cache.key(&key).await {
+                    break until;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{name}: a miss is remembered"));
+        let upper = unix_now();
         assert!(
-            (before + ttl..=unix_now() + ttl).contains(&until),
+            (before + ttl..=upper + ttl).contains(&until),
             "{name}: remembered for {ttl} s, until {until} (asked at {before})"
         );
     }
