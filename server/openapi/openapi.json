@@ -8745,19 +8745,18 @@
             }
           },
           {
-            "name": "offset",
+            "name": "after",
             "in": "query",
-            "description": "Page start. Default 0.",
+            "description": "The `next` of the page before, with the same sort and order.\nAbsent for the first page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           },
           {
             "name": "sort",
             "in": "query",
-            "description": "`name`, `date_added`, `year`, `artist`, `random`, or `rediscover`\n(oldest first). Default `name`.",
+            "description": "`name`, `date_added`, `year`, `artist`, `random` (one shuffle per\nwalk, kept across its pages), or `rediscover` (oldest first).\nDefault `name`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -12180,13 +12179,12 @@
             }
           },
           {
-            "name": "offset",
+            "name": "after",
             "in": "query",
-            "description": "Page start. Default 0.",
+            "description": "The `next` of the page before, with the same scope, sort and\norder. Absent for the first page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           },
           {
@@ -12842,13 +12840,12 @@
             }
           },
           {
-            "name": "offset",
+            "name": "after",
             "in": "query",
-            "description": "Page start. Default 0.",
+            "description": "The `next` of the page before. Absent for the first page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           }
         ],
@@ -12931,13 +12928,12 @@
             }
           },
           {
-            "name": "offset",
+            "name": "after",
             "in": "query",
-            "description": "Page start. Default 0.",
+            "description": "The `next` of the page before. Absent for the first page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           }
         ],
@@ -21335,19 +21331,18 @@
             }
           },
           {
-            "name": "offset",
+            "name": "after",
             "in": "query",
-            "description": "Page start. Default 0.",
+            "description": "The `next` of the page before, with the same sort and order.\nAbsent for the first page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           },
           {
             "name": "sort",
             "in": "query",
-            "description": "`title` or `date_added`. Default `title`.",
+            "description": "`title`, `date_added`, `artist` (then album, disc and track),\n`album` (then disc and track), or `random` (one shuffle per walk,\nkept across its pages). Default `title`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -21405,7 +21400,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TrackPage"
+                  "$ref": "#/components/schemas/TrackListPage"
                 }
               }
             }
@@ -36188,9 +36183,7 @@
         "description": "One page of catalog albums.",
         "required": [
           "items",
-          "total",
-          "offset",
-          "limit"
+          "total"
         ],
         "properties": {
           "items": {
@@ -36200,17 +36193,12 @@
             },
             "description": "This page of albums."
           },
-          "limit": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Echo of the requested limit.",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Echo of the requested offset.",
-            "minimum": 0
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `after` for the next page; absent on the last page."
           },
           "total": {
             "type": "integer",
@@ -37644,9 +37632,7 @@
           "items",
           "total",
           "album_artist_total",
-          "contributor_total",
-          "offset",
-          "limit"
+          "contributor_total"
         ],
         "properties": {
           "album_artist_total": {
@@ -37668,17 +37654,12 @@
             },
             "description": "This page of artists."
           },
-          "limit": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Echo of the requested limit.",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Echo of the requested offset.",
-            "minimum": 0
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `after` for the next page; absent on the last page."
           },
           "total": {
             "type": "integer",
@@ -64030,6 +64011,36 @@
               "null"
             ],
             "description": "Linked download task, when dispatched."
+          }
+        }
+      },
+      "TrackListPage": {
+        "type": "object",
+        "description": "One page of the track list.",
+        "required": [
+          "items",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackView"
+            },
+            "description": "This page of tracks."
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `after` for the next page; absent on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks matching the filter, all pages.",
+            "minimum": 0
           }
         }
       },

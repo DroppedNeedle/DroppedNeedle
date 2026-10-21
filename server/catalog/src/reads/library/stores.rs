@@ -53,7 +53,7 @@ droppedneedle_kernel::sql_choice! {
         Year,
         /// Album artist, case folded.
         Artist,
-        /// Database random order.
+        /// One seeded shuffle per walk.
         Random,
         /// Oldest imports first.
         Rediscover,
@@ -81,6 +81,12 @@ droppedneedle_kernel::sql_choice! {
         Title,
         /// Import time.
         DateAdded,
+        /// Track artist, then album, disc and track number.
+        Artist,
+        /// Album, then disc and track number.
+        Album,
+        /// One seeded shuffle per walk.
+        Random,
     }
 }
 
@@ -355,6 +361,31 @@ pub struct DecadeRecord {
 /// Artist listing: page items, match total, album-artist total,
 /// contributor total.
 pub type ArtistListing = (Vec<ArtistRecord>, u64, u64, u64);
+
+/// Where a page of a long list starts: the seed of a random order, and the
+/// sort key of the last row already sent (none on the first page).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct After {
+    /// The shuffle seed; read by random orders only.
+    pub seed: u32,
+    /// The last sent row's sort key.
+    pub key: Option<Vec<rusqlite::types::Value>>,
+}
+
+/// One page of a long list: its rows, the list's total, and the last row's
+/// sort key when more rows follow.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyedPage<T> {
+    /// This page's rows.
+    pub items: Vec<T>,
+    /// Rows in the whole list.
+    pub total: u64,
+    /// The key to read on from; `None` on the last page.
+    pub next: Option<Vec<rusqlite::types::Value>>,
+}
+
+/// A page of artists with the album-artist and contributor totals.
+pub type ArtistKeyedListing = (KeyedPage<ArtistRecord>, u64, u64);
 
 /// Stored lyrics for one track.
 #[derive(Debug, Clone, PartialEq)]

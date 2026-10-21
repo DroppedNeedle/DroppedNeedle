@@ -3,7 +3,7 @@ import { userIdSegment } from '../userKeySegment';
 
 export type LocalV3AlbumsParams = Pick<
 	LibraryV3AlbumsParams,
-	'limit' | 'offset' | 'sort' | 'order' | 'q' | 'decade'
+	'limit' | 'sort' | 'order' | 'q' | 'decade'
 >;
 
 export interface LocalV3PageParams {

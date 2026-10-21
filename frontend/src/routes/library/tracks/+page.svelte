@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { fetchLibraryTracks, type LibraryTrackSort } from '$lib/queries/library/libraryTracks';
+	import { getLibraryTracksInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { libraryTrackParams, type LibraryTrackSort } from '$lib/queries/library/libraryTracks';
+	import { createLibraryTrackQueue } from '$lib/queries/library/libraryTrackQueue.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
@@ -15,9 +16,9 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import {
 		ChevronLeft,
-		ChevronRight,
 		Play,
 		Shuffle,
 		ListPlus,
@@ -27,85 +28,79 @@
 		Search,
 		X
 	} from 'lucide-svelte';
-	import type { NativeTrackListItem, NativeTrackPage } from '$lib/types';
-	import { untrack } from 'svelte';
+	import type { NativeTrackListItem } from '$lib/types';
 
 	const PAGE_SIZE = 48;
+	const SEARCH_DEBOUNCE_MS = 300;
 
-	let loading = $state(true);
-	let data = $state<NativeTrackPage>({ items: [], total: 0, offset: 0, limit: PAGE_SIZE });
-	let currentPage = $state(0);
 	let searchQuery = $state('');
+	let searchTerm = $state('');
 	let sort = $state<LibraryTrackSort>('recent');
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => () => clearTimeout(searchTimeout));
 
-	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
-
-	const loader = createLibraryTrackLoader<NativeTrackListItem>(
-		{
-			fetchPage: (limit, offset, signal) =>
-				fetchLibraryTracks(limit, offset, sort, searchQuery, signal),
-			buildQueue: (tracks) => buildDiscoveryQueueFromLocal(tracks),
-			pageSize: PAGE_SIZE
-		},
-		(items) => playerStore.appendQueueSilent(items),
-		(items, startIndex, shuffle) => playerStore.playQueue(items, startIndex, shuffle),
-		() => playerStore.regenerateShuffleOrder(),
-		(message, type) => toastStore.show({ message, type })
+	const tracksQuery = getLibraryTracksInfiniteQuery(() =>
+		libraryTrackParams(PAGE_SIZE, sort, searchTerm)
 	);
-
-	async function fetchTracks() {
-		loader.abort();
-		loading = true;
-		try {
-			data = await fetchLibraryTracks(PAGE_SIZE, currentPage * PAGE_SIZE, sort, searchQuery);
-		} catch {
-			data = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
-		} finally {
-			loading = false;
+	const pages = $derived(tracksQuery.data?.pages ?? []);
+	// A track can move between pages while they load (a scan renames it):
+	// keep its first appearance.
+	const tracks = $derived.by(() => {
+		const seen: Record<string, true> = Object.create(null);
+		const out: NativeTrackListItem[] = [];
+		for (const response of pages) {
+			for (const track of response.items) {
+				if (seen[track.id]) continue;
+				seen[track.id] = true;
+				out.push(track);
+			}
 		}
-	}
+		return out;
+	});
+	const total = $derived(pages[0]?.total ?? 0);
 
-	function goToPage(page: number) {
-		currentPage = page;
-		fetchTracks();
-		window.scrollTo({ top: 0, behavior: 'smooth' });
-	}
+	const queue = createLibraryTrackQueue({
+		buildQueue: (items) => buildDiscoveryQueueFromLocal(items),
+		playQueue: (items, startIndex, shuffle) => playerStore.playQueue(items, startIndex, shuffle),
+		appendQueue: (items) => playerStore.appendQueueSilent(items),
+		reshuffle: () => playerStore.regenerateShuffleOrder(),
+		toast: (message, type) => toastStore.show({ message, type })
+	});
+	$effect(() => () => queue.abort());
 
 	function handleSearchInput() {
 		clearTimeout(searchTimeout);
-		searchTimeout = setTimeout(() => {
-			currentPage = 0;
-			fetchTracks();
-		}, 300);
+		searchTimeout = setTimeout(() => (searchTerm = searchQuery.trim()), SEARCH_DEBOUNCE_MS);
 	}
 
 	function clearSearch() {
 		searchQuery = '';
+		searchTerm = '';
 		clearTimeout(searchTimeout);
-		currentPage = 0;
-		fetchTracks();
 	}
 
 	function handleSortChange(e: Event) {
 		sort = (e.target as HTMLSelectElement).value as LibraryTrackSort;
-		currentPage = 0;
-		fetchTracks();
 	}
 
 	function playTrack(index: number) {
-		loader.abort();
-		const queue = buildDiscoveryQueueFromLocal(data.items);
-		if (queue.length === 0) return;
-		playerStore.playQueue(queue, index, false);
+		queue.abort();
+		const items = buildDiscoveryQueueFromLocal(tracks);
+		if (items.length === 0) return;
+		playerStore.playQueue(items, index, false);
 	}
 
+	// Plays what is loaded, then the rest of the list after the last page.
 	function playAll() {
-		loader.playAll(data.items, data.total);
+		void queue.playAll(sort, searchTerm, {
+			items: tracks,
+			total,
+			next: pages.at(-1)?.next ?? null
+		});
 	}
 
 	function shuffleAll() {
-		loader.shuffleAll(data.items, data.total);
+		void queue.shuffleAll(searchTerm);
 	}
 
 	function addTrackToQueue(track: NativeTrackListItem) {
@@ -136,12 +131,6 @@
 			playerStore.currentQueueItem?.sourceType === 'local'
 		);
 	}
-
-	// untrack stops this mount-fetch re-running on state changes (handlers refetch), avoiding double-fetch
-	$effect(() => {
-		untrack(() => fetchTracks());
-		return () => loader.abort();
-	});
 </script>
 
 <svelte:head><title>Tracks · Library</title></svelte:head>
@@ -156,8 +145,8 @@
 		<div>
 			<h1 class="text-3xl font-bold">All Tracks</h1>
 			<p class="text-base-content/70 text-sm mt-1">
-				{data.total.toLocaleString()}
-				{data.total === 1 ? 'track' : 'tracks'}
+				{total.toLocaleString()}
+				{total === 1 ? 'track' : 'tracks'}
 			</p>
 		</div>
 	</div>
@@ -185,41 +174,49 @@
 		<select class="select" value={sort} onchange={handleSortChange} aria-label="Sort tracks">
 			<option value="recent">Recently added</option>
 			<option value="title">Title</option>
+			<option value="artist">Artist</option>
+			<option value="album">Album</option>
 		</select>
 	</div>
 
-	{#if loading}
-		<div class="overflow-hidden rounded-xl bg-base-100/40 shadow-sm">
-			{#each Array(12) as _, i (i)}
-				<div class="flex items-center gap-3 px-3 py-2">
-					<div class="skeleton h-12 w-12 shrink-0 rounded-md"></div>
-					<div class="flex-1 space-y-2">
-						<div class="skeleton h-3.5 w-48"></div>
-						<div class="skeleton h-3 w-32"></div>
+	<QueryBoundary
+		query={tracksQuery}
+		what="your tracks"
+		isEmpty={(data) => !data.pages[0]?.items.length}
+	>
+		{#snippet loading()}
+			<div class="overflow-hidden rounded-xl bg-base-100/40 shadow-sm">
+				{#each Array(12) as _, i (i)}
+					<div class="flex items-center gap-3 px-3 py-2">
+						<div class="skeleton h-12 w-12 shrink-0 rounded-md"></div>
+						<div class="flex-1 space-y-2">
+							<div class="skeleton h-3.5 w-48"></div>
+							<div class="skeleton h-3 w-32"></div>
+						</div>
+						<div class="skeleton h-3 w-10 shrink-0"></div>
 					</div>
-					<div class="skeleton h-3 w-10 shrink-0"></div>
-				</div>
-			{/each}
-		</div>
-	{:else if data.items.length === 0}
-		<div class="flex flex-col items-center justify-center py-20 text-base-content/50">
-			<Music2 class="mb-4 h-12 w-12 opacity-20" />
-			<p class="text-lg font-medium">{searchQuery ? 'No matches' : 'No tracks yet'}</p>
-			<p class="mt-1 text-sm">
-				{searchQuery ? 'Try another search term.' : 'Scan your library to see tracks here.'}
-			</p>
-		</div>
-	{:else}
+				{/each}
+			</div>
+		{/snippet}
+		{#snippet empty()}
+			<div class="flex flex-col items-center justify-center py-20 text-base-content/50">
+				<Music2 class="mb-4 h-12 w-12 opacity-20" />
+				<p class="text-lg font-medium">{searchTerm ? 'No matches' : 'No tracks yet'}</p>
+				<p class="mt-1 text-sm">
+					{searchTerm ? 'Try another search term.' : 'Scan your library to see tracks here.'}
+				</p>
+			</div>
+		{/snippet}
 		<div class="mb-4 flex items-center gap-2">
-			{#if loader.loading}
+			{#if queue.loading}
 				<Button
 					variant="primary"
 					size="sm"
-					onclick={() => loader.abort()}
+					onclick={() => queue.abort()}
 					aria-label="Stop loading tracks"
 				>
 					<LoaderCircle class="h-3.5 w-3.5 animate-spin motion-keep" aria-hidden="true" />
-					{loader.progressText ?? 'Loading tracks'}
+					{queue.progressText ?? 'Loading tracks'}
 				</Button>
 			{:else}
 				<Button
@@ -248,7 +245,7 @@
 			class="divide-y divide-base-content/5 overflow-hidden rounded-xl bg-base-100/40 shadow-sm"
 			use:reveal
 		>
-			{#each data.items as track, i (track.id)}
+			{#each tracks as track, i (track.id)}
 				{@const playing = isTrackPlaying(track)}
 				<div
 					class="group flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary {playing
@@ -323,28 +320,16 @@
 			{/each}
 		</div>
 
-		{#if totalPages > 1}
-			<div class="mt-8 flex items-center justify-center gap-2">
+		{#if tracksQuery.hasNextPage}
+			<div class="mt-6 flex justify-center">
 				<Button
-					variant="ghost"
-					size="sm"
-					icon={ChevronLeft}
-					disabled={currentPage === 0}
-					onclick={() => goToPage(currentPage - 1)}
-					aria-label="Previous page"
-				/>
-				<span class="text-sm text-base-content/70">
-					Page {currentPage + 1} of {totalPages}
-				</span>
-				<Button
-					variant="ghost"
-					size="sm"
-					icon={ChevronRight}
-					disabled={currentPage >= totalPages - 1}
-					onclick={() => goToPage(currentPage + 1)}
-					aria-label="Next page"
-				/>
+					variant="outline"
+					loading={tracksQuery.isFetchingNextPage}
+					onclick={() => tracksQuery.fetchNextPage()}
+				>
+					Load more ({tracks.length.toLocaleString()} / {total.toLocaleString()})
+				</Button>
 			</div>
 		{/if}
-	{/if}
+	</QueryBoundary>
 </div>

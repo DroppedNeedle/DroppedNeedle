@@ -3,6 +3,7 @@ import type {
 	LibraryReviewParams,
 	LibraryV3AlbumsParams,
 	LibraryV3ArtistsParams,
+	LibraryV3CursorParams,
 	LibraryV3PageParams,
 	LibraryV3TracksParams
 } from './LibraryQueryKeyFactory';
@@ -39,11 +40,12 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/management/re-enable', {
 			path: { album_id: albumId }
 		}),
-	albums: (params: LibraryV3AlbumsParams) =>
+	// The long lists read by cursor: `after` is the `next` of the page before.
+	albums: (params: LibraryV3AlbumsParams, after: string | null = null) =>
 		v3('/api/v3/library/albums', {
 			query: {
 				limit: params.limit,
-				offset: params.offset,
+				...(after ? { after } : {}),
 				sort: params.sort,
 				order: params.order,
 				...(params.q ? { q: params.q } : {}),
@@ -52,11 +54,11 @@ export const LibraryV3Api = {
 				...(params.format ? { format: params.format } : {})
 			}
 		}),
-	artists: (params: LibraryV3ArtistsParams) =>
+	artists: (params: LibraryV3ArtistsParams, after: string | null = null) =>
 		v3('/api/v3/library/artists', {
 			query: {
 				limit: params.limit,
-				offset: params.offset,
+				...(after ? { after } : {}),
 				sort: params.sort,
 				order: params.order,
 				...(params.q ? { q: params.q } : {}),
@@ -148,27 +150,27 @@ export const LibraryV3Api = {
 		}),
 	artistDetail: (artistId: string) =>
 		v3('/api/v3/library/artists/{id}', { path: { id: artistId } }),
-	artistAlbums: (artistId: string, params: LibraryV3PageParams) =>
+	artistAlbums: (artistId: string, params: LibraryV3CursorParams) =>
 		v3('/api/v3/library/artists/{id}/albums', {
 			path: { id: artistId },
 			query: {
 				...(params.limit !== undefined ? { limit: params.limit } : {}),
-				...(params.offset !== undefined ? { offset: params.offset } : {})
+				...(params.after ? { after: params.after } : {})
 			}
 		}),
-	artistAppearances: (artistId: string, params: LibraryV3PageParams) =>
+	artistAppearances: (artistId: string, params: LibraryV3CursorParams) =>
 		v3('/api/v3/library/artists/{id}/appearances', {
 			path: { id: artistId },
 			query: {
 				...(params.limit !== undefined ? { limit: params.limit } : {}),
-				...(params.offset !== undefined ? { offset: params.offset } : {})
+				...(params.after ? { after: params.after } : {})
 			}
 		}),
-	tracks: (params: LibraryV3TracksParams) =>
+	tracks: (params: LibraryV3TracksParams, after: string | null = null) =>
 		v3('/api/v3/library/tracks', {
 			query: {
 				limit: params.limit,
-				offset: params.offset,
+				...(after ? { after } : {}),
 				sort: params.sort,
 				order: params.order,
 				...(params.q ? { q: params.q } : {}),

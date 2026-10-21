@@ -4658,6 +4658,43 @@ async fn recycle_bin_empties_table_is_added() {
     assert!(version >= 78, "user_version {version}");
 }
 
+/// Migration 0079 adds the indexes the track list's artist and album
+/// orders walk, on a database at 0078.
+#[tokio::test]
+async fn track_list_orders_walk_an_index() {
+    let pool = scratch_pool().await;
+    migrator_through(78).run(&pool).await.unwrap();
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    for (name, columns) in [
+        (
+            "idx_local_tracks_artist_order",
+            "availability, COALESCE(artist_name_folded, ''), album_title_folded",
+        ),
+        (
+            "idx_local_tracks_album_order_folded",
+            "availability, album_title_folded, local_album_id",
+        ),
+    ] {
+        let sql: Option<String> =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+                .bind(name)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert!(
+            sql.as_deref().is_some_and(|sql| sql.contains(columns)),
+            "{name}: {sql:?}"
+        );
+    }
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(version >= 79, "user_version {version}");
+}
+
 /// Migration 0076 rebuilds the request, watch and approval tables as
 /// STRICT tables with checked states and millisecond times. A database
 /// before it, with a row in every state and times in every stored form,

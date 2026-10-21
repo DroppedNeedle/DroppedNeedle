@@ -5,19 +5,23 @@
 use std::collections::HashSet;
 
 use super::LibraryDeps;
+use super::cursor::{Cursor, fresh_seed};
 use super::models::{
     AlbumCard, AlbumDetailView, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery,
-    ArtistView, DecadeShelf, DecadesResponse, GenreList, GenreView, LibraryAlbumStatus,
-    LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
-    LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery, ResolveTracksRequest,
-    ResolveTracksResponse, ResolvedTrack, SearchQuery, SearchResults, StatsView, SuggestionTrack,
-    SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
+    ArtistView, CursorQuery, DecadeShelf, DecadesResponse, GenreList, GenreView,
+    LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse,
+    LibraryStatusTrack, LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery,
+    ResolveTracksRequest, ResolveTracksResponse, ResolvedTrack, SearchQuery, SearchResults,
+    StatsView, SuggestionTrack, SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackPage,
+    TrackQuery, TrackTags, TrackView,
 };
+use super::sql;
 use super::stores::{
-    AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, StoreError,
-    TagRead, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
+    After, AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, KeyedPage,
+    StoreError, TagRead, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
 };
 use droppedneedle_auth::Admin;
+use rusqlite::types::Value;
 
 /// Domain failures. Handlers convert these; nothing here names HTTP.
 #[derive(Debug, PartialEq, Eq)]
@@ -112,10 +116,75 @@ fn track_sort(sort: Option<&str>) -> Result<TrackSort, LibraryFailure> {
     match sort {
         None | Some("title") => Ok(TrackSort::Title),
         Some("date_added") => Ok(TrackSort::DateAdded),
+        Some("artist") => Ok(TrackSort::Artist),
+        Some("album") => Ok(TrackSort::Album),
+        Some("random") => Ok(TrackSort::Random),
         Some(other) => Err(LibraryFailure::InvalidInput(format!(
-            "unknown sort '{other}': want title or date_added"
+            "unknown sort '{other}': want title, date_added, artist, album, or random"
         ))),
     }
+}
+
+/// Where a page of the list taken in `order` starts: the first page, or
+/// after the cursor's row. A first page in random order draws its seed.
+/// A cursor from another list or order is bad input.
+fn start(
+    after: Option<&str>,
+    order: &str,
+    width: usize,
+    random: bool,
+) -> Result<After, LibraryFailure> {
+    let Some(text) = after else {
+        return Ok(After {
+            seed: if random { fresh_seed() } else { 0 },
+            key: None,
+        });
+    };
+    let cursor = Cursor::decode(text, order, width).map_err(|_| {
+        LibraryFailure::InvalidInput(
+            "after is not a cursor from this list and order; start from the first page".to_owned(),
+        )
+    })?;
+    Ok(After {
+        seed: cursor.seed,
+        key: Some(cursor.key),
+    })
+}
+
+/// The cursor of the page after one that started at `after`.
+fn next_cursor(order: String, after: &After, key: Option<Vec<Value>>) -> Option<String> {
+    key.map(|key| {
+        Cursor {
+            order,
+            seed: after.seed,
+            key,
+        }
+        .encode()
+    })
+}
+
+/// A page of albums with the caller's favorite flags.
+async fn album_page(
+    deps: &LibraryDeps,
+    user_id: &str,
+    order: String,
+    after: &After,
+    page: KeyedPage<AlbumRecord>,
+) -> Result<AlbumPage, LibraryFailure> {
+    let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
+    let favorites = favorites_for(deps, user_id, "album", &ids).await?;
+    Ok(AlbumPage {
+        items: page
+            .items
+            .into_iter()
+            .map(|record| {
+                let favorite = favorites.contains(&record.id);
+                AlbumView::from((record, favorite))
+            })
+            .collect(),
+        total: page.total,
+        next: next_cursor(order, after, page.next),
+    })
 }
 
 fn artist_scope(scope: Option<&str>) -> Result<ArtistScope, LibraryFailure> {
@@ -212,37 +281,27 @@ pub async fn list_albums(
     user_id: &str,
     query: &AlbumQuery,
 ) -> Result<AlbumPage, LibraryFailure> {
-    let (limit, offset) = page(query.limit, query.offset, 50, 200)?;
+    let (limit, _) = page(query.limit, None, 50, 200)?;
     let filter = AlbumFilter {
         q: clean_q(query.q.as_deref()),
         artist_id: query.artist_id.clone(),
         decade: check_decade(query.decade)?,
         format: clean_format(query.format.as_deref()),
     };
-    let (records, total) = deps
+    let sort = album_sort(query.sort.as_deref())?;
+    let descending = descending(query.order.as_deref())?;
+    let order = format!("albums/{sort:?}/{descending}");
+    let after = start(
+        query.after.as_deref(),
+        &order,
+        sql::album_keys(sort, descending).len(),
+        sort == AlbumSort::Random,
+    )?;
+    let page = deps
         .catalog
-        .list_albums(
-            &filter,
-            album_sort(query.sort.as_deref())?,
-            descending(query.order.as_deref())?,
-            limit,
-            offset,
-        )
+        .list_albums(&filter, sort, descending, limit, &after)
         .await?;
-    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
-    let favorites = favorites_for(deps, user_id, "album", &ids).await?;
-    Ok(AlbumPage {
-        items: records
-            .into_iter()
-            .map(|record| {
-                let favorite = favorites.contains(&record.id);
-                AlbumView::from((record, favorite))
-            })
-            .collect(),
-        total,
-        offset,
-        limit,
-    })
+    album_page(deps, user_id, order, &after, page).await
 }
 
 /// One catalog album, answered for the album the id names now. Unknown ids
@@ -337,8 +396,7 @@ pub async fn album_copies(
             })
             .collect(),
         total,
-        offset: 0,
-        limit: total,
+        next: None,
     })
 }
 
@@ -348,34 +406,37 @@ pub async fn list_artists(
     user_id: &str,
     query: &ArtistQuery,
 ) -> Result<ArtistPage, LibraryFailure> {
-    let (limit, offset) = page(query.limit, query.offset, 50, 200)?;
+    let (limit, _) = page(query.limit, None, 50, 200)?;
     let q = clean_q(query.q.as_deref());
-    let (records, total, album_artist_total, contributor_total) = deps
+    let scope = artist_scope(query.scope.as_deref())?;
+    let sort = artist_sort(query.sort.as_deref())?;
+    let descending = descending(query.order.as_deref())?;
+    let order = format!("artists/{scope:?}/{sort:?}/{descending}");
+    let after = start(
+        query.after.as_deref(),
+        &order,
+        sql::artist_keys(sort, descending).len(),
+        false,
+    )?;
+    let (page, album_artist_total, contributor_total) = deps
         .catalog
-        .list_artists(
-            artist_scope(query.scope.as_deref())?,
-            q.as_deref(),
-            artist_sort(query.sort.as_deref())?,
-            descending(query.order.as_deref())?,
-            limit,
-            offset,
-        )
+        .artist_list(scope, q.as_deref(), sort, descending, limit, &after)
         .await?;
-    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
+    let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "artist", &ids).await?;
     Ok(ArtistPage {
-        items: records
+        items: page
+            .items
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
                 ArtistView::from((record, favorite))
             })
             .collect(),
-        total,
+        total: page.total,
         album_artist_total,
         contributor_total,
-        offset,
-        limit,
+        next: next_cursor(order, &after, page.next),
     })
 }
 
@@ -398,25 +459,19 @@ pub async fn artist_albums(
     deps: &LibraryDeps,
     user_id: &str,
     artist_id: &str,
-    query: &PageQuery,
+    query: &CursorQuery,
 ) -> Result<AlbumPage, LibraryFailure> {
-    let (limit, offset) = page(query.limit, query.offset, 200, 1000)?;
+    let (limit, _) = page(query.limit, None, 200, 1000)?;
+    let order = "artist-albums".to_owned();
+    let after = start(
+        query.after.as_deref(),
+        &order,
+        sql::title_keys().len(),
+        false,
+    )?;
     let artist = artist_record(deps, artist_id).await?;
-    let (records, total) = deps.catalog.led_albums(&artist.id, limit, offset).await?;
-    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
-    let favorites = favorites_for(deps, user_id, "album", &ids).await?;
-    Ok(AlbumPage {
-        items: records
-            .into_iter()
-            .map(|record| {
-                let favorite = favorites.contains(&record.id);
-                AlbumView::from((record, favorite))
-            })
-            .collect(),
-        total,
-        offset,
-        limit,
-    })
+    let page = deps.catalog.led_albums(&artist.id, limit, &after).await?;
+    album_page(deps, user_id, order, &after, page).await
 }
 
 /// One page of albums where the artist appears without leading.
@@ -425,28 +480,22 @@ pub async fn artist_appearances(
     deps: &LibraryDeps,
     user_id: &str,
     artist_id: &str,
-    query: &PageQuery,
+    query: &CursorQuery,
 ) -> Result<AlbumPage, LibraryFailure> {
-    let (limit, offset) = page(query.limit, query.offset, 200, 1000)?;
+    let (limit, _) = page(query.limit, None, 200, 1000)?;
+    let order = "appearances".to_owned();
+    let after = start(
+        query.after.as_deref(),
+        &order,
+        sql::title_keys().len(),
+        false,
+    )?;
     let artist = artist_record(deps, artist_id).await?;
-    let (records, total) = deps
+    let page = deps
         .catalog
-        .artist_appearances(&artist.id, limit, offset)
+        .artist_appearances(&artist.id, limit, &after)
         .await?;
-    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
-    let favorites = favorites_for(deps, user_id, "album", &ids).await?;
-    Ok(AlbumPage {
-        items: records
-            .into_iter()
-            .map(|record| {
-                let favorite = favorites.contains(&record.id);
-                AlbumView::from((record, favorite))
-            })
-            .collect(),
-        total,
-        offset,
-        limit,
-    })
+    album_page(deps, user_id, order, &after, page).await
 }
 
 /// One page of streamable tracks.
@@ -454,37 +503,40 @@ pub async fn list_tracks(
     deps: &LibraryDeps,
     user_id: &str,
     query: &TrackQuery,
-) -> Result<TrackPage, LibraryFailure> {
-    let (limit, offset) = page(query.limit, query.offset, 50, 500)?;
+) -> Result<TrackListPage, LibraryFailure> {
+    let (limit, _) = page(query.limit, None, 50, 500)?;
     let filter = TrackFilter {
         q: clean_q(query.q.as_deref()),
         album_id: query.album_id.clone(),
         artist_id: query.artist_id.clone(),
         genre: clean_q(query.genre.as_deref()),
     };
-    let (records, total) = deps
+    let sort = track_sort(query.sort.as_deref())?;
+    let descending = descending(query.order.as_deref())?;
+    let order = format!("tracks/{sort:?}/{descending}");
+    let after = start(
+        query.after.as_deref(),
+        &order,
+        sql::track_keys(sort, descending).len(),
+        sort == TrackSort::Random,
+    )?;
+    let page = deps
         .catalog
-        .list_tracks(
-            &filter,
-            track_sort(query.sort.as_deref())?,
-            descending(query.order.as_deref())?,
-            limit,
-            offset,
-        )
+        .list_tracks(&filter, sort, descending, limit, &after)
         .await?;
-    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
+    let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
-    Ok(TrackPage {
-        items: records
+    Ok(TrackListPage {
+        items: page
+            .items
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
                 TrackView::from((record, favorite))
             })
             .collect(),
-        total,
-        offset,
-        limit,
+        total: page.total,
+        next: next_cursor(order, &after, page.next),
     })
 }
 
@@ -546,8 +598,7 @@ pub async fn recently_added(
             })
             .collect(),
         total,
-        offset: 0,
-        limit,
+        next: None,
     })
 }
 
@@ -618,17 +669,30 @@ pub async fn search_library(
         artist_id: None,
         genre: None,
     };
-    let (albums, _) = deps
+    let albums = deps
         .catalog
-        .list_albums(&album_filter, AlbumSort::Name, false, limit, 0)
+        .list_albums(
+            &album_filter,
+            AlbumSort::Name,
+            false,
+            limit,
+            &After::default(),
+        )
         .await?;
-    let (tracks, _) = deps
+    let tracks = deps
         .catalog
-        .list_tracks(&track_filter, TrackSort::Title, false, limit, 0)
+        .list_tracks(
+            &track_filter,
+            TrackSort::Title,
+            false,
+            limit,
+            &After::default(),
+        )
         .await?;
     Ok(SearchResults {
-        albums: albums.into_iter().map(AlbumCard::from).collect(),
+        albums: albums.items.into_iter().map(AlbumCard::from).collect(),
         tracks: tracks
+            .items
             .into_iter()
             .map(|record| SuggestionTrack::from((record, "match")))
             .collect(),

@@ -1,10 +1,32 @@
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import type { LibraryAlbumStatus, NativeTrackListItem, NativeTrackPage } from '$lib/types';
+import type { LibraryAlbumStatus, NativeTrackListItem } from '$lib/types';
+import type { LibraryV3TracksParams } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 
 /** Track list orders the v3 catalog serves. */
-export type LibraryTrackSort = 'recent' | 'title';
+export type LibraryTrackSort = 'recent' | 'title' | 'artist' | 'album' | 'random';
+
+/** One page of the track list; `next` reads the page after it. */
+export interface LibraryTrackPage {
+	items: NativeTrackListItem[];
+	total: number;
+	next: string | null;
+}
+
+/** The track list's params for one order and search, the cursor aside. */
+export function libraryTrackParams(
+	limit: number,
+	sort: LibraryTrackSort,
+	q: string = ''
+): LibraryV3TracksParams {
+	return {
+		limit,
+		sort: sort === 'recent' ? 'date_added' : sort,
+		order: sort === 'recent' ? 'desc' : 'asc',
+		...(q ? { q } : {})
+	};
+}
 
 // The local track list and the player helpers read the native track page
 // model. The quality tier and the upgrade-cutoff flag only come with the
@@ -57,23 +79,12 @@ export function toAlbumStatus(
 	};
 }
 
-/** One page of the local catalog's tracks, newest first or by title. */
+/** One page of the local catalog's tracks: the first, or the one `after` names. */
 export async function fetchLibraryTracks(
-	limit: number,
-	offset: number,
-	sort: LibraryTrackSort,
-	q: string = '',
+	params: LibraryV3TracksParams,
+	after: string | null,
 	signal?: AbortSignal
-): Promise<NativeTrackPage> {
-	const page = await api.global.v3.GET(
-		LibraryV3Api.tracks({
-			limit,
-			offset,
-			sort: sort === 'recent' ? 'date_added' : 'title',
-			order: sort === 'recent' ? 'desc' : 'asc',
-			q: q || undefined
-		}),
-		{ signal }
-	);
-	return { ...page, items: page.items.map(toNativeTrack) };
+): Promise<LibraryTrackPage> {
+	const page = await api.global.v3.GET(LibraryV3Api.tracks(params, after), { signal });
+	return { items: page.items.map(toNativeTrack), total: page.total, next: page.next ?? null };
 }

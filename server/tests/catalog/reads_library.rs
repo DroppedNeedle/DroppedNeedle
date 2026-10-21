@@ -21,8 +21,8 @@ use library::LibraryDeps;
 use library::file_lyrics::{FileLyrics, NoOnlineLyrics};
 use library::store::LocalCatalog;
 use library::stores::{
-    AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricDoc, LyricsPort, StoreError,
-    TrackFilter, TrackSort,
+    After, AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricDoc, LyricsPort,
+    StoreError, TrackFilter, TrackSort,
 };
 use library::tags::FileTagReader;
 use serde_json::Value;
@@ -132,7 +132,8 @@ async fn bad_input_stays_in_the_envelope() {
         "/api/v3/library/albums?order=sideways",
         "/api/v3/library/albums?limit=0",
         "/api/v3/library/albums?limit=abc",
-        "/api/v3/library/albums?offset=-1",
+        "/api/v3/library/albums?after=not-a-cursor",
+        "/api/v3/library/tracks?after=not-a-cursor",
         "/api/v3/library/albums?decade=1995",
         "/api/v3/library/artists?scope=nope",
         "/api/v3/library/artists?sort=nope",
@@ -317,8 +318,9 @@ async fn sqlite_albums_streamable_counts_identity_and_filters() {
     let filter = AlbumFilter::default();
     let (albums, total) = fixture
         .catalog
-        .list_albums(&filter, AlbumSort::Name, false, 50, 0)
+        .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("albums list");
     assert_eq!(total, 4);
     let first = albums
@@ -355,8 +357,9 @@ async fn sqlite_albums_streamable_counts_identity_and_filters() {
     };
     let (_, total) = fixture
         .catalog
-        .list_albums(&filter, AlbumSort::Name, false, 50, 0)
+        .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("q filter");
     assert_eq!(total, 1);
 
@@ -366,8 +369,9 @@ async fn sqlite_albums_streamable_counts_identity_and_filters() {
     };
     let (_, total) = fixture
         .catalog
-        .list_albums(&filter, AlbumSort::Name, false, 50, 0)
+        .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("decade filter");
     assert_eq!(total, 3);
 
@@ -377,8 +381,9 @@ async fn sqlite_albums_streamable_counts_identity_and_filters() {
     };
     let (_, total) = fixture
         .catalog
-        .list_albums(&filter, AlbumSort::Name, false, 50, 0)
+        .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("artist filter");
     assert_eq!(total, 3);
 }
@@ -393,8 +398,9 @@ async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
         };
         let (albums, counted) = fixture
             .catalog
-            .list_albums(&filter, AlbumSort::Name, false, 50, 0)
+            .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
             .await
+            .map(|page| (page.items, page.total))
             .expect("format filter");
         assert_eq!(counted, total, "for {format}");
         assert_eq!(albums.len() as u64, total, "for {format}");
@@ -403,8 +409,9 @@ async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
     let filter = AlbumFilter::default();
     let (albums, _) = fixture
         .catalog
-        .list_albums(&filter, AlbumSort::Artist, false, 50, 0)
+        .list_albums(&filter, AlbumSort::Artist, false, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("artist sort");
     assert_eq!(
         albums
@@ -415,8 +422,9 @@ async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
     );
     let (albums, _) = fixture
         .catalog
-        .list_albums(&filter, AlbumSort::Artist, true, 50, 0)
+        .list_albums(&filter, AlbumSort::Artist, true, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("artist sort desc");
     assert_eq!(
         albums
@@ -539,16 +547,18 @@ async fn sqlite_artists_scopes_and_credits() {
 
     let (led_albums, total) = fixture
         .catalog
-        .led_albums("a1", 50, 0)
+        .led_albums("a1", 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("led list");
     assert_eq!(total, 3);
     assert_eq!(led_albums[0].id, "al1");
 
     let (appearances, total) = fixture
         .catalog
-        .artist_appearances("a3", 50, 0)
+        .artist_appearances("a3", 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("appearances list");
     assert_eq!(total, 1);
     assert_eq!(appearances[0].id, "al3");
@@ -590,8 +600,9 @@ async fn sqlite_tracks_filters_and_stats() {
     };
     let (tracks, total) = fixture
         .catalog
-        .list_tracks(&filter, TrackSort::Title, false, 50, 0)
+        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("q filter");
     assert_eq!(total, 1);
     assert_eq!(tracks[0].id, "t4");
@@ -603,8 +614,9 @@ async fn sqlite_tracks_filters_and_stats() {
     };
     let (_, total) = fixture
         .catalog
-        .list_tracks(&filter, TrackSort::Title, false, 50, 0)
+        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("genre filter");
     assert_eq!(total, 2);
 
@@ -614,8 +626,9 @@ async fn sqlite_tracks_filters_and_stats() {
     };
     let (tracks, total) = fixture
         .catalog
-        .list_tracks(&filter, TrackSort::Title, false, 50, 0)
+        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
         .await
+        .map(|page| (page.items, page.total))
         .expect("artist filter");
     assert_eq!(total, 1);
     assert_eq!(tracks[0].id, "t6");

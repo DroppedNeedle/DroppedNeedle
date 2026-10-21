@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 
-const albumsParams = { limit: 50, offset: 0, sort: 'name', order: 'asc' } as const;
+const albumsParams = { limit: 50, sort: 'name', order: 'asc' } as const;
 
 describe('LibraryQueryKeyFactory.catalog', () => {
 	it('roots user-scoped catalog keys under the library prefix', () => {
@@ -19,7 +19,7 @@ describe('LibraryQueryKeyFactory.catalog', () => {
 		const catalog = LibraryQueryKeyFactory.catalog;
 		const keys = [
 			catalog.albums(userId, { ...albumsParams }),
-			catalog.artists(userId, { limit: 48, offset: 0, sort: 'name', order: 'asc' }),
+			catalog.artists(userId, { limit: 48, sort: 'name', order: 'asc' }),
 			catalog.artistThumbs(userId),
 			catalog.albumDetail(userId, 'album-1'),
 			catalog.albumCopies(userId, 'album-1'),

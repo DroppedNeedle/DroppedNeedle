@@ -21,7 +21,7 @@ use library::sql;
 use library::sqlite::fts_match_phrase;
 use library::store::LocalCatalog;
 use library::stores::{
-    AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, TrackFilter,
+    After, AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, TrackFilter,
     TrackRecord, TrackSort,
 };
 use rusqlite::types::Value;
@@ -238,6 +238,49 @@ async fn explain(db: &Db, text: &str, binds: &[ExplainBind<'_>]) -> Vec<String> 
     .await
 }
 
+/// The plan's detail lines for `text` with every parameter bound NULL: a
+/// plan does not depend on the values.
+async fn explain_unbound(db: &Db, text: &str) -> Vec<String> {
+    let binds = vec![Value::Null; text.matches('?').count()];
+    fetch(db, &format!("EXPLAIN QUERY PLAN {text}"), binds, |row| {
+        row.get(3)
+    })
+    .await
+}
+
+/// The plan lines of `text`'s own query, without its subqueries', every
+/// parameter bound NULL.
+async fn explain_outer(db: &Db, text: &str) -> Vec<String> {
+    let binds = vec![Value::Null; text.matches('?').count()];
+    let lines: Vec<(i64, String)> =
+        fetch(db, &format!("EXPLAIN QUERY PLAN {text}"), binds, |row| {
+            Ok((row.get(1)?, row.get(3)?))
+        })
+        .await;
+    lines
+        .into_iter()
+        .filter(|(parent, _)| *parent == 0)
+        .map(|(_, line)| line)
+        .collect()
+}
+
+/// Every track sort.
+const TRACK_SORTS: [TrackSort; 5] = [
+    TrackSort::Title,
+    TrackSort::DateAdded,
+    TrackSort::Artist,
+    TrackSort::Album,
+    TrackSort::Random,
+];
+
+/// Every artist sort.
+const ARTIST_SORTS: [ArtistSort; 4] = [
+    ArtistSort::Name,
+    ArtistSort::DateAdded,
+    ArtistSort::AlbumCount,
+    ArtistSort::AppearanceCount,
+];
+
 /// The album list's id order for each sort and direction over every album
 /// of the small fixture.
 const ALBUM_ORDERS: [(AlbumSort, bool, [&str; 5]); 10] = [
@@ -254,7 +297,7 @@ const ALBUM_ORDERS: [(AlbumSort, bool, [&str; 5]); 10] = [
         ["al2", "al5", "al3", "al4", "al1"],
     ),
     (AlbumSort::Year, false, ["al5", "al1", "al3", "al4", "al2"]),
-    (AlbumSort::Year, true, ["al2", "al1", "al3", "al4", "al5"]),
+    (AlbumSort::Year, true, ["al2", "al4", "al3", "al1", "al5"]),
     (
         AlbumSort::Artist,
         false,
@@ -311,10 +354,38 @@ fn album_ids(albums: &[AlbumRecord]) -> Vec<&str> {
     albums.iter().map(|album| album.id.as_str()).collect()
 }
 
+/// Every album the list gives, walked `limit` at a time from the first
+/// page by each page's key, with each page's total.
+async fn walk_albums(
+    fixture: &Fixture,
+    sort: AlbumSort,
+    descending: bool,
+    limit: u64,
+    seed: u32,
+) -> (Vec<String>, Vec<u64>) {
+    let mut after = After { seed, key: None };
+    let (mut ids, mut totals) = (Vec::new(), Vec::new());
+    loop {
+        let page = fixture
+            .catalog
+            .list_albums(&AlbumFilter::default(), sort, descending, limit, &after)
+            .await
+            .expect("lists");
+        assert!(page.items.len() as u64 <= limit);
+        ids.extend(page.items.iter().map(|album| album.id.clone()));
+        totals.push(page.total);
+        match page.next {
+            Some(key) => after.key = Some(key),
+            None => return (ids, totals),
+        }
+    }
+}
+
 /// The album list answers the fixture's pages: every sort in both
-/// directions across filters and paging edges, the album without files
-/// listed with no tracks. A filtered page is the sort's order of every
-/// album kept to the filter's albums; random order answers every album.
+/// directions across filters, walked two at a time by cursor, the album
+/// without files listed with no tracks. A filtered page is the sort's
+/// order of every album kept to the filter's albums; one random walk
+/// gives every album once.
 #[tokio::test]
 async fn album_pages_match_the_fixture() {
     let fixture = seed_small().await;
@@ -336,45 +407,44 @@ async fn album_pages_match_the_fixture() {
     ];
     for (sort, descending, order) in ALBUM_ORDERS {
         for (filter, kept) in &filters {
-            let (albums, total) = fixture
+            let page = fixture
                 .catalog
-                .list_albums(filter, sort, descending, 50, 0)
+                .list_albums(filter, sort, descending, 50, &After::default())
                 .await
                 .expect("lists");
             let want: Vec<&str> = order.into_iter().filter(|id| kept.contains(id)).collect();
             assert_eq!(
-                (album_ids(&albums), total),
-                (want.clone(), want.len() as u64),
+                (album_ids(&page.items), page.total, page.next),
+                (want.clone(), want.len() as u64, None),
                 "sort={sort:?} desc={descending} filter={filter:?}"
             );
         }
-        for (limit, offset, want) in [(2, 1, &order[1..3]), (50, 99, &order[..0])] {
-            let (albums, total) = fixture
-                .catalog
-                .list_albums(&AlbumFilter::default(), sort, descending, limit, offset)
-                .await
-                .expect("lists");
-            assert_eq!(
-                (album_ids(&albums), total),
-                (want.to_vec(), 5),
-                "sort={sort:?} desc={descending} limit={limit} offset={offset}"
-            );
-        }
+        assert_eq!(
+            walk_albums(&fixture, sort, descending, 2, 0).await,
+            (order.map(str::to_owned).to_vec(), vec![5, 5, 5]),
+            "sort={sort:?} desc={descending}"
+        );
     }
-    let (albums, total) = fixture
-        .catalog
-        .list_albums(&AlbumFilter::default(), AlbumSort::Random, false, 50, 0)
-        .await
-        .expect("lists");
-    let mut ids = album_ids(&albums);
+    let (mut ids, totals) = walk_albums(&fixture, AlbumSort::Random, false, 2, 42).await;
+    assert_eq!(totals, [5, 5, 5]);
     ids.sort_unstable();
-    assert_eq!((ids, total), (vec!["al1", "al2", "al3", "al4", "al5"], 5));
-    let (albums, _) = fixture
+    assert_eq!(ids, ["al1", "al2", "al3", "al4", "al5"]);
+    let page = fixture
         .catalog
-        .list_albums(&AlbumFilter::default(), AlbumSort::Name, false, 50, 0)
+        .list_albums(
+            &AlbumFilter::default(),
+            AlbumSort::Name,
+            false,
+            50,
+            &After::default(),
+        )
         .await
         .expect("lists");
-    let records: Vec<String> = albums.iter().map(|album| format!("{album:?}")).collect();
+    let records: Vec<String> = page
+        .items
+        .iter()
+        .map(|album| format!("{album:?}"))
+        .collect();
     assert_eq!(records, ALBUM_RECORDS);
 }
 
@@ -409,11 +479,39 @@ fn artist_ids(artists: &[ArtistRecord]) -> Vec<&str> {
     artists.iter().map(|artist| artist.id.as_str()).collect()
 }
 
+/// Every artist the list gives in one scope, walked `limit` at a time by
+/// each page's key, with each page's totals.
+async fn walk_artists(
+    fixture: &Fixture,
+    scope: ArtistScope,
+    q: Option<&str>,
+    sort: ArtistSort,
+    descending: bool,
+    limit: u64,
+) -> (Vec<String>, Vec<(u64, u64, u64)>) {
+    let mut after = After::default();
+    let (mut ids, mut totals) = (Vec::new(), Vec::new());
+    loop {
+        let (page, led, contributors) = fixture
+            .catalog
+            .artist_list(scope, q, sort, descending, limit, &after)
+            .await
+            .expect("lists");
+        ids.extend(page.items.iter().map(|artist| artist.id.clone()));
+        totals.push((page.total, led, contributors));
+        match page.next {
+            Some(key) => after.key = Some(key),
+            None => return (ids, totals),
+        }
+    }
+}
+
 /// The artist list answers the fixture's pages: every scope and sort in
-/// both directions, a name filter and paging edges, with the scope totals;
-/// text filters with LIKE metacharacters and quotes; single gets of live,
-/// retired and unknown ids. The retired artist and the uncredited
-/// placeholders are never listed.
+/// both directions, a name filter, walked by cursor one page and two at a
+/// time, with the scope totals; text filters with LIKE metacharacters and
+/// quotes; single gets of live, retired and unknown ids. The retired artist
+/// and the uncredited placeholders are never listed. The player apps' page
+/// at an offset reads the same order.
 #[tokio::test]
 async fn artist_pages_match_the_fixture() {
     let fixture = seed_small().await;
@@ -430,31 +528,39 @@ async fn artist_pages_match_the_fixture() {
                 .into_iter()
                 .filter(|id| members.contains(id))
                 .collect();
-            for (q, limit, offset) in [
-                (None, 50, 0),
-                (None, 2, 1),
-                (None, 50, 99),
-                (Some("a"), 50, 0),
-            ] {
-                let named: Vec<&str> = listed
+            for (q, limit) in [(None, 50), (None, 2), (Some("a"), 50)] {
+                let named: Vec<String> = listed
                     .iter()
-                    .copied()
                     .filter(|id| q.is_none() || ["a1", "a2"].contains(id))
+                    .map(|id| (*id).to_owned())
                     .collect();
-                let want: Vec<&str> = named.iter().copied().skip(offset).take(limit).collect();
                 let totals = match q {
                     None => (named.len() as u64, 2, 1),
                     Some(_) => (named.len() as u64, 2, 0),
                 };
+                let pages = named.len().div_ceil(limit as usize).max(1);
+                assert_eq!(
+                    walk_artists(&fixture, scope, q, sort, descending, limit).await,
+                    (named.clone(), vec![totals; pages]),
+                    "{what} q={q:?} limit={limit}"
+                );
                 let (artists, total, led, contributors) = fixture
                     .catalog
-                    .list_artists(scope, q, sort, descending, limit as u64, offset as u64)
+                    .list_artists(scope, q, sort, descending, limit, 1)
                     .await
-                    .expect("lists");
+                    .expect("lists at an offset");
                 assert_eq!(
                     (artist_ids(&artists), (total, led, contributors)),
-                    (want, totals),
-                    "{what} q={q:?} limit={limit} offset={offset}"
+                    (
+                        named
+                            .iter()
+                            .skip(1)
+                            .take(limit as usize)
+                            .map(String::as_str)
+                            .collect(),
+                        totals
+                    ),
+                    "{what} q={q:?} limit={limit} offset=1"
                 );
             }
         }
@@ -465,23 +571,41 @@ async fn artist_pages_match_the_fixture() {
         ("100%", (vec!["a3"], (1, 0, 1))),
         ("\"quoted\"", (vec!["a3"], (1, 0, 1))),
     ] {
-        let (artists, total, led, contributors) = fixture
+        let (page, led, contributors) = fixture
             .catalog
-            .list_artists(ArtistScope::All, Some(q), ArtistSort::Name, false, 50, 0)
+            .artist_list(
+                ArtistScope::All,
+                Some(q),
+                ArtistSort::Name,
+                false,
+                50,
+                &After::default(),
+            )
             .await
             .expect("lists");
         assert_eq!(
-            (artist_ids(&artists), (total, led, contributors)),
+            (artist_ids(&page.items), (page.total, led, contributors)),
             want,
             "q={q:?}"
         );
     }
-    let (artists, ..) = fixture
+    let (page, ..) = fixture
         .catalog
-        .list_artists(ArtistScope::All, None, ArtistSort::Name, false, 50, 0)
+        .artist_list(
+            ArtistScope::All,
+            None,
+            ArtistSort::Name,
+            false,
+            50,
+            &After::default(),
+        )
         .await
         .expect("lists");
-    let records: Vec<String> = artists.iter().map(|artist| format!("{artist:?}")).collect();
+    let records: Vec<String> = page
+        .items
+        .iter()
+        .map(|artist| format!("{artist:?}"))
+        .collect();
     assert_eq!(records, ARTIST_RECORDS);
     for (id, want) in [
         ("a1", Some(ARTIST_RECORDS[0])),
@@ -560,6 +684,94 @@ fn track_ids(tracks: &[TrackRecord]) -> Vec<&str> {
     tracks.iter().map(|track| track.id.as_str()).collect()
 }
 
+/// The track list's first page, unfiltered but for `filter`.
+async fn first_tracks(
+    fixture: &Fixture,
+    filter: &TrackFilter,
+    sort: TrackSort,
+    descending: bool,
+    limit: u64,
+) -> (Vec<TrackRecord>, u64) {
+    let page = fixture
+        .catalog
+        .list_tracks(filter, sort, descending, limit, &After::default())
+        .await
+        .expect("lists");
+    (page.items, page.total)
+}
+
+/// Every indexed track the list gives, walked `limit` at a time by each
+/// page's key.
+async fn walk_tracks(
+    fixture: &Fixture,
+    sort: TrackSort,
+    descending: bool,
+    limit: u64,
+    seed: u32,
+) -> Vec<String> {
+    let mut after = After { seed, key: None };
+    let mut ids = Vec::new();
+    loop {
+        let page = fixture
+            .catalog
+            .list_tracks(&TrackFilter::default(), sort, descending, limit, &after)
+            .await
+            .expect("lists");
+        assert_eq!(page.total, 7);
+        ids.extend(page.items.iter().map(|track| track.id.clone()));
+        match page.next {
+            Some(key) => after.key = Some(key),
+            None => return ids,
+        }
+    }
+}
+
+/// The track list's order for each sort over every indexed track of the
+/// small fixture. By artist, the track with no artist comes first and
+/// tracks keep disc and track order within their album either way.
+const TRACK_ORDERS: [(TrackSort, bool, [&str; 7]); 8] = [
+    (
+        TrackSort::Title,
+        false,
+        ["t2", "t1", "t9", "t6", "t4", "t8", "t7"],
+    ),
+    (
+        TrackSort::Title,
+        true,
+        ["t7", "t8", "t4", "t6", "t9", "t1", "t2"],
+    ),
+    (
+        TrackSort::DateAdded,
+        false,
+        ["t1", "t2", "t6", "t7", "t8", "t9", "t4"],
+    ),
+    (
+        TrackSort::DateAdded,
+        true,
+        ["t4", "t9", "t8", "t7", "t6", "t2", "t1"],
+    ),
+    (
+        TrackSort::Artist,
+        false,
+        ["t9", "t1", "t2", "t7", "t4", "t8", "t6"],
+    ),
+    (
+        TrackSort::Artist,
+        true,
+        ["t6", "t8", "t4", "t7", "t1", "t2", "t9"],
+    ),
+    (
+        TrackSort::Album,
+        false,
+        ["t8", "t9", "t1", "t2", "t6", "t7", "t4"],
+    ),
+    (
+        TrackSort::Album,
+        true,
+        ["t4", "t6", "t7", "t1", "t2", "t8", "t9"],
+    ),
+];
+
 /// Track search answers the fixture's pages on every query shape: misses,
 /// hits, 1-2 character queries (the substring path), LIKE metacharacters,
 /// quotes, unicode, case folding and NUL bytes, in title order and newest
@@ -615,11 +827,7 @@ async fn track_search_matches_the_fixture() {
                 q: Some(q.to_owned()),
                 ..Default::default()
             };
-            let (tracks, total) = fixture
-                .catalog
-                .list_tracks(&filter, sort, descending, 20, 0)
-                .await
-                .expect("lists");
+            let (tracks, total) = first_tracks(&fixture, &filter, sort, descending, 20).await;
             assert_eq!(
                 (track_ids(&tracks), total),
                 (want.to_vec(), want.len() as u64),
@@ -642,11 +850,7 @@ async fn track_search_matches_the_fixture() {
             q: Some("zzz-no-such-thing-zzz".to_owned()),
             ..filter
         };
-        let (tracks, total) = fixture
-            .catalog
-            .list_tracks(&filter, TrackSort::Title, false, 20, 0)
-            .await
-            .expect("lists");
+        let (tracks, total) = first_tracks(&fixture, &filter, TrackSort::Title, false, 20).await;
         assert!(tracks.is_empty() && total == 0, "filter={filter:?}");
     }
     for (filter, want) in [
@@ -664,24 +868,33 @@ async fn track_search_matches_the_fixture() {
             vec!["t1"],
         ),
     ] {
-        let (tracks, total) = fixture
-            .catalog
-            .list_tracks(&filter, TrackSort::Title, false, 50, 0)
-            .await
-            .expect("lists");
+        let (tracks, total) = first_tracks(&fixture, &filter, TrackSort::Title, false, 50).await;
         assert_eq!(
             (track_ids(&tracks), total),
             (want.clone(), want.len() as u64),
             "filter={filter:?}"
         );
     }
-    let (tracks, _) = fixture
-        .catalog
-        .list_tracks(&TrackFilter::default(), TrackSort::Title, false, 50, 0)
-        .await
-        .expect("lists");
+    let (tracks, _) = first_tracks(
+        &fixture,
+        &TrackFilter::default(),
+        TrackSort::Title,
+        false,
+        50,
+    )
+    .await;
     let records: Vec<String> = tracks.iter().map(|track| format!("{track:?}")).collect();
     assert_eq!(records, TRACK_RECORDS);
+    for (sort, descending, order) in TRACK_ORDERS {
+        assert_eq!(
+            walk_tracks(&fixture, sort, descending, 3, 0).await,
+            order,
+            "sort={sort:?} desc={descending}"
+        );
+    }
+    let mut shuffled = walk_tracks(&fixture, TrackSort::Random, false, 3, 42).await;
+    shuffled.sort_unstable();
+    assert_eq!(shuffled, ["t1", "t2", "t4", "t6", "t7", "t8", "t9"]);
 }
 
 /// Maintained format totals track every mutation: inserts in each
@@ -704,11 +917,14 @@ async fn stats_maintained_totals_track_mutations() {
             ground,
             "stats at {step}"
         );
-        let (_, total) = fixture
-            .catalog
-            .list_tracks(&TrackFilter::default(), TrackSort::Title, false, 50, 0)
-            .await
-            .expect("tracks list");
+        let (_, total) = first_tracks(
+            fixture,
+            &TrackFilter::default(),
+            TrackSort::Title,
+            false,
+            50,
+        )
+        .await;
         assert_eq!(total, ground.0, "unfiltered total at {step}");
     }
     check(&fixture, "seed").await;
@@ -822,20 +1038,163 @@ async fn assert_hot_plans(db: &Db) {
         "no scan in the credit aggregation: {plan:?}"
     );
 
-    let mut binds = vec![ExplainBind::Text(None); 11];
-    binds.extend([ExplainBind::Int(48), ExplainBind::Int(0)]);
-    let plan = explain(db, &sql::track_page_like(TrackSort::Title, false), &binds).await;
+    // Long lists page by key, never by offset, so a deep page costs what
+    // the first does.
+    let mut lists = Vec::new();
+    for after in [false, true] {
+        lists.push(sql::led_album_page(after));
+        lists.push(sql::appearance_page(after));
+        for descending in [false, true] {
+            for sort in [
+                AlbumSort::Name,
+                AlbumSort::DateAdded,
+                AlbumSort::Year,
+                AlbumSort::Artist,
+                AlbumSort::Random,
+                AlbumSort::Rediscover,
+            ] {
+                lists.push(sql::album_page(sort, descending, after));
+            }
+            for sort in TRACK_SORTS {
+                lists.push(sql::track_page_like(sort, descending, after));
+                lists.push(sql::track_page_words(
+                    ListLen::new(1),
+                    sort,
+                    descending,
+                    after,
+                ));
+            }
+            for scope in [
+                ArtistScope::All,
+                ArtistScope::AlbumArtists,
+                ArtistScope::Contributors,
+                ArtistScope::WithMusic,
+            ] {
+                for sort in ARTIST_SORTS {
+                    lists.push(sql::artist_page(scope, sort, descending, after));
+                }
+            }
+        }
+    }
+    for text in &lists {
+        assert!(!text.contains("OFFSET"), "a list pages by offset: {text}");
+    }
+
+    // The first page and a deep page of each order an index holds walk that
+    // index and sort nothing.
+    for (name, text, index) in [
+        (
+            "tracks by title",
+            sql::track_page_like(TrackSort::Title, false, false),
+            "idx_local_tracks_availability_title",
+        ),
+        (
+            "tracks by title, deep",
+            sql::track_page_like(TrackSort::Title, false, true),
+            "idx_local_tracks_availability_title",
+        ),
+        (
+            "newest tracks, deep",
+            sql::track_page_like(TrackSort::DateAdded, true, true),
+            "idx_local_tracks_recent",
+        ),
+        (
+            "tracks by artist",
+            sql::track_page_like(TrackSort::Artist, false, false),
+            "idx_local_tracks_artist_order",
+        ),
+        (
+            "tracks by artist, deep",
+            sql::track_page_like(TrackSort::Artist, false, true),
+            "idx_local_tracks_artist_order",
+        ),
+        (
+            "tracks by album, deep",
+            sql::track_page_like(TrackSort::Album, false, true),
+            "idx_local_tracks_album_order_folded",
+        ),
+        (
+            "newest albums, deep",
+            sql::album_page(AlbumSort::DateAdded, true, true),
+            "idx_local_albums_created",
+        ),
+        (
+            "recently added",
+            sql::RECENT_ALBUM_IDS.text().to_owned(),
+            "idx_local_albums_created",
+        ),
+    ] {
+        let plan = explain_outer(db, &text).await;
+        // A deep page seeks its place in the index; a first page walks it
+        // from the top.
+        let seeks = |line: &String| {
+            !name.ends_with("deep")
+                || [")>(", ")<(", ">?", "<?"]
+                    .iter()
+                    .any(|range| line.contains(range))
+        };
+        assert!(
+            plan.iter().any(|line| line.contains(index) && seeks(line)),
+            "{name} walks {index}: {plan:?}"
+        );
+        assert!(
+            !plan
+                .iter()
+                .any(|line| line.contains("TEMP B-TREE FOR ORDER BY")),
+            "{name} sorts nothing: {plan:?}"
+        );
+    }
+
+    // A deep album page by name starts in the title index, not at the top.
+    let plan = explain_unbound(db, &sql::album_page(AlbumSort::Name, false, true)).await;
     assert!(
         plan.iter()
-            .any(|line| line.contains("idx_local_tracks_availability_title")),
-        "title page walks its index: {plan:?}"
+            .any(|line| line.contains("idx_local_albums_search (title_folded>?)")),
+        "a deep album page seeks its title: {plan:?}"
     );
-    assert!(
-        !plan
-            .iter()
-            .any(|line| line.contains("TEMP B-TREE FOR ORDER BY")),
-        "title page sorts nothing: {plan:?}"
-    );
+
+    // The count sorts count per artist from the artist's own albums and
+    // credits, never by grouping every album or credit in the catalog.
+    for (sort, probe) in [
+        (
+            ArtistSort::AppearanceCount,
+            "SEARCH ata USING COVERING INDEX idx_local_track_artists_reverse (local_artist_id=?)",
+        ),
+        (
+            ArtistSort::AlbumCount,
+            "SEARCH lo USING INDEX idx_local_albums_artist_id (album_artist_id=?)",
+        ),
+    ] {
+        for after in [false, true] {
+            let plan = explain_unbound(
+                db,
+                &sql::artist_page(ArtistScope::Contributors, sort, true, after),
+            )
+            .await;
+            assert!(
+                plan.iter().any(|line| line.contains(probe)),
+                "{sort:?} page counts per artist: {plan:?}"
+            );
+            assert!(
+                !plan.iter().any(|line| line.contains("SCAN ata")
+                    || line.contains("SCAN lo")
+                    || line.contains("SCAN local_track_artists")
+                    || line.contains("SCAN local_tracks")),
+                "{sort:?} page never walks the catalog: {plan:?}"
+            );
+        }
+    }
+
+    // An artist's appearances start from the artist's credits.
+    for after in [false, true] {
+        let plan = explain_unbound(db, &sql::appearance_page(after)).await;
+        assert!(
+            !plan
+                .iter()
+                .any(|line| line.contains("SCAN a ") || line.contains("SCAN local_albums")),
+            "appearances never walk every album: {plan:?}"
+        );
+    }
 
     for statement in [sql::STATS, sql::STATS_FORMATS, sql::TRACK_TOTAL] {
         let plan = explain(db, statement.text(), &[]).await;
@@ -857,9 +1216,7 @@ async fn assert_hot_plans(db: &Db) {
         "oracle probes the FTS index: {plan:?}"
     );
 
-    let mut binds = vec![ExplainBind::Text(None); 10];
-    binds.extend([ExplainBind::Int(50), ExplainBind::Int(0)]);
-    let plan = explain(db, &sql::album_page(AlbumSort::Name, false), &binds).await;
+    let plan = explain_unbound(db, &sql::album_page(AlbumSort::Name, false, false)).await;
     assert!(
         plan.iter()
             .all(|line| !line.contains("SCAN ") || line.contains("USING")),
@@ -883,15 +1240,9 @@ async fn assert_hot_plans(db: &Db) {
         "format probe stays on the album index: {plan:?}"
     );
 
-    let plan = explain(
+    let plan = explain_unbound(
         db,
-        &sql::artist_page(ArtistScope::All, ArtistSort::Name, false),
-        &[
-            ExplainBind::Text(None),
-            ExplainBind::Text(None),
-            ExplainBind::Int(50),
-            ExplainBind::Int(0),
-        ],
+        &sql::artist_page(ArtistScope::All, ArtistSort::Name, false, false),
     )
     .await;
     assert!(
@@ -906,12 +1257,11 @@ async fn assert_hot_plans(db: &Db) {
     for (name, text, binds) in [
         (
             "artist page",
-            sql::artist_page(ArtistScope::All, ArtistSort::Name, false),
+            sql::artist_page(ArtistScope::All, ArtistSort::Name, false, false),
             vec![
                 ExplainBind::Text(None),
                 ExplainBind::Text(None),
                 ExplainBind::Int(50),
-                ExplainBind::Int(0),
             ],
         ),
         (
@@ -2420,6 +2770,37 @@ async fn seed_100k_marks(fixture: &Fixture) {
     write_batch(fixture, "perf marks", sql).await;
 }
 
+/// Guests over the 100k catalog: 1,000 artists who lead nothing, the n-th
+/// credited second on one track of each of `n % 10 + 1` albums led by
+/// others (5,500 credits), so the contributors view has artists to count.
+async fn seed_100k_guests(fixture: &Fixture) {
+    let mut artists = String::from(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) VALUES ",
+    );
+    let mut credits = String::from(
+        "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) VALUES ",
+    );
+    for guest in 0..1000 {
+        if guest > 0 {
+            artists.push_str(", ");
+        }
+        artists.push_str(&format!(
+            "('p-g{guest:04}', 'Perf Guest {guest:04}', 'perf guest {guest:04}', 'person', 1000, 1000)"
+        ));
+        for album in 0..(guest % 10 + 1) {
+            if guest > 0 || album > 0 {
+                credits.push_str(", ");
+            }
+            let track = guest * 100 + album * 10;
+            credits.push_str(&format!("('p-t{track:06}', 1, 'p-g{guest:04}', 'guest')"));
+        }
+    }
+    artists.push(';');
+    credits.push(';');
+    write_batch(fixture, "perf guests", artists).await;
+    write_batch(fixture, "perf guest credits", credits).await;
+}
+
 fn percentile(sorted: &mut [f64], pct: f64) -> f64 {
     sorted.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
     let rank = (pct / 100.0 * sorted.len() as f64).ceil() as usize;
@@ -2438,6 +2819,7 @@ fn percentile(sorted: &mut [f64], pct: f64) -> f64 {
 async fn perf_100k_endpoints_hold_p95() {
     let fixture = seed_small().await;
     seed_100k(&fixture).await;
+    seed_100k_guests(&fixture).await;
     // Settle the store like production: the seed leaves megabytes of WAL
     // no steady-state server carries, and the bench seeds checkpoint too.
     let checkpoint = fixture.runtime.checkpoint().clone();
@@ -2457,102 +2839,103 @@ async fn perf_100k_endpoints_hold_p95() {
     // Owned albums only: the small fixture's Empty Halls has no files.
     assert_eq!(stats.total_albums, 10004);
 
-    let miss_albums = AlbumFilter {
-        q: Some("zzz-no-such-thing-zzz".to_owned()),
-        ..Default::default()
+    // A deep page starts after the key of the row the old offset paging
+    // reached: album 9,000 by name, track 99,500 by title.
+    let deep_albums = After {
+        seed: 0,
+        key: Some(
+            fetch(
+                fixture.db(),
+                "SELECT title_folded, id FROM local_albums WHERE retired_into_album_id IS NULL \
+                 ORDER BY title_folded, id LIMIT 1 OFFSET 8999",
+                Vec::new(),
+                |row| Ok(vec![row.get::<_, Value>(0)?, row.get::<_, Value>(1)?]),
+            )
+            .await
+            .remove(0),
+        ),
     };
-    let miss_tracks = TrackFilter {
-        q: Some("zzz-no-such-thing-zzz".to_owned()),
-        ..Default::default()
+    let deep_tracks = After {
+        seed: 0,
+        key: Some(
+            fetch(
+                fixture.db(),
+                "SELECT title_folded, id FROM local_tracks WHERE availability = 'indexed' \
+                 ORDER BY title_folded, id LIMIT 1 OFFSET 99499",
+                Vec::new(),
+                |row| Ok(vec![row.get::<_, Value>(0)?, row.get::<_, Value>(1)?]),
+            )
+            .await
+            .remove(0),
+        ),
     };
-    let mut report = Vec::new();
-    // (name, samples)
-    let mut endpoints: Vec<(&str, Vec<f64>)> = vec![
-        ("library_albums", Vec::new()),
-        ("library_artists", Vec::new()),
-        ("library_tracks", Vec::new()),
-        ("library_stats", Vec::new()),
-        ("local_albums", Vec::new()),
-        ("local_search_miss", Vec::new()),
-    ];
+    let deep_by_artist = After {
+        seed: 0,
+        key: Some(
+            fetch(
+                fixture.db(),
+                "SELECT COALESCE(artist_name_folded, ''), album_title_folded, local_album_id, \
+                 disc_number, track_number, id FROM local_tracks \
+                 WHERE availability = 'indexed' ORDER BY 1, 2, 3, 4, 5, 6 LIMIT 1 OFFSET 99499",
+                Vec::new(),
+                |row| (0..6).map(|index| row.get::<_, Value>(index)).collect(),
+            )
+            .await
+            .remove(0),
+        ),
+    };
+    let deep = (deep_albums, deep_tracks, deep_by_artist);
+    // (name, samples). Every row holds the budget.
+    let mut endpoints: Vec<(&str, Vec<f64>)> = [
+        "library_albums",
+        "library_artists",
+        "library_tracks",
+        "library_stats",
+        "local_albums",
+        "local_search_miss",
+        "library_albums_deep_9000",
+        "library_tracks_deep_99500",
+        "library_tracks_by_artist",
+        "library_tracks_by_artist_deep_99500",
+        "library_recently_added",
+    ]
+    .into_iter()
+    .map(|name| (name, Vec::new()))
+    .collect();
+    // Timed and reported, not budgeted: the count sorts count each artist's
+    // albums or credits on every page (about 12 ms for the contributors
+    // view here) until per-artist counts are kept by triggers; random track
+    // pages key every track.
+    let mut reported: Vec<(&str, Vec<f64>)> = [
+        "library_contributors_by_appearances",
+        "library_artists_by_appearances",
+        "library_artists_by_album_count",
+        "library_tracks_random",
+    ]
+    .into_iter()
+    .map(|name| (name, Vec::new()))
+    .collect();
     for _ in 0..3 {
-        fixture
-            .catalog
-            .list_albums(&AlbumFilter::default(), AlbumSort::Name, false, 50, 0)
-            .await
-            .expect("warmup");
-        fixture
-            .catalog
-            .list_artists(ArtistScope::All, None, ArtistSort::Name, false, 50, 0)
-            .await
-            .expect("warmup");
-        fixture
-            .catalog
-            .list_tracks(&TrackFilter::default(), TrackSort::Title, false, 48, 0)
-            .await
-            .expect("warmup");
-        fixture.catalog.stats().await.expect("warmup");
-        fixture
-            .catalog
-            .list_albums(&miss_albums, AlbumSort::Name, false, 20, 0)
-            .await
-            .expect("warmup");
-        fixture
-            .catalog
-            .list_tracks(&miss_tracks, TrackSort::Title, false, 20, 0)
-            .await
-            .expect("warmup");
+        for (name, _) in endpoints.iter().chain(&reported) {
+            read_endpoint(&fixture.catalog, name, &deep).await;
+        }
     }
     for _ in 0..50 {
-        let tick = std::time::Instant::now();
-        fixture
-            .catalog
-            .list_albums(&AlbumFilter::default(), AlbumSort::Name, false, 50, 0)
-            .await
-            .expect("lists");
-        endpoints[0].1.push(tick.elapsed().as_secs_f64() * 1000.0);
-        let tick = std::time::Instant::now();
-        fixture
-            .catalog
-            .list_artists(ArtistScope::All, None, ArtistSort::Name, false, 50, 0)
-            .await
-            .expect("lists");
-        endpoints[1].1.push(tick.elapsed().as_secs_f64() * 1000.0);
-        let tick = std::time::Instant::now();
-        fixture
-            .catalog
-            .list_tracks(&TrackFilter::default(), TrackSort::Title, false, 48, 0)
-            .await
-            .expect("lists");
-        endpoints[2].1.push(tick.elapsed().as_secs_f64() * 1000.0);
-        let tick = std::time::Instant::now();
-        fixture.catalog.stats().await.expect("stats read");
-        endpoints[3].1.push(tick.elapsed().as_secs_f64() * 1000.0);
-        let tick = std::time::Instant::now();
-        fixture
-            .catalog
-            .list_albums(&AlbumFilter::default(), AlbumSort::Name, false, 50, 0)
-            .await
-            .expect("lists");
-        endpoints[4].1.push(tick.elapsed().as_secs_f64() * 1000.0);
-        let tick = std::time::Instant::now();
-        fixture
-            .catalog
-            .list_albums(&miss_albums, AlbumSort::Name, false, 20, 0)
-            .await
-            .expect("lists");
-        fixture
-            .catalog
-            .list_tracks(&miss_tracks, TrackSort::Title, false, 20, 0)
-            .await
-            .expect("lists");
-        endpoints[5].1.push(tick.elapsed().as_secs_f64() * 1000.0);
+        for (name, samples) in endpoints.iter_mut().chain(&mut reported) {
+            let tick = std::time::Instant::now();
+            read_endpoint(&fixture.catalog, name, &deep).await;
+            samples.push(tick.elapsed().as_secs_f64() * 1000.0);
+        }
     }
-    for (name, samples) in &mut endpoints {
-        let mut sorted = samples.clone();
-        let p95 = percentile(&mut sorted, 95.0);
-        let p50 = percentile(&mut sorted, 50.0);
+    let mut report = Vec::new();
+    for (name, samples) in reported.iter_mut().chain(&mut endpoints) {
+        let p95 = percentile(samples, 95.0);
+        let p50 = percentile(samples, 50.0);
         report.push(format!("{name}: p50 {p50:.2} ms, p95 {p95:.2} ms"));
+    }
+    eprintln!("100k catalog p95:\n{}", report.join("\n"));
+    for (name, samples) in &mut endpoints {
+        let p95 = percentile(samples, 95.0);
         // The budget binds release runs; debug runs report only, since
         // an unoptimized build adds milliseconds per call there.
         if !cfg!(debug_assertions) {
@@ -2563,7 +2946,108 @@ async fn perf_100k_endpoints_hold_p95() {
             );
         }
     }
-    eprintln!("100k catalog p95:\n{}", report.join("\n"));
+}
+
+/// One read of a timed endpoint.
+async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After, After)) {
+    let first = After::default();
+    let random = After {
+        seed: 42,
+        key: None,
+    };
+    let albums = AlbumFilter::default();
+    let tracks = TrackFilter::default();
+    let miss_albums = AlbumFilter {
+        q: Some("zzz-no-such-thing-zzz".to_owned()),
+        ..Default::default()
+    };
+    let miss_tracks = TrackFilter {
+        q: Some("zzz-no-such-thing-zzz".to_owned()),
+        ..Default::default()
+    };
+    let artists = |scope, sort| catalog.artist_list(scope, None, sort, true, 48, &first);
+    match name {
+        "library_albums" | "local_albums" => {
+            catalog
+                .list_albums(&albums, AlbumSort::Name, false, 50, &first)
+                .await
+                .expect("lists");
+        }
+        "library_albums_deep_9000" => {
+            catalog
+                .list_albums(&albums, AlbumSort::Name, false, 50, &deep.0)
+                .await
+                .expect("lists");
+        }
+        "library_artists" => {
+            catalog
+                .artist_list(ArtistScope::All, None, ArtistSort::Name, false, 50, &first)
+                .await
+                .expect("lists");
+        }
+        "library_contributors_by_appearances" => {
+            artists(ArtistScope::Contributors, ArtistSort::AppearanceCount)
+                .await
+                .expect("lists");
+        }
+        "library_artists_by_appearances" => {
+            artists(ArtistScope::All, ArtistSort::AppearanceCount)
+                .await
+                .expect("lists");
+        }
+        "library_artists_by_album_count" => {
+            artists(ArtistScope::All, ArtistSort::AlbumCount)
+                .await
+                .expect("lists");
+        }
+        "library_tracks" => {
+            catalog
+                .list_tracks(&tracks, TrackSort::Title, false, 48, &first)
+                .await
+                .expect("lists");
+        }
+        "library_tracks_deep_99500" => {
+            catalog
+                .list_tracks(&tracks, TrackSort::Title, false, 48, &deep.1)
+                .await
+                .expect("lists");
+        }
+        "library_tracks_by_artist" => {
+            catalog
+                .list_tracks(&tracks, TrackSort::Artist, false, 48, &first)
+                .await
+                .expect("lists");
+        }
+        "library_tracks_by_artist_deep_99500" => {
+            catalog
+                .list_tracks(&tracks, TrackSort::Artist, false, 48, &deep.2)
+                .await
+                .expect("lists");
+        }
+        "library_tracks_random" => {
+            catalog
+                .list_tracks(&tracks, TrackSort::Random, false, 48, &random)
+                .await
+                .expect("lists");
+        }
+        "library_stats" => {
+            catalog.stats().await.expect("stats read");
+        }
+        "library_recently_added" => {
+            catalog.recently_added(20).await.expect("recent");
+        }
+        "local_search_miss" => {
+            catalog
+                .list_albums(&miss_albums, AlbumSort::Name, false, 20, &first)
+                .await
+                .expect("lists");
+            catalog
+                .list_tracks(&miss_tracks, TrackSort::Title, false, 20, &first)
+                .await
+                .expect("lists");
+        }
+        other => panic!("no timed endpoint {other}"),
+    }
 }
 
 /// Acceptance: the player pages the Jellyfin and Subsonic browse routes

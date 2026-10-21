@@ -1385,13 +1385,6 @@ export interface TargetNativeTrack {
 
 export type NativeTrackListItem = TargetNativeTrack;
 
-export type NativeTrackPage = {
-	items: NativeTrackListItem[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
 export interface LibraryAlbumSummary {
 	id: string;
 	title: string;
@@ -1731,8 +1724,8 @@ export interface LibraryArtistAppearancesResponse {
 	items: LibraryArtistAppearance[];
 	total: number;
 	total_tracks: number;
-	offset: number;
-	limit: number;
+	/** The cursor of the page after this one; null on the last page. */
+	next: string | null;
 }
 
 export interface LibraryTrack {

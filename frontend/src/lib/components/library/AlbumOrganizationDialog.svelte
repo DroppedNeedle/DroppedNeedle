@@ -35,7 +35,6 @@
 	let previewResult = $state<MembershipPreviewResponse | null>(null);
 	const targetAlbums = getLibraryAlbumsQuery(() => ({
 		limit: 48,
-		offset: 0,
 		sort: 'name',
 		order: 'asc',
 		...(targetSearch ? { q: targetSearch } : {})

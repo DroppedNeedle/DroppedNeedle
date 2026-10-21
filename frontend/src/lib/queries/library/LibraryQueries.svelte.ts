@@ -11,6 +11,7 @@ import {
 	LibraryQueryKeyFactory,
 	type LibraryV3AlbumsParams,
 	type LibraryV3ArtistsParams,
+	type LibraryV3TracksParams,
 	type LibraryV3UserId
 } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
@@ -23,7 +24,12 @@ import {
 	toLibraryStats,
 	toNativeAlbums
 } from './libraryAdapters';
-import { toAlbumStatus, toNativeTrack } from './libraryTracks';
+import {
+	fetchLibraryTracks,
+	toAlbumStatus,
+	toNativeTrack,
+	type LibraryTrackPage
+} from './libraryTracks';
 import type {
 	Album,
 	ArtistSort,
@@ -35,6 +41,7 @@ import type {
 	LibraryArtistScope,
 	LibraryScanSchedule,
 	LibraryMembershipResponse,
+	NativeAlbumsResponse,
 	NativeArtistsResponse,
 	NativeTrackListItem,
 	ScanFrequency
@@ -99,6 +106,27 @@ export const getLibraryAlbumsQueryOptions = (
 export const getLibraryAlbumsQuery = (getParams: Getter<LibraryV3AlbumsParams>) =>
 	createQuery(() => getLibraryAlbumsQueryOptions(userId(), getParams()));
 
+/** One page of albums and the cursor of the page after it. */
+export type LibraryAlbumsPage = NativeAlbumsResponse & { next: string | null };
+
+// The album list a page at a time: each page reads on from the last one's
+// cursor, so a deep page costs what the first does.
+export const getLibraryAlbumsInfiniteQuery = (getParams: Getter<LibraryV3AlbumsParams>) =>
+	createInfiniteQuery(() => {
+		const params = getParams();
+		return {
+			staleTime: CACHE_TTL.LIBRARY,
+			placeholderData: keepPreviousData,
+			queryKey: LibraryQueryKeyFactory.catalog.albumPages(userId(), params),
+			initialPageParam: null as string | null,
+			queryFn: async ({ pageParam, signal }): Promise<LibraryAlbumsPage> => {
+				const page = await api.global.v3.GET(LibraryV3Api.albums(params, pageParam), { signal });
+				return { ...toNativeAlbums(page), next: page.next ?? null };
+			},
+			getNextPageParam: (lastPage: LibraryAlbumsPage) => lastPage.next ?? undefined
+		};
+	});
+
 export interface LibraryArtistsParams {
 	sortBy: ArtistSort;
 	sortOrder: 'asc' | 'desc';
@@ -108,10 +136,9 @@ export interface LibraryArtistsParams {
 
 const ARTISTS_PAGE_SIZE = 48;
 
-function artistParams(params: LibraryArtistsParams, offset: number): LibraryV3ArtistsParams {
+function artistParams(params: LibraryArtistsParams): LibraryV3ArtistsParams {
 	return {
 		limit: ARTISTS_PAGE_SIZE,
-		offset,
 		sort: params.sortBy,
 		order: params.sortOrder,
 		q: params.q || undefined,
@@ -119,31 +146,47 @@ function artistParams(params: LibraryArtistsParams, offset: number): LibraryV3Ar
 	};
 }
 
+/** One page of artists and the cursor of the page after it. */
+type LibraryArtistsPage = NativeArtistsResponse & { next: string | null };
+
 async function fetchArtists(
 	params: LibraryV3ArtistsParams,
+	after: string | null,
 	signal?: AbortSignal
-): Promise<NativeArtistsResponse> {
-	const page = await api.global.v3.GET(LibraryV3Api.artists(params), { signal });
+): Promise<LibraryArtistsPage> {
+	const page = await api.global.v3.GET(LibraryV3Api.artists(params, after), { signal });
 	return {
 		items: page.items.map(toArtistSummary),
 		total: page.total,
 		album_artist_total: page.album_artist_total,
-		contributor_total: page.contributor_total
+		contributor_total: page.contributor_total,
+		next: page.next ?? null
 	};
 }
 
 export const getLibraryArtistsInfiniteQuery = (getParams: Getter<LibraryArtistsParams>) =>
 	createInfiniteQuery(() => {
+		const params = artistParams(getParams());
+		return {
+			staleTime: CACHE_TTL.LIBRARY,
+			queryKey: LibraryQueryKeyFactory.catalog.artists(userId(), params),
+			initialPageParam: null as string | null,
+			queryFn: ({ pageParam, signal }) => fetchArtists(params, pageParam, signal),
+			getNextPageParam: (lastPage: LibraryArtistsPage) => lastPage.next ?? undefined
+		};
+	});
+
+// The track list a page at a time, read on by cursor.
+export const getLibraryTracksInfiniteQuery = (getParams: Getter<LibraryV3TracksParams>) =>
+	createInfiniteQuery(() => {
 		const params = getParams();
 		return {
 			staleTime: CACHE_TTL.LIBRARY,
-			queryKey: LibraryQueryKeyFactory.catalog.artists(userId(), artistParams(params, 0)),
-			initialPageParam: 0,
-			queryFn: ({ pageParam = 0, signal }) => fetchArtists(artistParams(params, pageParam), signal),
-			getNextPageParam: (lastPage: NativeArtistsResponse, allPages: NativeArtistsResponse[]) => {
-				const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
-				return loaded < lastPage.total ? loaded : undefined;
-			}
+			placeholderData: keepPreviousData,
+			queryKey: LibraryQueryKeyFactory.catalog.tracks(userId(), params),
+			initialPageParam: null as string | null,
+			queryFn: ({ pageParam, signal }) => fetchLibraryTracks(params, pageParam, signal),
+			getNextPageParam: (lastPage: LibraryTrackPage) => lastPage.next ?? undefined
 		};
 	});
 
@@ -155,10 +198,7 @@ export const getLibraryArtistThumbsQuery = () =>
 		staleTime: CACHE_TTL.LIBRARY,
 		queryKey: LibraryQueryKeyFactory.catalog.artistThumbs(userId()),
 		queryFn: ({ signal }) =>
-			fetchArtists(
-				{ limit: ARTIST_THUMBS_LIMIT, offset: 0, sort: 'album_count', order: 'desc' },
-				signal
-			)
+			fetchArtists({ limit: ARTIST_THUMBS_LIMIT, sort: 'album_count', order: 'desc' }, null, signal)
 	}));
 
 export const getLibraryStatsQueryOptions = (forUser: LibraryV3UserId) =>
@@ -299,12 +339,12 @@ const ARTIST_APPEARANCES_PAGE_SIZE = 20;
 // which the track filter needs.
 async function fetchAppearances(
 	id: string,
-	offset: number,
+	after: string | null,
 	signal: AbortSignal
 ): Promise<LibraryArtistAppearancesResponse> {
 	const artistId = (await api.global.v3.GET(LibraryV3Api.artistDetail(id), { signal })).id;
 	const page = await api.global.v3.GET(
-		LibraryV3Api.artistAppearances(artistId, { limit: ARTIST_APPEARANCES_PAGE_SIZE, offset }),
+		LibraryV3Api.artistAppearances(artistId, { limit: ARTIST_APPEARANCES_PAGE_SIZE, after }),
 		{ signal }
 	);
 	const items = await Promise.all(
@@ -312,7 +352,6 @@ async function fetchAppearances(
 			const tracks = await api.global.v3.GET(
 				LibraryV3Api.tracks({
 					limit: 200,
-					offset: 0,
 					sort: 'title',
 					order: 'asc',
 					albumId: album.id,
@@ -327,8 +366,7 @@ async function fetchAppearances(
 		items,
 		total: page.total,
 		total_tracks: items.reduce((sum, item) => sum + item.tracks.length, 0),
-		offset: page.offset,
-		limit: page.limit
+		next: page.next ?? null
 	};
 }
 
@@ -341,15 +379,9 @@ export const getLibraryArtistAppearancesQuery = (getArtistId: Getter<string>) =>
 			queryKey: LibraryQueryKeyFactory.catalog.artistAppearances(userId(), artistId, {
 				limit: ARTIST_APPEARANCES_PAGE_SIZE
 			}),
-			initialPageParam: 0,
-			queryFn: ({ pageParam = 0, signal }) => fetchAppearances(artistId, pageParam, signal),
-			getNextPageParam: (
-				lastPage: LibraryArtistAppearancesResponse,
-				allPages: LibraryArtistAppearancesResponse[]
-			) => {
-				const loaded = allPages.reduce((total, page) => total + page.items.length, 0);
-				return loaded < lastPage.total ? loaded : undefined;
-			}
+			initialPageParam: null as string | null,
+			queryFn: ({ pageParam, signal }) => fetchAppearances(artistId, pageParam, signal),
+			getNextPageParam: (lastPage: LibraryArtistAppearancesResponse) => lastPage.next ?? undefined
 		};
 	});
 
@@ -401,7 +433,7 @@ export const getLibrarySearchQuery = (getTerm: Getter<string>) =>
 			placeholderData: keepPreviousData,
 			queryKey: LibraryQueryKeyFactory.catalog.search(userId(), term),
 			queryFn: async ({ signal }): Promise<LibrarySearchResults> => {
-				const page = { limit: LIBRARY_SEARCH_LIMIT, offset: 0, q: term } as const;
+				const page = { limit: LIBRARY_SEARCH_LIMIT, q: term } as const;
 				const [albums, artists, tracks] = await Promise.all([
 					api.global.v3.GET(LibraryV3Api.albums({ ...page, sort: 'date_added', order: 'desc' }), {
 						signal

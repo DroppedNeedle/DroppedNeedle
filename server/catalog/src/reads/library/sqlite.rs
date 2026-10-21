@@ -15,6 +15,10 @@
 //! - Retired artists (`retired_into_artist_id` set) are merged away and read
 //!   as absent everywhere. Live, owned albums and a track's recording id
 //!   mean what [`super::definitions`] says.
+//! - Long lists page by keyset: each page reads the rows after the last
+//!   one sent, in an order that ends in the row id, so a deep page costs
+//!   what the first does. Their totals come from the maintained counts or
+//!   are remembered per catalog revision.
 //! - List methods page ids first, then aggregate over the page only; the
 //!   0005 read models (trigram FTS index, maintained format totals) keep
 //!   text search and stats off full scans.
@@ -27,6 +31,7 @@
 use std::collections::{HashMap, HashSet};
 
 use droppedneedle_kernel::db::statement::ListLen;
+use rusqlite::Row;
 use rusqlite::types::Value;
 
 use super::sql;
@@ -35,9 +40,9 @@ use super::store::{
     track_row, unsigned,
 };
 use super::stores::{
-    AlbumFilter, AlbumRecord, AlbumSort, ArtistListing, ArtistRecord, ArtistScope, ArtistSort,
-    DecadeRecord, GenreRecord, ManagementHoldRecord, StatsRecord, StoreError, TrackFilter,
-    TrackRecord, TrackSort,
+    After, AlbumFilter, AlbumRecord, AlbumSort, ArtistKeyedListing, ArtistListing, ArtistRecord,
+    ArtistScope, ArtistSort, DecadeRecord, GenreRecord, KeyedPage, ManagementHoldRecord,
+    StatsRecord, StoreError, TrackFilter, TrackRecord, TrackSort,
 };
 
 /// Escape the LIKE metacharacters in a folded filter, then wrap for
@@ -174,40 +179,99 @@ fn name_filter(q: Option<&str>) -> Vec<Value> {
     vec![pattern.clone(), pattern]
 }
 
+/// The last `width` columns of a page row: its sort key.
+fn key_of(row: &Row<'_>, width: usize) -> rusqlite::Result<Vec<Value>> {
+    let from = row.as_ref().column_count() - width;
+    (from..from + width).map(|index| row.get(index)).collect()
+}
+
+/// A page read one row long, split: the rows to send, and the last sent
+/// row's key when more follow.
+fn split_page<T>(mut rows: Vec<(T, Vec<Value>)>, limit: u64) -> (Vec<T>, Option<Vec<Value>>) {
+    let more = rows.len() as u64 > limit;
+    rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let next = if more {
+        rows.last().map(|(_, key)| key.clone())
+    } else {
+        None
+    };
+    (rows.into_iter().map(|(item, _)| item).collect(), next)
+}
+
+/// The first remembered total, zero when none.
+fn first_total(totals: &[u64]) -> u64 {
+    totals.first().copied().unwrap_or(0)
+}
+
 impl LocalCatalog {
-    /// One page of albums plus the match total.
+    /// One page of albums plus the match total, remembered per catalog
+    /// revision.
     pub async fn list_albums(
         &self,
         filter: &AlbumFilter,
         sort: AlbumSort,
         descending: bool,
         limit: u64,
-        offset: u64,
-    ) -> Result<(Vec<AlbumRecord>, u64), StoreError> {
+        after: &After,
+    ) -> Result<KeyedPage<AlbumRecord>, StoreError> {
+        let keys = sql::album_keys(sort, descending);
         let filter_values = album_filter_values(filter);
-        let mut page_values = filter_values.clone();
-        page_values.extend([count(limit), count(offset)]);
-        // Page the ids first: filtering and ordering touch albums only,
+        let mut values = Vec::new();
+        if sort == AlbumSort::Random {
+            values.extend(sql::shuffle_values(after.seed));
+        }
+        values.extend(filter_values.iter().cloned());
+        if let Some(key) = &after.key {
+            values.extend(sql::after_values(&keys, key));
+        }
+        values.push(count(limit.saturating_add(1)));
+        let text = sql::album_page(sort, descending, after.key.is_some());
+        // Page the keys first: filtering and ordering touch albums only,
         // so the track aggregation below runs over the page, never the
         // catalog.
-        let ids: Vec<String> = self
-            .read("library.albums.list", move |conn| {
-                rows(
-                    conn,
-                    &sql::album_page(sort, descending),
-                    &page_values,
-                    |row| row.get(0),
-                )
+        let (items, next) = self
+            .album_key_page("library.albums.list", text, values, keys.len(), limit)
+            .await?;
+        let total = self
+            .totals(
+                format!("albums {filter:?}"),
+                "library.albums.count",
+                move |conn| {
+                    let total: i64 = scalar(conn, sql::ALBUM_COUNT.text(), &filter_values)?;
+                    Ok(vec![unsigned(total)])
+                },
+            )
+            .await?;
+        Ok(KeyedPage {
+            items,
+            total: first_total(&total),
+            next,
+        })
+    }
+
+    /// One page of albums by a statement that selects their sort keys, the
+    /// id last, one row past `limit`.
+    async fn album_key_page(
+        &self,
+        name: &'static str,
+        text: String,
+        values: Vec<Value>,
+        width: usize,
+        limit: u64,
+    ) -> Result<(Vec<AlbumRecord>, Option<Vec<Value>>), StoreError> {
+        let keyed = self
+            .read(name, move |conn| {
+                rows(conn, &text, &values, |row| {
+                    let key = key_of(row, width)?;
+                    let id: String = row.get(width - 1)?;
+                    Ok((id, key))
+                })
             })
             .await?;
+        let (ids, next) = split_page(keyed, limit);
         let mut albums = self.albums_by_id(&ids).await?;
-        let total: i64 = self
-            .read("library.albums.count", move |conn| {
-                scalar(conn, sql::ALBUM_COUNT.text(), &filter_values)
-            })
-            .await?;
         let ordered = ids.iter().filter_map(|id| albums.remove(id)).collect();
-        Ok((ordered, unsigned(total)))
+        Ok((ordered, next))
     }
 
     /// The album projection for `ids`, by id.
@@ -310,8 +374,9 @@ impl LocalCatalog {
         .await
     }
 
-    /// One page of artists in scope plus the match total, the album-artist
-    /// total, and the contributor total (totals honor `q`, ignore paging).
+    /// One page of artists in scope at an offset, for the player apps,
+    /// plus the match total, the album-artist total, and the contributor
+    /// total (totals honor `q`, ignore paging).
     pub async fn list_artists(
         &self,
         scope: ArtistScope,
@@ -321,43 +386,91 @@ impl LocalCatalog {
         limit: u64,
         offset: u64,
     ) -> Result<ArtistListing, StoreError> {
-        let names = name_filter(q);
-        let mut page_values = names.clone();
+        let mut page_values = name_filter(q);
         page_values.extend([count(limit), count(offset)]);
         // Page the ids first; counts aggregate over the page below.
         let ids: Vec<String> = self
             .read("library.artists.list", move |conn| {
                 rows(
                     conn,
-                    &sql::artist_page(scope, sort, descending),
+                    &sql::artist_offset_page(scope, sort, descending),
                     &page_values,
                     |row| row.get(0),
                 )
             })
             .await?;
         let artists = self.hydrate_artists(&ids).await?;
-        let totals_values = names.clone();
-        let (mut total, led, contributors): (i64, i64, i64) = self
-            .read("library.artists.count", move |conn| {
-                let mut statement = conn.prepare_cached(sql::ARTIST_TOTALS.text())?;
-                statement.query_row(rusqlite::params_from_iter(&totals_values), |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        let (total, led, contributors) = self.artist_totals(scope, q).await?;
+        Ok((artists, total, led, contributors))
+    }
+
+    /// One page of artists in scope from a cursor, plus the album-artist
+    /// and contributor totals. Totals honor `q` and are remembered per
+    /// catalog revision.
+    pub async fn artist_list(
+        &self,
+        scope: ArtistScope,
+        q: Option<&str>,
+        sort: ArtistSort,
+        descending: bool,
+        limit: u64,
+        after: &After,
+    ) -> Result<ArtistKeyedListing, StoreError> {
+        let keys = sql::artist_keys(sort, descending);
+        let width = keys.len();
+        let mut values = name_filter(q);
+        if let Some(key) = &after.key {
+            values.extend(sql::after_values(&keys, key));
+        }
+        values.push(count(limit.saturating_add(1)));
+        let text = sql::artist_page(scope, sort, descending, after.key.is_some());
+        // Page the ids first; counts aggregate over the page below.
+        let keyed = self
+            .read("library.artists.list", move |conn| {
+                rows(conn, &text, &values, |row| {
+                    let key = key_of(row, width)?;
+                    let id: String = row.get(width - 1)?;
+                    Ok((id, key))
                 })
             })
             .await?;
-        if !matches!(scope, ArtistScope::All) {
-            total = self
-                .read("library.artists.count", move |conn| {
-                    scalar(conn, &sql::artist_scope_count(scope), &names)
-                })
-                .await?;
+        let (ids, next) = split_page(keyed, limit);
+        let items = self.hydrate_artists(&ids).await?;
+        let (total, led, contributors) = self.artist_totals(scope, q).await?;
+        Ok((KeyedPage { items, total, next }, led, contributors))
+    }
+
+    /// Artists in scope, album artists and contributors matching `q`,
+    /// remembered per catalog revision.
+    async fn artist_totals(
+        &self,
+        scope: ArtistScope,
+        q: Option<&str>,
+    ) -> Result<(u64, u64, u64), StoreError> {
+        let names = name_filter(q);
+        let totals = self
+            .totals(
+                format!("artists {scope:?} {q:?}"),
+                "library.artists.count",
+                move |conn| {
+                    let mut statement = conn.prepare_cached(sql::ARTIST_TOTALS.text())?;
+                    let (all, led, contributors): (i64, i64, i64) = statement
+                        .query_row(rusqlite::params_from_iter(&names), |row| {
+                            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                        })?;
+                    let total = if matches!(scope, ArtistScope::All) {
+                        all
+                    } else {
+                        scalar(conn, &sql::artist_scope_count(scope), &names)?
+                    };
+                    Ok(vec![unsigned(total), unsigned(led), unsigned(contributors)])
+                },
+            )
+            .await?;
+        match totals.as_slice() {
+            [total, led, contributors] => Ok((*total, *led, *contributors)),
+            _ => Ok((0, 0, 0)),
         }
-        Ok((
-            artists,
-            unsigned(total),
-            unsigned(led),
-            unsigned(contributors),
-        ))
     }
 
     /// Artist rows with their counts for `ids`, in `ids` order; unknown ids
@@ -470,21 +583,29 @@ impl LocalCatalog {
         &self,
         artist_id: &str,
         limit: u64,
-        offset: u64,
-    ) -> Result<(Vec<AlbumRecord>, u64), StoreError> {
+        after: &After,
+    ) -> Result<KeyedPage<AlbumRecord>, StoreError> {
+        let keys = sql::title_keys();
         let artist = Value::Text(artist_id.to_owned());
-        let page = vec![artist.clone(), count(limit), count(offset)];
-        let albums = self
-            .read("library.artists.albums", move |conn| {
-                rows(conn, sql::LED_ALBUMS.text(), &page, album_row)
-            })
+        let mut values = vec![artist.clone()];
+        if let Some(key) = &after.key {
+            values.extend(sql::after_values(&keys, key));
+        }
+        values.push(count(limit.saturating_add(1)));
+        let text = sql::led_album_page(after.key.is_some());
+        let (items, next) = self
+            .album_key_page("library.artists.albums", text, values, keys.len(), limit)
             .await?;
         let total: i64 = self
             .read("library.artists.albums.count", move |conn| {
                 scalar(conn, sql::LED_ALBUM_COUNT.text(), &[artist])
             })
             .await?;
-        Ok((albums, unsigned(total)))
+        Ok(KeyedPage {
+            items,
+            total: unsigned(total),
+            next,
+        })
     }
 
     /// One page of albums where the artist appears without leading, name
@@ -493,34 +614,48 @@ impl LocalCatalog {
         &self,
         artist_id: &str,
         limit: u64,
-        offset: u64,
-    ) -> Result<(Vec<AlbumRecord>, u64), StoreError> {
+        after: &After,
+    ) -> Result<KeyedPage<AlbumRecord>, StoreError> {
+        let keys = sql::title_keys();
         let artist = Value::Text(artist_id.to_owned());
         let filter = vec![artist.clone(), artist];
-        let mut page = filter.clone();
-        page.extend([count(limit), count(offset)]);
-        let albums = self
-            .read("library.artists.appearances", move |conn| {
-                rows(conn, sql::APPEARANCES.text(), &page, album_row)
-            })
+        let mut values = filter.clone();
+        if let Some(key) = &after.key {
+            values.extend(sql::after_values(&keys, key));
+        }
+        values.push(count(limit.saturating_add(1)));
+        let text = sql::appearance_page(after.key.is_some());
+        let (items, next) = self
+            .album_key_page(
+                "library.artists.appearances",
+                text,
+                values,
+                keys.len(),
+                limit,
+            )
             .await?;
         let total: i64 = self
             .read("library.artists.appearances.count", move |conn| {
                 scalar(conn, sql::APPEARANCE_COUNT.text(), &filter)
             })
             .await?;
-        Ok((albums, unsigned(total)))
+        Ok(KeyedPage {
+            items,
+            total: unsigned(total),
+            next,
+        })
     }
 
-    /// One page of streamable tracks plus the match total.
+    /// One page of streamable tracks plus the match total: the maintained
+    /// count when unfiltered, else remembered per catalog revision.
     pub async fn list_tracks(
         &self,
         filter: &TrackFilter,
         sort: TrackSort,
         descending: bool,
         limit: u64,
-        offset: u64,
-    ) -> Result<(Vec<TrackRecord>, u64), StoreError> {
+        after: &After,
+    ) -> Result<KeyedPage<TrackRecord>, StoreError> {
         // Words of 3+ characters search the FTS index; anything else
         // keeps the LIKE substring match.
         let search = filter.q.as_deref().and_then(TextSearch::parse);
@@ -534,7 +669,11 @@ impl LocalCatalog {
                 })
                 .await?;
             if !hit {
-                return Ok((Vec::new(), 0));
+                return Ok(KeyedPage {
+                    items: Vec::new(),
+                    total: 0,
+                    next: None,
+                });
             }
         }
         let pattern = match search {
@@ -554,31 +693,62 @@ impl LocalCatalog {
         let short = search
             .as_ref()
             .map(|search| ListLen::new(search.short_words.len()));
-        let mut page_values = filter_values.clone();
-        page_values.extend([count(limit), count(offset)]);
-        let tracks = self
+        let keys = sql::track_keys(sort, descending);
+        let width = keys.len();
+        let mut values = Vec::new();
+        if sort == TrackSort::Random {
+            values.extend(sql::shuffle_values(after.seed));
+        }
+        values.extend(filter_values.iter().cloned());
+        if let Some(key) = &after.key {
+            values.extend(sql::after_values(&keys, key));
+        }
+        values.push(count(limit.saturating_add(1)));
+        let after_cursor = after.key.is_some();
+        let text = match short {
+            Some(short) => sql::track_page_words(short, sort, descending, after_cursor),
+            None => sql::track_page_like(sort, descending, after_cursor),
+        };
+        let keyed = self
             .read("library.tracks.list", move |conn| {
-                let text = match short {
-                    Some(short) => sql::track_page_words(short, sort, descending),
-                    None => sql::track_page_like(sort, descending),
-                };
-                rows(conn, &text, &page_values, track_row)
+                rows(conn, &text, &values, |row| {
+                    Ok((track_row(row)?, key_of(row, width)?))
+                })
             })
             .await?;
+        let (items, next) = split_page(keyed, limit);
         let unfiltered = filter.q.is_none()
             && filter.album_id.is_none()
             && filter.artist_id.is_none()
             && filter.genre.is_none();
         // Unfiltered, the maintained exact count of indexed tracks
         // (migration 0005) answers.
-        let total: i64 = self
-            .read("library.tracks.count", move |conn| match short {
-                _ if unfiltered => scalar(conn, sql::TRACK_TOTAL.text(), &[]),
-                Some(short) => scalar(conn, &sql::track_count_words(short), &filter_values),
-                None => scalar(conn, sql::TRACK_COUNT_LIKE.text(), &filter_values),
-            })
-            .await?;
-        Ok((tracks, unsigned(total)))
+        let total = if unfiltered {
+            let total: i64 = self
+                .read("library.tracks.count", |conn| {
+                    scalar(conn, sql::TRACK_TOTAL.text(), &[])
+                })
+                .await?;
+            unsigned(total)
+        } else {
+            let totals = self
+                .totals(
+                    format!("tracks {filter:?}"),
+                    "library.tracks.count",
+                    move |conn| {
+                        let total: i64 = match short {
+                            Some(short) => {
+                                scalar(conn, &sql::track_count_words(short), &filter_values)?
+                            }
+                            None => scalar(conn, sql::TRACK_COUNT_LIKE.text(), &filter_values)?,
+                        };
+                        Ok(vec![unsigned(total)])
+                    },
+                )
+                .await?;
+            first_total(&totals)
+        };
+        Ok(KeyedPage { items, total, next })
     }
 
     /// One streamable track by id. None covers unknown ids and tracks
@@ -640,13 +810,19 @@ impl LocalCatalog {
         .await
     }
 
-    /// Newest owned albums first, capped.
+    /// Newest owned albums first, capped: the ids from the creation index,
+    /// then the projection for those albums only.
     pub async fn recently_added(&self, limit: u64) -> Result<Vec<AlbumRecord>, StoreError> {
         let values = vec![count(limit)];
-        self.read("library.albums.recent", move |conn| {
-            rows(conn, sql::RECENTLY_ADDED.text(), &values, album_row)
-        })
-        .await
+        let ids: Vec<String> = self
+            .read("library.albums.recent", move |conn| {
+                rows(conn, sql::RECENT_ALBUM_IDS.text(), &values, |row| {
+                    row.get(0)
+                })
+            })
+            .await?;
+        let mut albums = self.albums_by_id(&ids).await?;
+        Ok(ids.iter().filter_map(|id| albums.remove(id)).collect())
     }
 
     /// Genres by descending track count, name tiebreak.

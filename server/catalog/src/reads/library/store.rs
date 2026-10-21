@@ -9,22 +9,82 @@
 //! `sql.rs`, and each entity is read through its one projection and the row
 //! mapper here.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use droppedneedle_kernel::db::{Db, DbError};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension as _, Row};
 
+use super::sql;
 use super::stores::{AlbumRecord, ArtistRecord, StoreError, TrackRecord};
 
-/// The local catalog. `Clone` is cheap; clones share the database.
+/// The local catalog. `Clone` is cheap; clones share the database and the
+/// remembered totals.
 #[derive(Clone, Debug)]
 pub struct LocalCatalog {
     db: Db,
+    totals: Arc<Mutex<Totals>>,
 }
+
+/// List totals counted at one catalog revision, by list and filter. Every
+/// catalog write moves the revision, which drops them all.
+#[derive(Debug, Default)]
+struct Totals {
+    revision: i64,
+    counted: HashMap<String, Vec<u64>>,
+}
+
+/// Most totals remembered at one revision; past this they are dropped.
+const TOTALS_CAP: usize = 256;
 
 impl LocalCatalog {
     /// Reads over `db`.
     pub fn new(db: Db) -> Self {
-        Self { db }
+        Self {
+            db,
+            totals: Arc::default(),
+        }
+    }
+
+    /// The totals `key` names at the catalog revision now: remembered from
+    /// an earlier page, else counted by `count` in a read named `name`.
+    pub(crate) async fn totals<F>(
+        &self,
+        key: String,
+        name: &'static str,
+        count: F,
+    ) -> Result<Vec<u64>, StoreError>
+    where
+        F: FnOnce(&Connection) -> rusqlite::Result<Vec<u64>> + Send + 'static,
+    {
+        let revision: i64 = self
+            .read("library.catalog.revision", |conn| {
+                scalar(conn, sql::CATALOG_REVISION.text(), &[])
+            })
+            .await?;
+        {
+            let memo = self
+                .totals
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if memo.revision == revision
+                && let Some(counted) = memo.counted.get(&key)
+            {
+                return Ok(counted.clone());
+            }
+        }
+        let counted = self.read(name, count).await?;
+        let mut memo = self
+            .totals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if memo.revision != revision || memo.counted.len() >= TOTALS_CAP {
+            memo.revision = revision;
+            memo.counted.clear();
+        }
+        memo.counted.insert(key, counted.clone());
+        Ok(counted)
     }
 
     /// One pooled read named `name`. A busy database answers

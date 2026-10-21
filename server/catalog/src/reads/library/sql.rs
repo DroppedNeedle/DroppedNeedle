@@ -10,6 +10,7 @@
 
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
+use rusqlite::types::Value;
 
 use super::definitions::{
     copy_order, live_album, musicbrainz, owned_album, owned_artist, owned_release_groups,
@@ -64,7 +65,11 @@ droppedneedle_kernel::sql! {
          WHERE t2.local_album_id = a.id AND t2.availability = 'indexed' \
          GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1)) = ?)"
     ));
-    /// One page of the album list's ids, one statement per sort.
+    /// A shuffle seed's three numbers as one row `s` beside the rows a
+    /// random list shuffles, from [`shuffle_values`].
+    pub(crate) fragment SHUFFLE_SEED = " CROSS JOIN (SELECT ? AS sa, ? AS sb, ? AS sk) s";
+    /// One page of the album list's keys, one statement per sort and
+    /// direction, from the start or after a cursor.
     family ALBUM_PAGE = album_page;
     /// The album projection for a page of ids.
     family ALBUM_ROWS = album_rows;
@@ -97,31 +102,27 @@ droppedneedle_kernel::sql! {
         AND a.id != ? AND " + (live_album!("a"))
         + " GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC";
     /// A page of the live albums an artist leads, by title.
-    pub(crate) LED_ALBUMS = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
-        + " WHERE a.album_artist_id = ? AND " + (live_album!("a"))
-        + " GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC LIMIT ? OFFSET ?";
+    family LED_ALBUM_PAGE = led_album_page;
     /// How many live albums an artist leads.
     pub(crate) LED_ALBUM_COUNT = "SELECT COUNT(*) FROM local_albums a \
         WHERE a.album_artist_id = ? AND " + (live_album!("a"));
-    /// Live albums an artist (bound twice) appears on without leading.
+    /// Live albums an artist (bound twice) appears on without leading,
+    /// reached from the artist's credits.
     pub(crate) fragment APPEARANCE_FILTER = (concat!(
         live_album!("a"),
-        " AND a.album_artist_id != ? AND EXISTS \
-         (SELECT 1 FROM local_tracks at \
-         JOIN local_track_artists ata ON ata.local_track_id = at.id \
-         WHERE at.local_album_id = a.id AND ata.local_artist_id = ? \
-         AND at.availability = 'indexed')"
+        " AND a.album_artist_id != ? AND a.id IN \
+         (SELECT at.local_album_id FROM local_track_artists ata \
+         JOIN local_tracks at ON at.id = ata.local_track_id \
+         WHERE ata.local_artist_id = ? AND at.availability = 'indexed')"
     ));
     /// A page of an artist's appearances, by title.
-    pub(crate) APPEARANCES = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS + " WHERE "
-        + APPEARANCE_FILTER + " GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC \
-        LIMIT ? OFFSET ?";
+    family APPEARANCE_PAGE = appearance_page;
     /// How many albums an artist appears on.
     pub(crate) APPEARANCE_COUNT = "SELECT COUNT(*) FROM local_albums a WHERE "
         + APPEARANCE_FILTER;
-    /// The newest owned albums.
-    pub(crate) RECENTLY_ADDED = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS + " WHERE "
-        + (owned_album!("a")) + " GROUP BY a.id ORDER BY a.created_at DESC, a.id ASC LIMIT ?";
+    /// The newest owned albums' ids, walking the creation index.
+    pub(crate) RECENT_ALBUM_IDS = "SELECT a.id FROM local_albums a WHERE "
+        + (owned_album!("a")) + " ORDER BY a.created_at DESC, a.id DESC LIMIT ?";
     /// Owned albums per decade, oldest first; albums without a year sit out.
     pub(crate) DECADES = "SELECT (a.year / 10 * 10) AS decade, COUNT(*) AS album_count \
         FROM local_albums a WHERE a.year IS NOT NULL AND " + (owned_album!("a"))
@@ -300,26 +301,31 @@ droppedneedle_kernel::sql! {
     pub(crate) fragment WITH_MUSIC_PREDICATE = "((LED) OR EXISTS (SELECT 1 \
         FROM local_track_artists lta JOIN local_tracks lt ON lt.id = lta.local_track_id \
         WHERE lta.local_artist_id = r.id AND lt.availability = 'indexed'))";
-    /// Owned albums led per artist, for the album-count sort.
-    pub(crate) fragment ALBUM_COUNT_BY_ARTIST = (concat!(
-        "SELECT la.album_artist_id AS aid, COUNT(*) AS c FROM local_albums la WHERE ",
-        owned_album!("la"),
-        " GROUP BY aid"
+    /// How many owned albums the artist `r` leads, for the album-count
+    /// sort: a probe of the artist's albums.
+    pub(crate) fragment LED_ALBUM_TOTAL = (concat!(
+        "(SELECT COUNT(*) FROM local_albums lo WHERE lo.album_artist_id = r.id AND ",
+        owned_album!("lo"),
+        ")"
     ));
-    /// Appearance albums per artist, for the appearance-count sort: albums
-    /// led by someone else where the artist is credited on an indexed track.
-    pub(crate) fragment APPEARANCE_COUNT_BY_ARTIST = (concat!(
-        "SELECT ata.local_artist_id AS aid, \
-         COUNT(DISTINCT at.local_album_id) AS c \
-         FROM local_track_artists ata \
+    /// How many albums the artist `r` appears on, for the appearance-count
+    /// sort: live albums led by someone else where the artist is credited
+    /// on an indexed track, reached from the artist's own credits.
+    pub(crate) fragment APPEARANCE_ALBUM_TOTAL = (concat!(
+        "(SELECT COUNT(DISTINCT at.local_album_id) FROM local_track_artists ata \
          JOIN local_tracks at ON at.id = ata.local_track_id \
          JOIN local_albums aa ON aa.id = at.local_album_id \
-         WHERE at.availability = 'indexed' AND aa.album_artist_id != ata.local_artist_id AND ",
+         WHERE ata.local_artist_id = r.id AND +at.availability = 'indexed' \
+         AND aa.album_artist_id != r.id AND ",
         live_album!("aa"),
-        " GROUP BY 1"
+        ")"
     ));
-    /// One page of artist ids, one statement per scope and sort.
+    /// One page of artist keys in a scope, one statement per scope, sort
+    /// and direction, from the start or after a cursor.
     family ARTIST_PAGE = artist_page;
+    /// One page of artist ids at an offset, for the player apps, which
+    /// page by offset.
+    family ARTIST_OFFSET_PAGE = artist_offset_page;
     /// The artist projection for a page of ids.
     family ARTIST_ROWS = artist_rows;
     /// Owned albums led per artist id.
@@ -497,6 +503,10 @@ droppedneedle_kernel::sql! {
     pub(crate) LOCAL_ALBUM_TRACKS = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
         + " WHERE t.local_album_id = ? AND t.availability = 'indexed' \
         ORDER BY t.disc_number, t.track_number, t.title_folded";
+    /// The catalog revision: moves with every write to the catalog, so a
+    /// total counted at one revision holds until it moves.
+    pub(crate) CATALOG_REVISION = "SELECT COALESCE((SELECT value \
+        FROM library_catalog_revision WHERE singleton = 1), 0)";
     /// The release group a library album, or the album it merged into, is
     /// identified as.
     pub(crate) GROUP_FOR_ALBUM = "SELECT e.release_group_mbid FROM local_albums b \
@@ -510,34 +520,204 @@ fn marks(len: ListLen) -> String {
     vec!["?"; len.get()].join(", ")
 }
 
-/// The album list's order for one sort and direction.
-pub(crate) fn album_order(sort: AlbumSort, descending: bool) -> &'static str {
-    match (sort, descending) {
-        (AlbumSort::Name, false) => "a.title_folded ASC, a.id ASC",
-        (AlbumSort::Name, true) => "a.title_folded DESC, a.id ASC",
-        (AlbumSort::DateAdded, false) => "a.created_at ASC, a.id ASC",
-        (AlbumSort::DateAdded, true) => "a.created_at DESC, a.id ASC",
-        (AlbumSort::Year, false) => "(a.year IS NULL) ASC, a.year ASC, a.id ASC",
-        (AlbumSort::Year, true) => "(a.year IS NULL) ASC, a.year DESC, a.id ASC",
-        (AlbumSort::Artist, false) => {
-            "a.album_artist_name_folded ASC, a.title_folded ASC, a.id ASC"
+/// One column of a list's order: its expression and whether it runs
+/// descending. Every order ends in the row's id, so it is total and a
+/// cursor names one place in it.
+pub(crate) type OrderKey = (&'static str, bool);
+
+/// A seeded shuffle key over an alias's rowid: `h = (rowid * a + b) mod p`,
+/// then `(k * h^2 + h) mod p`, with `p` the prime 2^31 - 1, above any
+/// realistic rowid so every product stays inside 64 bits. The square makes
+/// it non-linear, so neighbouring rows land far apart. One seed is one
+/// fixed order.
+macro_rules! shuffle_key {
+    ($alias:literal) => {
+        concat!(
+            "((((",
+            $alias,
+            ".rowid * s.sa + s.sb) % 2147483647) * ((",
+            $alias,
+            ".rowid * s.sa + s.sb) % 2147483647)) % 2147483647 * s.sk + ((",
+            $alias,
+            ".rowid * s.sa + s.sb) % 2147483647)) % 2147483647"
+        )
+    };
+}
+
+/// The binds of [`SHUFFLE_SEED`] for one seed.
+pub(crate) fn shuffle_values(seed: u32) -> [Value; 3] {
+    let prime: i64 = 2_147_483_647;
+    let seed = i64::from(seed);
+    [
+        Value::Integer(seed % (prime - 1) + 1),
+        Value::Integer((seed * 7919) % prime),
+        Value::Integer((seed * 104_729) % (prime - 1) + 1),
+    ]
+}
+
+/// The key columns a page selects, `k0`, `k1`, ..., in order.
+fn key_columns(keys: &[OrderKey]) -> String {
+    keys.iter()
+        .enumerate()
+        .map(|(index, (expr, _))| format!("{expr} AS k{index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The `ORDER BY` list of `keys`.
+fn order_by(keys: &[OrderKey]) -> String {
+    keys.iter()
+        .map(|(expr, descending)| format!("{expr} {}", if *descending { "DESC" } else { "ASC" }))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// True when every key runs one way.
+fn one_direction(keys: &[OrderKey]) -> bool {
+    keys.iter().all(|(_, descending)| *descending == keys[0].1)
+}
+
+/// True when the order is led by a `COALESCE(...)` expression. An index on
+/// an expression is sought only by a plain comparison, never by a row
+/// value, so such an order also takes a leading bound on that key.
+fn expression_led(keys: &[OrderKey]) -> bool {
+    keys[0].0.starts_with("COALESCE(")
+}
+
+/// The rows after a position in `keys` order, as ` AND ...`, or nothing for
+/// the first page. One direction throughout is one row-value comparison,
+/// which an index over those columns serves; mixed directions are spelled
+/// out, with a leading bound on the first key. Bind [`after_values`].
+fn after(keys: &[OrderKey], after_cursor: bool) -> String {
+    if !after_cursor {
+        return String::new();
+    }
+    if one_direction(keys) {
+        let columns: Vec<&str> = keys.iter().map(|(expr, _)| *expr).collect();
+        let (first, descending) = keys[0];
+        let op = if descending { "<" } else { ">" };
+        let bound = if expression_led(keys) {
+            format!(" AND {first} {op}= ?")
+        } else {
+            String::new()
+        };
+        return format!(
+            "{bound} AND ({}) {op} ({})",
+            columns.join(", "),
+            vec!["?"; keys.len()].join(", ")
+        );
+    }
+    let (first, descending) = keys[0];
+    format!(
+        " AND {first} {} ? AND {}",
+        if descending { "<=" } else { ">=" },
+        spelled(keys)
+    )
+}
+
+/// `k1 > ? OR (k1 = ? AND (k2 > ? OR ...))`, each key in its direction.
+fn spelled(keys: &[OrderKey]) -> String {
+    let (expr, descending) = keys[0];
+    let op = if descending { "<" } else { ">" };
+    if keys.len() == 1 {
+        return format!("{expr} {op} ?");
+    }
+    format!(
+        "({expr} {op} ? OR ({expr} = ? AND {}))",
+        spelled(&keys[1..])
+    )
+}
+
+/// The binds of [`after`] for the last row's `key`.
+pub(crate) fn after_values(keys: &[OrderKey], key: &[Value]) -> Vec<Value> {
+    if one_direction(keys) {
+        let mut values = Vec::with_capacity(key.len() + 1);
+        if expression_led(keys) {
+            values.extend(key.first().cloned());
         }
-        (AlbumSort::Artist, true) => {
-            "a.album_artist_name_folded DESC, a.title_folded DESC, a.id ASC"
+        values.extend_from_slice(key);
+        return values;
+    }
+    let mut values = Vec::with_capacity(key.len() * 2);
+    values.extend(key.first().cloned());
+    for (index, value) in key.iter().enumerate() {
+        values.push(value.clone());
+        if index + 1 < key.len() {
+            values.push(value.clone());
         }
-        (AlbumSort::Random, _) => "RANDOM()",
-        (AlbumSort::Rediscover, false) => "a.created_at ASC, a.id ASC",
-        (AlbumSort::Rediscover, true) => "a.created_at DESC, a.id ASC",
+    }
+    values
+}
+
+/// The album list's order for one sort and direction. Ties fall the way
+/// the order runs.
+pub(crate) fn album_keys(sort: AlbumSort, descending: bool) -> Vec<OrderKey> {
+    let d = descending;
+    match sort {
+        AlbumSort::Name => vec![("a.title_folded", d), ("a.id", d)],
+        AlbumSort::DateAdded | AlbumSort::Rediscover => {
+            vec![("a.created_at", d), ("a.id", d)]
+        }
+        AlbumSort::Year => vec![
+            ("(a.year IS NULL)", false),
+            ("COALESCE(a.year, 0)", d),
+            ("a.id", d),
+        ],
+        AlbumSort::Artist => vec![
+            ("COALESCE(a.album_artist_name_folded, '')", d),
+            ("a.title_folded", d),
+            ("a.id", d),
+        ],
+        AlbumSort::Random => vec![(shuffle_key!("a"), false), ("a.id", false)],
     }
 }
 
-/// One page of album ids: filtering and ordering touch albums only, so the
-/// track aggregation runs over the page, never the catalog.
-pub(crate) fn album_page(sort: AlbumSort, descending: bool) -> String {
+/// One page of album keys: filtering and ordering touch albums only, so the
+/// track aggregation runs over the page, never the catalog. A random page
+/// binds the seed first, then the filter, the cursor and the limit.
+pub(crate) fn album_page(sort: AlbumSort, descending: bool, after_cursor: bool) -> String {
+    let keys = album_keys(sort, descending);
+    let seed = if sort == AlbumSort::Random {
+        SHUFFLE_SEED
+    } else {
+        ""
+    };
     format!(
-        "SELECT a.id FROM local_albums a WHERE {ALBUM_FILTER} \
-         ORDER BY {} LIMIT ? OFFSET ?",
-        album_order(sort, descending)
+        "SELECT {} FROM local_albums a{seed} WHERE {ALBUM_FILTER}{} ORDER BY {} LIMIT ?",
+        key_columns(&keys),
+        after(&keys, after_cursor),
+        order_by(&keys)
+    )
+}
+
+/// The order of an artist's led albums and appearances: by title.
+pub(crate) fn title_keys() -> Vec<OrderKey> {
+    vec![("a.title_folded", false), ("a.id", false)]
+}
+
+/// A page of the live albums an artist leads: the artist, the cursor, the
+/// limit.
+pub(crate) fn led_album_page(after_cursor: bool) -> String {
+    let keys = title_keys();
+    format!(
+        "SELECT {} FROM local_albums a WHERE a.album_artist_id = ? AND {}{} \
+         ORDER BY {} LIMIT ?",
+        key_columns(&keys),
+        live_album!("a"),
+        after(&keys, after_cursor),
+        order_by(&keys)
+    )
+}
+
+/// A page of an artist's appearances: the artist twice, the cursor, the
+/// limit.
+pub(crate) fn appearance_page(after_cursor: bool) -> String {
+    let keys = title_keys();
+    format!(
+        "SELECT {} FROM local_albums a WHERE {APPEARANCE_FILTER}{} ORDER BY {} LIMIT ?",
+        key_columns(&keys),
+        after(&keys, after_cursor),
+        order_by(&keys)
     )
 }
 
@@ -549,13 +729,38 @@ pub(crate) fn album_rows(ids: ListLen) -> String {
     )
 }
 
-/// The track list's order for one sort and direction.
-pub(crate) fn track_order(sort: TrackSort, descending: bool) -> &'static str {
-    match (sort, descending) {
-        (TrackSort::Title, false) => "t.title_folded ASC, t.id ASC",
-        (TrackSort::Title, true) => "t.title_folded DESC, t.id ASC",
-        (TrackSort::DateAdded, false) => "t.imported_at ASC, t.id ASC",
-        (TrackSort::DateAdded, true) => "t.imported_at DESC, t.id ASC",
+/// The track list's order for one sort and direction. Within an album,
+/// tracks keep disc and track order whichever way the albums run.
+pub(crate) fn track_keys(sort: TrackSort, descending: bool) -> Vec<OrderKey> {
+    let d = descending;
+    match sort {
+        TrackSort::Title => vec![("t.title_folded", d), ("t.id", d)],
+        TrackSort::DateAdded => vec![("t.imported_at", d), ("t.id", d)],
+        TrackSort::Artist => vec![
+            ("COALESCE(t.artist_name_folded, '')", d),
+            ("t.album_title_folded", d),
+            ("t.local_album_id", d),
+            ("t.disc_number", false),
+            ("t.track_number", false),
+            ("t.id", false),
+        ],
+        TrackSort::Album => vec![
+            ("t.album_title_folded", d),
+            ("t.local_album_id", d),
+            ("t.disc_number", false),
+            ("t.track_number", false),
+            ("t.id", false),
+        ],
+        TrackSort::Random => vec![(shuffle_key!("t"), false), ("t.id", false)],
+    }
+}
+
+/// The track joins, with the seed row for a random order.
+fn track_from(sort: TrackSort) -> String {
+    if sort == TrackSort::Random {
+        format!("{TRACK_JOINS}{SHUFFLE_SEED}")
+    } else {
+        TRACK_JOINS.to_owned()
     }
 }
 
@@ -568,22 +773,34 @@ fn track_words(short: ListLen) -> String {
     )
 }
 
-/// A page of the track list on the substring match.
-pub(crate) fn track_page_like(sort: TrackSort, descending: bool) -> String {
+/// A page of the track list on the substring match: the seed of a random
+/// order, the filter, the cursor, the limit.
+pub(crate) fn track_page_like(sort: TrackSort, descending: bool, after_cursor: bool) -> String {
+    let keys = track_keys(sort, descending);
     format!(
-        "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {TRACK_LIKE}{TRACK_SCOPE} \
-         ORDER BY {} LIMIT ? OFFSET ?",
-        track_order(sort, descending)
+        "SELECT {TRACK_COLUMNS}, {} {} WHERE {TRACK_LIKE}{TRACK_SCOPE}{} ORDER BY {} LIMIT ?",
+        key_columns(&keys),
+        track_from(sort),
+        after(&keys, after_cursor),
+        order_by(&keys)
     )
 }
 
 /// A page of the track list on the FTS index with `short` short words.
-pub(crate) fn track_page_words(short: ListLen, sort: TrackSort, descending: bool) -> String {
+pub(crate) fn track_page_words(
+    short: ListLen,
+    sort: TrackSort,
+    descending: bool,
+    after_cursor: bool,
+) -> String {
+    let keys = track_keys(sort, descending);
     format!(
-        "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {}{TRACK_SCOPE} \
-         ORDER BY {} LIMIT ? OFFSET ?",
+        "SELECT {TRACK_COLUMNS}, {} {} WHERE {}{TRACK_SCOPE}{} ORDER BY {} LIMIT ?",
+        key_columns(&keys),
+        track_from(sort),
         track_words(short),
-        track_order(sort, descending)
+        after(&keys, after_cursor),
+        order_by(&keys)
     )
 }
 
@@ -628,38 +845,55 @@ fn artist_scope_predicate(scope: ArtistScope) -> String {
         .replace("(CREDITED)", CREDITED_PREDICATE)
 }
 
-/// One page of artist ids in a scope, matching the name filter (bound
-/// twice). The count sorts join a per-artist aggregate, with artists
-/// without any sorting as zero.
-pub(crate) fn artist_page(scope: ArtistScope, sort: ArtistSort, descending: bool) -> String {
-    let scope = artist_scope_predicate(scope);
-    let counts = match sort {
-        ArtistSort::AlbumCount => Some(ALBUM_COUNT_BY_ARTIST),
-        ArtistSort::AppearanceCount => Some(APPEARANCE_COUNT_BY_ARTIST),
-        ArtistSort::Name | ArtistSort::DateAdded => None,
-    };
-    if let Some(counts) = counts {
-        let direction = if descending { "DESC" } else { "ASC" };
-        return format!(
-            "SELECT r.id FROM local_artists r \
-             LEFT JOIN ({counts}) ac ON ac.aid = r.id \
-             WHERE r.retired_into_artist_id IS NULL AND ({scope}) \
-             AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
-             ORDER BY COALESCE(ac.c, 0) {direction}, \
-             r.folded_name ASC, r.id ASC LIMIT ? OFFSET ?"
-        );
+/// The artist list's order for one sort and direction. The count sorts
+/// count per artist in the page's scope and break ties by name, A to Z.
+pub(crate) fn artist_keys(sort: ArtistSort, descending: bool) -> Vec<OrderKey> {
+    let d = descending;
+    match sort {
+        ArtistSort::Name => vec![("r.folded_name", d), ("r.id", d)],
+        ArtistSort::DateAdded => vec![("r.created_at", d), ("r.id", d)],
+        ArtistSort::AlbumCount => vec![
+            (LED_ALBUM_TOTAL, d),
+            ("r.folded_name", false),
+            ("r.id", false),
+        ],
+        ArtistSort::AppearanceCount => vec![
+            (APPEARANCE_ALBUM_TOTAL, d),
+            ("r.folded_name", false),
+            ("r.id", false),
+        ],
     }
-    let order = match (sort, descending) {
-        (ArtistSort::DateAdded, false) => "r.created_at ASC, r.id ASC",
-        (ArtistSort::DateAdded, true) => "r.created_at DESC, r.id ASC",
-        (_, false) => "r.folded_name ASC, r.id ASC",
-        (_, true) => "r.folded_name DESC, r.id ASC",
-    };
+}
+
+/// One page of artist keys in a scope: the name filter (bound twice), the
+/// cursor, the limit.
+pub(crate) fn artist_page(
+    scope: ArtistScope,
+    sort: ArtistSort,
+    descending: bool,
+    after_cursor: bool,
+) -> String {
+    let keys = artist_keys(sort, descending);
+    format!(
+        "SELECT {} FROM local_artists r \
+         WHERE r.retired_into_artist_id IS NULL AND ({}) \
+         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\'){} ORDER BY {} LIMIT ?",
+        key_columns(&keys),
+        artist_scope_predicate(scope),
+        after(&keys, after_cursor),
+        order_by(&keys)
+    )
+}
+
+/// One page of artist ids in a scope at an offset, for the player apps:
+/// the name filter (bound twice), the limit, the offset.
+pub(crate) fn artist_offset_page(scope: ArtistScope, sort: ArtistSort, descending: bool) -> String {
     format!(
         "SELECT r.id FROM local_artists r \
-         WHERE r.retired_into_artist_id IS NULL AND ({scope}) \
-         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
-         ORDER BY {order} LIMIT ? OFFSET ?"
+         WHERE r.retired_into_artist_id IS NULL AND ({}) \
+         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') ORDER BY {} LIMIT ? OFFSET ?",
+        artist_scope_predicate(scope),
+        order_by(&artist_keys(sort, descending))
     )
 }
 

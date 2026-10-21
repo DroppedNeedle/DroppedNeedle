@@ -5,15 +5,14 @@
 		getLocalStatsV3Query
 	} from '$lib/queries/local/LocalV3Queries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
-	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
-	import { fetchLibraryTracks } from '$lib/queries/library/libraryTracks';
+	import { fetchLibraryTracks, libraryTrackParams } from '$lib/queries/library/libraryTracks';
+	import { createLibraryTrackQueue } from '$lib/queries/library/libraryTrackQueue.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { NOISE_TEXTURE } from './noiseTexture';
-	import type { NativeTrackListItem, NativeTrackPage } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	const statsQuery = getLocalStatsV3Query();
@@ -21,66 +20,36 @@
 	const stats = $derived(statsQuery.data);
 	const backdropCard = $derived(recentQuery.data?.[0]);
 
-	const PAGE_SIZE = 100;
-	const loader = createLibraryTrackLoader<NativeTrackListItem>(
-		{
-			fetchPage: (limit, offset, signal) => fetchLibraryTracks(limit, offset, 'recent', '', signal),
-			buildQueue: (tracks) => buildDiscoveryQueueFromLocal(tracks),
-			pageSize: PAGE_SIZE
-		},
-		(items) => playerStore.appendQueueSilent(items),
-		(items, startIndex, shuffle) => playerStore.playQueue(items, startIndex, shuffle),
-		() => playerStore.regenerateShuffleOrder(),
-		(message, type) => playbackToast.show(message, type)
-	);
+	const queue = createLibraryTrackQueue({
+		buildQueue: (tracks) => buildDiscoveryQueueFromLocal(tracks),
+		playQueue: (items, startIndex, shuffle) => playerStore.playQueue(items, startIndex, shuffle),
+		appendQueue: (items) => playerStore.appendQueueSilent(items),
+		reshuffle: () => playerStore.regenerateShuffleOrder(),
+		toast: (message, type) => playbackToast.show(message, type)
+	});
 
 	let busy = $state<'' | 'play' | 'shuffle' | 'surprise'>('');
 
-	function firstPage(): Promise<NativeTrackPage> {
-		return fetchLibraryTracks(PAGE_SIZE, 0, 'recent');
-	}
-
-	async function playAll() {
+	async function start(kind: 'play' | 'shuffle') {
 		if (busy) return;
-		busy = 'play';
+		busy = kind;
 		try {
-			const page = await firstPage();
-			if (!page.items.length) {
-				playbackToast.show('No tracks to play yet', 'info');
-				return;
-			}
-			loader.playAll(page.items, page.total);
-		} catch {
-			playbackToast.show("Couldn't start playback", 'error');
+			const started =
+				kind === 'play' ? await queue.playAll('recent', '') : await queue.shuffleAll('');
+			if (started === 'empty') playbackToast.show('No tracks to play yet', 'info');
 		} finally {
 			busy = '';
 		}
 	}
 
-	async function shuffleAll() {
-		if (busy) return;
-		busy = 'shuffle';
-		try {
-			const page = await firstPage();
-			if (!page.items.length) {
-				playbackToast.show('No tracks to play yet', 'info');
-				return;
-			}
-			loader.shuffleAll(page.items, page.total);
-		} catch {
-			playbackToast.show("Couldn't start playback", 'error');
-		} finally {
-			busy = '';
-		}
-	}
+	const playAll = () => start('play');
+	const shuffleAll = () => start('shuffle');
 
 	async function surprise() {
 		if (busy) return;
 		busy = 'surprise';
 		try {
-			const count = stats?.total_tracks ?? 0;
-			const offset = count > 0 ? Math.floor(Math.random() * count) : 0;
-			const page = await fetchLibraryTracks(1, offset, 'recent');
+			const page = await fetchLibraryTracks(libraryTrackParams(1, 'random'), null);
 			const track = page.items[0];
 			if (!track) {
 				playbackToast.show('Nothing to surprise you with yet', 'info');

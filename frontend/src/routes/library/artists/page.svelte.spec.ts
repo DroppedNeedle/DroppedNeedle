@@ -37,8 +37,7 @@ const contributors: RouteData<'GET /api/v3/library/artists'> = {
 	total: 1,
 	album_artist_total: 0,
 	contributor_total: 1,
-	offset: 0,
-	limit: 48
+	next: null
 };
 
 beforeEach(() => {

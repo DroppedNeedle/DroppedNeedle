@@ -63,7 +63,6 @@
 	const recentQuery = getLocalRecentV3Query(() => 20);
 	const rediscoverQuery = getLocalAlbumsV3Query(() => ({
 		limit: 20,
-		offset: 0,
 		sort: 'rediscover',
 		order: 'asc'
 	}));
@@ -73,7 +72,7 @@
 
 	let openDecade = $state<number | null>(null);
 	const shelfQuery = getLocalAlbumsV3Query(
-		() => ({ limit: 50, offset: 0, sort: 'name', order: 'asc', decade: openDecade ?? undefined }),
+		() => ({ limit: 50, sort: 'name', order: 'asc', decade: openDecade ?? undefined }),
 		() => openDecade !== null
 	);
 

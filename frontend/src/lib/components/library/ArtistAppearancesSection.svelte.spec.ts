@@ -86,14 +86,11 @@ describe('ArtistAppearancesSection on a provider artist page', () => {
 			'GET /api/v3/library/artists/{id}': ({ params }) =>
 				known(params.id) ? artist : apiError(404, 'NOT_FOUND'),
 			'GET /api/v3/library/artists/{id}/appearances': ({ params }) =>
-				known(params.id)
-					? { items: [album], total: 1, offset: 0, limit: 20 }
-					: apiError(404, 'NOT_FOUND'),
+				known(params.id) ? { items: [album], total: 1, next: null } : apiError(404, 'NOT_FOUND'),
 			'GET /api/v3/library/tracks': ({ query }) => ({
 				items: query.get('artist_id') === LIBRARY_ID ? [track] : [],
 				total: query.get('artist_id') === LIBRARY_ID ? 1 : 0,
-				offset: 0,
-				limit: 200
+				next: null
 			})
 		});
 		await renderWithQuery(ArtistAppearancesSection, { artistId: ARTIST_MBID });

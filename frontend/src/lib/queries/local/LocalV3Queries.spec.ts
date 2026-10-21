@@ -16,7 +16,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('LocalV3Queries', () => {
 	it('nests every shared local key under the local root without a userId segment', () => {
 		const keys = [
-			LOCAL_KEYS.albums({ limit: 1, offset: 0, sort: 'date_added', order: 'desc' }),
+			LOCAL_KEYS.albums({ limit: 1, sort: 'date_added', order: 'desc' }),
 			LOCAL_KEYS.recent(null),
 			LOCAL_KEYS.suggestions(16, null),
 			LOCAL_KEYS.search('abba', null),

@@ -13,11 +13,11 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::LibraryDeps;
 use super::models::{
-    AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView, DecadesResponse,
-    GenreList, LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest,
+    AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView, CursorQuery,
+    DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest,
     LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
     ResolveTracksResponse, SearchQuery, SearchResults, StatsView, SuggestionsQuery,
-    SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
+    SuggestionsResponse, TrackListPage, TrackPage, TrackQuery, TrackTags, TrackView,
 };
 use super::services;
 
@@ -166,7 +166,7 @@ pub async fn get_artist(
     get,
     tag = "library",
     path = "/api/v3/library/artists/{id}/albums",
-    params(("id" = String, Path, description = "Local artist id or linked MusicBrainz artist id"), PageQuery),
+    params(("id" = String, Path, description = "Local artist id or linked MusicBrainz artist id"), CursorQuery),
     responses(
         (status = 200, description = "Led albums", body = AlbumPage),
         (status = 400, description = "Bad query string"),
@@ -178,7 +178,7 @@ pub async fn list_artist_albums(
     State(deps): State<LibraryDeps>,
     User(caller): User,
     Path(id): Path<String>,
-    ValidQuery(query): ValidQuery<PageQuery>,
+    ValidQuery(query): ValidQuery<CursorQuery>,
 ) -> Result<Json<AlbumPage>, ApiError> {
     services::artist_albums(&deps, caller.user_id(), &id, &query)
         .await
@@ -191,7 +191,7 @@ pub async fn list_artist_albums(
     get,
     tag = "library",
     path = "/api/v3/library/artists/{id}/appearances",
-    params(("id" = String, Path, description = "Local artist id or linked MusicBrainz artist id"), PageQuery),
+    params(("id" = String, Path, description = "Local artist id or linked MusicBrainz artist id"), CursorQuery),
     responses(
         (status = 200, description = "Appearance albums", body = AlbumPage),
         (status = 400, description = "Bad query string"),
@@ -203,7 +203,7 @@ pub async fn list_artist_appearances(
     State(deps): State<LibraryDeps>,
     User(caller): User,
     Path(id): Path<String>,
-    ValidQuery(query): ValidQuery<PageQuery>,
+    ValidQuery(query): ValidQuery<CursorQuery>,
 ) -> Result<Json<AlbumPage>, ApiError> {
     services::artist_appearances(&deps, caller.user_id(), &id, &query)
         .await
@@ -218,7 +218,7 @@ pub async fn list_artist_appearances(
     path = "/api/v3/library/tracks",
     params(TrackQuery),
     responses(
-        (status = 200, description = "Track page", body = TrackPage),
+        (status = 200, description = "Track page", body = TrackListPage),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
     )
@@ -227,7 +227,7 @@ pub async fn list_tracks(
     State(deps): State<LibraryDeps>,
     User(caller): User,
     ValidQuery(query): ValidQuery<TrackQuery>,
-) -> Result<Json<TrackPage>, ApiError> {
+) -> Result<Json<TrackListPage>, ApiError> {
     services::list_tracks(&deps, caller.user_id(), &query)
         .await
         .map(Json)

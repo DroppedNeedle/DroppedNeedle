@@ -125,10 +125,8 @@ pub struct AlbumPage {
     pub items: Vec<AlbumView>,
     /// Albums matching the filter, all pages.
     pub total: u64,
-    /// Echo of the requested offset.
-    pub offset: u64,
-    /// Echo of the requested limit.
-    pub limit: u64,
+    /// Pass as `after` for the next page; absent on the last page.
+    pub next: Option<String>,
 }
 
 /// Album list query. Unknown `sort` values fail with INVALID_INPUT.
@@ -137,10 +135,12 @@ pub struct AlbumPage {
 pub struct AlbumQuery {
     /// Page size, 1-200. Default 50.
     pub limit: Option<i64>,
-    /// Page start. Default 0.
-    pub offset: Option<i64>,
-    /// `name`, `date_added`, `year`, `artist`, `random`, or `rediscover`
-    /// (oldest first). Default `name`.
+    /// The `next` of the page before, with the same sort and order.
+    /// Absent for the first page.
+    pub after: Option<String>,
+    /// `name`, `date_added`, `year`, `artist`, `random` (one shuffle per
+    /// walk, kept across its pages), or `rediscover` (oldest first).
+    /// Default `name`.
     pub sort: Option<String>,
     /// `asc` or `desc`. Default `asc`.
     pub order: Option<String>,
@@ -153,6 +153,16 @@ pub struct AlbumQuery {
     /// Restrict to one primary track format, e.g. `flac`. Blank reads as
     /// absent; matching is case-insensitive.
     pub format: Option<String>,
+}
+
+/// Page query for an artist's albums and appearances.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct CursorQuery {
+    /// Page size, 1-1000. Default 200.
+    pub limit: Option<i64>,
+    /// The `next` of the page before. Absent for the first page.
+    pub after: Option<String>,
 }
 
 /// Track list query for album and genre scopes.
@@ -220,10 +230,8 @@ pub struct ArtistPage {
     pub album_artist_total: u64,
     /// Contributors in the catalog (ignores paging, honors `q`).
     pub contributor_total: u64,
-    /// Echo of the requested offset.
-    pub offset: u64,
-    /// Echo of the requested limit.
-    pub limit: u64,
+    /// Pass as `after` for the next page; absent on the last page.
+    pub next: Option<String>,
 }
 
 /// Artist list query.
@@ -232,8 +240,9 @@ pub struct ArtistPage {
 pub struct ArtistQuery {
     /// Page size, 1-200. Default 50.
     pub limit: Option<i64>,
-    /// Page start. Default 0.
-    pub offset: Option<i64>,
+    /// The `next` of the page before, with the same scope, sort and
+    /// order. Absent for the first page.
+    pub after: Option<String>,
     /// `name`, `album_count`, `appearance_count`, or `date_added`.
     /// Default `name`.
     pub sort: Option<String>,
@@ -351,15 +360,29 @@ pub struct TrackPage {
     pub limit: u64,
 }
 
+/// One page of the track list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TrackListPage {
+    /// This page of tracks.
+    pub items: Vec<TrackView>,
+    /// Tracks matching the filter, all pages.
+    pub total: u64,
+    /// Pass as `after` for the next page; absent on the last page.
+    pub next: Option<String>,
+}
+
 /// Track list query.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct TrackQuery {
     /// Page size, 1-500. Default 50.
     pub limit: Option<i64>,
-    /// Page start. Default 0.
-    pub offset: Option<i64>,
-    /// `title` or `date_added`. Default `title`.
+    /// The `next` of the page before, with the same sort and order.
+    /// Absent for the first page.
+    pub after: Option<String>,
+    /// `title`, `date_added`, `artist` (then album, disc and track),
+    /// `album` (then disc and track), or `random` (one shuffle per walk,
+    /// kept across its pages). Default `title`.
     pub sort: Option<String>,
     /// `asc` or `desc`. Default `asc`.
     pub order: Option<String>,

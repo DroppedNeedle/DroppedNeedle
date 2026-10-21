@@ -4,6 +4,7 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 
 ## Contents
 
+- [Browsing](#browsing)
 - [Scanning](#scanning)
 - [How an album is identified](#how-an-album-is-identified)
 - [Unconfirmed matches](#unconfirmed-matches)
@@ -15,6 +16,10 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 - [Lyrics](#lyrics)
 - [Ratings](#ratings)
 - [Adding a missing album to MusicBrainz](#adding-a-missing-album-to-musicbrainz)
+
+## Browsing
+
+The Albums, Artists and Tracks lists show the first page and add the next with Load more, however large the library. Tracks sort by date added, title, artist (then album and track number) or album. Shuffle on the Tracks page plays every track once in a random order.
 
 ## Scanning
 

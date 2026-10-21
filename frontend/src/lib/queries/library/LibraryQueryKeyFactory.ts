@@ -2,9 +2,9 @@ import { userIdSegment } from '../userKeySegment';
 
 export type LibraryV3UserId = string | null | undefined;
 
+// A long list's params, without its cursor: a list's pages share one key.
 export interface LibraryV3AlbumsParams {
 	limit: number;
-	offset: number;
 	sort: 'name' | 'date_added' | 'year' | 'artist' | 'random' | 'rediscover';
 	order: 'asc' | 'desc';
 	q?: string;
@@ -15,7 +15,6 @@ export interface LibraryV3AlbumsParams {
 
 export interface LibraryV3ArtistsParams {
 	limit: number;
-	offset: number;
 	sort: 'name' | 'album_count' | 'appearance_count' | 'date_added';
 	order: 'asc' | 'desc';
 	q?: string;
@@ -24,8 +23,7 @@ export interface LibraryV3ArtistsParams {
 
 export interface LibraryV3TracksParams {
 	limit: number;
-	offset: number;
-	sort: 'title' | 'date_added';
+	sort: 'title' | 'date_added' | 'artist' | 'album' | 'random';
 	order: 'asc' | 'desc';
 	q?: string;
 	albumId?: string;
@@ -58,6 +56,12 @@ export interface LibraryV3PageParams {
 	offset?: number;
 }
 
+/** A page of a list read by cursor: the size, and the `next` it follows. */
+export interface LibraryV3CursorParams {
+	limit?: number;
+	after?: string | null;
+}
+
 export const LibraryQueryKeyFactory = {
 	all: ['library'] as const,
 	// Catalog keys. Album and artist views carry per-caller favorite flags, so
@@ -68,8 +72,13 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.all, 'catalog', userIdSegment(userId)] as const,
 		albums: (userId: LibraryV3UserId, params: LibraryV3AlbumsParams) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'albums', params] as const,
+		// The album list's pages, read on by cursor: apart from one page's key.
+		albumPages: (userId: LibraryV3UserId, params: LibraryV3AlbumsParams) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-pages', params] as const,
 		artists: (userId: LibraryV3UserId, params: LibraryV3ArtistsParams) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'artists', params] as const,
+		tracks: (userId: LibraryV3UserId, params: LibraryV3TracksParams) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'tracks', params] as const,
 		artistThumbs: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'artist-thumbs'] as const,
 		albumDetail: (userId: LibraryV3UserId, albumId: string) =>
@@ -80,9 +89,9 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-tracks', albumId, params] as const,
 		artistDetail: (userId: LibraryV3UserId, artistId: string) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'artist-detail', artistId] as const,
-		artistAlbums: (userId: LibraryV3UserId, artistId: string, params: LibraryV3PageParams) =>
+		artistAlbums: (userId: LibraryV3UserId, artistId: string, params: LibraryV3CursorParams) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'artist-albums', artistId, params] as const,
-		artistAppearances: (userId: LibraryV3UserId, artistId: string, params: LibraryV3PageParams) =>
+		artistAppearances: (userId: LibraryV3UserId, artistId: string, params: LibraryV3CursorParams) =>
 			[
 				...LibraryQueryKeyFactory.catalog.root(userId),
 				'artist-appearances',

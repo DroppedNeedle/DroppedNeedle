@@ -58,14 +58,13 @@ describe('local artist page', () => {
 	it('shows the appearance line and the appearances section for a guest artist', async () => {
 		fakeApi({
 			'GET /api/v3/library/artists/{id}': artist,
-			'GET /api/v3/library/artists/{id}/albums': { items: [], total: 0, offset: 0, limit: 200 },
+			'GET /api/v3/library/artists/{id}/albums': { items: [], total: 0, next: null },
 			'GET /api/v3/library/artists/{id}/appearances': {
 				items: [album],
 				total: 1,
-				offset: 0,
-				limit: 20
+				next: null
 			},
-			'GET /api/v3/library/tracks': { items: [], total: 0, offset: 0, limit: 200 },
+			'GET /api/v3/library/tracks': { items: [], total: 0, next: null },
 			'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: {} }
 		});
 		await renderWithQuery(LocalArtistPage, { artistId: artist.id });

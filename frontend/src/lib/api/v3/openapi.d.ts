@@ -10270,16 +10270,8 @@ export interface components {
         AlbumPage: {
             /** @description This page of albums. */
             items: components["schemas"]["AlbumView"][];
-            /**
-             * Format: int64
-             * @description Echo of the requested limit.
-             */
-            limit: number;
-            /**
-             * Format: int64
-             * @description Echo of the requested offset.
-             */
-            offset: number;
+            /** @description Pass as `after` for the next page; absent on the last page. */
+            next?: string | null;
             /**
              * Format: int64
              * @description Albums matching the filter, all pages.
@@ -10860,16 +10852,8 @@ export interface components {
             contributor_total: number;
             /** @description This page of artists. */
             items: components["schemas"]["ArtistView"][];
-            /**
-             * Format: int64
-             * @description Echo of the requested limit.
-             */
-            limit: number;
-            /**
-             * Format: int64
-             * @description Echo of the requested offset.
-             */
-            offset: number;
+            /** @description Pass as `after` for the next page; absent on the last page. */
+            next?: string | null;
             /**
              * Format: int64
              * @description Artists matching the scope and filter, all pages.
@@ -22657,6 +22641,18 @@ export interface components {
             /** @description Linked download task, when dispatched. */
             task_id?: string | null;
         };
+        /** @description One page of the track list. */
+        TrackListPage: {
+            /** @description This page of tracks. */
+            items: components["schemas"]["TrackView"][];
+            /** @description Pass as `after` for the next page; absent on the last page. */
+            next?: string | null;
+            /**
+             * Format: int64
+             * @description Tracks matching the filter, all pages.
+             */
+            total: number;
+        };
         /** @description One page of catalog tracks. */
         TrackPage: {
             /** @description This page of tracks. */
@@ -29637,11 +29633,15 @@ export interface operations {
             query?: {
                 /** @description Page size, 1-200. Default 50. */
                 limit?: number;
-                /** @description Page start. Default 0. */
-                offset?: number;
                 /**
-                 * @description `name`, `date_added`, `year`, `artist`, `random`, or `rediscover`
-                 *     (oldest first). Default `name`.
+                 * @description The `next` of the page before, with the same sort and order.
+                 *     Absent for the first page.
+                 */
+                after?: string;
+                /**
+                 * @description `name`, `date_added`, `year`, `artist`, `random` (one shuffle per
+                 *     walk, kept across its pages), or `rediscover` (oldest first).
+                 *     Default `name`.
                  */
                 sort?: string;
                 /** @description `asc` or `desc`. Default `asc`. */
@@ -32062,8 +32062,11 @@ export interface operations {
             query?: {
                 /** @description Page size, 1-200. Default 50. */
                 limit?: number;
-                /** @description Page start. Default 0. */
-                offset?: number;
+                /**
+                 * @description The `next` of the page before, with the same scope, sort and
+                 *     order. Absent for the first page.
+                 */
+                after?: string;
                 /**
                  * @description `name`, `album_count`, `appearance_count`, or `date_added`.
                  *     Default `name`.
@@ -32510,8 +32513,8 @@ export interface operations {
             query?: {
                 /** @description Page size, 1-1000. Default 200. */
                 limit?: number;
-                /** @description Page start. Default 0. */
-                offset?: number;
+                /** @description The `next` of the page before. Absent for the first page. */
+                after?: string;
             };
             header?: never;
             path: {
@@ -32565,8 +32568,8 @@ export interface operations {
             query?: {
                 /** @description Page size, 1-1000. Default 200. */
                 limit?: number;
-                /** @description Page start. Default 0. */
-                offset?: number;
+                /** @description The `next` of the page before. Absent for the first page. */
+                after?: string;
             };
             header?: never;
             path: {
@@ -38528,9 +38531,16 @@ export interface operations {
             query?: {
                 /** @description Page size, 1-500. Default 50. */
                 limit?: number;
-                /** @description Page start. Default 0. */
-                offset?: number;
-                /** @description `title` or `date_added`. Default `title`. */
+                /**
+                 * @description The `next` of the page before, with the same sort and order.
+                 *     Absent for the first page.
+                 */
+                after?: string;
+                /**
+                 * @description `title`, `date_added`, `artist` (then album, disc and track),
+                 *     `album` (then disc and track), or `random` (one shuffle per walk,
+                 *     kept across its pages). Default `title`.
+                 */
                 sort?: string;
                 /** @description `asc` or `desc`. Default `asc`. */
                 order?: string;
@@ -38555,7 +38565,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TrackPage"];
+                    "application/json": components["schemas"]["TrackListPage"];
                 };
             };
             /** @description Bad query string */
