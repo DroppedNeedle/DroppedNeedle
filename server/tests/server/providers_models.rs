@@ -36,6 +36,10 @@ enum Provider {
     GithubReleases,
     CoverArtRelease,
     CoverArtReleaseGroup,
+    AudioDbArtistMbid,
+    AudioDbAlbumMbid,
+    AudioDbArtistSearch,
+    AudioDbAlbumSearch,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -59,6 +63,10 @@ const GITHUB_RELEASES_URL: &str = "http://fake/github/releases";
 const COVER_ART_RELEASE_GROUP_MBID: &str = "b1392450-e666-3926-a536-22c65f834433";
 /// The release the release group's listing names.
 const COVER_ART_RELEASE_MBID: &str = "30702389-5c67-4438-9ea0-2351c8de0f1d";
+/// Radiohead, and the release group of OK Computer, as TheAudioDB's lookups
+/// take them.
+const AUDIODB_ARTIST_MBID: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+const AUDIODB_ALBUM_MBID: &str = "b1392450-e666-3926-a536-22c65f834433";
 
 /// One recorded answer.
 struct Row {
@@ -209,6 +217,54 @@ const ROWS: &[Row] = &[
         provider: Provider::CoverArtReleaseGroup,
         body: include_str!("../fixtures/coverartarchive/release_group_found.json"),
         identity: "/images/0/id",
+    },
+    Row {
+        name: "audiodb /artist-mb.php, artist list",
+        provider: Provider::AudioDbArtistMbid,
+        body: include_str!("../fixtures/audiodb/artist_mb_found.json"),
+        identity: "/artists",
+    },
+    Row {
+        name: "audiodb /artist-mb.php, artist id",
+        provider: Provider::AudioDbArtistMbid,
+        body: include_str!("../fixtures/audiodb/artist_mb_found.json"),
+        identity: "/artists/0/idArtist",
+    },
+    Row {
+        name: "audiodb /album-mb.php, album list",
+        provider: Provider::AudioDbAlbumMbid,
+        body: include_str!("../fixtures/audiodb/album_mb_found.json"),
+        identity: "/album",
+    },
+    Row {
+        name: "audiodb /album-mb.php, album id",
+        provider: Provider::AudioDbAlbumMbid,
+        body: include_str!("../fixtures/audiodb/album_mb_found.json"),
+        identity: "/album/0/idAlbum",
+    },
+    Row {
+        name: "audiodb /search.php, artist list",
+        provider: Provider::AudioDbArtistSearch,
+        body: include_str!("../fixtures/audiodb/search_artist_found.json"),
+        identity: "/artists",
+    },
+    Row {
+        name: "audiodb /search.php, artist id",
+        provider: Provider::AudioDbArtistSearch,
+        body: include_str!("../fixtures/audiodb/search_artist_found.json"),
+        identity: "/artists/0/idArtist",
+    },
+    Row {
+        name: "audiodb /searchalbum.php, album list",
+        provider: Provider::AudioDbAlbumSearch,
+        body: include_str!("../fixtures/audiodb/search_album_found.json"),
+        identity: "/album",
+    },
+    Row {
+        name: "audiodb /searchalbum.php, album id",
+        provider: Provider::AudioDbAlbumSearch,
+        body: include_str!("../fixtures/audiodb/search_album_found.json"),
+        identity: "/album/0/idAlbum",
     },
 ];
 
@@ -398,6 +454,38 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
         Provider::CoverArtReleaseGroup => {
             cover_art(EntityKind::ReleaseGroup, COVER_ART_RELEASE_GROUP_MBID, body).await
         }
+        Provider::AudioDbArtistMbid => {
+            let providers = audiodb("artist-mb.php", body);
+            let artist = providers
+                .audiodb
+                .artist_by_mbid("", AUDIODB_ARTIST_MBID, PRIORITY)
+                .await?;
+            Ok(artist.is_some())
+        }
+        Provider::AudioDbAlbumMbid => {
+            let providers = audiodb("album-mb.php", body);
+            let album = providers
+                .audiodb
+                .album_by_mbid("", AUDIODB_ALBUM_MBID, PRIORITY)
+                .await?;
+            Ok(album.is_some())
+        }
+        Provider::AudioDbArtistSearch => {
+            let providers = audiodb("search.php", body);
+            let artist = providers
+                .audiodb
+                .search_artist("", "Radiohead", PRIORITY)
+                .await?;
+            Ok(artist.is_some())
+        }
+        Provider::AudioDbAlbumSearch => {
+            let providers = audiodb("searchalbum.php", body);
+            let album = providers
+                .audiodb
+                .search_album("", "Radiohead", "OK Computer", PRIORITY)
+                .await?;
+            Ok(album.is_some())
+        }
     }
 }
 
@@ -423,6 +511,25 @@ async fn cover_art(entity: EntityKind, mbid: &str, body: &str) -> Result<bool, P
         .list_artwork(entity, mbid, DownloadSize::Full, PRIORITY)
         .await?;
     Ok(!images.is_empty())
+}
+
+/// Serves `body` from TheAudioDB's free-key address for `endpoint` and returns
+/// the providers that read it.
+fn audiodb(endpoint: &str, body: &str) -> Providers {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("http://fake/audiodb/123/{endpoint}"),
+        200,
+        &[],
+        body.as_bytes().to_vec(),
+    );
+    Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            audiodb: "http://fake/audiodb".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    )
 }
 
 /// Serves each `(path, body)` from the Deezer origin and returns the providers

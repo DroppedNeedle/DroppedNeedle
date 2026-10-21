@@ -57,18 +57,9 @@ fn audiodb_url(endpoint: &str) -> String {
     format!("{}/123/{endpoint}", audiodb::DEFAULT_BASE_URL)
 }
 
-fn audiodb_artist_payload() -> serde_json::Value {
-    serde_json::json!({
-        "artists": [{
-            "idArtist": "111239",
-            "strArtist": "Radiohead",
-            "strMusicBrainzID": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
-            "strArtistThumb": "https://thumb.example/a.jpg",
-            "strArtistFanart": "https://fan.example/a.jpg",
-            "strBrandNewField": "ignored, like v2's tolerant structs"
-        }]
-    })
-}
+/// The recorded artist lookup for Radiohead, and the recorded no-match answer.
+const AUDIODB_ARTIST_FOUND: &str = include_str!("../fixtures/audiodb/artist_mb_found.json");
+const AUDIODB_NOT_FOUND: &str = include_str!("../fixtures/audiodb/artist_mb_not_found.json");
 
 #[tokio::test]
 async fn audiodb_artist_by_mbid_found_tolerates_unknown_fields() {
@@ -76,7 +67,7 @@ async fn audiodb_artist_by_mbid_found_tolerates_unknown_fields() {
     wire.on(
         Method::Get,
         &audiodb_url("artist-mb.php"),
-        json_answer(200, &audiodb_artist_payload()),
+        bytes_answer(200, AUDIODB_ARTIST_FOUND.as_bytes().to_vec()),
     );
     let providers = audio_providers(&wire);
 
@@ -87,19 +78,38 @@ async fn audiodb_artist_by_mbid_found_tolerates_unknown_fields() {
         .expect("answered")
         .expect("artist found");
 
-    assert_eq!(artist.id_artist, "111239");
+    assert_eq!(artist.id_artist, "111418");
     assert_eq!(artist.name, "Radiohead");
     assert_eq!(
         artist.mbid.as_deref(),
         Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
     );
-    assert_eq!(artist.thumb.as_deref(), Some("https://thumb.example/a.jpg"));
+    assert_eq!(
+        artist.thumb.as_deref(),
+        Some("https://r2.theaudiodb.com/images/media/artist/thumb/35poth1668098458.jpg")
+    );
     let sent = wire.sent();
     assert_eq!(sent.len(), 1);
     assert_eq!(
         sent[0].query("i").as_deref(),
         Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
     );
+}
+
+/// Nothing found is `{"artists": null}`: no match, never a failure.
+#[tokio::test]
+async fn audiodb_not_found_is_no_match() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        &audiodb_url("artist-mb.php"),
+        bytes_answer(200, AUDIODB_NOT_FOUND.as_bytes().to_vec()),
+    );
+    let found = audio_providers(&wire)
+        .audiodb
+        .artist_by_mbid("", "00000000-0000-0000-0000-000000000000", PRIORITY)
+        .await;
+    assert!(matches!(found, Ok(None)), "{found:?}");
 }
 
 /// An entry missing its identity, or an answer that is not JSON, is a
