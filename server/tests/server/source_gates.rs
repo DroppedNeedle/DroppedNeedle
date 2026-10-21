@@ -645,3 +645,76 @@ fn no_loop_has_its_own_stop_or_time_seam() {
         wrong.join("\n")
     );
 }
+
+/// The one file that reads the system clock: the kernel's `Clock` and its
+/// `SystemClock`.
+const KERNEL_CLOCK: &str = "kernel/src/clock.rs";
+
+/// The files that still read the system clock outside the kernel, each with
+/// its reason, from `server/clock-outside-kernel.txt`.
+fn clock_outside_kernel() -> Vec<(String, String)> {
+    let list = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("clock-outside-kernel.txt"),
+    )
+    .expect("clock-outside-kernel.txt reads");
+    list.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let (path, why) = line
+                .split_once(char::is_whitespace)
+                .expect("each clock-outside-kernel.txt line is a path and a reason");
+            (path.to_owned(), why.trim().to_owned())
+        })
+        .collect()
+}
+
+/// Wall time comes from the kernel clock, so a test's `ManualClock` drives
+/// every path it reaches. Outside `kernel/src/clock.rs`, a read of
+/// `SystemTime::now()`, chrono's `Utc::now()` or `Local::now()`, or the time
+/// crate's `now_utc()` or `now_local()` must be listed in
+/// `server/clock-outside-kernel.txt`, and a listed file that stops reading
+/// the clock loses its line. `Instant::now()` is a monotonic timer and stays
+/// allowed.
+#[test]
+fn wall_time_comes_from_the_kernel_clock() {
+    let reads =
+        Regex::new(r"\b(?:SystemTime::now|Utc::now|Local::now)\b|\bnow_(?:utc|local)\b").unwrap();
+    let listed = clock_outside_kernel();
+    let sources = workspace_sources();
+    let mut used = vec![false; listed.len()];
+    let mut wrong = Vec::new();
+    for source in &sources {
+        if source.path == KERNEL_CLOCK {
+            continue;
+        }
+        let code = source.shipping_code();
+        let hits: Vec<String> = reads
+            .find_iter(&code)
+            .map(|found| {
+                let line = code[..found.start()].matches('\n').count() + 1;
+                format!("{}:{line}: {}", source.path, found.as_str())
+            })
+            .collect();
+        match listed.iter().position(|(path, _)| *path == source.path) {
+            Some(at) => used[at] = !hits.is_empty(),
+            None => wrong.extend(hits),
+        }
+    }
+    for ((path, _), used) in listed.iter().zip(used) {
+        if !sources.iter().any(|source| source.path == *path) {
+            wrong.push(format!(
+                "{path}: listed in clock-outside-kernel.txt, but no longer exists"
+            ));
+        } else if !used {
+            wrong.push(format!(
+                "{path}: listed in clock-outside-kernel.txt, but no longer reads the clock; delete the line"
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "read wall time through the kernel clock, or list the file:\n{}",
+        wrong.join("\n")
+    );
+}
