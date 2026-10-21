@@ -28,7 +28,10 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidQuery;
 use droppedneedle_kernel::mount::{Routes, routes};
 use futures_util::future::BoxFuture;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use super::artwork::cache::ImageCredit;
 
 /// Sizes the release cover routes accept, v2 set kept.
 const ALLOWED_SIZES: &[&str] = &["250", "500", "1200"];
@@ -111,6 +114,8 @@ pub trait CoverArt: Send + Sync + 'static {
         artist_id: &'a str,
         size_px: Option<u32>,
     ) -> BoxFuture<'a, CoverLookup>;
+    /// The credit stored with the artist's image, while the image is held.
+    fn artist_image_credit<'a>(&'a self, artist_id: &'a str) -> BoxFuture<'a, Option<ImageCredit>>;
     /// Art for a local album by any source, waiting for a network fetch to
     /// finish (compat clients cannot poll a 202).
     fn album_cover<'a>(
@@ -217,6 +222,13 @@ impl CoverArt for FakeCoverArt {
         Box::pin(async move { found })
     }
 
+    fn artist_image_credit<'a>(
+        &'a self,
+        _artist_id: &'a str,
+    ) -> BoxFuture<'a, Option<ImageCredit>> {
+        Box::pin(async { None })
+    }
+
     fn album_cover<'a>(
         &'a self,
         album_id: &'a str,
@@ -257,7 +269,29 @@ pub fn routes() -> Routes<CoversState> {
         .user(routes!(cover_from_release_group))
         .user(routes!(cover_from_release))
         .user(routes!(artist_cover))
+        .user(routes!(artist_cover_credit))
         .user(routes!(album_artwork))
+}
+
+/// Who made an artist's picture and under which licence. Plain text.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PhotoCredit {
+    /// The author, when the source names one.
+    pub author: Option<String>,
+    /// The licence's short name, such as `CC BY-SA 4.0`.
+    pub licence: Option<String>,
+    /// The licence's page, http or https.
+    pub licence_url: Option<String>,
+    /// The picture's page at its source, http or https.
+    pub file_url: String,
+}
+
+/// The credit an artist's picture asks for.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ArtistImageCredit {
+    /// `null` when the picture asks for none, or no picture is held.
+    #[schema(required = true)]
+    pub credit: Option<PhotoCredit>,
 }
 
 /// `size` query for the release cover routes.
@@ -484,6 +518,38 @@ pub async fn artist_cover(
 ) -> Response {
     let lookup = state.covers.artist_image(&artist_id, query.size).await;
     lookup_response(lookup, &headers)
+}
+
+/// Artist image credit: the author and licence of a Commons picture.
+///
+/// Read from the stored image, so it is there exactly while the picture is.
+#[utoipa::path(
+    get,
+    tag = "platform",
+    path = "/api/v3/covers/artist/{artist_id}/credit",
+    params(
+        ("artist_id" = String, Path, description = "MusicBrainz artist id"),
+    ),
+    responses(
+        (status = 200, description = "The credit, or null", body = ArtistImageCredit),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn artist_cover_credit(
+    State(state): State<CoversState>,
+    Path(artist_id): Path<String>,
+) -> axum::Json<ArtistImageCredit> {
+    let credit = state
+        .covers
+        .artist_image_credit(&artist_id)
+        .await
+        .map(|credit| PhotoCredit {
+            author: credit.author,
+            licence: credit.licence,
+            licence_url: credit.licence_url,
+            file_url: credit.file_url,
+        });
+    axum::Json(ArtistImageCredit { credit })
 }
 
 /// An album's own art: the folder image or embedded picture the library

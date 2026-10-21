@@ -222,6 +222,8 @@ pub enum WikiPage {
 ///
 /// Verified against commons.wikimedia.org/w/api.php on 2026-10-20: tests/fixtures/wikidata/commons_imageinfo_found.json.
 /// A file that does not exist: tests/fixtures/wikidata/commons_imageinfo_not_found.json.
+/// With `iiprop=url|extmetadata` and `iiextmetadatafilter=Artist|LicenseShortName|LicenseUrl`,
+/// verified on 2026-10-21: tests/fixtures/wikidata/commons_imageinfo_credit.json.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageAnswer {
     /// The query block.
@@ -243,4 +245,61 @@ pub struct ImageInfo {
     pub url: String,
     /// The scaled thumbnail, when Commons made one for the width asked.
     pub thumburl: Option<String>,
+    /// The file's page on Commons.
+    #[serde(default)]
+    pub descriptionurl: Option<String>,
+    /// The author and licence fields asked for, when the file page has them.
+    #[serde(default)]
+    pub extmetadata: Option<ExtMetadata>,
+}
+
+/// The `extmetadata` fields the credit reads. Each is absent when the file
+/// page does not state it.
+///
+/// Verified on 2026-10-21 (tests/fixtures/wikidata/commons_imageinfo_credit.json):
+/// each field is an object with a string `value` and a `source`
+/// (`commons-desc-page`). `Artist` is HTML, here a link to the photographer's
+/// Flickr page; `LicenseShortName` is plain text (`CC BY 4.0`) and
+/// `LicenseUrl` a bare URL.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExtMetadata {
+    /// Who made the file, as HTML.
+    #[serde(rename = "Artist", default)]
+    pub artist: Option<MetadataField>,
+    /// The licence's short name, such as `CC BY-SA 4.0`.
+    #[serde(rename = "LicenseShortName", default)]
+    pub license_short_name: Option<MetadataField>,
+    /// The licence's own page.
+    #[serde(rename = "LicenseUrl", default)]
+    pub license_url: Option<MetadataField>,
+}
+
+/// One `extmetadata` field.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MetadataField {
+    /// The field's value. A value that is not a string is not read.
+    #[serde(default)]
+    pub value: Option<MetadataValue>,
+}
+
+impl MetadataField {
+    /// The value, when it is a string.
+    #[must_use]
+    pub fn text(&self) -> Option<&str> {
+        match self.value.as_ref()? {
+            MetadataValue::Text(text) => Some(text),
+            MetadataValue::Other(_) => None,
+        }
+    }
+}
+
+/// An `extmetadata` value: a string, or anything else, which is not read.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum MetadataValue {
+    /// A string value.
+    Text(String),
+    /// Any other value. Kept so one odd field does not fail the answer.
+    #[allow(dead_code)]
+    Other(IgnoredAny),
 }

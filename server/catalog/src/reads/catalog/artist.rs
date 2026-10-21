@@ -21,6 +21,8 @@ use super::{
     BIOGRAPHY, Catalog, LASTFM_DETAILS, is_mbid, mb_error, mb_search_error, record_mb_down,
 };
 use crate::reads::collections::state::AutoDownloadState;
+use crate::reads::platform::artwork::ArtistImageCandidate;
+use crate::reads::platform::artwork::cache::ImageCredit;
 use crate::reads::platform::artwork::warm::WarmTargets;
 
 /// Most discography pages fetched per artist (v2 `_MAX_RG_PAGES`).
@@ -186,6 +188,10 @@ pub struct Biography {
     pub description: Option<String>,
     /// Wikidata/Commons portrait.
     pub image: Option<String>,
+    /// The portrait's Commons credit. Absent in an answer cached before
+    /// credits were kept.
+    #[serde(default)]
+    pub image_credit: Option<ImageCredit>,
     /// The portrait lookup failed, so "no image" is not an answer. Never
     /// cached: a failed fetch is not stored.
     #[serde(skip)]
@@ -588,10 +594,13 @@ impl Catalog {
                 if let Some(error) = description.as_ref().err().or(image.as_ref().err()) {
                     tracing::debug!(artist = %detail.mbid, %error, "artist biography incomplete");
                 }
+                let image_failed = image.is_err();
+                let portrait = image.ok().flatten().map(ArtistImageCandidate::commons);
                 let biography = Biography {
                     description: description.ok().flatten().filter(|text| !text.is_empty()),
-                    image_failed: image.is_err(),
-                    image: image.ok().flatten(),
+                    image_failed,
+                    image_credit: portrait.as_ref().and_then(|found| found.credit.clone()),
+                    image: portrait.map(|found| found.url),
                 };
                 Ok(if failed {
                     Fetched::Partial(biography)

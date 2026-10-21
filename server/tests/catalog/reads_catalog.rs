@@ -1056,8 +1056,13 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
         .candidates(ARTIST, RequestPriority::ImageFetch)
         .await;
     assert!(!candidates.incomplete, "the resolve is settled");
+    let urls: Vec<&str> = candidates
+        .images
+        .iter()
+        .map(|image| image.url.as_str())
+        .collect();
     assert_eq!(
-        candidates.urls,
+        urls,
         ["https://upload.wikimedia.org/wikipedia/commons/a/a1/Radiohead_2016.jpg"]
     );
     assert!(started.elapsed() >= Duration::from_secs(2), "it waited");
@@ -1066,6 +1071,120 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
             .iter()
             .all(|sent| !sent.url.as_str().starts_with(audiodb::DEFAULT_BASE_URL)),
         "TheAudioDB is not asked while the page waits"
+    );
+}
+
+/// A Commons portrait keeps its licence attribution: once the artist's
+/// picture is resolved from Commons, the credit route answers the author
+/// and licence its file page gives, the author's HTML reduced to plain
+/// text, and a link to the file page.
+#[tokio::test]
+async fn a_commons_portrait_answers_its_credit_as_plain_text() {
+    use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
+    use droppedneedle_catalog::reads::platform::artwork::{
+        ArtworkService, cache::ArtworkCache, local::LocalArtwork,
+    };
+    use droppedneedle_catalog::reads::platform::covers::{self, CoversState};
+    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, wikidata};
+
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+    let wire = Arc::new(ScriptedWire::new());
+    // One Wikidata item carries the MBID, and its only picture is on Commons.
+    let wikidata_api = format!("{}/w/api.php", wikidata::WIKIDATA_BASE);
+    wire.answer(
+        &wikidata_api,
+        200,
+        &[],
+        include_str!("../fixtures/wikidata/search_p434.json"),
+    );
+    wire.answer(
+        &wikidata_api,
+        200,
+        &[],
+        include_str!("../fixtures/wikidata/claims_p18_found.json"),
+    );
+    wire.answer(
+        &format!("{}/w/api.php", wikidata::COMMONS_BASE),
+        200,
+        &[],
+        include_str!("../fixtures/wikidata/commons_imageinfo_credit.json"),
+    );
+    wire.answer(
+        "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a1/RadioheadO2211125_composite.jpg/1280px-RadioheadO2211125_composite.jpg",
+        200,
+        &[("content-type", "image/png")],
+        PNG,
+    );
+    let providers = Arc::new(Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints {
+            wikidata: wikidata::WIKIDATA_BASE.to_owned(),
+            commons: wikidata::COMMONS_BASE.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let (pool, dir) = crate::common::migrated_pool("reads-catalog-credit").await;
+    let rig = AuthRig::new("reads-catalog-credit").await;
+    let catalog = Catalog::new(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(TestSettings {
+                mb_url: "http://127.0.0.1:9".to_owned(),
+            }),
+            rig.deps.clone(),
+        ),
+        LocalCatalog::new(pool.clone()),
+    );
+    let config = crate::common::config_store(&dir.join("settings"));
+    let artwork = ArtworkService::new(
+        ArtworkCache::new(dir.join("covers"), 1024 * 1024),
+        LocalArtwork::new(pool),
+        None,
+        config.live(),
+    )
+    .with_images(Arc::new(providers.images.clone()))
+    .with_artist_source(Arc::new(CatalogArtistImages(catalog)));
+    let app = covers::routes()
+        .with_state(CoversState::new(Arc::new(artwork)))
+        .into_router();
+    let get = |uri: String| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            (status, body)
+        }
+    };
+
+    let (status, image) = get(format!("/api/v3/covers/artist/{ARTIST}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(&image[..], PNG);
+
+    let (status, body) = get(format!("/api/v3/covers/artist/{ARTIST}/credit")).await;
+    assert_eq!(status, StatusCode::OK);
+    let credit: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        credit,
+        json!({"credit": {
+            "author": "Raph_PH",
+            "licence": "CC BY 4.0",
+            "licence_url": "https://creativecommons.org/licenses/by/4.0",
+            "file_url": "https://commons.wikimedia.org/wiki/File:RadioheadO2211125_composite.jpg",
+        }})
     );
 }
 

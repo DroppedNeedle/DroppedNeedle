@@ -7,7 +7,9 @@
 //! reuse the same claims path with a caller-chosen property. An artist's
 //! picture can also be found from its MusicBrainz id alone: a statement
 //! search finds the one item carrying that id (P434), and one claims call
-//! reads its Commons image (P18) and Deezer artist id (P2722).
+//! reads its Commons image (P18) and Deezer artist id (P2722). A Commons
+//! picture comes with its credit: the author and licence its file page
+//! states, as plain text, and a link to that page.
 //!
 //! Absence-vs-outage semantics, carried over from v2: a
 //! clean miss (no sitelink, no extract, no claim) is `Ok(None)` and is
@@ -34,8 +36,8 @@ use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
 use models::{
-    Claim, ClaimsAnswer, Entity, EntityData, ExtractAnswer, ImageAnswer, ImagePage, SearchAnswer,
-    WikiPage,
+    Claim, ClaimsAnswer, Entity, EntityData, ExtMetadata, ExtractAnswer, ImageAnswer, ImageInfo,
+    ImagePage, MetadataField, SearchAnswer, WikiPage,
 };
 
 /// The provider name errors carry.
@@ -77,6 +79,35 @@ pub const PROPERTY_DEEZER_ARTIST: &str = "P2722";
 /// thumburl for File:RadioheadO2211125 composite.jpg, tests/fixtures/wikidata/commons_imageinfo_found.json.
 /// The stored portrait is still shrunk to 1200 px.
 pub const COMMONS_THUMB_WIDTH: &str = "1280";
+/// The file page fields a Commons credit is made from.
+const COMMONS_CREDIT_FIELDS: &str = "Artist|LicenseShortName|LicenseUrl";
+/// Longest author name kept, in characters: a credit is one short line.
+const MAX_AUTHOR_CHARS: usize = 120;
+/// Longest licence name kept, in characters.
+const MAX_LICENCE_CHARS: usize = 60;
+
+/// A Commons picture: the URL to download and the credit its file page gives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommonsImage {
+    /// The scaled thumbnail, or the original when Commons made none.
+    pub url: String,
+    /// Who made it and under which licence. `None` when the answer names no
+    /// usable file page.
+    pub credit: Option<CommonsCredit>,
+}
+
+/// The credit a Commons file page gives, as plain text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommonsCredit {
+    /// The author, its HTML reduced to text.
+    pub author: Option<String>,
+    /// The licence's short name, such as `CC BY-SA 4.0`.
+    pub licence: Option<String>,
+    /// The licence's page; only an http or https address is kept.
+    pub licence_url: Option<String>,
+    /// The file's page on Commons, http or https.
+    pub file_url: String,
+}
 
 // ---------------------------------------------------------------------------
 // Pure helpers (ports of the v2 static helpers)
@@ -198,9 +229,9 @@ fn select_extract(answer: &ExtractAnswer) -> Option<String> {
     None
 }
 
-/// Read the first usable Commons file URL: the first page carrying image info
+/// Read the first usable Commons file: the first page carrying image info
 /// decides, and an empty URL there ends the lookup as absent.
-fn select_commons_url(answer: &ImageAnswer) -> Option<String> {
+fn select_commons_image(answer: &ImageAnswer) -> Option<CommonsImage> {
     let mut pages: Vec<(&String, &ImagePage)> = answer.query.pages.iter().collect();
     pages.sort_by(|a, b| a.0.cmp(b.0));
     let (_, page) = pages
@@ -213,7 +244,114 @@ fn select_commons_url(answer: &ImageAnswer) -> Option<String> {
         .as_deref()
         .filter(|url| !url.is_empty())
         .unwrap_or(info.url.as_str());
-    (!url.is_empty()).then(|| url.to_owned())
+    (!url.is_empty()).then(|| CommonsImage {
+        url: url.to_owned(),
+        credit: commons_credit(info),
+    })
+}
+
+/// The credit of one image info row, or `None` without a usable file page.
+fn commons_credit(info: &ImageInfo) -> Option<CommonsCredit> {
+    let file_url = web_url(info.descriptionurl.as_deref()?)?;
+    let field = |pick: fn(&ExtMetadata) -> Option<&MetadataField>| {
+        info.extmetadata
+            .as_ref()
+            .and_then(pick)
+            .and_then(MetadataField::text)
+    };
+    Some(CommonsCredit {
+        author: field(|fields| fields.artist.as_ref())
+            .and_then(|html| plain_text(html, MAX_AUTHOR_CHARS)),
+        licence: field(|fields| fields.license_short_name.as_ref())
+            .and_then(|html| plain_text(html, MAX_LICENCE_CHARS)),
+        licence_url: field(|fields| fields.license_url.as_ref()).and_then(web_url),
+        file_url,
+    })
+}
+
+/// `raw` as an http or https address with a host and no credentials, else
+/// `None`.
+fn web_url(raw: &str) -> Option<String> {
+    let url = Url::parse(raw.trim()).ok()?;
+    let usable = matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some_and(|host| !host.is_empty())
+        && url.username().is_empty()
+        && url.password().is_none();
+    usable.then(|| url.to_string())
+}
+
+/// HTML reduced to one line of plain text: tags dropped, character
+/// references decoded, whitespace collapsed, and cut to `max` characters.
+/// Empty text is `None`.
+fn plain_text(html: &str, max: usize) -> Option<String> {
+    let mut stripped = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for character in html.chars() {
+        match character {
+            '<' => in_tag = true,
+            '>' if in_tag => {
+                in_tag = false;
+                stripped.push(' ');
+            }
+            _ if !in_tag => stripped.push(character),
+            _ => {}
+        }
+    }
+    let decoded = decode_references(&stripped);
+    let words: Vec<&str> = decoded.split_whitespace().collect();
+    let text: String = words.join(" ").chars().take(max).collect();
+    let text = text.trim_end();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// Decode the character references HTML text carries: the common named ones
+/// and numeric ones. Anything else is kept as written.
+fn decode_references(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let decoded = rest
+            .char_indices()
+            .take(12)
+            .find(|(_, character)| *character == ';')
+            .and_then(|(end, _)| reference(&rest[1..end]).map(|character| (character, end + 1)));
+        match decoded {
+            Some((character, used)) => {
+                out.push(character);
+                rest = &rest[used..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The character one reference names (`amp`, `#39`, `#x27`), if known.
+fn reference(name: &str) -> Option<char> {
+    let named = match name {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some(' '),
+        _ => None,
+    };
+    if named.is_some() {
+        return named;
+    }
+    let number = name.strip_prefix('#')?;
+    let code = match number.strip_prefix(['x', 'X']) {
+        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+        None => number.parse().ok()?,
+    };
+    char::from_u32(code).filter(|character| !character.is_control())
 }
 
 /// The error codes that read as absence: the id names no entity, or it is a
@@ -451,7 +589,7 @@ impl WikidataClient {
         &self,
         wikidata_id: &str,
         priority: RequestPriority,
-    ) -> Result<Option<String>, ProviderError> {
+    ) -> Result<Option<CommonsImage>, ProviderError> {
         let filename = self
             .claim_string(wikidata_id, PROPERTY_IMAGE, priority)
             .await?;
@@ -461,7 +599,7 @@ impl WikidataClient {
         self.commons_image(&filename, priority).await
     }
 
-    /// The scaled Commons URL of one file (a P18 value).
+    /// The scaled Commons URL of one file (a P18 value), with its credit.
     ///
     /// # Errors
     ///
@@ -470,7 +608,7 @@ impl WikidataClient {
         &self,
         filename: &str,
         priority: RequestPriority,
-    ) -> Result<Option<String>, ProviderError> {
+    ) -> Result<Option<CommonsImage>, ProviderError> {
         let titles = format!("File:{filename}");
         let Some(reply) = self
             .get(
@@ -480,8 +618,9 @@ impl WikidataClient {
                     ("action", "query"),
                     ("titles", titles.as_str()),
                     ("prop", "imageinfo"),
-                    ("iiprop", "url"),
+                    ("iiprop", "url|extmetadata"),
                     ("iiurlwidth", COMMONS_THUMB_WIDTH),
+                    ("iiextmetadatafilter", COMMONS_CREDIT_FIELDS),
                     ("format", "json"),
                 ],
                 priority,
@@ -491,7 +630,7 @@ impl WikidataClient {
             return Ok(None);
         };
         let answer: ImageAnswer = decode(&reply)?;
-        Ok(select_commons_url(&answer))
+        Ok(select_commons_image(&answer))
     }
 
     /// The first claim's string value for one property (the P18 path behind

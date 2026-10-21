@@ -1446,6 +1446,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/covers/artist/{artist_id}/credit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Artist image credit: the author and licence of a Commons picture.
+         * @description Read from the stored image, so it is there exactly while the picture is.
+         */
+        get: operations["artist_cover_credit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/covers/release-group/{release_group_id}": {
         parameters: {
             query?: never;
@@ -10612,6 +10632,10 @@ export interface components {
          * @enum {string}
          */
         ArtistGroupState: "waiting_for_identity" | "provider_conflict" | "ambiguous_credit_structure" | "same_name_only" | "credits_moved" | "resolved_automatically";
+        /** @description The credit an artist's picture asks for. */
+        ArtistImageCredit: {
+            credit: null | components["schemas"]["PhotoCredit"];
+        };
         /** @description Artist images from TheAudioDB. Every field is optional. */
         ArtistImages: {
             /** @description Banner. */
@@ -17963,6 +17987,17 @@ export interface components {
              * @description Tracks in the mix.
              */
             track_count: number;
+        };
+        /** @description Who made an artist's picture and under which licence. Plain text. */
+        PhotoCredit: {
+            /** @description The author, when the source names one. */
+            author?: string | null;
+            /** @description The picture's page at its source, http or https. */
+            file_url: string;
+            /** @description The licence's short name, such as `CC BY-SA 4.0`. */
+            licence?: string | null;
+            /** @description The licence's page, http or https. */
+            licence_url?: string | null;
         };
         /** @description Pick one candidate. */
         PickRequest: {
@@ -26183,6 +26218,38 @@ export interface operations {
             };
             /** @description No image for this artist */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    artist_cover_credit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description MusicBrainz artist id */
+                artist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The credit, or null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistImageCredit"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

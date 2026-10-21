@@ -7,7 +7,8 @@
 //!   found in a folder and served through two routes, is stored once.
 //! - `keys/<aa>/<key hash>`: a small text record mapping a lookup key (for
 //!   example `caa:release-group:<mbid>:500`) to a blob, or recording that
-//!   the archive had no art until a given time. TheAudioDB album
+//!   the archive had no art until a given time. A record may also carry the
+//!   image's credit (see [`ImageCredit`]). TheAudioDB album
 //!   thumbnails keep theirs under `keys-audiodb/` instead, so they can be
 //!   forgotten on their own.
 //!
@@ -36,6 +37,7 @@ const AUDIODB_KEYS_DIR: &str = "keys-audiodb";
 /// Keys that live in [`AUDIODB_KEYS_DIR`].
 pub const AUDIODB_KEY_PREFIX: &str = "audiodb:";
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// What a key file says.
@@ -54,6 +56,33 @@ pub enum KeyEntry {
         until: u64,
     },
 }
+
+/// Where a credited picture came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CreditSource {
+    /// A Wikimedia Commons file.
+    WikimediaCommons,
+}
+
+/// The credit a picture's source asks for, kept in the picture's key record
+/// so the two are stored and dropped together. Text is plain, never HTML.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageCredit {
+    /// Where the picture came from.
+    pub source: CreditSource,
+    /// Who made it.
+    pub author: Option<String>,
+    /// The licence's short name.
+    pub licence: Option<String>,
+    /// The licence's page, http or https.
+    pub licence_url: Option<String>,
+    /// The picture's page at its source, http or https.
+    pub file_url: String,
+}
+
+/// Prefix of the key record line that holds an [`ImageCredit`] as JSON.
+const CREDIT_LINE: &str = "credit ";
 
 /// One blob's bookkeeping for eviction.
 #[derive(Debug, Clone, Copy)]
@@ -152,16 +181,43 @@ impl ArtworkCache {
         Some(bytes)
     }
 
+    /// The credit stored with the image under `key`, while that image is on
+    /// disk. A record without one, written before credits were kept
+    /// included, reads as `None`.
+    pub async fn credit(&self, key: &str) -> Option<ImageCredit> {
+        let path = self.key_path(key);
+        let text = blocking(move || std::fs::read_to_string(path).ok()).await??;
+        let Some(KeyEntry::Hit { hash, .. }) = parse_key(&text) else {
+            return None;
+        };
+        if !self.has_blob(&hash).await {
+            return None;
+        }
+        parse_credit(&text)
+    }
+
     /// Store image bytes, optionally under a key, and return their hash.
     /// Evicts old blobs when the cache grows past its bound.
     pub async fn put(&self, key: Option<&str>, bytes: Vec<u8>, content_type: &str) -> String {
+        self.put_credited(key, bytes, content_type, None).await
+    }
+
+    /// [`ArtworkCache::put`], with `credit` kept in the key record beside
+    /// the image.
+    pub async fn put_credited(
+        &self,
+        key: Option<&str>,
+        bytes: Vec<u8>,
+        content_type: &str,
+        credit: Option<&ImageCredit>,
+    ) -> String {
         let hash = sha256_hex(&bytes);
         let size = bytes.len() as u64;
         let blob = self.blob_path(&hash);
         let key_path = key.map(|key| self.key_path(key));
         let key_file = key_path
             .clone()
-            .map(|path| (path, format!("hit\n{hash}\n{content_type}\n")));
+            .map(|path| (path, hit_record(&hash, content_type, credit)));
         let written = blocking(move || -> std::io::Result<bool> {
             let fresh = !blob.exists();
             if fresh {
@@ -221,7 +277,7 @@ impl ArtworkCache {
             return;
         }
         let path = self.key_path(key);
-        let text = format!("hit\n{hash}\n{content_type}\n");
+        let text = hit_record(hash, content_type, None);
         let target = path.clone();
         match blocking(move || write_atomic(&target, text.as_bytes())).await {
             Some(Ok(())) => {
@@ -472,6 +528,32 @@ fn parse_key(text: &str) -> Option<KeyEntry> {
         }),
         _ => None,
     }
+}
+
+/// A key record pointing at a blob, with the image's credit on a line of its
+/// own when it has one.
+fn hit_record(hash: &str, content_type: &str, credit: Option<&ImageCredit>) -> String {
+    let mut record = format!("hit\n{hash}\n{content_type}\n");
+    match credit.map(serde_json::to_string) {
+        Some(Ok(json)) => {
+            record.push_str(CREDIT_LINE);
+            record.push_str(&json);
+            record.push('\n');
+        }
+        Some(Err(error)) => tracing::warn!(%error, "image credit not stored"),
+        None => {}
+    }
+    record
+}
+
+/// The credit line of a key record. A record without one, or with one that
+/// does not read, has no credit.
+fn parse_credit(text: &str) -> Option<ImageCredit> {
+    let json = text
+        .lines()
+        .skip(3)
+        .find_map(|line| line.strip_prefix(CREDIT_LINE))?;
+    serde_json::from_str(json).ok()
 }
 
 fn is_hash(value: &str) -> bool {

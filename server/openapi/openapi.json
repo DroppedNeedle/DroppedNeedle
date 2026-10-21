@@ -4099,6 +4099,56 @@
         ]
       }
     },
+    "/api/v3/covers/artist/{artist_id}/credit": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Artist image credit: the author and licence of a Commons picture.",
+        "description": "Read from the stored image, so it is there exactly while the picture is.",
+        "operationId": "artist_cover_credit",
+        "parameters": [
+          {
+            "name": "artist_id",
+            "in": "path",
+            "description": "MusicBrainz artist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The credit, or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistImageCredit"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/covers/release-group/{release_group_id}": {
       "get": {
         "tags": [
@@ -36933,6 +36983,26 @@
           "resolved_automatically"
         ]
       },
+      "ArtistImageCredit": {
+        "type": "object",
+        "description": "The credit an artist's picture asks for.",
+        "required": [
+          "credit"
+        ],
+        "properties": {
+          "credit": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PhotoCredit",
+                "description": "`null` when the picture asks for none, or no picture is held."
+              }
+            ]
+          }
+        }
+      },
       "ArtistImages": {
         "type": "object",
         "description": "Artist images from TheAudioDB. Every field is optional.",
@@ -53244,6 +53314,40 @@
             "format": "int32",
             "description": "Tracks in the mix.",
             "minimum": 0
+          }
+        }
+      },
+      "PhotoCredit": {
+        "type": "object",
+        "description": "Who made an artist's picture and under which licence. Plain text.",
+        "required": [
+          "file_url"
+        ],
+        "properties": {
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The author, when the source names one."
+          },
+          "file_url": {
+            "type": "string",
+            "description": "The picture's page at its source, http or https."
+          },
+          "licence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The licence's short name, such as `CC BY-SA 4.0`."
+          },
+          "licence_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The licence's page, http or https."
           }
         }
       },

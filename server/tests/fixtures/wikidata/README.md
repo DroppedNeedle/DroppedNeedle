@@ -52,6 +52,13 @@ Every endpoint the client calls has a fixture:
   `continue` block, which the client does not follow.
 - `commons_imageinfo_not_found.json`: the same request for a file name that
   does not exist. HTTP 200, page `-1` with `missing` and no image info.
+- `commons_imageinfo_credit.json`, recorded on 2026-10-21: the request the
+  client now sends for the same file, `GET https://commons.wikimedia.org/w/api.php?action=query&titles=File:RadioheadO2211125 composite.jpg&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=1280&iiextmetadatafilter=Artist|LicenseShortName|LicenseUrl&format=json`,
+  HTTP 200, `application/json; charset=utf-8`. Beside the URLs it carries
+  `extmetadata` with the three fields asked for, each an object with a string
+  `value` and a `source`: `Artist` is HTML (a link to the photographer's
+  Flickr page), `LicenseShortName` is `CC BY 4.0` and `LicenseUrl` the
+  licence's address.
 
 Not recorded: the Special:EntityData answer for an unknown id. The client
 reads its 404 as absence without decoding the body.
@@ -68,9 +75,10 @@ decode. Its only free text is a short image caption.
 The other bodies are unchanged except re-indented (two spaces), with one
 exception. In `extract_found.json` the English Wikipedia intro in
 `query.pages.38252.extract` is CC BY-SA article text, so it is replaced by a
-placeholder sentence. Nothing else in that file was changed. The Commons answers
-carry no author or licence metadata, because the client does not request
-`extmetadata`.
+placeholder sentence. Nothing else in that file was changed. The two older
+Commons answers carry no author or licence metadata: they were recorded before
+the client asked for `extmetadata`. The newer one holds a photographer's
+public name and a licence, and no description text.
 
 None of the bodies holds a key, a token or personal data. The error answers
 name the Wikimedia server that served them (`servedby`), which is not personal data.

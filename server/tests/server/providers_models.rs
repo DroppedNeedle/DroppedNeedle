@@ -257,6 +257,13 @@ const ROWS: &[Row] = &[
         identity: "/query/pages/179695193/imageinfo/0/url",
     },
     Row {
+        name: "commons imageinfo with author and licence, file url",
+        provider: Provider::CommonsImage,
+        body: include_str!("../fixtures/wikidata/commons_imageinfo_credit.json"),
+        kind: PayloadKind::Decode,
+        identity: "/query/pages/179695193/imageinfo/0/url",
+    },
+    Row {
         name: "wikidata Special:EntityData, redirected id, the target entity",
         provider: Provider::WikidataRedirect,
         body: include_str!("../fixtures/wikidata/entity_redirect.json"),

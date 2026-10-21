@@ -11,6 +11,8 @@
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import { outsideLink } from './outsideLink';
+	import { getArtistImageCreditQuery } from '$lib/queries/artist/ArtistImageCreditQuery.svelte';
 
 	interface Props {
 		artist: ArtistInfo;
@@ -56,6 +58,14 @@
 			(gradient) => (heroGradient = gradient)
 		);
 	}
+
+	const creditQuery = getArtistImageCreditQuery(() => ({
+		mbid: artist.musicbrainz_id,
+		enabled: heroImageLoaded
+	}));
+	let credit = $derived(creditQuery.data ?? null);
+	let creditFileLink = $derived(outsideLink(credit?.file_url));
+	let creditLicenceLink = $derived(outsideLink(credit?.licence_url));
 
 	let validLinks = $derived(
 		artist.external_links.filter((link) => link.url && link.url.trim() !== '')
@@ -157,6 +167,31 @@
 			</div>
 		</div>
 	</div>
+
+	{#if credit && creditFileLink}
+		<p
+			class="absolute bottom-2 right-3 left-3 z-10 truncate text-right text-[0.7rem] text-base-content/50"
+		>
+			<a
+				href={creditFileLink}
+				target="_blank"
+				rel="noopener noreferrer"
+				class="hover:text-base-content/80 hover:underline"
+				>Photo: {credit.author ?? 'Wikimedia Commons'}</a
+			>{#if credit.licence},
+				{#if creditLicenceLink}
+					<a
+						href={creditLicenceLink}
+						target="_blank"
+						rel="noopener noreferrer license"
+						class="hover:text-base-content/80 hover:underline">{credit.licence}</a
+					>
+				{:else}
+					{credit.licence}
+				{/if}
+			{/if}
+		</p>
+	{/if}
 </div>
 
 <style>

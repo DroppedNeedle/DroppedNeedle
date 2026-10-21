@@ -34,7 +34,9 @@
 //! picture and then the Commons portrait of the one Wikidata item carrying
 //! the artist's MBID, matched by exact id. A page reads TheAudioDB from the
 //! cache only; a miss queues a background fill (see [`warm`]) and the page
-//! goes on to Wikidata. The catalog names the candidate URLs through
+//! goes on to Wikidata. A Commons portrait keeps its author and licence in
+//! its cache record, which the credit route reads. The catalog names the
+//! candidate URLs through
 //! [`ArtistImageSource`]; the image itself is downloaded once, from an
 //! allowed host only (see
 //! [`check_image_url`](droppedneedle_providers::images::check_image_url)),
@@ -61,9 +63,10 @@ use futures_util::future::BoxFuture;
 use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup};
 use droppedneedle_providers::coverart::{ArtworkBytes, DownloadSize, EntityKind};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
+use droppedneedle_providers::wikidata::CommonsImage;
 use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority, Singleflight};
 
-use self::cache::{ArtworkCache, KeyEntry, sha256_hex, unix_now};
+use self::cache::{ArtworkCache, CreditSource, ImageCredit, KeyEntry, sha256_hex, unix_now};
 use self::local::{LocalArt, LocalArtwork, local_art_stamp, read_local_art};
 use self::remote::{ImageFetch, RemoteCovers, RemoteImages};
 use droppedneedle_kernel::runtime_config::Live;
@@ -102,12 +105,44 @@ pub const PRECACHE_WAIT: Duration = Duration::from_secs(60);
 /// Wikidata has no match), so more would only queue.
 pub const ARTIST_RESOLVE_PERMITS: usize = 4;
 
-/// Candidate artist image URLs, best first.
+/// One artist picture to try, with the credit its source asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtistImageCandidate {
+    /// Where to download it.
+    pub url: String,
+    /// Stored with the picture. Only Commons portraits carry one.
+    pub credit: Option<ImageCredit>,
+}
+
+impl ArtistImageCandidate {
+    /// A picture whose source asks for no credit.
+    #[must_use]
+    pub fn uncredited(url: String) -> Self {
+        Self { url, credit: None }
+    }
+
+    /// A Commons portrait with the credit its file page gives.
+    #[must_use]
+    pub fn commons(image: CommonsImage) -> Self {
+        Self {
+            url: image.url,
+            credit: image.credit.map(|credit| ImageCredit {
+                source: CreditSource::WikimediaCommons,
+                author: credit.author,
+                licence: credit.licence,
+                licence_url: credit.licence_url,
+                file_url: credit.file_url,
+            }),
+        }
+    }
+}
+
+/// Candidate artist images, best first.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArtistImageCandidates {
-    /// URLs to try in order: TheAudioDB thumbnail, then the Deezer picture,
-    /// then the Commons portrait.
-    pub urls: Vec<String>,
+    /// Pictures to try in order: TheAudioDB thumbnail, then the Deezer
+    /// picture, then the Commons portrait.
+    pub images: Vec<ArtistImageCandidate>,
     /// A source could not answer, so "no image" is not settled yet and is
     /// asked again sooner.
     pub incomplete: bool,
@@ -207,6 +242,15 @@ impl ArtworkService {
     /// The disk cache, for the admin stats and clears.
     pub fn cache(&self) -> &ArtworkCache {
         &self.cache
+    }
+
+    /// The credit stored with the artist's image, while the image is held.
+    pub async fn artist_credit(&self, artist_mbid: &str) -> Option<ImageCredit> {
+        let mbid = artist_mbid.trim().to_ascii_lowercase();
+        if !is_valid_mbid(&mbid) {
+            return None;
+        }
+        self.cache.credit(&artist_key(&mbid)).await
     }
 
     /// Whether the artist's image question is settled in the cache: an
@@ -878,12 +922,17 @@ async fn resolve_artist(
 ) -> Option<CoverBytes> {
     let candidates = source.candidates(mbid, priority).await;
     let mut failed = candidates.incomplete;
-    for url in &candidates.urls {
-        match images.fetch(url, priority).await {
+    for candidate in &candidates.images {
+        match images.fetch(&candidate.url, priority).await {
             ImageFetch::Found(art) => {
                 let art = shrink_artist_image(art).await;
                 let hash = cache
-                    .put(Some(key), art.bytes.clone(), &art.content_type)
+                    .put_credited(
+                        Some(key),
+                        art.bytes.clone(),
+                        &art.content_type,
+                        candidate.credit.as_ref(),
+                    )
                     .await;
                 return Some(CoverBytes {
                     bytes: art.bytes,
@@ -966,6 +1015,10 @@ impl CoverArt for ArtworkService {
                 other => other,
             }
         })
+    }
+
+    fn artist_image_credit<'a>(&'a self, artist_id: &'a str) -> BoxFuture<'a, Option<ImageCredit>> {
+        Box::pin(self.artist_credit(artist_id))
     }
 
     fn album_cover<'a>(

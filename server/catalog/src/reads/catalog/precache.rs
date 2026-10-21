@@ -7,7 +7,9 @@
 //! the catalog's own caches and provider pacing, so a precache run fills
 //! exactly what a page visit would, at the pace the providers allow.
 
-use crate::reads::platform::artwork::{ArtistImageCandidates, ArtistImageSource, ArtworkService};
+use crate::reads::platform::artwork::{
+    ArtistImageCandidate, ArtistImageCandidates, ArtistImageSource, ArtworkService,
+};
 use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::precache_phases::{
     LibraryAlbum, LibraryArtist, PrecacheLibrary, PrecacheSources, PrecacheTuning,
@@ -151,7 +153,9 @@ impl Catalog {
         if priority.is_user_facing() {
             let cached = self.page_artist_images(mbid, mbid).await;
             if let Some(thumb) = cached.and_then(|images| images.thumb_url) {
-                candidates.urls.push(thumb);
+                candidates
+                    .images
+                    .push(ArtistImageCandidate::uncredited(thumb));
                 return candidates;
             }
         } else {
@@ -166,7 +170,9 @@ impl Catalog {
             {
                 Some(images) => {
                     if let Some(thumb) = images.and_then(|images| images.thumb_url) {
-                        candidates.urls.push(thumb);
+                        candidates
+                            .images
+                            .push(ArtistImageCandidate::uncredited(thumb));
                         return candidates;
                     }
                 }
@@ -176,8 +182,8 @@ impl Catalog {
         }
         let canonical = detail.as_ref().map_or(mbid, |found| found.mbid.as_str());
         match self.wikidata_artist_pictures(canonical, priority).await {
-            WikidataPictures::Matched { urls, failed } => {
-                candidates.urls = urls;
+            WikidataPictures::Matched { images, failed } => {
+                candidates.images = images;
                 candidates.incomplete |= failed;
                 return candidates;
             }
@@ -195,7 +201,9 @@ impl Catalog {
                             .await
                             .and_then(|images| images.thumb_url)
                     {
-                        candidates.urls.push(thumb);
+                        candidates
+                            .images
+                            .push(ArtistImageCandidate::uncredited(thumb));
                         return candidates;
                     }
                     found
@@ -207,7 +215,12 @@ impl Catalog {
         let biography = self.biography(&detail, priority).await;
         // A failed portrait lookup keeps the short outage marker.
         candidates.incomplete |= biography.image_failed;
-        candidates.urls.extend(biography.image);
+        candidates
+            .images
+            .extend(biography.image.map(|url| ArtistImageCandidate {
+                url,
+                credit: biography.image_credit,
+            }));
         candidates
     }
 
@@ -234,7 +247,7 @@ impl Catalog {
             Err(error) => {
                 tracing::debug!(artist = mbid, %error, "artist image: Wikidata claims failed");
                 return WikidataPictures::Matched {
-                    urls: Vec::new(),
+                    images: Vec::new(),
                     failed: true,
                 };
             }
@@ -249,7 +262,7 @@ impl Catalog {
             {
                 Ok(Some(url)) => {
                     return WikidataPictures::Matched {
-                        urls: vec![url],
+                        images: vec![ArtistImageCandidate::uncredited(url)],
                         failed: false,
                     };
                 }
@@ -260,17 +273,17 @@ impl Catalog {
                 }
             }
         }
-        let mut urls = Vec::new();
+        let mut images = Vec::new();
         if let Some(file) = &ids.commons_file {
             match wiki.commons_image(file, priority).await {
-                Ok(url) => urls.extend(url),
+                Ok(image) => images.extend(image.map(ArtistImageCandidate::commons)),
                 Err(error) => {
                     tracing::debug!(artist = mbid, %error, "artist image: Commons failed");
                     failed = true;
                 }
             }
         }
-        WikidataPictures::Matched { urls, failed }
+        WikidataPictures::Matched { images, failed }
     }
 
     /// Fetch and cache TheAudioDB's answer for an artist at background
@@ -298,7 +311,10 @@ enum WikidataPictures {
     NoMatch { failed: bool },
     /// The item's pictures, best first; `failed` when a lookup behind them
     /// failed.
-    Matched { urls: Vec<String>, failed: bool },
+    Matched {
+        images: Vec<ArtistImageCandidate>,
+        failed: bool,
+    },
 }
 
 /// Candidates for an artist MusicBrainz could not look up: none, asked
@@ -306,7 +322,7 @@ enum WikidataPictures {
 fn musicbrainz_unavailable(mbid: &str, error: &CatalogError) -> ArtistImageCandidates {
     tracing::debug!(artist = mbid, %error, "artist image: MusicBrainz unavailable");
     ArtistImageCandidates {
-        urls: Vec::new(),
+        images: Vec::new(),
         incomplete: true,
     }
 }
