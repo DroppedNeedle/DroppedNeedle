@@ -33,7 +33,7 @@ use crate::dispatch::{
 };
 use crate::downloads::state::TaskStatus;
 use crate::edition::chosen_edition;
-use crate::follows::Follows;
+use crate::follows::{FollowAsk, Follows};
 use droppedneedle_auth::{Admin, Principal};
 
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
@@ -169,10 +169,16 @@ impl RequestsService {
                 message: "Invalid artist MBID format".to_owned(),
             });
         }
+        let follow = follow_ask(
+            principal,
+            body.artist_mbid.as_deref().filter(|_| body.monitor_artist),
+            Some(artist_name.clone()),
+            body.auto_download_artist,
+        );
         if let Some(existing) = self.store.get(RequestKind::Album, &mbid).await?
             && (existing.status.is_active() || existing.status == RequestStatus::Cancelling)
         {
-            return self.attach_album(principal, &existing, body).await;
+            return self.attach_album(principal, &existing, follow).await;
         }
 
         let gate = self.quota.request_gate(principal.user_id(), role, 1)?;
@@ -202,15 +208,15 @@ impl RequestsService {
         );
         let outcome = self
             .store
-            .begin(record, principal.user_id(), gate)
+            .begin(record, principal.user_id(), gate, follow.clone())
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
             BeginOutcome::Existing(winner) if winner.status.is_active() => {
-                self.attach_album(principal, &winner, body).await
+                self.attach_album(principal, &winner, follow).await
             }
             BeginOutcome::Existing(winner) if winner.status == RequestStatus::Cancelling => {
-                self.attach_album(principal, &winner, body).await
+                self.attach_album(principal, &winner, follow).await
             }
             BeginOutcome::Existing(_) => Ok(IntakeResponse {
                 success: false,
@@ -312,7 +318,7 @@ impl RequestsService {
         };
         let outcome = self
             .store
-            .begin(record, principal.user_id(), gate)
+            .begin(record, principal.user_id(), gate, None)
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
@@ -392,6 +398,20 @@ impl RequestsService {
                 duplicate_count = duplicate_count.saturating_add(1);
             }
         }
+        // The follow each row's ask names, keyed by the row's lowercased id.
+        let follows: std::collections::HashMap<String, FollowAsk> = normalized
+            .iter()
+            .filter_map(|(mbid, item)| {
+                let artist = item
+                    .artist_mbid
+                    .as_deref()
+                    .filter(|artist| body.monitor_artist && validate_mbid(artist).is_ok());
+                let name = meaningful_name(item.artist_name.as_deref());
+                let ask = follow_ask(principal, artist, name, body.auto_download_artist)?;
+                Some((mbid.to_lowercase(), ask))
+            })
+            .collect();
+        let follow_for = |mbid: &str| follows.get(&mbid.to_lowercase()).cloned();
 
         let needs_approval = !auto_approves(role);
         let live = self.store.active_mbids(RequestKind::Album).await?;
@@ -409,7 +429,7 @@ impl RequestsService {
         if new_items.is_empty() {
             for (mbid, _) in &existing_items {
                 self.store
-                    .attach_requester(RequestKind::Album, mbid, user_id, Some(name.clone()), now)
+                    .attach_following(mbid, user_id, Some(name.clone()), now, follow_for(mbid))
                     .await?;
             }
             return Ok(BatchIntakeResponse {
@@ -459,7 +479,7 @@ impl RequestsService {
         let mut records = Vec::with_capacity(resolvable.len());
         for (mbid, item, artist_name, album_title) in &resolvable {
             let release_mbid = self.chosen_release(mbid).await;
-            records.push(RequestRecord {
+            let record = RequestRecord {
                 key: mbid.to_lowercase(),
                 kind: RequestKind::Album,
                 status: status_for_role(needs_approval),
@@ -483,11 +503,12 @@ impl RequestsService {
                 auto_download_artist: body.auto_download_artist,
                 reviewed_by_name: None,
                 reviewed_at: None,
-            });
+            };
+            records.push((record, follow_for(mbid)));
         }
         let outcomes = self
             .store
-            .begin_batch(records, user_id, gate)
+            .begin_following(records, user_id, gate)
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         let mut created = Vec::new();
@@ -517,7 +538,7 @@ impl RequestsService {
             .chain(existing_items.iter().map(|(mbid, _)| mbid))
         {
             self.store
-                .attach_requester(RequestKind::Album, mbid, user_id, Some(name.clone()), now)
+                .attach_following(mbid, user_id, Some(name.clone()), now, follow_for(mbid))
                 .await?;
         }
 
@@ -1471,29 +1492,24 @@ impl RequestsService {
         Ok(report)
     }
 
-    /// Attach a duplicate album ask to its live row and report the row's own
-    /// status (v2: the duplicate reply mirrors the winner, including the
-    /// awaiting-approval message).
+    /// Attach a duplicate album ask to its live row, with the follow it
+    /// names, and report the row's own status (v2: the duplicate reply
+    /// mirrors the winner, including the awaiting-approval message).
     async fn attach_album(
         &self,
         principal: &Principal,
         existing: &RequestRecord,
-        body: &AlbumIntake,
+        follow: Option<FollowAsk>,
     ) -> Result<IntakeResponse, RequestsError> {
         self.store
-            .attach_requester(
-                RequestKind::Album,
+            .attach_following(
                 &existing.key,
                 principal.user_id(),
                 Some(principal.username_display().to_owned()),
                 now_epoch(),
+                follow,
             )
             .await?;
-        if body.monitor_artist {
-            self.store
-                .widen_monitoring(RequestKind::Album, &existing.key, body.auto_download_artist)
-                .await?;
-        }
         let message = if existing.status == RequestStatus::AwaitingApproval {
             "Request is awaiting admin approval"
         } else if existing.status == RequestStatus::Cancelling {
@@ -1953,6 +1969,24 @@ pub struct RequestRecovery {
     pub relinked: usize,
     /// Rows dispatched again under their original key.
     pub redispatched: usize,
+}
+
+/// The follow an album ask names: its artist, when the ask says to follow
+/// and names one, and auto-download the way the Following page asks for
+/// it (trusted and admin callers approve themselves, a plain user's ask
+/// waits for an admin).
+fn follow_ask(
+    principal: &Principal,
+    artist_mbid: Option<&str>,
+    artist_name: Option<String>,
+    auto_download: bool,
+) -> Option<FollowAsk> {
+    Some(FollowAsk {
+        artist_mbid: artist_mbid?.to_owned(),
+        artist_name,
+        auto_download,
+        self_approves: principal.role().is_curator(),
+    })
 }
 
 /// Initial status for one role's fresh ask.

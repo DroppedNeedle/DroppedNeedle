@@ -16,6 +16,7 @@ use super::super::settle::{self, Fulfilled};
 use super::super::sql;
 use super::{lane_error, ms_from_secs, read_error, secs_from_ms};
 use crate::db::{AcquireDb, to_i64, to_u64};
+use crate::follows::FollowAsk;
 
 /// Ledger key for one row (v2 `_request_key`).
 fn row_key(kind: RequestKind, key: &str) -> String {
@@ -261,6 +262,36 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
     Ok(BeginOutcome::Won(record))
 }
 
+/// Attach a listener to a live row (v2 `async_add_requester`). Terminal
+/// and cancelling rows refuse; the generation is untouched.
+fn attach_tx(
+    tx: &Transaction,
+    stored: &str,
+    user_id: &str,
+    name: Option<&str>,
+    now: u64,
+) -> rusqlite::Result<bool> {
+    let status: Option<RequestStatus> = tx
+        .query_row(
+            "SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1",
+            params![stored],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if !status.is_some_and(RequestStatus::is_active) {
+        return Ok(false);
+    }
+    tx.execute(
+        "INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, \
+         requested_at, requested_by_name) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT (user_id, musicbrainz_id_lower) DO UPDATE SET \
+         requested_by_name = COALESCE(excluded.requested_by_name, \
+         request_history_requesters.requested_by_name)",
+        params![user_id, stored, ms_from_secs(now), name],
+    )?;
+    Ok(true)
+}
+
 /// Optional generation guard as SQL: NULL matches any generation.
 fn guard(expected: Option<u64>) -> Option<i64> {
     expected.map(to_i64)
@@ -316,14 +347,19 @@ impl RequestStore {
             .collect())
     }
 
-    /// Claim one row, enforcing the quota gate inside the same write.
+    /// Claim one row, enforcing the quota gate inside the same write. A
+    /// won row writes the follow it asks for in the same write.
     pub async fn begin(
         &self,
         record: RequestRecord,
         owner: &str,
         gate: Option<QuotaGate>,
+        follow: Option<FollowAsk>,
     ) -> Result<Result<BeginOutcome, QuotaRefusal>, RequestsError> {
-        match self.begin_batch(vec![record], owner, gate).await? {
+        match self
+            .begin_following(vec![(record, follow)], owner, gate)
+            .await?
+        {
             Err(refusal) => Ok(Err(refusal)),
             Ok(outcomes) => outcomes
                 .into_iter()
@@ -342,8 +378,21 @@ impl RequestStore {
         owner: &str,
         gate: Option<QuotaGate>,
     ) -> Result<Result<Vec<BeginOutcome>, QuotaRefusal>, RequestsError> {
+        let records = records.into_iter().map(|record| (record, None)).collect();
+        self.begin_following(records, owner, gate).await
+    }
+
+    /// [`Self::begin_batch`] where each row may carry the follow its ask
+    /// names: a won row follows for `owner` in the same write, so a
+    /// refused or lost claim follows nobody.
+    pub async fn begin_following(
+        &self,
+        records: Vec<(RequestRecord, Option<FollowAsk>)>,
+        owner: &str,
+        gate: Option<QuotaGate>,
+    ) -> Result<Result<Vec<BeginOutcome>, QuotaRefusal>, RequestsError> {
         let owner = owner.to_owned();
-        let now = records.first().map_or(0, |record| record.requested_at);
+        let now = records.first().map_or(0, |(record, _)| record.requested_at);
         self.db
             .write("requests.begin", move |tx| {
                 if let Some(gate) = gate.filter(|gate| gate.limit > 0) {
@@ -358,8 +407,12 @@ impl RequestStore {
                     }
                 }
                 let mut outcomes = Vec::with_capacity(records.len());
-                for record in records {
-                    outcomes.push(begin_tx(tx, record)?);
+                for (record, follow) in records {
+                    let outcome = begin_tx(tx, record)?;
+                    if let (BeginOutcome::Won(_), Some(follow)) = (&outcome, follow) {
+                        follow.apply(tx, &owner)?;
+                    }
+                    outcomes.push(outcome);
                 }
                 Ok(Ok(outcomes))
             })
@@ -381,49 +434,44 @@ impl RequestStore {
         let user_id = user_id.to_owned();
         self.db
             .write("requests.attach", move |tx| {
-                let status: Option<RequestStatus> = tx
-                    .query_row(
-                        "SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1",
-                        params![stored],
-                        |row| row.get(0),
-                    )
-                    .optional()?;
-                if !status.is_some_and(RequestStatus::is_active) {
-                    return Ok(false);
-                }
-                tx.execute(
-                    "INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, \
-                     requested_at, requested_by_name) VALUES (?1, ?2, ?3, ?4) \
-                     ON CONFLICT (user_id, musicbrainz_id_lower) DO UPDATE SET \
-                     requested_by_name = COALESCE(excluded.requested_by_name, \
-                     request_history_requesters.requested_by_name)",
-                    params![user_id, stored, ms_from_secs(now), name],
-                )?;
-                Ok(true)
+                Ok(attach_tx(tx, &stored, &user_id, name.as_deref(), now)?)
             })
             .await
             .map_err(|error| lane_error("requests.attach", error))
     }
 
-    /// Widen monitoring flags; never narrows them (v2 batch/single quirk).
-    pub async fn widen_monitoring(
+    /// Attach a listener to a live album row with the follow its ask
+    /// names, in one write: the row's monitoring flags widen (never
+    /// narrow, v2 batch/single quirk) and the listener follows the
+    /// artist. A row that refuses the listener follows nobody.
+    pub async fn attach_following(
         &self,
-        kind: RequestKind,
         key: &str,
-        auto_download_artist: bool,
-    ) -> Result<(), RequestsError> {
-        let stored = row_key(kind, key);
+        user_id: &str,
+        name: Option<String>,
+        now: u64,
+        follow: Option<FollowAsk>,
+    ) -> Result<bool, RequestsError> {
+        let stored = row_key(RequestKind::Album, key);
+        let user_id = user_id.to_owned();
         self.db
-            .write("requests.widen_monitoring", move |tx| {
-                tx.execute(
-                    "UPDATE request_history SET monitor_artist = 1, auto_download_artist = ?2 \
-                     WHERE musicbrainz_id_lower = ?1 AND monitor_artist = 0",
-                    params![stored, auto_download_artist],
-                )?;
-                Ok(())
+            .write("requests.attach", move |tx| {
+                if !attach_tx(tx, &stored, &user_id, name.as_deref(), now)? {
+                    return Ok(false);
+                }
+                if let Some(follow) = follow {
+                    tx.execute(
+                        "UPDATE request_history SET monitor_artist = 1, \
+                         auto_download_artist = ?2 \
+                         WHERE musicbrainz_id_lower = ?1 AND monitor_artist = 0",
+                        params![stored, follow.auto_download],
+                    )?;
+                    follow.apply(tx, &user_id)?;
+                }
+                Ok(true)
             })
             .await
-            .map_err(|error| lane_error("requests.widen_monitoring", error))
+            .map_err(|error| lane_error("requests.attach", error))
     }
 
     /// Move one row's status behind the generation CAS (`None` skips the

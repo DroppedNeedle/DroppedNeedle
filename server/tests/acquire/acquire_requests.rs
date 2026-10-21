@@ -1442,3 +1442,73 @@ async fn active_count_issues_no_write() {
     let after = *commits.borrow();
     assert_eq!(after, before, "the badge read wrote");
 }
+
+/// An album ask with `monitor_artist` and `auto_download_artist`.
+fn ask_to_follow(album: &str, artist: &str, auto_download: bool) -> Value {
+    json!({
+        "musicbrainz_id": album, "artist": "Artist", "album": "Album",
+        "artist_mbid": artist, "monitor_artist": true, "auto_download_artist": auto_download,
+    })
+}
+
+// A request that asks to follow its artist follows it in the request's own
+// write: a plain user's auto-download waits for an admin, a repeat ask on a
+// live row follows too, a batch follows each artist, and a request the
+// quota refuses leaves no follow behind.
+#[tokio::test]
+async fn a_request_that_asks_to_follow_follows_the_artist() {
+    let (_, db, dispatch) = setup().await;
+    let limited = QuotaPolicy {
+        request_count: 1,
+        ..QuotaPolicy::default()
+    };
+    let state = rebuilt(&db, limited, &dispatch);
+    let albums = "/api/v3/requests/albums";
+    let body = ask_to_follow(MBID_A, ARTIST, true);
+    let (status, _) = call(&state, Method::POST, albums, Some(ADA), Some(body)).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let follow = state.follows.status("u-ada", ARTIST).await.unwrap();
+    assert!(follow.followed);
+    assert_eq!(
+        serde_json::to_value(follow.auto_download_state).unwrap(),
+        "pending"
+    );
+
+    let refused = ask_to_follow(MBID_B, MBID_C, false);
+    let (status, _) = call(&state, Method::POST, albums, Some(ADA), Some(refused)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        !state
+            .follows
+            .status("u-ada", MBID_C)
+            .await
+            .unwrap()
+            .followed,
+        "a refused request follows nobody"
+    );
+
+    let again = ask_to_follow(MBID_A, ARTIST, false);
+    call(&state, Method::POST, albums, Some(BOB), Some(again)).await;
+    assert!(
+        state
+            .follows
+            .status("u-bob", ARTIST)
+            .await
+            .unwrap()
+            .followed
+    );
+
+    let batch = json!({
+        "items": [{"musicbrainz_id": MBID_B, "artist_name": "Other", "album_title": "Album",
+                   "artist_mbid": MBID_C}],
+        "monitor_artist": true,
+        "auto_download_artist": true,
+    });
+    let batches = "/api/v3/requests/batches";
+    call(&state, Method::POST, batches, Some(TRUSTED), Some(batch)).await;
+    let follow = state.follows.status("u-tris", MBID_C).await.unwrap();
+    assert!(
+        follow.followed && follow.auto_download,
+        "a trusted ask arms itself"
+    );
+}

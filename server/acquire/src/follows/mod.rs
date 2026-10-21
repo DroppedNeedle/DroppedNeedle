@@ -87,6 +87,38 @@ pub struct ImportOutcome {
     pub approval_batch_id: Option<String>,
 }
 
+/// A follow an album request asks for, written in the request's own
+/// transaction.
+#[derive(Debug, Clone)]
+pub struct FollowAsk {
+    /// Artist MBID, validated.
+    pub artist_mbid: String,
+    /// Artist name, when the ask has one.
+    pub artist_name: Option<String>,
+    /// Ask for auto-download as well.
+    pub auto_download: bool,
+    /// The asker's role approves its own auto-download.
+    pub self_approves: bool,
+}
+
+impl FollowAsk {
+    /// Follow the artist for `user_id`, and ask for auto-download the way
+    /// the Following page does.
+    pub(crate) fn apply(&self, tx: &Transaction, user_id: &str) -> rusqlite::Result<()> {
+        set_follow_tx(
+            tx,
+            user_id,
+            &self.artist_mbid,
+            true,
+            self.artist_name.as_deref(),
+        )?;
+        if self.auto_download {
+            set_auto_download_tx(tx, user_id, &self.artist_mbid, true, self.self_approves)?;
+        }
+        Ok(())
+    }
+}
+
 /// The one owner of the follow tables.
 #[derive(Clone)]
 pub struct Follows {
@@ -129,16 +161,7 @@ impl Follows {
         let name = artist_name.filter(|name| !name.trim().is_empty());
         self.db
             .write("follows.set_follow", move |tx| {
-                if followed {
-                    upsert_follow(tx, &user, &mbid, name.as_deref(), now_real())?;
-                } else {
-                    tx.execute(
-                        "DELETE FROM user_followed_artists \
-                         WHERE user_id = ?1 AND artist_mbid_lower = ?2",
-                        params![user, mbid.to_lowercase()],
-                    )?;
-                }
-                Ok(())
+                Ok(set_follow_tx(tx, &user, &mbid, followed, name.as_deref())?)
             })
             .await
             .map_err(|error| lane_error("follows.set_follow", error))?;
@@ -153,29 +176,18 @@ impl Follows {
         artist_mbid: &str,
         enabled: bool,
     ) -> Result<FollowStatusResponse, RequestsError> {
-        let (user, lower) = (caller.user_id().to_owned(), artist_mbid.to_lowercase());
+        let (user, mbid) = (caller.user_id().to_owned(), artist_mbid.to_owned());
         let self_approves = caller.role().is_curator();
         let followed = self
             .db
             .write("follows.set_auto_download", move |tx| {
-                let name: Option<(String, String)> = tx
-                    .query_row(
-                        "SELECT artist_mbid, artist_name FROM user_followed_artists \
-                         WHERE user_id = ?1 AND artist_mbid_lower = ?2",
-                        params![user, lower],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .optional()?;
-                let Some((mbid, name)) = name else {
-                    return Ok(false);
-                };
-                set_intent(tx, &user, &lower, enabled, now_real())?;
-                if !enabled {
-                    approvals::withdraw_pending(tx, &user, &lower)?;
-                } else if !self_approves {
-                    approvals::file_pending(tx, &user, &mbid, &name, now_ms())?;
-                }
-                Ok(true)
+                Ok(set_auto_download_tx(
+                    tx,
+                    &user,
+                    &mbid,
+                    enabled,
+                    self_approves,
+                )?)
             })
             .await
             .map_err(|error| lane_error("follows.set_auto_download", error))?;
@@ -427,6 +439,60 @@ fn reviewer(admin: &Admin) -> Reviewer {
         admin.user_id().to_owned(),
         Some(admin.username_display().to_owned()),
     )
+}
+
+/// Follow or unfollow one artist inside the caller's transaction.
+/// Re-following keeps the intent and the start date and refreshes the
+/// name when one is given.
+pub(crate) fn set_follow_tx(
+    tx: &Transaction,
+    user_id: &str,
+    artist_mbid: &str,
+    followed: bool,
+    artist_name: Option<&str>,
+) -> rusqlite::Result<()> {
+    if followed {
+        upsert_follow(tx, user_id, artist_mbid, artist_name, now_real())
+    } else {
+        tx.execute(
+            "DELETE FROM user_followed_artists \
+             WHERE user_id = ?1 AND artist_mbid_lower = ?2",
+            params![user_id, artist_mbid.to_lowercase()],
+        )?;
+        Ok(())
+    }
+}
+
+/// Turn auto-download on or off for one followed artist inside the
+/// caller's transaction, filing the ask when the user does not approve
+/// themselves (or withdrawing a pending one). Answers whether the artist
+/// is followed; an unfollowed artist is left alone.
+pub(crate) fn set_auto_download_tx(
+    tx: &Transaction,
+    user_id: &str,
+    artist_mbid: &str,
+    enabled: bool,
+    self_approves: bool,
+) -> rusqlite::Result<bool> {
+    let lower = artist_mbid.to_lowercase();
+    let name: Option<(String, String)> = tx
+        .query_row(
+            "SELECT artist_mbid, artist_name FROM user_followed_artists \
+             WHERE user_id = ?1 AND artist_mbid_lower = ?2",
+            params![user_id, lower],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((mbid, name)) = name else {
+        return Ok(false);
+    };
+    set_intent(tx, user_id, &lower, enabled, now_real())?;
+    if !enabled {
+        approvals::withdraw_pending(tx, user_id, &lower)?;
+    } else if !self_approves {
+        approvals::file_pending(tx, user_id, &mbid, &name, now_ms())?;
+    }
+    Ok(true)
 }
 
 /// Follow one artist. A conflict keeps the intent and the start date and
