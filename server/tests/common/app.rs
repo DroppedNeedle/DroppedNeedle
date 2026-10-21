@@ -28,6 +28,12 @@ use tower::ServiceExt as _;
 
 use super::{ScratchDir, closed_outbound, migrated_db, through_busy};
 
+/// The app's shutdown grace in tests. On a loaded host the database close
+/// alone has taken half a minute, so the production ten seconds would fail
+/// a shutdown that is slow but finishing. Something that holds the app
+/// still waits out the whole grace, which [`TestApp::stop`] refuses.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(60);
+
 const ADMIN_NAME: &str = "admin";
 const ADMIN_PASSWORD: &str = "correct horse battery";
 
@@ -116,7 +122,9 @@ impl TestApp {
         place: impl FnOnce(&AppConfig),
     ) -> Self {
         let dir = ScratchDir::new(tag);
-        let config = configure(AppConfig::with_root(0, &dir));
+        let mut config = AppConfig::with_root(0, &dir);
+        config.shutdown_grace = SHUTDOWN_GRACE;
+        let config = configure(config);
         std::fs::create_dir_all(&config.cache_dir).expect("cache dir creates");
         std::fs::create_dir_all(config.config_dir()).expect("config dir creates");
         // A database that holds data comes with its key, as the server's

@@ -123,6 +123,10 @@ pub const FOREGROUND_WAIT_LIMIT: Duration = Duration::from_secs(5);
 /// How often the watch thread wakes. A second keeps the `Busy` answer within
 /// a second of the limit and costs nothing while the lane is idle.
 pub const WATCH_TICK: Duration = Duration::from_secs(1);
+/// How long a test database waits for a turn, a connection or a write's
+/// end before giving up: long enough that a loaded host only slows a test.
+#[cfg(any(test, feature = "test-support"))]
+pub const TEST_PATIENCE: Duration = Duration::from_secs(60);
 /// How often a write that still holds the lane is named in the log again.
 pub const HOLDER_LOG_EVERY: Duration = Duration::from_secs(30);
 /// Progress-handler granularity: the abort check runs every 10k VM ops.
@@ -308,6 +312,25 @@ impl Default for LaneLimits {
 }
 
 impl LaneLimits {
+    /// Limits for a test database on a loaded host: a minute to wait for
+    /// a turn and to run, so a starved test runs slowly instead of hearing
+    /// `Busy` or a budget abort. A test that checks a limit sets its own.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn patient() -> Self {
+        Self {
+            foreground: Budget {
+                warn: FOREGROUND_SOFT_BUDGET,
+                abort: TEST_PATIENCE,
+            },
+            background: Budget {
+                warn: BACKGROUND_SOFT_BUDGET,
+                abort: TEST_PATIENCE,
+            },
+            foreground_wait: TEST_PATIENCE,
+            watch_tick: WATCH_TICK,
+        }
+    }
+
     fn budget(&self, lane: Lane) -> Budget {
         match lane {
             Lane::Foreground => self.foreground,
@@ -1103,28 +1126,21 @@ impl Drop for Turn {
 }
 
 impl WriteLane {
-    /// Open the writer on an existing database file: the write connection
-    /// with its pragmas set, and the thread that runs async writes. Needs no
-    /// runtime.
+    /// Open the writer on an existing database file with `limits`: the
+    /// write connection with its pragmas set, and the thread that runs
+    /// async writes. Needs no runtime.
     ///
     /// A lane opened here has no watch thread: until [`WriteLane::watch`] is
     /// started, a foreground write waits for its turn without limit and a
     /// stuck holder is not logged. The database runtime starts one for its
     /// lane, which is the only lane production opens. Nothing sets the WAL
     /// hold on a lane without a checkpoint service either.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn open(db_path: &Path) -> Result<Self, DbError> {
-        Self::open_limited(db_path, LaneLimits::default())
-    }
-
-    /// [`WriteLane::open`] with other time limits, so a test can reach them
-    /// without waiting out the real ones.
     #[cfg(test)]
     pub fn open_with(db_path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
         Self::open_limited(db_path, limits)
     }
 
-    /// [`WriteLane::open`] with the given time limits.
+    /// The writer with `limits`, as the runtime and the test handles open it.
     pub(crate) fn open_limited(db_path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
         let id = LaneId::next();
         let connection = WriterConnection::open(db_path, id)?;

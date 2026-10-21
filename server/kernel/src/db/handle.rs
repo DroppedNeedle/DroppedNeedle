@@ -50,9 +50,11 @@ impl Db {
     /// pool, opened on the calling thread. For tests only. It starts no
     /// watch, so a waiting write or read gets no `Busy` answer and a stuck
     /// write is not logged, and nothing holds bulk writes for the WAL.
+    /// Writes run on [`LaneLimits::patient`], so a loaded host slows a
+    /// test without aborting its writes.
     #[cfg(any(test, feature = "test-support"))]
     pub fn open_for_tests(path: &Path) -> Result<Self, DbError> {
-        Self::on_test_lane(path, WriteLane::open(path)?)
+        Self::on_test_lane(path, WriteLane::open_limited(path, LaneLimits::patient())?)
     }
 
     /// [`Db::open_for_tests`] with other lane time limits, so a test can

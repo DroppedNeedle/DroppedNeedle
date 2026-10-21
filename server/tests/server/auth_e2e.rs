@@ -1783,6 +1783,14 @@ async fn concurrent_setups_yield_exactly_one_admin() {
 // Rate limits and edge failures
 // ---------------------------------------------------------------------------
 
+/// The app with its limiter's clock held, so no bucket refills while a
+/// test counts refusals, however slowly the host runs the requests.
+fn held_clock_router(e2e: &E2e) -> Router {
+    let state = e2e.state();
+    state.auth.limits.hold_clock();
+    create_app(state)
+}
+
 /// One request from a given client address (as `ConnectInfo` would carry),
 /// asked again while the app answers busy.
 async fn call_from(app: Router, peer: &str, uri: &str, body: Option<Value>) -> StatusCode {
@@ -1821,7 +1829,7 @@ async fn call_from_once(
 #[tokio::test]
 async fn rate_limits_key_by_client_and_username() {
     let e2e = E2e::open("rate-limits").await;
-    let app = e2e.router();
+    let app = held_clock_router(&e2e);
 
     // One client burning the setup budget (burst 3) leaves others alone.
     // An empty body fails validation, so no request does real work.
@@ -1945,7 +1953,7 @@ async fn login_guesses_from_fresh_addresses_meet_the_username_wall() {
 #[tokio::test]
 async fn failed_authentications_are_throttled_per_client() {
     let e2e = E2e::open("auth-failures").await;
-    let app = e2e.router();
+    let app = held_clock_router(&e2e);
 
     // The gate answers before the request limiter, so it charges its own
     // per-address bucket (burst 20) for every failed authentication.

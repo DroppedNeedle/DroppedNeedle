@@ -413,10 +413,18 @@ async fn open_pool(
 
 /// The sqlx reader pool of [`super::Db::open_for_tests`]: the runtime's
 /// reader pool with no idle reaper and no warm connection, either of which
-/// would start a task on a tokio runtime the caller may not have.
+/// would start a task on a tokio runtime the caller may not have. A
+/// connection opens on first use, inside the wait for it, so the wait is
+/// [`super::TEST_PATIENCE`] and a loaded host does not time it out.
 #[cfg(any(test, feature = "test-support"))]
 pub(in crate::db) fn lazy_reader_pool_for_tests(path: &Path) -> SqlitePool {
-    let (options, connect) = pool_options(path, MAX_READERS, BUSY_TIMEOUT, ACQUIRE_TIMEOUT, true);
+    let (options, connect) = pool_options(
+        path,
+        MAX_READERS,
+        BUSY_TIMEOUT,
+        super::writer::TEST_PATIENCE,
+        true,
+    );
     options
         .idle_timeout(None)
         .min_connections(0)

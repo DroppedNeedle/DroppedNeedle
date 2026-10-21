@@ -44,11 +44,13 @@ fn scratch_dir(name: &str) -> ScratchDir {
     ScratchDir::new(&format!("persist-runtime-{name}"))
 }
 
-/// Open a runtime on a fresh scratch database.
+/// Open a runtime on a fresh scratch database, with the production limits
+/// these briefs check.
 async fn open_scratch(name: &str) -> (DbRuntime, ScratchDir) {
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
-    let runtime = crate::common::scratch_runtime(&db).await;
+    crate::common::migrated_db(&db);
+    let runtime = open_runtime(&DbConfig::new(&db)).await.unwrap();
     (runtime, dir)
 }
 

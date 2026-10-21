@@ -120,6 +120,8 @@ pub use handle::Db;
 pub use read_pool::{LONG_READERS, OldestRead, ReadActivity};
 pub use savepoint::savepoint;
 pub use scope::block_on;
+#[cfg(any(test, feature = "test-support"))]
+pub use writer::TEST_PATIENCE;
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, BACKGROUND_HARD_BUDGET, BACKGROUND_QUEUE_CAPACITY,
     BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, Durable, DurableLane, FOREGROUND_BURST,

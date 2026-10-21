@@ -137,12 +137,18 @@ pub async fn migrated_pool(tag: &str) -> (sqlx::SqlitePool, ScratchDir) {
     (pool, dir)
 }
 
-/// The production runtime on a fresh migrated database at `path`.
+/// The production runtime on a fresh migrated database at `path`, with
+/// patient limits: a write or read waits up to a minute for its turn and a
+/// write may run that long, so a loaded host slows a test instead of
+/// answering `Busy`. A test that checks a limit opens its own runtime.
 pub async fn scratch_runtime(path: &Path) -> droppedneedle_kernel::db::DbRuntime {
+    use droppedneedle_kernel::db::{DbConfig, LaneLimits, TEST_PATIENCE, open_runtime};
+
     migrated_db(path);
-    droppedneedle_kernel::db::open_runtime(&droppedneedle_kernel::db::DbConfig::new(path))
-        .await
-        .expect("scratch runtime opens")
+    let config = DbConfig::new(path)
+        .with_lane_limits(LaneLimits::patient())
+        .with_read_wait(TEST_PATIENCE);
+    open_runtime(&config).await.expect("scratch runtime opens")
 }
 
 /// A started loop supervisor over a fresh scratch runtime. Hold the guard:

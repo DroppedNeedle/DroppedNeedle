@@ -287,6 +287,10 @@ pub struct RateLimiter {
     buckets: Mutex<BoundedMap<TokenBucket>>,
     started: Instant,
     trusted_proxies: TrustedProxies,
+    /// A test's fixed reading of the clock, so no bucket refills while it
+    /// counts refusals on a slow host.
+    #[cfg(any(test, feature = "test-support"))]
+    held_at: Mutex<Option<f64>>,
 }
 
 impl Default for RateLimiter {
@@ -302,7 +306,32 @@ impl RateLimiter {
             buckets: Mutex::new(BoundedMap::default()),
             started: Instant::now(),
             trusted_proxies: TrustedProxies::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            held_at: Mutex::new(None),
         }
+    }
+
+    /// Stop the limiter's clock where it is: from now on no bucket refills.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hold_clock(&self) {
+        let now = self.started.elapsed().as_secs_f64();
+        *self
+            .held_at
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(now);
+    }
+
+    /// Seconds since the limiter started.
+    fn now(&self) -> f64 {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(held) = *self
+            .held_at
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+        {
+            return held;
+        }
+        self.started.elapsed().as_secs_f64()
     }
 
     /// Trust the given proxies when reading the client address.
@@ -325,7 +354,7 @@ impl RateLimiter {
 
     /// Take one token for `key` in `class` now.
     pub fn check(&self, class: RateClass, key: &str) -> AcquireOutcome {
-        self.check_at(class, key, self.started.elapsed().as_secs_f64())
+        self.check_at(class, key, self.now())
     }
 
     /// Take one token for `key` in `class` at `now` (monotonic seconds).
@@ -360,7 +389,7 @@ impl RateLimiter {
     /// whoever is trying. The request limiter has already charged the
     /// client's own [`LOGIN_CLASS`] bucket by the time a handler calls this.
     pub fn check_login(&self, username: &str) -> AcquireOutcome {
-        self.check_login_at(username, self.started.elapsed().as_secs_f64())
+        self.check_login_at(username, self.now())
     }
 
     /// [`RateLimiter::check_login`] at `now` (monotonic seconds).
