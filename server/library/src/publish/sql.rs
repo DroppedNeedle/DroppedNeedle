@@ -40,6 +40,30 @@ droppedneedle_kernel::sql! {
     /// A fresh bin entry (`?2`) for a replaced file not yet recycled.
     pub(super) JOURNAL_SET_RECYCLE_TO = "UPDATE library_publish_replacements \
              SET recycle_to = ?2 WHERE journal_id = ?1 AND recycled_at IS NULL";
+    /// One page of recycled copies due to expire: copies that reached the
+    /// bin before `?1` (unix seconds), are not expired yet and whose row
+    /// is done, after the cursor (`?2` recycled at, `?3` journal id), at
+    /// most `?4`, skipping any whose track a put-back still holds.
+    pub(super) EXPIRY_DUE = "SELECT r.journal_id, r.recycle_to, r.replaced_sha256, \
+             r.recycled_at FROM library_publish_replacements r \
+             JOIN library_publish_journal j ON j.id = r.journal_id \
+             WHERE r.expired_at IS NULL AND r.recycled_at IS NOT NULL AND r.recycled_at < ?1 \
+             AND j.state = 'cleaned' \
+             AND (r.recycled_at > ?2 OR (r.recycled_at = ?2 AND r.journal_id > ?3)) \
+             AND NOT EXISTS (SELECT 1 FROM library_publish_journal p \
+             WHERE p.kind = 'put_back' AND p.track_id = r.replaced_track_id \
+             AND p.state NOT IN ('cleaned', 'compensated')) \
+             ORDER BY r.recycled_at, r.journal_id LIMIT ?4";
+    /// Whether a put-back still holds the track of row `?1`'s copy.
+    pub(super) EXPIRY_HELD = "SELECT EXISTS (SELECT 1 FROM library_publish_replacements r \
+             JOIN library_publish_journal p ON p.track_id = r.replaced_track_id \
+             WHERE r.journal_id = ?1 AND p.kind = 'put_back' \
+             AND p.state NOT IN ('cleaned', 'compensated'))";
+    /// Record that row `?1`'s copy was expired at `?2` (unix milliseconds).
+    pub(super) EXPIRY_MARK = "UPDATE library_publish_replacements SET expired_at = ?2 \
+             WHERE journal_id = ?1 AND expired_at IS NULL";
+    /// Every bin entry a row names, expired or not.
+    pub(super) EXPIRY_ENTRIES = "SELECT recycle_to FROM library_publish_replacements";
     /// Another bundle (not `?2`) still unsettled for a track (`?1`): one
     /// writing the track's file, or one that set the file aside to replace
     /// or remove it and has not committed yet. A committed row waiting for

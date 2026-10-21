@@ -20,7 +20,6 @@ use futures_util::future::BoxFuture;
 use super::db::AcquireDb;
 use super::dispatch::DownloadDispatch;
 use super::downloads::journal::Journal;
-use super::downloads::orphans::RecycleBin;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::drop_import::DropImports;
 use super::drop_import::store::DropStore;
@@ -1438,21 +1437,11 @@ impl WorkerSettings {
         let source_priority = self.source_priority.read()?;
         let sab = self.sabnzbd.read().unwrap_or_default();
         let sab_mount = sabnzbd_mount(&sab);
-        let library_roots: Vec<PathBuf> = self
-            .library
-            .read()?
-            .library_roots
-            .iter()
-            .map(|root| root.path.trim())
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .collect();
         Some(worker_config(
             &policy,
             &source_priority,
             &self.staging_root,
             sab_mount,
-            &library_roots,
         ))
     }
 }
@@ -1491,7 +1480,6 @@ fn worker_config(
     source_priority: &SourcePriority,
     staging_root: &Path,
     sab_mount: Option<PathBuf>,
-    library_roots: &[PathBuf],
 ) -> WorkerConfig {
     let mut source_order: Vec<String> = source_priority
         .0
@@ -1505,25 +1493,8 @@ fn worker_config(
         source_order = vec!["soulseek".to_owned(), "usenet".to_owned()];
     }
     let orphan_roots = sab_mount
-        .clone()
         .map(|mount| vec![("usenet".to_owned(), mount)])
         .unwrap_or_default();
-    let mut protected = download_trees(staging_root, sab_mount);
-    protected.extend(library_roots.iter().cloned());
-    let retention = policy.recycle_retention_days.max(0);
-    let mut bin_roots: Vec<PathBuf> = RecycleBin::resolve(&policy.recycle_bin_path, &[])
-        .into_iter()
-        .collect();
-    for root in library_roots {
-        let bin = root.join(droppedneedle_library::scan::fs::RECYCLE_BIN_DIRECTORY_NAME);
-        if !bin_roots.contains(&bin) {
-            bin_roots.push(bin);
-        }
-    }
-    let recycle = bin_roots
-        .into_iter()
-        .filter_map(|root| RecycleBin::guarded(root, retention, &protected))
-        .collect();
     WorkerConfig {
         max_concurrent_downloads: clamp_usize(policy.max_concurrent_downloads).max(1),
         max_failover_attempts: policy.max_failover_attempts.max(0),
@@ -1540,7 +1511,6 @@ fn worker_config(
         },
         source_order,
         staging_root: staging_root.to_owned(),
-        recycle,
         orphan_roots,
         worker_id: "download-worker".to_owned(),
         review: crate::search_jobs::review::ReviewMode::from_setting(&policy.search_review),

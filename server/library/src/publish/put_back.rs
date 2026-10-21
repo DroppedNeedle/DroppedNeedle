@@ -378,7 +378,7 @@ fn old_entry(copy: &Path) -> Result<(), PublishError> {
     let ours = entry
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(entry_name);
+        .is_some_and(super::bin::entry_name);
     if !ours {
         return Err(refused());
     }
@@ -386,18 +386,6 @@ fn old_entry(copy: &Path) -> Result<(), PublishError> {
         Ok(meta) if meta.file_type().is_dir() => Ok(()),
         _ => Err(refused()),
     }
-}
-
-/// Whether `name` is a bin entry folder's: `YYYYMMDDTHHMMSS-` and eight
-/// hex characters.
-fn entry_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    bytes.len() == 24
-        && bytes[..8].iter().all(u8::is_ascii_digit)
-        && bytes[8] == b'T'
-        && bytes[9..15].iter().all(u8::is_ascii_digit)
-        && bytes[15] == b'-'
-        && bytes[16..].iter().all(u8::is_ascii_hexdigit)
 }
 
 /// The copy's identity when it may be read from where it is and holds

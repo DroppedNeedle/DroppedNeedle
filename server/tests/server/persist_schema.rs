@@ -4503,3 +4503,54 @@ async fn work_bundle_ids_move_into_a_column() {
         "the bundle id is indexed: {index:?}"
     );
 }
+
+/// Migration 0075 gives every replaced file's row an `expired_at`, NULL
+/// on rows already there, and indexes the rows not yet expired by when
+/// their copy reached the bin.
+#[tokio::test]
+async fn recycled_rows_gain_an_expiry_column() {
+    let pool = scratch_pool().await;
+    migrator_through(74).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+             staged, staged_sha256, state) \
+         VALUES ('j1', 'b1', 'remove', 'music', 'a.flac', '.dn-aside', 'abc', 'cleaned'); \
+         INSERT INTO library_publish_replacements (journal_id, replaced_rel, replaced_sha256, \
+             replaced_track_id, recycle_to, recycled_at) \
+         VALUES ('j1', 'a.flac', 'abc', 't1', '/bin/20250101T000000-0a1b2c3d/a.flac', \
+             1735689600.5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let row: (String, f64, Option<i64>) = sqlx::query_as(
+        "SELECT journal_id, recycled_at, expired_at FROM library_publish_replacements",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row, ("j1".to_owned(), 1_735_689_600.5, None));
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' \
+         AND name = 'idx_library_publish_replacements_due'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        index.as_deref().is_some_and(|sql| sql
+            .contains("library_publish_replacements(recycled_at, journal_id)")
+            && sql.contains("WHERE expired_at IS NULL")),
+        "the due rows are indexed: {index:?}"
+    );
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(version >= 75, "user_version {version}");
+}

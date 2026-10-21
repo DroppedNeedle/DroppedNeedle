@@ -1,24 +1,16 @@
-//! Orphan reconcile and recycle-bin prune.
+//! Orphan reconcile.
 //!
-//! Ports `reconcile_orphan_folders` (#131) and `recycle_bin.py`. A
-//! DN-named complete-dir folder is debris only when no attempt journal
-//! owns it, no live task or unsettled publisher bundle claims it, it is
-//! older than 6 hours, and the client confirms the job is not active.
-//! Every ambiguous answer keeps the folder: deletion decisions fail
-//! closed. The recycle bin holds upgrade-replaced files for a retention
-//! window so a bad swap stays recoverable.
-
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+//! Ports `reconcile_orphan_folders` (#131). A DN-named complete-dir
+//! folder is debris only when no attempt journal owns it, no live task or
+//! unsettled publisher bundle claims it, it is older than 6 hours, and
+//! the client confirms the job is not active. Every ambiguous answer
+//! keeps the folder: deletion decisions fail closed.
 
 /// A folder qualifies as orphan debris only past this age (6 hours). The
 /// floor comfortably exceeds any crash window between the client
 /// materializing a job and its attempt row being journaled, so a live
 /// download can never look abandoned just because its row landed late.
 pub const ORPHAN_MIN_AGE_SECONDS: f64 = 6.0 * 3600.0;
-
-/// Entry stamp format for recycle entries (`<stamp>-<unique>`).
-pub const RECYCLE_STAMP_FORMAT_LEN: usize = 15;
 
 /// Split a DN job directory name into `(task_id, job_name)`.
 ///
@@ -139,184 +131,6 @@ pub fn evaluate_orphan(
     OrphanPolicy::default().evaluate(dir_name, is_symlink, evidence)
 }
 
-/// Upgrade-only recycle bin: replaced files move here instead of being
-/// deleted, so a bad swap stays recoverable for the retention window.
-/// User-initiated deletes stay hard deletes outside this bin.
-#[derive(Debug, Clone)]
-pub struct RecycleBin {
-    root: PathBuf,
-    retention_days: i64,
-}
-
-impl RecycleBin {
-    /// Resolve the effective bin directory: the configured path, else
-    /// `.recycle` under the first library path, else `None` when no
-    /// library is configured yet. A relative configured path is ignored
-    /// (it would resolve against the server's working directory and
-    /// scatter recycled files who-knows-where).
-    pub fn resolve(configured: &str, library_paths: &[String]) -> Option<PathBuf> {
-        let trimmed = configured.trim();
-        if !trimmed.is_empty() {
-            let path = PathBuf::from(trimmed);
-            if path.is_absolute() {
-                return Some(path);
-            }
-        }
-        library_paths
-            .first()
-            .map(|first| PathBuf::from(first).join(".recycle"))
-    }
-
-    /// Open a bin at an explicit root with a retention window in days.
-    pub fn at(root: PathBuf, retention_days: i64) -> Self {
-        Self {
-            root,
-            retention_days,
-        }
-    }
-
-    /// Open a bin only when the root cannot eat a real tree: `/`, empty,
-    /// and relative roots are refused, as is any root equal to or an
-    /// ancestor of a protected path (library, download, staging dirs). A
-    /// refused root answers `None` so the caller skips pruning; the bin
-    /// itself is never created.
-    pub fn guarded(root: PathBuf, retention_days: i64, protected: &[PathBuf]) -> Option<Self> {
-        if root.as_os_str().is_empty() || !root.is_absolute() || root.parent().is_none() {
-            tracing::warn!(root = %root.display(), "recycle bin root refused: not absolute");
-            return None;
-        }
-        for keep in protected {
-            if root == *keep || keep.starts_with(&root) {
-                tracing::warn!(
-                    root = %root.display(),
-                    protected = %keep.display(),
-                    "recycle bin root refused: overlaps a protected tree"
-                );
-                return None;
-            }
-        }
-        Some(Self::at(root, retention_days))
-    }
-
-    /// Bin root.
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// Delete entries older than the retention window; returns how many
-    /// entries were removed. Never touches anything outside the root, and
-    /// inside it only the entries DroppedNeedle made: directories named
-    /// `<UTC stamp>-<random hex>`. Anything else stays, however old, since
-    /// a `.recycle` folder may belong to someone else (a Samba
-    /// `vfs_recycle` share uses that name too). Age comes from the stamp.
-    pub fn prune(&self, now: SystemTime) -> Result<usize, RecycleError> {
-        // Belt and suspenders behind `guarded`: a `/` root never prunes.
-        if self.root.parent().is_none() {
-            tracing::warn!("recycle bin prune skipped: root is filesystem root");
-            return Ok(0);
-        }
-        if !self.root.is_dir() {
-            return Ok(0);
-        }
-        let cutoff_secs = self.retention_days.max(0) as u64 * 86_400;
-        let mut removed = 0;
-        let entries = std::fs::read_dir(&self.root).map_err(|source| RecycleError::Io {
-            path: self.root.clone(),
-            detail: source.to_string(),
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|source| RecycleError::Io {
-                path: self.root.clone(),
-                detail: source.to_string(),
-            })?;
-            let path = entry.path();
-            let Some(created) = entry
-                .file_name()
-                .to_str()
-                .and_then(owned_entry_stamp)
-                .filter(|_| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            else {
-                continue;
-            };
-            let expired = now.duration_since(created).unwrap_or_default().as_secs() > cutoff_secs;
-            if !expired {
-                continue;
-            }
-            std::fs::remove_dir_all(&path).map_err(|source| RecycleError::Io {
-                path: path.clone(),
-                detail: source.to_string(),
-            })?;
-            removed += 1;
-        }
-        Ok(removed)
-    }
-}
-
-/// The creation time of a bin entry DroppedNeedle made, or `None` for
-/// any other name. Ours are `<YYYYMMDDTHHMMSS>-<8 or more lowercase hex>`;
-/// the stamp is authoritative because a cross-filesystem move rewrites
-/// mtimes.
-fn owned_entry_stamp(name: &str) -> Option<SystemTime> {
-    let (stamp, unique) = name.split_once('-')?;
-    if stamp.len() != RECYCLE_STAMP_FORMAT_LEN
-        || unique.len() < 8
-        || !unique
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return None;
-    }
-    parse_stamp(stamp)
-}
-
-/// Parse a `YYYYMMDDTHHMMSS` UTC stamp without external date crates.
-fn parse_stamp(stamp: &str) -> Option<SystemTime> {
-    let year: i32 = stamp.get(0..4)?.parse().ok()?;
-    let month: i32 = stamp.get(4..6)?.parse().ok()?;
-    let day: i32 = stamp.get(6..8)?.parse().ok()?;
-    if stamp.as_bytes().get(8) != Some(&b'T') {
-        return None;
-    }
-    let hour: i32 = stamp.get(9..11)?.parse().ok()?;
-    let minute: i32 = stamp.get(11..13)?.parse().ok()?;
-    let second: i32 = stamp.get(13..15)?.parse().ok()?;
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 60
-    {
-        return None;
-    }
-    let days = days_since_epoch(year, month, day)?;
-    let secs = days * 86_400 + i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second);
-    SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(secs as u64))
-}
-
-/// Civil date to days since the unix epoch (Howard Hinnant's algorithm).
-fn days_since_epoch(year: i32, month: i32, day: i32) -> Option<i64> {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400) as i64;
-    let mp = ((month + 9) % 12) as i64;
-    let doy = (153 * mp + 2) / 5 + i64::from(day) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(i64::from(era) * 146_097 + doe - 719_468)
-}
-
-/// Recycle-bin failures.
-#[derive(Debug, thiserror::Error)]
-pub enum RecycleError {
-    /// Directory iteration or removal failed.
-    #[error("recycle bin I/O failed for {}: {detail}", path.display())]
-    Io {
-        /// Path being read or removed.
-        path: PathBuf,
-        /// Underlying OS error text.
-        detail: String,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,37 +193,5 @@ mod tests {
             policy.evaluate(name, false, Some(owned)),
             OrphanDecision::Keep
         );
-    }
-
-    #[test]
-    fn prune_only_touches_our_entries() {
-        let scratch =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("recycle-prune").expect("scratch");
-        let root = scratch.to_path_buf().join(".recycle");
-        for name in [
-            "20200101T000000-0a1b2c3d",
-            "20200101T000000-notours",
-            "old-user-file",
-        ] {
-            std::fs::create_dir_all(root.join(name)).expect("mkdir");
-        }
-        std::fs::write(root.join("20200101T000000-deadbeef"), b"a file").expect("file");
-        let removed = RecycleBin::at(root.clone(), 30)
-            .prune(SystemTime::now())
-            .expect("prune");
-        assert_eq!(removed, 1);
-        assert!(!root.join("20200101T000000-0a1b2c3d").exists());
-        assert!(root.join("20200101T000000-notours").exists());
-        assert!(root.join("old-user-file").exists());
-        assert!(root.join("20200101T000000-deadbeef").exists());
-    }
-
-    #[test]
-    fn relative_recycle_path_falls_back_to_library_default() {
-        let bin = RecycleBin::resolve("relative/bin", &["/lib".to_string()]);
-        assert_eq!(bin, Some(PathBuf::from("/lib/.recycle")));
-        let bin = RecycleBin::resolve("/abs/bin", &["/lib".to_string()]);
-        assert_eq!(bin, Some(PathBuf::from("/abs/bin")));
-        assert_eq!(RecycleBin::resolve("", &[]), None);
     }
 }

@@ -425,7 +425,7 @@ impl Sandbox {
     /// its root may be reached through a link; a resolved folder (the
     /// configured bin, or the target of a `.recycle` link) is checked all
     /// the way down, since it held no link when the session opened.
-    fn ensure_bin_dir(&self, bin: &Root) -> Result<(), PublishError> {
+    pub(crate) fn ensure_bin_dir(&self, bin: &Root) -> Result<(), PublishError> {
         let plain_recycle = match &bin.kind {
             RootKind::Bin { serves: Some(root) } => self
                 .removal_root_dir(root)
@@ -965,13 +965,8 @@ fn copy_verified(
     seams: Seams,
 ) -> Result<(), PublishError> {
     use std::os::unix::fs::PermissionsExt as _;
-    let parent = recycle_to
-        .parent()
+    let temp = incoming_temp(recycle_to)
         .ok_or_else(|| PublishError::UnsafePath("recycle bin path has no folder".into()))?;
-    let temp = parent.join(format!(
-        "{HIDDEN_PREFIX}incoming-{}",
-        short_hash(&recycle_to.to_string_lossy())
-    ));
     let copied = (|| -> Result<(), PublishError> {
         let mut file = create_hidden(&temp).map_err(PublishError::from)?;
         if seams.short_write {
@@ -1007,6 +1002,15 @@ fn copy_verified(
         tracing::warn!(temp = %temp.display(), %error, "unfinished copy not removed");
     }
     copied
+}
+
+/// The hidden temp a copy into the bin across disks is written under,
+/// beside `recycle_to`.
+pub(crate) fn incoming_temp(recycle_to: &Path) -> Option<PathBuf> {
+    Some(recycle_to.parent()?.join(format!(
+        "{HIDDEN_PREFIX}incoming-{}",
+        short_hash(&recycle_to.to_string_lossy())
+    )))
 }
 
 /// Make `dir` and any folder above it that is missing. Answers the

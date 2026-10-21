@@ -1,6 +1,6 @@
 //! Library background loops and the ticks they drive.
 
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use droppedneedle_kernel::db::Lane;
@@ -13,9 +13,12 @@ use tokio::runtime::Handle;
 
 use super::clock::{now_ms, now_unix, today_day};
 use super::publish::PublishError;
+use super::publish::expiry::{self, ExpiryPass, ExpiryReport};
+use super::publish::paths::{Root, Sandbox};
 use super::publish::snapshots;
 use super::scan::ScanStoreError;
 use super::scan::coordinator::{ResolverSource as _, ScanRequestError};
+use super::scan::models::EffectivePolicy;
 use super::scan::supervisor::SupervisorInputs;
 use super::scan::supervisor::{startup_recovery, supervise_once, supervise_once_with_shutdown};
 use super::scan::watcher::{
@@ -33,6 +36,8 @@ pub const IDENTIFY_JOB: &str = "library-identify";
 pub const PUBLISH_JOB: &str = "library-publish";
 /// The one look for leftover hidden files after startup recovery.
 pub const LEFTOVERS_JOB: &str = "library-leftovers";
+/// Recycle-bin expiry.
+pub const RECYCLE_EXPIRY_JOB: &str = "library-recycle-expiry";
 
 /// Every always-on library loop, by name.
 pub const LOOPS: &[&str] = &[
@@ -44,6 +49,7 @@ pub const LOOPS: &[&str] = &[
     super::management::JOB_NAME,
     super::repairs::JOB_NAME,
     PUBLISH_JOB,
+    RECYCLE_EXPIRY_JOB,
 ];
 
 /// Scan idle ceiling: how often the scan loop looks for scheduled work
@@ -92,6 +98,16 @@ const IDLE_ARTIST_LOOKUPS: usize = 20;
 
 /// Publish maintenance cadence (snapshot purge plus preview sweep).
 const PUBLISH_MAINTENANCE: Duration = Duration::from_secs(3600);
+
+/// Recycle-bin expiry cadence, its first pass after start, and the
+/// spread added to each.
+const RECYCLE_EXPIRY: Duration = Duration::from_secs(3600);
+const RECYCLE_EXPIRY_FIRST: Duration = Duration::from_secs(600);
+const RECYCLE_EXPIRY_JITTER: Duration = Duration::from_secs(300);
+/// Rows an expiry pass reads at a time.
+const RECYCLE_EXPIRY_PAGE: usize = 200;
+/// Row code of an expiry pass that failed.
+const RECYCLE_EXPIRY_FAILED: &str = "RECYCLE_EXPIRY_FAILED";
 
 impl LibrarySetup {
     /// Supervisor inputs, rebuilt per call so settings-swap rebuilds
@@ -450,6 +466,67 @@ impl LibrarySetup {
         self.sweep_previews();
         Ok(purged)
     }
+
+    /// One recycle-bin expiry pass, on the retention the download settings
+    /// give now. Skipped while those or the library settings cannot be
+    /// read. The deletes wait for the publish lock, so no put-back or
+    /// removal is reading a copy while it goes. `go_on` is asked between
+    /// rows. Blocking.
+    pub fn recycle_expiry_tick(
+        &self,
+        go_on: &dyn Fn() -> bool,
+    ) -> Result<ExpiryReport, PublishError> {
+        let Some(policy) = self.settings.download_policy.read() else {
+            return Ok(ExpiryReport::default());
+        };
+        let pass = ExpiryPass {
+            retention_days: policy.recycle_retention_days,
+            now_ms: self.clock.now_ms(),
+            page: RECYCLE_EXPIRY_PAGE,
+        };
+        let report = expiry::expire(
+            &self.db,
+            &pass,
+            &self.expiry,
+            &|| self.expiry_sandbox(),
+            || self.publish.lock().unwrap_or_else(PoisonError::into_inner),
+            go_on,
+        )?;
+        if report != ExpiryReport::default() {
+            tracing::info!(?report, "recycle bin expiry pass");
+        }
+        Ok(report)
+    }
+
+    /// The library folders and the bins expiry may delete from, as the
+    /// settings give them now. `None` while the library settings, or the
+    /// settings the bins come from, cannot be read.
+    fn expiry_sandbox(&self) -> Option<Sandbox> {
+        let library = self.settings.library.read()?;
+        let registry = super::settings::registry_from(&library);
+        let (bins, dropped) = match self.bins.for_expiry(&registry) {
+            Ok(found) => found,
+            Err(cause) => {
+                self.expiry.note(
+                    "bins",
+                    Some(format!("recycle bin expiry waits while {cause}")),
+                );
+                return None;
+            }
+        };
+        self.expiry
+            .note("bins", (!dropped.is_empty()).then(|| dropped.join("; ")));
+        let mut roots: Vec<Root> = registry
+            .roots()
+            .iter()
+            .map(|root| match root.policy {
+                EffectivePolicy::Excluded => Root::remove_only(root.id.clone(), root.path.clone()),
+                _ => Root::library(root.id.clone(), root.path.clone()),
+            })
+            .collect();
+        roots.extend(bins);
+        Sandbox::new(roots).ok()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +582,24 @@ pub(crate) fn start_loops(
         move |_ctx| match caught("publish maintenance", || publish.publish_tick())? {
             Ok(_) => Ok(Next::Continue),
             Err(error) => Err(TickError::new(PUBLISH_FAILED, error)),
+        },
+    )?;
+    let expiry = setup.clone();
+    supervisor.periodic_blocking(
+        RECYCLE_EXPIRY_JOB,
+        Schedule::new(RECYCLE_EXPIRY)
+            .with_initial_delay(RECYCLE_EXPIRY_FIRST)
+            .with_jitter(RECYCLE_EXPIRY_JITTER)
+            .with_backoff(Duration::from_secs(60), RECYCLE_EXPIRY),
+        move |ctx| {
+            let go_on = || {
+                ctx.heartbeat();
+                !ctx.token().is_cancelled()
+            };
+            match caught("recycle bin expiry", || expiry.recycle_expiry_tick(&go_on))? {
+                Ok(_) => Ok(Next::Continue),
+                Err(error) => Err(TickError::new(RECYCLE_EXPIRY_FAILED, error)),
+            }
         },
     )
 }

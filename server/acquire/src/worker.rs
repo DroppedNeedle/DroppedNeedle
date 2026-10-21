@@ -27,9 +27,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::downloads::journal::Journal;
 use super::downloads::manifest::{DownloadManifest, ExpectedFile, ManifestCodec};
-use super::downloads::orphans::{
-    OrphanDecision, OrphanEvidence, RecycleBin, evaluate_orphan, job_name_parts,
-};
+use super::downloads::orphans::{OrphanDecision, OrphanEvidence, evaluate_orphan, job_name_parts};
 use super::downloads::quarantine::{
     QUARANTINE_TTL_SECONDS, QuarantineReason, failover_identities, is_local_fault,
 };
@@ -460,10 +458,6 @@ pub struct WorkerConfig {
     pub source_order: Vec<String>,
     /// Per-task staging root (manifests live beneath it).
     pub staging_root: PathBuf,
-    /// Recycle bins to prune: the configured one, when resolvable, plus
-    /// the `.recycle` folder of every library root (library removals land
-    /// there). All share one retention window.
-    pub recycle: Vec<RecycleBin>,
     /// Complete dirs to walk as `(journal source, dir)`.
     pub orphan_roots: Vec<(String, PathBuf)>,
     /// Lease owner name for cleanup claims.
@@ -481,7 +475,6 @@ impl Default for WorkerConfig {
             watchdog: WatchdogConfig::default(),
             source_order: vec!["soulseek".to_owned(), "usenet".to_owned()],
             staging_root: PathBuf::from("staging"),
-            recycle: Vec::new(),
             orphan_roots: Vec::new(),
             worker_id: "download-worker".to_owned(),
             review: ReviewMode::default(),
@@ -1748,20 +1741,10 @@ impl DownloadWorker {
     }
 
     /// Walk the complete dirs and remove proven debris. Every ambiguous
-    /// answer keeps the folder; the recycle bin prunes expired entries.
+    /// answer keeps the folder.
     async fn orphan_pass(&self, pass: &Pass) {
         for (source_tag, root) in &pass.config.orphan_roots {
             self.orphan_root(pass, source_tag, root).await;
-        }
-        for bin in &pass.config.recycle {
-            let bin = bin.clone();
-            let pruned = tokio::task::spawn_blocking(move || bin.prune(SystemTime::now())).await;
-            if let Err(error) = pruned
-                .map_err(|join| join.to_string())
-                .and_then(|r| r.map_err(|e| e.to_string()))
-            {
-                tracing::warn!(%error, "recycle bin prune failed");
-            }
         }
     }
 

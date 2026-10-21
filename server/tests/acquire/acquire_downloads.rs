@@ -25,9 +25,8 @@ use downloads::state::{AttemptState, can_transition};
 use downloads::store::NewTask;
 use downloads::{
     DownloadManifest, DownloadStore, ExpectedFile, ManifestCodec, OrphanDecision, OrphanEvidence,
-    OrphanPolicy, PollSample, QuarantineDir, RecycleBin, RetryPolicy, TaskStatus, Watchdog,
-    WatchdogConfig, WatchdogOutcome, canonical_soulseek_identity, classify_startup, is_terminal,
-    plan_retry,
+    OrphanPolicy, PollSample, QuarantineDir, RetryPolicy, TaskStatus, Watchdog, WatchdogConfig,
+    WatchdogOutcome, canonical_soulseek_identity, classify_startup, is_terminal, plan_retry,
 };
 use rusqlite::Connection;
 
@@ -600,33 +599,6 @@ fn orphan_reconcile_removes_only_proven_debris() {
 }
 
 #[test]
-fn recycle_bin_prunes_only_past_retention() {
-    let root = scratch_dir("recycle");
-    let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).unwrap();
-    let resolved = RecycleBin::resolve("", &[lib.to_str().unwrap().to_string()]).unwrap();
-    assert_eq!(resolved, lib.join(".recycle"));
-
-    let bin = RecycleBin::at(resolved.clone(), 30);
-    std::fs::create_dir_all(&resolved).unwrap();
-    let old = resolved.join("20200101T000000-aaaabbbb");
-    let young = resolved.join("29990101T000000-ccccdddd");
-    std::fs::create_dir_all(&old).unwrap();
-    std::fs::write(old.join("track.flac"), b"old").unwrap();
-    std::fs::create_dir_all(&young).unwrap();
-    std::fs::write(young.join("track.flac"), b"young").unwrap();
-
-    let removed = bin.prune(SystemTime::now()).unwrap();
-    assert_eq!(removed, 1);
-    assert!(!old.exists());
-    assert!(young.exists());
-
-    // A missing bin prunes to zero instead of erroring.
-    let missing = RecycleBin::at(root.join("nope"), 30);
-    assert_eq!(missing.prune(SystemTime::now()).unwrap(), 0);
-}
-
-#[test]
 fn watchdog_orders_terminal_ceiling_stall_and_queue() {
     let watchdog = Watchdog::new(WatchdogConfig::default());
     let base = PollSample {
@@ -808,21 +780,6 @@ fn quarantine_hold_rejects_escaping_stamps() {
     assert!(suspect.exists());
     let held = sandbox.hold_file(&suspect, "20240101T000000").unwrap();
     assert!(held.starts_with(dir.join("quarantine")));
-}
-
-#[test]
-fn recycle_bin_guarded_refuses_protected_roots() {
-    let staging = PathBuf::from("/data/staging");
-    let mount = PathBuf::from("/data/complete");
-    let protected = vec![staging.clone(), mount.clone()];
-    assert!(RecycleBin::guarded(PathBuf::from("/"), 7, &protected).is_none());
-    assert!(RecycleBin::guarded(staging.clone(), 7, &protected).is_none());
-    assert!(RecycleBin::guarded(PathBuf::from("/data"), 7, &protected).is_none());
-    assert!(RecycleBin::guarded(PathBuf::from("relative/bin"), 7, &protected).is_none());
-    assert!(RecycleBin::guarded(PathBuf::from("/data/recycle"), 7, &protected).is_some());
-    // Belt and suspenders: a `/` root never prunes.
-    let root_bin = RecycleBin::at(PathBuf::from("/"), 7);
-    assert_eq!(root_bin.prune(SystemTime::now()).unwrap(), 0);
 }
 
 #[test]

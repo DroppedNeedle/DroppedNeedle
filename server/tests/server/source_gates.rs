@@ -304,7 +304,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/usenet/sabnzbd.rs", 6, AWAITED),
     ("acquire/src/worker/landings.rs", 2, WORKER_CHILD),
     ("acquire/src/worker/review.rs", 1, WORKER_CHILD),
-    ("acquire/src/worker.rs", 3, AWAITED),
+    ("acquire/src/worker.rs", 2, AWAITED),
     ("auth/src/avatars.rs", 2, REQUEST),
     ("auth/src/session/login.rs", 1, REQUEST),
     ("auth/src/users/hibp.rs", 1, REQUEST),

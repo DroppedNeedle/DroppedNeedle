@@ -32,9 +32,9 @@ use crate::scan::roots::RootRegistry;
 pub const CONFIGURED_BIN_ID: &str = "recycle-bin";
 
 /// Folders a configured bin must stay clear of besides the library: the
-/// download staging folder and each download client's folder. Acquisition
-/// names them and the builder hands its answer in. `None` while a setting
-/// that names one cannot be read.
+/// download staging folder and SABnzbd's completed-downloads folder.
+/// Acquisition names them and the builder hands its answer in. `None`
+/// while a setting that names one cannot be read.
 pub type DownloadTrees = Arc<dyn Fn() -> Option<Vec<PathBuf>> + Send + Sync>;
 
 /// Why the configured bin is not used.
@@ -258,6 +258,30 @@ impl BinSource {
         Ok(choose(&policy.recycle_bin_path, &library, &downloads))
     }
 
+    /// The bins expiry may delete from for `registry`'s roots now, with a
+    /// line for each bin left out ([`expiry_guard`]). `Err` with the cause
+    /// while the download settings, or a setting naming a download folder,
+    /// cannot be read. Logs nothing: expiry keeps its own log memory.
+    pub fn for_expiry(
+        &self,
+        registry: &RootRegistry,
+    ) -> Result<(Vec<Root>, Vec<String>), BinsUnknown> {
+        let choice = self.read(registry)?;
+        let downloads = (self.downloads)().ok_or("the SABnzbd settings cannot be read")?;
+        let resolved: Vec<paths::ResolvedRoot> = registry
+            .roots()
+            .iter()
+            .map(|root| paths::ResolvedRoot::of(&root.id, &root.path))
+            .collect();
+        let left_out = paths::left_out(&resolved);
+        Ok(expiry_guard(
+            choice.roots,
+            &library_roots(registry),
+            &downloads,
+            &left_out,
+        ))
+    }
+
     /// Why `configured` would not be used as the bin, for the download
     /// settings. `None` when it would be, or while that cannot be told.
     /// Blocking: it resolves paths.
@@ -335,7 +359,7 @@ pub fn fresh_entry(bin: &Path, name: &str, now: SystemTime) -> Option<PathBuf> {
 }
 
 /// `YYYYMMDDTHHMMSS` in UTC: every bin entry's name starts with it, and
-/// the bin prune reads it.
+/// expiry reads it for an entry no row names ([`entry_stamp`]).
 pub fn utc_stamp(now: SystemTime) -> String {
     let secs = now
         .duration_since(UNIX_EPOCH)
@@ -359,6 +383,99 @@ pub fn utc_stamp(now: SystemTime) -> String {
         (rest % 3600) / 60,
         rest % 60
     )
+}
+
+/// Whether `name` is the name of a bin entry folder made since removals
+/// went through the publisher: `YYYYMMDDTHHMMSS-` and eight hex
+/// characters.
+pub(crate) fn entry_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() == 24
+        && bytes[..8].iter().all(u8::is_ascii_digit)
+        && bytes[8] == b'T'
+        && bytes[9..15].iter().all(u8::is_ascii_digit)
+        && bytes[15] == b'-'
+        && bytes[16..].iter().all(u8::is_ascii_hexdigit)
+}
+
+/// When a bin entry folder of any DroppedNeedle release was made, in unix
+/// seconds, read from its name: `<YYYYMMDDTHHMMSS>-<8 or more lowercase
+/// hex>`. `None` for any other name. The name is the record, since a move
+/// across disks rewrites modified times.
+pub(crate) fn entry_stamp(name: &str) -> Option<i64> {
+    let (stamp, unique) = name.split_once('-')?;
+    if stamp.len() != 15
+        || unique.len() < 8
+        || !unique
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return None;
+    }
+    let number = |range: std::ops::Range<usize>| stamp.get(range)?.parse::<i64>().ok();
+    let (year, month, day) = (number(0..4)?, number(4..6)?, number(6..8)?);
+    if stamp.as_bytes().get(8) != Some(&b'T') {
+        return None;
+    }
+    let (hour, minute, second) = (number(9..11)?, number(11..13)?, number(13..15)?);
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    // Howard Hinnant's days-from-civil.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second)
+}
+
+/// The bins expiry may delete from, out of `bins`: never one that is `/`,
+/// is or holds a download folder, or holds a library folder, and never
+/// the `.recycle` of a library folder `left_out` names (it takes no file
+/// changes). Every path is compared resolved. Answers the bins kept and a
+/// line for each one dropped.
+pub fn expiry_guard(
+    bins: Vec<Root>,
+    library: &[Root],
+    downloads: &[PathBuf],
+    left_out: &[String],
+) -> (Vec<Root>, Vec<String>) {
+    let real = |path: &Path| resolve_existing(path).unwrap_or_else(|_| path.to_path_buf());
+    let real_library: Vec<PathBuf> = library.iter().map(|root| real(&root.dir)).collect();
+    let real_downloads: Vec<PathBuf> = downloads.iter().map(|tree| real(tree)).collect();
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    for bin in bins {
+        let dir = real(&bin.dir);
+        let why = if dir.parent().is_none() {
+            Some("is the filesystem root")
+        } else if real_downloads.iter().any(|tree| tree.starts_with(&dir)) {
+            Some("is or holds a download folder")
+        } else if real_library.iter().any(|root| root.starts_with(&dir)) {
+            Some("holds a library folder")
+        } else if matches!(&bin.kind, RootKind::Bin { serves: Some(root) } if left_out.contains(root))
+        {
+            Some("belongs to a library folder that takes no file changes")
+        } else {
+            None
+        };
+        match why {
+            Some(why) => dropped.push(format!(
+                "recycle bin expiry leaves recycle bin {} alone: it {why}",
+                bin.id
+            )),
+            None => kept.push(bin),
+        }
+    }
+    (kept, dropped)
 }
 
 /// Move a committed row's replaced file from its set-aside name into its

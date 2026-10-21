@@ -164,6 +164,10 @@ pub struct LibrarySetup {
     pub jobs: droppedneedle_kernel::jobs::queue::JobQueue,
     /// The recycle bins removals, upgrades and replaced files go to.
     pub bins: super::publish::bin::BinSource,
+    /// What recycle-bin expiry remembers between passes.
+    pub expiry: Arc<super::publish::expiry::ExpiryMemory>,
+    /// Wall time: the kernel clock, which recycle-bin expiry reads.
+    pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     /// The shared outbound HTTP client, for media-server refreshes after a
     /// management run.
     pub http: reqwest::Client,
@@ -372,6 +376,8 @@ impl LibrarySetup {
             root_dirs,
             jobs,
             bins,
+            expiry: Arc::default(),
+            clock: platform.clock.clone(),
             http: platform.http.shared().clone(),
             enrichment,
         })

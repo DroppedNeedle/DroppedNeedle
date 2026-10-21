@@ -1,7 +1,7 @@
 //! Durable downloads: SQLite state machines with crash-safe recovery.
 //!
 //! Ports the v2 acquisition durability contract (the download
-//! orchestrator, acquisition cleanup, recycle bin, download store journal,
+//! orchestrator, acquisition cleanup, download store journal,
 //! and acquisition status) as small pieces wired to the real sources:
 //!
 //! - [`state`] task and attempt states, terminal sets, legal transitions.
@@ -14,7 +14,7 @@
 //! - [`watchdog`] stall/queued/deadline evaluation plus retry backoff.
 //! - [`recovery`] startup classification and orchestrator failover.
 //! - [`quarantine`] release blocklist with TTL and prune-on-write.
-//! - [`orphans`] fail-closed orphan reconcile and recycle-bin prune.
+//! - [`orphans`] fail-closed orphan reconcile.
 //! - [`sources`] the per-source fetch seam (slskd/usenet live elsewhere).
 //! - [`landing_rows`] held files and per-landing import decisions.
 //! - [`queue`] the queue view and its actions, over [`queue_rows`].
@@ -54,9 +54,7 @@ pub use manifest::{
     DownloadManifest, ExpectedFile, ExpectedTrack, ManifestCodec, RecordedReason, TaskHandle,
     TrackAlbumContext, TrackPosition,
 };
-pub use orphans::{
-    OrphanDecision, OrphanEvidence, OrphanPolicy, RecycleBin, evaluate_orphan, job_name_parts,
-};
+pub use orphans::{OrphanDecision, OrphanEvidence, OrphanPolicy, evaluate_orphan, job_name_parts};
 pub use quarantine::{QUARANTINE_TTL_SECONDS, QuarantineDir, canonical_soulseek_identity};
 pub use recovery::{RetrySpawn, StartupAction, classify_startup, plan_retry};
 pub use sources::{

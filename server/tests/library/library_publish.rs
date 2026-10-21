@@ -4210,3 +4210,325 @@ fn mp3_unknown_frames_survive_publish_staging() {
     }
     tags::probe(&dest).unwrap();
 }
+
+// --- Recycle-bin expiry briefs: only a copy a row names, as it was binned,
+// in a bin set now, with nothing holding it, is ever deleted. ---
+
+/// The expiry passes' clock: a fixed point well after every fixture.
+const EXPIRY_NOW_MS: i64 = 4_000_000_000_000;
+const RETENTION_DAYS: i64 = 30;
+/// A copy recycled 31 days before [`EXPIRY_NOW_MS`], due to expire.
+const RECYCLED_OLD: f64 = (EXPIRY_NOW_MS / 1000 - 31 * 86_400) as f64;
+/// A copy recycled 29 days before it, still kept.
+const RECYCLED_YOUNG: f64 = (EXPIRY_NOW_MS / 1000 - 29 * 86_400) as f64;
+
+/// Remove `track-a` and `track-b` into the fixture's bin, and answer each
+/// track's copy there.
+fn recycle_two(fix: &Fixture) -> BTreeMap<String, PathBuf> {
+    write_source(fix, "music", "staging/a.flac", b"first removed file");
+    write_source(fix, "music", "staging/b.flac", b"second removed file");
+    let bundle = removal_bundle(
+        fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let outcome = open_publisher(fix)
+        .publish(&sealed, &live, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(outcome, PublishOutcome::Committed);
+    let conn = open_db(fix);
+    let mut statement = conn
+        .prepare("SELECT replaced_track_id, recycle_to FROM library_publish_replacements")
+        .unwrap();
+    let copies: BTreeMap<String, PathBuf> = statement
+        .query_map([], |row| {
+            Ok((row.get(0)?, PathBuf::from(row.get::<_, String>(1)?)))
+        })
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(copies.len(), 2);
+    assert!(copies.values().all(|copy| copy.is_file()));
+    copies
+}
+
+/// Say `track`'s copy reached the bin at `secs`.
+fn recycled_at(fix: &Fixture, track: &str, secs: f64) {
+    open_db(fix)
+        .execute(
+            "UPDATE library_publish_replacements SET recycled_at = ?2 \
+             WHERE replaced_track_id = ?1",
+            rusqlite::params![track, secs],
+        )
+        .unwrap();
+}
+
+/// When `track`'s copy was expired, if it was.
+fn expired_at(fix: &Fixture, track: &str) -> Option<i64> {
+    open_db(fix)
+        .query_row(
+            "SELECT expired_at FROM library_publish_replacements WHERE replaced_track_id = ?1",
+            [track],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+/// One expiry pass over `sandbox`'s bins, reading `page` rows at a time.
+fn run_expiry(fix: &Fixture, sandbox: &Sandbox, page: usize) -> publish::expiry::ExpiryReport {
+    publish::expiry::expire(
+        &restart(fix),
+        &publish::expiry::ExpiryPass {
+            retention_days: RETENTION_DAYS,
+            now_ms: EXPIRY_NOW_MS,
+            page,
+        },
+        &publish::expiry::ExpiryMemory::default(),
+        &|| Some(sandbox.clone()),
+        || (),
+        &|| true,
+    )
+    .unwrap()
+}
+
+/// A copy past its retention goes with its entry folder and its row is
+/// marked; one inside it stays. A copy someone deleted is marked, as long
+/// as its entry folder is still there.
+#[test]
+fn an_expired_copy_goes_and_a_young_one_stays() {
+    let fix = fixture("expiry-age");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    recycled_at(&fix, "track-b", RECYCLED_YOUNG);
+
+    let report = run_expiry(&fix, &fix.sandbox, 200);
+
+    assert_eq!(report.deleted, 1);
+    assert!(!copies["track-a"].parent().unwrap().exists());
+    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS));
+    assert!(copies["track-b"].is_file());
+    assert_eq!(expired_at(&fix, "track-b"), None);
+
+    std::fs::remove_file(&copies["track-b"]).unwrap();
+    recycled_at(&fix, "track-b", RECYCLED_OLD);
+    let report = run_expiry(&fix, &fix.sandbox, 200);
+    assert_eq!(report.gone, 1);
+    assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS));
+    assert!(!copies["track-b"].parent().unwrap().exists());
+}
+
+/// An empty bin folder may be a share that is not mounted: a copy whose
+/// entry folder is gone counts as gone only while the bin holds another
+/// entry. Until then its row is left for a later pass.
+#[test]
+fn a_copy_counts_as_gone_only_beside_other_entries() {
+    let fix = fixture("expiry-unmounted");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    recycled_at(&fix, "track-b", RECYCLED_OLD);
+    for copy in copies.values() {
+        std::fs::remove_dir_all(copy.parent().unwrap()).unwrap();
+    }
+
+    let report = run_expiry(&fix, &fix.sandbox, 200);
+    assert_eq!(report.waited, 2);
+    assert_eq!(expired_at(&fix, "track-a"), None);
+    assert_eq!(expired_at(&fix, "track-b"), None);
+
+    std::fs::create_dir_all(fix.dir.join("bin/29990101T000000-0a0b0c0d")).unwrap();
+    run_expiry(&fix, &fix.sandbox, 200);
+    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS));
+    assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS));
+}
+
+/// The bin is looked at again under the lock: one that empties between the
+/// first look and the lock (a share dropping out) proves nothing gone.
+#[test]
+fn a_bin_that_empties_before_the_lock_marks_nothing_gone() {
+    let fix = fixture("expiry-unmounted-late");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    recycled_at(&fix, "track-b", RECYCLED_YOUNG);
+    std::fs::remove_dir_all(copies["track-a"].parent().unwrap()).unwrap();
+    let other = copies["track-b"].parent().unwrap().to_path_buf();
+    let aside = fix.dir.join("aside");
+
+    let report = publish::expiry::expire(
+        &restart(&fix),
+        &publish::expiry::ExpiryPass {
+            retention_days: RETENTION_DAYS,
+            now_ms: EXPIRY_NOW_MS,
+            page: 200,
+        },
+        &publish::expiry::ExpiryMemory::default(),
+        &|| Some(fix.sandbox.clone()),
+        || std::fs::rename(&other, &aside).unwrap(),
+        &|| true,
+    )
+    .unwrap();
+
+    assert_eq!(report.waited, 1);
+    assert_eq!(report.gone, 0);
+    assert_eq!(expired_at(&fix, "track-a"), None);
+}
+
+/// A copy whose bytes in the bin are no longer the ones recycled is not
+/// deleted, however old, and its row stays unmarked.
+#[test]
+fn an_expired_copy_whose_bytes_changed_is_kept() {
+    let fix = fixture("expiry-changed");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    recycled_at(&fix, "track-b", RECYCLED_OLD);
+    std::fs::write(&copies["track-a"], b"FIRST REMOVED FILE").unwrap();
+
+    let report = run_expiry(&fix, &fix.sandbox, 200);
+
+    assert_eq!(report.changed, 1);
+    assert_eq!(
+        std::fs::read(&copies["track-a"]).unwrap(),
+        b"FIRST REMOVED FILE"
+    );
+    assert_eq!(expired_at(&fix, "track-a"), None);
+    assert!(!copies["track-b"].exists());
+}
+
+/// A copy in a bin that is no longer set is kept, and does not hold up a
+/// due copy behind it, however small the page. A copy reached through a
+/// link below the bin is kept, and what the link leads to is untouched.
+#[test]
+fn copies_outside_the_current_bins_or_below_a_link_are_kept() {
+    let fix = fixture("expiry-old-bin");
+    let copies = recycle_two(&fix);
+    let entry = copies["track-a"].parent().unwrap();
+    let moved = fix.dir.join("old-bin").join(entry.file_name().unwrap());
+    std::fs::create_dir_all(fix.dir.join("old-bin")).unwrap();
+    std::fs::rename(entry, &moved).unwrap();
+    let moved_copy = moved.join(copies["track-a"].file_name().unwrap());
+    open_db(&fix)
+        .execute(
+            "UPDATE library_publish_replacements SET recycle_to = ?1 \
+             WHERE replaced_track_id = 'track-a'",
+            [moved_copy.to_string_lossy()],
+        )
+        .unwrap();
+    recycled_at(&fix, "track-a", RECYCLED_OLD - 10.0);
+    recycled_at(&fix, "track-b", RECYCLED_OLD);
+
+    run_expiry(&fix, &fix.sandbox, 1);
+
+    assert!(moved_copy.is_file(), "a bin no longer set is left alone");
+    assert_eq!(expired_at(&fix, "track-a"), None);
+    assert!(!copies["track-b"].exists(), "the due copy behind it goes");
+
+    let fix = fixture("expiry-link");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    let entry = copies["track-a"].parent().unwrap();
+    let elsewhere = fix.dir.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let target = elsewhere.join(copies["track-a"].file_name().unwrap());
+    std::fs::rename(&copies["track-a"], &target).unwrap();
+    std::fs::remove_dir(entry).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, entry).unwrap();
+
+    run_expiry(&fix, &fix.sandbox, 200);
+
+    assert_eq!(std::fs::read(&target).unwrap(), b"first removed file");
+    assert_eq!(expired_at(&fix, "track-a"), None);
+}
+
+/// A copy a put-back still holds stays until the put-back is done.
+#[test]
+fn a_copy_a_put_back_holds_is_kept() {
+    let fix = fixture("expiry-put-back");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    open_db(&fix)
+        .execute_batch(
+            "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+             staged, staged_sha256, track_id, state) VALUES ('pb-putback-000', 'pb', \
+             'put_back', 'music', 'staging/a.flac', '.dn-pb', 'x', 'track-a', 'staged')",
+        )
+        .unwrap();
+
+    run_expiry(&fix, &fix.sandbox, 200);
+    assert!(copies["track-a"].is_file());
+    assert_eq!(expired_at(&fix, "track-a"), None);
+
+    open_db(&fix)
+        .execute_batch(
+            "UPDATE library_publish_journal SET state = 'cleaned' WHERE id = 'pb-putback-000'",
+        )
+        .unwrap();
+    run_expiry(&fix, &fix.sandbox, 200);
+    assert!(!copies["track-a"].exists());
+}
+
+/// Entries no row names keep the old rule, narrowed: a folder named like
+/// ours and past the retention by its name loses its plain files, then
+/// itself. One holding anything else, or named otherwise, is kept, and so
+/// is any entry a row names.
+#[test]
+fn old_entries_no_row_names_lose_only_their_plain_files() {
+    let fix = fixture("expiry-legacy");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_YOUNG);
+    recycled_at(&fix, "track-b", RECYCLED_YOUNG);
+    let bin = fix.dir.join("bin");
+    let plain = bin.join("20200101T000000-0a1b2c3d");
+    let nested = bin.join("20200101T000000-1a2b3c4d");
+    let foreign = bin.join("20200101T000000-notours");
+    let young = bin.join("20960920T000000-2a2b2c2d");
+    for dir in [&plain, &nested.join("sub"), &foreign, &young] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(plain.join("old.flac"), b"old").unwrap();
+    std::fs::write(nested.join("sub/old.flac"), b"old").unwrap();
+    std::fs::write(foreign.join("old.flac"), b"old").unwrap();
+    std::fs::write(young.join("young.flac"), b"young").unwrap();
+
+    let report = run_expiry(&fix, &fix.sandbox, 200);
+
+    assert_eq!(report.legacy_deleted, 1);
+    assert!(!plain.exists());
+    assert!(nested.join("sub/old.flac").is_file());
+    assert!(foreign.join("old.flac").is_file());
+    assert!(young.join("young.flac").is_file());
+    assert!(copies.values().all(|copy| copy.is_file()));
+}
+
+/// Expiry never deletes from a bin that is `/`, is or holds a download
+/// folder, or holds a library folder, a library folder's own `.recycle`
+/// included. A bin beside them, or inside a download folder, is used.
+#[test]
+fn expiry_never_prunes_a_bin_over_downloads_or_a_library() {
+    let scratch = ScratchDir::new("expiry-guard");
+    let dir = scratch.to_path_buf();
+    let music = dir.join("music");
+    let staging = music.join(".recycle/staging");
+    let complete = dir.join("downloads/complete");
+    for folder in [&staging, &complete, &dir.join("bin")] {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    let bins = vec![
+        Root::bin("root", "/"),
+        Root::bin("staging", staging.clone()),
+        Root::bin("holds-downloads", dir.join("downloads")),
+        Root::bin("holds-library", dir.clone()),
+        Root::recycle_of("music", &music),
+        Root::bin("inside-downloads", complete.join("bin")),
+        Root::bin("beside", dir.join("bin")),
+    ];
+    let (kept, dropped) = publish::bin::expiry_guard(
+        bins,
+        &[Root::library("music", music.clone())],
+        &[staging, complete],
+        &[],
+    );
+    let kept: Vec<&str> = kept.iter().map(|bin| bin.id.as_str()).collect();
+    assert_eq!(kept, ["inside-downloads", "beside"]);
+    assert_eq!(dropped.len(), 5);
+}
