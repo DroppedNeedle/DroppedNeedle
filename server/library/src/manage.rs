@@ -500,6 +500,240 @@ impl PublishCell {
     }
 }
 
+/// A file a plugin added: where it is, and the bundle that added it.
+#[derive(Debug, Clone)]
+pub struct AddedPluginFile {
+    pub path: PathBuf,
+    pub bundle_id: String,
+}
+
+/// Why a plugin's file was not added.
+#[derive(Debug)]
+pub enum PluginFileRefusal {
+    /// The library stayed busy until the deadline. Nothing was written.
+    Busy,
+    /// Whoever asked stopped waiting. Nothing was written.
+    Cancelled,
+    /// No library folder is set up.
+    NoFolder,
+    /// The first library folder takes no plugin files; the sentence says
+    /// why.
+    FolderUnusable(&'static str),
+    /// Another file has the name.
+    Taken,
+    /// The write stopped partway; it finishes or is undone by itself.
+    Pending,
+    /// The publish refused or failed. Nothing was added.
+    Publish(PublishError),
+}
+
+/// How long a plugin write pauses between tries for a busy library.
+const PLUGIN_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
+
+impl super::wiring::LibraryCore {
+    /// Add `bytes` as the new file `relative_path` under the first library
+    /// folder for plugin `plugin`, as one publisher bundle with one add
+    /// row. It waits for the publish lock and then the folder until
+    /// `deadline`, never waiting on a folder while it holds the lock, and
+    /// stops once `cancelled` is set; nothing is recorded until both are
+    /// held and the write is still wanted. Blocking.
+    pub fn add_plugin_file(
+        &self,
+        plugin: &str,
+        relative_path: &str,
+        bytes: Vec<u8>,
+        deadline: std::time::Instant,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<AddedPluginFile, PluginFileRefusal> {
+        use std::sync::atomic::Ordering;
+        let library = self
+            .library
+            .get()
+            .map_err(|_| PluginFileRefusal::FolderUnusable("the library settings can't be read"))?;
+        let first = library
+            .library_roots
+            .iter()
+            .find(|root| !root.id.is_empty() && !root.path.trim().is_empty())
+            .map(|root| root.id.clone())
+            .ok_or(PluginFileRefusal::NoFolder)?;
+        let mut bytes = Some(bytes);
+        loop {
+            if cancelled.load(Ordering::SeqCst) {
+                return Err(PluginFileRefusal::Cancelled);
+            }
+            if let Some(done) =
+                self.try_add_plugin_file(plugin, relative_path, &first, &mut bytes, cancelled)
+            {
+                return done;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return Err(PluginFileRefusal::Busy);
+            }
+            std::thread::sleep(PLUGIN_RETRY_PAUSE.min(deadline - now));
+        }
+    }
+
+    /// One try of [`Self::add_plugin_file`]: `None` while the lock or the
+    /// folder is taken.
+    fn try_add_plugin_file(
+        &self,
+        plugin: &str,
+        relative_path: &str,
+        first: &str,
+        bytes: &mut Option<Vec<u8>>,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Option<Result<AddedPluginFile, PluginFileRefusal>> {
+        let mut cell = match self.publish.try_lock() {
+            Ok(cell) => cell,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        let registry = self.refresh_registry();
+        // The registry leaves out a root it cannot use; the plugin's file
+        // never goes to the one after it instead.
+        match registry.roots().first() {
+            Some(root) if root.id == first => {
+                if root.policy == EffectivePolicy::Excluded {
+                    return Some(Err(PluginFileRefusal::FolderUnusable(
+                        "the first library folder is excluded from the library",
+                    )));
+                }
+            }
+            _ => {
+                return Some(Err(PluginFileRefusal::FolderUnusable(
+                    "the first library folder isn't usable; check it in the library settings",
+                )));
+            }
+        }
+        let session = cell.session(&registry);
+        // A reopen reconciles, which may touch any root.
+        let mut ids: Vec<String> = if cell.needs_refresh(&session) {
+            PublishCell::guarded_ids(&registry)
+        } else {
+            vec![first.to_owned()]
+        };
+        ids.sort();
+        ids.dedup();
+        let mut guards = Vec::with_capacity(ids.len());
+        for id in &ids {
+            guards.push(self.fs.try_write(id)?);
+        }
+        if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            return Some(Err(PluginFileRefusal::Cancelled));
+        }
+        let bytes = bytes.take()?;
+        Some(self.publish_plugin_file(
+            &mut cell,
+            session,
+            &registry,
+            (plugin, relative_path, first),
+            bytes,
+        ))
+    }
+
+    /// Publish the plugin's file under the cell and guards the caller
+    /// holds. `file` is the plugin, the path and the root id.
+    fn publish_plugin_file(
+        &self,
+        cell: &mut PublishCell,
+        session: SessionRoots,
+        registry: &RootRegistry,
+        (plugin, relative_path, first): (&str, &str, &str),
+        bytes: Vec<u8>,
+    ) -> Result<AddedPluginFile, PluginFileRefusal> {
+        use super::publish::add::{Added, AddedFile, Origin};
+        cell.refresh_to(session, &self.root_dirs)
+            .map_err(PluginFileRefusal::Publish)?;
+        let unusable = PluginFileRefusal::FolderUnusable(
+            "the library folder is reached through a link into another library folder",
+        );
+        let Ok(open) = cell.open() else {
+            return Err(unusable);
+        };
+        if open.sandbox.root_dir(first).is_err() {
+            return Err(unusable);
+        }
+        let path = open
+            .sandbox
+            .resolve(first, relative_path)
+            .map_err(PluginFileRefusal::Publish)?;
+        let policy_revision = policy_revision_u64(registry);
+        let bundle = PlanBundle {
+            id: self.ids.new_id(),
+            items: Vec::new(),
+            profile_revision: PINNED_REVISION,
+            naming_revision: PINNED_REVISION,
+            policy_revision,
+            removal: None,
+            put_back: None,
+            added: Some(Added {
+                origin: Origin::Plugin(plugin.to_owned()),
+                file: AddedFile {
+                    root_id: first.to_owned(),
+                    relative_path: relative_path.to_owned(),
+                    sha256: sha256_hex(&bytes),
+                    size: bytes.len() as u64,
+                },
+                undoes: None,
+            }),
+        };
+        let (sealed, live) = seal_pinned(bundle, &self.ids.new_id(), policy_revision);
+        let bundle_id = sealed.bundle.id.clone();
+        let Err(error) = open.publisher.publish_add(&sealed, &live, bytes) else {
+            return Ok(AddedPluginFile { path, bundle_id });
+        };
+        let committed = self
+            .held_bundles
+            .committed(&bundle_id)
+            .unwrap_or_else(|read| {
+                tracing::warn!(%read, bundle_id, "could not tell whether a failed plugin write committed");
+                false
+            });
+        if committed {
+            tracing::warn!(%error, bundle_id, "plugin write committed; recovery finishes the rest");
+            return Ok(AddedPluginFile { path, bundle_id });
+        }
+        let unsettled = self.held_bundles.unsettled(&bundle_id).unwrap_or(true);
+        Err(if unsettled {
+            tracing::warn!(%error, bundle_id, "plugin write stopped partway; recovery settles it");
+            PluginFileRefusal::Pending
+        } else if matches!(error, PublishError::Collision(_)) {
+            PluginFileRefusal::Taken
+        } else {
+            PluginFileRefusal::Publish(error)
+        })
+    }
+}
+
+/// A bundle sealed with the pinned revisions, for a publish no person
+/// previewed, with the recheck that matches it.
+fn seal_pinned(
+    bundle: PlanBundle,
+    token: &str,
+    policy_revision: u64,
+) -> (SealedPreview, SealRecheck) {
+    let token_hash = sha256_hex(token.as_bytes());
+    let sealed = SealedPreview::seal(
+        bundle,
+        token_hash.clone(),
+        PINNED_REVISION,
+        today_day() + PREVIEW_TTL_DAYS,
+    );
+    let live = SealRecheck {
+        fingerprints: BTreeMap::new(),
+        identities: BTreeMap::new(),
+        overrides: BTreeMap::new(),
+        profile_revision: PINNED_REVISION,
+        naming_revision: PINNED_REVISION,
+        policy_revision,
+        settings_revision: PINNED_REVISION,
+        today_day: today_day(),
+        token_hash,
+    };
+    (sealed, live)
+}
+
 /// How a removal takes the publish lock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemovalEntry {
@@ -1218,6 +1452,7 @@ impl LibrarySetup {
             naming_revision: PINNED_REVISION,
             policy_revision: policy_revision_u64(&registry),
             put_back: None,
+            added: None,
             removal: None,
         };
         // The tracks' rows as previewed: Apply is refused if they move.
@@ -1587,6 +1822,7 @@ impl LibrarySetup {
             naming_revision: PINNED_REVISION,
             policy_revision,
             put_back: None,
+            added: None,
             removal: Some(removal),
         };
         let token_hash = sha256_hex(self.ids.new_id().as_bytes());
@@ -1713,6 +1949,7 @@ impl LibrarySetup {
             policy_revision,
             removal: None,
             put_back: Some(plan),
+            added: None,
         };
         let token_hash = sha256_hex(self.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
@@ -1790,6 +2027,7 @@ impl LibrarySetup {
             naming_revision: pins.naming,
             policy_revision: policy_revision_u64(&registry),
             put_back: None,
+            added: None,
             removal: None,
         };
         // What moved since planning is caught by the seal recheck below;
@@ -1860,6 +2098,17 @@ impl LibrarySetup {
                 return Err(ServiceError::NotFound);
             }
         }
+        // A bundle that added a file (a plugin's) is undone by taking the
+        // file away; it has no before-states.
+        let added = self
+            .db
+            .read_blocking("publish.undo_added", |conn| {
+                super::publish::add::plan_take_back(conn, bundle_id)
+            })
+            .map_err(publish_error)?;
+        if !matches!(added, Err(super::publish::add::TakeBackRefusal::NotAnAdd)) {
+            return self.take_back(open, &registry, added);
+        }
         let files = self.undo_files_in(open, bundle_id, &|_| PINNED_OVERRIDE)?;
         if !files.blocked.is_empty() || files.eligible.is_empty() {
             return Err(ServiceError::Conflict {
@@ -1890,6 +2139,71 @@ impl LibrarySetup {
             tracing::warn!(%error, bundle_id, "undone bundle not recorded for automatic management");
         }
         Ok(applied)
+    }
+
+    /// Undo a bundle that added a file: take the file away while it still
+    /// holds the bytes written, in a new bundle. The caller holds the cell
+    /// and the guards.
+    fn take_back(
+        &self,
+        open: &mut OpenPublish,
+        registry: &RootRegistry,
+        planned: Result<super::publish::add::Added, super::publish::add::TakeBackRefusal>,
+    ) -> Result<AppliedBundle, ServiceError> {
+        use super::publish::add::TakeBackRefusal;
+        let blocked = |why: String| ServiceError::Conflict {
+            message: format!("Undo blocked: {why}"),
+        };
+        let refused = |refusal: TakeBackRefusal| match refusal {
+            TakeBackRefusal::NotAnAdd => ServiceError::NotFound,
+            TakeBackRefusal::IsATakeBack => {
+                blocked("this change took a plugin's file away and can't be undone".to_owned())
+            }
+            TakeBackRefusal::NotLanded => blocked("the plugin's file was never added".to_owned()),
+            TakeBackRefusal::AlreadyTakenBack => {
+                blocked("the plugin's file was already taken away".to_owned())
+            }
+            TakeBackRefusal::FolderUnusable(path) => blocked(format!(
+                "the library folder of {path} takes no file changes now"
+            )),
+            TakeBackRefusal::Gone(path) => blocked(format!("{path} is no longer there")),
+            TakeBackRefusal::Changed(path) => {
+                blocked(format!("{path} changed since the plugin wrote it"))
+            }
+        };
+        let added = planned.map_err(refused)?;
+        super::publish::add::check_take_back(&open.sandbox, &added.file).map_err(refused)?;
+        let policy_revision = policy_revision_u64(registry);
+        let bundle = PlanBundle {
+            id: self.ids.new_id(),
+            items: Vec::new(),
+            profile_revision: PINNED_REVISION,
+            naming_revision: PINNED_REVISION,
+            policy_revision,
+            removal: None,
+            put_back: None,
+            added: Some(added),
+        };
+        let (sealed, live) = seal_pinned(bundle, &self.ids.new_id(), policy_revision);
+        let bundle_id = sealed.bundle.id.clone();
+        let outcome = match open
+            .publisher
+            .publish_as(&sealed, &live, &BTreeMap::new(), None)
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if !self.held_bundles.committed(&bundle_id).unwrap_or(false) {
+                    return Err(publish_error(error));
+                }
+                tracing::warn!(%error, bundle_id, "plugin file taken away; recovery finishes the rest");
+                PublishOutcome::CleanupPending
+            }
+        };
+        Ok(AppliedBundle {
+            bundle_id,
+            outcome,
+            files: Vec::new(),
+        })
     }
 
     /// What undoing one published bundle would do, file by file. Blocking.
@@ -2439,6 +2753,7 @@ impl LibrarySetup {
             naming_revision: PINNED_REVISION,
             policy_revision: policy_revision_u64(&self.live_registry()),
             put_back: None,
+            added: None,
             removal: None,
         };
         super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;

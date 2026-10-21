@@ -233,13 +233,20 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         queues.queue().clone(),
     );
 
-    // The library roots' lease table: the publisher and plugin library
-    // writes hold the same leases.
-    let library_fs = droppedneedle_library::scan::fs::FsCoordinator::new();
+    // The library's write side (the publish cell, its roots and leases):
+    // the library and plugin library writes share it, so it is built
+    // before the plugin host.
+    let library_core = droppedneedle_library::wiring::LibraryCore::build(
+        p,
+        queues.queue().clone(),
+        droppedneedle_acquire::wiring::recycle_guard(&p.settings, p.config.imports_dir()),
+    )
+    .map_err(stage("library setup"))?;
     // The plugin host exists early so playback, acquisition and streaming
     // can hold it; no plugin starts until `PluginsSetup::build` loads it.
     let plugin_ticks = droppedneedle_plugins::wiring::tick_store(p);
-    let plugin_host = droppedneedle_plugins::wiring::new_host(p, &plugin_ticks, library_fs.clone());
+    let plugin_host =
+        droppedneedle_plugins::wiring::new_host(p, &plugin_ticks, library_core.clone());
     // Shared provider deps first: auth links Last.fm accounts through the
     // one Last.fm client, and the reads enrichment pair paces through these
     // same limiters, so production holds one limiter set. The answer cache
@@ -312,7 +319,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         mb_source.clone(),
         queues.queue().clone(),
         outbound.library(),
-        library_ports(p, &providers, &auth, &artwork, &scans, library_fs)?,
+        library_ports(p, &providers, &auth, &artwork, &scans, library_core),
     )
     .map_err(stage("library setup"))?;
     let acquire = AcquireSetup::build(
@@ -579,8 +586,8 @@ fn library_ports(
     auth: &AuthSetup,
     artwork: &ArtworkService,
     scans: &jobs::ScansEnded,
-    fs: droppedneedle_library::scan::fs::FsCoordinator,
-) -> Result<droppedneedle_library::wiring::LibraryPorts, BootError> {
+    core: droppedneedle_library::wiring::LibraryCore,
+) -> droppedneedle_library::wiring::LibraryPorts {
     let enrichment = LiveEnrichment {
         acoustid: providers.acoustid.clone(),
         library: p.settings.live(),
@@ -593,15 +600,11 @@ fn library_ports(
         lrclib: Default::default(),
     };
     let scans = scans.clone();
-    Ok(droppedneedle_library::wiring::LibraryPorts {
+    droppedneedle_library::wiring::LibraryPorts {
         enrichment: Some(Arc::new(enrichment)),
         scan_completed: Arc::new(move || scans.bump()),
-        fs,
-        download_trees: droppedneedle_acquire::wiring::recycle_guard(
-            &p.settings,
-            p.config.imports_dir(),
-        ),
-    })
+        core,
+    }
 }
 
 /// What acquisition calls outside itself. Finished downloads land through

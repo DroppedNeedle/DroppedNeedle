@@ -129,6 +129,10 @@ pub enum JournalKind {
     /// row's hidden temp beside home and placed there. The copy is never
     /// touched before the commit.
     PutBack,
+    /// A file added with no track behind it (a plugin's file): written to
+    /// the row's hidden temp and placed only onto a free name. Undo takes
+    /// it away under a `Delete` row.
+    Add,
 }
 
 impl JournalKind {
@@ -142,6 +146,7 @@ impl JournalKind {
             Self::Delete => "delete",
             Self::Remove => "remove",
             Self::PutBack => "put_back",
+            Self::Add => "add",
         }
     }
 
@@ -155,6 +160,7 @@ impl JournalKind {
             "delete" => Ok(Self::Delete),
             "remove" => Ok(Self::Remove),
             "put_back" => Ok(Self::PutBack),
+            "add" => Ok(Self::Add),
             other => Err(PublishError::Journal(format!(
                 "unknown journal kind {other}"
             ))),

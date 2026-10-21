@@ -22,9 +22,8 @@ use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::Value;
 
-use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::sections::PluginConfig;
-use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
 use super::capabilities::events::EventState;
 use super::manifest::{PluginManifest, active_capabilities, load_manifest};
@@ -137,8 +136,6 @@ pub struct PluginHost {
     me: Weak<PluginHost>,
     dir: PathBuf,
     pub(super) config: Arc<ConfigStore>,
-    /// The library section, for plugin library writes.
-    pub(super) library: Live<TypedLibrary>,
     launcher: Arc<dyn PluginLauncher>,
     plugins: Mutex<HashMap<String, LoadedPlugin>>,
     running: Mutex<HashMap<String, Running>>,
@@ -151,28 +148,25 @@ pub struct PluginHost {
     pub(super) events: EventState,
     /// Library writes per plugin (`host.library.write`).
     pub(super) library_writes: super::capabilities::library_files::LibraryWrites,
-    /// The library roots' lease table, shared with the publisher.
-    library_fs: droppedneedle_library::scan::fs::FsCoordinator,
+    /// The library's write side: plugin files go through its publisher.
+    pub(super) library: droppedneedle_library::wiring::LibraryCore,
 }
 
 impl PluginHost {
     /// Build a host over one plugins directory. Nothing loads until
     /// [`load_all`](PluginHost::load_all) runs. `state` backs the
-    /// `host.state.*` requests. Plugin library writes hold the roots
-    /// through `library_fs`, the publisher's lease table; temp files a
-    /// crash left from such writes are cleared here.
+    /// `host.state.*` requests. Plugin library writes go through the
+    /// library's publisher in `library`, the one the library holds.
     pub fn new(
         plugins_dir: PathBuf,
         config: Arc<ConfigStore>,
         launcher: Arc<dyn PluginLauncher>,
         state: Arc<dyn PluginStateStore>,
-        library_fs: droppedneedle_library::scan::fs::FsCoordinator,
+        library: droppedneedle_library::wiring::LibraryCore,
     ) -> Arc<Self> {
-        super::capabilities::library_files::sweep_ledger(&plugins_dir.join(DATA_FOLDER));
         Arc::new_cyclic(|me| Self {
             me: me.clone(),
             dir: plugins_dir,
-            library: config.live(),
             config,
             launcher,
             plugins: Mutex::new(HashMap::new()),
@@ -182,12 +176,8 @@ impl PluginHost {
             state,
             events: EventState::default(),
             library_writes: Default::default(),
-            library_fs,
+            library,
         })
-    }
-
-    pub(super) fn library_fs(&self) -> droppedneedle_library::scan::fs::FsCoordinator {
-        self.library_fs.clone()
     }
 
     /// Plugins directory.
@@ -768,11 +758,11 @@ impl HostServices for HostRequests {
                         .ok_or_else(|| {
                             RpcError::new(codes::INVALID_PARAMS, "data_base64 must be base64 text")
                         })?;
-                    let path = host
-                        .write_library_file(plugin, rel_path, data)
-                        .await
-                        .map_err(|reason| RpcError::new(codes::HOST_REFUSED, reason))?;
-                    Ok(serde_json::json!({ "path": path }))
+                    let (path, bundle_id) =
+                        host.write_library_file(plugin, rel_path, data)
+                            .await
+                            .map_err(|reason| RpcError::new(codes::HOST_REFUSED, reason))?;
+                    Ok(serde_json::json!({ "path": path, "bundle_id": bundle_id }))
                 }
                 other => Err(RpcError::new(
                     codes::METHOD_NOT_FOUND,

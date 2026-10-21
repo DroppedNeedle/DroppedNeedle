@@ -63,14 +63,16 @@ async fn rig(tag: &str, examples: &[&str]) -> Rig {
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).unwrap();
     let config = Arc::new(ConfigStore::scratch(&dir, crypto).unwrap());
     crate::common::migrated_db(&dir.join("app.db"));
-    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
-        droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).unwrap(),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
-        droppedneedle_kernel::jobs::CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    let launcher = ProcessLauncher::new(repo().join("sdk/python"), supervisor);
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).unwrap();
+    let platform = crate::common::TestPlatform::on(&db, &dir).build().await;
+    let library = crate::common::library::library_core(
+        &platform,
+        droppedneedle_kernel::jobs::queue::JobQueue::new(
+            db,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
+    );
+    let launcher = ProcessLauncher::new(repo().join("sdk/python"), platform.supervisor.clone());
     let host = PluginHost::new(
         dir.join("plugins"),
         config,
@@ -78,7 +80,7 @@ async fn rig(tag: &str, examples: &[&str]) -> Rig {
         Arc::new(droppedneedle_plugins::ticks::TickStoreKind::Memory(
             droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore::new(),
         )),
-        droppedneedle_library::scan::fs::FsCoordinator::new(),
+        library,
     );
     host.load_all();
     Rig { dir, host }

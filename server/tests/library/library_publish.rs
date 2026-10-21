@@ -23,6 +23,7 @@ use crate::common::ScratchDir;
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{Db, DurableLane};
 use droppedneedle_kernel::jobs::queue::JobQueue;
+use publish::add::{Added, AddedFile, Origin, TakeBackRefusal};
 use publish::paths::Root;
 use publish::place::{PlacementMode, Seams};
 use publish::planner::{
@@ -311,6 +312,7 @@ fn two_track_bundle(fix: &Fixture, kind: PlanKind) -> (PlanBundle, BTreeMap<Stri
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -1048,8 +1050,6 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
     std::fs::create_dir_all(&import).unwrap();
     std::fs::write(import.join("01.flac"), b"staged").unwrap();
     std::fs::create_dir_all(music.join(publish::place::PROBE_DIR)).unwrap();
-    let plugin_temp = format!("{}plugin-1", publish::HIDDEN_PREFIX);
-    std::fs::write(music.join("staging").join(plugin_temp), b"temp").unwrap();
 
     let conn = open_db(&fix);
     let db = restart(&fix);
@@ -2075,6 +2075,7 @@ fn generated_files_land_and_go_away_journaled() {
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -2161,6 +2162,7 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -2484,6 +2486,7 @@ fn removal_bundle(
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: Some(removal),
     }
 }
@@ -2752,6 +2755,7 @@ fn upgrade_bundle(
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: Some(removal),
     };
     let mut docs = BTreeMap::new();
@@ -3102,6 +3106,7 @@ fn a_remove_only_root_takes_removals_only() {
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: None,
     };
     let (sealed, live) = seal(&bundle);
@@ -3178,6 +3183,7 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -3931,6 +3937,7 @@ fn retag_bundle(
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -3955,6 +3962,7 @@ fn a_240_byte_file_name_is_published_and_retagged() {
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -4185,6 +4193,7 @@ fn mp3_unknown_frames_survive_publish_staging() {
         naming_revision: 3,
         policy_revision: 5,
         put_back: None,
+        added: None,
         removal: None,
     };
     let mut docs = BTreeMap::new();
@@ -4531,4 +4540,219 @@ fn expiry_never_prunes_a_bin_over_downloads_or_a_library() {
     let kept: Vec<&str> = kept.iter().map(|bin| bin.id.as_str()).collect();
     assert_eq!(kept, ["inside-downloads", "beside"]);
     assert_eq!(dropped.len(), 5);
+}
+
+// --- A file a plugin adds, and its undo. ---
+
+/// A bundle that adds `bytes` at `rel` under the music root for the
+/// plugin `toy`.
+fn plugin_add(id: &str, rel: &str, bytes: &[u8]) -> PlanBundle {
+    PlanBundle {
+        id: id.to_string(),
+        items: Vec::new(),
+        profile_revision: 1,
+        naming_revision: 1,
+        policy_revision: 5,
+        put_back: None,
+        added: Some(Added {
+            origin: Origin::Plugin("toy".to_string()),
+            file: AddedFile {
+                root_id: "music".to_string(),
+                relative_path: rel.to_string(),
+                sha256: sha256_hex(bytes),
+                size: bytes.len() as u64,
+            },
+            undoes: None,
+        }),
+        removal: None,
+    }
+}
+
+/// The states of a bundle's rows.
+fn row_states(fix: &Fixture, bundle_id: &str) -> Vec<JournalState> {
+    JournalStore::new(&open_db(fix))
+        .bundle(bundle_id)
+        .unwrap()
+        .iter()
+        .map(|row| row.state)
+        .collect()
+}
+
+/// A crash at any step of a plugin's add leaves, after recovery, the file
+/// placed whole with its change recorded under the plugin's name, or no
+/// file at all; never a hidden temp. A crash while the temp was still
+/// being written (a part copy) unwinds too.
+#[test]
+fn a_plugin_file_lands_whole_or_not_at_all_after_a_crash() {
+    let bytes = b"bytes a plugin wrote".as_slice();
+    let mut cases: Vec<(CrashPoint, bool)> = CrashPoint::all()
+        .into_iter()
+        .map(|point| (point, false))
+        .collect();
+    cases.push((CrashPoint::AfterTempWritten, false));
+    cases.push((CrashPoint::AfterTempWritten, true));
+    for (point, part_written) in cases {
+        let case = format!("{point:?} part_written={part_written}");
+        let fix = fixture("plugin-add-crash");
+        let bundle = plugin_add("add-1", "notes/one.txt", bytes);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(point));
+        assert!(
+            matches!(
+                publisher.publish_add(&sealed, &live, bytes.to_vec()),
+                Err(PublishError::InjectedCrash(_))
+            ),
+            "{case}"
+        );
+        drop(publisher);
+        if part_written {
+            let temps = hidden_leftovers(&fix.dir);
+            assert_eq!(temps.len(), 1, "{case}");
+            std::fs::write(&temps[0], &bytes[..5]).unwrap();
+        }
+        let db = restart(&fix);
+        reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
+        let dest = fix.sandbox.resolve("music", "notes/one.txt").unwrap();
+        if point == CrashPoint::AfterTempWritten {
+            assert!(dest.symlink_metadata().is_err(), "{case}: nothing placed");
+            assert_eq!(
+                row_states(&fix, "add-1"),
+                [JournalState::Compensated],
+                "{case}"
+            );
+        } else {
+            assert_eq!(std::fs::read(&dest).unwrap(), bytes, "{case}");
+            assert_eq!(row_states(&fix, "add-1"), [JournalState::Cleaned], "{case}");
+            let recorded = publish::operations::load_operation(&open_db(&fix), "add-1")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                recorded.added.unwrap().origin.to_string(),
+                "plugin:toy",
+                "{case}"
+            );
+        }
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{case}");
+    }
+}
+
+/// A plugin's add never replaces a file: one already there, one that turns
+/// up just before placement, and a folder that can only check and then
+/// rename all refuse it, with the other file and the folder as they were.
+#[test]
+fn a_plugin_file_never_replaces_one() {
+    let bytes = b"bytes a plugin wrote".as_slice();
+    let theirs = b"a file that was there".as_slice();
+
+    let fix = fixture("plugin-add-taken");
+    let dest = fix.sandbox.resolve("music", "notes/one.txt").unwrap();
+    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    std::fs::write(&dest, theirs).unwrap();
+    let (sealed, live) = seal(&plugin_add("add-1", "notes/one.txt", bytes));
+    let mut publisher = open_publisher(&fix);
+    assert!(matches!(
+        publisher.publish_add(&sealed, &live, bytes.to_vec()),
+        Err(PublishError::Collision(_))
+    ));
+    assert_eq!(std::fs::read(&dest).unwrap(), theirs);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+
+    let fix = fixture("plugin-add-late");
+    let dest = fix.sandbox.resolve("music", "notes/one.txt").unwrap();
+    let (sealed, live) = seal(&plugin_add("add-1", "notes/one.txt", bytes));
+    let mut publisher = open_publisher(&fix);
+    publisher.set_before_place(Some(Box::new(move |dest| {
+        std::fs::write(dest, b"a file that was there").unwrap();
+    })));
+    assert!(matches!(
+        publisher.publish_add(&sealed, &live, bytes.to_vec()),
+        Err(PublishError::Collision(_))
+    ));
+    assert_eq!(std::fs::read(&dest).unwrap(), theirs);
+    assert_eq!(row_states(&fix, "add-1"), [JournalState::Compensated]);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+
+    let fix = fixture("plugin-add-check");
+    fix.sandbox
+        .set_placement_mode("music", PlacementMode::Check);
+    let dest = fix.sandbox.resolve("music", "notes/one.txt").unwrap();
+    let (sealed, live) = seal(&plugin_add("add-1", "notes/one.txt", bytes));
+    let mut publisher = open_publisher(&fix);
+    publisher.set_place_seams(Seams {
+        skip_rename: true,
+        link_errno: Some(libc::EPERM),
+        ..Seams::default()
+    });
+    assert!(matches!(
+        publisher.publish_add(&sealed, &live, bytes.to_vec()),
+        Err(PublishError::NoSafePlacement(_))
+    ));
+    assert!(dest.symlink_metadata().is_err(), "nothing was placed");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// Undo of a plugin's add takes the file away while it still holds the
+/// bytes written, once. A file changed since stays and the undo says so;
+/// an add that never landed, and the undo itself, cannot be undone.
+#[test]
+fn undo_takes_a_plugin_file_only_while_unchanged() {
+    let bytes = b"bytes a plugin wrote".as_slice();
+    let fix = fixture("plugin-add-undo");
+    let mut publisher = open_publisher(&fix);
+    for (id, rel) in [("add-1", "notes/one.txt"), ("add-2", "notes/two.txt")] {
+        let (sealed, live) = seal(&plugin_add(id, rel, bytes));
+        assert_eq!(
+            publisher
+                .publish_add(&sealed, &live, bytes.to_vec())
+                .unwrap(),
+            PublishOutcome::Committed
+        );
+    }
+    let take_back = |publisher: &mut Publisher<SqliteCatalog, FixedSpace>, id: &str, undo: &str| {
+        let added = publish::add::plan_take_back(&open_db(&fix), id).unwrap()?;
+        publish::add::check_take_back(&fix.sandbox, &added.file)?;
+        let bundle = PlanBundle {
+            added: Some(added),
+            ..plugin_add(undo, "unused", b"")
+        };
+        let (sealed, live) = seal(&bundle);
+        publisher
+            .publish_as(&sealed, &live, &BTreeMap::new(), None)
+            .unwrap();
+        Ok::<(), TakeBackRefusal>(())
+    };
+
+    let one = fix.sandbox.resolve("music", "notes/one.txt").unwrap();
+    take_back(&mut publisher, "add-1", "undo-1").unwrap();
+    assert!(one.symlink_metadata().is_err(), "the plugin's file is gone");
+    assert_eq!(
+        take_back(&mut publisher, "add-1", "undo-1b"),
+        Err(TakeBackRefusal::AlreadyTakenBack)
+    );
+    assert_eq!(
+        take_back(&mut publisher, "undo-1", "undo-1c"),
+        Err(TakeBackRefusal::IsATakeBack)
+    );
+
+    let two = fix.sandbox.resolve("music", "notes/two.txt").unwrap();
+    std::fs::write(&two, b"a person's edit").unwrap();
+    assert_eq!(
+        take_back(&mut publisher, "add-2", "undo-2"),
+        Err(TakeBackRefusal::Changed("notes/two.txt".to_string()))
+    );
+    assert_eq!(std::fs::read(&two).unwrap(), b"a person's edit");
+
+    let (sealed, live) = seal(&plugin_add("add-3", "notes/three.txt", bytes));
+    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
+    publisher
+        .publish_add(&sealed, &live, bytes.to_vec())
+        .unwrap_err();
+    publisher.set_crash_point(None);
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(
+        take_back(&mut publisher, "add-3", "undo-3"),
+        Err(TakeBackRefusal::NotLanded)
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty());
 }

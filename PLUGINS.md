@@ -327,12 +327,26 @@ To put a file into the music library itself, declare the `library_writer`
 capability and use `await ctx.write_library_file(rel_path, data)`. It adds
 one new file under your first library folder and answers the full path. The path is relative,
 in lowercase letters, digits, `_`, `-`, `.` and `/`, without hidden or `..`
-parts. A file that already exists is never replaced: the call fails
-instead. Each plugin may write 100 MiB a day; past that the call fails until
-older writes are a day old, and one file may be at most 6 MiB. The write
-waits for the library folder to be free (no scan or move running in it) and
-gives up after 30 seconds. Files a plugin adds, audio included, are picked
-up by the next library scan like any other file.
+parts. A file that already exists is never replaced, nor is a file whose
+name differs only in letter case: the call fails instead. A first library
+folder set to Excluded, or one on a disk that can only add a file by
+checking first and then renaming, takes no plugin files. Each plugin may
+write 100 MiB a day; past that the call fails until older writes are a day
+old, and one file may be at most 6 MiB. The write waits up to 30 seconds
+for the library to be free (no scan, move or other change running), then
+fails. Files a plugin adds, audio included, are picked up by the next
+library scan like any other file.
+
+Each write is a recorded library change, made the way the server makes its
+own: the file is written beside its destination under a hidden name and
+put in place only if the name is still free, so after a crash it is either
+in place whole or not there at all. The server log line `plugin added a
+library file` names the plugin, the path and the change's `bundle_id`
+(the low-level answer carries the same id). An administrator can undo the
+change with `POST /api/v3/library/manage/undo` and `{"bundle_id": "..."}`:
+the file is removed only while it still holds the bytes the plugin wrote,
+and the undo says so and leaves the file when it was changed since. Each
+write can be undone once.
 
 Example: `examples/plugins/http-catalog`.
 
@@ -563,7 +577,7 @@ Answer an unknown method with error code `-32601`; the server treats that as
 | `host.publish` | `{kind, payload, causation_id?}` | `{ok, status, retry_after, error}` |
 | `host.state.get` | `{key}` | `{value}` (`null` when unset) |
 | `host.state.set` | `{key, value}` | `{}` |
-| `host.library.write` | `{rel_path, data_base64}` | `{path}`; refused (-32001) for a bad path, an existing file or over the daily allowance |
+| `host.library.write` | `{rel_path, data_base64}` | `{path, bundle_id}`; refused (-32001) for a bad path, an existing file, a library that stays busy for 30 s or over the daily allowance |
 
 State keys are 1-64 lowercase letters, digits, `_`, `-` or `/`, starting
 with a letter or digit; values are strings up to 1 MiB. One plugin may keep

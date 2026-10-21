@@ -94,10 +94,103 @@ pub struct LibraryPorts {
     /// Called after each scan run that changed the library completes
     /// (the library image refresh).
     pub scan_completed: ScanCompleted,
-    /// Root leases, shared with the plugin host's library writes.
+    /// The library's write side, shared with the plugin host's library
+    /// writes.
+    pub core: LibraryCore,
+}
+
+/// The library's write side: the publish cell, the roots it opens over
+/// (with the dirty marks and wakeups a change to them sends the scan),
+/// the root leases and the recycle bins. Built once, before the plugin
+/// host, which adds plugin files through it, and handed to
+/// [`LibrarySetup::build`], so the library and the host hold one cell.
+#[derive(Clone)]
+pub struct LibraryCore {
+    pub(crate) ids: Arc<dyn IdGenerator>,
+    /// Roots and path rules, re-read on every refresh.
+    pub(crate) library: Live<TypedLibrary>,
+    pub(crate) registry: Arc<SharedResolver>,
+    pub(crate) root_dirs: RootDirs,
+    /// Root leases: scans read, publishes write.
     pub fs: FsCoordinator,
-    /// The download folders a configured recycle bin must stay clear of.
-    pub download_trees: super::publish::bin::DownloadTrees,
+    pub(crate) dirty: DirtyScopes,
+    pub(crate) wakeups: WorkWakeups,
+    pub(crate) publish: Arc<std::sync::Mutex<PublishCell>>,
+    pub(crate) placement: super::manage::RootPlacement,
+    pub(crate) held_bundles: super::manage::HeldBundles,
+    pub(crate) bins: super::publish::bin::BinSource,
+}
+
+impl LibraryCore {
+    /// Load the roots and open nothing yet: the cell opens on its first
+    /// refresh. A commit queues its follow-up work on `queue`; a
+    /// configured recycle bin stays clear of `download_trees`.
+    pub fn build(
+        platform: &droppedneedle_kernel::platform::Platform,
+        queue: droppedneedle_kernel::jobs::queue::JobQueue,
+        download_trees: super::publish::bin::DownloadTrees,
+    ) -> Result<Self, String> {
+        let settings = LibrarySettings::new(&platform.settings);
+        // The roots load before anything can scan or stream: a restart
+        // comes back with exactly the roots the settings hold.
+        let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(
+            super::settings::registry(&settings.library)
+                .map_err(|error| format!("library roots: {error}"))?,
+        ));
+        let root_dirs: RootDirs = {
+            let registry = registry.clone();
+            Arc::new(move || registry.resolver().registry().root_paths())
+        };
+        let bins = super::publish::bin::BinSource::new(
+            settings.download_policy.clone(),
+            settings.library.clone(),
+            download_trees,
+        );
+        let publish = PublishCell::new(platform.db.clone(), bins.clone(), queue);
+        Ok(Self {
+            ids: platform.ids.clone(),
+            library: settings.library,
+            registry,
+            root_dirs,
+            fs: FsCoordinator::new(),
+            dirty: DirtyScopes::new(),
+            wakeups: WorkWakeups::new(),
+            placement: publish.placement(),
+            publish: Arc::new(std::sync::Mutex::new(publish)),
+            held_bundles: super::manage::HeldBundles::new(platform.db.clone()),
+            bins,
+        })
+    }
+
+    /// Re-read the roots from the settings and swap them in when they
+    /// changed. Roots that are new or changed get a dirty mark, so the
+    /// next scan pass walks them. A settings read that fails keeps the
+    /// current registry.
+    pub fn refresh_registry(&self) -> RootRegistry {
+        let current = self.registry.resolver().registry().clone();
+        let fresh = match super::settings::registry(&self.library) {
+            Ok(fresh) => fresh,
+            Err(error) => {
+                tracing::warn!(%error, "cannot read the library roots; keeping the current set");
+                return current;
+            }
+        };
+        if fresh.policy_revision() == current.policy_revision() {
+            return current;
+        }
+        self.registry.update(fresh.clone());
+        let mut marked = false;
+        for root in fresh.roots() {
+            if current.resolve(&root.id) != Some(root) {
+                self.dirty.mark(&root.id);
+                marked = true;
+            }
+        }
+        if marked {
+            self.wakeups.notify("scan");
+        }
+        fresh
+    }
 }
 
 /// Everything `create_app` needs to mount the library engine, built once.
@@ -179,6 +272,9 @@ pub struct LibrarySetup {
     /// artwork cache lives with the reads). `None` in a test bundle with
     /// no outside sources.
     pub enrichment: Option<Arc<dyn EnrichmentPort>>,
+    /// The write side the fields above share, which the plugin host holds
+    /// too.
+    pub core: LibraryCore,
 }
 
 impl LibrarySetup {
@@ -270,25 +366,17 @@ impl LibrarySetup {
         let db = &platform.db;
         let settings = LibrarySettings::new(&platform.settings);
         let scan_store = Arc::new(SqliteScanStore::new(db.clone()));
-        // The roots load before anything can scan or stream: a restart
-        // comes back with exactly the roots the settings hold.
-        let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(
-            super::settings::registry(&settings.library)
-                .map_err(|error| format!("library roots: {error}"))?,
-        ));
-        let root_dirs: RootDirs = {
-            let registry = registry.clone();
-            Arc::new(move || registry.resolver().registry().root_paths())
-        };
-        let identify_store = Arc::new(SqliteIdentifyStore::new(db.clone()));
-        let pool = BlockingPool::new(4);
-        let wakeups = WorkWakeups::new();
         let LibraryPorts {
             enrichment,
             scan_completed,
-            fs,
-            download_trees,
+            core,
         } = ports;
+        let registry = core.registry.clone();
+        let root_dirs = core.root_dirs.clone();
+        let fs = core.fs.clone();
+        let identify_store = Arc::new(SqliteIdentifyStore::new(db.clone()));
+        let pool = BlockingPool::new(4);
+        let wakeups = core.wakeups.clone();
         let coordinator = Arc::new(
             ScanCoordinator::new(
                 scan_store.clone(),
@@ -342,13 +430,6 @@ impl LibrarySetup {
                 pool.clone(),
                 identify_store.clone(),
             ));
-        let bins = super::publish::bin::BinSource::new(
-            settings.download_policy.clone(),
-            settings.library.clone(),
-            download_trees,
-        );
-        let publish = PublishCell::new(db.clone(), bins.clone(), jobs.clone());
-        let placement = publish.placement();
         Ok(Self {
             ids: platform.ids.clone(),
             management_settings: Arc::new(LibraryManagementService::new(platform.settings.clone())),
@@ -359,7 +440,7 @@ impl LibrarySetup {
             coordinator,
             fs,
             pool,
-            dirty: DirtyScopes::new(),
+            dirty: core.dirty.clone(),
             wakeups,
             identify_store,
             identify,
@@ -367,19 +448,20 @@ impl LibrarySetup {
             fingerprints,
             contrib,
             contrib_worker,
-            publish: Arc::new(std::sync::Mutex::new(publish)),
-            placement,
-            held_bundles: super::manage::HeldBundles::new(db.clone()),
+            publish: core.publish.clone(),
+            placement: core.placement.clone(),
+            held_bundles: core.held_bundles.clone(),
             leftover_files: super::manage::LeftoverFiles::new(db.clone()),
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
             jobs,
-            bins,
+            bins: core.bins.clone(),
             expiry: Arc::default(),
             clock: platform.clock.clone(),
             http: platform.http.shared().clone(),
             enrichment,
+            core,
         })
     }
 
@@ -421,29 +503,7 @@ impl LibrarySetup {
     /// supervisor scans them; an unreadable settings section keeps the
     /// current registry.
     pub fn refresh_registry(&self) -> RootRegistry {
-        let current = self.registry.resolver().registry().clone();
-        let fresh = match super::settings::registry(&self.settings.library) {
-            Ok(fresh) => fresh,
-            Err(error) => {
-                tracing::warn!(%error, "cannot read the library roots; keeping the current set");
-                return current;
-            }
-        };
-        if fresh.policy_revision() == current.policy_revision() {
-            return current;
-        }
-        self.registry.update(fresh.clone());
-        let mut marked = false;
-        for root in fresh.roots() {
-            if current.resolve(&root.id) != Some(root) {
-                self.dirty.mark(&root.id);
-                marked = true;
-            }
-        }
-        if marked {
-            self.wakeups.notify("scan");
-        }
-        fresh
+        self.core.refresh_registry()
     }
 
     /// The shared root registry the stream gateway resolves local reads

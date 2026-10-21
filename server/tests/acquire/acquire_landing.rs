@@ -911,6 +911,16 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
         .expect("config"),
     );
     let launcher = Arc::new(FakeLauncher::new());
+    crate::common::migrated_db(&dir.join("library.db"));
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&dir.join("library.db")).expect("db");
+    let platform = TestPlatform::on(&db, &dir).build().await;
+    let library = crate::common::library::library_core(
+        &platform,
+        droppedneedle_kernel::jobs::queue::JobQueue::new(
+            db,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
+    );
     let host = PluginHost::new(
         dir.join("plugins"),
         config,
@@ -918,7 +928,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
         Arc::new(droppedneedle_plugins::ticks::TickStoreKind::Memory(
             droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore::new(),
         )),
-        droppedneedle_library::scan::fs::FsCoordinator::new(),
+        library,
     );
     host.load_all();
     let allowed = dir.join("plugin-downloads");

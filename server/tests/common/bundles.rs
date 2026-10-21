@@ -23,8 +23,7 @@ use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, Batc
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_catalog::reads::{ReadsInputs, ReadsPorts, ReadsSetup};
 use droppedneedle_kernel::platform::Platform;
-use droppedneedle_library::scan::fs::FsCoordinator;
-use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_library::wiring::{LibraryCore, LibrarySetup};
 use droppedneedle_media::stream::local_files::LibraryFiles;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;
@@ -62,14 +61,15 @@ impl TickSink for FulfilledTicks {
     }
 }
 
-/// A plugin host over the platform's plugins folder that launches nothing.
-pub fn idle_host(platform: &Platform, fs: FsCoordinator) -> Arc<PluginHost> {
+/// A plugin host over the platform's plugins folder that launches nothing,
+/// adding library files through `library`.
+pub fn idle_host(platform: &Platform, library: LibraryCore) -> Arc<PluginHost> {
     PluginHost::new(
         platform.config.plugins_dir(),
         platform.settings.clone(),
         Arc::new(droppedneedle_plugins::fakes::FakeLauncher::new()),
         Arc::new(droppedneedle_plugins::wiring::tick_store(platform)),
-        fs,
+        library,
     )
 }
 
@@ -88,7 +88,7 @@ pub fn acquire_at(
         droppedneedle_kernel::db::cache::CacheDb::scratch(),
     ));
     let mb_source = providers.musicbrainz.live_source(platform.settings.live());
-    let plugins = idle_host(platform, library.fs.clone());
+    let plugins = idle_host(platform, library.core.clone());
     let ticks = Arc::new(FlowTicks::new(
         Some(plugins.clone()),
         platform.events.clone(),

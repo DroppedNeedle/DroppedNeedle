@@ -19,8 +19,7 @@ use droppedneedle_library::identify::sources::{
     ArtistAnswer, EditionPage, EditionQuery, SourceError, Unanswered,
 };
 use droppedneedle_library::management::enrich::EnrichmentPort;
-use droppedneedle_library::scan::fs::FsCoordinator;
-use droppedneedle_library::wiring::{LibraryPorts, LibrarySetup};
+use droppedneedle_library::wiring::{LibraryCore, LibraryPorts, LibrarySetup};
 use droppedneedle_providers::Providers;
 use droppedneedle_providers::musicbrainz::Criticality;
 
@@ -185,26 +184,40 @@ pub fn library_with(
         droppedneedle_providers::executor::ScriptedWire::new(),
     )));
     let mb_source = providers.musicbrainz.live_source(platform.settings.live());
+    let queue = droppedneedle_kernel::jobs::queue::JobQueue::new(
+        platform.db.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     LibrarySetup::build(
         platform,
         providers,
         mb_source,
-        droppedneedle_kernel::jobs::queue::JobQueue::new(
-            platform.db.clone(),
-            Arc::new(droppedneedle_kernel::clock::SystemClock),
-        ),
+        queue.clone(),
         outbound.library(),
         LibraryPorts {
             enrichment,
             scan_completed: Arc::new(|| {}),
-            fs: FsCoordinator::new(),
-            download_trees: droppedneedle_acquire::wiring::recycle_guard(
-                &platform.settings,
-                platform.config.imports_dir(),
-            ),
+            core: library_core(platform, queue),
         },
     )
     .expect("library bundle builds")
+}
+
+/// The library's write side over the platform, built the way the app
+/// builds it, for a rig that holds a plugin host and no library.
+pub fn library_core(
+    platform: &Platform,
+    queue: droppedneedle_kernel::jobs::queue::JobQueue,
+) -> LibraryCore {
+    LibraryCore::build(
+        platform,
+        queue,
+        droppedneedle_acquire::wiring::recycle_guard(
+            &platform.settings,
+            platform.config.imports_dir(),
+        ),
+    )
+    .expect("library write side builds")
 }
 
 /// Raw SQL on a test library's database: seeds no store method writes

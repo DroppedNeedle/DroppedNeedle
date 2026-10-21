@@ -1066,19 +1066,11 @@ const KEPT_NAME_MAX: usize = 64;
 /// name, and the ending. The kept part lets a person tell which file a
 /// leftover belongs to; it is cut at [`KEPT_NAME_MAX`] bytes, so a file
 /// name near the 255-byte limit still has room. A name that is not UTF-8
-/// is carried lossily. A retry of the same journal finds the same name. A
-/// plugin temp keeps its tag in front of the hash, which the plugin sweep
-/// matches on.
+/// is carried lossily. A retry of the same journal finds the same name.
 fn hidden_path(dest: &Path, journal_id: &str, ending: &str) -> Result<PathBuf, PublishError> {
-    use super::plugin_files::TEMP_TAG;
     let parent = dest
         .parent()
         .ok_or_else(|| PublishError::UnsafePath("destination has no parent directory".into()))?;
-    let tag = if journal_id.starts_with(TEMP_TAG) {
-        TEMP_TAG
-    } else {
-        ""
-    };
     let name = dest
         .file_name()
         .map(|name| name.to_string_lossy())
@@ -1088,7 +1080,7 @@ fn hidden_path(dest: &Path, journal_id: &str, ending: &str) -> Result<PathBuf, P
         cut -= 1;
     }
     Ok(parent.join(format!(
-        "{HIDDEN_PREFIX}{tag}{}.{}.{ending}",
+        "{HIDDEN_PREFIX}{}.{}.{ending}",
         short_hash(journal_id),
         &name[..cut]
     )))

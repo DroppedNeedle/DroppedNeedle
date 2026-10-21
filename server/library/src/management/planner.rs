@@ -1824,6 +1824,7 @@ fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
             naming_revision: 0,
             policy_revision: 0,
             put_back: None,
+            added: None,
             removal: None,
         };
         match CollisionGate::check_bundle(ctx.sandbox, &single) {
@@ -1983,6 +1984,7 @@ pub fn plan_album(
             naming_revision: 0,
             policy_revision: 0,
             put_back: None,
+            added: None,
             removal: None,
         };
         let probe = crate::adapters::FsSpaceProbe::new(ctx.setup.root_dirs.clone());

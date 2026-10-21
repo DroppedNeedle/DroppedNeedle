@@ -101,6 +101,12 @@ droppedneedle_kernel::sql! {
     /// Whether a restored action carries the marker `?1`.
     pub(super) RESTORED_MARKER_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_catalog_actions \
              WHERE action_kind = 'edition_extras_restored' AND before_json = ?1)";
+    /// Whether an undo of an added file, recorded with the text `?1`, landed
+    /// or is still settling.
+    pub(super) TAKE_BACK_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_publish_operations o \
+             JOIN library_publish_journal j ON j.bundle_id = o.bundle_id \
+             WHERE instr(o.bundle_json, ?1) > 0 AND j.kind = 'delete' \
+             AND j.state <> 'compensated')";
     /// A track's (`?1`) root, relative path and availability.
     pub(super) TRACK_PLACE = "SELECT root_id, relative_path, availability FROM local_tracks \
              WHERE id = ?1";

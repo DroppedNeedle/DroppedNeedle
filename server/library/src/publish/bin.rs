@@ -511,6 +511,7 @@ pub(super) fn recycle_replaced(
         | JournalKind::Sidecar
         | JournalKind::Artwork
         | JournalKind::Output
+        | JournalKind::Add
         | JournalKind::Delete => sandbox.ensure_under_roots(backup)?,
     }
     let mut recycle_to = PathBuf::from(&replaced.recycle_to);

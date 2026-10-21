@@ -19,9 +19,13 @@ use axum::http::{Request, StatusCode};
 use droppedneedle_auth::Principal;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
+use droppedneedle_kernel::clock::SystemClock;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::plugin_ticks::{
     MemoryTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
 };
+use droppedneedle_kernel::jobs::queue::JobQueue;
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::fakes::{
@@ -52,20 +56,28 @@ struct Rig {
     launcher: Arc<FakeLauncher>,
     /// The host's plugin state store.
     ticks: TickStoreKind,
+    /// The platform the library's write side is built over: its settings
+    /// hold the library folders plugin files go to.
+    platform: Platform,
 }
 
-fn rig(tag: &str) -> Rig {
+async fn rig(tag: &str) -> Rig {
     let dir = ScratchDir::new(&format!("plugins-{tag}"));
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).unwrap();
     let config = Arc::new(ConfigStore::scratch(&dir, crypto).unwrap());
     let launcher = Arc::new(FakeLauncher::new());
     let ticks = TickStoreKind::Memory(MemoryTickStore::new());
+    crate::common::migrated_db(&dir.join("app.db"));
+    let db = Db::open_for_tests(&dir.join("app.db")).unwrap();
+    let platform = crate::common::TestPlatform::on(&db, &dir).build().await;
+    let library =
+        crate::common::library::library_core(&platform, JobQueue::new(db, Arc::new(SystemClock)));
     let host = PluginHost::new(
         dir.join("plugins"),
         Arc::clone(&config),
         launcher.clone(),
         Arc::new(ticks.clone()),
-        droppedneedle_library::scan::fs::FsCoordinator::new(),
+        library,
     );
     Rig {
         dir,
@@ -73,6 +85,7 @@ fn rig(tag: &str) -> Rig {
         config,
         launcher,
         ticks,
+        platform,
     }
 }
 
@@ -187,7 +200,7 @@ fn enable_toy(rig: &Rig, manifest: &str) -> Arc<FakeConnection> {
 
 #[tokio::test]
 async fn dropped_folder_runs_no_code_until_enabled() {
-    let rig = rig("no-code");
+    let rig = rig("no-code").await;
     write_plugin(&rig.dir, "toy", TOY_MANIFEST);
     rig.host.load_all();
     let plugin = rig.host.get("toy").unwrap();
@@ -205,7 +218,7 @@ async fn dropped_folder_runs_no_code_until_enabled() {
 
 #[tokio::test]
 async fn secrets_seal_at_rest_and_saves_reach_the_running_plugin() {
-    let rig = rig("secrets");
+    let rig = rig("secrets").await;
     let manifest = "[plugin]\n\
          name = \"toy\"\n\
          api_version = 1\n\
@@ -254,7 +267,7 @@ async fn secrets_seal_at_rest_and_saves_reach_the_running_plugin() {
 
 #[tokio::test]
 async fn uninstall_stops_the_plugin_and_keeps_settings() {
-    let rig = rig("uninstall");
+    let rig = rig("uninstall").await;
     let runtime = enable_toy(&rig, TOY_MANIFEST);
     rig.host
         .update_settings(
@@ -293,7 +306,7 @@ fn github(fetcher: &FakeFetcher) {
 
 #[tokio::test]
 async fn install_previews_permissions_then_pins_the_previewed_commit() {
-    let rig = rig("install");
+    let rig = rig("install").await;
     let fetcher = Arc::new(FakeFetcher::new());
     github(&fetcher);
     let unpacker = Arc::new(FakeUnpacker::new(vec![
@@ -488,7 +501,7 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
     ];
     let scope = TestApp::start("plugins-refused").await;
     for (index, (answer, kind, expected)) in cases.into_iter().enumerate() {
-        let rig = rig(&format!("refused-{index}"));
+        let rig = rig(&format!("refused-{index}")).await;
         let fetcher = Arc::new(FakeFetcher::new());
         github(&fetcher);
         default_branch(&fetcher);
@@ -532,7 +545,7 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
 
 #[tokio::test]
 async fn a_repository_without_releases_installs_its_default_branch() {
-    let rig = rig("no-releases");
+    let rig = rig("no-releases").await;
     let fetcher = Arc::new(FakeFetcher::new());
     fetcher.answer(LATEST_RELEASE, Fetched::NotFound);
     default_branch(&fetcher);
@@ -553,7 +566,7 @@ async fn a_repository_without_releases_installs_its_default_branch() {
 
 #[tokio::test]
 async fn a_ref_github_does_not_know_is_the_admins_mistake_not_an_outage() {
-    let rig = rig("unknown-ref");
+    let rig = rig("unknown-ref").await;
     let fetcher = Arc::new(FakeFetcher::new());
     fetcher.answer(
         "https://api.github.com/repos/acme/toy/commits/mian",
@@ -578,7 +591,7 @@ async fn a_ref_github_does_not_know_is_the_admins_mistake_not_an_outage() {
 
 #[tokio::test]
 async fn unsafe_archives_never_reach_the_plugins_folder() {
-    let rig = rig("unsafe");
+    let rig = rig("unsafe").await;
     let fetcher = Arc::new(FakeFetcher::new());
     github(&fetcher);
     let mut link = FakeUnpacker::file("toy-0123456/plugin.py", b"x");
@@ -607,7 +620,7 @@ async fn unsafe_archives_never_reach_the_plugins_folder() {
 
 #[tokio::test]
 async fn plugin_routes_need_sessions_and_admins() {
-    let rig = rig("auth");
+    let rig = rig("auth").await;
     let bare = plugin_routes()
         .with_state(deps_for(
             &rig,
@@ -652,7 +665,7 @@ async fn the_panel_page_is_sealed_on_every_answer() {
              sandbox allow-scripts"
         )
     };
-    let rig = rig("panel");
+    let rig = rig("panel").await;
     let manifest = format!("{TOY_MANIFEST}[plugin_ui]\nentry = \"ui/panel.js\"\n");
     write_plugin(&rig.dir, "toy", &manifest);
     let ui = rig.dir.join("plugins").join("toy").join("ui");
@@ -744,7 +757,7 @@ async fn the_panel_page_is_sealed_on_every_answer() {
 
 #[tokio::test]
 async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
-    let rig = rig("ext");
+    let rig = rig("ext").await;
     let runtime = enable_toy(&rig, TOY_MANIFEST);
     runtime.answer(
         methods::ROUTE,
@@ -828,7 +841,7 @@ async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
 
 #[tokio::test]
 async fn publish_is_stamped_validated_paced_and_loop_guarded() {
-    let rig = rig("publish");
+    let rig = rig("publish").await;
     let runtime = enable_toy(&rig, TOY_MANIFEST);
 
     // Through the plugin's own host request: the host stamps the source.
@@ -877,7 +890,7 @@ async fn publish_is_stamped_validated_paced_and_loop_guarded() {
 
 #[tokio::test]
 async fn a_plugin_handling_a_notice_cannot_publish_again() {
-    let rig = rig("depth");
+    let rig = rig("depth").await;
     let runtime = enable_toy(&rig, TOY_MANIFEST);
     // The plugin takes a while with every event, so it is still handling
     // the notice when it tries to publish.
@@ -899,7 +912,7 @@ async fn a_plugin_handling_a_notice_cannot_publish_again() {
 
 #[tokio::test]
 async fn fanout_reaches_subscribers_once_per_causation() {
-    let rig = rig("fanout");
+    let rig = rig("fanout").await;
     let manifest = "[plugin]\n\
          name = \"toy\"\n\
          api_version = 1\n\
@@ -935,7 +948,7 @@ async fn fanout_reaches_subscribers_once_per_causation() {
 
 #[tokio::test]
 async fn ticks_run_through_the_jobs_loop_and_state_persists() {
-    let rig = rig("ticks");
+    let rig = rig("ticks").await;
     let store = rig.ticks.clone();
     let runtime = enable_toy(&rig, TOY_MANIFEST);
 
@@ -973,4 +986,81 @@ async fn ticks_run_through_the_jobs_loop_and_state_persists() {
     assert!(supervisor.is_running("plugin-tick:toy"));
     supervisor.shutdown(Duration::from_secs(5)).await;
     db.shutdown().await;
+}
+
+const WRITER_MANIFEST: &str = "[plugin]\n\
+     name = \"toy\"\n\
+     version = \"1.0.0\"\n\
+     api_version = 1\n\
+     entrypoint = \"plugin:Toy\"\n\
+     capabilities = [\"library_writer\"]\n";
+
+/// A plugin's library write goes through the publisher: the file lands
+/// under the first library folder as a change recorded under the plugin's
+/// name, the answer names that change, a taken name is refused with the
+/// file left as it was, and no ledger folder is made.
+#[tokio::test]
+async fn a_plugin_write_is_journaled_and_keeps_no_ledger() {
+    use base64::Engine as _;
+    use droppedneedle_kernel::runtime_config::secret_sections::{LibraryRoot, TypedLibrary};
+
+    let rig = rig("library-write").await;
+    let music = rig.dir.join("music");
+    std::fs::create_dir_all(&music).unwrap();
+    let settings = Arc::clone(&rig.platform.settings);
+    let path = music.to_string_lossy().into_owned();
+    let saved = tokio::task::spawn_blocking(move || {
+        settings.update_secret_blocking::<TypedLibrary, String, _>(move |stored| {
+            let mut library = stored.into_inner();
+            library.library_roots = vec![LibraryRoot {
+                id: "music".to_owned(),
+                path,
+                ..LibraryRoot::default()
+            }];
+            Ok(library)
+        })
+    })
+    .await
+    .unwrap();
+    assert!(saved.is_ok());
+    let runtime = enable_toy(&rig, WRITER_MANIFEST);
+    let write = |data: &[u8]| {
+        runtime.host_request(
+            methods::HOST_LIBRARY_WRITE,
+            json!({
+                "rel_path": "notes/one.txt",
+                "data_base64": base64::engine::general_purpose::STANDARD.encode(data),
+            }),
+        )
+    };
+
+    let answer = write(b"first").await.unwrap();
+    let placed = music.join("notes/one.txt");
+    assert_eq!(answer["path"], placed.to_string_lossy().as_ref());
+    assert_eq!(std::fs::read(&placed).unwrap(), b"first");
+    let bundle_id = answer["bundle_id"].as_str().unwrap().to_owned();
+    let conn = droppedneedle_kernel::db::open_connection(&rig.dir.join("app.db")).unwrap();
+    let (recorded, state): (String, String) = conn
+        .query_row(
+            "SELECT o.bundle_json, j.state FROM library_publish_operations o \
+             JOIN library_publish_journal j ON j.bundle_id = o.bundle_id \
+             WHERE o.bundle_id = ?1",
+            [&bundle_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert!(
+        recorded.contains(r#""origin":{"plugin":"toy"}"#),
+        "{recorded}"
+    );
+    assert_eq!(state, "cleaned");
+
+    let refused = write(b"second").await.unwrap_err();
+    assert_eq!(refused.code, -32001);
+    assert!(refused.message.contains("already exists"), "{refused:?}");
+    assert_eq!(std::fs::read(&placed).unwrap(), b"first");
+    assert!(
+        !rig.dir.join("plugins/.data/.library-writes").exists(),
+        "no ledger folder"
+    );
 }

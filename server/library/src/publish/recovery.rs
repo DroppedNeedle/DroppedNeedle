@@ -121,8 +121,8 @@ pub const LEFTOVER_LIST_MAX: usize = 100;
 /// Find hidden files under `roots` that no journal row names, as of
 /// `now`. Reads folder listings and the metadata of hidden names only:
 /// it opens no file, follows no symlink, and changes nothing. The import
-/// folder, the placement probe folder and plugin temps belong to their
-/// own cleanups and are skipped. `None` when `cancelled` turned true.
+/// folder and the placement probe folder belong to their own cleanups and
+/// are skipped. `None` when `cancelled` turned true.
 /// Blocking.
 pub fn find_leftovers(
     db: &Db,
@@ -135,7 +135,6 @@ pub fn find_leftovers(
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs() as i64);
     let import_dir = format!("{}import", super::HIDDEN_PREFIX);
-    let plugin_temp = format!("{}{}", super::HIDDEN_PREFIX, super::plugin_files::TEMP_TAG);
     // Keyed by the absolute path as the journal writes it.
     let mut found: BTreeMap<String, Leftover> = BTreeMap::new();
     'roots: for root in roots {
@@ -175,11 +174,7 @@ pub fn find_leftovers(
                     }
                     continue;
                 }
-                if kind.is_symlink()
-                    || name == import_dir
-                    || name == super::place::PROBE_DIR
-                    || name.starts_with(&plugin_temp)
-                {
+                if kind.is_symlink() || name == import_dir || name == super::place::PROBE_DIR {
                     continue;
                 }
                 let meta = match entry.metadata() {
@@ -370,6 +365,7 @@ fn unusable_root(sandbox: &Sandbox, journals: &[FileJournal]) -> Option<String> 
                 | JournalKind::Sidecar
                 | JournalKind::Artwork
                 | JournalKind::Output
+                | JournalKind::Add
                 | JournalKind::Delete => sandbox.root_dir(root),
             };
             dir.and_then(paths::ensure_library_dir).is_err()
@@ -527,6 +523,7 @@ fn put_back_refused(sandbox: &Sandbox, journals: &[FileJournal]) -> bool {
                 | JournalKind::Sidecar
                 | JournalKind::Artwork
                 | JournalKind::Output
+                | JournalKind::Add
                 | JournalKind::PutBack => (
                     journal.backup.as_deref(),
                     journal.backup_sha256(),
@@ -621,6 +618,16 @@ fn inspect_bundle(
                 }
                 continue;
             }
+            JournalKind::Add => {
+                match super::add::evidence(sandbox, journal) {
+                    super::add::Evidence::Resume => {}
+                    super::add::Evidence::Unwind => resumeable = false,
+                    super::add::Evidence::Ambiguous(reason) => {
+                        return Ok(BundleEvidence::Ambiguous(reason));
+                    }
+                }
+                continue;
+            }
             JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
@@ -653,7 +660,8 @@ fn inspect_bundle(
             | JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
-            | JournalKind::Output => false,
+            | JournalKind::Output
+            | JournalKind::Add => false,
         };
         if generated {
             // A generated file being taken away: it is either still in
@@ -945,7 +953,11 @@ fn resume_precommit<C: Catalog>(
             });
         }
     }
-    if tracks.is_empty() && recorded.removal.is_none() && recorded.put_back.is_none() {
+    if tracks.is_empty()
+        && recorded.removal.is_none()
+        && recorded.put_back.is_none()
+        && recorded.added.is_none()
+    {
         return Err(PublishError::Journal(
             "bundle has no committable track".into(),
         ));
@@ -1090,9 +1102,11 @@ fn resume_rename(
             record_published(db, &journal.id, journal.state)?;
             return Ok(None);
         }
-        JournalKind::Audio | JournalKind::Sidecar | JournalKind::Artwork | JournalKind::Output => {
-            sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?
-        }
+        JournalKind::Audio
+        | JournalKind::Sidecar
+        | JournalKind::Artwork
+        | JournalKind::Output
+        | JournalKind::Add => sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?,
     };
     if let Ok(bytes) = paths::read_regular_file(&dest) {
         if sha256_hex(&bytes) == journal.staged_sha256 {
@@ -1182,7 +1196,7 @@ fn resume_rename(
             }
         }
     }
-    let mode = sandbox.placement_mode(&journal.dest_root);
+    let mode = super::add::mode_for(sandbox, journal);
     match place_with(mode, staged, &dest, seams) {
         Ok(_) => {}
         Err(PlaceError::Collision) => return occupied(),
@@ -1271,7 +1285,8 @@ fn reconcile_committed<C: Catalog>(
             JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
-            | JournalKind::Output => {}
+            | JournalKind::Output
+            | JournalKind::Add => {}
         }
         let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
         let staged = Path::new(&journal.staged);
@@ -1280,7 +1295,7 @@ fn reconcile_committed<C: Catalog>(
                 .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256)
         };
         let staged_holds = sandbox.ensure_under_roots(staged).is_ok() && holds(staged);
-        let mode = sandbox.placement_mode(&journal.dest_root);
+        let mode = super::add::mode_for(sandbox, journal);
         let dest_free = matches!(
             std::fs::symlink_metadata(&dest),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound
@@ -1411,7 +1426,8 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
             JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
-            | JournalKind::Output => journal.replaces.as_ref().zip(journal.backup.as_deref()),
+            | JournalKind::Output
+            | JournalKind::Add => journal.replaces.as_ref().zip(journal.backup.as_deref()),
         };
         if let Some((replaced, hidden)) = hop {
             let known = removal
@@ -1616,6 +1632,7 @@ fn unwind_row(
         | JournalKind::Sidecar
         | JournalKind::Artwork
         | JournalKind::Output
+        | JournalKind::Add
         | JournalKind::PutBack => false,
     };
     let dest = match journal.kind {
@@ -1626,6 +1643,20 @@ fn unwind_row(
             sandbox.ensure_under_removal_roots(staged)?;
             // Its temp is new under the row's own name: one still being
             // written is a part copy, and goes.
+            if journal.state == JournalState::Prepared
+                && std::fs::symlink_metadata(staged).is_ok()
+                && !paths::same_file(staged, &dest)
+            {
+                std::fs::remove_file(staged).map_err(PublishError::from)?;
+            }
+            dest
+        }
+        // Its temp is new under the row's own name, so one still being
+        // written is a part copy, and goes.
+        JournalKind::Add => {
+            let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
+            let staged = Path::new(&journal.staged);
+            sandbox.ensure_under_roots(staged)?;
             if journal.state == JournalState::Prepared
                 && std::fs::symlink_metadata(staged).is_ok()
                 && !paths::same_file(staged, &dest)

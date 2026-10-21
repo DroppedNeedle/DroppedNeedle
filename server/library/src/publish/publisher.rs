@@ -200,6 +200,10 @@ impl Catalog for SqliteCatalog {
 
     fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError> {
         let conn: &Connection = tx;
+        // A file added with no track, or its undo: no catalog row moves.
+        if commit.tracks.is_empty() && commit.removal.is_none() && commit.put_back.is_none() {
+            return Ok(());
+        }
         if let Some(removal) = &commit.removal {
             super::remove::commit(conn, &commit.bundle_id, removal, now_secs())?;
         }
@@ -742,6 +746,8 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     /// Each put-back temp's identity as this publish wrote it, by journal
     /// id: publish and cleanup check it instead of reading the file again.
     temps: BTreeMap<String, paths::FileStat>,
+    /// The bytes of the file the bundle being published adds.
+    added_bytes: Option<Vec<u8>>,
     /// Unix milliseconds, read at the start of each publish: a publisher
     /// stays open for as long as the root set does.
     clock: Box<dyn Fn() -> i64 + Send>,
@@ -829,6 +835,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             before_place: None,
             before_set_aside: None,
             temps: BTreeMap::new(),
+            added_bytes: None,
             now_ms,
             today_day: day_of(now_ms),
             clock: Box::new(clock),
@@ -890,6 +897,20 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         docs: &BTreeMap<String, TagDocument>,
     ) -> Result<PublishOutcome, PublishError> {
         self.publish_as(sealed, live, docs, None)
+    }
+
+    /// Publish a bundle that adds one file (see [`super::add`]), with the
+    /// file's bytes. The bundle runs the same steps as every other.
+    pub fn publish_add(
+        &mut self,
+        sealed: &SealedPreview,
+        live: &SealRecheck,
+        bytes: Vec<u8>,
+    ) -> Result<PublishOutcome, PublishError> {
+        self.added_bytes = Some(bytes);
+        let outcome = self.publish_as(sealed, live, &BTreeMap::new(), None);
+        self.added_bytes = None;
+        outcome
     }
 
     /// [`Self::publish`], recording the account that applied the bundle
@@ -960,6 +981,13 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         if put_back.is_some() && (removal.is_some() || !sealed.bundle.items.is_empty()) {
             return Err(PublishError::Journal(
                 "a put-back bundle carries nothing else".into(),
+            ));
+        }
+        if sealed.bundle.added.is_some()
+            && (removal.is_some() || put_back.is_some() || !sealed.bundle.items.is_empty())
+        {
+            return Err(PublishError::Journal(
+                "a bundle that adds a file carries nothing else".into(),
             ));
         }
         sealed.recheck(live).map_err(|err| match err {
@@ -1166,6 +1194,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     self.maybe_crash(CrashPoint::AfterFirstFileStaged)?;
                 }
             }
+        }
+        if let Some(added) = &bundle.added {
+            self.prepare_added(bundle, added)?;
         }
         let mut staged_files = Vec::new();
         for (ordinal, item) in bundle.items.iter().enumerate() {
@@ -1577,6 +1608,70 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         })
     }
 
+    /// Journal the file a bundle adds and write its bytes to the row's
+    /// hidden temp, or, for the undo of an add, journal taking that file
+    /// away (inserted and staged in one durable write; nothing moves until
+    /// publish).
+    fn prepare_added(
+        &mut self,
+        bundle: &PlanBundle,
+        added: &super::add::Added,
+    ) -> Result<(), PublishError> {
+        let journal_id = super::add::journal_id(&bundle.id, added);
+        let file = &added.file;
+        let dest = self
+            .sandbox
+            .resolve_no_symlink(&file.root_id, &file.relative_path)?;
+        self.sandbox.ensure_under_roots(&dest)?;
+        let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
+        self.sandbox.ensure_under_roots(&temp)?;
+        let mut journal = FileJournal {
+            id: journal_id.clone(),
+            bundle_id: bundle.id.clone(),
+            kind: JournalKind::Add,
+            source: None,
+            dest_root: file.root_id.clone(),
+            dest_rel: file.relative_path.clone(),
+            staged: temp.to_string_lossy().to_string(),
+            backup: None,
+            source_sha256: None,
+            staged_sha256: file.sha256.clone(),
+            track_id: None,
+            mgmt_state: None,
+            state: JournalState::Prepared,
+            seq: 0,
+            replaces: None,
+        };
+        if added.undoes.is_some() {
+            super::generated::check(&dest, &file.sha256)?;
+            journal.kind = JournalKind::Delete;
+            journal.source_sha256 = Some(file.sha256.clone());
+            return durable(&self.db, "publish.journal_take_back", |tx| {
+                let writer = JournalWriter::new(tx);
+                writer.insert(&journal)?;
+                writer.advance(&journal_id, JournalState::Prepared, JournalState::Staged)
+            });
+        }
+        let bytes = self
+            .added_bytes
+            .take()
+            .ok_or_else(|| PublishError::Journal("an added file came with no bytes".into()))?;
+        if bytes.len() as u64 != file.size || sha256_hex(&bytes) != file.sha256 {
+            return Err(PublishError::Validation(
+                "the bytes to add are not the planned file".into(),
+            ));
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+            // A folder swapped for a link while it was being made.
+            paths::ensure_no_symlink_below(self.sandbox.root_dir(&file.root_id)?, parent)?;
+        }
+        self.journal_insert(&journal)?;
+        write_staged_temp(&temp, &bytes, None)?;
+        self.maybe_crash(CrashPoint::AfterTempWritten)?;
+        self.journal_staged(&journal_id)
+    }
+
     /// Journal one file a put-back brings home, then copy its recycled
     /// copy into the row's hidden temp beside home with the copy's
     /// permission bits: read once, hashed once, read back once.
@@ -1748,7 +1843,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
-            | JournalKind::Output => {}
+            | JournalKind::Output
+            | JournalKind::Add => {}
         }
         let staged_path = Path::new(&journal.staged);
         self.sandbox.ensure_under_roots(staged_path)?;
@@ -1834,7 +1930,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         }
         // The checks above can go stale before the file lands, so the
         // placement itself refuses a name that is taken by then.
-        let mode = self.sandbox.placement_mode(&journal.dest_root);
+        let mode = super::add::mode_for(&self.sandbox, &current);
         super::place::place_with(mode, staged_path, &dest, self.place_seams)
             .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
         self.journal_published(&journal.id)
@@ -2074,7 +2170,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             JournalKind::Audio
             | JournalKind::Sidecar
             | JournalKind::Artwork
-            | JournalKind::Output => {}
+            | JournalKind::Output
+            | JournalKind::Add => {}
         }
         if let (Some(replaced), Some(backup_text)) =
             (journal.replaces.as_ref(), journal.backup.as_deref())
@@ -2224,6 +2321,7 @@ pub(super) fn probe_root(sandbox: &Sandbox, journal: &FileJournal) -> Result<(),
         | JournalKind::Sidecar
         | JournalKind::Artwork
         | JournalKind::Output
+        | JournalKind::Add
         | JournalKind::Delete => sandbox.probe_placement(&journal.dest_root)?,
     };
     Ok(())
@@ -2239,6 +2337,7 @@ pub(super) fn journal_ids(bundle: &PlanBundle) -> Vec<String> {
     if let Some(put_back) = &bundle.put_back {
         ids.extend(super::put_back::journal_ids(&bundle.id, put_back));
     }
+    ids.extend(super::add::journal_ids(bundle));
     for (ordinal, item) in bundle.items.iter().enumerate() {
         let audio = audio_journal_id(&bundle.id, ordinal);
         ids.extend((0..item.sidecars.len()).map(|index| sidecar_journal_id(&audio, index)));

@@ -65,13 +65,13 @@ pub fn tick_store(platform: &Platform) -> TickStoreKind {
 
 /// The production host: subprocess plugins over the deployment's plugins
 /// directory, each process supervised on the platform's supervisor, with
-/// plugin state in `ticks` and library writes holding the roots through
-/// `library_fs`, the publisher's lease table. Nothing starts until
+/// plugin state in `ticks` and library writes going through `library`,
+/// the library's own publisher. Nothing starts until
 /// [`PluginsSetup::build`] loads it.
 pub fn new_host(
     platform: &Platform,
     ticks: &TickStoreKind,
-    library_fs: droppedneedle_library::scan::fs::FsCoordinator,
+    library: droppedneedle_library::wiring::LibraryCore,
 ) -> Arc<PluginHost> {
     let plugins_dir = platform.config.plugins_dir();
     // Best-effort: the host reads a missing directory as empty and the
@@ -89,7 +89,7 @@ pub fn new_host(
         platform.settings.clone(),
         launcher,
         Arc::new(ticks.clone()),
-        library_fs,
+        library,
     )
 }
 
@@ -138,9 +138,13 @@ impl PluginsSetup {
 
     /// Test bundle: scratch config store and plugins directory, fake
     /// plugin runtimes (no subprocesses), a memory tick store, and tick
-    /// loops on the caller's supervisor.
+    /// loops on the caller's supervisor. Library writes go through the
+    /// test library's `library`.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(supervisor: Supervisor) -> Result<Self, String> {
+    pub fn for_tests(
+        supervisor: Supervisor,
+        library: droppedneedle_library::wiring::LibraryCore,
+    ) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         use super::fakes::FakeLauncher;
@@ -168,7 +172,7 @@ impl PluginsSetup {
             config,
             Arc::new(FakeLauncher::new()),
             Arc::new(ticks.clone()),
-            droppedneedle_library::scan::fs::FsCoordinator::new(),
+            library,
         );
         let mut setup = Self::assemble(
             host,

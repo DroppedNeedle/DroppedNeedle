@@ -85,7 +85,11 @@
 //! - Remove extras' undo (`put_back` rows, see [`put_back`]) copies each
 //!   recycled file home under its row and re-indexes its track in the
 //!   commit; the recycled copy goes only after that.
+//! - A file a plugin adds (`add` rows, see [`add`]) is placed only onto a
+//!   free name, never by check-then-rename, and its undo takes it away
+//!   only while it holds the bytes written.
 
+pub mod add;
 pub mod archive;
 pub mod bin;
 pub mod expiry;
@@ -95,7 +99,6 @@ pub mod operations;
 pub mod paths;
 pub mod place;
 pub mod planner;
-pub mod plugin_files;
 pub mod publisher;
 pub mod put_back;
 pub mod record;

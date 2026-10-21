@@ -210,7 +210,7 @@ impl E2e {
                     reads.collections.clone(),
                 ),
             ),
-            crate::common::bundles::idle_host(p, library.fs.clone()),
+            crate::common::bundles::idle_host(p, library.core.clone()),
             droppedneedle::bootstrap::Outbound::live().plex_tv,
             &providers,
             Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
@@ -252,9 +252,11 @@ impl E2e {
         ))
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());
-        let plugins =
-            droppedneedle_plugins::wiring::PluginsSetup::for_tests(jobs.supervisor().clone())
-                .expect("test plugins bundle builds");
+        let plugins = droppedneedle_plugins::wiring::PluginsSetup::for_tests(
+            jobs.supervisor().clone(),
+            library.core.clone(),
+        )
+        .expect("test plugins bundle builds");
         let settings =
             droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(&p.ids))
                 .expect("test settings bundle builds")

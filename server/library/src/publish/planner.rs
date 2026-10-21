@@ -307,6 +307,10 @@ pub struct PlanBundle {
     /// carries nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub put_back: Option<PutBack>,
+    /// One file added with no track behind it, with who added it, or its
+    /// undo. A bundle that carries one carries nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<super::add::Added>,
 }
 
 /// Remove extras' undo: files one removal took to the recycle bin, going
@@ -822,6 +826,18 @@ impl CollisionGate {
                 )?;
             }
         }
+        if let Some(added) = bundle.added.as_ref().filter(|added| added.undoes.is_none()) {
+            Self::check_output(
+                sandbox,
+                &freed,
+                &mut seen,
+                &mut blockers,
+                "added",
+                &added.file.root_id,
+                &added.file.relative_path,
+                SamePathSelf::absent(),
+            )?;
+        }
         if blockers.is_empty() {
             return Ok(());
         }
@@ -1060,6 +1076,9 @@ impl DiskPreflight {
         let put_backs = bundle.put_back.iter().flat_map(|put_back| &put_back.items);
         for item in put_backs.filter(|item| !item.home_already) {
             *per_root.entry(item.root_id.as_str()).or_insert(0) += item.fingerprint.size;
+        }
+        if let Some(added) = bundle.added.as_ref().filter(|added| added.undoes.is_none()) {
+            *per_root.entry(added.file.root_id.as_str()).or_insert(0) += added.file.size;
         }
         for (root, needed) in per_root {
             let free = probe.free_bytes(root)?;
