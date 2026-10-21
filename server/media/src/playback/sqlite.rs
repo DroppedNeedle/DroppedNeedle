@@ -177,7 +177,7 @@ impl PlaybackStore {
                         album_title: row.get("album_title")?,
                         duration_ms,
                         recording_mbid: row
-                            .get::<_, Option<String>>("embedded_recording_mbid")?
+                            .get::<_, Option<String>>("recording_mbid")?
                             .filter(|mbid| !mbid.is_empty()),
                         // The release group the album was matched to,
                         // never an id from the file's tags: an unmatched
@@ -195,7 +195,9 @@ impl PlaybackStore {
     /// Insert one play as a background write. A play the lane refuses is
     /// logged with what it was, never dropped silently.
     ///
-    /// A play of a library track is filed under the track, its album and
+    /// A play of a library track is filed under the track its id names when
+    /// the play is written (a session keeps the track it resolved at start,
+    /// which may since have continued or merged into another), its album and
     /// its first credited artist (the album artist when the track credits
     /// none), all read from the catalog in the insert itself. A track that
     /// is gone leaves the three ids empty and the play is kept by name.
@@ -208,7 +210,13 @@ impl PlaybackStore {
         let outcome = self
             .db
             .write_blocking(Lane::Background, "playback-play", |tx| {
-                let track_id = record.track_id.clone().or_else(|| remote_match(tx, record));
+                let named = record.track_id.clone().or_else(|| remote_match(tx, record));
+                let track_id = match named {
+                    Some(id) => Some(tx.query_row(sql::CURRENT_TRACK_ID.text(), [id], |row| {
+                        row.get::<_, String>(0)
+                    })?),
+                    None => None,
+                };
                 tx.execute(
                     sql::RECORD_PLAY.text(),
                     rusqlite::params![

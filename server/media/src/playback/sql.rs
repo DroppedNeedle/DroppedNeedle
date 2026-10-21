@@ -3,13 +3,20 @@
 use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 
 droppedneedle_kernel::sql! {
-    /// The track a local id names now, with the release group its album
-    /// was matched to.
+    /// The track a local id names now, with its recording and the release
+    /// group its album was matched to. The recording is the accepted
+    /// identity's, else the file's own: the rule catalog's `recording_mbid!`
+    /// states, written out here because media sits below catalog.
     pub(super) TRACK = "SELECT id, title, artist_name, album_title, duration_seconds, \
-         embedded_recording_mbid, \
+         COALESCE((SELECT i.recording_mbid FROM local_track_external_identities i \
+                   WHERE i.local_track_id = local_tracks.id AND i.provider = 'musicbrainz'), \
+                  embedded_recording_mbid) AS recording_mbid, \
          (SELECT e.release_group_mbid FROM local_album_external_identities e \
           WHERE e.local_album_id = local_tracks.local_album_id) AS rg_mbid \
          FROM local_tracks WHERE id = (" + CURRENT_TRACK + ")";
+    /// The track a local id names now, so a play is filed under the track
+    /// an id continued or merged into by the time it is written.
+    pub(super) CURRENT_TRACK_ID = "SELECT (" + CURRENT_TRACK + ")";
     /// Record one play, filed under the track, its album and its first
     /// credited artist when the track is known.
     pub(super) RECORD_PLAY = "INSERT INTO library_play_history \

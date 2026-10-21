@@ -171,6 +171,7 @@ struct Rig {
     remotes: Arc<FakeRemotes>,
     store: Arc<PlaybackStore>,
     crypto: Arc<droppedneedle_kernel::runtime_config::Crypto>,
+    db: droppedneedle_kernel::db::Db,
     scratch: ScratchDir,
 }
 
@@ -186,8 +187,9 @@ fn rig() -> Rig {
     let crypto = Arc::new(
         droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
     );
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens");
     let store = Arc::new(PlaybackStore::new(
-        droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens"),
+        db.clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
         crypto.clone(),
         Arc::new(clock.clone()),
@@ -212,6 +214,7 @@ fn rig() -> Rig {
         remotes,
         store,
         crypto,
+        db,
         scratch,
     }
 }
@@ -447,6 +450,40 @@ async fn lifecycle_start_progress_stop_counts_the_play() {
     assert_eq!(rig.deps.sessions.len(NOW), 1);
     rig.clock.advance((SESSION_TTL_SECS + 1) * 1000);
     assert_eq!(rig.deps.sessions.len(rig.clock.now_unix()), 0);
+}
+
+/// A session that stops while another write holds the lane for two
+/// seconds still records its play, once: the play waits its turn and a
+/// repeated stop does not count it again.
+#[tokio::test]
+async fn a_play_waits_out_a_held_lane_and_lands_once() {
+    let rig = rig();
+    let (status, _) = start(&rig, "user-1", "track-1", "local").await;
+    assert_eq!(status, StatusCode::OK);
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let holder_db = rig.db.clone();
+    let holder = std::thread::spawn(move || {
+        holder_db.write_blocking(
+            droppedneedle_kernel::db::Lane::Background,
+            "brief-hold",
+            |_tx| {
+                held_tx.send(()).expect("the test waits");
+                std::thread::sleep(Duration::from_secs(2));
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            },
+        )
+    });
+    held_rx.recv().expect("the lane is held");
+    for _ in 0..2 {
+        let (status, body) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    holder
+        .join()
+        .expect("the holder ends")
+        .expect("the hold commits");
+    assert_eq!(rig.plays(), 1);
+    assert_eq!(rig.sinks.scrobble_calls(), 1);
 }
 
 #[tokio::test]
@@ -1253,6 +1290,95 @@ async fn plays_from_every_player_are_filed_under_the_track() {
     let song = &song["subsonic-response"]["song"];
     assert_eq!(song["title"], "One", "{song}");
     assert!(song.get("playCount").is_none(), "{song}");
+
+    rig.stop().await;
+}
+
+/// A web player session on a library track (start, progress, stop) is
+/// counted once and player apps see it by the track's library ids: the
+/// track's play count and the recently played albums.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_web_session_counts_in_player_apps() {
+    let rig = CompatApp::start("playback-session").await;
+    let app = &rig.app;
+    let subsonic = rig.subsonic_auth("symfonium");
+    let (status, signed_in) = app
+        .call(
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(json!({
+                "username": PLAYER,
+                "password": format!("{PLAYER}-password-1234"),
+                "transport": "bearer",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{signed_in}");
+    let web_value = format!("Bearer {}", signed_in["token"].as_str().expect("token"));
+    let web = [("authorization", web_value.as_str())];
+    let alice: String = app
+        .db()
+        .query_row(
+            "SELECT id FROM auth_users WHERE username = ?1",
+            [PLAYER],
+            |row| row.get(0),
+        )
+        .expect("the player's id");
+    let one = catalog_ids(app, "One");
+
+    for (uri, body) in [
+        (
+            "/api/v3/playback/start",
+            json!({"track_id": one.0, "source": "local", "device": "web"}),
+        ),
+        (
+            "/api/v3/playback/progress",
+            json!({"track_id": one.0, "source": "local", "device": "web",
+                   "position_ms": 1_000, "is_paused": false}),
+        ),
+        (
+            "/api/v3/playback/stop",
+            json!({"track_id": one.0, "source": "local", "device": "web",
+                   "position_ms": 3_600_000}),
+        ),
+    ] {
+        let (status, answer) = app.call("POST", uri, &web, Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {answer}");
+    }
+    let plays = app
+        .until("the session's play is in history", || async {
+            Some(filed_under(app, &alice, "One")).filter(|plays| !plays.is_empty())
+        })
+        .await;
+    assert_eq!(plays, vec![one.clone()]);
+
+    let (status, song) = app
+        .call(
+            "GET",
+            &rest(&format!("getSong?id=tr-{}", one.0), &subsonic),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{song}");
+    assert_eq!(song["subsonic-response"]["song"]["playCount"], 1, "{song}");
+    let (status, recent) = app
+        .call(
+            "GET",
+            &rest("getAlbumList2?type=recent", &subsonic),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{recent}");
+    let albums: Vec<&str> = recent["subsonic-response"]["albumList2"]["album"]
+        .as_array()
+        .expect("albums")
+        .iter()
+        .map(|album| album["id"].as_str().expect("id"))
+        .collect();
+    assert_eq!(albums, [format!("al-{}", one.1)], "{recent}");
 
     rig.stop().await;
 }

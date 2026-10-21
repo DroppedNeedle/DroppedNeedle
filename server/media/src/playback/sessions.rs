@@ -1,5 +1,6 @@
-//! Bounded playback sessions and their lifecycle: session reports
-//! (`start`/`progress`/`stop`) resolve the track, keep the session, write
+//! Bounded playback sessions and their lifecycle: a start resolves the
+//! track and the listener's display name once and the session keeps them,
+//! so progress and stop read neither again. Session reports write
 //! presence, attribute the play to its remote server, and count a scrobble
 //! past threshold. Reporting never fails the player, so remote failures are
 //! logged and swallowed, and only unknown tracks and malformed input error.
@@ -37,10 +38,19 @@ pub struct SessionKey {
     pub track_id: String,
 }
 
+/// What a session resolves once and keeps: the track and the name its
+/// presence entry shows.
+#[derive(Debug, Clone)]
+struct Resolved {
+    track: TrackInfo,
+    user_name: String,
+}
+
 /// One bounded playback session (v2 `_PlaybackSession`, plus the start
 /// instant that becomes the scrobble timestamp on the Jellyfin path).
 #[derive(Debug, Clone)]
 struct Session {
+    resolved: Resolved,
     position_ms: Option<i64>,
     stopped: bool,
     submitted: bool,
@@ -80,14 +90,22 @@ impl SessionStore {
         }
     }
 
+    /// What the live session under `key` resolved at its start.
+    fn resolved(&self, key: &SessionKey, now: i64) -> Option<Resolved> {
+        let mut sessions = self.inner.lock().ok()?;
+        evict_stale_sessions(&mut sessions, now);
+        sessions.get(key).map(|session| session.resolved.clone())
+    }
+
     /// Open a session, discarding any previous one: a start always resets
     /// (v2 `state == "starting"` branch).
-    fn begin(&self, key: SessionKey, now: i64) {
+    fn begin(&self, key: SessionKey, resolved: Resolved, now: i64) {
         if let Ok(mut sessions) = self.inner.lock() {
             evict_stale_sessions(&mut sessions, now);
             sessions.insert(
                 key,
                 Session {
+                    resolved,
                     position_ms: None,
                     stopped: false,
                     submitted: false,
@@ -102,7 +120,7 @@ impl SessionStore {
     /// Record a heartbeat. A stopped session that rewinds restarts fresh
     /// (v2 `previous.stopped and position < previous.position` branch);
     /// otherwise the heartbeat joins the live session.
-    fn heartbeat(&self, key: SessionKey, position_ms: Option<i64>, now: i64) {
+    fn heartbeat(&self, key: SessionKey, resolved: Resolved, position_ms: Option<i64>, now: i64) {
         if let Ok(mut sessions) = self.inner.lock() {
             evict_stale_sessions(&mut sessions, now);
             let previous = sessions.remove(&key);
@@ -110,6 +128,7 @@ impl SessionStore {
                 session.stopped && position_ms.unwrap_or(0) < session.position_ms.unwrap_or(0)
             });
             let mut session = if restart { None } else { previous }.unwrap_or(Session {
+                resolved,
                 position_ms: None,
                 stopped: false,
                 submitted: false,
@@ -125,11 +144,18 @@ impl SessionStore {
 
     /// Mark a session stopped, creating it when the player never said
     /// hello (v2 `previous or fresh` branch on the stop path).
-    fn finish(&self, key: SessionKey, position_ms: Option<i64>, now: i64) -> FinishView {
+    fn finish(
+        &self,
+        key: SessionKey,
+        resolved: Resolved,
+        position_ms: Option<i64>,
+        now: i64,
+    ) -> FinishView {
         if let Ok(mut sessions) = self.inner.lock() {
             evict_stale_sessions(&mut sessions, now);
             let previous = sessions.remove(&key);
             let mut session = previous.unwrap_or(Session {
+                resolved,
                 position_ms: None,
                 stopped: false,
                 submitted: false,
@@ -202,7 +228,7 @@ pub fn start_playback(
     user_id: &str,
     request: &PlaybackStartRequest,
 ) -> Result<PlaybackStartResponse, ServiceError> {
-    let track = resolve_track(deps, &request.track_id)?;
+    let resolved = resolve(deps, user_id, &request.track_id)?;
     let now = deps.clock.now_unix();
     let client = normalize_client(Some(&request.device)).unwrap_or_else(|| "app".to_owned());
     let key = SessionKey {
@@ -210,14 +236,16 @@ pub fn start_playback(
         client,
         track_id: request.track_id.clone(),
     };
-    deps.sessions.begin(key.clone(), now);
+    deps.sessions.begin(key.clone(), resolved.clone(), now);
     deps.mixed.clear(&key);
+    let Resolved { track, user_name } = resolved;
 
     let source = normalize_client(Some(&request.source));
     forward_now_playing(deps, user_id, &track, source.as_deref());
     write_session_presence(
         deps,
         user_id,
+        &user_name,
         &request.device,
         &track,
         source.as_deref(),
@@ -241,30 +269,30 @@ pub fn start_playback(
     })
 }
 
-/// Record a heartbeat: resolve the track, join the session, refresh
-/// presence, and attribute progress to the remote server. Heartbeats never
-/// forward a scrobble (v2 `progress` quirk: counting happens on stop).
+/// Record a heartbeat: join the session, refresh presence, and attribute
+/// progress to the remote server. Heartbeats never forward a scrobble (v2
+/// `progress` quirk: counting happens on stop).
 pub fn report_progress(
     deps: &PlaybackDeps,
     user_id: &str,
     request: &PlaybackProgressRequest,
 ) -> Result<PlaybackProgressResponse, ServiceError> {
-    let track = resolve_track(deps, &request.track_id)?;
     let now = deps.clock.now_unix();
     let client = normalize_client(Some(&request.device)).unwrap_or_else(|| "app".to_owned());
-    deps.sessions.heartbeat(
-        SessionKey {
-            user_id: user_id.to_owned(),
-            client,
-            track_id: request.track_id.clone(),
-        },
-        request.position_ms,
-        now,
-    );
+    let key = SessionKey {
+        user_id: user_id.to_owned(),
+        client,
+        track_id: request.track_id.clone(),
+    };
+    let resolved = session_resolved(deps, &key, now)?;
+    deps.sessions
+        .heartbeat(key, resolved.clone(), request.position_ms, now);
+    let Resolved { track, user_name } = resolved;
     let source = normalize_client(Some(&request.source));
     write_session_presence(
         deps,
         user_id,
+        &user_name,
         &request.device,
         &track,
         source.as_deref(),
@@ -285,17 +313,15 @@ pub fn report_progress(
     Ok(PlaybackProgressResponse { accepted: true })
 }
 
-/// Close a session: resolve the track, mark it stopped, always clear
-/// presence (even below threshold, so nothing lingers to the TTL: v2
-/// `_playing_stopped` rule), attribute the stop, and count the play past
-/// the native threshold unless told to skip or already counted (v2
-/// once-only `submitted` flag).
+/// Close a session: mark it stopped, always clear presence (even below
+/// threshold, so nothing lingers to the TTL: v2 `_playing_stopped` rule),
+/// attribute the stop, and count the play past the native threshold unless
+/// told to skip or already counted (v2 once-only `submitted` flag).
 pub fn stop_playback(
     deps: &PlaybackDeps,
     user_id: &str,
     request: &PlaybackStopRequest,
 ) -> Result<PlaybackStopResponse, ServiceError> {
-    let track = resolve_track(deps, &request.track_id)?;
     let now = deps.clock.now_unix();
     let client = normalize_client(Some(&request.device)).unwrap_or_else(|| "app".to_owned());
     let key = SessionKey {
@@ -303,7 +329,11 @@ pub fn stop_playback(
         client,
         track_id: request.track_id.clone(),
     };
-    let finish = deps.sessions.finish(key.clone(), request.position_ms, now);
+    let resolved = session_resolved(deps, &key, now)?;
+    let track = resolved.track.clone();
+    let finish = deps
+        .sessions
+        .finish(key.clone(), resolved, request.position_ms, now);
     deps.presence
         .remove(&presence_key(user_id, &request.device));
 
@@ -346,11 +376,30 @@ pub fn stop_playback(
     })
 }
 
-/// Resolve the track or 404 (v2 `LibraryViewService.get_track` miss).
-fn resolve_track(deps: &PlaybackDeps, track_id: &str) -> Result<TrackInfo, ServiceError> {
-    deps.store
+/// What the live session under `key` resolved at its start, else a fresh
+/// resolution (a player that never said hello, or a session past its TTL).
+fn session_resolved(
+    deps: &PlaybackDeps,
+    key: &SessionKey,
+    now: i64,
+) -> Result<Resolved, ServiceError> {
+    match deps.sessions.resolved(key, now) {
+        Some(resolved) => Ok(resolved),
+        None => resolve(deps, &key.user_id, &key.track_id),
+    }
+}
+
+/// Resolve the track or 404 (v2 `LibraryViewService.get_track` miss), and
+/// the listener's display name.
+fn resolve(deps: &PlaybackDeps, user_id: &str, track_id: &str) -> Result<Resolved, ServiceError> {
+    let track = deps
+        .store
         .get_track(track_id)
-        .ok_or(ServiceError::TrackNotFound)
+        .ok_or(ServiceError::TrackNotFound)?;
+    Ok(Resolved {
+        track,
+        user_name: deps.store.display_name(user_id),
+    })
 }
 
 /// Run one attribution call for remote sources only. Failures are logged

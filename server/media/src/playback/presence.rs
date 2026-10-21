@@ -451,6 +451,7 @@ pub fn snapshot(deps: &PlaybackDeps) -> NowPlayingSnapshot {
 pub(super) fn write_session_presence(
     deps: &PlaybackDeps,
     user_id: &str,
+    user_name: &str,
     device: &str,
     track: &TrackInfo,
     source: Option<&str>,
@@ -458,12 +459,11 @@ pub(super) fn write_session_presence(
     progress_ms: Option<i64>,
     now: i64,
 ) {
-    let user_name = deps.store.display_name(user_id);
     deps.presence.update(
         PresenceUpdate {
             key: presence_key(user_id, device),
             user_id: Some(user_id.to_owned()),
-            user_name,
+            user_name: user_name.to_owned(),
             source: source.unwrap_or("local").to_owned(),
             device_name: device_label(device),
             track_name: track.title.clone(),
