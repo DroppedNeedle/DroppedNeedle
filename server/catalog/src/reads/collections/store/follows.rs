@@ -15,13 +15,13 @@ use rusqlite::params;
 use sqlx::Row as _;
 
 use super::super::db::{CollectionsDb, StoreError, epoch_from_real, now_real, placeholders};
+use crate::reads::library::definitions::owned_release_groups;
 
 /// Name used when a follow arrives without one (v2 placeholder).
 pub const UNKNOWN_ARTIST: &str = "Unknown Artist";
 
-/// Release groups the library already holds, lowercased.
-const OWNED_RELEASE_GROUPS: &str = "SELECT lower(release_group_mbid) \
-    FROM local_album_external_identities";
+/// Release groups the library owns, lowercased.
+const OWNED_RELEASE_GROUPS: &str = owned_release_groups!();
 
 /// One follow row with its approval verdict.
 #[derive(Debug, Clone, PartialEq)]

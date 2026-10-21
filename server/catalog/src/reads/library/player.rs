@@ -14,6 +14,7 @@ use sqlx::{Row as _, SqlitePool};
 
 use std::sync::{Arc, Mutex};
 
+use super::definitions::{live_album, musicbrainz, owned_album, recording_mbid};
 use super::sqlite::{
     ALBUM_COLUMNS, ALBUM_JOINS, LED_PREDICATE, LibraryDb, TRACK_MISS_ORACLE, TextSearch,
     hydrate_artists,
@@ -430,34 +431,43 @@ pub trait PlayerCatalog: Send + Sync {
     ) -> BoxFuture<'a, Result<ArtistTracks, StoreError>>;
 }
 
-const TRACK_SELECT: &str = "SELECT t.id AS id, t.title AS title, t.local_album_id AS album_id, \
-    t.album_title AS album_title, COALESCE(t.artist_name, '') AS artist_name, \
-    ta.local_artist_id AS artist_id, a.album_artist_id AS album_artist_id, \
-    COALESCE(an.display_name, t.album_artist_name, a.album_artist_name) AS album_artist_name, \
-    t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
-    (SELECT group_concat(name, char(31)) FROM (SELECT g.name AS name FROM local_track_genres g \
+const TRACK_SELECT: &str = concat!(
+    "SELECT t.id AS id, t.title AS title, t.local_album_id AS album_id, \
+     t.album_title AS album_title, COALESCE(t.artist_name, '') AS artist_name, \
+     ta.local_artist_id AS artist_id, a.album_artist_id AS album_artist_id, \
+     COALESCE(an.display_name, t.album_artist_name, a.album_artist_name) AS album_artist_name, \
+     t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
+     (SELECT group_concat(name, char(31)) FROM (SELECT g.name AS name FROM local_track_genres g \
      WHERE g.local_track_id = t.id ORDER BY g.position)) AS genres, \
-    t.genre AS tag_genre, t.duration_seconds AS duration_seconds, \
-    LOWER(t.file_format) AS format, t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
-    t.bit_depth AS bit_depth, t.channels AS channels, t.file_size_bytes AS file_size_bytes, \
-    t.relative_path AS relative_path, \
-    t.imported_at AS date_added, t.title_sort AS sort_name, t.disc_subtitle AS disc_subtitle, \
-    COALESCE(te.recording_mbid, t.embedded_recording_mbid) AS recording_mbid, \
-    tae.provider_artist_id AS artist_mbid, aae.provider_artist_id AS album_artist_mbid, \
-    ae.release_group_mbid AS release_group_mbid, t.release_type AS release_type, \
-    t.replaygain_track_gain AS rg_track_gain, t.replaygain_album_gain AS rg_album_gain, \
-    t.replaygain_track_peak AS rg_track_peak, t.replaygain_album_peak AS rg_album_peak, \
-    EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
-    AS cover_available, \
-    EXISTS (SELECT 1 FROM local_track_lyrics l WHERE l.local_track_id = t.id) AS has_lyrics \
-    FROM local_tracks t \
-    JOIN local_albums a ON a.id = t.local_album_id \
-    LEFT JOIN local_artists an ON an.id = a.album_artist_id \
-    LEFT JOIN local_track_artists ta ON ta.local_track_id = t.id AND ta.position = 0 \
-    LEFT JOIN local_track_external_identities te ON te.local_track_id = t.id \
-    LEFT JOIN local_artist_external_identities tae ON tae.local_artist_id = ta.local_artist_id \
-    LEFT JOIN local_artist_external_identities aae ON aae.local_artist_id = a.album_artist_id \
-    LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id";
+     t.genre AS tag_genre, t.duration_seconds AS duration_seconds, \
+     LOWER(t.file_format) AS format, t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
+     t.bit_depth AS bit_depth, t.channels AS channels, t.file_size_bytes AS file_size_bytes, \
+     t.relative_path AS relative_path, \
+     t.imported_at AS date_added, t.title_sort AS sort_name, t.disc_subtitle AS disc_subtitle, ",
+    recording_mbid!("te", "t"),
+    " AS recording_mbid, \
+     tae.provider_artist_id AS artist_mbid, aae.provider_artist_id AS album_artist_mbid, \
+     ae.release_group_mbid AS release_group_mbid, t.release_type AS release_type, \
+     t.replaygain_track_gain AS rg_track_gain, t.replaygain_album_gain AS rg_album_gain, \
+     t.replaygain_track_peak AS rg_track_peak, t.replaygain_album_peak AS rg_album_peak, \
+     EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
+     AS cover_available, \
+     EXISTS (SELECT 1 FROM local_track_lyrics l WHERE l.local_track_id = t.id) AS has_lyrics \
+     FROM local_tracks t \
+     JOIN local_albums a ON a.id = t.local_album_id \
+     LEFT JOIN local_artists an ON an.id = a.album_artist_id \
+     LEFT JOIN local_track_artists ta ON ta.local_track_id = t.id AND ta.position = 0 \
+     LEFT JOIN local_track_external_identities te ON te.local_track_id = t.id AND ",
+    musicbrainz!("te"),
+    " LEFT JOIN local_artist_external_identities tae \
+     ON tae.local_artist_id = ta.local_artist_id AND ",
+    musicbrainz!("tae"),
+    " LEFT JOIN local_artist_external_identities aae \
+     ON aae.local_artist_id = a.album_artist_id AND ",
+    musicbrainz!("aae"),
+    " LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND ",
+    musicbrainz!("ae")
+);
 
 /// Genre match for one track, folded.
 const TRACK_GENRE_MATCH: &str = "(EXISTS (SELECT 1 FROM local_track_genres g \
@@ -1142,7 +1152,8 @@ pub(super) fn history_albums_sql(frequent: bool) -> String {
     };
     format!(
         "SELECT a.id FROM ({ALBUM_PLAYS}) h CROSS JOIN local_albums a WHERE a.id = h.id \
-         AND a.has_indexed_track = 1 ORDER BY {order}, a.id LIMIT ? OFFSET ?"
+         AND {owned} ORDER BY {order}, a.id LIMIT ? OFFSET ?",
+        owned = owned_album!("a")
     )
 }
 
@@ -1423,15 +1434,13 @@ fn track_order_sql(order: TrackOrder) -> String {
 /// for the played filter.
 pub(super) fn album_clause(query: &AlbumQuery, played: Option<&str>) -> Clause {
     let mut clause = Clause::default();
-    // The unary plus keeps the planner off the retired index, so the
-    // ordered pages walk the title and created-at indexes and stop early.
-    // On `has_indexed_track` (kept by migration 0065's triggers) it keeps
-    // the planner from guessing the column leaves few albums, which with
-    // statistics turns the id walk of an unplayed page into a sort.
-    clause.push(
-        "+a.retired_into_album_id IS NULL AND +a.has_indexed_track = 1",
-        [],
-    );
+    // Player apps see owned albums only. The definition's unary plus keeps
+    // the planner off the retired index, so the ordered pages walk the
+    // title and created-at indexes and stop early; on `has_indexed_track`
+    // it keeps the planner from guessing the column leaves few albums,
+    // which with statistics turns the id walk of an unplayed page into a
+    // sort.
+    clause.push(owned_album!("a"), []);
     if let Some(q) = &query.q {
         let pattern = like_pattern(q);
         clause.push(
@@ -1834,10 +1843,13 @@ impl SqlitePlayerCatalog {
     ) -> Result<HashMap<String, PlayerAlbum>, StoreError> {
         let mut out = HashMap::with_capacity(ids.len());
         for chunk in ids.chunks(500) {
+            // An album that is merged away or has no files answers as an
+            // unknown id.
             let sql = format!(
                 "SELECT {ALBUM_COLUMNS}, {ALBUM_EXTRAS} {ALBUM_JOINS} {ALBUM_EXTRA_JOINS} \
-                 WHERE a.id IN ({}) GROUP BY a.id",
-                placeholders(chunk.len())
+                 WHERE a.id IN ({}) AND {owned} GROUP BY a.id",
+                placeholders(chunk.len()),
+                owned = owned_album!("a")
             );
             let mut query = sqlx::query(&sql);
             for id in chunk {
@@ -1992,7 +2004,7 @@ impl PlayerCatalog for SqlitePlayerCatalog {
             let pool = self.pool()?;
             let (table, extra) = match kind {
                 "artist" => ("local_artists", "retired_into_artist_id IS NULL"),
-                "album" => ("local_albums", "retired_into_album_id IS NULL"),
+                "album" => ("local_albums", owned_album!("local_albums")),
                 "track" => ("local_tracks", "availability = 'indexed'"),
                 _ => return Ok(HashSet::new()),
             };
@@ -2167,10 +2179,12 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                      t.embedded_release_mbid, t.embedded_release_group_mbid \
                      FROM local_albums a \
                      LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
+                     AND {provider} \
                      LEFT JOIN local_tracks t ON ae.local_album_id IS NULL \
                      AND t.local_album_id = a.id AND t.availability = 'indexed' \
                      WHERE a.id IN ({})",
-                    placeholders(chunk.len())
+                    placeholders(chunk.len()),
+                    provider = musicbrainz!("ae")
                 );
                 let mut query = sqlx::query_as::<
                     _,
@@ -2221,9 +2235,11 @@ impl PlayerCatalog for SqlitePlayerCatalog {
             }
             for chunk in artist_ids.chunks(500) {
                 let sql = format!(
-                    "SELECT local_artist_id, provider_artist_id \
-                     FROM local_artist_external_identities WHERE local_artist_id IN ({})",
-                    placeholders(chunk.len())
+                    "SELECT e.local_artist_id, e.provider_artist_id \
+                     FROM local_artist_external_identities e \
+                     WHERE e.local_artist_id IN ({}) AND {provider}",
+                    placeholders(chunk.len()),
+                    provider = musicbrainz!("e")
                 );
                 let mut query = sqlx::query_as::<_, (String, String)>(&sql);
                 for id in chunk {
@@ -2308,7 +2324,7 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                 ),
                 (
                     "album",
-                    "SELECT id FROM local_albums WHERE retired_into_album_id IS NULL",
+                    concat!("SELECT id FROM local_albums a WHERE ", owned_album!("a")),
                 ),
                 (
                     "track",
@@ -2366,13 +2382,11 @@ impl PlayerCatalog for SqlitePlayerCatalog {
 
     fn album_years<'a>(&'a self) -> BoxFuture<'a, Result<Vec<i64>, StoreError>> {
         Box::pin(async move {
-            sqlx::query_scalar(
-                "SELECT DISTINCT a.year FROM local_albums a \
-                 WHERE a.year IS NOT NULL AND a.retired_into_album_id IS NULL \
-                 AND EXISTS (SELECT 1 FROM local_tracks t \
-                 WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
-                 ORDER BY a.year",
-            )
+            sqlx::query_scalar(concat!(
+                "SELECT DISTINCT a.year FROM local_albums a WHERE a.year IS NOT NULL AND ",
+                owned_album!("a"),
+                " ORDER BY a.year"
+            ))
             .fetch_all(self.pool()?)
             .await
             .map_err(read_error("player.album_years"))
@@ -2399,9 +2413,9 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                      JOIN local_tracks lt ON lt.local_album_id = a.id \
                      WHERE a.album_artist_id IN ({marks})) c \
                      JOIN local_tracks t ON t.id = c.track_id AND t.availability = 'indexed' \
-                     JOIN local_albums a ON a.id = t.local_album_id \
-                     AND a.retired_into_album_id IS NULL \
-                     GROUP BY c.artist_id"
+                     JOIN local_albums a ON a.id = t.local_album_id AND {live} \
+                     GROUP BY c.artist_id",
+                    live = live_album!("a")
                 );
                 let mut query = sqlx::query_as::<_, (String, f64, i64)>(&sql);
                 for id in chunk.iter().chain(chunk) {

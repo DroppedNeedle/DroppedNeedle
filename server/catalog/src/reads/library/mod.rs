@@ -14,6 +14,7 @@
 //! Wiring: the app mounts [`routes`], which also registers the paths in
 //! the API document.
 
+pub(crate) mod definitions;
 pub mod error;
 pub mod file_lyrics;
 pub mod handlers;

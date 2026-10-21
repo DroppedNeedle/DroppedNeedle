@@ -12,6 +12,7 @@
 	import { Search, X, Disc3, Music2, Play, ListPlus, GripVertical, Loader } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 
@@ -87,6 +88,36 @@
 	}
 </script>
 
+{#snippet albumRowBody(a: LocalAlbumSummary, playable: boolean)}
+	{@const cover = albumCoverUrl(a)}
+	<div class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10">
+		{#if cover}
+			<AlbumImage
+				customUrl={cover}
+				alt={a.name}
+				size="full"
+				rounded="none"
+				className="h-full w-full"
+			/>
+		{:else}
+			<div class="relative h-full w-full overflow-hidden">
+				<CoverPlaceholder id={a.musicbrainz_id} name={a.name} />
+			</div>
+		{/if}
+	</div>
+	<div class="min-w-0 flex-1">
+		<p class="truncate text-sm font-semibold text-base-content">{a.name}</p>
+		<p class="truncate text-xs text-base-content/55">{a.artist_name}</p>
+		{#if playable}
+			<span class="badge badge-xs badge-primary mt-1 gap-1 border-none">
+				<Disc3 class="h-2.5 w-2.5" /> Album
+			</span>
+		{:else}
+			<NoFilesBadge size="xs" className="mt-1" />
+		{/if}
+	</div>
+{/snippet}
+
 <section class="flex h-full flex-col gap-3">
 	<header class="flex items-center gap-2 px-1">
 		<Search class="h-4 w-4 text-accent" />
@@ -141,63 +172,55 @@
 			{#each rows as row (row.key)}
 				{#if row.kind === 'album'}
 					{@const a = row.album}
-					{@const cover = albumCoverUrl(a)}
-					<div
-						class="search-row group flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2 backdrop-blur-sm"
-						class:is-dragging={draggingId === row.key}
-						draggable="true"
-						role="button"
-						tabindex="0"
-						ondragstart={(e) => onAlbumDragStart(e, a)}
-						ondragend={() => (draggingId = null)}
-						ondblclick={() => onPlayAlbum(a)}
-						onkeydown={(e) => {
-							if (e.key === 'Enter' || e.key === ' ') {
-								e.preventDefault();
-								onPlayAlbum(a);
-							}
-						}}
-						in:fly={{ y: 10, duration: reducedMotion ? 0 : 200 }}
-					>
-						<GripVertical
-							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-base-content/50"
-						/>
+					{#if a.track_count === 0}
+						<!-- No files in the library: nothing to play, drag or queue. -->
 						<div
-							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
+							class="search-row flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2 backdrop-blur-sm"
+							in:fly={{ y: 10, duration: reducedMotion ? 0 : 200 }}
 						>
-							{#if cover}
-								<AlbumImage
-									customUrl={cover}
-									alt={a.name}
-									size="full"
-									rounded="none"
-									className="h-full w-full"
-								/>
-							{:else}
-								<div class="relative h-full w-full overflow-hidden">
-									<CoverPlaceholder id={a.musicbrainz_id} name={a.name} />
-								</div>
-							{/if}
+							<span class="h-4 w-4 shrink-0" aria-hidden="true"></span>
+							{@render albumRowBody(a, false)}
 						</div>
-						<div class="min-w-0 flex-1">
-							<p class="truncate text-sm font-semibold text-base-content">{a.name}</p>
-							<p class="truncate text-xs text-base-content/55">{a.artist_name}</p>
-							<span class="badge badge-xs badge-primary mt-1 gap-1 border-none">
-								<Disc3 class="h-2.5 w-2.5" /> Album
-							</span>
-						</div>
+					{:else}
 						<div
-							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+							class="search-row group flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2 backdrop-blur-sm"
+							class:is-dragging={draggingId === row.key}
+							draggable="true"
+							role="button"
+							tabindex="0"
+							ondragstart={(e) => onAlbumDragStart(e, a)}
+							ondragend={() => (draggingId = null)}
+							ondblclick={() => onPlayAlbum(a)}
+							onkeydown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									onPlayAlbum(a);
+								}
+							}}
+							in:fly={{ y: 10, duration: reducedMotion ? 0 : 200 }}
 						>
-							<IconButton size="xs" icon={Play} label="Play album" onclick={() => onPlayAlbum(a)} />
-							<IconButton
-								size="xs"
-								icon={ListPlus}
-								label="Queue album"
-								onclick={() => onQueueAlbum(a)}
+							<GripVertical
+								class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-base-content/50"
 							/>
+							{@render albumRowBody(a, true)}
+							<div
+								class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+							>
+								<IconButton
+									size="xs"
+									icon={Play}
+									label="Play album"
+									onclick={() => onPlayAlbum(a)}
+								/>
+								<IconButton
+									size="xs"
+									icon={ListPlus}
+									label="Queue album"
+									onclick={() => onQueueAlbum(a)}
+								/>
+							</div>
 						</div>
-					</div>
+					{/if}
 				{:else}
 					{@const t = row.track}
 					{@const trackCover = crateCoverUrl(t)}

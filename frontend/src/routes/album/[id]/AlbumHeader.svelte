@@ -28,6 +28,7 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
+	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
 	import { editionSheet } from '$lib/components/library/edition/editionSheetState.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -266,6 +267,10 @@
 					label={album.title}
 					onchange={onrate}
 				/>
+			{/if}
+
+			{#if localCopies.length > 0 && localCopies.every((copy) => copy.track_count === 0)}
+				<NoFilesBadge className="self-start" />
 			{/if}
 
 			{#if showPlate}

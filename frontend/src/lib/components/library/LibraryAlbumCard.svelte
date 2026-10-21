@@ -4,6 +4,7 @@
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from './LocalIdentityBadge.svelte';
+	import NoFilesBadge from './NoFilesBadge.svelte';
 	import type { LibraryAlbumSummary } from '$lib/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
 
@@ -34,7 +35,11 @@
 			className="w-full h-full"
 		/>
 		<div class="absolute top-2 right-2 z-10">
-			<LibraryFormatBadge format={album.format} />
+			{#if album.track_count === 0}
+				<NoFilesBadge />
+			{:else}
+				<LibraryFormatBadge format={album.format} />
+			{/if}
 		</div>
 		{#if album.album_identity_state === 'local_only'}
 			<LocalIdentityBadge

@@ -20,6 +20,7 @@
 	import DeckVisualiser from '$lib/components/local/DeckVisualiser.svelte';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
 	import {
 		getLocalRecentV3Query,
 		getLocalAlbumsV3Query,
@@ -399,28 +400,44 @@
 
 		{#snippet albumTile(album: LocalAlbumSummary)}
 			<div class="group w-36 shrink-0 sm:w-40">
-				<button
-					class="relative block aspect-square w-full overflow-hidden rounded-xl ring-1 ring-base-content/10 transition-transform group-hover:scale-[1.03]"
-					onclick={() => playAlbum(album)}
-					title="Play {album.name}"
-				>
-					<AlbumImage
-						customUrl={albumCoverUrl(album)}
-						alt={album.name}
-						size="full"
-						requestSize={250}
-						rounded="none"
-						className="h-full w-full object-cover"
-					/>
+				{#if album.track_count === 0}
 					<div
-						class="absolute inset-0 flex items-center justify-center bg-base-100/40 opacity-0 backdrop-blur-[2px] transition-opacity group-hover:opacity-100"
+						class="relative block aspect-square w-full overflow-hidden rounded-xl ring-1 ring-base-content/10"
 					>
-						<span
-							class="grid size-8 place-items-center rounded-full bg-primary text-primary-content shadow-lg"
-							aria-hidden="true"><Play class="h-4 w-4" /></span
-						>
+						<AlbumImage
+							customUrl={albumCoverUrl(album)}
+							alt={album.name}
+							size="full"
+							requestSize={250}
+							rounded="none"
+							className="h-full w-full object-cover"
+						/>
+						<NoFilesBadge className="absolute right-2 top-2 z-10" />
 					</div>
-				</button>
+				{:else}
+					<button
+						class="relative block aspect-square w-full overflow-hidden rounded-xl ring-1 ring-base-content/10 transition-transform group-hover:scale-[1.03]"
+						onclick={() => playAlbum(album)}
+						title="Play {album.name}"
+					>
+						<AlbumImage
+							customUrl={albumCoverUrl(album)}
+							alt={album.name}
+							size="full"
+							requestSize={250}
+							rounded="none"
+							className="h-full w-full object-cover"
+						/>
+						<div
+							class="absolute inset-0 flex items-center justify-center bg-base-100/40 opacity-0 backdrop-blur-[2px] transition-opacity group-hover:opacity-100"
+						>
+							<span
+								class="grid size-8 place-items-center rounded-full bg-primary text-primary-content shadow-lg"
+								aria-hidden="true"><Play class="h-4 w-4" /></span
+							>
+						</div>
+					</button>
+				{/if}
 				{#if isMbid(album.musicbrainz_id)}
 					<a
 						href={withBasePath(`/album/${album.musicbrainz_id}`)}

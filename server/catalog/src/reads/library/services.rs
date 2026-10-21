@@ -394,15 +394,17 @@ pub async fn album_tracks(
 
 /// One page of an album's streamable tracks by release-group mbid or
 /// local album id, for browse cards that only carry the mbid. Unknown
-/// mbids and ids are 404; sibling groups resolve to the oldest album.
+/// mbids and ids are 404. A local id or alias answers for the album it
+/// names now; a group answers with its oldest copy with files, else its
+/// oldest copy.
 pub async fn album_match(
     deps: &LibraryDeps,
     user_id: &str,
     mbid: &str,
     query: &PageQuery,
 ) -> Result<TrackPage, LibraryFailure> {
-    let id = if deps.catalog.get_album(mbid).await?.is_some() {
-        mbid.to_owned()
+    let id = if let Some(current) = deps.lookups.current_album(mbid).await? {
+        current
     } else {
         deps.catalog
             .get_album_by_release_group(mbid)

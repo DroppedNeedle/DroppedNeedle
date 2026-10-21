@@ -110,6 +110,15 @@ async fn seed_catalog(pool: &SqlitePool) {
         .execute(pool)
         .await
         .unwrap();
+        sqlx::query(
+            "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+             VALUES (?, 0, ?, 'main')",
+        )
+        .bind(id)
+        .bind(artist_id)
+        .execute(pool)
+        .await
+        .unwrap();
     }
     sqlx::query(
         "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \

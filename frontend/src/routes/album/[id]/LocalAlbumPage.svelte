@@ -3,6 +3,7 @@
 	import { ChevronLeft, Disc3, FileUp, ListMusic, Play, Shuffle } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import LibraryFormatBadge from '$lib/components/library/LibraryFormatBadge.svelte';
+	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
 	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
 	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
 	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
@@ -52,6 +53,8 @@
 	const tracksQuery = getLibraryAlbumTracksQuery(() => albumId);
 	const album = $derived(albumQuery.data);
 	const tracks = $derived(tracksQuery.data?.items ?? []);
+	// The track count is over files in the library: none means nothing to play.
+	const hasFiles = $derived((album?.track_count ?? 0) > 0);
 	// The download buttons follow the admin's "Library downloads" setting.
 	const downloadAccessQuery = getDownloadAccessQuery(() => authStore.user?.id);
 	const downloadAllowed = $derived(
@@ -202,7 +205,7 @@
 			/>
 			<div class="min-w-0">
 				<div class="flex flex-wrap items-center gap-2">
-					<LibraryFormatBadge format={album.format} />
+					{#if hasFiles}<LibraryFormatBadge format={album.format} />{:else}<NoFilesBadge />{/if}
 					{#if album.is_compilation}<span class="badge badge-ghost">Compilation</span>{/if}
 					{#if reviewLabel}<span class="badge badge-warning badge-outline">{reviewLabel}</span>{/if}
 				</div>
@@ -241,26 +244,28 @@
 					<EditionPlate copies={[album]} />
 				</div>
 				<div class="mt-5 flex flex-wrap items-center gap-2">
-					<Button
-						variant="primary"
-						icon={Play}
-						class="[&_svg]:fill-current"
-						disabled={!tracks.length}
-						onclick={() => play(false)}>Play</Button
-					>
-					<Button
-						variant="ghost"
-						icon={Shuffle}
-						disabled={!tracks.length}
-						onclick={() => play(true)}>Shuffle</Button
-					>
-					<AlbumDownloadButton
-						albumId={album.id}
-						mbid={null}
-						totalSizeBytes={album.total_size_bytes}
-						trackCount={tracks.length}
-						{downloadAllowed}
-					/>
+					{#if hasFiles}
+						<Button
+							variant="primary"
+							icon={Play}
+							class="[&_svg]:fill-current"
+							disabled={!tracks.length}
+							onclick={() => play(false)}>Play</Button
+						>
+						<Button
+							variant="ghost"
+							icon={Shuffle}
+							disabled={!tracks.length}
+							onclick={() => play(true)}>Shuffle</Button
+						>
+						<AlbumDownloadButton
+							albumId={album.id}
+							mbid={null}
+							totalSizeBytes={album.total_size_bytes}
+							trackCount={tracks.length}
+							{downloadAllowed}
+						/>
+					{/if}
 					{#if authStore.isTrusted && album.album_identity_state === 'local_only'}
 						<Button
 							variant="ghost"

@@ -99,17 +99,19 @@ pub async fn copy_is_held(pool: &SqlitePool, album_id: &str) -> Result<bool, sql
     .await
 }
 
-/// Whether the library holds a copy of one release group.
+/// Whether the library holds a copy of one release group with at least one
+/// indexed track: the check the landing and the wanted watcher share.
 pub async fn library_holds(
     pool: &SqlitePool,
     release_group_mbid: &str,
 ) -> Result<bool, sqlx::Error> {
-    Ok(
-        droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(pool.clone())
-            .album(release_group_mbid)
-            .await?
-            .is_some(),
-    )
+    sqlx::query_scalar(&format!(
+        "SELECT EXISTS (SELECT 1 {})",
+        crate::landing::library::OWNED_TRACKS_FROM
+    ))
+    .bind(release_group_mbid.to_ascii_lowercase())
+    .fetch_one(pool)
+    .await
 }
 
 /// Artist and title of the library's copy of one release group, for

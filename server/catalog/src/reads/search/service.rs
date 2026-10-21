@@ -21,6 +21,7 @@ use sqlx::{Row, SqlitePool};
 
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::search::{RemoteBucket, RemoteHit, RemoteKind, RemoteState};
+use crate::reads::library::definitions::{musicbrainz, owned_album, owned_artist, recording_mbid};
 
 use super::models::{
     Degradation, EnrichmentBatchRequest, EnrichmentResponse, EnrichmentSource,
@@ -425,17 +426,18 @@ impl SearchService {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT a.id, a.display_name, a.folded_name, e.provider_artist_id AS mbid \
-             FROM local_artists a \
-             LEFT JOIN local_artist_external_identities e \
-             ON e.local_artist_id = a.id AND e.provider = 'musicbrainz' \
-             WHERE a.retired_into_artist_id IS NULL \
+        let rows = sqlx::query(concat!(
+            "SELECT a.id, a.display_name, a.folded_name, e.provider_artist_id AS mbid, (",
+            owned_artist!("a"),
+            ") AS owned FROM local_artists a \
+             LEFT JOIN local_artist_external_identities e ON e.local_artist_id = a.id AND ",
+            musicbrainz!("e"),
+            " WHERE a.retired_into_artist_id IS NULL \
              AND a.folded_name LIKE ? ESCAPE '\\' \
              ORDER BY CASE WHEN a.folded_name = ? THEN 0 \
              WHEN a.folded_name LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
-             a.folded_name ASC LIMIT ? OFFSET ?",
-        )
+             a.folded_name ASC LIMIT ? OFFSET ?"
+        ))
         .bind(like_contains(folded))
         .bind(folded)
         .bind(like_prefix(folded))
@@ -454,7 +456,7 @@ impl SearchService {
                     artist: None,
                     year: None,
                     musicbrainz_id: row.get("mbid"),
-                    in_library: true,
+                    in_library: row.get("owned"),
                     requested: false,
                     score: match_score(&name_folded, folded),
                     disambiguation: None,
@@ -473,27 +475,29 @@ impl SearchService {
         self.search_albums_page(folded, limit, 0).await
     }
 
-    /// One page of album hits: live rows whose folded title or folded
-    /// album-artist name contains the query, exact title first.
+    /// One page of album hits: owned albums whose folded title or folded
+    /// album-artist name contains the query, exact title first. An album
+    /// without files is found in the MusicBrainz half, as not in library.
     async fn search_albums_page(
         &self,
         folded: &str,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
-        let rows = sqlx::query(
+        let rows = sqlx::query(concat!(
             "SELECT b.id, b.title, b.title_folded, b.album_artist_name, b.year, \
              e.release_group_mbid AS mbid \
              FROM local_albums b \
-             LEFT JOIN local_album_external_identities e \
-             ON e.local_album_id = b.id AND e.provider = 'musicbrainz' \
-             WHERE b.retired_into_album_id IS NULL \
-             AND (b.title_folded LIKE ? ESCAPE '\\' \
+             LEFT JOIN local_album_external_identities e ON e.local_album_id = b.id AND ",
+            musicbrainz!("e"),
+            " WHERE ",
+            owned_album!("b"),
+            " AND (b.title_folded LIKE ? ESCAPE '\\' \
              OR COALESCE(b.album_artist_name_folded, '') LIKE ? ESCAPE '\\') \
              ORDER BY CASE WHEN b.title_folded = ? THEN 0 \
              WHEN b.title_folded LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
-             b.title_folded ASC LIMIT ? OFFSET ?",
-        )
+             b.title_folded ASC LIMIT ? OFFSET ?"
+        ))
         .bind(like_contains(folded))
         .bind(like_contains(folded))
         .bind(folded)
@@ -543,14 +547,16 @@ impl SearchService {
         };
         let sql = format!(
             "SELECT t.id, t.title, t.title_folded, t.artist_name, t.year, \
-             e.recording_mbid AS mbid \
+             {recording} AS mbid \
              FROM local_tracks t \
              LEFT JOIN local_track_external_identities e \
-             ON e.local_track_id = t.id AND e.provider = 'musicbrainz' \
+             ON e.local_track_id = t.id AND {provider} \
              WHERE t.availability = 'indexed' AND {text} \
              ORDER BY CASE WHEN t.title_folded = ? THEN 0 \
              WHEN t.title_folded LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
-             t.title_folded ASC LIMIT ? OFFSET ?"
+             t.title_folded ASC LIMIT ? OFFSET ?",
+            recording = recording_mbid!("e", "t"),
+            provider = musicbrainz!("e")
         );
         let mut query = sqlx::query(&sql);
         match search {

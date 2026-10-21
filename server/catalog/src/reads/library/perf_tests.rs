@@ -167,7 +167,8 @@ const LEGACY_ALBUM_JOINS: &str = "FROM local_albums a \
     LEFT JOIN local_album_artwork w ON w.local_album_id = a.id \
     LEFT JOIN local_tracks t ON t.local_album_id = a.id AND t.availability = 'indexed'";
 
-const LEGACY_ALBUM_FILTER: &str = "(? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
+const LEGACY_ALBUM_FILTER: &str = "a.retired_into_album_id IS NULL \
+    AND (? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
     OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
     AND (? IS NULL OR a.album_artist_id = ?) \
     AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10)) \
@@ -181,7 +182,8 @@ const LEGACY_TRACK_COLUMNS: &str = "t.id AS id, t.title AS title, \
     ta.local_artist_id AS artist_id, \
     COALESCE(t.album_artist_name, '') AS album_artist_name, \
     tal.album_artist_id AS album_artist_id, \
-    tri.recording_mbid AS recording_mbid, tgi.release_group_mbid AS release_group_mbid, \
+    COALESCE(tri.recording_mbid, t.embedded_recording_mbid) AS recording_mbid, \
+    tgi.release_group_mbid AS release_group_mbid, \
     tai.provider_artist_id AS artist_mbid, tbi.provider_artist_id AS album_artist_mbid, \
     t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
     COALESCE((SELECT g.name FROM local_track_genres g \
@@ -220,31 +222,53 @@ const LEGACY_TRACK_FILTER: &str = "t.availability = 'indexed' \
 
 const LEGACY_ARTIST_COLUMNS: &str = "r.id AS id, r.display_name AS name, \
     e.provider_artist_id AS artist_mbid, (e.local_artist_id IS NOT NULL) AS linked, \
-    (SELECT COUNT(*) FROM local_albums la WHERE la.album_artist_id = r.id) AS album_count, \
+    (SELECT COUNT(*) FROM local_albums la WHERE la.album_artist_id = r.id \
+     AND la.retired_into_album_id IS NULL AND EXISTS (SELECT 1 FROM local_tracks lt \
+     WHERE lt.local_album_id = la.id AND lt.availability = 'indexed')) AS album_count, \
     (SELECT COUNT(DISTINCT ct.id) FROM local_tracks ct \
      JOIN local_track_artists cta ON cta.local_track_id = ct.id \
-     WHERE cta.local_artist_id = r.id AND ct.availability = 'indexed') AS track_count, \
+     JOIN local_albums ca ON ca.id = ct.local_album_id \
+     WHERE cta.local_artist_id = r.id AND ct.availability = 'indexed' \
+     AND ca.retired_into_album_id IS NULL) AS track_count, \
     (SELECT COUNT(DISTINCT at.local_album_id) FROM local_tracks at \
      JOIN local_track_artists ata ON ata.local_track_id = at.id \
      JOIN local_albums aa ON aa.id = at.local_album_id \
      WHERE ata.local_artist_id = r.id AND at.availability = 'indexed' \
+     AND aa.retired_into_album_id IS NULL \
      AND aa.album_artist_id != r.id) AS appearance_album_count, \
     (SELECT COUNT(DISTINCT at.id) FROM local_tracks at \
      JOIN local_track_artists ata ON ata.local_track_id = at.id \
      JOIN local_albums aa ON aa.id = at.local_album_id \
      WHERE ata.local_artist_id = r.id AND at.availability = 'indexed' \
+     AND aa.retired_into_album_id IS NULL \
      AND aa.album_artist_id != r.id) AS appearance_track_count, \
     r.created_at AS date_added";
 
 const LEGACY_ARTIST_JOINS: &str = "FROM local_artists r \
-    LEFT JOIN local_artist_external_identities e ON e.local_artist_id = r.id";
+    LEFT JOIN local_artist_external_identities e ON e.local_artist_id = r.id \
+    AND e.provider = 'musicbrainz'";
 
-const LEGACY_LED: &str = "EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id)";
+/// An owned album, over alias `la`: live with an indexed track.
+const LEGACY_OWNED_LA: &str = "la.retired_into_album_id IS NULL AND EXISTS (SELECT 1 \
+    FROM local_tracks lt WHERE lt.local_album_id = la.id AND lt.availability = 'indexed')";
+
+const LEGACY_LED: &str = "EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id \
+    AND la.retired_into_album_id IS NULL AND EXISTS (SELECT 1 FROM local_tracks lt \
+    WHERE lt.local_album_id = la.id AND lt.availability = 'indexed'))";
 
 const LEGACY_CREDITED: &str = "(EXISTS (SELECT 1 FROM local_album_artists laa \
-    WHERE laa.local_artist_id = r.id) \
-    OR EXISTS (SELECT 1 FROM local_track_artists lta WHERE lta.local_artist_id = r.id) \
-    OR EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id))";
+    JOIN local_albums la ON la.id = laa.local_album_id \
+    WHERE laa.local_artist_id = r.id AND la.retired_into_album_id IS NULL \
+    AND EXISTS (SELECT 1 FROM local_tracks lt WHERE lt.local_album_id = la.id \
+    AND lt.availability = 'indexed')) \
+    OR EXISTS (SELECT 1 FROM local_track_artists lta \
+    JOIN local_tracks lt ON lt.id = lta.local_track_id \
+    JOIN local_albums la ON la.id = lt.local_album_id \
+    WHERE lta.local_artist_id = r.id AND lt.availability = 'indexed' \
+    AND la.retired_into_album_id IS NULL) \
+    OR EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id \
+    AND la.retired_into_album_id IS NULL AND EXISTS (SELECT 1 FROM local_tracks lt \
+    WHERE lt.local_album_id = la.id AND lt.availability = 'indexed')))";
 
 fn legacy_like_pattern(raw: &str) -> String {
     let folded = fold_text(raw)
@@ -567,7 +591,7 @@ async fn legacy_tracks(
 /// totals must match after every mutation.
 async fn ground_stats(pool: &SqlitePool) -> StatsRecord {
     let row = sqlx::query(&format!(
-        "SELECT (SELECT COUNT(*) FROM local_albums) AS albums, \
+        "SELECT (SELECT COUNT(*) FROM local_albums la WHERE {LEGACY_OWNED_LA}) AS albums, \
          (SELECT COUNT(*) FROM local_artists r \
           WHERE r.retired_into_artist_id IS NULL AND {LEGACY_CREDITED}) AS artists, \
          (SELECT COUNT(*) FROM local_tracks \
@@ -844,8 +868,8 @@ async fn artists_batched_matches_legacy() {
         .collect();
     assert_eq!(
         (by_id["a1"].album_count, by_id["a1"].track_count),
-        (3, 4),
-        "double credit counts once"
+        (2, 4),
+        "double credit counts once; Empty Halls has no files and is not counted"
     );
     assert_eq!(by_id["a1"].appearance_album_count, 1);
     assert_eq!(
@@ -2812,7 +2836,8 @@ async fn perf_100k_endpoints_hold_p95() {
     }
     let stats = fixture.catalog.stats().await.expect("stats read");
     assert_eq!(stats.total_tracks, 100007);
-    assert_eq!(stats.total_albums, 10005);
+    // Owned albums only: the small fixture's Empty Halls has no files.
+    assert_eq!(stats.total_albums, 10004);
 
     let miss_albums = AlbumFilter {
         q: Some("zzz-no-such-thing-zzz".to_owned()),

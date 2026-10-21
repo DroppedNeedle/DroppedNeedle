@@ -580,7 +580,14 @@ async fn jellyfin_ids_unknown_to_a_caller_without_sign_in_read_the_catalog_once(
                  album_artist_name, album_artist_name_folded, album_artist_id, year, \
                  grouping_source, created_at, updated_at) VALUES ('alb-2', 'root', 'k2', \
                  'Portishead', 'portishead', 'Portishead', 'portishead', 'art-1', 1997, \
-                 'automatic', 1, 1)",
+                 'automatic', 1, 1); \
+                 INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                 relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                 title, title_folded, album_title, album_title_folded, file_format, \
+                 ingest_source, imported_at, membership_source) VALUES ('trk-2', 'alb-2', \
+                 'root', '/music/portishead/01.flac', 'portishead/01.flac', 'h2', 1000, 1, \
+                 'r2', 'Cowboys', 'cowboys', 'Portishead', 'portishead', 'flac', 'scan', 1, \
+                 'automatic')",
             )?;
             Ok::<_, droppedneedle_kernel::db::DbError>(())
         })

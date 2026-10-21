@@ -338,7 +338,10 @@ async fn seed_library(pool: &SqlitePool) {
          membership_source) VALUES ('track-airbag', 'album-okc', 'root-1', \
          '/music/airbag.flac', 'airbag.flac', 'hash-1', 1000, 0, 'stat-1', 'Airbag', 'airbag', \
          'Radiohead', 'radiohead', 'OK Computer', 'ok computer', 1, 1, 284.0, 'flac', 'scan', \
-         0, 'manual')"
+         0, 'manual'), ('track-bootleg', 'album-bootleg', 'root-1', '/music/bootleg.flac', \
+         'bootleg.flac', 'hash-2', 1000, 0, 'stat-2', 'Lucky', 'lucky', 'Radiohead', \
+         'radiohead', 'OK Computer Live Bootleg', 'ok computer live bootleg', 1, 1, 260.0, \
+         'flac', 'scan', 0, 'manual')"
             .to_owned(),
         format!(
             "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \

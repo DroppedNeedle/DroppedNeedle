@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use sqlx::SqlitePool;
 
+use super::definitions::{copy_order, live_album, musicbrainz, owned_album};
 use super::sqlite::{TRACK_COLUMNS, TRACK_JOINS, in_placeholders, internal, map_track};
 use super::stores::{AlbumMbids, StatsExtras, StoreError, TrackRecord};
 use crate::reads::catalog::library::LocalCatalog;
@@ -19,16 +20,19 @@ use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 const MAX_BINDS: usize = 500;
 
 /// Review, local-only and last-scan totals in one round trip. Local-only
-/// albums are live albums with a streamable track and no identity row
-/// (v2 `local_only_count`); the last scan is the newest completed run.
-const STATS_EXTRAS: &str = "SELECT \
-    (SELECT COUNT(*) FROM library_identify_reviews WHERE state = 'pending') AS reviews, \
-    (SELECT COUNT(*) FROM local_albums a WHERE a.retired_into_album_id IS NULL \
-     AND NOT EXISTS (SELECT 1 FROM local_album_external_identities i \
-      WHERE i.local_album_id = a.id) \
-     AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
-      AND t.availability = 'indexed')) AS local_only, \
-    (SELECT MAX(terminal_at) FROM library_scan_runs WHERE state = 'completed') AS last_scan";
+/// albums are owned albums with no identity row (v2 `local_only_count`);
+/// the last scan is the newest completed run.
+const STATS_EXTRAS: &str = concat!(
+    "SELECT \
+     (SELECT COUNT(*) FROM library_identify_reviews WHERE state = 'pending') AS reviews, \
+     (SELECT COUNT(*) FROM local_albums a WHERE ",
+    owned_album!("a"),
+    " AND NOT EXISTS (SELECT 1 FROM local_album_external_identities i \
+     WHERE i.local_album_id = a.id AND ",
+    musicbrainz!("i"),
+    ")) AS local_only, \
+     (SELECT MAX(terminal_at) FROM library_scan_runs WHERE state = 'completed') AS last_scan"
+);
 
 /// The live album a local id or alias names now: the album itself while it
 /// is live, else the album its alias points at (every merge points older
@@ -63,20 +67,40 @@ const ARTIST_FOR_MBID: &str = "SELECT r.id FROM local_artist_external_identities
     WHERE e.provider = 'musicbrainz' AND lower(e.provider_artist_id) = lower(?1) \
     AND r.retired_into_artist_id IS NULL ORDER BY r.id LIMIT 1";
 
-/// Live albums with a streamable track holding one of the release groups.
-const OWNERS_BY_GROUP: &str = "SELECT e.local_album_id, lower(e.release_group_mbid) \
-    FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
-    WHERE b.retired_into_album_id IS NULL AND lower(e.release_group_mbid) IN ({ids}) \
-    AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
-    AND t.availability = 'indexed')";
+/// Owned albums holding one of the release groups.
+const OWNERS_BY_GROUP: &str = concat!(
+    "SELECT e.local_album_id, lower(e.release_group_mbid) \
+     FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
+     WHERE lower(e.release_group_mbid) IN ({ids}) AND ",
+    musicbrainz!("e"),
+    " AND ",
+    owned_album!("b")
+);
 
-/// Live albums with a streamable track identified as one of the releases.
-const OWNERS_BY_RELEASE: &str = "SELECT e.local_album_id, lower(e.release_mbid) \
-    FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
-    WHERE b.retired_into_album_id IS NULL AND e.release_mbid IS NOT NULL \
-    AND lower(e.release_mbid) IN ({ids}) \
-    AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
-    AND t.availability = 'indexed')";
+/// The live copy of one release group (`?1`, lowercase) when no copy is
+/// owned: the oldest copy with files, else the oldest copy. Its album page
+/// stays reachable while its files are gone.
+const LIVE_COPY_BY_GROUP: &str = concat!(
+    "SELECT b.id FROM local_album_external_identities e \
+     JOIN local_albums b ON b.id = e.local_album_id \
+     WHERE lower(e.release_group_mbid) = ?1 AND ",
+    musicbrainz!("e"),
+    " AND ",
+    live_album!("b"),
+    " ORDER BY ",
+    copy_order!("b"),
+    " LIMIT 1"
+);
+
+/// Owned albums identified as one of the releases.
+const OWNERS_BY_RELEASE: &str = concat!(
+    "SELECT e.local_album_id, lower(e.release_mbid) \
+     FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
+     WHERE e.release_mbid IS NOT NULL AND lower(e.release_mbid) IN ({ids}) AND ",
+    musicbrainz!("e"),
+    " AND ",
+    owned_album!("b")
+);
 
 /// Identity lookups behind membership, album status, track resolution and
 /// the stats extras.
@@ -241,8 +265,9 @@ impl LibraryLookups {
     }
 
     /// Every live local album an identifier covers for the album status
-    /// view: the album a local id or alias names, else every album holding
-    /// the MusicBrainz release group (or release). Ordered by id.
+    /// view: the album a local id or alias names, else every owned album
+    /// holding the MusicBrainz release group (or release), ordered by id,
+    /// else the group's live copy without files.
     pub async fn status_albums(&self, identifier: &str) -> Result<Vec<String>, StoreError> {
         let pool = &self.pool;
         if let Some(album_id) = current_id(pool, "album", identifier).await? {
@@ -261,7 +286,15 @@ impl LibraryLookups {
                 return Ok(albums);
             }
         }
-        Ok(Vec::new())
+        let Some(group) = needle.first() else {
+            return Ok(Vec::new());
+        };
+        let copy: Option<String> = sqlx::query_scalar(LIVE_COPY_BY_GROUP)
+            .bind(group)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| internal("library.lookups.live_copy", error))?;
+        Ok(copy.into_iter().collect())
     }
 
     /// The live album a local id or alias names now: the album itself, the

@@ -16,7 +16,8 @@
 //! - Optional filters bind NULL-means-absent so every statement keeps a
 //!   static bind list; only id IN-lists build placeholders.
 //! - Retired artists (`retired_into_artist_id` set) are merged away and read
-//!   as absent everywhere.
+//!   as absent everywhere. Live, owned albums and a track's recording id
+//!   mean what [`super::definitions`] says.
 //! - List methods page ids first, then aggregate over the page only; the
 //!   0005 read models (trigram FTS index, maintained format totals) keep
 //!   text search and stats off full scans.
@@ -30,6 +31,7 @@ use std::collections::HashMap;
 
 use sqlx::{Row as _, SqlitePool};
 
+use super::definitions::{copy_order, live_album, musicbrainz, owned_album, recording_mbid};
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistListing, ArtistRecord, ArtistScope, ArtistSort,
     DecadeRecord, GenreRecord, ManagementHoldRecord, StatsRecord, StoreError, TrackFilter,
@@ -186,22 +188,31 @@ pub(crate) const ALBUM_COLUMNS: &str = "a.id AS id, a.title AS title, \
 
 /// Joins shared by every album SELECT. Track joins filter to streamable.
 /// Visible to the plan tests, which assemble the same statements.
-pub(crate) const ALBUM_JOINS: &str = "FROM local_albums a \
-    LEFT JOIN local_artists an ON an.id = a.album_artist_id \
-    LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
-    LEFT JOIN local_artist_external_identities rte ON rte.local_artist_id = a.album_artist_id \
-    LEFT JOIN local_album_artwork w ON w.local_album_id = a.id \
-    LEFT JOIN local_tracks t ON t.local_album_id = a.id AND t.availability = 'indexed'";
+pub(crate) const ALBUM_JOINS: &str = concat!(
+    "FROM local_albums a \
+     LEFT JOIN local_artists an ON an.id = a.album_artist_id \
+     LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND ",
+    musicbrainz!("ae"),
+    " LEFT JOIN local_artist_external_identities rte \
+     ON rte.local_artist_id = a.album_artist_id AND ",
+    musicbrainz!("rte"),
+    " LEFT JOIN local_album_artwork w ON w.local_album_id = a.id \
+     LEFT JOIN local_tracks t ON t.local_album_id = a.id AND t.availability = 'indexed'"
+);
 
-/// Filters shared by the album list and its count.
+/// Filters shared by the album list and its count: live albums, with or
+/// without files.
 /// Visible to the plan tests, which assemble the same statements.
-pub(crate) const ALBUM_FILTER: &str = "(? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
-    OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
-    AND (? IS NULL OR a.album_artist_id = ?) \
-    AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10)) \
-    AND (? IS NULL OR LOWER((SELECT t2.file_format FROM local_tracks t2 \
+pub(crate) const ALBUM_FILTER: &str = concat!(
+    live_album!("a"),
+    " AND (? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
+     OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
+     AND (? IS NULL OR a.album_artist_id = ?) \
+     AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10)) \
+     AND (? IS NULL OR LOWER((SELECT t2.file_format FROM local_tracks t2 \
      WHERE t2.local_album_id = a.id AND t2.availability = 'indexed' \
-     GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1)) = ?)";
+     GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1)) = ?)"
+);
 
 /// Visible to the plan tests, which assemble the same statements.
 pub(crate) fn album_order(sort: AlbumSort, descending: bool) -> &'static str {
@@ -250,22 +261,25 @@ fn map_album(row: &sqlx::sqlite::SqliteRow) -> AlbumRecord {
 }
 
 /// One track's columns, shared by every track SELECT.
-pub(crate) const TRACK_COLUMNS: &str = "t.id AS id, t.title AS title, \
-    t.local_album_id AS album_id, t.album_title AS album_title, \
-    COALESCE(t.artist_name, '') AS artist_name, \
-    ta.local_artist_id AS artist_id, \
-    COALESCE(t.album_artist_name, '') AS album_artist_name, \
-    tal.album_artist_id AS album_artist_id, \
-    tri.recording_mbid AS recording_mbid, tgi.release_group_mbid AS release_group_mbid, \
-    tai.provider_artist_id AS artist_mbid, tbi.provider_artist_id AS album_artist_mbid, \
-    t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
-    COALESCE((SELECT g.name FROM local_track_genres g \
+pub(crate) const TRACK_COLUMNS: &str = concat!(
+    "t.id AS id, t.title AS title, \
+     t.local_album_id AS album_id, t.album_title AS album_title, \
+     COALESCE(t.artist_name, '') AS artist_name, \
+     ta.local_artist_id AS artist_id, \
+     COALESCE(t.album_artist_name, '') AS album_artist_name, \
+     tal.album_artist_id AS album_artist_id, ",
+    recording_mbid!("tri", "t"),
+    " AS recording_mbid, tgi.release_group_mbid AS release_group_mbid, \
+     tai.provider_artist_id AS artist_mbid, tbi.provider_artist_id AS album_artist_mbid, \
+     t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
+     COALESCE((SELECT g.name FROM local_track_genres g \
      WHERE g.local_track_id = t.id ORDER BY g.position LIMIT 1), t.genre) AS genre, \
-    t.duration_seconds AS duration_seconds, t.file_format AS format, \
-    t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
-    t.bit_depth AS bit_depth, t.channels AS channels, \
-    t.file_size_bytes AS file_size_bytes, t.imported_at AS date_added, \
-    (w.local_album_id IS NOT NULL) AS cover_available";
+     t.duration_seconds AS duration_seconds, t.file_format AS format, \
+     t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
+     t.bit_depth AS bit_depth, t.channels AS channels, \
+     t.file_size_bytes AS file_size_bytes, t.imported_at AS date_added, \
+     (w.local_album_id IS NOT NULL) AS cover_available"
+);
 
 /// Joins shared by every track SELECT. Callers add the streamability filter.
 /// Every join after the first credit is a primary-key lookup per output
@@ -319,17 +333,18 @@ pub(crate) fn track_filter_fts(search: &TextSearch) -> String {
 pub(crate) const TRACK_MISS_ORACLE: &str =
     "SELECT EXISTS(SELECT 1 FROM local_tracks_fts WHERE local_tracks_fts MATCH ?)";
 
-/// Library totals: live albums, the artists the Artists page lists (every
+/// Library totals: owned albums, the artists the Artists page lists (every
 /// credited artist), and the maintained track totals.
 pub(crate) fn stats_main() -> String {
     format!(
-        "SELECT (SELECT COUNT(*) FROM local_albums) AS albums, \
+        "SELECT (SELECT COUNT(*) FROM local_albums a WHERE {owned}) AS albums, \
          (SELECT COUNT(*) FROM local_artists r \
           WHERE r.retired_into_artist_id IS NULL AND {CREDITED_PREDICATE}) AS artists, \
          (SELECT COALESCE(SUM(indexed_tracks), 0) \
           FROM library_track_format_stats) AS tracks, \
          (SELECT COALESCE(SUM(indexed_bytes), 0) \
-          FROM library_track_format_stats) AS size_bytes"
+          FROM library_track_format_stats) AS size_bytes",
+        owned = owned_album!("a")
     )
 }
 
@@ -383,53 +398,84 @@ const ARTIST_ROW_COLUMNS: &str = "r.id AS id, r.display_name AS name, \
     e.provider_artist_id AS artist_mbid, (e.local_artist_id IS NOT NULL) AS linked, \
     r.created_at AS date_added";
 
-const ARTIST_JOINS: &str = "FROM local_artists r \
-    LEFT JOIN local_artist_external_identities e ON e.local_artist_id = r.id";
+const ARTIST_JOINS: &str = concat!(
+    "FROM local_artists r \
+     LEFT JOIN local_artist_external_identities e ON e.local_artist_id = r.id AND ",
+    musicbrainz!("e")
+);
 
-/// Albums led per artist id, one grouped pass over the page's leaders.
-const ARTIST_ALBUM_COUNTS: &str = "SELECT la.album_artist_id AS id, COUNT(*) AS total \
-    FROM local_albums la WHERE la.album_artist_id IN ({placeholders}) GROUP BY 1";
+/// Owned albums led per artist id, one grouped pass over the page's
+/// leaders.
+const ARTIST_ALBUM_COUNTS: &str = concat!(
+    "SELECT la.album_artist_id AS id, COUNT(*) AS total \
+     FROM local_albums la WHERE la.album_artist_id IN ({placeholders}) AND ",
+    owned_album!("la"),
+    " GROUP BY 1"
+);
 
 /// Streamable credited tracks, appearance albums and appearance tracks per
 /// artist id, one grouped pass over the page's credits. The CASEs keep the
 /// legacy appearance definition: on an album whose leader is someone else.
 /// Visible to the plan tests, which assemble the same statements.
-pub(crate) const ARTIST_CREDIT_COUNTS: &str = "SELECT ata.local_artist_id AS id, \
-    COUNT(DISTINCT at.id) AS tracks, \
-    COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
+pub(crate) const ARTIST_CREDIT_COUNTS: &str = concat!(
+    "SELECT ata.local_artist_id AS id, \
+     COUNT(DISTINCT at.id) AS tracks, \
+     COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
      THEN at.local_album_id END) AS appearances, \
-    COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
+     COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
      THEN at.id END) AS appearance_tracks \
-    FROM local_track_artists ata \
-    JOIN local_tracks at ON at.id = ata.local_track_id \
-    JOIN local_albums aa ON aa.id = at.local_album_id \
-    WHERE ata.local_artist_id IN ({placeholders}) AND at.availability = 'indexed' \
-    GROUP BY 1";
+     FROM local_track_artists ata \
+     JOIN local_tracks at ON at.id = ata.local_track_id \
+     JOIN local_albums aa ON aa.id = at.local_album_id \
+     WHERE ata.local_artist_id IN ({placeholders}) AND at.availability = 'indexed' AND ",
+    live_album!("aa"),
+    " GROUP BY 1"
+);
 
-/// Albums led per artist, for the album-count sort.
-const ALBUM_COUNT_BY_ARTIST: &str =
-    "SELECT album_artist_id AS aid, COUNT(*) AS c FROM local_albums GROUP BY aid";
+/// Owned albums led per artist, for the album-count sort.
+const ALBUM_COUNT_BY_ARTIST: &str = concat!(
+    "SELECT la.album_artist_id AS aid, COUNT(*) AS c FROM local_albums la WHERE ",
+    owned_album!("la"),
+    " GROUP BY aid"
+);
 
 /// Appearance albums per artist, for the appearance-count sort: distinct
 /// albums led by someone else where the artist is credited on a streamable
 /// track, the same definition [`ARTIST_CREDIT_COUNTS`] reports.
-const APPEARANCE_COUNT_BY_ARTIST: &str = "SELECT ata.local_artist_id AS aid, \
-    COUNT(DISTINCT at.local_album_id) AS c \
-    FROM local_track_artists ata \
-    JOIN local_tracks at ON at.id = ata.local_track_id \
-    JOIN local_albums aa ON aa.id = at.local_album_id \
-    WHERE at.availability = 'indexed' AND aa.album_artist_id != ata.local_artist_id \
-    GROUP BY 1";
+const APPEARANCE_COUNT_BY_ARTIST: &str = concat!(
+    "SELECT ata.local_artist_id AS aid, \
+     COUNT(DISTINCT at.local_album_id) AS c \
+     FROM local_track_artists ata \
+     JOIN local_tracks at ON at.id = ata.local_track_id \
+     JOIN local_albums aa ON aa.id = at.local_album_id \
+     WHERE at.availability = 'indexed' AND aa.album_artist_id != ata.local_artist_id AND ",
+    live_album!("aa"),
+    " GROUP BY 1"
+);
 
-/// Artists leading at least one album.
-pub(crate) const LED_PREDICATE: &str =
-    "EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id)";
+/// Artists leading at least one owned album.
+pub(crate) const LED_PREDICATE: &str = concat!(
+    "EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id AND ",
+    owned_album!("la"),
+    ")"
+);
 
-/// Artists credited anywhere (album or track level).
-const CREDITED_PREDICATE: &str = "(EXISTS (SELECT 1 FROM local_album_artists laa \
-    WHERE laa.local_artist_id = r.id) \
-    OR EXISTS (SELECT 1 FROM local_track_artists lta WHERE lta.local_artist_id = r.id) \
-    OR EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id))";
+/// Artists credited on an owned album or on an indexed track of a live one.
+const CREDITED_PREDICATE: &str = concat!(
+    "(EXISTS (SELECT 1 FROM local_album_artists laa \
+     JOIN local_albums lca ON lca.id = laa.local_album_id \
+     WHERE laa.local_artist_id = r.id AND ",
+    owned_album!("lca"),
+    ") OR EXISTS (SELECT 1 FROM local_track_artists lta \
+     JOIN local_tracks lct ON lct.id = lta.local_track_id \
+     JOIN local_albums lcb ON lcb.id = lct.local_album_id \
+     WHERE lta.local_artist_id = r.id AND lct.availability = 'indexed' AND ",
+    live_album!("lcb"),
+    ") OR ",
+    "EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id AND ",
+    owned_album!("la"),
+    "))"
+);
 
 /// Artists leading an album or credited on a streamable track.
 const WITH_MUSIC_PREDICATE: &str = "((LED) OR EXISTS (SELECT 1 FROM local_track_artists lta \
@@ -699,7 +745,8 @@ impl LibraryCatalog {
     pub async fn get_album(&self, id: &str) -> Result<Option<AlbumRecord>, StoreError> {
         let pool = &self.pool;
         let row = sqlx::query(&format!(
-            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.id = ? GROUP BY a.id"
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.id = ? AND {live} GROUP BY a.id",
+            live = live_album!("a")
         ))
         .bind(id)
         .fetch_optional(pool)
@@ -737,17 +784,18 @@ impl LibraryCatalog {
         }))
     }
 
-    /// Oldest album carrying one release-group mbid. None is absence,
-    /// never failure; siblings order oldest first so the match route is
-    /// deterministic.
+    /// The live album one release-group mbid names: the oldest copy with
+    /// files, else the oldest copy. None is absence, never failure.
     pub async fn get_album_by_release_group(
         &self,
         release_group_mbid: &str,
     ) -> Result<Option<AlbumRecord>, StoreError> {
         let pool = &self.pool;
         let row = sqlx::query(&format!(
-            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE ae.release_group_mbid = ? \
-             GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC LIMIT 1"
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE ae.release_group_mbid = ? AND {live} \
+             GROUP BY a.id ORDER BY {order} LIMIT 1",
+            live = live_album!("a"),
+            order = copy_order!("a")
         ))
         .bind(release_group_mbid)
         .fetch_optional(pool)
@@ -788,16 +836,18 @@ impl LibraryCatalog {
         Ok((rows.iter().map(map_track).collect(), total.max(0) as u64))
     }
 
-    /// Other local albums sharing the album's release group, oldest first.
+    /// Other live albums sharing the album's release group, oldest first.
     /// Empty when the album is unidentified or has no siblings.
     pub async fn album_copies(&self, album_id: &str) -> Result<Vec<AlbumRecord>, StoreError> {
         let pool = &self.pool;
         let rows = sqlx::query(&format!(
             "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
              WHERE ae.release_group_mbid = \
-             (SELECT release_group_mbid FROM local_album_external_identities \
-              WHERE local_album_id = ?) \
-             AND a.id != ? GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC"
+             (SELECT i.release_group_mbid FROM local_album_external_identities i \
+              WHERE i.local_album_id = ? AND {provider}) \
+             AND a.id != ? AND {live} GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC",
+            provider = musicbrainz!("i"),
+            live = live_album!("a")
         ))
         .bind(album_id)
         .bind(album_id)
@@ -923,7 +973,7 @@ impl LibraryCatalog {
         Ok(Some(map_artist(&row, album_count, credits)))
     }
 
-    /// One page of albums led by the artist, name order, plus total.
+    /// One page of live albums led by the artist, name order, plus total.
     pub async fn artist_albums(
         &self,
         artist_id: &str,
@@ -932,8 +982,9 @@ impl LibraryCatalog {
     ) -> Result<(Vec<AlbumRecord>, u64), StoreError> {
         let pool = &self.pool;
         let rows = sqlx::query(&format!(
-            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.album_artist_id = ? \
-             GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC LIMIT ? OFFSET ?"
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.album_artist_id = ? AND {live} \
+             GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC LIMIT ? OFFSET ?",
+            live = live_album!("a")
         ))
         .bind(artist_id)
         .bind(limit as i64)
@@ -941,10 +992,10 @@ impl LibraryCatalog {
         .fetch_all(pool)
         .await
         .map_err(|error| internal("library.artists.albums", error))?;
-        let row = sqlx::query(
-            "SELECT COUNT(*) AS total FROM local_albums a \
-             WHERE a.album_artist_id = ?",
-        )
+        let row = sqlx::query(concat!(
+            "SELECT COUNT(*) AS total FROM local_albums a WHERE a.album_artist_id = ? AND ",
+            live_album!("a")
+        ))
         .bind(artist_id)
         .fetch_one(pool)
         .await
@@ -962,11 +1013,14 @@ impl LibraryCatalog {
         offset: u64,
     ) -> Result<(Vec<AlbumRecord>, u64), StoreError> {
         let pool = &self.pool;
-        let filter = "a.album_artist_id != ? AND EXISTS \
-            (SELECT 1 FROM local_tracks at \
+        let filter = concat!(
+            live_album!("a"),
+            " AND a.album_artist_id != ? AND EXISTS \
+             (SELECT 1 FROM local_tracks at \
              JOIN local_track_artists ata ON ata.local_track_id = at.id \
              WHERE at.local_album_id = a.id AND ata.local_artist_id = ? \
-             AND at.availability = 'indexed')";
+             AND at.availability = 'indexed')"
+        );
         let rows = sqlx::query(&format!(
             "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE {filter} \
              GROUP BY a.id ORDER BY a.title_folded ASC, a.id ASC LIMIT ? OFFSET ?"
@@ -1136,12 +1190,13 @@ impl LibraryCatalog {
         })
     }
 
-    /// Newest albums first, capped.
+    /// Newest owned albums first, capped.
     pub async fn recently_added(&self, limit: u64) -> Result<Vec<AlbumRecord>, StoreError> {
         let pool = &self.pool;
         let rows = sqlx::query(&format!(
-            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
-             GROUP BY a.id ORDER BY a.created_at DESC, a.id ASC LIMIT ?"
+            "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE {owned} \
+             GROUP BY a.id ORDER BY a.created_at DESC, a.id ASC LIMIT ?",
+            owned = owned_album!("a")
         ))
         .bind(limit as i64)
         .fetch_all(pool)
@@ -1222,14 +1277,16 @@ impl LibraryCatalog {
         Ok((rows.iter().map(map_track).collect(), total.max(0) as u64))
     }
 
-    /// Decade shelves, ascending. Albums without a year sit outside.
+    /// Decade shelves of owned albums, ascending. Albums without a year
+    /// sit outside.
     pub async fn decades(&self) -> Result<Vec<DecadeRecord>, StoreError> {
         let pool = &self.pool;
-        let rows = sqlx::query(
-            "SELECT (year / 10 * 10) AS decade, COUNT(*) AS album_count \
-             FROM local_albums WHERE year IS NOT NULL \
-             GROUP BY decade ORDER BY decade ASC",
-        )
+        let rows = sqlx::query(concat!(
+            "SELECT (a.year / 10 * 10) AS decade, COUNT(*) AS album_count \
+             FROM local_albums a WHERE a.year IS NOT NULL AND ",
+            owned_album!("a"),
+            " GROUP BY decade ORDER BY decade ASC"
+        ))
         .fetch_all(pool)
         .await
         .map_err(|error| internal("library.decades", error))?;

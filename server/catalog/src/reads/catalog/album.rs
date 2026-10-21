@@ -441,7 +441,7 @@ impl Catalog {
             year: local.year,
             album_type: None,
             disambiguation: None,
-            in_library: true,
+            in_library: local.owned,
             requested: false,
             cover_url: mapping::release_group_cover_url(id),
             album_thumb_url: self

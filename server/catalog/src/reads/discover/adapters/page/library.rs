@@ -10,6 +10,10 @@ use std::collections::HashMap;
 
 use sqlx::SqlitePool;
 
+use crate::reads::library::definitions::{
+    live_album, musicbrainz, owned_album, owned_release_groups,
+};
+
 /// One identified library album.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LibraryAlbum {
@@ -102,19 +106,21 @@ impl LibraryReads {
         &self.pool
     }
 
-    /// Up to `limit` identified albums, newest changes first (v2
+    /// Up to `limit` identified owned albums, newest changes first (v2
     /// `get_home_albums`, which Missing Essentials counts per artist).
     pub async fn identified_albums(&self, limit: i64) -> Result<Vec<LibraryAlbum>, String> {
-        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(concat!(
             "SELECT lower(ae.release_group_mbid), lower(aie.provider_artist_id) \
              FROM local_albums a \
-             JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
-               AND ae.provider = 'musicbrainz' AND ae.release_group_mbid IS NOT NULL \
-             LEFT JOIN local_artist_external_identities aie \
-               ON aie.local_artist_id = a.album_artist_id AND aie.provider = 'musicbrainz' \
-             WHERE a.retired_into_album_id IS NULL \
-             GROUP BY a.id ORDER BY a.updated_at DESC, a.id LIMIT ?1",
-        )
+             JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND ",
+            musicbrainz!("ae"),
+            " LEFT JOIN local_artist_external_identities aie \
+               ON aie.local_artist_id = a.album_artist_id AND ",
+            musicbrainz!("aie"),
+            " WHERE ",
+            owned_album!("a"),
+            " GROUP BY a.id ORDER BY a.updated_at DESC, a.id LIMIT ?1"
+        ))
         .bind(limit.max(1))
         .fetch_all(&self.pool)
         .await
@@ -256,11 +262,12 @@ impl LibraryReads {
             return Ok(Vec::new());
         }
         let rows: Vec<ShelfTuple> = sqlx::query_as(&format!(
-            "{SHELF_SELECT} WHERE a.retired_into_album_id IS NULL \
+            "{SHELF_SELECT} WHERE {live} \
              AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
                AND t.availability = 'indexed' AND EXISTS (SELECT 1 FROM local_track_genres g \
                WHERE g.local_track_id = t.id AND g.folded_name = ?1)) \
-             GROUP BY a.id ORDER BY a.updated_at DESC, a.title COLLATE NOCASE, a.id LIMIT ?2"
+             GROUP BY a.id ORDER BY a.updated_at DESC, a.title COLLATE NOCASE, a.id LIMIT ?2",
+            live = live_album!("a")
         ))
         .bind(folded)
         .bind(limit.max(1))
@@ -282,11 +289,10 @@ impl LibraryReads {
             return Ok(Vec::new());
         }
         let sql = format!(
-            "{SHELF_SELECT} WHERE a.retired_into_album_id IS NULL AND a.year IN ({}) \
-             AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
-               AND t.availability = 'indexed') \
+            "{SHELF_SELECT} WHERE {owned} AND a.year IN ({}) \
              GROUP BY a.id ORDER BY a.year ASC, a.title COLLATE NOCASE, a.id LIMIT ?",
-            placeholders(ages.len())
+            placeholders(ages.len()),
+            owned = owned_album!("a")
         );
         let mut query = sqlx::query_as::<_, ShelfTuple>(&sql);
         for age in ages {
@@ -307,15 +313,14 @@ impl LibraryReads {
         user_id: &str,
         limit: i64,
     ) -> Result<Vec<FollowedRelease>, String> {
-        let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(concat!(
             "SELECT n.release_group_mbid, n.title, n.artist_name, f.artist_mbid, \
              n.first_release_date FROM new_release_feed n JOIN user_followed_artists f \
              ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ?1 \
-             WHERE n.release_group_mbid_lower NOT IN \
-               (SELECT lower(release_group_mbid) FROM local_album_external_identities \
-                WHERE release_group_mbid IS NOT NULL) \
-             ORDER BY n.first_release_date DESC, n.discovered_at DESC LIMIT ?2",
-        )
+             WHERE n.release_group_mbid_lower NOT IN (",
+            owned_release_groups!(),
+            ") ORDER BY n.first_release_date DESC, n.discovered_at DESC LIMIT ?2"
+        ))
         .bind(user_id)
         .bind(limit.max(1))
         .fetch_all(&self.pool)
@@ -338,12 +343,15 @@ impl LibraryReads {
     }
 }
 
-const SHELF_SELECT: &str = "SELECT a.id, MIN(ae.release_group_mbid), a.title, \
+const SHELF_SELECT: &str = concat!(
+    "SELECT a.id, MIN(ae.release_group_mbid), a.title, \
      a.album_artist_name, MIN(aie.provider_artist_id), a.year FROM local_albums a \
-     LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
-       AND ae.provider = 'musicbrainz' \
-     LEFT JOIN local_artist_external_identities aie \
-       ON aie.local_artist_id = a.album_artist_id AND aie.provider = 'musicbrainz'";
+     LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND ",
+    musicbrainz!("ae"),
+    " LEFT JOIN local_artist_external_identities aie \
+       ON aie.local_artist_id = a.album_artist_id AND ",
+    musicbrainz!("aie")
+);
 
 type ShelfTuple = (
     String,
