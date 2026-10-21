@@ -1,10 +1,10 @@
 //! Discogs contribution metadata: release lookup and release search.
 //!
-//! A Rust port of v2's Discogs repository (repository, models,
-//! and the notes verified live on 2026-07-21). Only contribution metadata
-//! crosses the boundary: image, community, and marketplace-adjacent fields
-//! decode and are dropped, exactly as in v2. Each quirk below cites the v2
-//! code or note it came from.
+//! A Rust port of v2's Discogs repository (repository, models, and the API
+//! notes seen on 2026-07-21, per discogs_API_NOTES.md). Only contribution
+//! metadata crosses the boundary: image, community, and marketplace-adjacent
+//! fields decode and are dropped, exactly as in v2. Each quirk below cites
+//! the v2 code or note it came from.
 //!
 //! Requests go through the executor at the `discogs` row: 25 requests a
 //! minute unauthenticated, spaced 2.4 seconds with no burst. Response
@@ -21,7 +21,11 @@ use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 use crate::limiter::RateLimiter;
 
-/// Live API origin (discogs_API_NOTES.md, verified 2026-07-21).
+mod models;
+
+use models::{WireArtist, WireRelease, WireSearchResponse, WireSearchResult, WireTrack};
+
+/// Live API origin, seen on 2026-07-21 per discogs_API_NOTES.md.
 pub const API_BASE: &str = "https://api.discogs.com";
 /// Origin for canonical release/master/artist/label links.
 pub const WEB_BASE: &str = "https://www.discogs.com";
@@ -41,190 +45,6 @@ pub static SPEC: Spec = Spec {
     retry_after_cap: MAX_RETRY_AFTER,
     classify: standard_classify,
 };
-
-// ---------------------------------------------------------------------------
-// Wire models (default-tolerant; unknown fields are ignored by serde)
-// ---------------------------------------------------------------------------
-
-/// One credited artist on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireArtist {
-    /// Discogs artist id, absent on some rows.
-    #[serde(default)]
-    pub id: Option<i64>,
-    /// Artist name.
-    #[serde(default)]
-    pub name: String,
-    /// "Artist name variation" as printed on the release.
-    #[serde(default)]
-    pub anv: String,
-    /// Join phrase between this credit and the next.
-    #[serde(default)]
-    pub join: String,
-}
-
-/// One label row on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireLabel {
-    /// Discogs label id.
-    #[serde(default)]
-    pub id: Option<i64>,
-    /// Label name.
-    #[serde(default)]
-    pub name: String,
-    /// Catalogue number.
-    #[serde(default)]
-    pub catno: String,
-}
-
-/// One identifier row on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireIdentifier {
-    /// Identifier kind, e.g. "Barcode".
-    #[serde(default)]
-    pub r#type: String,
-    /// Identifier value.
-    #[serde(default)]
-    pub value: String,
-    /// Identifier description.
-    #[serde(default)]
-    pub description: String,
-}
-
-/// One format row on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireFormat {
-    /// Format name, e.g. "Vinyl".
-    #[serde(default)]
-    pub name: String,
-    /// Quantity as a string; live data is not always numeric.
-    #[serde(default)]
-    pub qty: String,
-    /// Format descriptions.
-    #[serde(default)]
-    pub descriptions: Vec<String>,
-    /// Free-text format note.
-    #[serde(default)]
-    pub text: String,
-}
-
-fn default_track_type() -> String {
-    "track".to_owned()
-}
-
-/// One tracklist row on the wire. The live API really does spell the
-/// discriminator `type_` (see the v2 `release_249504.json` fixture), so the
-/// field keeps that name instead of renaming to `type`.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireTrack {
-    /// Printed position ("A1", "2-3", "4", ...).
-    #[serde(default)]
-    pub position: String,
-    /// Row kind: "track", "heading", or "index".
-    #[serde(default = "default_track_type")]
-    pub type_: String,
-    /// Track title.
-    #[serde(default)]
-    pub title: String,
-    /// Duration as "M:SS" or "H:MM:SS".
-    #[serde(default)]
-    pub duration: String,
-    /// Per-track artist credits.
-    #[serde(default)]
-    pub artists: Vec<WireArtist>,
-    /// Index sub-tracks, flattened during normalization.
-    #[serde(default)]
-    pub sub_tracks: Vec<WireTrack>,
-}
-
-/// One release on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireRelease {
-    /// Discogs release id; 0 means the payload has no identity.
-    #[serde(default)]
-    pub id: i64,
-    /// Discogs master id, when the release belongs to one.
-    #[serde(default)]
-    pub master_id: Option<i64>,
-    /// Release title.
-    #[serde(default)]
-    pub title: String,
-    /// Pre-joined artist string.
-    #[serde(default)]
-    pub artists_sort: String,
-    /// Release-level artist credits.
-    #[serde(default)]
-    pub artists: Vec<WireArtist>,
-    /// Release year.
-    #[serde(default)]
-    pub year: Option<i64>,
-    /// Country of release.
-    #[serde(default)]
-    pub country: String,
-    /// Release date string.
-    #[serde(default)]
-    pub released: String,
-    /// Label rows.
-    #[serde(default)]
-    pub labels: Vec<WireLabel>,
-    /// Format rows.
-    #[serde(default)]
-    pub formats: Vec<WireFormat>,
-    /// Identifier rows.
-    #[serde(default)]
-    pub identifiers: Vec<WireIdentifier>,
-    /// Raw tracklist rows.
-    #[serde(default)]
-    pub tracklist: Vec<WireTrack>,
-}
-
-/// One search-result format row on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireSearchFormat {
-    /// Format name.
-    #[serde(default)]
-    pub name: String,
-}
-
-/// One `/database/search` hit on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireSearchResult {
-    /// Discogs release id; 0 means the hit has no identity.
-    #[serde(default)]
-    pub id: i64,
-    /// Discogs master id.
-    #[serde(default)]
-    pub master_id: Option<i64>,
-    /// "Artist - Title" display string.
-    #[serde(default)]
-    pub title: String,
-    /// Release year.
-    #[serde(default)]
-    pub year: Option<i64>,
-    /// Country string.
-    #[serde(default)]
-    pub country: String,
-    /// Label names.
-    #[serde(default)]
-    pub label: Vec<String>,
-    /// Catalogue number.
-    #[serde(default)]
-    pub catno: String,
-    /// Flat format summary strings.
-    #[serde(default)]
-    pub format: Vec<String>,
-    /// Structured format rows (fallback summary source).
-    #[serde(default)]
-    pub formats: Vec<WireSearchFormat>,
-}
-
-/// A `/database/search` page on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireSearchResponse {
-    /// Search hits.
-    #[serde(default)]
-    pub results: Vec<WireSearchResult>,
-}
 
 // ---------------------------------------------------------------------------
 // Normalized models
@@ -557,8 +377,8 @@ pub fn normalize_formats(release: &WireRelease) -> Vec<Format> {
         .collect()
 }
 
-/// Normalize one release. A payload without an id
-/// or title is incomplete, never an empty release.
+/// Normalize one release. A zero id or an empty title is incomplete, never
+/// an empty release. A missing id fails decoding before this point.
 pub fn normalize_release(
     release: &WireRelease,
     fetched_at: f64,
@@ -650,7 +470,7 @@ pub fn normalize_query(query: &str) -> String {
     collapsed.chars().take(200).collect()
 }
 
-/// Normalize one search hit, skipping hits without an identity.
+/// Normalize one search hit. A zero id or an empty title skips the hit.
 /// The display title splits on the first " - " into
 /// artist and title; without a separator the whole string is the title and
 /// the artist stays empty. The format summary prefers the flat `format`
@@ -678,7 +498,8 @@ pub fn normalize_candidate(item: &WireSearchResult, fetched_at: f64) -> Option<R
         title,
         artist_name,
         canonical_url: format!("{WEB_BASE}/release/{}", item.id),
-        year: item.year,
+        // The search answer sends the year as text; text that is not a number reads as no year.
+        year: item.year.as_deref().and_then(|year| year.parse().ok()),
         country: if item.country.is_empty() {
             None
         } else {

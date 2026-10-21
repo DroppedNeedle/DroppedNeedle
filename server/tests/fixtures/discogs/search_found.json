@@ -1,0 +1,337 @@
+{
+  "pagination": {
+    "page": 1,
+    "pages": 271,
+    "per_page": 5,
+    "items": 1352,
+    "urls": {
+      "last": "https://api.discogs.com/database/search?type=release&q=Nirvana+Nevermind&per_page=5&page=271",
+      "next": "https://api.discogs.com/database/search?type=release&q=Nirvana+Nevermind&per_page=5&page=2"
+    }
+  },
+  "results": [
+    {
+      "country": "Europe",
+      "year": "2015",
+      "format": [
+        "Vinyl",
+        "LP",
+        "Album",
+        "Reissue",
+        "Repress"
+      ],
+      "label": [
+        "DGC",
+        "Sub Pop",
+        "Back To Black",
+        "Sub Pop Records",
+        "The David Geffen Company",
+        "The David Geffen Company",
+        "Sound City Studios",
+        "Scream Studios",
+        "Masterdisk",
+        "Virgin Songs, Inc.",
+        "The End Of Music",
+        "Universal M & L, Germany"
+      ],
+      "type": "release",
+      "genre": [
+        "Rock"
+      ],
+      "style": [
+        "Alternative Rock",
+        "Grunge"
+      ],
+      "id": 7097051,
+      "barcode": [
+        "720642442517",
+        "0 720642 442517",
+        "LC 07266",
+        "BIEM/MCPS",
+        "BMI",
+        "A33 9124 425 S1 320",
+        "A33 9124 425 S2 320"
+      ],
+      "master_id": 13814,
+      "master_url": "https://api.discogs.com/masters/13814",
+      "uri": "/release/7097051-Nirvana-Nevermind",
+      "catno": "424 425-1",
+      "title": "Nirvana - Nevermind",
+      "thumb": "",
+      "cover_image": "",
+      "resource_url": "https://api.discogs.com/releases/7097051",
+      "community": {
+        "want": 13405,
+        "have": 77463
+      },
+      "format_quantity": 1,
+      "formats": [
+        {
+          "name": "Vinyl",
+          "qty": "1",
+          "text": "180g",
+          "descriptions": [
+            "LP",
+            "Album",
+            "Reissue",
+            "Repress"
+          ]
+        }
+      ]
+    },
+    {
+      "country": "Europe",
+      "year": "1991",
+      "format": [
+        "CD",
+        "Album"
+      ],
+      "label": [
+        "DGC",
+        "Sub Pop",
+        "Sub Pop Records",
+        "The David Geffen Company",
+        "The David Geffen Company",
+        "BMG",
+        "Sound City Studios",
+        "Sound City Studios",
+        "The Mastering Lab"
+      ],
+      "type": "release",
+      "genre": [
+        "Rock"
+      ],
+      "style": [
+        "Grunge",
+        "Alternative Rock"
+      ],
+      "id": 1820636,
+      "barcode": [
+        "7 2064-24425-2 4",
+        "720642442524",
+        "GED24425 / A",
+        "AAD"
+      ],
+      "master_id": 13814,
+      "master_url": "https://api.discogs.com/masters/13814",
+      "uri": "/release/1820636-Nirvana-Nevermind",
+      "catno": "GED 24425",
+      "title": "Nirvana - Nevermind",
+      "thumb": "",
+      "cover_image": "",
+      "resource_url": "https://api.discogs.com/releases/1820636",
+      "community": {
+        "want": 1131,
+        "have": 12092
+      },
+      "format_quantity": 1,
+      "formats": [
+        {
+          "name": "CD",
+          "qty": "1",
+          "text": "Flipped CD Image",
+          "descriptions": [
+            "Album"
+          ]
+        }
+      ]
+    },
+    {
+      "country": "US",
+      "year": "2013",
+      "format": [
+        "Vinyl",
+        "LP",
+        "Album",
+        "Reissue",
+        "Remastered",
+        "Repress"
+      ],
+      "label": [
+        "DGC",
+        "Sub Pop",
+        "Geffen Records",
+        "Geffen Records",
+        "Universal Music Distribution",
+        "Sound City Studios",
+        "Scream Studios",
+        "Virgin Songs, Inc.",
+        "The End Of Music",
+        "Pallas USA",
+        "Bernie Grundman Mastering",
+        "Record Technology Incorporated",
+        "Schallplattenfabrik Pallas GmbH"
+      ],
+      "type": "release",
+      "genre": [
+        "Rock"
+      ],
+      "style": [
+        "Grunge"
+      ],
+      "id": 4819086,
+      "barcode": [
+        "BMI",
+        "7 20642 44251 7",
+        "720642442517",
+        "BG DGC 24425 A O̶R̶G̶ ̶0̶3̶2̶-A -21919- P. USA 18200.1(3)...",
+        "BG DGC 24425 B O̶R̶G̶ ̶0̶3̶2̶-B -21919- P. USA 18200.2(3)..."
+      ],
+      "master_id": 13814,
+      "master_url": "https://api.discogs.com/masters/13814",
+      "uri": "/release/4819086-Nirvana-Nevermind",
+      "catno": "DGC-24425",
+      "title": "Nirvana - Nevermind",
+      "thumb": "",
+      "cover_image": "",
+      "resource_url": "https://api.discogs.com/releases/4819086",
+      "community": {
+        "want": 5272,
+        "have": 21420
+      },
+      "format_quantity": 1,
+      "formats": [
+        {
+          "name": "Vinyl",
+          "qty": "1",
+          "text": "180 Gram",
+          "descriptions": [
+            "LP",
+            "Album",
+            "Reissue",
+            "Remastered",
+            "Repress"
+          ]
+        }
+      ]
+    },
+    {
+      "country": "US",
+      "year": "1991",
+      "format": [
+        "Vinyl",
+        "LP",
+        "Album"
+      ],
+      "label": [
+        "DGC",
+        "Sub Pop",
+        "The David Geffen Company",
+        "Uni Distribution Corp.",
+        "Uni Distribution Corp.",
+        "Sub Pop Records",
+        "The David Geffen Company",
+        "The David Geffen Company",
+        "The End Of Music",
+        "Virgin Songs, Inc.",
+        "MCA Pressing Plant, Gloversville",
+        "The End Of Music",
+        "Virgin Songs, Inc.",
+        "Sound City Studios",
+        "Scream Studios",
+        "Masterdisk",
+        "Masterdisk"
+      ],
+      "type": "release",
+      "genre": [
+        "Rock"
+      ],
+      "style": [
+        "Grunge",
+        "Alternative Rock"
+      ],
+      "id": 1813006,
+      "barcode": [
+        "7 2064-24425-1 7",
+        "720642442517",
+        "MASTERDISK DGC-24425-A-GL1",
+        "DGC-24425-B-GL1",
+        "MASTERDISK DGC-24425-A-GL1",
+        "DGC-24425-B-GL1 1-2",
+        "BMI"
+      ],
+      "master_id": 13814,
+      "master_url": "https://api.discogs.com/masters/13814",
+      "uri": "/release/1813006-Nirvana-Nevermind",
+      "catno": "DGC-24425",
+      "title": "Nirvana - Nevermind",
+      "thumb": "",
+      "cover_image": "",
+      "resource_url": "https://api.discogs.com/releases/1813006",
+      "community": {
+        "want": 14089,
+        "have": 11022
+      },
+      "format_quantity": 1,
+      "formats": [
+        {
+          "name": "Vinyl",
+          "qty": "1",
+          "descriptions": [
+            "LP",
+            "Album"
+          ]
+        }
+      ]
+    },
+    {
+      "country": "Europe",
+      "genre": [
+        "Rock"
+      ],
+      "format": [
+        "Vinyl",
+        "LP",
+        "Album",
+        "Unofficial Release"
+      ],
+      "style": [
+        "Alternative Rock",
+        "Grunge"
+      ],
+      "id": 3196247,
+      "label": [
+        "DGC",
+        "Sub Pop",
+        "Virgin Songs, Inc.",
+        "The End Of Music",
+        "DGC",
+        "Sub Pop Records"
+      ],
+      "type": "release",
+      "barcode": [
+        "0 720642 442517",
+        "NEVERMIND 001 A-1",
+        "NEVERMIND 001 B-1",
+        "LC07266",
+        "BIEM/MCPS",
+        "BMI"
+      ],
+      "master_id": 13814,
+      "master_url": "https://api.discogs.com/masters/13814",
+      "uri": "/release/3196247-Nirvana-Nevermind",
+      "catno": "424 425-1",
+      "title": "Nirvana - Nevermind",
+      "thumb": "",
+      "cover_image": "",
+      "resource_url": "https://api.discogs.com/releases/3196247",
+      "community": {
+        "want": 2006,
+        "have": 1951
+      },
+      "format_quantity": 1,
+      "formats": [
+        {
+          "name": "Vinyl",
+          "qty": "1",
+          "text": "Tyrian Purple w/ Blue & Red Splatter",
+          "descriptions": [
+            "LP",
+            "Album",
+            "Unofficial Release"
+          ]
+        }
+      ]
+    }
+  ]
+}

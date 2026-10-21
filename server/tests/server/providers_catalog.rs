@@ -69,23 +69,12 @@ fn resting(providers: &Providers, row: &str) -> Duration {
 // Discogs
 // ---------------------------------------------------------------------------
 
-const DISCOGS_RELEASE: &str = r#"{
-    "id": 249504, "master_id": 96559, "title": "Never Gonna Give You Up",
-    "artists_sort": "Rick Astley",
-    "artists": [{"id": 22, "name": "Rick Astley", "anv": "", "join": ""}],
-    "year": 1987, "country": "UK", "released": "1987-07-27",
-    "labels": [{"id": 7, "name": "RCA", "catno": "PB 41447"}],
-    "formats": [{"name": "Vinyl", "qty": "1", "descriptions": ["7\""], "text": ""}],
-    "identifiers": [{"type": "Barcode", "value": "5 012394-144777", "description": ""}],
-    "tracklist": [
-        {"position": "A", "type_": "track", "title": "Never Gonna Give You Up",
-         "duration": "3:32", "artists": [], "sub_tracks": []},
-        {"position": "B", "type_": "track", "title": "You Move Me",
-         "duration": "3:40", "artists": [], "sub_tracks": []}
-    ],
-    "images": [{"uri": "https://example.invalid/restricted.jpg"}],
-    "community": {"want": 1}, "lowest_price": 4.5, "future_field": {"n": 1}
-}"#;
+/// Verified against api.discogs.com/releases/{id} on 2026-10-21: tests/fixtures/discogs/release_249504.json.
+const DISCOGS_RELEASE: &str = include_str!("../fixtures/discogs/release_249504.json");
+/// Verified against api.discogs.com/database/search on 2026-10-21: tests/fixtures/discogs/search_found.json.
+const DISCOGS_SEARCH: &str = include_str!("../fixtures/discogs/search_found.json");
+/// No results, recorded on 2026-10-21: tests/fixtures/discogs/search_no_results.json.
+const DISCOGS_SEARCH_NO_RESULTS: &str = include_str!("../fixtures/discogs/search_no_results.json");
 
 fn release_url(id: &str) -> String {
     format!("{DISCOGS}/releases/{id}")
@@ -220,6 +209,79 @@ async fn discogs_degradation_500_transport_bad_json_unusable() {
             .await
             .unwrap(),
         None
+    );
+}
+
+#[tokio::test]
+async fn discogs_contract_search_tolerates_unknown_fields() {
+    let wire = scripted(
+        &format!("{DISCOGS}/database/search"),
+        &[(200, &[], DISCOGS_SEARCH)],
+    );
+    let candidates = catalog_providers(&wire)
+        .discogs
+        .search_releases("Nirvana Nevermind", 5, 1.0, PRIORITY)
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 5);
+    let first = &candidates[0];
+    assert_eq!(first.release_id, "7097051");
+    assert_eq!(first.master_id.as_deref(), Some("13814"));
+    assert_eq!(first.artist_name, "Nirvana");
+    assert_eq!(first.title, "Nevermind");
+    assert_eq!(first.year, Some(2015));
+    assert_eq!(first.label.as_deref(), Some("DGC"));
+    assert_eq!(first.catalogue_number.as_deref(), Some("424 425-1"));
+    assert_eq!(
+        first.format_summary.as_deref(),
+        Some("Vinyl, LP, Album, Reissue, Repress")
+    );
+    // The fifth hit has no year key.
+    assert_eq!(candidates[4].year, None);
+}
+
+#[tokio::test]
+async fn discogs_search_with_no_results_is_empty() {
+    let wire = scripted(
+        &format!("{DISCOGS}/database/search"),
+        &[(200, &[], DISCOGS_SEARCH_NO_RESULTS)],
+    );
+    let candidates = catalog_providers(&wire)
+        .discogs
+        .search_releases("zxqvjkwpq", 5, 1.0, PRIORITY)
+        .await
+        .unwrap();
+    assert!(candidates.is_empty());
+}
+
+#[tokio::test]
+async fn discogs_search_hit_without_its_id_fails_the_page() {
+    // The recorded page with the second hit's id taken out.
+    let mut answer: serde_json::Value = serde_json::from_str(DISCOGS_SEARCH).unwrap();
+    answer["results"][1]
+        .as_object_mut()
+        .expect("a second hit")
+        .remove("id")
+        .expect("the hit's id");
+    let body = answer.to_string();
+    let wire = scripted(
+        &format!("{DISCOGS}/database/search"),
+        &[(200, &[], body.as_str())],
+    );
+    let error = catalog_providers(&wire)
+        .discogs
+        .search_releases("Nirvana Nevermind", 5, 1.0, PRIORITY)
+        .await
+        .expect_err("a hit without its id");
+    assert!(
+        matches!(
+            error,
+            ProviderError::Payload {
+                kind: PayloadKind::Decode,
+                ..
+            }
+        ),
+        "{error:?}"
     );
 }
 

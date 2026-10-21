@@ -1,0 +1,529 @@
+{
+  "id": 249504,
+  "status": "Accepted",
+  "year": 1987,
+  "resource_url": "https://api.discogs.com/releases/249504",
+  "uri": "https://www.discogs.com/release/249504-Rick-Astley-Never-Gonna-Give-You-Up",
+  "artists": [
+    {
+      "name": "Rick Astley",
+      "anv": "",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 72872,
+      "resource_url": "https://api.discogs.com/artists/72872",
+      "thumbnail_url": "https://i.discogs.com/Bb1-_pHvbCPFZEZvwoX89glv8Vq7uR_pKeK85ZWhOhA/rs:fit/g:sm/q:90/h:434/w:448/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9BLTcyODcy/LTE3NjMyNzU4MjYt/NTY4My5qcGVn.jpeg"
+    }
+  ],
+  "artists_sort": "Rick Astley",
+  "labels": [
+    {
+      "name": "RCA",
+      "catno": "PB 41447",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 895,
+      "resource_url": "https://api.discogs.com/labels/895",
+      "thumbnail_url": "https://i.discogs.com/q-zL2IXAAZL18V9Ova8MTy7NXCoGMloDEKM1yaHpays/rs:fit/g:sm/q:90/h:287/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTg5NS0x/NzY4MDgxMjYxLTMw/NDIuanBlZw.jpeg"
+    }
+  ],
+  "series": [],
+  "companies": [
+    {
+      "name": "BMG Records (UK) Ltd.",
+      "catno": "",
+      "entity_type": "13",
+      "entity_type_name": "Phonographic Copyright (p)",
+      "id": 82835,
+      "resource_url": "https://api.discogs.com/labels/82835",
+      "thumbnail_url": "https://i.discogs.com/aLAGfAWEPyoZq1-xZ3e1jec6bhXwBFl8f5FDyKid2ss/rs:fit/g:sm/q:90/h:80/w:173/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTgyODM1/LTEyMzMxNzA2NjQu/Z2lm.jpeg"
+    },
+    {
+      "name": "BMG Records (UK) Ltd.",
+      "catno": "",
+      "entity_type": "14",
+      "entity_type_name": "Copyright (c)",
+      "id": 82835,
+      "resource_url": "https://api.discogs.com/labels/82835",
+      "thumbnail_url": "https://i.discogs.com/aLAGfAWEPyoZq1-xZ3e1jec6bhXwBFl8f5FDyKid2ss/rs:fit/g:sm/q:90/h:80/w:173/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTgyODM1/LTEyMzMxNzA2NjQu/Z2lm.jpeg"
+    },
+    {
+      "name": "Pete Waterman Ltd.",
+      "catno": "",
+      "entity_type": "13",
+      "entity_type_name": "Phonographic Copyright (p)",
+      "id": 301937,
+      "resource_url": "https://api.discogs.com/labels/301937"
+    },
+    {
+      "name": "All Boys Music Ltd.",
+      "catno": "",
+      "entity_type": "21",
+      "entity_type_name": "Published By",
+      "id": 273945,
+      "resource_url": "https://api.discogs.com/labels/273945",
+      "thumbnail_url": "https://i.discogs.com/ucamenUGXvXpGvnuCD0jYTXFLZJan4VY5VLJWjKTeNQ/rs:fit/g:sm/q:90/h:77/w:350/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI3Mzk0/NS0xNDkwMzI3OTE5/LTcxMTkuanBlZw.jpeg"
+    },
+    {
+      "name": "BMG Records",
+      "catno": "",
+      "entity_type": "9",
+      "entity_type_name": "Distributed By",
+      "id": 26385,
+      "resource_url": "https://api.discogs.com/labels/26385",
+      "thumbnail_url": "https://i.discogs.com/u4kaojBpPPBKiZ2Gj6B8PLmgb6orre_6LOYDekLRLxU/rs:fit/g:sm/q:90/h:66/w:212/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI2Mzg1/LTE0OTAwMDY5NzUt/MjkyMy5qcGVn.jpeg"
+    },
+    {
+      "name": "BMG Ariola",
+      "catno": "",
+      "entity_type": "9",
+      "entity_type_name": "Distributed By",
+      "id": 33652,
+      "resource_url": "https://api.discogs.com/labels/33652",
+      "thumbnail_url": "https://i.discogs.com/tc3QfRPLEcXXuEdsYIs4T1hVtQB0QRBTxPtpSMBtcJQ/rs:fit/g:sm/q:90/h:128/w:213/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTMzNjUy/LTE1NDA4NDI3MTAt/NzE5OS5qcGVn.jpeg"
+    },
+    {
+      "name": "RCA Records",
+      "catno": "",
+      "entity_type": "8",
+      "entity_type_name": "Marketed By",
+      "id": 29656,
+      "resource_url": "https://api.discogs.com/labels/29656",
+      "thumbnail_url": "https://i.discogs.com/EN9PpsplNgyWdRKTy1QohI1E5-1H-AkSgtzqej8WFu0/rs:fit/g:sm/q:90/h:94/w:283/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI5NjU2/LTE0OTAwODk0MTQt/MjI5My5wbmc.jpeg"
+    },
+    {
+      "name": "Utopia Studios",
+      "catno": "",
+      "entity_type": "30",
+      "entity_type_name": "Lacquer Cut At",
+      "id": 266218,
+      "resource_url": "https://api.discogs.com/labels/266218",
+      "thumbnail_url": "https://i.discogs.com/W605-PQkVUHh6DC7I_F9E8YiSFTzmpOhJxNFGq9Be6I/rs:fit/g:sm/q:90/h:154/w:468/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI2NjIx/OC0xMzM0MTQ0NzYy/LmpwZWc.jpeg"
+    },
+    {
+      "name": "BMG Records (UK) Ltd.",
+      "catno": "",
+      "entity_type": "5",
+      "entity_type_name": "Licensed To",
+      "id": 82835,
+      "resource_url": "https://api.discogs.com/labels/82835",
+      "thumbnail_url": "https://i.discogs.com/aLAGfAWEPyoZq1-xZ3e1jec6bhXwBFl8f5FDyKid2ss/rs:fit/g:sm/q:90/h:80/w:173/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTgyODM1/LTEyMzMxNzA2NjQu/Z2lm.jpeg"
+    },
+    {
+      "name": "PWL",
+      "catno": "",
+      "entity_type": "4",
+      "entity_type_name": "Record Company",
+      "id": 30024,
+      "resource_url": "https://api.discogs.com/labels/30024"
+    },
+    {
+      "name": "CBS Pressing Plant, Aston Clinton",
+      "catno": "",
+      "entity_type": "17",
+      "entity_type_name": "Pressed By",
+      "id": 553982,
+      "resource_url": "https://api.discogs.com/labels/553982",
+      "thumbnail_url": "https://i.discogs.com/uJGOIG3RRJpQPbCNsf4T3q0LFcTj1g3sGVfShINaHaQ/rs:fit/g:sm/q:90/h:554/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTU1Mzk4/Mi0xMzcwNzgzMjUx/LTcxMTYuanBlZw.jpeg"
+    }
+  ],
+  "formats": [
+    {
+      "name": "Vinyl",
+      "qty": "1",
+      "descriptions": [
+        "7\"",
+        "45 RPM",
+        "Single",
+        "Stereo"
+      ]
+    }
+  ],
+  "data_quality": "Correct",
+  "community": {
+    "have": 4145,
+    "want": 590,
+    "rating": {
+      "count": 245,
+      "average": 3.88
+    },
+    "submitter": {
+      "username": "REDACTED",
+      "resource_url": "REDACTED"
+    },
+    "contributors": [
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      }
+    ],
+    "data_quality": "Correct",
+    "status": "Accepted"
+  },
+  "format_quantity": 1,
+  "date_added": "2004-04-30T08:10:05-07:00",
+  "date_changed": "2022-08-03T03:03:28-07:00",
+  "num_for_sale": 109,
+  "lowest_price": 0.67,
+  "master_id": 96559,
+  "master_url": "https://api.discogs.com/masters/96559",
+  "title": "Never Gonna Give You Up",
+  "country": "UK",
+  "released": "1987-07-00",
+  "notes": "Placeholder release notes.",
+  "released_formatted": "Jul 1987",
+  "identifiers": [
+    {
+      "type": "Barcode",
+      "value": "5012394144777"
+    },
+    {
+      "type": "Label Code",
+      "value": "LC 0316"
+    },
+    {
+      "type": "Price Code",
+      "value": "AC",
+      "description": "D:"
+    },
+    {
+      "type": "Price Code",
+      "value": "RC110",
+      "description": "F:"
+    },
+    {
+      "type": "Price Code",
+      "value": "AA",
+      "description": "UK:"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "PB 41447 A‡",
+      "description": "A side label"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "PB 41447 B‡",
+      "description": "B side label"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "PB 41447 A2 UTOPIA MS",
+      "description": "A side runout, variant 1"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "PB 41447-B.2 UTOPIA MS",
+      "description": "B side runout, variant 1"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "PB 41447 A4 UTOPIA MS.",
+      "description": "A side runout, variant 2"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "PB 41447 B4 UTOPIA MS ♥ RD.",
+      "description": "B side runout, variant 2"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "PB 41447 A2 UTOPIA MS B",
+      "description": "A side runout, variant 3"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "PB 41447-B.2 B UTOPIA MS",
+      "description": "B side runout, variant 3"
+    }
+  ],
+  "videos": [
+    {
+      "uri": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+      "description": "Placeholder video description.",
+      "duration": 214,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=nsCIeklgp1M",
+      "title": "Rick Astley - Never Gonna Give You Up | Glastonbury 2023",
+      "description": "Placeholder video description.",
+      "duration": 560,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=5SZYz7lZRRI",
+      "title": "Rick Astley - Never Gonna Give You Up (Official Music Video) (1987)",
+      "description": "Placeholder video description.",
+      "duration": 213,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=7FwDP17XPlk",
+      "title": "Rick Astley - Never Gonna Give You Up",
+      "description": "Placeholder video description.",
+      "duration": 214,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=OWGRrOo7l5E",
+      "title": "Rick Astley - Never Gonna Give You Up (Extended)",
+      "description": "Placeholder video description.",
+      "duration": 348,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=9-t0P3dqRD0",
+      "title": "Rick Astley – Never Gonna Give You Up (Extended Re-Mix 1987)",
+      "description": "Placeholder video description.",
+      "duration": 0,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=hIWRq2SJUmg",
+      "title": "Rick Astley - Never Gonna Give You Up (Extended Mix)",
+      "description": "Placeholder video description.",
+      "duration": 440,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=n3jMY98KIEw",
+      "title": "Never Gonna Give You Up (Cake Mix)",
+      "description": "Placeholder video description.",
+      "duration": 348,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=ENVqkACcR0c",
+      "title": "Rick Astley - Never Gonna Give You Up (Escape To New York Mix)",
+      "description": "Placeholder video description.",
+      "duration": 419,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=_QSx57P9gwE",
+      "title": "Never Gonna Give You Up (Escape to New York Mix)",
+      "description": "Placeholder video description.",
+      "duration": 423,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=BnoMXGVDC4w",
+      "title": "Never Gonna Give You Up (Escape to NY Mix)",
+      "description": "Placeholder video description.",
+      "duration": 422,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=vAj-LkH8o1U",
+      "title": "Rick Astley - Never Gonna Give You Up (Escape From Newton Mix)",
+      "description": "Placeholder video description.",
+      "duration": 387,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=iPm1ltTM5-w",
+      "title": "Never Gonna Give You Up (Escape From Newton Mix) - Rick Astley",
+      "description": "Placeholder video description.",
+      "duration": 387,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=6EWB1ObTbD4",
+      "title": "Rick Astley  / Never Gonna Give You Up  / Escape To New York Mix",
+      "description": "Placeholder video description.",
+      "duration": 419,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=DVInNB5sKDc",
+      "title": "👉📀 Rick Astley - Never Gonna Give You Up (Cake Mix) | 12'' Maxi Single Vinyl 1987",
+      "description": "Placeholder video description.",
+      "duration": 354,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=R0aslmKzi90",
+      "title": "👉📀 Rick Astley - Never Gonna Give You Up (Instrumental) | 12'' Maxi Single Vinyl Rip 1987",
+      "description": "Placeholder video description.",
+      "duration": 393,
+      "embed": true
+    },
+    {
+      "uri": "https://www.youtube.com/watch?v=xlZS9Rr6Hfc",
+      "title": "👉📀 Rick Astley - Never Gonna Give You Up | 12'' Maxi Single Vinyl Rip 1987",
+      "description": "Placeholder video description.",
+      "duration": 213,
+      "embed": true
+    }
+  ],
+  "genres": [
+    "Electronic",
+    "Pop"
+  ],
+  "styles": [
+    "Euro-Disco"
+  ],
+  "tracklist": [
+    {
+      "position": "A",
+      "type_": "track",
+      "title": "Never Gonna Give You Up",
+      "duration": "3:32"
+    },
+    {
+      "position": "B",
+      "type_": "track",
+      "title": "Never Gonna Give You Up (Instrumental)",
+      "duration": "3:30"
+    }
+  ],
+  "extraartists": [
+    {
+      "name": "Me Company",
+      "anv": "Me Co",
+      "join": "",
+      "role": "Design",
+      "tracks": "",
+      "id": 547352,
+      "resource_url": "https://api.discogs.com/artists/547352"
+    },
+    {
+      "name": "Mark McGuire",
+      "anv": "",
+      "join": "",
+      "role": "Engineer",
+      "tracks": "",
+      "id": 78275,
+      "resource_url": "https://api.discogs.com/artists/78275"
+    },
+    {
+      "name": "Mike Duffy",
+      "anv": "",
+      "join": "",
+      "role": "Engineer",
+      "tracks": "",
+      "id": 95941,
+      "resource_url": "https://api.discogs.com/artists/95941"
+    },
+    {
+      "name": "Miles Showell",
+      "anv": "MS",
+      "join": "",
+      "role": "Lacquer Cut By",
+      "tracks": "",
+      "id": 383408,
+      "resource_url": "https://api.discogs.com/artists/383408"
+    },
+    {
+      "name": "Pete Hammond",
+      "anv": "Mixmaster Pete Hammond",
+      "join": "",
+      "role": "Mixed By",
+      "tracks": "",
+      "id": 34067,
+      "resource_url": "https://api.discogs.com/artists/34067"
+    },
+    {
+      "name": "Stock, Aitken & Waterman",
+      "anv": "Stock / Aitken / Waterman",
+      "join": "",
+      "role": "Producer, Written-By",
+      "tracks": "",
+      "id": 20942,
+      "resource_url": "https://api.discogs.com/artists/20942"
+    }
+  ],
+  "images": [
+    {
+      "type": "primary",
+      "uri": "https://i.discogs.com/-DPFA5hKT8i91jnjn4rLB1zSiuUBFTrGWspu1TpLV30/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjEy/LmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/-DPFA5hKT8i91jnjn4rLB1zSiuUBFTrGWspu1TpLV30/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjEy/LmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/HG2xChKN-rIHHSfgL53W9z2vJWeFknfevpOMwSHtIaM/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjEy/LmpwZWc.jpeg",
+      "width": 600,
+      "height": 600
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/OWpTvsxMTH_LKyKfVm9VwnejWED-PDaweQLLpP85sw0/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjI4/LmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/OWpTvsxMTH_LKyKfVm9VwnejWED-PDaweQLLpP85sw0/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjI4/LmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/tAcGENSjy6SkScrHuPEu3rdOb_9S2zR-ubeaHj5dxRI/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjI4/LmpwZWc.jpeg",
+      "width": 600,
+      "height": 600
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/GQJ67saFtqGZWcuPGvRldpsQ8QdiSDcob9yeLnyvfzo/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjMz/LmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/GQJ67saFtqGZWcuPGvRldpsQ8QdiSDcob9yeLnyvfzo/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjMz/LmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/2Bas-uaVWd9S3JTUhGREpiYSG-MCNc0ntgi_oPjJXds/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjMz/LmpwZWc.jpeg",
+      "width": 600,
+      "height": 600
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/cMqrTKVAQriVfa4UGEXjTFD9pdCo_isHBs1KANNc6KE/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjM4/LmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/cMqrTKVAQriVfa4UGEXjTFD9pdCo_isHBs1KANNc6KE/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjM4/LmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/Ai9QPh87GFSS2DNSJ3JRdKaLXtxT4NrnN1LyrMX3Qi0/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjM4/LmpwZWc.jpeg",
+      "width": 600,
+      "height": 600
+    }
+  ],
+  "thumb": "https://i.discogs.com/HG2xChKN-rIHHSfgL53W9z2vJWeFknfevpOMwSHtIaM/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTI0OTUw/NC0xMzM0NTkyMjEy/LmpwZWc.jpeg",
+  "estimated_weight": 230,
+  "blocked_from_sale": false,
+  "is_offensive": false
+}

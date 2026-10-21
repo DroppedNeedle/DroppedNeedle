@@ -40,6 +40,8 @@ enum Provider {
     AudioDbAlbumMbid,
     AudioDbArtistSearch,
     AudioDbAlbumSearch,
+    DiscogsRelease(&'static str),
+    DiscogsSearch,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -266,6 +268,30 @@ const ROWS: &[Row] = &[
         body: include_str!("../fixtures/audiodb/search_album_found.json"),
         identity: "/album/0/idAlbum",
     },
+    Row {
+        name: "discogs /releases/{id}, release id (7 inch)",
+        provider: Provider::DiscogsRelease("249504"),
+        body: include_str!("../fixtures/discogs/release_249504.json"),
+        identity: "/id",
+    },
+    Row {
+        name: "discogs /releases/{id}, release id (CD with index rows)",
+        provider: Provider::DiscogsRelease("3562468"),
+        body: include_str!("../fixtures/discogs/release_3562468.json"),
+        identity: "/id",
+    },
+    Row {
+        name: "discogs /database/search, hit list",
+        provider: Provider::DiscogsSearch,
+        body: include_str!("../fixtures/discogs/search_found.json"),
+        identity: "/results",
+    },
+    Row {
+        name: "discogs /database/search, hit id",
+        provider: Provider::DiscogsSearch,
+        body: include_str!("../fixtures/discogs/search_found.json"),
+        identity: "/results/0/id",
+    },
 ];
 
 /// Serves `body` from the provider's address and reads it through the
@@ -485,6 +511,48 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .search_album("", "Radiohead", "OK Computer", PRIORITY)
                 .await?;
             Ok(album.is_some())
+        }
+        Provider::DiscogsRelease(release_id) => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer(
+                &format!("http://fake/discogs/releases/{release_id}"),
+                200,
+                &[],
+                body.as_bytes().to_vec(),
+            );
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    discogs: "http://fake/discogs".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let release = providers
+                .discogs
+                .get_release(release_id, 1.0, PRIORITY)
+                .await?;
+            Ok(release.is_some())
+        }
+        Provider::DiscogsSearch => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer(
+                "http://fake/discogs/database/search",
+                200,
+                &[],
+                body.as_bytes().to_vec(),
+            );
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    discogs: "http://fake/discogs".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let candidates = providers
+                .discogs
+                .search_releases("Nirvana Nevermind", 5, 1.0, PRIORITY)
+                .await?;
+            Ok(!candidates.is_empty())
         }
     }
 }

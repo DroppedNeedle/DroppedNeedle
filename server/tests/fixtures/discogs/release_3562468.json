@@ -1,0 +1,689 @@
+{
+  "id": 3562468,
+  "status": "Accepted",
+  "year": 0,
+  "resource_url": "https://api.discogs.com/releases/3562468",
+  "uri": "https://www.discogs.com/release/3562468-J-S-Bach-Glenn-Gould-Goldberg-Variations-BWV-988-The-Historic-1955-Debut-Recording",
+  "artists": [
+    {
+      "name": "Johann Sebastian Bach",
+      "anv": "J. S. Bach",
+      "join": ",",
+      "role": "",
+      "tracks": "",
+      "id": 95537,
+      "resource_url": "https://api.discogs.com/artists/95537",
+      "thumbnail_url": "https://i.discogs.com/-_zVaRMNL6wRFRhZGMFdZkb4gllke5-RPdHjYZ1A8gk/rs:fit/g:sm/q:90/h:591/w:480/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9BLTk1NTM3/LTEzOTkzODM0ODQt/NjQyOS5qcGVn.jpeg"
+    },
+    {
+      "name": "Glenn Gould",
+      "anv": "",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 517160,
+      "resource_url": "https://api.discogs.com/artists/517160",
+      "thumbnail_url": "https://i.discogs.com/pGfp6xcujWpvZ2OVacoMarwMd-lj_HMLLnBtsBCRykw/rs:fit/g:sm/q:90/h:600/w:480/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9BLTUxNzE2/MC0xNjYyNzQ2NzA3/LTI1NTQuanBlZw.jpeg"
+    }
+  ],
+  "artists_sort": "Johann Sebastian Bach, Glenn Gould",
+  "labels": [
+    {
+      "name": "Sony Classical",
+      "catno": "SMK 52594",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 865,
+      "resource_url": "https://api.discogs.com/labels/865",
+      "thumbnail_url": "https://i.discogs.com/x8nm99CedzI6B9ya2Zb58zEAuOqFiZf00sz2FwyY7Y0/rs:fit/g:sm/q:90/h:592/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTg2NS0x/NTAzNDE1NzAwLTM1/NDAucG5n.jpeg"
+    },
+    {
+      "name": "Sony Classical",
+      "catno": "SMK 52 594",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 865,
+      "resource_url": "https://api.discogs.com/labels/865",
+      "thumbnail_url": "https://i.discogs.com/x8nm99CedzI6B9ya2Zb58zEAuOqFiZf00sz2FwyY7Y0/rs:fit/g:sm/q:90/h:592/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTg2NS0x/NTAzNDE1NzAwLTM1/NDAucG5n.jpeg"
+    }
+  ],
+  "series": [
+    {
+      "name": "The Glenn Gould Edition",
+      "catno": "",
+      "entity_type": "2",
+      "entity_type_name": "Series",
+      "id": 279941,
+      "resource_url": "https://api.discogs.com/labels/279941",
+      "thumbnail_url": "https://i.discogs.com/7HbsNQxJo2mGAK5Qp0qrQOYJ3bsQUBvrgQA7BLUN3ug/rs:fit/g:sm/q:90/h:210/w:415/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI3OTk0/MS0xMzE2Mjg1Mzgx/LmpwZWc.jpeg"
+    }
+  ],
+  "companies": [
+    {
+      "name": "Sony Music",
+      "catno": "",
+      "entity_type": "9",
+      "entity_type_name": "Distributed By",
+      "id": 25487,
+      "resource_url": "https://api.discogs.com/labels/25487",
+      "thumbnail_url": "https://i.discogs.com/O7quXBkakkeeljzb5ApIswR86acqIHTQ3qzBrCHmqzA/rs:fit/g:sm/q:90/h:571/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI1NDg3/LTE3MDA5NDA1ODgt/MTYwNS5wbmc.jpeg"
+    },
+    {
+      "name": "Sony Music",
+      "catno": "",
+      "entity_type": "10",
+      "entity_type_name": "Manufactured By",
+      "id": 25487,
+      "resource_url": "https://api.discogs.com/labels/25487",
+      "thumbnail_url": "https://i.discogs.com/O7quXBkakkeeljzb5ApIswR86acqIHTQ3qzBrCHmqzA/rs:fit/g:sm/q:90/h:571/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI1NDg3/LTE3MDA5NDA1ODgt/MTYwNS5wbmc.jpeg"
+    },
+    {
+      "name": "Sony Music Entertainment Inc.",
+      "catno": "",
+      "entity_type": "13",
+      "entity_type_name": "Phonographic Copyright (p)",
+      "id": 19795,
+      "resource_url": "https://api.discogs.com/labels/19795",
+      "thumbnail_url": "https://i.discogs.com/B2EDpke7ohm-VDeJ_cbEc4SqoDnHHlIGRuJ08zdYMuQ/rs:fit/g:sm/q:90/h:98/w:212/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTE5Nzk1/LTE1MzA0NjY5Mzgt/ODc3Ni5qcGVn.jpeg"
+    },
+    {
+      "name": "Sony Classical GmbH",
+      "catno": "",
+      "entity_type": "14",
+      "entity_type_name": "Copyright (c)",
+      "id": 268689,
+      "resource_url": "https://api.discogs.com/labels/268689",
+      "thumbnail_url": "https://i.discogs.com/f8V7RI_u3Ujy4QR5tsvIL_aXmLh4_qQNE2qgQNdEq6Q/rs:fit/g:sm/q:90/h:345/w:390/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI2ODY4/OS0xNTY0NTczNzQw/LTU5NDcuanBlZw.jpeg"
+    },
+    {
+      "name": "Columbia 30th Street Studio",
+      "catno": "",
+      "entity_type": "23",
+      "entity_type_name": "Recorded At",
+      "id": 285739,
+      "resource_url": "https://api.discogs.com/labels/285739",
+      "thumbnail_url": "https://i.discogs.com/-gW5ijR6srAUUPJ_XUwTZrq1f2mMD0ZQvBS5KHEikg8/rs:fit/g:sm/q:90/h:431/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9MLTI4NTcz/OS0xMzYwOTE1NTc0/LTUzMjIuanBlZw.jpeg"
+    }
+  ],
+  "formats": [
+    {
+      "name": "CD",
+      "qty": "1",
+      "descriptions": [
+        "Album",
+        "Reissue",
+        "Remastered",
+        "Mono"
+      ]
+    }
+  ],
+  "data_quality": "Needs Vote",
+  "community": {
+    "have": 369,
+    "want": 58,
+    "rating": {
+      "count": 18,
+      "average": 4.61
+    },
+    "submitter": {
+      "username": "REDACTED",
+      "resource_url": "REDACTED"
+    },
+    "contributors": [
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      },
+      {
+        "username": "REDACTED",
+        "resource_url": "REDACTED"
+      }
+    ],
+    "data_quality": "Needs Vote",
+    "status": "Accepted"
+  },
+  "format_quantity": 1,
+  "date_added": "2012-04-25T11:45:29-07:00",
+  "date_changed": "2025-12-29T01:42:24-08:00",
+  "num_for_sale": 59,
+  "lowest_price": 1.45,
+  "master_id": 261784,
+  "master_url": "https://api.discogs.com/masters/261784",
+  "title": "Goldberg Variations BWV 988 (The Historic 1955 Debut Recording)",
+  "country": "Europe",
+  "notes": "Placeholder release notes.",
+  "identifiers": [
+    {
+      "type": "Barcode",
+      "value": "5 099705 259429",
+      "description": "Text"
+    },
+    {
+      "type": "Barcode",
+      "value": "5099705259429",
+      "description": "Scanned"
+    },
+    {
+      "type": "Label Code",
+      "value": "LC 6868"
+    },
+    {
+      "type": "Price Code",
+      "value": "CB 731"
+    },
+    {
+      "type": "SPARS Code",
+      "value": "ADD"
+    },
+    {
+      "type": "Other",
+      "value": "P. D.",
+      "description": "Public Domain Declaration"
+    },
+    {
+      "type": "Other",
+      "value": "CDM CX",
+      "description": "Format Code"
+    },
+    {
+      "type": "Other",
+      "value": "01-052594-10",
+      "description": "Sony manufacturing code"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "S0105259410-0101 135 Sony Music",
+      "description": "Variant 1"
+    },
+    {
+      "type": "Mastering SID Code",
+      "value": "IFPI L555",
+      "description": "Variant 1"
+    },
+    {
+      "type": "Mould SID Code",
+      "value": "IFPI 945S",
+      "description": "Variant 1"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "S0105259410-0101 135 A4 Sony Music",
+      "description": "Variant 2"
+    },
+    {
+      "type": "Mastering SID Code",
+      "value": "IFPI L555",
+      "description": "Variant 2"
+    },
+    {
+      "type": "Mould SID Code",
+      "value": "IFPI 94Z3",
+      "description": "Variant 2"
+    },
+    {
+      "type": "Matrix / Runout",
+      "value": "S0105259410-0101 145 A 3 Sony Music",
+      "description": "Variant 3"
+    },
+    {
+      "type": "Mastering SID Code",
+      "value": "IFPI L555",
+      "description": "Variant 3"
+    },
+    {
+      "type": "Mould SID Code",
+      "value": "IFPI 942R",
+      "description": "Variant 3"
+    }
+  ],
+  "videos": [],
+  "genres": [
+    "Classical"
+  ],
+  "styles": [
+    "Baroque",
+    "Theme With Variations",
+    "Piano"
+  ],
+  "tracklist": [
+    {
+      "position": "",
+      "type_": "index",
+      "title": "Goldberg Variations, BWV 988: Aria With 30 Variations = Goldberg-Variationen: Aria Mit 30 Veränderungen = Variations Goldberg: Aria Avec 30 Variations = Variazioni Goldberg: Aria Con 30 Variazioni (Clavier-Übung, Part = Teil = Partie = Parte IV)",
+      "duration": "",
+      "sub_tracks": [
+        {
+          "position": "1",
+          "type_": "track",
+          "title": "Aria",
+          "duration": "1:53"
+        },
+        {
+          "position": "2",
+          "type_": "track",
+          "title": "Variatio 1 A 1 Clav.",
+          "duration": "0:45"
+        },
+        {
+          "position": "3",
+          "type_": "track",
+          "title": "Variatio 2 A 1 Clav.",
+          "duration": "0:38"
+        },
+        {
+          "position": "4",
+          "type_": "track",
+          "title": "Variatio 3 A 1 Clav. Canone All'Unisono",
+          "duration": "0:55"
+        },
+        {
+          "position": "5",
+          "type_": "track",
+          "title": "Variatio 4 A 1 Clav.",
+          "duration": "0:29"
+        },
+        {
+          "position": "6",
+          "type_": "track",
+          "title": "Variatio 5 A 1 Ovvero 2 Clav.",
+          "duration": "0:37"
+        },
+        {
+          "position": "7",
+          "type_": "track",
+          "title": "Variatio 6 A 1 Clav. Canone Alla Seconda",
+          "duration": "0:35"
+        },
+        {
+          "position": "8",
+          "type_": "track",
+          "title": "Variatio 7 A 1 Ovvero 2 Clav.",
+          "duration": "1:08"
+        },
+        {
+          "position": "9",
+          "type_": "track",
+          "title": "Variatio 8 A 2 Clav.",
+          "duration": "0:45"
+        },
+        {
+          "position": "10",
+          "type_": "track",
+          "title": "Variatio 9 A 1 Clav. Canone Alla Terza",
+          "duration": "0:38"
+        },
+        {
+          "position": "11",
+          "type_": "track",
+          "title": "Variatio 10 A 1 Clav. Fughetta",
+          "duration": "0:43"
+        },
+        {
+          "position": "12",
+          "type_": "track",
+          "title": "Variatio 11 A 2 Clav.",
+          "duration": "0:55"
+        },
+        {
+          "position": "13",
+          "type_": "track",
+          "title": "Variatio 12 Canone Alla Quarta",
+          "duration": "0:56"
+        },
+        {
+          "position": "14",
+          "type_": "track",
+          "title": "Variatio 13 A 2 Clav.",
+          "duration": "2:10"
+        },
+        {
+          "position": "15",
+          "type_": "track",
+          "title": "Variatio 14 A 2 Clav.",
+          "duration": "0:59"
+        },
+        {
+          "position": "16",
+          "type_": "track",
+          "title": "Variatio 15 A 1 Clav. Canone Alla Quinta. Andante",
+          "duration": "2:17"
+        },
+        {
+          "position": "17",
+          "type_": "track",
+          "title": "Variatio 16 A 1 Clav. Ouverture",
+          "duration": "1:18"
+        },
+        {
+          "position": "18",
+          "type_": "track",
+          "title": "Variatio 17 A 2 Clav.",
+          "duration": "0:53"
+        },
+        {
+          "position": "19",
+          "type_": "track",
+          "title": "Variatio 18 A 1 Clav. Canone Alla Sesta",
+          "duration": "0:46"
+        },
+        {
+          "position": "20",
+          "type_": "track",
+          "title": "Variatio 19 A 1 Clav.",
+          "duration": "0:43"
+        },
+        {
+          "position": "21",
+          "type_": "track",
+          "title": "Variatio 20 A 2 Clav.",
+          "duration": "0:48"
+        },
+        {
+          "position": "22",
+          "type_": "track",
+          "title": "Variatio 21 Canone Alla Settima",
+          "duration": "1:42"
+        },
+        {
+          "position": "23",
+          "type_": "track",
+          "title": "Variatio 22 A 1 Clav. Alla Breve",
+          "duration": "0:42"
+        },
+        {
+          "position": "24",
+          "type_": "track",
+          "title": "Variatio 23 A 2 Clav.",
+          "duration": "0:55"
+        },
+        {
+          "position": "25",
+          "type_": "track",
+          "title": "Variatio 24 A 1 Clav. Canone All'Ottava",
+          "duration": "0:58"
+        },
+        {
+          "position": "26",
+          "type_": "track",
+          "title": "Variatio 25 A 2 Clav.",
+          "duration": "6:30"
+        },
+        {
+          "position": "27",
+          "type_": "track",
+          "title": "Variatio 26 A 2 Clav.",
+          "duration": "0:52"
+        },
+        {
+          "position": "28",
+          "type_": "track",
+          "title": "Variatio 27 A 2 Clav. Canone Alla Nona",
+          "duration": "0:50"
+        },
+        {
+          "position": "29",
+          "type_": "track",
+          "title": "Variatio 28 A 2 Clav.",
+          "duration": "1:11"
+        },
+        {
+          "position": "30",
+          "type_": "track",
+          "title": "Variatio 29 A 1 Ovvero 2 Clav.",
+          "duration": "1:00"
+        },
+        {
+          "position": "31",
+          "type_": "track",
+          "title": "Variatio 30 A 1 Clav. Quodlibet",
+          "duration": "0:49"
+        },
+        {
+          "position": "32",
+          "type_": "track",
+          "title": "Aria Da Capo",
+          "duration": "2:10"
+        }
+      ]
+    },
+    {
+      "position": "",
+      "type_": "heading",
+      "title": "From = Aus = De = Da: \"The Well Tempered Clavier II\" = »Das Wohltemperierte Clavier II« = «Le Clavier Bien Tempéré II» = \"Il Clavicembalo Ben Temperato II\"",
+      "duration": ""
+    },
+    {
+      "position": "33",
+      "type_": "track",
+      "title": "Fugue In F-Sharp Minor, BWV 883 = Fis-moll = En Fa Dièse Mineur = In Fa Diesis Minore",
+      "duration": "3:14"
+    },
+    {
+      "position": "34",
+      "type_": "track",
+      "title": "Fugue In E Major, BWV 878 = E-dur = En Mi Majeur = In Mi Maggiore",
+      "duration": "4:17"
+    }
+  ],
+  "extraartists": [
+    {
+      "name": "Johann Sebastian Bach",
+      "anv": "",
+      "join": "",
+      "role": "Composed By",
+      "tracks": "",
+      "id": 95537,
+      "resource_url": "https://api.discogs.com/artists/95537"
+    },
+    {
+      "name": "C.C. Garbers",
+      "anv": "",
+      "join": "",
+      "role": "Cover, Design",
+      "tracks": "",
+      "id": 1828071,
+      "resource_url": "https://api.discogs.com/artists/1828071"
+    },
+    {
+      "name": "Dan Weiner (2)",
+      "anv": "",
+      "join": "",
+      "role": "Cover, Photography By",
+      "tracks": "",
+      "id": 2235547,
+      "resource_url": "https://api.discogs.com/artists/2235547"
+    },
+    {
+      "name": "Michael Stegemann",
+      "anv": "",
+      "join": "",
+      "role": "Liner Notes",
+      "tracks": "",
+      "id": 1641633,
+      "resource_url": "https://api.discogs.com/artists/1641633"
+    },
+    {
+      "name": "Françoise Ferlan",
+      "anv": "",
+      "join": "",
+      "role": "Liner Notes [Traduction]",
+      "tracks": "",
+      "id": 1859307,
+      "resource_url": "https://api.discogs.com/artists/1859307"
+    },
+    {
+      "name": "Claudio Maria Perselli",
+      "anv": "Claudio M. Perselli",
+      "join": "",
+      "role": "Liner Notes [Traduzione]",
+      "tracks": "",
+      "id": 1630774,
+      "resource_url": "https://api.discogs.com/artists/1630774"
+    },
+    {
+      "name": "Stewart Spencer",
+      "anv": "",
+      "join": "",
+      "role": "Liner Notes [Translation]",
+      "tracks": "",
+      "id": 1639543,
+      "resource_url": "https://api.discogs.com/artists/1639543"
+    },
+    {
+      "name": "Dennis Drake",
+      "anv": "",
+      "join": "",
+      "role": "Mixed By [Remixed By], Engineer",
+      "tracks": "",
+      "id": 391812,
+      "resource_url": "https://api.discogs.com/artists/391812"
+    },
+    {
+      "name": "Ken Abeling",
+      "anv": "Kenneth Abeling",
+      "join": "",
+      "role": "Mixed By [Remixed By], Engineer",
+      "tracks": "",
+      "id": 780494,
+      "resource_url": "https://api.discogs.com/artists/780494"
+    },
+    {
+      "name": "Andrew Kazdin",
+      "anv": "",
+      "join": "",
+      "role": "Mixed By [Remixed By], Producer",
+      "tracks": "",
+      "id": 342540,
+      "resource_url": "https://api.discogs.com/artists/342540"
+    },
+    {
+      "name": "Don Hunstein",
+      "anv": "",
+      "join": "",
+      "role": "Photography By",
+      "tracks": "",
+      "id": 1905443,
+      "resource_url": "https://api.discogs.com/artists/1905443"
+    },
+    {
+      "name": "Glenn Gould",
+      "anv": "",
+      "join": "",
+      "role": "Piano",
+      "tracks": "",
+      "id": 517160,
+      "resource_url": "https://api.discogs.com/artists/517160"
+    },
+    {
+      "name": "Howard H. Scott",
+      "anv": "",
+      "join": "",
+      "role": "Producer",
+      "tracks": "",
+      "id": 839226,
+      "resource_url": "https://api.discogs.com/artists/839226"
+    }
+  ],
+  "images": [
+    {
+      "type": "primary",
+      "uri": "https://i.discogs.com/CWpCRnDL9xSmVRlSGNrRaop6fCJrF7JuIV80NDURssY/rs:fit/g:sm/q:90/h:592/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTMzNTM3NzYz/Ny5qcGVn.jpeg",
+      "resource_url": "https://i.discogs.com/CWpCRnDL9xSmVRlSGNrRaop6fCJrF7JuIV80NDURssY/rs:fit/g:sm/q:90/h:592/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTMzNTM3NzYz/Ny5qcGVn.jpeg",
+      "uri150": "https://i.discogs.com/CJQaMbf1YGocwcuWDgYJon3d6np3zzGdotyKqvxvddk/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTMzNTM3NzYz/Ny5qcGVn.jpeg",
+      "width": 600,
+      "height": 592
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/Bt3Jm5VaUsAJ68CnxGHdZaWpRaDvBgSCAO80ll-Utug/rs:fit/g:sm/q:90/h:473/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTMzNTM3NzY0/OS5qcGVn.jpeg",
+      "resource_url": "https://i.discogs.com/Bt3Jm5VaUsAJ68CnxGHdZaWpRaDvBgSCAO80ll-Utug/rs:fit/g:sm/q:90/h:473/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTMzNTM3NzY0/OS5qcGVn.jpeg",
+      "uri150": "https://i.discogs.com/BzZsEbxDzi1PHM66qgFurh3vpg5kPhRHYEneJbVPwGo/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTMzNTM3NzY0/OS5qcGVn.jpeg",
+      "width": 600,
+      "height": 473
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/oJ2gvkzs61rtlEKolYpH5QVoNnjM39ZrJ_8v9x3afB0/rs:fit/g:sm/q:90/h:590/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni0xOTkwLmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/oJ2gvkzs61rtlEKolYpH5QVoNnjM39ZrJ_8v9x3afB0/rs:fit/g:sm/q:90/h:590/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni0xOTkwLmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/515zC8AiEy-p2SCokLuTuxeuHFYG_FsBt7_8DXkJJ0g/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni0xOTkwLmpwZWc.jpeg",
+      "width": 600,
+      "height": 590
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/s07Il29Kcjd2Wx9ExPk9fSbWtkHTnofqFOHfkSm3Y_Y/rs:fit/g:sm/q:90/h:542/w:545/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/NS02ODI2LmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/s07Il29Kcjd2Wx9ExPk9fSbWtkHTnofqFOHfkSm3Y_Y/rs:fit/g:sm/q:90/h:542/w:545/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/NS02ODI2LmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/fss966pQZddO2P59SP_cYIghV7ZAp-o3ZLCKJzOxOKU/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/NS02ODI2LmpwZWc.jpeg",
+      "width": 545,
+      "height": 542
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/HyNgvRM_HJMVnNTR1hzfhmqFOd7SRmXi6NRjpdvD128/rs:fit/g:sm/q:90/h:597/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni02MTM0LmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/HyNgvRM_HJMVnNTR1hzfhmqFOd7SRmXi6NRjpdvD128/rs:fit/g:sm/q:90/h:597/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni02MTM0LmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/8F6o5nlEXPxJGK2QGomppfsZFxVq609ltrPusJ-bT0I/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni02MTM0LmpwZWc.jpeg",
+      "width": 600,
+      "height": 597
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/CZVl8Ul6RGNnxeg1JCmqEgdta8vBBT7RXdM67T2-y6k/rs:fit/g:sm/q:90/h:527/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni00MTAzLmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/CZVl8Ul6RGNnxeg1JCmqEgdta8vBBT7RXdM67T2-y6k/rs:fit/g:sm/q:90/h:527/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni00MTAzLmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/-YM5TxFembL_0ZI_JyJCfJmvrjuVQFzRt-GEye4m7qI/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni00MTAzLmpwZWc.jpeg",
+      "width": 600,
+      "height": 527
+    },
+    {
+      "type": "secondary",
+      "uri": "https://i.discogs.com/Qa6FKQ8snyT-trhvSJkTfBBT6dp93gGFuJ7WwY2if60/rs:fit/g:sm/q:90/h:330/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni00NzE0LmpwZWc.jpeg",
+      "resource_url": "https://i.discogs.com/Qa6FKQ8snyT-trhvSJkTfBBT6dp93gGFuJ7WwY2if60/rs:fit/g:sm/q:90/h:330/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni00NzE0LmpwZWc.jpeg",
+      "uri150": "https://i.discogs.com/HbF1LFqi84Vg4Ok--5YPUUp2gaiAXYJTb-AzWuf6DDE/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTc2NzAwMTMx/Ni00NzE0LmpwZWc.jpeg",
+      "width": 600,
+      "height": 330
+    }
+  ],
+  "thumb": "https://i.discogs.com/CJQaMbf1YGocwcuWDgYJon3d6np3zzGdotyKqvxvddk/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM1NjI0/NjgtMTMzNTM3NzYz/Ny5qcGVn.jpeg",
+  "estimated_weight": 85,
+  "blocked_from_sale": false,
+  "is_offensive": false
+}
