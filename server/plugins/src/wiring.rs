@@ -1,4 +1,4 @@
-//! Plugins bundle: host, routes, scrobble backend, tick loops.
+//! Plugins bundle: host, routes, tick loops.
 //!
 //! [`new_host`] builds the [`PluginHost`] early in boot so the flows that
 //! raise events or look up plugin sources (playback, acquisition,
@@ -23,19 +23,12 @@ use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::mount::Routes;
 use droppedneedle_kernel::platform::Platform;
 
-use super::handlers::{
-    ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, plugin_routes, scrobble_routes,
-};
+use super::handlers::{ExtRateLimiter, PluginsDeps, plugin_routes};
 use super::host::PluginHost;
 use super::install::{GitHubHosts, ReqwestFetcher, ZipUnpacker};
 use super::process::ProcessLauncher;
 use super::runtime::PluginLauncher;
-use super::scrobble::{
-    ListenBrainzLinkStore, NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsStore,
-    SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
-};
 use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE, TickLoopSync, TickStoreKind};
-use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 
 /// The Python helper module, shipped inside the binary.
 const PYTHON_SDK: &str = include_str!("../../../sdk/python/droppedneedle_plugin.py");
@@ -118,7 +111,6 @@ impl Drop for ScratchGuard {
 pub struct PluginsSetup {
     host: Arc<PluginHost>,
     plugins: PluginsDeps,
-    scrobble: ScrobbleHttpDeps,
     ticks: Arc<PluginTickLoops<TickStoreKind>>,
     #[cfg(any(test, feature = "test-support"))]
     _scratch: Option<Arc<ScratchGuard>>,
@@ -126,45 +118,32 @@ pub struct PluginsSetup {
 
 impl PluginsSetup {
     /// Bind the production seams over a host from [`new_host`] and the
-    /// tick store it was given: SQLite scrobble stores, the ListenBrainz
-    /// client as the link verifier, the HTTP fetcher, and tick loops over the shared loop supervisor. Loads
-    /// the host, which starts the enabled plugins.
+    /// tick store it was given: the HTTP fetcher, and tick loops over the
+    /// shared loop supervisor. Loads the host, which starts the enabled
+    /// plugins.
     pub fn build(
         platform: &Platform,
         host: Arc<PluginHost>,
         ticks: TickStoreKind,
         github: GitHubHosts,
-        listenbrainz: ListenBrainzClient,
     ) -> Self {
-        let db = &platform.db;
         Self::assemble(
             host,
             platform.http.shared().clone(),
             github,
-            listenbrainz,
             platform.supervisor.clone(),
             ticks,
-            Arc::new(SqliteScrobblePrefsStore::new(db.clone())),
-            Arc::new(SqliteListenBrainzLinkStore::new(
-                db.clone(),
-                platform.crypto.clone(),
-            )),
         )
     }
 
     /// Test bundle: scratch config store and plugins directory, fake
-    /// plugin runtimes (no subprocesses), memory tick and scrobble stores,
-    /// `listenbrainz` as the verifier, and tick loops on the caller's
-    /// supervisor.
+    /// plugin runtimes (no subprocesses), a memory tick store, and tick
+    /// loops on the caller's supervisor.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(
-        supervisor: Supervisor,
-        listenbrainz: ListenBrainzClient,
-    ) -> Result<Self, String> {
+    pub fn for_tests(supervisor: Supervisor) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         use super::fakes::FakeLauncher;
-        use super::scrobble::{MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore};
         use droppedneedle_kernel::http_client::HttpClientFactory;
         use droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore;
         use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
@@ -179,14 +158,10 @@ impl PluginsSetup {
             std::process::id()
         ));
         let scratch = Arc::new(ScratchGuard(dir.clone()));
-        // `Crypto` is not cloneable, so the store and the link sealer each
-        // open the same test key; both instances seal identically.
         let config = Arc::new(ConfigStore::scratch(
             &dir,
             Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?,
         )?);
-        let crypto =
-            Arc::new(Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?);
         let ticks = TickStoreKind::Memory(MemoryTickStore::new());
         let host = PluginHost::new(
             dir.join("plugins"),
@@ -202,28 +177,21 @@ impl PluginsSetup {
                 api: super::install::API_BASE.to_owned(),
                 codeload: super::install::CODELOAD_BASE.to_owned(),
             },
-            listenbrainz,
             supervisor,
             ticks,
-            Arc::new(MemoryScrobblePrefsStore::new()),
-            Arc::new(MemoryListenBrainzLinkStore::new(crypto)),
         );
         setup._scratch = Some(scratch);
         Ok(setup)
     }
 
-    /// Assemble the bundle from its parts. Production passes the SQLite
-    /// stores, tests the memory ones; everything else is identical.
-    #[allow(clippy::too_many_arguments)]
+    /// Assemble the bundle from its parts, the same for production and
+    /// tests.
     fn assemble(
         host: Arc<PluginHost>,
         http: reqwest::Client,
         github: GitHubHosts,
-        listenbrainz: ListenBrainzClient,
         supervisor: Supervisor,
         ticks: TickStoreKind,
-        prefs: Arc<dyn ScrobblePrefsStore>,
-        links: Arc<dyn ListenBrainzLinkStore>,
     ) -> Self {
         host.load_all();
         let ticks = Arc::new(PluginTickLoops::new(supervisor, ticks, TICK_CANCEL_GRACE));
@@ -236,42 +204,13 @@ impl PluginsSetup {
             tick_sync: Arc::clone(&ticks) as Arc<dyn TickLoopSync>,
             ext_limiter: Arc::new(ExtRateLimiter::new()),
         };
-        let scrobble = ScrobbleHttpDeps {
-            deps: ScrobbleDeps::new(
-                prefs,
-                links,
-                Arc::new(listenbrainz),
-                Arc::new(NoopMixApprovalHook),
-            ),
-            mix_state: Arc::new(StaticMixState),
-        };
         Self {
             host,
             plugins,
-            scrobble,
             ticks,
             #[cfg(any(test, feature = "test-support"))]
             _scratch: None,
         }
-    }
-
-    /// Send saved `now_playing_visibility` changes to the live presence
-    /// feed so a user going offline or hiding the track disappears at once.
-    pub fn with_presence(mut self, hook: Arc<dyn super::scrobble::VisibilityHook>) -> Self {
-        self.scrobble.deps.visibility_hook = hook;
-        self
-    }
-
-    /// Route the personal-mix toggle and its grant state through the
-    /// requests service's approval queue.
-    pub fn with_mix_grants(
-        mut self,
-        hook: Arc<dyn super::scrobble::MixApprovalHook>,
-        state: Arc<dyn super::scrobble::MixStateReader>,
-    ) -> Self {
-        self.scrobble.deps.mix_hook = hook;
-        self.scrobble.mix_state = state;
-        self
     }
 
     /// The plugin host, for dispatches outside the route layer.
@@ -287,20 +226,14 @@ impl PluginsSetup {
     }
 }
 
-/// The plugin and scrobble routes. Admin-only routes are in the admin
-/// group and also take the `Admin` extractor.
+/// The plugin routes. Admin-only routes are in the admin group and also
+/// take the `Admin` extractor.
 pub fn routes() -> Routes<PluginsSetup> {
-    plugin_routes().merge(scrobble_routes())
+    plugin_routes()
 }
 
 impl FromRef<PluginsSetup> for PluginsDeps {
     fn from_ref(setup: &PluginsSetup) -> Self {
         setup.plugins.clone()
-    }
-}
-
-impl FromRef<PluginsSetup> for ScrobbleHttpDeps {
-    fn from_ref(setup: &PluginsSetup) -> Self {
-        setup.scrobble.clone()
     }
 }

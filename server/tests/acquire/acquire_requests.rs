@@ -18,10 +18,8 @@ use droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
-use droppedneedle_plugins::scrobble::{
-    MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,
-    ScrobblePrefsStore as _,
-};
+use droppedneedle_media::playback::listening::{ListeningStore, PrefsPatch};
+use droppedneedle_media::playback::listening_routes::MixGrants as _;
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
@@ -819,7 +817,11 @@ impl MixSources for FakeMix {
 #[tokio::test]
 async fn personal_mix_grant_build_and_refresh() {
     let (mut state, db, dispatch) = setup().await;
-    let prefs = Arc::new(MemoryScrobblePrefsStore::new());
+    let prefs = ListeningStore::new(
+        db.db().clone(),
+        Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone()));
     let builder = Arc::new(PersonalMixBuilder::new(
         Arc::new(FakeMix),
@@ -832,19 +834,16 @@ async fn personal_mix_grant_build_and_refresh() {
     let hooks = MixGrantHooks::new(state.mixer.clone());
 
     prefs
-        .upsert(
+        .update_prefs(
             "u-ada",
-            &ScrobblePrefsPatch {
+            &PrefsPatch {
                 auto_request_personal_mix: Some(true),
-                ..ScrobblePrefsPatch::default()
+                ..PrefsPatch::default()
             },
         )
         .await;
-    hooks.on_auto_request_toggled("u-ada", "user", true).await;
-    assert_eq!(
-        hooks.auto_request_state("u-ada", "user", true).await,
-        "pending"
-    );
+    hooks.on_toggle("u-ada", Role::User, true).await;
+    assert_eq!(hooks.state("u-ada", Role::User, true).await, "pending");
     let approve = "/api/v3/requests/personal-mix-approvals/u-ada/approve";
     assert_eq!(
         call(&state, Method::POST, approve, Some(ADMIN), None)
@@ -852,10 +851,7 @@ async fn personal_mix_grant_build_and_refresh() {
             .1["success"],
         true
     );
-    assert_eq!(
-        hooks.auto_request_state("u-ada", "user", true).await,
-        "approved"
-    );
+    assert_eq!(hooks.state("u-ada", Role::User, true).await, "approved");
 
     let built = builder.build_for_user("u-ada", false).await.unwrap();
     assert_eq!(
@@ -880,7 +876,7 @@ async fn personal_mix_grant_build_and_refresh() {
         true
     );
     assert!(
-        !prefs.get("u-ada").await.auto_request_personal_mix,
+        !prefs.prefs("u-ada").await.auto_request_personal_mix,
         "revoke turns the toggle off"
     );
 

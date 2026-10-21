@@ -17,7 +17,7 @@ use super::wrapped::{
     WrappedGenre, WrappedLeaderboardEntry, WrappedTrack, WrappedUserSummary,
 };
 use droppedneedle_auth::users::stores::UserStore;
-use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
+use droppedneedle_media::playback::listening::ListenBrainzLinkStore;
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::{ProviderError, RequestPriority};
 

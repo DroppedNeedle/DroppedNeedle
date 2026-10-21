@@ -63,7 +63,7 @@ impl CompatPlayback {
         position_ms: Option<i64>,
         paused: bool,
     ) {
-        let Some(track) = self.deps.catalog.get_track(file_id) else {
+        let Some(track) = self.deps.store.get_track(file_id) else {
             return;
         };
         compat_heartbeat(
@@ -100,7 +100,7 @@ impl CompatPlayback {
     /// Record a scrobble. Unknown files are skipped; played_at defaults to
     /// now. Returns false when the service refused the report.
     pub fn scrobble(&self, file_id: &str, user_id: &str, played_at: Option<f64>) -> bool {
-        let Some(track) = self.deps.catalog.get_track(file_id) else {
+        let Some(track) = self.deps.store.get_track(file_id) else {
             return true;
         };
         let now = self.deps.clock.now_unix();

@@ -36,7 +36,7 @@ use crate::reads::discover::{
     ports::{BoxFuture, ChartsSource, ProviderFailure},
 };
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
+use droppedneedle_media::playback::listening::ListenBrainzLinkStore;
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials, TopItem};
 use droppedneedle_providers::listenbrainz::{
     ListenBrainzClient,

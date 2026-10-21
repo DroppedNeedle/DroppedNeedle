@@ -75,6 +75,7 @@ use droppedneedle_kernel::{
     runtime_config::{crypto::CryptoError, quota::QUOTA_FILE_NAME},
 };
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::{
     MediaSetup,
     remotes::{
@@ -86,7 +87,7 @@ use droppedneedle_media::{
     },
     stream::local_files::LibraryFiles,
 };
-use droppedneedle_plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup};
+use droppedneedle_plugins::wiring::PluginsSetup;
 use droppedneedle_providers::Providers;
 
 /// Why the server could not boot.
@@ -266,7 +267,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         cover_cache_max_bytes: config.cover_cache_max_bytes,
         http: http.shared().clone(),
         providers: providers.clone(),
-        listenbrainz_links: Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
+        listenbrainz_links: Arc::new(ListeningStore::new(
+            db.clone(),
+            crypto.clone(),
+            p.clock.clone(),
+        )),
         youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
         discover_warmer: config.discover_warmer,
     };
@@ -342,6 +347,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             cover_warm: Some(cover_warm),
         },
     );
+    // Your Weekly Mix: one builder behind the refresh route, the daily
+    // loop and the listening-settings toggle.
+    let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
+        acquire.requests.mixer.clone(),
+    ));
     let (media, media_workers) = MediaSetup::build(
         p,
         auth.users.clone(),
@@ -351,6 +361,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         plugin_host.clone(),
         outbound.plex_tv.clone(),
         &providers,
+        mix_hooks.clone(),
     )
     .map_err(stage("media setup"))?;
     // Startup recovery before serving traffic. Re-running after a clean
@@ -407,11 +418,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
     let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
-    // Your Weekly Mix: one builder behind the refresh route, the daily
-    // loop and the scrobble-settings toggle.
-    let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
-        acquire.requests.mixer.clone(),
-    ));
     let jobs = JobsSetup::build(
         p,
         runtime.checkpoint().clone(),
@@ -429,7 +435,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         droppedneedle_library::contrib::worker::SPEC,
         library.contrib_worker.handler(),
     )
-    .with_mixer(mix_hooks.clone())
+    .with_mixer(mix_hooks)
     .with_precache_sources_from(&reads, config_store)
     .with_cover_warm_jobs(&reads)
     .with_job(
@@ -489,15 +495,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
         pool: db.sqlx().clone(),
     }));
-    let plugins = PluginsSetup::build(
-        p,
-        plugin_host,
-        plugin_ticks,
-        outbound.plugin_hosts(),
-        providers.listenbrainz.clone(),
-    )
-    .with_presence(Arc::new(media.playback.presence.clone()))
-    .with_mix_grants(mix_hooks.clone(), mix_hooks);
+    let plugins = PluginsSetup::build(p, plugin_host, plugin_ticks, outbound.plugin_hosts());
     plugins.sync_ticks().await;
 
     // Attribution and scrobble drains: they deliver what is queued and end

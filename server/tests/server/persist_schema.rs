@@ -3865,6 +3865,7 @@ const REGISTRIES: &[(&str, StatementFiles)] = &[
     ("catalog", droppedneedle_catalog::statement_files),
     ("acquire", droppedneedle_acquire::statement_files),
     ("library", droppedneedle_library::statement_files),
+    ("media", droppedneedle_media::statement_files),
     ("tool", droppedneedle_tool::statement_files),
 ];
 

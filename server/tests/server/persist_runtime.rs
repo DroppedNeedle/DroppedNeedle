@@ -817,6 +817,8 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
     let history = PlaybackStore::new(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+        Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
     let (held_tx, held_rx) = std::sync::mpsc::channel();
     let holder_db = runtime.db().clone();

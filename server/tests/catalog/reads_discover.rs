@@ -410,7 +410,7 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     use droppedneedle_catalog::reads::discover::models::{ChartRange, ChartSource};
     use droppedneedle_catalog::reads::discover::ports::{ChartsSource as _, ProviderFailure};
     use droppedneedle_kernel::http_client::HttpClientFactory;
-    use droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore;
+    use droppedneedle_media::playback::listening::MemoryListenBrainzLinkStore;
     use droppedneedle_providers::{ProviderEndpoints, Providers, ReqwestWire};
 
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();

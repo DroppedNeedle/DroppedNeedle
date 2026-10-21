@@ -16,7 +16,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Serialize, de::DeserializeOwned};
-use sqlx::SqlitePool;
 
 use super::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
@@ -25,10 +24,10 @@ use super::sources::{
 use crate::reads::catalog::mapping::should_include_release;
 use crate::reads::catalog::upstream::{CatalogLastFm, UNREADABLE_NAMESPACE, Upstream, user_lastfm};
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
+use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
 use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolveError};
 use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
 use droppedneedle_media::remotes::models::SourceName;
-use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::lastfm::LastFmCredentials;
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
@@ -50,7 +49,7 @@ pub struct LiveSources {
     links: Arc<dyn ListenBrainzLinkStore>,
     pub(in crate::reads::discover::adapters) jellyfin: Arc<ConnectionResolver>,
     pub(in crate::reads::discover::adapters) http: reqwest::Client,
-    pool: SqlitePool,
+    listening: ListeningStore,
     popularity_down_until: Mutex<Option<Instant>>,
 }
 
@@ -62,7 +61,7 @@ impl LiveSources {
         http: reqwest::Client,
         links: Arc<dyn ListenBrainzLinkStore>,
         jellyfin: Arc<ConnectionResolver>,
-        pool: SqlitePool,
+        listening: ListeningStore,
     ) -> Self {
         Self {
             listenbrainz: providers.listenbrainz.clone(),
@@ -70,7 +69,7 @@ impl LiveSources {
             links,
             jellyfin,
             http,
-            pool,
+            listening,
             popularity_down_until: Mutex::new(None),
         }
     }
@@ -151,19 +150,17 @@ impl LiveSources {
         self.upstream.lastfm(user_id).await
     }
 
+    /// Where the user's listening is read from. Preferences that do not
+    /// read follow ListenBrainz, the default.
     async fn primary_source(&self, user_id: &str) -> MusicSource {
-        let stored: Option<(String,)> = sqlx::query_as(
-            "SELECT primary_music_source FROM user_listening_prefs WHERE user_id = ?1",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "listening prefs unreadable; discovery follows ListenBrainz");
-            None
-        });
-        match stored.as_ref().map(|(source,)| source.as_str()) {
-            Some("lastfm") => MusicSource::LastFm,
+        match self
+            .listening
+            .prefs(user_id)
+            .await
+            .primary_music_source
+            .as_str()
+        {
+            "lastfm" => MusicSource::LastFm,
             _ => MusicSource::ListenBrainz,
         }
     }

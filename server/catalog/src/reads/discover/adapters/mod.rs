@@ -32,10 +32,10 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, secret_sections::AdvancedSettings};
+use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
 use droppedneedle_media::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
 };
-use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::{
     Providers,
     youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
@@ -174,7 +174,11 @@ fn live_sources(
         inputs.http.clone(),
         inputs.listenbrainz_links.clone(),
         jellyfin,
-        inputs.db.sqlx().clone(),
+        ListeningStore::new(
+            inputs.db.clone(),
+            inputs.users.crypto.clone(),
+            inputs.clock.clone(),
+        ),
     )
 }
 

@@ -1,4 +1,4 @@
-//! Plugins, plus the ListenBrainz and scrobble settings backend.
+//! Plugins.
 //!
 //! Plugins work like community plugins in the *arr apps: an admin installs
 //! one from a GitHub repository, pinned to an exact commit, and enables it.
@@ -19,10 +19,6 @@
 //! - [`ticks`]: `scheduler` loops and plugin state on the jobs store.
 //! - [`handlers`], [`models`], [`error`]: the HTTP routes.
 //! - [`wiring`]: the `AppState` bundle.
-//!
-//! The scrobble half ([`scrobble`]) is the settings backend only: per-user
-//! ListenBrainz links (verify-then-store, token sealed) and scrobble
-//! preference reads and writes, over the baseline tables.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -39,6 +35,5 @@ pub mod models;
 pub mod process;
 pub mod protocol;
 pub mod runtime;
-pub mod scrobble;
 pub mod ticks;
 pub mod wiring;

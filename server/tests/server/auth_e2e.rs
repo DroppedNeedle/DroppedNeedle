@@ -131,6 +131,11 @@ impl E2e {
         self.runtime.db().sqlx()
     }
 
+    /// The scratch database, for stores a test builds over it.
+    pub(crate) fn db(&self) -> &droppedneedle_kernel::db::Db {
+        self.runtime.db()
+    }
+
     fn auth_setup(&self) -> AuthSetup {
         let p = &self.platform;
         let providers = Providers::unpaced_at(
@@ -208,6 +213,9 @@ impl E2e {
             crate::common::bundles::idle_host(p, library.fs.clone()),
             droppedneedle::bootstrap::Outbound::live().plex_tv,
             &providers,
+            Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
+                acquire.requests.mixer.clone(),
+            )),
         )
         .expect("media bundle builds");
         let compat = droppedneedle_compat::CompatSetup::build(
@@ -244,11 +252,9 @@ impl E2e {
         ))
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());
-        let plugins = droppedneedle_plugins::wiring::PluginsSetup::for_tests(
-            jobs.supervisor().clone(),
-            providers.listenbrainz.clone(),
-        )
-        .expect("test plugins bundle builds");
+        let plugins =
+            droppedneedle_plugins::wiring::PluginsSetup::for_tests(jobs.supervisor().clone())
+                .expect("test plugins bundle builds");
         let settings =
             droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(&p.ids))
                 .expect("test settings bundle builds")

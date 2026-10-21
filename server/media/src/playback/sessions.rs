@@ -348,7 +348,7 @@ pub fn stop_playback(
 
 /// Resolve the track or 404 (v2 `LibraryViewService.get_track` miss).
 fn resolve_track(deps: &PlaybackDeps, track_id: &str) -> Result<TrackInfo, ServiceError> {
-    deps.catalog
+    deps.store
         .get_track(track_id)
         .ok_or(ServiceError::TrackNotFound)
 }

@@ -34,10 +34,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, LastFmSettings, OidcConnection, PlexConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::PublicAddress;
-use droppedneedle_media::playback::forwarding::{
-    ScrobbleCredentials as _, StoredScrobbleCredentials,
-};
-use droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore;
+use droppedneedle_media::playback::sqlite::PlaybackStore;
 use ring::rand::SystemRandom;
 use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair, RsaPublicKeyComponents};
 use serde_json::{Value, json};
@@ -1027,15 +1024,14 @@ async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
 
     // Scrobbling signs with the instance pair, since Jane has none.
     let users = e2e.users();
-    let credentials = StoredScrobbleCredentials::new(
-        Arc::new(MemoryListenBrainzLinkStore::new(users.crypto.clone())),
-        users.lastfm.clone(),
-        users.lastfm_switch.clone(),
+    let store = PlaybackStore::new(
+        e2e.db().clone(),
+        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
         users.crypto.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
-    let signing = credentials
-        .lastfm_session(&jane_id)
-        .await
+    let signing = store
+        .lastfm_session(&jane_id, users.lastfm_switch.as_ref())
         .expect("jane scrobbles");
     assert_eq!(
         (

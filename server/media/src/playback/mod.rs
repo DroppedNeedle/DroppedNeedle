@@ -1,5 +1,5 @@
 //! Playback reporting: session lifecycle, native scrobbles, live
-//! presence, and MBID warmup loops.
+//! presence, MBID warmup loops, and each user's listening settings.
 //!
 //! The native player reports `start`/`progress`/`stop` for each play; the
 //! services resolve the track, keep the bounded session, write presence,
@@ -36,7 +36,9 @@
 //! [`routes`] puts every route in the user group, inside the session gate.
 //! `GET /now-playing` serves the live presence registry here, not the
 //! static snapshot in `reads::discover`. The warmup loops run on the loop
-//! supervisor once something starts them.
+//! supervisor once something starts them. [`listening_routes`] serves each
+//! user's scrobble preferences and ListenBrainz link, kept by
+//! [`listening::ListeningStore`].
 //!
 //! The 4s presence poll loop (v2 `run_now_playing_presence_loop`) lives in
 //! `jobs::presence`; `remotes::presence_feed` feeds it this registry and the
@@ -47,6 +49,8 @@
 pub mod error;
 pub mod forwarding;
 pub mod handlers;
+pub mod listening;
+pub mod listening_routes;
 pub mod models;
 pub mod plugin_events;
 pub mod ports;
@@ -56,6 +60,7 @@ pub mod reports;
 pub mod rules;
 pub mod scrobble_models;
 pub mod sessions;
+pub(crate) mod sql;
 pub mod sqlite;
 pub mod warmup;
 
@@ -73,22 +78,17 @@ use sessions::SessionStore;
 use sqlite::PlaybackStore;
 
 /// Everything the reporting services need, built once and cloned into
-/// handlers. Ports stay behind traits; the session, presence, and dedup
-/// state is process-local by design (v2 single-process invariant).
+/// handlers. The database side is the one concrete store; only what lies
+/// outside the process sits behind a trait. The session, presence, and
+/// dedup state is process-local by design (v2 single-process invariant).
 #[derive(Clone)]
 pub struct PlaybackDeps {
-    /// Track resolution for reporting.
-    pub catalog: Arc<PlaybackStore>,
+    /// Tracks, play history, listening preferences and display names.
+    pub store: Arc<PlaybackStore>,
     /// External scrobble sinks (Last.fm / ListenBrainz).
     pub sinks: Arc<dyn ScrobbleSinks>,
     /// Outbound remote attribution (Jellyfin / Navidrome / Plex).
     pub remotes: Arc<dyn RemoteReporters>,
-    /// Local play-history source of truth.
-    pub history: Arc<PlaybackStore>,
-    /// Per-user forwarding and visibility choices.
-    pub prefs: Arc<PlaybackStore>,
-    /// Display-name resolution for presence entries.
-    pub names: Arc<PlaybackStore>,
     /// Bounded playback sessions.
     pub sessions: SessionStore,
     /// Live presence registry.

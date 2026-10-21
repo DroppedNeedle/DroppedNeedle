@@ -85,8 +85,8 @@ use droppedneedle_kernel::runtime_config::sections::{
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
 use droppedneedle_library::operations::port::EditionPlans;
 use droppedneedle_library::publish::bin::DownloadTrees;
+use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
 use droppedneedle_plugins::host::PluginHost;
-use droppedneedle_plugins::scrobble::{ListenBrainzLinkStore, ScrobblePrefsStore};
 use droppedneedle_providers::Providers;
 use tokio::sync::watch;
 
@@ -605,7 +605,7 @@ pub struct AcquirePorts {
 struct MixInputs {
     providers: Arc<Providers>,
     links: Arc<dyn ListenBrainzLinkStore>,
-    prefs: Arc<dyn ScrobblePrefsStore>,
+    prefs: ListeningStore,
     playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
 }
 
@@ -760,20 +760,18 @@ impl AcquireSetup {
                     staging_root: staging_root.clone(),
                 }),
                 release_poll: ports.release_poll,
-                mix: Some(MixInputs {
-                    providers: ports.providers,
-                    links: Arc::new(
-                        droppedneedle_plugins::scrobble::SqliteListenBrainzLinkStore::new(
-                            platform.db.clone(),
-                            platform.crypto.clone(),
-                        ),
-                    ),
-                    prefs: Arc::new(
-                        droppedneedle_plugins::scrobble::SqliteScrobblePrefsStore::new(
-                            platform.db.clone(),
-                        ),
-                    ),
-                    playlists: collections.playlists.clone(),
+                mix: Some({
+                    let listening = ListeningStore::new(
+                        platform.db.clone(),
+                        platform.crypto.clone(),
+                        platform.clock.clone(),
+                    );
+                    MixInputs {
+                        providers: ports.providers,
+                        links: Arc::new(listening.clone()),
+                        prefs: listening,
+                        playlists: collections.playlists.clone(),
+                    }
                 }),
             },
             events.clone(),

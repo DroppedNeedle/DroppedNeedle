@@ -208,7 +208,8 @@ pub struct ReadsInputs {
     /// Shared provider limiters.
     pub providers: Arc<droppedneedle_providers::Providers>,
     /// Users' ListenBrainz links (your-top charts, wrapped).
-    pub listenbrainz_links: Arc<dyn droppedneedle_plugins::scrobble::ListenBrainzLinkStore>,
+    pub listenbrainz_links:
+        Arc<dyn droppedneedle_media::playback::listening::ListenBrainzLinkStore>,
     /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
     pub youtube_quota_path: std::path::PathBuf,
     /// Whether the discover warm cycle runs (`DISCOVER_WARMER_ENABLED`).

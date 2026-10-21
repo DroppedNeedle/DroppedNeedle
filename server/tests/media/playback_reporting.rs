@@ -170,6 +170,7 @@ struct Rig {
     sinks: Arc<FakeSinks>,
     remotes: Arc<FakeRemotes>,
     store: Arc<PlaybackStore>,
+    crypto: Arc<droppedneedle_kernel::runtime_config::Crypto>,
     scratch: ScratchDir,
 }
 
@@ -181,20 +182,22 @@ fn rig() -> Rig {
         .expect("seed connection")
         .execute_batch(SEED)
         .expect("the rig is seeded");
+    let clock = ManualClock::at(NOW * 1000);
+    let crypto = Arc::new(
+        droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+    );
     let store = Arc::new(PlaybackStore::new(
         droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens"),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+        crypto.clone(),
+        Arc::new(clock.clone()),
     ));
-    let clock = ManualClock::at(NOW * 1000);
     let sinks = Arc::new(FakeSinks::default());
     let remotes = Arc::new(FakeRemotes::default());
     let deps = PlaybackDeps {
-        catalog: store.clone(),
+        store: store.clone(),
         sinks: sinks.clone(),
         remotes: remotes.clone(),
-        history: store.clone(),
-        prefs: store.clone(),
-        names: store.clone(),
         sessions: SessionStore::new(),
         presence: PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new()),
         dedup: ScrobbleDedup::new(),
@@ -208,6 +211,7 @@ fn rig() -> Rig {
         sinks,
         remotes,
         store,
+        crypto,
         scratch,
     }
 }
@@ -262,6 +266,30 @@ impl Rig {
                 [user_id],
             )
             .expect("broken visibility stored");
+    }
+
+    /// Link ListenBrainz for the listener with `token`, sealed the way the
+    /// link store seals it.
+    fn link_listenbrainz(&self, user_id: &str, token: &str) {
+        let sealed = self
+            .crypto
+            .encrypt(&json!({"user_token": token, "username": "listener"}).to_string())
+            .expect("link seals");
+        self.link(user_id, "listenbrainz", &sealed);
+    }
+
+    /// Link Last.fm for the listener with their own key pair, each secret
+    /// sealed on its own as the Last.fm link flow stores them.
+    fn link_lastfm(&self, user_id: &str) {
+        let seal = |value: &str| self.crypto.encrypt(value).expect("secret seals");
+        let document = json!({
+            "configured": true,
+            "api_key": seal("lfm-key"),
+            "shared_secret": seal("lfm-secret"),
+            "username": "listener",
+            "session_key": seal("lfm-session"),
+        });
+        self.link(user_id, "lastfm", &document.to_string());
     }
 
     /// Link `service` for the listener, with `data` as the stored document.
@@ -551,7 +579,7 @@ async fn mixed_report_dedup_counts_live_once() {
     let rig = rig();
     let track = rig
         .deps
-        .catalog
+        .store
         .get_track("track-1")
         .expect("the track is in the catalog");
     let key = SessionKey {
@@ -744,34 +772,6 @@ async fn compat_now_playing_serves_full_sessions_only() {
 // Scrobble forwarding
 // ---------------------------------------------------------------------------
 
-/// One fixed ListenBrainz token per user.
-struct FixedToken;
-
-impl playback::forwarding::ScrobbleCredentials for FixedToken {
-    fn listenbrainz_token<'a>(
-        &'a self,
-        _user_id: &'a str,
-    ) -> droppedneedle_media::remotes::adapter::BoxFuture<'a, Option<String>> {
-        Box::pin(async { Some("lb-token".to_owned()) })
-    }
-
-    fn lastfm_session<'a>(
-        &'a self,
-        _user_id: &'a str,
-    ) -> droppedneedle_media::remotes::adapter::BoxFuture<
-        'a,
-        Option<playback::forwarding::LastFmSession>,
-    > {
-        Box::pin(async {
-            Some(playback::forwarding::LastFmSession {
-                api_key: "lfm-key".to_owned(),
-                shared_secret: "lfm-secret".to_owned(),
-                session_key: "lfm-session".to_owned(),
-            })
-        })
-    }
-}
-
 type SeenListens = Arc<std::sync::Mutex<Vec<(String, Value)>>>;
 
 async fn record_listen(
@@ -808,7 +808,7 @@ async fn a_scrobble_reaches_listenbrainz_once() {
     });
 
     let mut rig = rig();
-    rig.link("user-1", "listenbrainz", "sealed");
+    rig.link_listenbrainz("user-1", "lb-token");
     let (forwarder, rx) = ScrobbleForwarder::channel(
         rig.store.clone(),
         Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
@@ -821,12 +821,7 @@ async fn a_scrobble_reaches_listenbrainz_once() {
             ..droppedneedle_providers::ProviderEndpoints::closed()
         },
     );
-    let worker = ForwardWorker::new(
-        rx,
-        providers.listenbrainz.clone(),
-        providers.lastfm.clone(),
-        Arc::new(FixedToken),
-    );
+    let worker = ForwardWorker::new(rx, providers.listenbrainz.clone(), providers.lastfm.clone());
     let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
     rig.deps.sinks = Arc::new(forwarder);
     let request = ScrobbleSubmitRequest {
@@ -901,17 +896,12 @@ async fn a_switched_off_listenbrainz_keeps_the_listen_for_later() {
         },
     );
     let rig = rig();
-    rig.link("user-1", "listenbrainz", "sealed");
+    rig.link_listenbrainz("user-1", "lb-token");
     let (forwarder, rx) = ScrobbleForwarder::channel(
         rig.store.clone(),
         Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
     );
-    let worker = ForwardWorker::new(
-        rx,
-        providers.listenbrainz.clone(),
-        providers.lastfm.clone(),
-        Arc::new(FixedToken),
-    );
+    let worker = ForwardWorker::new(rx, providers.listenbrainz.clone(), providers.lastfm.clone());
     forwarder.submit_scrobble(
         "user-1",
         &ReportTrack {
@@ -978,17 +968,12 @@ async fn a_scrobble_last_fm_turns_away_for_now_is_delivered_later() {
         },
     );
     let rig = rig();
-    rig.link("user-1", "lastfm", r#"{"session_key": "sealed"}"#);
+    rig.link_lastfm("user-1");
     let (forwarder, rx) = ScrobbleForwarder::channel(
         rig.store.clone(),
         Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
     );
-    let worker = ForwardWorker::new(
-        rx,
-        providers.listenbrainz.clone(),
-        providers.lastfm.clone(),
-        Arc::new(FixedToken),
-    );
+    let worker = ForwardWorker::new(rx, providers.listenbrainz.clone(), providers.lastfm.clone());
     forwarder.submit_scrobble(
         "user-1",
         &ReportTrack {

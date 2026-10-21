@@ -1,11 +1,14 @@
-//! ListenBrainz linking and scrobble settings: connect verifies before it
-//! stores, rejected credentials store nothing, sealed tokens survive a
-//! reopen of the SQLite stores, the link lifecycle over HTTP, and the
+//! ListenBrainz linking and listening settings: connect verifies before it
+//! stores, rejected credentials store nothing, sealed tokens and partial
+//! preference saves survive a reopen of the database, the link lifecycle
+//! over HTTP, a saved visibility reaching the live feed, and the
 //! ListenBrainz client as the verifier against a scripted wire.
 
 use crate::common::ScratchDir;
 use crate::common::auth::{test_principal, with_test_principal};
-use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -13,53 +16,118 @@ use droppedneedle_auth::Principal;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
+use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
-use droppedneedle_plugins::fakes::FakeVerifier;
-use droppedneedle_plugins::handlers::{ScrobbleHttpDeps, scrobble_routes};
-use droppedneedle_plugins::scrobble::{
-    ListenBrainzLinkStore, MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore,
-    NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsPatch, ScrobblePrefsStore,
-    SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState, connect_listenbrainz,
+use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore, PrefsPatch};
+use droppedneedle_media::playback::listening_routes::{
+    ListeningDeps, MixGrants, connect_listenbrainz, routes, update_prefs,
 };
-use droppedneedle_providers::listenbrainz::VerifyOutcome;
+use droppedneedle_media::playback::presence::{PresenceRegistry, PresenceUpdate};
+use droppedneedle_providers::listenbrainz::{ListenBrainzVerifier, VerifyOutcome};
 use tower::ServiceExt as _;
+
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 fn test_crypto() -> Arc<Crypto> {
     Arc::new(Crypto::from_key_bytes(&[11u8; 32]).unwrap())
+}
+
+fn store_over(runtime: &DbRuntime) -> ListeningStore {
+    ListeningStore::new(
+        runtime.db().clone(),
+        test_crypto(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
 }
 
 fn user_session(user_id: &str) -> Principal {
     test_principal(user_id, Role::User, "session-1", SessionKind::Standard)
 }
 
-struct Rig {
-    deps: ScrobbleDeps,
-    http: ScrobbleHttpDeps,
-    verifier: Arc<FakeVerifier>,
+/// A ListenBrainz verifier that gives one answer to every pair.
+struct Verifier(Mutex<VerifyOutcome>);
+
+impl ListenBrainzVerifier for Verifier {
+    fn verify<'a>(&'a self, _username: &'a str, _token: &'a str) -> BoxFuture<'a, VerifyOutcome> {
+        let outcome = self.0.lock().unwrap().clone();
+        Box::pin(async move { outcome })
+    }
 }
 
-fn rig() -> Rig {
-    let verifier = Arc::new(FakeVerifier::valid());
-    let deps = ScrobbleDeps::new(
-        Arc::new(MemoryScrobblePrefsStore::new()),
-        Arc::new(MemoryListenBrainzLinkStore::new(test_crypto())),
-        verifier.clone(),
-        Arc::new(NoopMixApprovalHook),
-    );
-    let http = ScrobbleHttpDeps {
-        deps: ScrobbleDeps::new(
-            deps.prefs.clone(),
-            deps.links.clone(),
-            deps.verifier.clone(),
-            deps.mix_hook.clone(),
-        ),
-        mix_state: Arc::new(StaticMixState),
+/// The grant answered by role alone: no requests side behind it.
+struct RoleOnlyGrants;
+
+impl MixGrants for RoleOnlyGrants {
+    fn on_toggle<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _role: Role,
+        _enabled: bool,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn state<'a>(
+        &'a self,
+        _user_id: &'a str,
+        role: Role,
+        toggle_on: bool,
+    ) -> BoxFuture<'a, String> {
+        let state = match (toggle_on, role) {
+            (false, _) => "none",
+            (true, Role::Admin) => "approved",
+            (true, _) => "pending",
+        };
+        Box::pin(async move { state.to_owned() })
+    }
+}
+
+struct Rig {
+    deps: ListeningDeps,
+    verifier: Arc<Verifier>,
+    runtime: DbRuntime,
+    _scratch: ScratchDir,
+}
+
+/// The settings over a scratch database that knows `user-1`.
+async fn rig() -> Rig {
+    let scratch = ScratchDir::new("listening-settings");
+    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
+    mirror_user(&runtime, "user-1").await;
+    let verifier = Arc::new(Verifier(Mutex::new(VerifyOutcome {
+        valid: true,
+        message: "Successfully connected".to_owned(),
+        rate_limited: false,
+    })));
+    let deps = ListeningDeps {
+        store: store_over(&runtime),
+        verifier: verifier.clone(),
+        mix: Arc::new(RoleOnlyGrants),
+        presence: PresenceRegistry::new(EventHub::new()),
     };
     Rig {
         deps,
-        http,
         verifier,
+        runtime,
+        _scratch: scratch,
     }
+}
+
+/// Mirror a user row so FK-backed prefs and link writes accept it.
+async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
+    let user_id = user_id.to_owned();
+    runtime
+        .db()
+        .write(Lane::Foreground, "scrobble-test-seed", move |tx| {
+            tx.execute(
+                "INSERT INTO auth_users (id, display_name, role, created_at)
+                 VALUES (?1, ?1, 'user', '2026-01-01T00:00:00Z')",
+                rusqlite::params![user_id],
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("user row seeds");
 }
 
 async fn json_body(response: axum::response::Response) -> serde_json::Value {
@@ -71,29 +139,30 @@ async fn json_body(response: axum::response::Response) -> serde_json::Value {
 
 #[tokio::test]
 async fn connect_verifies_then_stores() {
-    let rig = rig();
+    let rig = rig().await;
     let link = connect_listenbrainz(&rig.deps, "user-1", "melody", "lb-token-1")
         .await
         .unwrap();
     assert_eq!(link.username, "melody");
-    let status = rig.deps.links.status("user-1").await.unwrap();
+    let status = rig.deps.store.status("user-1").await.unwrap();
     assert_eq!(status.username, "melody");
     assert_eq!(
-        rig.deps.links.token_for("user-1").await.as_deref(),
+        rig.deps.store.token_for("user-1").await.as_deref(),
         Some("lb-token-1")
     );
+    rig.runtime.shutdown().await;
 }
 
 #[tokio::test]
 async fn rejected_credentials_store_nothing() {
-    let rig = rig();
-    *rig.verifier.fallback.lock().unwrap() = VerifyOutcome {
+    let rig = rig().await;
+    *rig.verifier.0.lock().unwrap() = VerifyOutcome {
         valid: false,
         message: "Token invalid or expired".to_owned(),
         rate_limited: false,
     };
     let router = with_test_principal(
-        scrobble_routes().with_state(rig.http).into_router(),
+        routes().with_state(rig.deps.clone()).into_router(),
         user_session("user-1"),
     );
     let response = router
@@ -110,14 +179,15 @@ async fn rejected_credentials_store_nothing() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert!(!rig.deps.links.has_link("user-1").await);
+    assert!(!rig.deps.store.has_link("user-1").await);
+    rig.runtime.shutdown().await;
 }
 
 #[tokio::test]
 async fn link_lifecycle_over_http() {
-    let rig = rig();
+    let rig = rig().await;
     let router = with_test_principal(
-        scrobble_routes().with_state(rig.http).into_router(),
+        routes().with_state(rig.deps.clone()).into_router(),
         user_session("user-1"),
     );
     let response = router
@@ -179,13 +249,14 @@ async fn link_lifecycle_over_http() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    rig.runtime.shutdown().await;
 }
 
 #[tokio::test]
 async fn scrobble_routes_need_a_session() {
-    let rig = rig();
-    let response = scrobble_routes()
-        .with_state(rig.http)
+    let rig = rig().await;
+    let response = routes()
+        .with_state(rig.deps.clone())
         .into_router()
         .oneshot(
             Request::builder()
@@ -196,6 +267,7 @@ async fn scrobble_routes_need_a_session() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    rig.runtime.shutdown().await;
 }
 
 /// The link verifier is the one ListenBrainz client: a good token
@@ -206,7 +278,7 @@ async fn scrobble_routes_need_a_session() {
 async fn the_listenbrainz_client_verifies_links() {
     use droppedneedle_providers::Providers;
     use droppedneedle_providers::executor::ScriptedWire;
-    use droppedneedle_providers::listenbrainz::{DEFAULT_BASE_URL, ListenBrainzVerifier};
+    use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
 
     let wire = Arc::new(ScriptedWire::new());
     let token = format!("{DEFAULT_BASE_URL}/1/validate-token");
@@ -275,53 +347,32 @@ async fn the_listenbrainz_client_verifies_links() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// SQLite stores
-// ---------------------------------------------------------------------------
-
-/// Mirror a user row so FK-backed prefs and link writes accept it.
-async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
-    let user_id = user_id.to_owned();
-    runtime
-        .db()
-        .write(Lane::Foreground, "scrobble-test-seed", move |tx| {
-            tx.execute(
-                "INSERT INTO auth_users (id, display_name, role, created_at)
-                 VALUES (?1, ?1, 'user', '2026-01-01T00:00:00Z')",
-                rusqlite::params![user_id],
-            )?;
-            Ok::<_, droppedneedle_kernel::db::DbError>(())
-        })
-        .await
-        .expect("user row seeds");
-}
-
 #[tokio::test]
 async fn sqlite_prefs_partial_upsert_survives_reopen() {
     let scratch = ScratchDir::new("scrobble-prefs");
     let db_path = scratch.join("app.db");
     let runtime = crate::common::scratch_runtime(&db_path).await;
     mirror_user(&runtime, "user-1").await;
-    let store = SqliteScrobblePrefsStore::new(runtime.db().clone());
+    let store = store_over(&runtime);
 
-    // Unknown users read the defaults, like the memory store.
-    let prefs = store.get("user-1").await;
+    // A user who saved nothing reads the defaults.
+    let prefs = store.prefs("user-1").await;
     assert!(!prefs.scrobble_to_listenbrainz);
     assert!(prefs.navidrome_handles_external_scrobbles);
     assert_eq!(prefs.primary_music_source, "listenbrainz");
 
     // A partial patch lands; untouched fields keep their values.
     store
-        .upsert(
+        .update_prefs(
             "user-1",
-            &ScrobblePrefsPatch {
+            &PrefsPatch {
                 scrobble_to_listenbrainz: Some(true),
                 primary_music_source: Some("lastfm".to_owned()),
-                ..ScrobblePrefsPatch::default()
+                ..PrefsPatch::default()
             },
         )
         .await;
-    let prefs = store.get("user-1").await;
+    let prefs = store.prefs("user-1").await;
     assert!(prefs.scrobble_to_listenbrainz);
     assert_eq!(prefs.primary_music_source, "lastfm");
     assert!(prefs.navidrome_handles_external_scrobbles);
@@ -332,22 +383,22 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
     let runtime = open_runtime(&DbConfig::new(&db_path))
         .await
         .expect("runtime reopens");
-    let store = SqliteScrobblePrefsStore::new(runtime.db().clone());
-    let prefs = store.get("user-1").await;
+    let store = store_over(&runtime);
+    let prefs = store.prefs("user-1").await;
     assert!(prefs.scrobble_to_listenbrainz);
     assert_eq!(prefs.primary_music_source, "lastfm");
 
     // And a later patch merges over the persisted row, not the defaults.
     store
-        .upsert(
+        .update_prefs(
             "user-1",
-            &ScrobblePrefsPatch {
+            &PrefsPatch {
                 now_playing_visibility: Some("offline".to_owned()),
-                ..ScrobblePrefsPatch::default()
+                ..PrefsPatch::default()
             },
         )
         .await;
-    let prefs = store.get("user-1").await;
+    let prefs = store.prefs("user-1").await;
     assert_eq!(prefs.now_playing_visibility, "offline");
     assert!(prefs.scrobble_to_listenbrainz);
     runtime.shutdown().await;
@@ -359,7 +410,7 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     let db_path = scratch.join("app.db");
     let runtime = crate::common::scratch_runtime(&db_path).await;
     mirror_user(&runtime, "user-1").await;
-    let store = SqliteListenBrainzLinkStore::new(runtime.db().clone(), test_crypto());
+    let store = store_over(&runtime);
 
     assert!(!store.has_link("user-1").await);
     store
@@ -388,7 +439,7 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     let runtime = open_runtime(&DbConfig::new(&db_path))
         .await
         .expect("runtime reopens");
-    let store = SqliteListenBrainzLinkStore::new(runtime.db().clone(), test_crypto());
+    let store = store_over(&runtime);
     assert_eq!(
         store.status("user-1").await.expect("link reads").username,
         "melody"
@@ -403,11 +454,8 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
 /// out of the live feed at once, not after a restart.
 #[tokio::test]
 async fn saved_visibility_reaches_the_live_presence_feed() {
-    use droppedneedle_media::playback::presence::{PresenceRegistry, PresenceUpdate};
-    use droppedneedle_plugins::scrobble::update_prefs;
-
-    let registry = PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new());
-    let deps = rig().deps.with_visibility_hook(Arc::new(registry.clone()));
+    let rig = rig().await;
+    let registry = rig.deps.presence.clone();
     registry.update(
         PresenceUpdate {
             key: "user-1:web".to_owned(),
@@ -429,15 +477,16 @@ async fn saved_visibility_reaches_the_live_presence_feed() {
     );
     assert_eq!(registry.snapshot().len(), 1);
     update_prefs(
-        &deps,
+        &rig.deps,
         "user-1",
-        "user",
-        &ScrobblePrefsPatch {
+        Role::User,
+        &PrefsPatch {
             now_playing_visibility: Some("offline".to_owned()),
-            ..ScrobblePrefsPatch::default()
+            ..PrefsPatch::default()
         },
     )
     .await
     .unwrap();
     assert!(registry.snapshot().is_empty(), "offline hides the session");
+    rig.runtime.shutdown().await;
 }

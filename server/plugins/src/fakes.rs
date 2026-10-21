@@ -1,12 +1,11 @@
 //! Test doubles for plugins: scripted connections and launchers,
-//! fetchers, unpackers and verifiers.
+//! fetchers and unpackers.
 //!
 //! The real plugin runtime is a subprocess; tests that need one launch the
 //! shipped examples (see `tests/server/plugins_examples.rs`). These fakes cover
 //! the host logic around it: fan-out, publish guards, route clamps.
-//! The memory stores (`MemoryTickStore`, `MemoryScrobblePrefsStore`,
-//! `MemoryListenBrainzLinkStore`) are real implementations and double as
-//! their own fakes.
+//! The memory tick store (`MemoryTickStore`) is a real implementation and
+//! doubles as its own fake.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -20,7 +19,6 @@ use super::runtime::{
     BoxFuture, CallError, EventKind, HostServices, LaunchSpec, PluginConnection, PluginEvent,
     PluginLauncher, RuntimeState, RuntimeStatus, ScrobbleEvent,
 };
-use droppedneedle_providers::listenbrainz::{ListenBrainzVerifier, VerifyOutcome};
 
 /// Scripted plugin runtime. Answers each method from a script (default
 /// `null`), records every call, and can make host requests as the plugin.
@@ -296,54 +294,6 @@ impl ArchiveUnpacker for FakeUnpacker {
             return Err(reason);
         }
         Ok(self.entries.clone())
-    }
-}
-
-/// Scripted ListenBrainz verifier.
-pub struct FakeVerifier {
-    /// Outcome per (username, token) pair.
-    pub outcomes: Mutex<HashMap<(String, String), VerifyOutcome>>,
-    /// Fallback outcome.
-    pub fallback: Mutex<VerifyOutcome>,
-}
-
-impl FakeVerifier {
-    /// Verifier answering the fallback for every pair.
-    pub fn new(fallback: VerifyOutcome) -> Self {
-        Self {
-            outcomes: Mutex::new(HashMap::new()),
-            fallback: Mutex::new(fallback),
-        }
-    }
-
-    /// Always-valid verifier.
-    pub fn valid() -> Self {
-        Self::new(VerifyOutcome {
-            valid: true,
-            message: "Successfully connected".to_owned(),
-            rate_limited: false,
-        })
-    }
-}
-
-impl ListenBrainzVerifier for FakeVerifier {
-    fn verify<'a>(&'a self, username: &'a str, token: &'a str) -> BoxFuture<'a, VerifyOutcome> {
-        Box::pin(async move {
-            if let Ok(guard) = self.outcomes.lock()
-                && let Some(outcome) = guard.get(&(username.to_owned(), token.to_owned()))
-            {
-                return outcome.clone();
-            }
-            self.fallback
-                .lock()
-                .map(|guard| guard.clone())
-                .unwrap_or(VerifyOutcome {
-                    valid: false,
-                    message: "ListenBrainz is temporarily unavailable. Try again shortly."
-                        .to_owned(),
-                    rate_limited: false,
-                })
-        })
     }
 }
 

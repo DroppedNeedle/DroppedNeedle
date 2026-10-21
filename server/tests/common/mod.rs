@@ -206,7 +206,7 @@ pub fn reads_inputs(dir: &Path) -> droppedneedle_catalog::reads::ReadsInputs {
         http: http.shared().clone(),
         providers: Arc::new(droppedneedle_providers::Providers::closed()),
         listenbrainz_links: Arc::new(
-            droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore::new(Arc::new(
+            droppedneedle_media::playback::listening::MemoryListenBrainzLinkStore::new(Arc::new(
                 droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
                     .expect("test key"),
             )),

@@ -26,14 +26,13 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use droppedneedle_auth::users::stores::{LastFmStore, LastFmSwitch};
+use droppedneedle_auth::users::stores::LastFmSwitch;
 use droppedneedle_kernel::jobs::CancellationToken;
-use droppedneedle_kernel::runtime_config::crypto::Crypto;
-use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority};
 
+use super::listening::LastFmSession;
 use super::ports::{ReportTrack, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
 use super::scrobble_models::{AdditionalInfo, Listen, SubmitListens, TrackMetadata};
 use super::sqlite::PlaybackStore;
@@ -107,15 +106,19 @@ pub struct ScrobbleForwarder {
     lastfm_switch: Arc<dyn LastFmSwitch>,
 }
 
-/// The per-service queues the worker drains.
+/// The per-service queues the worker drains, with the store and switch
+/// its credentials come from.
 pub struct ForwardQueues {
     lastfm: tokio::sync::mpsc::Receiver<ForwardJob>,
     listenbrainz: tokio::sync::mpsc::Receiver<ForwardJob>,
+    store: Arc<PlaybackStore>,
+    lastfm_switch: Arc<dyn LastFmSwitch>,
 }
 
 impl ScrobbleForwarder {
-    /// Build the sink and the queues its worker drains. Last.fm forwards
-    /// also need the admin's Last.fm master switch on.
+    /// Build the sink and the queues its worker drains. Links and
+    /// credentials are read from `links`; Last.fm forwards also need the
+    /// admin's Last.fm master switch on.
     pub fn channel(
         links: Arc<PlaybackStore>,
         lastfm_switch: Arc<dyn LastFmSwitch>,
@@ -126,12 +129,14 @@ impl ScrobbleForwarder {
             Self {
                 lastfm_tx,
                 listenbrainz_tx,
-                links,
-                lastfm_switch,
+                links: links.clone(),
+                lastfm_switch: lastfm_switch.clone(),
             },
             ForwardQueues {
                 lastfm,
                 listenbrainz,
+                store: links,
+                lastfm_switch,
             },
         )
     }
@@ -210,106 +215,6 @@ impl ScrobbleSinks for ScrobbleForwarder {
     }
 }
 
-/// A user's Last.fm signing material. Never logged.
-pub struct LastFmSession {
-    /// API key: the user's own, else the instance key.
-    pub api_key: String,
-    /// Shared secret matching the API key.
-    pub shared_secret: String,
-    /// Session key from the link flow.
-    pub session_key: String,
-}
-
-/// Credentials the worker needs, looked up per job.
-pub trait ScrobbleCredentials: Send + Sync {
-    /// The user's ListenBrainz token, when linked.
-    fn listenbrainz_token<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> crate::remotes::adapter::BoxFuture<'a, Option<String>>;
-    /// The user's Last.fm session, when linked and Last.fm is switched on.
-    fn lastfm_session<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> crate::remotes::adapter::BoxFuture<'a, Option<LastFmSession>>;
-}
-
-/// Credentials from the stored links: ListenBrainz rows through the link
-/// store, Last.fm rows through the auth store (each secret sealed on its
-/// own).
-pub struct StoredScrobbleCredentials {
-    listenbrainz: Arc<dyn ListenBrainzLinkStore>,
-    lastfm: Arc<dyn LastFmStore>,
-    lastfm_switch: Arc<dyn LastFmSwitch>,
-    crypto: Arc<Crypto>,
-}
-
-impl StoredScrobbleCredentials {
-    /// Bind the link stores, the Last.fm master switch, and the key.
-    pub fn new(
-        listenbrainz: Arc<dyn ListenBrainzLinkStore>,
-        lastfm: Arc<dyn LastFmStore>,
-        lastfm_switch: Arc<dyn LastFmSwitch>,
-        crypto: Arc<Crypto>,
-    ) -> Self {
-        Self {
-            listenbrainz,
-            lastfm,
-            lastfm_switch,
-            crypto,
-        }
-    }
-}
-
-impl ScrobbleCredentials for StoredScrobbleCredentials {
-    fn listenbrainz_token<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> crate::remotes::adapter::BoxFuture<'a, Option<String>> {
-        Box::pin(async move { self.listenbrainz.token_for(user_id).await })
-    }
-
-    fn lastfm_session<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> crate::remotes::adapter::BoxFuture<'a, Option<LastFmSession>> {
-        Box::pin(async move {
-            if !self.lastfm_switch.enabled() {
-                return None;
-            }
-            let link = match self.lastfm.get(user_id).await {
-                Ok(link) => link?,
-                Err(error) => {
-                    tracing::warn!(?error, "last.fm link read failed; skipping the forward");
-                    return None;
-                }
-            };
-            let open = |sealed: Option<String>| -> Option<String> {
-                let plaintext = self.crypto.decrypt(sealed.as_deref()?).ok()?;
-                (!plaintext.is_empty()).then_some(plaintext)
-            };
-            let session_key = open(link.session_key_encrypted)?;
-            // The user's own key pair wins; without one, the session was
-            // granted to the instance pair the admin saved (v2 parity).
-            let (api_key, shared_secret) = match (
-                open(link.api_key_encrypted),
-                open(link.shared_secret_encrypted),
-            ) {
-                (Some(api_key), Some(shared_secret)) => (api_key, shared_secret),
-                _ => {
-                    let keys = self.lastfm_switch.instance_keys()?;
-                    (keys.api_key, keys.shared_secret)
-                }
-            };
-            Some(LastFmSession {
-                api_key,
-                shared_secret,
-                session_key,
-            })
-        })
-    }
-}
-
 /// How one delivery ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Delivery {
@@ -327,11 +232,13 @@ pub struct ForwardWorker {
     courier: Courier,
 }
 
-/// Makes the upstream calls; shared by both service lanes.
+/// Makes the upstream calls; shared by both service lanes. Credentials are
+/// read per job, so a link made or removed since the play counts.
 struct Courier {
     listenbrainz: ListenBrainzClient,
     lastfm: LastFmClient,
-    credentials: Arc<dyn ScrobbleCredentials>,
+    store: Arc<PlaybackStore>,
+    lastfm_switch: Arc<dyn LastFmSwitch>,
 }
 
 impl ForwardWorker {
@@ -341,16 +248,14 @@ impl ForwardWorker {
         queues: ForwardQueues,
         listenbrainz: ListenBrainzClient,
         lastfm: LastFmClient,
-        credentials: Arc<dyn ScrobbleCredentials>,
     ) -> Self {
-        Self {
-            queues,
-            courier: Courier {
-                listenbrainz,
-                lastfm,
-                credentials,
-            },
-        }
+        let courier = Courier {
+            listenbrainz,
+            lastfm,
+            store: queues.store.clone(),
+            lastfm_switch: queues.lastfm_switch.clone(),
+        };
+        Self { queues, courier }
     }
 
     /// Deliver both services' jobs side by side, each paced by its own
@@ -431,13 +336,16 @@ impl Courier {
     async fn deliver(&self, job: &ForwardJob) -> Delivery {
         match job.service {
             Service::ListenBrainz => {
-                let Some(token) = self.credentials.listenbrainz_token(&job.user_id).await else {
+                let Some(token) = self.store.listenbrainz_token(&job.user_id) else {
                     return Delivery::Drop("ListenBrainz is not linked".to_owned());
                 };
                 self.listenbrainz(job, &token).await
             }
             Service::LastFm => {
-                let Some(session) = self.credentials.lastfm_session(&job.user_id).await else {
+                let Some(session) = self
+                    .store
+                    .lastfm_session(&job.user_id, self.lastfm_switch.as_ref())
+                else {
                     return Delivery::Drop("Last.fm is not linked".to_owned());
                 };
                 self.lastfm(job, &session).await

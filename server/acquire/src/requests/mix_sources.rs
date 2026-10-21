@@ -13,7 +13,7 @@ use futures_util::future::BoxFuture;
 use sqlx::SqlitePool;
 
 use super::mix::MixSources;
-use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
+use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
@@ -172,7 +172,7 @@ pub fn live_builder(
     requests: &super::RequestsState,
     providers: &droppedneedle_providers::Providers,
     links: Arc<dyn ListenBrainzLinkStore>,
-    prefs: Arc<dyn droppedneedle_plugins::scrobble::ScrobblePrefsStore>,
+    prefs: ListeningStore,
     playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
     events: droppedneedle_kernel::events::EventHub,
 ) -> Arc<super::mix::PersonalMixBuilder> {

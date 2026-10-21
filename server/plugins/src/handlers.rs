@@ -19,7 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use droppedneedle_auth::{Admin, Principal, Role, User};
+use droppedneedle_auth::{Admin, Principal, User};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -33,17 +33,11 @@ use super::install::{
     resolve, stage,
 };
 use super::models::{
-    ConnectionStatus, ListenBrainzConnectRequest, PluginInfo, PluginInstallInfo,
-    PluginInstallPreview, PluginInstallRequest, PluginListResponse, PluginRefKind,
-    PluginRuntimeInfo, PluginSettingFieldInfo, PluginSourceUpdateRequest,
-    PluginSourceUpdateResponse, PluginSourcesResponse, PluginUpdateRequest, ScrobblePreferences,
-    ScrobblePreferencesUpdate, StatusMessage,
+    PluginInfo, PluginInstallInfo, PluginInstallPreview, PluginInstallRequest, PluginListResponse,
+    PluginRefKind, PluginRuntimeInfo, PluginSettingFieldInfo, PluginSourceUpdateRequest,
+    PluginSourceUpdateResponse, PluginSourcesResponse, PluginUpdateRequest, StatusMessage,
 };
 use super::runtime::PluginRouteBody;
-use super::scrobble::{
-    ConnectError, MixStateReader, PrefsError, ScrobbleDeps, ScrobblePrefsPatch,
-    connect_listenbrainz, disconnect_listenbrainz, get_prefs, update_prefs,
-};
 use super::ticks::TickLoopSync;
 
 /// Plugin-route dependencies.
@@ -63,29 +57,6 @@ pub struct PluginsDeps {
     pub tick_sync: Arc<dyn TickLoopSync>,
     /// `/ext/` rate limiter.
     pub ext_limiter: Arc<ExtRateLimiter>,
-}
-
-/// Scrobble-settings route dependencies.
-pub struct ScrobbleHttpDeps {
-    /// Scrobble settings service dependencies.
-    pub deps: ScrobbleDeps,
-    /// Standing-grant state reader.
-    pub mix_state: Arc<dyn MixStateReader>,
-}
-
-impl Clone for ScrobbleHttpDeps {
-    fn clone(&self) -> Self {
-        Self {
-            deps: ScrobbleDeps {
-                prefs: Arc::clone(&self.deps.prefs),
-                links: Arc::clone(&self.deps.links),
-                verifier: Arc::clone(&self.deps.verifier),
-                mix_hook: Arc::clone(&self.deps.mix_hook),
-                visibility_hook: Arc::clone(&self.deps.visibility_hook),
-            },
-            mix_state: Arc::clone(&self.mix_state),
-        }
-    }
 }
 
 fn map_install(error: InstallError) -> PluginError {
@@ -1025,161 +996,6 @@ async fn serve_panel_file(
 }
 
 // ---------------------------------------------------------------------------
-// Scrobble-settings routes
-// ---------------------------------------------------------------------------
-
-async fn prefs_response(deps: &ScrobbleHttpDeps, user_id: &str, role: Role) -> ScrobblePreferences {
-    let prefs = get_prefs(&deps.deps, user_id).await;
-    ScrobblePreferences {
-        scrobble_to_lastfm: prefs.scrobble_to_lastfm,
-        scrobble_to_listenbrainz: prefs.scrobble_to_listenbrainz,
-        navidrome_handles_external_scrobbles: prefs.navidrome_handles_external_scrobbles,
-        primary_music_source: prefs.primary_music_source,
-        now_playing_visibility: prefs.now_playing_visibility,
-        auto_request_personal_mix: prefs.auto_request_personal_mix,
-        auto_request_state: deps
-            .mix_state
-            .auto_request_state(user_id, role.as_str(), prefs.auto_request_personal_mix)
-            .await,
-    }
-}
-
-/// Read the caller's scrobble preferences.
-#[utoipa::path(
-    get,
-    tag = "plugins",
-    path = "/api/v3/me/scrobble-preferences",
-    responses(
-        (status = 200, description = "Scrobble preferences", body = ScrobblePreferences),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn get_scrobble_preferences(
-    State(deps): State<ScrobbleHttpDeps>,
-    User(user): User,
-) -> Json<ScrobblePreferences> {
-    Json(prefs_response(&deps, user.user_id(), user.role()).await)
-}
-
-/// Update the caller's scrobble preferences. Absent fields keep their
-/// stored values.
-#[utoipa::path(
-    put,
-    tag = "plugins",
-    path = "/api/v3/me/scrobble-preferences",
-    request_body = ScrobblePreferencesUpdate,
-    responses(
-        (status = 200, description = "Scrobble preferences", body = ScrobblePreferences),
-        (status = 400, description = "Unknown enum value"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn update_scrobble_preferences(
-    State(deps): State<ScrobbleHttpDeps>,
-    User(user): User,
-    ValidJson(body): ValidJson<ScrobblePreferencesUpdate>,
-) -> Result<Json<ScrobblePreferences>, ApiError> {
-    let patch = ScrobblePrefsPatch {
-        scrobble_to_lastfm: body.scrobble_to_lastfm,
-        scrobble_to_listenbrainz: body.scrobble_to_listenbrainz,
-        navidrome_handles_external_scrobbles: body.navidrome_handles_external_scrobbles,
-        primary_music_source: body.primary_music_source,
-        now_playing_visibility: body.now_playing_visibility,
-        auto_request_personal_mix: body.auto_request_personal_mix,
-    };
-    match update_prefs(&deps.deps, user.user_id(), user.role().as_str(), &patch).await {
-        Ok(_) => Ok(Json(
-            prefs_response(&deps, user.user_id(), user.role()).await,
-        )),
-        Err(PrefsError::InvalidValue(message)) => Err(ApiError::invalid_input(message)),
-    }
-}
-
-/// Link the caller's ListenBrainz account. The credential verifies first;
-/// only a verified pair stores.
-#[utoipa::path(
-    put,
-    tag = "plugins",
-    path = "/api/v3/me/connections/listenbrainz",
-    request_body = ListenBrainzConnectRequest,
-    responses(
-        (status = 200, description = "Link status", body = ConnectionStatus),
-        (status = 400, description = "Username required or credential rejected"),
-        (status = 401, description = "Not authenticated"),
-        (status = 429, description = "ListenBrainz is rate-limiting"),
-    )
-)]
-pub async fn connect_listenbrainz_route(
-    State(deps): State<ScrobbleHttpDeps>,
-    User(user): User,
-    ValidJson(body): ValidJson<ListenBrainzConnectRequest>,
-) -> Result<Json<ConnectionStatus>, ApiError> {
-    match connect_listenbrainz(&deps.deps, user.user_id(), &body.username, &body.user_token).await {
-        Ok(link) => Ok(Json(ConnectionStatus {
-            service: "listenbrainz".to_owned(),
-            enabled: true,
-            username: link.username,
-        })),
-        Err(ConnectError::UsernameRequired) => Err(ApiError::invalid_input(
-            "A ListenBrainz username is required",
-        )),
-        Err(ConnectError::RateLimited) => Err(ApiError::rate_limited(60)),
-        Err(ConnectError::Rejected(message)) => Err(ApiError::invalid_input(message)),
-        Err(ConnectError::StoreFailed(reason)) => Err(ApiError::internal(reason)),
-    }
-}
-
-/// Read the caller's ListenBrainz link status. Unlinked reads as missing.
-#[utoipa::path(
-    get,
-    tag = "plugins",
-    path = "/api/v3/me/connections/listenbrainz",
-    responses(
-        (status = 200, description = "Link status", body = ConnectionStatus),
-        (status = 401, description = "Not authenticated"),
-        (status = 404, description = "No link"),
-    )
-)]
-pub async fn listenbrainz_status(
-    State(deps): State<ScrobbleHttpDeps>,
-    User(user): User,
-) -> Result<Json<ConnectionStatus>, ApiError> {
-    match deps.deps.links.status(user.user_id()).await {
-        Some(link) => Ok(Json(ConnectionStatus {
-            service: "listenbrainz".to_owned(),
-            enabled: true,
-            username: link.username,
-        })),
-        None => Err(ApiError::not_found()),
-    }
-}
-
-/// Remove the caller's ListenBrainz link.
-#[utoipa::path(
-    delete,
-    tag = "plugins",
-    path = "/api/v3/me/connections/listenbrainz",
-    responses(
-        (status = 200, description = "Disconnect receipt", body = StatusMessage),
-        (status = 401, description = "Not authenticated"),
-        (status = 404, description = "No link"),
-    )
-)]
-pub async fn disconnect_listenbrainz_route(
-    State(deps): State<ScrobbleHttpDeps>,
-    User(user): User,
-) -> Result<Json<StatusMessage>, ApiError> {
-    if disconnect_listenbrainz(&deps.deps, user.user_id()).await {
-        Ok(Json(StatusMessage {
-            status: "ok".to_owned(),
-            message: "Disconnected listenbrainz".to_owned(),
-        }))
-    } else {
-        Err(ApiError::not_found())
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Routers
 // ---------------------------------------------------------------------------
 
@@ -1200,24 +1016,6 @@ where
         .admin(routes!(update_plugin, uninstall_plugin))
         .admin(routes!(plugin_panel_page))
         .user_at(routes!(plugin_ext_get, plugin_ext_post, plugin_ext_delete))
-}
-
-/// Every scrobble-settings route, for any signed-in user.
-pub fn scrobble_routes<S>() -> Routes<S>
-where
-    S: Clone + Send + Sync + 'static,
-    ScrobbleHttpDeps: FromRef<S>,
-{
-    Routes::new()
-        .user(routes!(
-            get_scrobble_preferences,
-            update_scrobble_preferences
-        ))
-        .user(routes!(
-            listenbrainz_status,
-            connect_listenbrainz_route,
-            disconnect_listenbrainz_route
-        ))
 }
 
 #[cfg(test)]

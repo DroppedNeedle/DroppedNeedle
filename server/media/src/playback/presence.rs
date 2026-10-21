@@ -323,13 +323,6 @@ impl PresenceRegistry {
     }
 }
 
-/// Saved visibility changes from the preferences route take effect live.
-impl droppedneedle_plugins::scrobble::VisibilityHook for PresenceRegistry {
-    fn on_visibility_changed(&self, user_id: &str, visibility: &str) {
-        self.set_visibility(user_id, visibility);
-    }
-}
-
 /// Privacy projection (v2 `_project`): upstream sessions have no owner
 /// setting and always show full; uncached owners redact fail-closed;
 /// offline owners vanish; hidden owners keep identity and progress with
@@ -417,7 +410,7 @@ fn write_heartbeat(
     track_file_id: Option<String>,
 ) {
     let now = deps.clock.now_unix();
-    let user_name = deps.names.display_name(user_id);
+    let user_name = deps.store.display_name(user_id);
     deps.presence.update(
         PresenceUpdate {
             key: presence_key(user_id, &request.device),
@@ -435,7 +428,7 @@ fn write_heartbeat(
             track_file_id,
         },
         now,
-        |owner| deps.prefs.visibility(owner),
+        |owner| deps.store.visibility(owner),
     );
 }
 
@@ -465,7 +458,7 @@ pub(super) fn write_session_presence(
     progress_ms: Option<i64>,
     now: i64,
 ) {
-    let user_name = deps.names.display_name(user_id);
+    let user_name = deps.store.display_name(user_id);
     deps.presence.update(
         PresenceUpdate {
             key: presence_key(user_id, device),
@@ -483,6 +476,6 @@ pub(super) fn write_session_presence(
             track_file_id: Some(track.track_id.clone()),
         },
         now,
-        |owner| deps.prefs.visibility(owner),
+        |owner| deps.store.visibility(owner),
     );
 }

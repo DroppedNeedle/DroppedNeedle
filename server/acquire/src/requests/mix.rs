@@ -34,7 +34,7 @@ use droppedneedle_catalog::reads::discover::models::QueueItemLight;
 use droppedneedle_kernel::events::{
     EventHub, PersonalMixRefreshed, UserNotice, model::new_event_id,
 };
-use droppedneedle_plugins::scrobble::{ScrobblePrefsPatch, ScrobblePrefsStore};
+use droppedneedle_media::playback::listening::{ListeningStore, PrefsPatch};
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
@@ -208,7 +208,7 @@ struct MixTrack {
 /// Builds and refreshes personal mixes.
 pub struct PersonalMixBuilder {
     sources: Arc<dyn MixSources>,
-    prefs: Arc<dyn ScrobblePrefsStore>,
+    prefs: ListeningStore,
     playlists: PlaylistStore,
     requests: RequestsState,
     events: EventHub,
@@ -221,7 +221,7 @@ impl PersonalMixBuilder {
     /// the builder, so it holds no mixer of its own.
     pub fn new(
         sources: Arc<dyn MixSources>,
-        prefs: Arc<dyn ScrobblePrefsStore>,
+        prefs: ListeningStore,
         playlists: PlaylistStore,
         requests: RequestsState,
         events: EventHub,
@@ -246,11 +246,11 @@ impl PersonalMixBuilder {
 
     /// Turn the user's auto-request intent off (after a reject or revoke).
     pub async fn clear_intent(&self, user_id: &str) {
-        let patch = ScrobblePrefsPatch {
+        let patch = PrefsPatch {
             auto_request_personal_mix: Some(false),
-            ..ScrobblePrefsPatch::default()
+            ..PrefsPatch::default()
         };
-        self.prefs.upsert(user_id, &patch).await;
+        self.prefs.update_prefs(user_id, &patch).await;
     }
 
     /// Display state of the user's standing grant
@@ -395,7 +395,7 @@ impl PersonalMixBuilder {
         let playlist_id = self
             .write_playlist(existing, user_id, &source_ref, &mix)
             .await?;
-        let requested = if self.prefs.get(user_id).await.auto_request_personal_mix
+        let requested = if self.prefs.prefs(user_id).await.auto_request_personal_mix
             && self.granted(user_id, role).await?
         {
             self.request_missing(user_id, role, name, &mix).await
@@ -829,31 +829,17 @@ impl MixGrantHooks {
     }
 }
 
-impl droppedneedle_plugins::scrobble::MixApprovalHook for MixGrantHooks {
-    fn on_auto_request_toggled<'a>(
-        &'a self,
-        user_id: &'a str,
-        role: &'a str,
-        enabled: bool,
-    ) -> BoxFuture<'a, ()> {
+impl droppedneedle_media::playback::listening_routes::MixGrants for MixGrantHooks {
+    fn on_toggle<'a>(&'a self, user_id: &'a str, role: Role, enabled: bool) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             if let Some(builder) = &self.mixer {
-                let role = Role::from_stored(role);
                 builder.on_toggle(user_id, role, enabled).await;
             }
         })
     }
-}
 
-impl droppedneedle_plugins::scrobble::MixStateReader for MixGrantHooks {
-    fn auto_request_state<'a>(
-        &'a self,
-        user_id: &'a str,
-        role: &'a str,
-        toggle_on: bool,
-    ) -> BoxFuture<'a, String> {
+    fn state<'a>(&'a self, user_id: &'a str, role: Role, toggle_on: bool) -> BoxFuture<'a, String> {
         Box::pin(async move {
-            let role = Role::from_stored(role);
             match &self.mixer {
                 Some(builder) => builder.auto_request_state(user_id, role, toggle_on).await,
                 None if toggle_on && role == Role::Admin => "approved".to_owned(),

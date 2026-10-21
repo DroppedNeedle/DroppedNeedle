@@ -4,9 +4,10 @@
 //! The reporting services are synchronous, so the store uses the blocking
 //! forms of [`Db`]: reads go through the request read pool and a play is
 //! one background write on the writer lane. Catalog reads hit
-//! `local_tracks`, plays land in `library_play_history`, prefs read
-//! `user_listening_prefs`, links read `user_connections`, and display
-//! names resolve from `auth_users`.
+//! `local_tracks`, plays land in `library_play_history`, preferences and
+//! the scrobble credentials come from the [`ListeningStore`], links read
+//! `user_connections`, and display names resolve from `auth_users`. The
+//! statements are in `sql.rs`.
 //!
 //! Every call runs through [`off_worker`], which moves a multi-threaded
 //! runtime's other tasks off the current thread before it waits on the
@@ -18,26 +19,41 @@
 use std::sync::Arc;
 
 use droppedneedle_auth::times::to_iso;
+use droppedneedle_auth::users::stores::LastFmSwitch;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
-use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_library::repairs::plays::{Matched, PlayKeys, match_play};
 use rusqlite::OptionalExtension;
 
-use super::ports::{
-    PlayRecord, ProviderFailure, ScrobblePrefs, ScrobbleTargets, TrackInfo, VISIBILITY_FULL,
-};
+use super::listening::{LastFmSession, ListeningStore, ScrobblePrefs};
+use super::ports::{PlayRecord, ProviderFailure, ScrobbleTargets, TrackInfo};
+use super::sql;
 
 /// Playback's reads and writes over the database.
 pub struct PlaybackStore {
     db: Db,
     ids: Arc<dyn IdGenerator>,
+    listening: ListeningStore,
 }
 
 impl PlaybackStore {
-    /// Playback reads and writes on `db`.
-    pub fn new(db: Db, ids: Arc<dyn IdGenerator>) -> Self {
-        Self { db, ids }
+    /// Playback reads and writes on `db`: plays take their ids from `ids`,
+    /// links open under `crypto`, preference saves are dated by `clock`.
+    pub fn new(
+        db: Db,
+        ids: Arc<dyn IdGenerator>,
+        crypto: Arc<Crypto>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        let listening = ListeningStore::new(db.clone(), crypto, clock);
+        Self { db, ids, listening }
+    }
+
+    /// The listening preferences and links this store reads.
+    pub fn listening(&self) -> &ListeningStore {
+        &self.listening
     }
 
     /// Resolve one track for reporting. An unknown id, or a read that
@@ -53,14 +69,14 @@ impl PlaybackStore {
         off_worker(|| self.write_play(user_id, record));
     }
 
-    /// The user's external-forwarding toggles; the column defaults when
-    /// the user saved none or the read failed.
+    /// The user's listening preferences; the column defaults when the
+    /// user saved none or the read failed.
     pub fn scrobble_prefs(&self, user_id: &str) -> ScrobblePrefs {
         off_worker(|| {
             or_logged(
                 "playback-scrobble-prefs",
-                self.read_scrobble_prefs(user_id),
-                default_scrobble_prefs,
+                self.listening.prefs_blocking(user_id),
+                ScrobblePrefs::default,
             )
         })
     }
@@ -70,11 +86,29 @@ impl PlaybackStore {
     /// `NowPlayingService._load_visibility` rule).
     pub fn visibility(&self, user_id: &str) -> Result<String, ProviderFailure> {
         off_worker(|| {
-            self.read_visibility(user_id).map_err(|error| {
-                tracing::warn!(read = "playback-visibility", %error, "playback read failed");
-                ProviderFailure(error.to_string())
-            })
+            self.listening
+                .prefs_blocking(user_id)
+                .map(|prefs| prefs.now_playing_visibility)
+                .map_err(|error| {
+                    tracing::warn!(read = "playback-visibility", %error, "playback read failed");
+                    ProviderFailure(error.to_string())
+                })
         })
+    }
+
+    /// The user's ListenBrainz token; `None` when unlinked or unreadable.
+    pub fn listenbrainz_token(&self, user_id: &str) -> Option<String> {
+        off_worker(|| self.listening.listenbrainz_token_blocking(user_id))
+    }
+
+    /// The user's Last.fm signing material; `None` while Last.fm is
+    /// switched off or the user has no usable session.
+    pub fn lastfm_session(
+        &self,
+        user_id: &str,
+        lastfm: &dyn LastFmSwitch,
+    ) -> Option<LastFmSession> {
+        off_worker(|| self.listening.lastfm_session_blocking(user_id, lastfm))
     }
 
     /// The scrobble services the user linked; a failed read reads as
@@ -129,40 +163,30 @@ impl PlaybackStore {
     fn read_track(&self, track_id: &str) -> Result<Option<TrackInfo>, DbError> {
         self.db.read_blocking("playback-track", |conn| {
             let track = conn
-                .query_row(
-                    &format!(
-                        "SELECT id, title, artist_name, album_title, duration_seconds, \
-                         embedded_recording_mbid, \
-                         (SELECT e.release_group_mbid FROM local_album_external_identities e \
-                          WHERE e.local_album_id = local_tracks.local_album_id) AS rg_mbid \
-                         FROM local_tracks WHERE id = ({CURRENT_TRACK})"
-                    ),
-                    [track_id],
-                    |row| {
-                        let duration_ms = row
-                            .get::<_, Option<f64>>("duration_seconds")?
-                            .map(|secs| (secs * 1000.0) as i64)
-                            .unwrap_or(0);
-                        Ok(TrackInfo {
-                            track_id: row.get("id")?,
-                            title: row.get("title")?,
-                            artist_name: row
-                                .get::<_, Option<String>>("artist_name")?
-                                .unwrap_or_default(),
-                            album_title: row.get("album_title")?,
-                            duration_ms,
-                            recording_mbid: row
-                                .get::<_, Option<String>>("embedded_recording_mbid")?
-                                .filter(|mbid| !mbid.is_empty()),
-                            // The release group the album was matched to,
-                            // never an id from the file's tags: an unmatched
-                            // album has none, and no cover address.
-                            rg_mbid: row
-                                .get::<_, Option<String>>("rg_mbid")?
-                                .filter(|mbid| !mbid.is_empty()),
-                        })
-                    },
-                )
+                .query_row(sql::TRACK.text(), [track_id], |row| {
+                    let duration_ms = row
+                        .get::<_, Option<f64>>("duration_seconds")?
+                        .map(|secs| (secs * 1000.0) as i64)
+                        .unwrap_or(0);
+                    Ok(TrackInfo {
+                        track_id: row.get("id")?,
+                        title: row.get("title")?,
+                        artist_name: row
+                            .get::<_, Option<String>>("artist_name")?
+                            .unwrap_or_default(),
+                        album_title: row.get("album_title")?,
+                        duration_ms,
+                        recording_mbid: row
+                            .get::<_, Option<String>>("embedded_recording_mbid")?
+                            .filter(|mbid| !mbid.is_empty()),
+                        // The release group the album was matched to,
+                        // never an id from the file's tags: an unmatched
+                        // album has none, and no cover address.
+                        rg_mbid: row
+                            .get::<_, Option<String>>("rg_mbid")?
+                            .filter(|mbid| !mbid.is_empty()),
+                    })
+                })
                 .optional()?;
             Ok(track)
         })
@@ -186,18 +210,7 @@ impl PlaybackStore {
             .write_blocking(Lane::Background, "playback-play", |tx| {
                 let track_id = record.track_id.clone().or_else(|| remote_match(tx, record));
                 tx.execute(
-                    "INSERT INTO library_play_history \
-                     (id, user_id, local_track_id, local_album_id, local_artist_id, track_name, \
-                      artist_name, album_name, recording_mbid, release_group_mbid, duration_ms, \
-                      source, played_at) \
-                     SELECT ?1, ?2, t.id, t.local_album_id, \
-                      COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
-                                WHERE x.local_track_id = t.id ORDER BY x.position LIMIT 1), \
-                               a.album_artist_id), \
-                      ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11 \
-                     FROM (SELECT 1) \
-                     LEFT JOIN local_tracks t ON t.id = ?3 \
-                     LEFT JOIN local_albums a ON a.id = t.local_album_id",
+                    sql::RECORD_PLAY.text(),
                     rusqlite::params![
                         id,
                         user_id,
@@ -257,61 +270,14 @@ fn remote_match(conn: &rusqlite::Connection, record: &PlayRecord) -> Option<Stri
     }
 }
 
-/// What a user's prefs read as before they save any: the column defaults.
-fn default_scrobble_prefs() -> ScrobblePrefs {
-    ScrobblePrefs {
-        scrobble_to_lastfm: false,
-        scrobble_to_listenbrainz: false,
-        navidrome_handles_external: true,
-    }
-}
-
 impl PlaybackStore {
-    fn read_scrobble_prefs(&self, user_id: &str) -> Result<ScrobblePrefs, DbError> {
-        self.db.read_blocking("playback-scrobble-prefs", |conn| {
-            let prefs = conn
-                .query_row(
-                    "SELECT scrobble_to_lastfm, scrobble_to_listenbrainz, \
-                     navidrome_handles_external_scrobbles FROM user_listening_prefs \
-                     WHERE user_id = ?1",
-                    [user_id],
-                    |row| {
-                        Ok(ScrobblePrefs {
-                            scrobble_to_lastfm: row.get::<_, i64>(0)? != 0,
-                            scrobble_to_listenbrainz: row.get::<_, i64>(1)? != 0,
-                            navidrome_handles_external: row.get::<_, i64>(2)? != 0,
-                        })
-                    },
-                )
-                .optional()?;
-            // No row yet: the column defaults are the right answer.
-            Ok(prefs.unwrap_or_else(default_scrobble_prefs))
-        })
-    }
-
-    fn read_visibility(&self, user_id: &str) -> Result<String, DbError> {
-        self.db.read_blocking("playback-visibility", |conn| {
-            let visibility = conn
-                .query_row(
-                    "SELECT now_playing_visibility FROM user_listening_prefs WHERE user_id = ?1",
-                    [user_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            Ok(visibility.unwrap_or_else(|| VISIBILITY_FULL.to_owned()))
-        })
-    }
-
     /// Linked scrobble services from `user_connections`: a ListenBrainz
     /// row (its document is sealed whole, so presence is the signal) and
     /// a Last.fm row whose plain document carries a session key. A failed
     /// read reads as unlinked.
     fn read_links(&self, user_id: &str) -> Result<ScrobbleTargets, DbError> {
         let rows = self.db.read_blocking("playback-scrobble-links", |conn| {
-            let mut query = conn.prepare(
-                "SELECT service, connection_data FROM user_connections \
-                 WHERE user_id = ?1 AND enabled = 1 AND service IN ('lastfm', 'listenbrainz')",
-            )?;
+            let mut query = conn.prepare(sql::SCROBBLE_LINKS.text())?;
             let rows = query
                 .query_map([user_id], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -344,16 +310,12 @@ impl PlaybackStore {
     fn read_display_name(&self, user_id: &str) -> Result<Option<String>, DbError> {
         let names = self.db.read_blocking("playback-display-name", |conn| {
             let names = conn
-                .query_row(
-                    "SELECT display_name, username FROM auth_users WHERE id = ?1",
-                    [user_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, Option<String>>(0)?,
-                            row.get::<_, Option<String>>(1)?,
-                        ))
-                    },
-                )
+                .query_row(sql::DISPLAY_NAMES.text(), [user_id], |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                })
                 .optional()?;
             Ok::<_, DbError>(names)
         })?;

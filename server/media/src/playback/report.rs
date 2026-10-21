@@ -9,8 +9,9 @@ use std::{
 
 use super::{
     PlaybackDeps,
+    listening::ScrobblePrefs,
     models::{ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest, ServiceResult},
-    ports::{PlayRecord, ReportTrack, ScrobblePrefs, ScrobbleTargets, ServiceOutcome, TrackInfo},
+    ports::{PlayRecord, ReportTrack, ScrobbleTargets, ServiceOutcome, TrackInfo},
     rules::{ServiceError, normalize_client},
     sessions::SessionKey,
 };
@@ -217,7 +218,7 @@ pub fn submit_scrobble(
             "track_id is only for a play from the library".to_owned(),
         ));
     }
-    match deps.catalog.get_track(track_id) {
+    match deps.store.get_track(track_id) {
         Some(track) => {
             let filed = ScrobbleSubmitRequest {
                 mbid: track.recording_mbid.clone(),
@@ -292,8 +293,8 @@ pub fn forward_sink_now_playing(
         ));
     }
     let source = normalize_client(request.source.as_deref());
-    let prefs = deps.prefs.scrobble_prefs(user_id);
-    if source.as_deref() == Some("navidrome") && prefs.navidrome_handles_external {
+    let prefs = deps.store.scrobble_prefs(user_id);
+    if source.as_deref() == Some("navidrome") && prefs.navidrome_handles_external_scrobbles {
         return Ok(ScrobbleResponse {
             accepted: true,
             services: HashMap::new(),
@@ -351,7 +352,7 @@ fn submit_counted_play(
             services: HashMap::new(),
         };
     }
-    deps.history.record(
+    deps.store.record(
         user_id,
         &PlayRecord {
             track_id: track_id.map(str::to_owned),
@@ -373,8 +374,8 @@ fn submit_counted_play(
             services: HashMap::new(),
         };
     }
-    let prefs = deps.prefs.scrobble_prefs(user_id);
-    if report.source.as_deref() == Some("navidrome") && prefs.navidrome_handles_external {
+    let prefs = deps.store.scrobble_prefs(user_id);
+    if report.source.as_deref() == Some("navidrome") && prefs.navidrome_handles_external_scrobbles {
         return ScrobbleResponse {
             accepted: true,
             services: HashMap::new(),
@@ -433,8 +434,8 @@ pub(super) fn forward_now_playing(
     track: &TrackInfo,
     source: Option<&str>,
 ) {
-    let prefs = deps.prefs.scrobble_prefs(user_id);
-    if source == Some("navidrome") && prefs.navidrome_handles_external {
+    let prefs = deps.store.scrobble_prefs(user_id);
+    if source == Some("navidrome") && prefs.navidrome_handles_external_scrobbles {
         return;
     }
     let report = ReportTrack {

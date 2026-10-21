@@ -1,9 +1,8 @@
-//! Wire shapes for the plugin and scrobble-settings routes.
+//! Wire shapes for the plugin routes.
 //!
 //! Secret-marked plugin settings follow the house mask-sentinel rule:
 //! reads return the mask when a value exists, and a save that sends the
-//! mask back keeps the stored value. ListenBrainz links never carry the
-//! token: the status shape holds the username only.
+//! mask back keeps the stored value.
 
 use std::collections::HashMap;
 
@@ -266,95 +265,6 @@ pub struct PluginSource {
 pub struct PluginSourcesResponse {
     /// Enabled acquisition sources.
     pub sources: Vec<PluginSource>,
-}
-
-/// One linked external account. Never carries the secret, only the name.
-/// The schema rename keeps this distinct from the remotes
-/// `ConnectionStatus` in the one OpenAPI document; the wire shape is
-/// unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = PluginConnectionStatus)]
-pub struct ConnectionStatus {
-    /// Service name (`listenbrainz` here).
-    pub service: String,
-    /// Whether the link is active.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Linked username.
-    #[serde(default)]
-    pub username: String,
-}
-
-/// Per-user scrobble preferences.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct ScrobblePreferences {
-    /// Forward plays to Last.fm.
-    #[serde(default)]
-    pub scrobble_to_lastfm: bool,
-    /// Forward plays to ListenBrainz.
-    #[serde(default)]
-    pub scrobble_to_listenbrainz: bool,
-    /// Navidrome owns external forwarding for Navidrome plays.
-    #[serde(default = "default_navidrome_delegation")]
-    pub navidrome_handles_external_scrobbles: bool,
-    /// `listenbrainz` or `lastfm`.
-    #[serde(default = "default_primary_source")]
-    pub primary_music_source: String,
-    /// `full`, `track_hidden`, or `offline`.
-    #[serde(default = "default_visibility")]
-    pub now_playing_visibility: String,
-    /// Standing intent to auto-request the personal mix.
-    #[serde(default)]
-    pub auto_request_personal_mix: bool,
-    /// Standing-grant state for auto-request.
-    #[serde(default = "default_mix_state")]
-    pub auto_request_state: String,
-}
-
-fn default_navidrome_delegation() -> bool {
-    true
-}
-
-fn default_primary_source() -> String {
-    "listenbrainz".to_owned()
-}
-
-fn default_visibility() -> String {
-    "full".to_owned()
-}
-
-fn default_mix_state() -> String {
-    "none".to_owned()
-}
-
-/// Partial prefs update: absent fields keep their stored values.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema, Default)]
-#[serde(default)]
-pub struct ScrobblePreferencesUpdate {
-    /// New Last.fm forwarding switch.
-    pub scrobble_to_lastfm: Option<bool>,
-    /// New ListenBrainz forwarding switch.
-    pub scrobble_to_listenbrainz: Option<bool>,
-    /// New Navidrome delegation switch.
-    pub navidrome_handles_external_scrobbles: Option<bool>,
-    /// New primary source.
-    pub primary_music_source: Option<String>,
-    /// New presence visibility.
-    pub now_playing_visibility: Option<String>,
-    /// New personal-mix auto-request intent.
-    pub auto_request_personal_mix: Option<bool>,
-}
-
-/// ListenBrainz connect request. The username is required: it drives every
-/// per-user read, and without it a "connected" account yields silently
-/// empty discovery.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct ListenBrainzConnectRequest {
-    /// User token.
-    pub user_token: String,
-    /// ListenBrainz username.
-    #[serde(default)]
-    pub username: String,
 }
 
 /// Plain status answer for uninstalls and disconnects.

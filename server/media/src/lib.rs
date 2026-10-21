@@ -4,9 +4,10 @@
 //! all of them in the user group inside the session gate. Remote
 //! connections and Navidrome folder preferences are SQLite rows; the admin
 //! servers are read from the config store on every call. Playback catalog,
-//! history, prefs, and display names read the SQLite schema through a
-//! dedicated rusqlite handle. Remote attribution and scrobble forwarding
-//! drain through [`MediaWorkers`], one job on the loop supervisor.
+//! history, listening preferences, links and display names read the
+//! database through the one playback store. Remote attribution and scrobble
+//! forwarding drain through [`MediaWorkers`], one job on the loop
+//! supervisor.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -21,7 +22,8 @@ use std::sync::Arc;
 use axum::extract::FromRef;
 
 use crate::playback::PlaybackDeps;
-use crate::playback::forwarding::{ForwardWorker, ScrobbleForwarder, StoredScrobbleCredentials};
+use crate::playback::forwarding::{ForwardWorker, ScrobbleForwarder};
+use crate::playback::listening_routes::{ListeningDeps, MixGrants};
 use crate::playback::presence::PresenceRegistry;
 use crate::playback::report::{MixedDedup, ScrobbleDedup};
 use crate::playback::reports::{ReportQueue, run_report_worker};
@@ -45,14 +47,12 @@ use crate::stream::transcode::{
     ffmpeg_available,
 };
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::mount::Routes;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::{AudioFormat, ConnectApps};
-use droppedneedle_plugins::scrobble::SqliteListenBrainzLinkStore;
 
 /// Production stream engine: gateway over stored-connection remote reads
 /// and ffmpeg transcodes behind the shared transcode gate.
@@ -69,8 +69,10 @@ pub struct MediaSetup {
     pub stream: StreamState<MediaEngine>,
     /// Local file downloads (track files and album archives).
     pub download: DownloadState,
-    /// Playback-reporting deps (SQLite catalog/history/prefs/names).
+    /// Playback-reporting deps over the one playback store.
     pub playback: PlaybackDeps,
+    /// Listening-settings route deps.
+    pub listening: ListeningDeps,
 }
 
 /// The media drains' name on the supervisor.
@@ -113,7 +115,10 @@ impl MediaSetup {
     /// `imports` is where remote playlist imports land; `plugins` hears
     /// accepted plays and serves `streaming_source` plugin streams;
     /// `plex_tv` is the plex.tv root; scrobbles are forwarded through the
-    /// one ListenBrainz client and the one Last.fm client of `providers`.
+    /// one ListenBrainz client and the one Last.fm client of `providers`,
+    /// and that ListenBrainz client checks a link before it is stored;
+    /// `mix` is the personal-mix standing grant the listening settings
+    /// report and feed.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         platform: &Platform,
@@ -123,6 +128,7 @@ impl MediaSetup {
         plugins: Arc<droppedneedle_plugins::host::PluginHost>,
         plex_tv: String,
         providers: &droppedneedle_providers::Providers,
+        mix: Arc<dyn MixGrants>,
     ) -> Result<(Self, MediaWorkers), String> {
         let (db, app_config, config) = (&platform.db, &platform.config, &*platform.settings);
         let (http_factory, ids, crypto) = (
@@ -145,12 +151,6 @@ impl MediaSetup {
                 plex_tv,
             ))),
         );
-        let credentials = Arc::new(StoredScrobbleCredentials::new(
-            Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
-            users.lastfm.clone(),
-            users.lastfm_switch.clone(),
-            crypto,
-        ));
         let service = RemotesService::new(
             http.clone(),
             resolver.clone(),
@@ -178,7 +178,12 @@ impl MediaSetup {
         let stream = StreamState {
             engine: Arc::new(gateway),
         };
-        let store = Arc::new(PlaybackStore::new(db.clone(), ids.clone()));
+        let store = Arc::new(PlaybackStore::new(
+            db.clone(),
+            ids,
+            crypto,
+            platform.clock.clone(),
+        ));
         let (queue, rx) = ReportQueue::channel();
         let (forwarder, forwards) =
             ScrobbleForwarder::channel(store.clone(), users.lastfm_switch.clone());
@@ -186,20 +191,23 @@ impl MediaSetup {
             forwards,
             providers.listenbrainz.clone(),
             providers.lastfm.clone(),
-            credentials,
         );
+        let presence = PresenceRegistry::new(platform.events.clone());
+        let listening = ListeningDeps {
+            store: store.listening().clone(),
+            verifier: Arc::new(providers.listenbrainz.clone()),
+            mix,
+            presence: presence.clone(),
+        };
         let playback = PlaybackDeps {
-            catalog: store.clone(),
+            store,
             sinks: Arc::new(forwarder),
             remotes: Arc::new(queue),
-            history: store.clone(),
-            prefs: store.clone(),
-            names: store,
             sessions: SessionStore::new(),
-            presence: PresenceRegistry::new(platform.events.clone()),
+            presence,
             dedup: ScrobbleDedup::new(),
             mixed: MixedDedup::new(),
-            clock: Arc::new(SystemClock),
+            clock: platform.clock.clone(),
             events: Arc::new(crate::playback::plugin_events::PluginPlayEvents(plugins)),
         };
         let worker = MediaWorkers {
@@ -214,6 +222,7 @@ impl MediaSetup {
                 stream,
                 download,
                 playback,
+                listening,
             },
             worker,
         ))
@@ -226,6 +235,13 @@ pub fn routes() -> Routes<MediaSetup> {
         .merge(stream::routes::routes())
         .merge(stream::download::routes())
         .merge(playback::routes())
+        .merge(playback::listening_routes::routes())
+}
+
+/// Every `sql.rs` of this crate, one line each, for the schema test.
+#[cfg(any(test, feature = "test-support"))]
+pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
+    vec![playback::sql::registered()]
 }
 
 impl FromRef<MediaSetup> for RemotesDeps {
@@ -249,6 +265,12 @@ impl FromRef<MediaSetup> for DownloadState {
 impl FromRef<MediaSetup> for PlaybackDeps {
     fn from_ref(setup: &MediaSetup) -> Self {
         setup.playback.clone()
+    }
+}
+
+impl FromRef<MediaSetup> for ListeningDeps {
+    fn from_ref(setup: &MediaSetup) -> Self {
+        setup.listening.clone()
     }
 }
 

@@ -180,18 +180,6 @@ impl PlayEvents for NoPlayEvents {
     fn play_accepted(&self, _user_id: &str, _report: &ReportTrack, _played_at: i64) {}
 }
 
-/// Per-user external-forwarding choices (v2 listening prefs, scrobble half).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScrobblePrefs {
-    /// Forward to the user's linked Last.fm account.
-    pub scrobble_to_lastfm: bool,
-    /// Forward to the user's linked ListenBrainz account.
-    pub scrobble_to_listenbrainz: bool,
-    /// Navidrome owns external scrobbles: skip our forwarding for
-    /// Navidrome-sourced plays (history still records).
-    pub navidrome_handles_external: bool,
-}
-
 /// Full track detail for other listeners.
 pub const VISIBILITY_FULL: &str = "full";
 /// Identity and progress only; the song stays hidden.
