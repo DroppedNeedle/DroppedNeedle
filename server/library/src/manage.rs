@@ -510,9 +510,9 @@ pub struct AddedPluginFile {
 /// Why a plugin's file was not added.
 #[derive(Debug)]
 pub enum PluginFileRefusal {
-    /// The library stayed busy until the deadline. Nothing was written.
+    /// The library stayed busy until the deadline. Nothing was added.
     Busy,
-    /// Whoever asked stopped waiting. Nothing was written.
+    /// Whoever asked stopped waiting. Nothing was added.
     Cancelled,
     /// No library folder is set up.
     NoFolder,
@@ -536,14 +536,17 @@ impl super::wiring::LibraryCore {
     /// row. It waits for the publish lock and then the folder until
     /// `deadline`, never waiting on a folder while it holds the lock, and
     /// stops once `cancelled` is set; nothing is recorded until both are
-    /// held and the write is still wanted. Blocking.
+    /// held and the write is still wanted, and the file is never placed
+    /// past the deadline or once `cancelled` is set. `on_record` runs in
+    /// the transaction that records the change. Blocking.
     pub fn add_plugin_file(
         &self,
         plugin: &str,
         relative_path: &str,
         bytes: Vec<u8>,
         deadline: std::time::Instant,
-        cancelled: &std::sync::atomic::AtomicBool,
+        cancelled: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+        on_record: super::publish::publisher::OnRecord<'_>,
     ) -> Result<AddedPluginFile, PluginFileRefusal> {
         use std::sync::atomic::Ordering;
         let library = self
@@ -561,8 +564,13 @@ impl super::wiring::LibraryCore {
             if cancelled.load(Ordering::SeqCst) {
                 return Err(PluginFileRefusal::Cancelled);
             }
+            let terms = || super::publish::publisher::AddTerms {
+                deadline,
+                cancelled: cancelled.clone(),
+                on_record,
+            };
             if let Some(done) =
-                self.try_add_plugin_file(plugin, relative_path, &first, &mut bytes, cancelled)
+                self.try_add_plugin_file(plugin, relative_path, &first, &mut bytes, terms)
             {
                 return done;
             }
@@ -576,13 +584,13 @@ impl super::wiring::LibraryCore {
 
     /// One try of [`Self::add_plugin_file`]: `None` while the lock or the
     /// folder is taken.
-    fn try_add_plugin_file(
+    fn try_add_plugin_file<'a>(
         &self,
         plugin: &str,
         relative_path: &str,
         first: &str,
         bytes: &mut Option<Vec<u8>>,
-        cancelled: &std::sync::atomic::AtomicBool,
+        terms: impl FnOnce() -> super::publish::publisher::AddTerms<'a>,
     ) -> Option<Result<AddedPluginFile, PluginFileRefusal>> {
         let mut cell = match self.publish.try_lock() {
             Ok(cell) => cell,
@@ -619,7 +627,8 @@ impl super::wiring::LibraryCore {
         for id in &ids {
             guards.push(self.fs.try_write(id)?);
         }
-        if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+        let terms = terms();
+        if terms.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
             return Some(Err(PluginFileRefusal::Cancelled));
         }
         let bytes = bytes.take()?;
@@ -629,6 +638,7 @@ impl super::wiring::LibraryCore {
             &registry,
             (plugin, relative_path, first),
             bytes,
+            terms,
         ))
     }
 
@@ -641,6 +651,7 @@ impl super::wiring::LibraryCore {
         registry: &RootRegistry,
         (plugin, relative_path, first): (&str, &str, &str),
         bytes: Vec<u8>,
+        terms: super::publish::publisher::AddTerms<'_>,
     ) -> Result<AddedPluginFile, PluginFileRefusal> {
         use super::publish::add::{Added, AddedFile, Origin};
         cell.refresh_to(session, &self.root_dirs)
@@ -680,7 +691,11 @@ impl super::wiring::LibraryCore {
         };
         let (sealed, live) = seal_pinned(bundle, &self.ids.new_id(), policy_revision);
         let bundle_id = sealed.bundle.id.clone();
-        let Err(error) = open.publisher.publish_add(&sealed, &live, bytes) else {
+        let (deadline, cancelled) = (terms.deadline, terms.cancelled.clone());
+        let Err(error) = open
+            .publisher
+            .publish_add_within(&sealed, &live, bytes, terms)
+        else {
             self.rescan(first);
             return Ok(AddedPluginFile { path, bundle_id });
         };
@@ -697,9 +712,14 @@ impl super::wiring::LibraryCore {
             return Ok(AddedPluginFile { path, bundle_id });
         }
         let unsettled = self.held_bundles.unsettled(&bundle_id).unwrap_or(true);
+        let out_of_time = matches!(error, PublishError::TimedOut(_));
         Err(if unsettled {
             tracing::warn!(%error, bundle_id, "plugin write stopped partway; recovery settles it");
             PluginFileRefusal::Pending
+        } else if out_of_time && cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            PluginFileRefusal::Cancelled
+        } else if out_of_time && std::time::Instant::now() >= deadline {
+            PluginFileRefusal::Busy
         } else if matches!(error, PublishError::Collision(_)) {
             PluginFileRefusal::Taken
         } else {

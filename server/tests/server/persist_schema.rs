@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 162);
+    assert_eq!(table_names(&pool).await.len(), 163);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -4554,6 +4554,58 @@ async fn recycled_rows_gain_an_expiry_column() {
         .await
         .unwrap();
     assert!(version >= 75, "user_version {version}");
+}
+
+/// Migration 0077 adds `plugin_library_writes` to a database at 0076: a
+/// STRICT table with one row per recorded change, and the rows one
+/// plugin's allowance reads indexed by time.
+#[tokio::test]
+async fn plugin_library_writes_table_is_added() {
+    let pool = scratch_pool().await;
+    migrator_through(76).run(&pool).await.unwrap();
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    for (values, refused) in [
+        ("('b1', 'toy', 5, 1735689600000)", false),
+        ("('b1', 'toy', 6, 1735689600000)", true),
+        ("('b2', 'toy', 'five', 1735689600000)", true),
+        ("('b3', 'toy', -1, 1735689600000)", true),
+    ] {
+        let sql = format!(
+            "INSERT INTO plugin_library_writes (bundle_id, plugin, bytes, written_at) \
+             VALUES {values}"
+        );
+        let outcome = sqlx::raw_sql(&sql).execute(&pool).await;
+        assert_eq!(outcome.is_err(), refused, "{values}: {outcome:?}");
+    }
+    let row: (String, String, i64, i64) =
+        sqlx::query_as("SELECT bundle_id, plugin, bytes, written_at FROM plugin_library_writes")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        row,
+        ("b1".to_owned(), "toy".to_owned(), 5, 1_735_689_600_000)
+    );
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' \
+         AND name = 'idx_plugin_library_writes_plugin'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        index
+            .as_deref()
+            .is_some_and(|sql| sql.contains("plugin_library_writes(plugin, written_at)")),
+        "a plugin's rows are indexed by time: {index:?}"
+    );
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(version >= 77, "user_version {version}");
 }
 
 /// Migration 0076 rebuilds the request, watch and approval tables as

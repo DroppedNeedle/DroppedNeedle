@@ -198,7 +198,7 @@ server carries on as if the plugin had said nothing.
 | `publisher` | `handle_route(method, subpath, query, body)` for `[[route]]`s; `await ctx.publish(kind, payload)` | 5 s | the route answers 502 |
 | `metadata_provider` | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in |
 | `scheduler` | `on_tick()` | the interval | the next tick runs as normal |
-| `library_writer` | none; allows `await ctx.write_library_file(rel_path, data)` | 30 s per write | the call fails with the reason |
+| `library_writer` | none; allows `await ctx.write_library_file(rel_path, data)` | 8 s per write | the call fails with the reason |
 | `streaming_source` | `resolve_stream(recording_mbid, user_id)` | 5 s | the next plugin is asked |
 | `indexer` | `search_album(...)`, `search_track(...)` | 35 s | no results from it |
 | `download_client` | `enqueue`, `get_status`, `inspect_materialization`, `discard_client_artifacts`, `abort` | 120 s enqueue, 30 s others | the download fails over |
@@ -331,11 +331,18 @@ parts. A file that already exists is never replaced, nor is a file whose
 name differs only in letter case: the call fails instead. A first library
 folder set to Excluded, or one on a disk that can only add a file by
 checking first and then renaming, takes no plugin files. Each plugin may
-write 100 MiB a day; past that the call fails until older writes are a day
-old, and one file may be at most 6 MiB. The write waits up to 30 seconds
-for the library to be free (no scan, move or other change running), then
-fails. After each write the library folder is scanned again, so the file,
-audio included, shows up like any other.
+write 100 MiB and 1000 files a day; past either the call fails until older
+writes are a day old. The allowance is kept in the database, so a restart
+does not reset it, and a write that failed or was undone by itself does not
+count. One file may be at most 6,288,384 bytes (just under 6 MiB, so its
+base64 text fits one 8 MiB message); the helper raises `ValueError` for a
+larger one before sending anything, and the host refuses one sent anyway.
+The write has 8 seconds: it waits for the library to be free (no scan,
+move or other change running) and then fails, and a file not in place by
+then, or that the server stopped waiting for, is never put there. In rare
+cases a `host request timed out` answer means the file did land; a retry
+then answers that it already exists. After each write the library folder
+is scanned again, so the file, audio included, shows up like any other.
 
 Each write is a recorded library change, made the way the server makes its
 own: the file is written beside its destination under a hidden name and
@@ -582,7 +589,7 @@ Answer an unknown method with error code `-32601`; the server treats that as
 | `host.publish` | `{kind, payload, causation_id?}` | `{ok, status, retry_after, error}` |
 | `host.state.get` | `{key}` | `{value}` (`null` when unset) |
 | `host.state.set` | `{key, value}` | `{}` |
-| `host.library.write` | `{rel_path, data_base64}` | `{path, bundle_id}`; refused (-32001) for a bad path, an existing file, a library that stays busy for 30 s or over the daily allowance |
+| `host.library.write` | `{rel_path, data_base64}` | `{path, bundle_id}`; refused (-32001) for a bad path, a file over 6,288,384 bytes, an existing file, a library that stays busy for 8 s or over the daily allowance |
 
 State keys are 1-64 lowercase letters, digits, `_`, `-` or `/`, starting
 with a letter or digit; values are strings up to 1 MiB. One plugin may keep

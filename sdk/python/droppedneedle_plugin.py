@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 __all__ = [
+    "MAX_LIBRARY_FILE_BYTES",
     "PROTOCOL_VERSION",
     "DownloadFileRef",
     "DownloadMaterialization",
@@ -77,6 +78,11 @@ __all__ = [
 ]
 
 PROTOCOL_VERSION = 1
+
+# Largest file ``write_library_file`` sends: its base64 text and the message
+# around it fit the host's 8 MiB message limit. The host refuses one byte
+# more with the same number.
+MAX_LIBRARY_FILE_BYTES = (8 * 1024 * 1024 - 4096) // 4 * 3
 
 # --------------------------------------------------------------------------
 # Types. Field names match v2's plugin protocol types.
@@ -430,9 +436,14 @@ class PluginContext:
 
     async def write_library_file(self, rel_path: str, data: bytes) -> str:
         """Add one new file under the first library folder; answers its path.
-        Existing files are never replaced. Up to 100 MiB a day per plugin."""
+        Existing files are never replaced. A file may be at most
+        ``MAX_LIBRARY_FILE_BYTES``; a larger one raises ``ValueError``
+        before anything is sent. Up to 100 MiB and 1000 files a day per
+        plugin."""
         import base64
 
+        if len(data) > MAX_LIBRARY_FILE_BYTES:
+            raise ValueError(f"a library file may be at most {MAX_LIBRARY_FILE_BYTES} bytes")
         answer = await self._server.request(
             "host.library.write",
             {"rel_path": rel_path, "data_base64": base64.b64encode(bytes(data)).decode("ascii")},

@@ -13,6 +13,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use droppedneedle_kernel::db::{CancelFlag, Db, Durable, DurableLane, Lane};
 use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
@@ -748,6 +751,9 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     temps: BTreeMap<String, paths::FileStat>,
     /// The bytes of the file the bundle being published adds.
     added_bytes: Option<Vec<u8>>,
+    /// When the file the bundle being published adds stops being wanted:
+    /// its deadline, and the flag set when whoever asked stopped waiting.
+    add_budget: Option<(Instant, Arc<AtomicBool>)>,
     /// Unix milliseconds, read at the start of each publish: a publisher
     /// stays open for as long as the root set does.
     clock: Box<dyn Fn() -> i64 + Send>,
@@ -765,6 +771,22 @@ pub const NO_SAFE_METHOD_ORIGINAL_ASIDE: &str = "This folder has no safe way to 
 /// Test hook run with the destination just before a staged file is
 /// placed there, after every check has passed.
 pub type BeforePlace = Box<dyn Fn(&Path) + Send>;
+
+/// Runs in the transaction that records a change, with the bundle id and
+/// the publish's time in unix milliseconds. An error records nothing.
+pub type OnRecord<'a> = &'a dyn Fn(&Connection, &str, i64) -> Result<(), PublishError>;
+
+/// What bounds the publish of one added file, and what else its record
+/// holds.
+pub struct AddTerms<'a> {
+    /// Past this instant the file is not placed: the bundle unwinds.
+    pub deadline: Instant,
+    /// Set once whoever asked stopped waiting: the bundle unwinds the same
+    /// way if the file is not placed yet.
+    pub cancelled: Arc<AtomicBool>,
+    /// Runs in the transaction that records the change.
+    pub on_record: OnRecord<'a>,
+}
 
 /// The unix day of a time in unix milliseconds.
 fn day_of(ms: i64) -> i64 {
@@ -836,6 +858,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             before_set_aside: None,
             temps: BTreeMap::new(),
             added_bytes: None,
+            add_budget: None,
             now_ms,
             today_day: day_of(now_ms),
             clock: Box::new(clock),
@@ -900,7 +923,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     }
 
     /// Publish a bundle that adds one file (see [`super::add`]), with the
-    /// file's bytes. The bundle runs the same steps as every other.
+    /// file's bytes and no time bound. The bundle runs the same steps as
+    /// every other.
     pub fn publish_add(
         &mut self,
         sealed: &SealedPreview,
@@ -908,8 +932,27 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         bytes: Vec<u8>,
     ) -> Result<PublishOutcome, PublishError> {
         self.added_bytes = Some(bytes);
-        let outcome = self.publish_as(sealed, live, &BTreeMap::new(), None);
+        let outcome = self.publish_recorded(sealed, live, &BTreeMap::new(), None, None);
         self.added_bytes = None;
+        outcome
+    }
+
+    /// [`Self::publish_add`] within `terms`: a file not placed by its
+    /// deadline, or no longer wanted, is never placed. Its bundle unwinds
+    /// and the publish fails with [`PublishError::TimedOut`].
+    pub fn publish_add_within(
+        &mut self,
+        sealed: &SealedPreview,
+        live: &SealRecheck,
+        bytes: Vec<u8>,
+        terms: AddTerms<'_>,
+    ) -> Result<PublishOutcome, PublishError> {
+        self.added_bytes = Some(bytes);
+        self.add_budget = Some((terms.deadline, terms.cancelled));
+        let outcome =
+            self.publish_recorded(sealed, live, &BTreeMap::new(), None, Some(terms.on_record));
+        self.added_bytes = None;
+        self.add_budget = None;
         outcome
     }
 
@@ -927,6 +970,19 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         docs: &BTreeMap<String, TagDocument>,
         applied_by: Option<&str>,
     ) -> Result<PublishOutcome, PublishError> {
+        self.publish_recorded(sealed, live, docs, applied_by, None)
+    }
+
+    /// [`Self::publish_as`], running `on_record` in the transaction that
+    /// records the operation.
+    fn publish_recorded(
+        &mut self,
+        sealed: &SealedPreview,
+        live: &SealRecheck,
+        docs: &BTreeMap<String, TagDocument>,
+        applied_by: Option<&str>,
+        on_record: Option<OnRecord<'_>>,
+    ) -> Result<PublishOutcome, PublishError> {
         let bundle = &sealed.bundle;
         self.temps.clear();
         self.now_ms = (self.clock)();
@@ -939,7 +995,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let (today, now) = (self.today_day, self.now_ms);
         self.db
             .write_blocking(Lane::Background, "publish.record_operation", |tx| {
-                super::operations::record_operation(tx, bundle, today, now, applied_by)
+                super::operations::record_operation(tx, bundle, today, now, applied_by)?;
+                match on_record {
+                    Some(on_record) => on_record(tx, &bundle.id, now),
+                    None => Ok(()),
+                }
             })?;
         // A file that cannot be staged unwinds the ones staged before it,
         // so no part of the bundle is held or later finished by recovery.
@@ -1928,6 +1988,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         if let Some(hook) = self.before_place.as_ref() {
             hook(&dest);
         }
+        self.within_add_budget()?;
         // The checks above can go stale before the file lands, so the
         // placement itself refuses a name that is taken by then.
         let mode = super::add::mode_for(&self.sandbox, &current);
@@ -2265,6 +2326,21 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 | PublishError::Cleanup(_)
                 | PublishError::Interrupted(_)
         )
+    }
+
+    /// Refuse to place an added file past its deadline or once whoever
+    /// asked stopped waiting. A bundle with no budget always passes.
+    fn within_add_budget(&self) -> Result<(), PublishError> {
+        match &self.add_budget {
+            Some((deadline, cancelled))
+                if cancelled.load(Ordering::SeqCst) || Instant::now() >= *deadline =>
+            {
+                Err(PublishError::TimedOut(
+                    "the file was not placed in time and was not added".into(),
+                ))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// The crash point armed for the bundle being published.

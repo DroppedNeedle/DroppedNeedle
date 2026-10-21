@@ -66,6 +66,7 @@ auth_users
 connect_app_passwords
 
 [plugins]
+plugin_library_writes
 plugin_tick_state
 
 [app]

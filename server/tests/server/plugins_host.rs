@@ -28,6 +28,7 @@ use droppedneedle_kernel::jobs::queue::JobQueue;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_library::wiring::LibraryCore;
 use droppedneedle_plugins::fakes::{
     FakeConnection, FakeFetcher, FakeLauncher, FakeUnpacker, scrobble_plugin_event,
 };
@@ -59,6 +60,8 @@ struct Rig {
     /// The platform the library's write side is built over: its settings
     /// hold the library folders plugin files go to.
     platform: Platform,
+    /// The library's write side the host adds plugin files through.
+    library: LibraryCore,
 }
 
 async fn rig(tag: &str) -> Rig {
@@ -77,7 +80,7 @@ async fn rig(tag: &str) -> Rig {
         Arc::clone(&config),
         launcher.clone(),
         Arc::new(ticks.clone()),
-        library,
+        library.clone(),
     );
     Rig {
         dir,
@@ -86,6 +89,7 @@ async fn rig(tag: &str) -> Rig {
         launcher,
         ticks,
         platform,
+        library,
     }
 }
 
@@ -995,16 +999,10 @@ const WRITER_MANIFEST: &str = "[plugin]\n\
      entrypoint = \"plugin:Toy\"\n\
      capabilities = [\"library_writer\"]\n";
 
-/// A plugin's library write goes through the publisher: the file lands
-/// under the first library folder as a change recorded under the plugin's
-/// name, the answer names that change, a taken name is refused with the
-/// file left as it was, and no ledger folder is made.
-#[tokio::test]
-async fn a_plugin_write_is_journaled_and_keeps_no_ledger() {
-    use base64::Engine as _;
+/// Make `<rig>/music` the one library folder.
+async fn music_root(rig: &Rig) -> std::path::PathBuf {
     use droppedneedle_kernel::runtime_config::secret_sections::{LibraryRoot, TypedLibrary};
 
-    let rig = rig("library-write").await;
     let music = rig.dir.join("music");
     std::fs::create_dir_all(&music).unwrap();
     let settings = Arc::clone(&rig.platform.settings);
@@ -1023,6 +1021,19 @@ async fn a_plugin_write_is_journaled_and_keeps_no_ledger() {
     .await
     .unwrap();
     assert!(saved.is_ok());
+    music
+}
+
+/// A plugin's library write goes through the publisher: the file lands
+/// under the first library folder as a change recorded under the plugin's
+/// name, the answer names that change, a taken name is refused with the
+/// file left as it was, and no ledger folder is made.
+#[tokio::test]
+async fn a_plugin_write_is_journaled_and_keeps_no_ledger() {
+    use base64::Engine as _;
+
+    let rig = rig("library-write").await;
+    let music = music_root(&rig).await;
     let runtime = enable_toy(&rig, WRITER_MANIFEST);
     let write = |data: &[u8]| {
         runtime.host_request(
@@ -1063,4 +1074,216 @@ async fn a_plugin_write_is_journaled_and_keeps_no_ledger() {
         !rig.dir.join("plugins/.data/.library-writes").exists(),
         "no ledger folder"
     );
+}
+
+/// Record that the toy plugin wrote `bytes` just now, in a change that
+/// landed.
+fn seed_written(rig: &Rig, bundle_id: &str, bytes: usize) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let conn = droppedneedle_kernel::db::open_connection(&rig.dir.join("app.db")).unwrap();
+    conn.execute_batch(&format!(
+        "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+             staged, staged_sha256, state) \
+         VALUES ('{bundle_id}-add-000', '{bundle_id}', 'add', 'music', 'seed/{bundle_id}', \
+             '.dn-seed', 'abc', 'cleaned'); \
+         INSERT INTO plugin_library_writes (bundle_id, plugin, bytes, written_at) \
+         VALUES ('{bundle_id}', 'toy', {bytes}, {now});"
+    ))
+    .unwrap();
+}
+
+/// A write the plugin stops waiting for before its file is placed (the
+/// host's cut on a slow request) is unwound: the file never appears, and
+/// none of the plugin's daily allowance is spent on it.
+#[tokio::test]
+async fn a_write_the_plugin_gave_up_on_never_lands_and_spends_nothing() {
+    use droppedneedle_plugins::capabilities::library_files::QUOTA_BYTES_PER_DAY;
+
+    let rig = rig("write-cut").await;
+    let music = music_root(&rig).await;
+    // A host over a whole library, so the test can hold its publisher.
+    let (library, _) = crate::common::library::library_at(&rig.platform);
+    let host = PluginHost::new(
+        rig.dir.join("plugins"),
+        Arc::clone(&rig.config),
+        Arc::new(FakeLauncher::new()),
+        Arc::new(rig.ticks.clone()),
+        library.core.clone(),
+    );
+    write_plugin(&rig.dir, "toy", WRITER_MANIFEST);
+    host.load_all();
+    host.update_settings("toy", true, HashMap::new()).unwrap();
+    let (reached, at_place) = std::sync::mpsc::channel::<()>();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    library.set_publish_hooks(
+        Some(Box::new(move |_: &Path| {
+            let _ = reached.send(());
+            let _ = released.recv();
+        })),
+        None,
+    );
+    let writer = Arc::clone(&host);
+    let write = tokio::spawn(async move {
+        writer
+            .write_library_file("toy", "notes/late.txt", b"late".to_vec())
+            .await
+    });
+    tokio::task::spawn_blocking(move || at_place.recv_timeout(Duration::from_secs(10)))
+        .await
+        .unwrap()
+        .expect("the write reaches placement");
+    write.abort();
+    assert!(write.await.unwrap_err().is_cancelled());
+    release.send(()).unwrap();
+
+    let conn = droppedneedle_kernel::db::open_connection(&rig.dir.join("app.db")).unwrap();
+    let state = || -> String {
+        conn.query_row(
+            "SELECT state FROM library_publish_journal WHERE dest_rel = 'notes/late.txt'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_default()
+    };
+    for _ in 0..400 {
+        if state() == "compensated" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(state(), "compensated");
+    assert!(!music.join("notes/late.txt").exists());
+
+    // Only the unwound write's bytes stand between the plugin and its
+    // allowance: they are back, so the same write now lands.
+    library.set_publish_hooks(None, None);
+    seed_written(&rig, "seeded", QUOTA_BYTES_PER_DAY - 4);
+    let (path, _) = host
+        .write_library_file("toy", "notes/late.txt", b"late".to_vec())
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), b"late");
+}
+
+/// What a plugin wrote before a restart still counts against its daily
+/// allowance after it.
+#[tokio::test]
+async fn the_daily_allowance_survives_a_restart() {
+    use droppedneedle_plugins::capabilities::library_files::QUOTA_BYTES_PER_DAY;
+
+    let rig = rig("write-restart").await;
+    let music = music_root(&rig).await;
+    enable_toy(&rig, WRITER_MANIFEST);
+    rig.host
+        .write_library_file("toy", "notes/before.txt", b"12345".to_vec())
+        .await
+        .unwrap();
+    seed_written(&rig, "seeded", QUOTA_BYTES_PER_DAY - 5);
+
+    let library = crate::common::library::library_core(
+        &rig.platform,
+        JobQueue::new(rig.platform.db.clone(), Arc::new(SystemClock)),
+    );
+    let host = PluginHost::new(
+        rig.dir.join("plugins"),
+        Arc::clone(&rig.config),
+        Arc::new(FakeLauncher::new()),
+        Arc::new(rig.ticks.clone()),
+        library,
+    );
+    host.load_all();
+    host.update_settings("toy", true, HashMap::new()).unwrap();
+    let refused = host
+        .write_library_file("toy", "notes/after.txt", b"1".to_vec())
+        .await
+        .unwrap_err();
+    assert!(refused.contains("allowance"), "{refused}");
+    assert!(!music.join("notes/after.txt").exists());
+}
+
+const BIG_MANIFEST: &str = "[plugin]\n\
+     name = \"big\"\n\
+     api_version = 1\n\
+     entrypoint = \"plugin:Big\"\n\
+     capabilities = [\"library_writer\", \"purchase_links\"]\n";
+
+const BIG_CODE: &str = r#"
+import base64
+import droppedneedle_plugin as sdk
+
+class Big:
+    def __init__(self, context):
+        self.ctx = context
+
+    async def purchase_links(self, artist, album, mbid):
+        size = sdk.MAX_LIBRARY_FILE_BYTES
+        path = await self.ctx.write_library_file("big/max.bin", b"x" * size)
+        try:
+            await self.ctx.write_library_file("big/over.bin", b"x" * (size + 1))
+            from_sdk = "sent"
+        except ValueError:
+            from_sdk = "refused"
+        try:
+            text = base64.b64encode(b"x" * (size + 1)).decode("ascii")
+            await self.ctx._server.request(
+                "host.library.write", {"rel_path": "big/over.bin", "data_base64": text})
+            from_host = "written"
+        except RuntimeError as error:
+            from_host = str(error)
+        return [{"label": f"{size}|{from_sdk}|{from_host}", "url": "https://x.test" + path}]
+"#;
+
+/// The largest file the cap allows travels in one protocol message from
+/// the Python helper and lands; one byte more is refused by the helper
+/// before sending, and by the host when sent anyway.
+#[tokio::test]
+async fn the_largest_library_file_fits_one_message() {
+    use droppedneedle_plugins::capabilities::library_files::MAX_FILE_BYTES;
+    use droppedneedle_plugins::process::ProcessLauncher;
+
+    let rig = rig("write-max").await;
+    let music = music_root(&rig).await;
+    write_plugin(&rig.dir, "big", BIG_MANIFEST);
+    std::fs::write(rig.dir.join("plugins/big/plugin.py"), BIG_CODE).unwrap();
+    let sdk = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sdk/python");
+    let host = PluginHost::new(
+        rig.dir.join("plugins"),
+        Arc::clone(&rig.config),
+        Arc::new(ProcessLauncher::new(sdk, rig.platform.supervisor.clone())),
+        Arc::new(rig.ticks.clone()),
+        rig.library.clone(),
+    );
+    host.load_all();
+    host.update_settings("big", true, HashMap::new()).unwrap();
+    // The host gives a plugin 15 seconds to answer its handshake.
+    for _ in 0..800 {
+        let running = host
+            .get("big")
+            .and_then(|plugin| plugin.runtime_status())
+            .is_some_and(|status| {
+                status.state == droppedneedle_plugins::runtime::RuntimeState::Running
+            });
+        if running {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let links = host.gather_purchase_links("", "", "").await;
+    host.stop_all().await;
+    let link = links.first().expect("the plugin answers");
+    let placed = music.join("big/max.bin");
+    assert_eq!(link.url, format!("https://x.test{}", placed.display()));
+    assert_eq!(
+        std::fs::metadata(&placed).unwrap().len(),
+        MAX_FILE_BYTES as u64
+    );
+    let parts: Vec<&str> = link.label.splitn(3, '|').collect();
+    assert_eq!(parts[0], MAX_FILE_BYTES.to_string());
+    assert_eq!(parts[1], "refused");
+    assert!(parts[2].contains("at most"), "{}", parts[2]);
+    assert!(!music.join("big/over.bin").exists());
 }
