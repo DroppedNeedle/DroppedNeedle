@@ -74,7 +74,7 @@ use droppedneedle_catalog::reads::collections::store::Stores as CollectionsStore
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::queue::JobQueue;
-use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor};
+use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor, TickCtx};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, Indexers as ConfigIndexers, LidarrImportConnection,
@@ -1131,18 +1131,22 @@ impl AcquireSetup {
     }
 
     /// Probe refresh: one pass now, then every five minutes, each over the
-    /// clients the current settings build.
+    /// clients the current settings build. A pass waiting on a slow client
+    /// ends at the stop; it only reads, and the cache keeps the last pass.
     fn spawn_probe_loop(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
         let cache = self.probe_cache.clone();
         let clients = self.clients.clone();
         supervisor.periodic(
             PROBE_JOB,
             Schedule::new(PROBE_INTERVAL),
-            FnTick(move |_| {
+            FnTick(move |ctx: TickCtx| {
                 let cache = cache.clone();
                 let inputs = clients.current().probe_inputs.clone();
                 async move {
-                    refresh_probes(&cache, &inputs).await;
+                    tokio::select! {
+                        () = ctx.token().cancelled() => {}
+                        () = refresh_probes(&cache, &inputs) => {}
+                    }
                     Ok(Next::Continue)
                 }
             }),
