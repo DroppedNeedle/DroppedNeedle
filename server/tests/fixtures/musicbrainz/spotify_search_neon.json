@@ -1,0 +1,20 @@
+{
+  "created": "2026-10-21T09:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "releases": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000000a01",
+      "score": 100,
+      "count": 1,
+      "title": "Neon Meridian",
+      "status": "Official",
+      "artist-credit": [{"name": "Aurora Current", "artist": {"id": "5907a1b0-0000-4000-8000-000000000c01", "name": "Aurora Current", "sort-name": "Aurora Current"}}],
+      "release-group": {"id": "5907a1b0-0000-4000-8000-000000000b01", "title": "Neon Meridian", "primary-type": "Album"},
+      "date": "2024-05-03",
+      "country": "XW",
+      "track-count": 1,
+      "media": [{"format": "Digital Media", "disc-count": 0, "track-count": 1}]
+    }
+  ]
+}

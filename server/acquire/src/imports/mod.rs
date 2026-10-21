@@ -10,7 +10,8 @@
 //! `spotify_oauth` holds the OAuth half (states, links, app settings),
 //! `spotify_client` the Web API client over the wire shapes in
 //! `spotify_models`, `spotify` the playlist listing and
-//! the populate worker, `spotify_store` holds the SQLite stores behind it (links, authorize
+//! the populate worker, `spotify_albums` the MusicBrainz release group of
+//! each imported album, `spotify_store` holds the SQLite stores behind it (links, authorize
 //! states, imported playlists),
 //! `jobs` holds the `spotify:import` durable-job key plus the minimal local
 //! [`jobs::SpotifyImportExecutor`] seam onto the downloads state machine
@@ -29,6 +30,7 @@ pub mod lidarr;
 pub mod models;
 pub mod mount;
 pub mod spotify;
+pub mod spotify_albums;
 pub mod spotify_client;
 pub mod spotify_models;
 pub mod spotify_oauth;

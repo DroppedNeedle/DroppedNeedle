@@ -36,7 +36,8 @@ use super::flows::stores::{
 use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
 use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use super::imports::lidarr::LidarrClient;
-use super::imports::spotify::{FixedMbidResolver, SpotifyImportService};
+use super::imports::spotify::SpotifyImportService;
+use super::imports::spotify_albums::AlbumResolver;
 use super::imports::spotify_client::SpotifyClient;
 use super::imports::spotify_store::{
     CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates,
@@ -734,6 +735,7 @@ impl AcquireSetup {
         let ready = worker_settings.clone();
         let collections = ports.collections;
         let health = ports.providers.health.clone();
+        let resolver = Arc::new(AlbumResolver::new(&ports.providers, config_store.live()));
         let core = core(
             &stores,
             ids.clone(),
@@ -786,7 +788,6 @@ impl AcquireSetup {
             collections.playlists.clone(),
             db.clone(),
         ));
-        let resolver = Arc::new(FixedMbidResolver::new());
         let spotify_client =
             SpotifyClient::new(http.clone(), no_redirect, &spotify.api, &spotify.accounts);
         let spotify_service = Arc::new(SpotifyImportService::new(
@@ -980,7 +981,11 @@ impl AcquireSetup {
             PlaylistStore::new(CollectionsDb::new(db.db().clone())),
             db.clone(),
         ));
-        let resolver = Arc::new(FixedMbidResolver::new());
+        // No outside address is open here: every album stays unresolved.
+        let providers = droppedneedle_providers::Providers::unpaced(Arc::new(
+            droppedneedle_providers::executor::ScriptedWire::new(),
+        ));
+        let resolver = Arc::new(AlbumResolver::new(&providers, settings.live()));
         let service = Arc::new(SpotifyImportService::new(
             spotify_client.clone(),
             spotify_settings.clone(),

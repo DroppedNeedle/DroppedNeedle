@@ -1,0 +1,25 @@
+{
+  "id": "5907a1b0-0000-4000-8000-000000000a01",
+  "title": "Neon Meridian",
+  "status": "Official",
+  "date": "2024-05-03",
+  "country": "XW",
+  "release-group": {"id": "5907a1b0-0000-4000-8000-000000000b01", "title": "Neon Meridian", "primary-type": "Album", "secondary-types": [], "first-release-date": "2024-05-03"},
+  "media": [
+    {
+      "position": 1,
+      "format": "Digital Media",
+      "track-count": 1,
+      "tracks": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000000d01",
+          "position": 1,
+          "number": "1",
+          "title": "Midnight Drive",
+          "length": 183000,
+          "recording": {"id": "5907a1b0-0000-4000-8000-000000000e01", "title": "Midnight Drive", "length": 183000, "isrcs": ["USRC17607839"]}
+        }
+      ]
+    }
+  ]
+}

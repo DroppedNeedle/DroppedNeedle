@@ -1,0 +1,20 @@
+{
+  "created": "2026-10-21T09:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "releases": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000000a02",
+      "score": 100,
+      "count": 1,
+      "title": "Glass Tides",
+      "status": "Official",
+      "artist-credit": [{"name": "Boreal Static", "artist": {"id": "5907a1b0-0000-4000-8000-000000000c02", "name": "Boreal Static", "sort-name": "Boreal Static"}}],
+      "release-group": {"id": "5907a1b0-0000-4000-8000-000000000b02", "title": "Glass Tides", "primary-type": "Single"},
+      "date": "2024-05-03",
+      "country": "XW",
+      "track-count": 1,
+      "media": [{"format": "Digital Media", "disc-count": 0, "track-count": 1}]
+    }
+  ]
+}

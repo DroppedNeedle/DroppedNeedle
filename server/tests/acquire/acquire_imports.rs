@@ -25,10 +25,12 @@ use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
 use droppedneedle_catalog::reads::collections::store::PlaylistStore;
 use droppedneedle_kernel::runtime_config::ConfigError;
 use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
+use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
 use droppedneedle_testkit::imports::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_PLAYLIST_NO_TRACK_ID,
     SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
 };
+use droppedneedle_testkit::musicbrainz::MockMusicBrainz;
 use imports::handlers::{ImportsDeps, imports_router};
 use imports::health::{
     ClientProbe, HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
@@ -38,7 +40,8 @@ use imports::lidarr::{
     LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
 };
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
-use imports::spotify::{FixedMbidResolver, ImportedTrack, SpotifyImportService};
+use imports::spotify::{ImportedTrack, SpotifyImportService};
+use imports::spotify_albums::AlbumResolver;
 use imports::spotify_client::{SpotifyClient, TokenGrant, is_allowed_cover_url};
 use imports::spotify_oauth::{
     PendingAuth, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection,
@@ -83,12 +86,14 @@ struct Rig {
     approvals: Arc<MemoryApprovalSink>,
     spotify_links: Arc<SqliteSpotifyLinks>,
     playlists: PlaylistStore,
-    resolver: Arc<FixedMbidResolver>,
     slskd: Arc<ScriptedSlskd>,
     sabnzbd: Arc<ScriptedSabnzbd>,
     newznab: Arc<ScriptedNewznab>,
     lidarr_probe: Arc<ScriptedLidarr>,
 }
+
+/// The release group the MusicBrainz mock proves _Neon Meridian_ is.
+const NEON_MERIDIAN_GROUP: &str = "5907a1b0-0000-4000-8000-000000000b01";
 
 fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
     let http = http_client();
@@ -102,7 +107,10 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
     let spotify_states = Arc::new(SqliteSpotifyStates::new(db.clone()));
     let spotify_links = Arc::new(SqliteSpotifyLinks::new(db.clone(), platform.crypto.clone()));
     let spotify_playlists = Arc::new(CollectionsPlaylistBridge::new(playlists.clone(), db));
-    let resolver = Arc::new(FixedMbidResolver::new());
+    let providers = droppedneedle_providers::Providers::unpaced(Arc::new(
+        droppedneedle_providers::ReqwestWire::new(&platform.http),
+    ));
+    let resolver = Arc::new(AlbumResolver::new(&providers, platform.settings.live()));
     let spotify_client =
         SpotifyClient::new(http.clone(), no_redirect_client(), api_base, accounts_base);
     let service = Arc::new(SpotifyImportService::new(
@@ -141,7 +149,7 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
         spotify_states,
         spotify_links: spotify_links.clone(),
         spotify_playlists,
-        resolver: resolver.clone(),
+        resolver,
         jobs,
         executor,
         probes: Arc::new(HealthProbes {
@@ -161,7 +169,6 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
         approvals,
         spotify_links,
         playlists,
-        resolver,
         slskd,
         sabnzbd,
         newznab,
@@ -495,6 +502,22 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
 }
 
 // --- Spotify tests ---
+
+/// The MusicBrainz mock, saved as the rig's MusicBrainz source.
+async fn serve_musicbrainz(auth: &AuthRig) -> MockMusicBrainz {
+    let mock = MockMusicBrainz::start().await.expect("mock serves");
+    auth.config
+        .save(MusicBrainzSettings {
+            source_mode: MbSourceMode::Mirror,
+            selected_source_mode: MbSourceMode::Mirror,
+            api_url: mock.base_url(),
+            rate_limit: 0.0,
+            ..MusicBrainzSettings::default()
+        })
+        .await
+        .expect("source saves");
+    mock
+}
 
 /// Seed the admin Spotify app via the settings route.
 async fn seed_spotify_app(bundle_deps: ImportsDeps, admin_id: &str) {
@@ -860,12 +883,10 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
 async fn spotify_import_answers_fast_then_populates_two_tracks() {
     let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
+    let _musicbrainz = serve_musicbrainz(&auth).await;
     let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
-    bundle
-        .resolver
-        .seed("Aurora Current", "Neon Meridian", "rg-mbid-1");
 
     let (status, body) = post_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
@@ -884,12 +905,19 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     assert_eq!(done["playlist_id"], playlist_id);
     assert_eq!(done["track_count"], 2);
 
-    // The `is_local` row never lands; the resolved album carries its MBID.
+    // The `is_local` row never lands. MusicBrainz proves the first album
+    // by its track's ISRC, so it carries its release group. The second
+    // album's namesake carries another ISRC: a name alone proves nothing,
+    // so it stays unresolved.
     let rows = playlist_rows(&bundle.playlists, &playlist_id).await;
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].track_name, "Midnight Drive");
     assert_eq!(rows[0].artist_name, "Aurora Current");
-    assert_eq!(rows[0].album_id.as_deref(), Some("rg-mbid-1"));
+    assert_eq!(rows[0].album_id.as_deref(), Some(NEON_MERIDIAN_GROUP));
+    assert_eq!(
+        rows[0].cover_url.as_deref(),
+        Some(format!("/api/v3/covers/release-group/{NEON_MERIDIAN_GROUP}?size=250").as_str())
+    );
     assert_eq!(rows[0].duration, Some(183.0));
     assert_eq!(rows[1].track_name, "Glass Tides");
     assert_eq!(rows[1].album_id, None);
@@ -936,12 +964,10 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
 async fn spotify_failed_reimport_keeps_the_old_tracks() {
     let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
+    let _musicbrainz = serve_musicbrainz(&auth).await;
     let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
-    bundle
-        .resolver
-        .seed("Aurora Current", "Neon Meridian", "rg-mbid-1");
 
     let (status, body) = post_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
@@ -989,6 +1015,7 @@ async fn spotify_failed_reimport_keeps_the_old_tracks() {
 async fn spotify_tracks_come_from_items_never_legacy_tracks() {
     let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
+    let _musicbrainz = serve_musicbrainz(&auth).await;
     let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;

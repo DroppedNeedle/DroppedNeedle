@@ -3,6 +3,13 @@
 `release_standard.json`, `release_remaster.json` and `release_search.json`
 are written by hand and their ids are made up.
 
+`spotify_search_*.json` and `spotify_release_*.json` are written by hand
+too, with made-up ids, for the two albums of the Spotify mock's playlist:
+a release search and a release lookup with
+`inc=recordings+isrcs+release-groups` for each. _Neon Meridian_'s release
+carries the ISRC Spotify gives for its track; _Glass Tides_' release
+carries another one, so its name matches and nothing proves it.
+
 `release_relations_classical.json` and `release_relations_pop.json` are
 recorded answers, fetched read-only on 2026-10-15 from the BrainzMash
 mirror (`https://api.brainzmash.cc/ws/2`, the same ws/2 shapes as

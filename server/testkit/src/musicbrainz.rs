@@ -18,6 +18,9 @@
 //!   and `artist_merged_*` were recorded read-only from the BrainzMash
 //!   mirror on 2026-10-15 and 2026-10-17; the README beside them names
 //!   each request.
+//! - `tests/fixtures/musicbrainz/spotify_*` are written by hand in the
+//!   shapes of the recorded release search and lookup, for the albums of
+//!   the Spotify mock's playlist.
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
@@ -156,6 +159,39 @@ const RECORDINGS: &[Recording] = &[
         inc: &[],
         param: None,
         body: include_str!("../../tests/fixtures/musicbrainz/artist_merged_canonical.json"),
+    },
+    // musicbrainz/spotify_*.json (hand-written): the two albums of the
+    // Spotify mock's playlist, searched and proven by ISRC. The searches
+    // answer only their own query, so no other release search finds them.
+    Recording {
+        path: "/release",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"release:"Neon Meridian" AND artist:"Aurora Current""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_search_neon.json"),
+    },
+    Recording {
+        path: "/release/5907a1b0-0000-4000-8000-000000000a01",
+        inc: &["isrcs", "recordings", "release-groups"],
+        param: None,
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_release_neon.json"),
+    },
+    Recording {
+        path: "/release",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"release:"Glass Tides" AND artist:"Boreal Static""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_search_glass.json"),
+    },
+    Recording {
+        path: "/release/5907a1b0-0000-4000-8000-000000000a02",
+        inc: &["isrcs", "recordings", "release-groups"],
+        param: None,
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_release_glass.json"),
     },
 ];
 

@@ -4,10 +4,11 @@
 //! Imported playlists persist through the collections playlist store (see
 //! [`super::spotify_store`]).
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 use super::models::{SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse};
+use super::spotify_albums::{AlbumResolver, SpotifyAlbum};
 use super::spotify_client::{
     SpotifyClient, SpotifyError, TokenRefresher, best_image_url, playlist_track_count,
 };
@@ -39,45 +40,6 @@ pub struct ImportedTrack {
     pub cover_url: Option<String>,
 }
 
-/// Album-to-MBID resolver (v2 `_resolve_album_mbids` ISRC + title-search
-/// fallback). Tests resolve from a fixed map.
-pub trait AlbumMbidResolver: Send + Sync {
-    /// Resolve one album, if the catalog knows it.
-    fn resolve(&self, isrc: Option<&str>, artist: &str, album: &str) -> Option<String>;
-}
-
-/// Fixed-map resolver for tests.
-#[derive(Debug, Default)]
-pub struct FixedMbidResolver {
-    inner: Mutex<HashMap<(String, String), String>>,
-}
-
-impl FixedMbidResolver {
-    /// Empty resolver.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Teach one `(artist, album) -> mbid` row.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn seed(&self, artist: &str, album: &str, mbid: &str) {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((artist.to_owned(), album.to_owned()), mbid.to_owned());
-    }
-}
-
-impl AlbumMbidResolver for FixedMbidResolver {
-    fn resolve(&self, _isrc: Option<&str>, artist: &str, album: &str) -> Option<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&(artist.to_owned(), album.to_owned()))
-            .cloned()
-    }
-}
-
 /// Spotify import service: OAuth helpers, playlist listing, and the
 /// populate worker the `spotify:import` job runs (v2
 /// `SpotifyImportService`).
@@ -86,7 +48,7 @@ pub struct SpotifyImportService {
     settings: Arc<ConfigSpotifySettings>,
     connections: Arc<SqliteSpotifyLinks>,
     playlists: Arc<CollectionsPlaylistBridge>,
-    resolver: Arc<dyn AlbumMbidResolver>,
+    resolver: Arc<AlbumResolver>,
 }
 
 /// Cover outcome the populate degrades on, never fails on.
@@ -107,7 +69,7 @@ impl SpotifyImportService {
         settings: Arc<ConfigSpotifySettings>,
         connections: Arc<SqliteSpotifyLinks>,
         playlists: Arc<CollectionsPlaylistBridge>,
-        resolver: Arc<dyn AlbumMbidResolver>,
+        resolver: Arc<AlbumResolver>,
     ) -> Self {
         Self {
             client,
@@ -247,24 +209,7 @@ impl SpotifyImportService {
         let info = info?;
         let tracks = tracks?;
 
-        let mut album_mbid: HashMap<String, Option<String>> = HashMap::new();
-        for track in &tracks {
-            let Some(album) = &track.album else { continue };
-            let album_id = album.id.as_deref().unwrap_or("");
-            if album_id.is_empty() || album_mbid.contains_key(album_id) {
-                continue;
-            }
-            let isrc = track
-                .external_ids
-                .as_ref()
-                .and_then(|ids| ids.isrc.as_deref());
-            let album_name = album.name.as_deref().unwrap_or("");
-            album_mbid.insert(
-                album_id.to_owned(),
-                self.resolver
-                    .resolve(isrc, &joined_artists(track), album_name),
-            );
-        }
+        let album_mbid = self.resolve_albums(&tracks).await;
 
         let rows: Vec<ImportedTrack> = tracks
             .iter()
@@ -272,9 +217,9 @@ impl SpotifyImportService {
                 let album = track.album.as_ref();
                 let mbid = album
                     .and_then(|album| album.id.as_deref())
-                    .and_then(|id| album_mbid.get(id).cloned().flatten());
+                    .and_then(|id| album_mbid.get(id).cloned());
                 let cover_url = match &mbid {
-                    Some(mbid) => Some(format!("/api/v1/covers/release-group/{mbid}?size=250")),
+                    Some(mbid) => Some(format!("/api/v3/covers/release-group/{mbid}?size=250")),
                     None => best_image_url(album.and_then(|album| album.images.as_deref()), 250),
                 };
                 ImportedTrack {
@@ -304,6 +249,61 @@ impl SpotifyImportService {
             tracing::debug!(%reason, "spotify playlist imported without a cover");
         }
         Ok(written)
+    }
+
+    /// The release group of each Spotify album on the playlist, keyed by
+    /// Spotify album id; an album nothing proves is left out. Every
+    /// ISRC the playlist has for an album counts toward its proof. A
+    /// MusicBrainz failure stops the lookups for this import: the albums
+    /// left are imported unresolved rather than waiting on a service that
+    /// is down.
+    async fn resolve_albums(&self, tracks: &[EntryTrack]) -> HashMap<String, String> {
+        let mut albums: Vec<(String, SpotifyAlbum)> = Vec::new();
+        for track in tracks {
+            let Some(album) = &track.album else { continue };
+            let Some(album_id) = album.id.as_deref().filter(|id| !id.is_empty()) else {
+                continue;
+            };
+            let at = match albums.iter().position(|(id, _)| id == album_id) {
+                Some(at) => at,
+                None => {
+                    albums.push((
+                        album_id.to_owned(),
+                        SpotifyAlbum {
+                            title: album.name.clone().unwrap_or_default(),
+                            artist: first_artist(track),
+                            isrcs: BTreeSet::new(),
+                        },
+                    ));
+                    albums.len() - 1
+                }
+            };
+            if let Some(isrc) = track
+                .external_ids
+                .as_ref()
+                .and_then(|ids| ids.isrc.as_deref())
+            {
+                albums[at].1.add_isrc(isrc);
+            }
+        }
+        let mut resolved = HashMap::new();
+        for (index, (album_id, album)) in albums.iter().enumerate() {
+            match self.resolver.resolve(album).await {
+                Ok(Some(group)) => {
+                    resolved.insert(album_id.clone(), group);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        unresolved = albums.len() - index,
+                        "musicbrainz failed; spotify albums imported without a release group"
+                    );
+                    break;
+                }
+            }
+        }
+        resolved
     }
 
     /// Store the picked provider image as the local cover. Any failure
@@ -341,6 +341,17 @@ impl SpotifyImportService {
             Err(cause) => CoverOutcome::Skipped(format!("cover write failed: {cause}")),
         }
     }
+}
+
+/// The track's first credited artist, the one MusicBrainz credits first.
+fn first_artist(track: &EntryTrack) -> String {
+    track
+        .artists
+        .iter()
+        .filter_map(|artist| artist.name.as_deref())
+        .find(|name| !name.is_empty())
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// Comma-joined track artist names (v2 populate loop).

@@ -49,7 +49,8 @@ use super::models::{
     SpotifyAuthUrlResponse, SpotifyImportRequest, SpotifyImportResponse, SpotifyJobStatus,
     SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
-use super::spotify::{AlbumMbidResolver, SpotifyImportService};
+use super::spotify::SpotifyImportService;
+use super::spotify_albums::AlbumResolver;
 use super::spotify_client::{SpotifyClient, SpotifyError, now_unix_secs};
 use super::spotify_oauth::{
     PendingAuth, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection,
@@ -79,8 +80,8 @@ pub struct ImportsDeps {
     pub spotify_links: Arc<SqliteSpotifyLinks>,
     /// Imported playlists (`spotify:{id}` refs) and their rows.
     pub spotify_playlists: Arc<CollectionsPlaylistBridge>,
-    /// Album-to-MBID resolver.
-    pub resolver: Arc<dyn AlbumMbidResolver>,
+    /// Finds each imported album's MusicBrainz release group.
+    pub resolver: Arc<AlbumResolver>,
     /// `spotify:import` job registry.
     pub jobs: Arc<JobRegistry>,
     /// Downloads-seam executor running the populates.
