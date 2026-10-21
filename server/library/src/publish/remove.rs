@@ -24,7 +24,7 @@ use super::journal::{FileJournal, JournalStore};
 use super::paths::{self, FileStat, Sandbox};
 use super::place::{self, Original, PlaceError, PlacementMode, Seams};
 use super::planner::{
-    ExtrasAction, FileFingerprint, Removal, RemoveFile, RemoveItem, removal_moved, removal_seals,
+    FileFingerprint, Removal, RemoveFile, RemoveItem, UndoRecord, removal_moved, removal_seals,
 };
 use super::snapshots::sha256_hex;
 use super::{PublishError, sql};
@@ -139,7 +139,7 @@ pub fn plan(
     targets: &[Target],
     reason_code: &str,
     actor: Option<&str>,
-    extras_action: Option<ExtrasAction>,
+    undo: Option<UndoRecord>,
     now: SystemTime,
 ) -> Result<Removal, Refusal> {
     let sealed = db.read_blocking("publish.plan_removal", |conn| {
@@ -188,7 +188,7 @@ pub fn plan(
         reason_code: reason_code.to_owned(),
         actor: actor.map(str::to_owned),
         items,
-        extras_action,
+        undo,
         album_removed: None,
     })
 }
@@ -382,7 +382,8 @@ pub(super) fn put_back(
 
 /// The catalog half of a removal, inside its bundle's commit: every
 /// track's rows must still be as sealed, then each is marked missing with
-/// its catalog action, and Remove extras' undo record is written.
+/// its catalog action, and the undo record is written under the bundle's
+/// id when the removal moves a file.
 pub(super) fn commit(
     conn: &Connection,
     bundle_id: &str,
@@ -410,7 +411,9 @@ pub(super) fn commit(
             )));
         }
     }
-    if let Some(extras) = &removal.extras_action {
+    if let Some(undo) = &removal.undo
+        && removal.items.iter().any(|item| item.file.is_some())
+    {
         let track_ids: Vec<&str> = removal
             .items
             .iter()
@@ -419,10 +422,10 @@ pub(super) fn commit(
         record_action(
             conn,
             &Action {
-                id: &extras.id,
+                id: bundle_id,
                 actor: removal.actor.as_deref(),
-                kind: "edition_extras_recycled",
-                album_id: &extras.album_id,
+                kind: RECYCLED_KIND,
+                album_id: &undo.album_id,
                 track_id: None,
                 before: "{}",
                 after: &serde_json::json!({
@@ -430,13 +433,16 @@ pub(super) fn commit(
                     "bundle_id": bundle_id,
                 })
                 .to_string(),
-                reason_code: "EDITION_EXTRA_RECYCLED",
+                reason_code: &removal.reason_code,
                 at: now,
             },
         )?;
     }
     Ok(())
 }
+
+/// The catalog action kind of a removal's undo record.
+pub(crate) const RECYCLED_KIND: &str = "files_recycled";
 
 /// Mark an indexed track missing and record one `remove_track` catalog
 /// action for it; its rows and references stay. False when the track was

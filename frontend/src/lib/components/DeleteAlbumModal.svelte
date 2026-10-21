@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { getDownloadPolicyQuery } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { removeLibraryAlbum } from '$lib/queries/library/LibraryMutations.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	interface Props {
@@ -16,6 +18,12 @@
 	let removing = $state(false);
 	let stopWanted = $state(true);
 	const removal = removeLibraryAlbum();
+	// How long the recycle bin keeps the files, from the download settings.
+	const policyQuery = getDownloadPolicyQuery(() => authStore.isAdmin);
+	const keptFor = $derived.by(() => {
+		const days = policyQuery.data?.recycle_retention_days;
+		return days ? ` for ${days} ${days === 1 ? 'day' : 'days'}` : '';
+	});
 
 	async function handleRemove() {
 		removing = true;
@@ -42,8 +50,8 @@
 >
 	<p class="text-base-content/70">
 		Remove <span class="font-semibold text-base-content">{albumTitle}</span> by
-		<span class="font-semibold text-base-content">{artistName}</span> from your library? The album's files
-		move to the recycle bin, so you can get them back from there if you change your mind.
+		<span class="font-semibold text-base-content">{artistName}</span> from your library? Its files
+		go to the recycle bin{keptFor}. Put them back from the album page.
 	</p>
 	<label class="mt-4 flex cursor-pointer items-start gap-3 rounded-box bg-base-200 p-3 text-sm">
 		<input

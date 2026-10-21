@@ -591,7 +591,7 @@ impl LibrarySetup {
                     reason_code: "FILE_RECYCLED".to_owned(),
                     actor: import.actor.clone(),
                     items: removals,
-                    extras_action: None,
+                    undo: None,
                     album_removed: None,
                 }),
             };

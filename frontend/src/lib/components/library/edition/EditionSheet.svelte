@@ -28,12 +28,15 @@
 		leaveAlbumUnmanaged,
 		matchEditionFile,
 		removeEditionExtras,
-		restoreEditionExtras,
 		sealCustomEdition,
 		undoAlbumEdition,
 		unmatchEditionFile,
 		type EditionChoice
 	} from '$lib/queries/albums/EditionQueries.svelte';
+	import {
+		getAlbumRemovalsQuery,
+		putBackRemoval
+	} from '$lib/queries/library/RemovalQueries.svelte';
 	import EditionList, { type EditionGroup, type EditionRow } from './EditionList.svelte';
 	import EditionListSkeleton from './EditionListSkeleton.svelte';
 	import EditionDetail from './EditionDetail.svelte';
@@ -94,7 +97,6 @@
 		done: null,
 		error: null
 	});
-	let lastRemoval = $state<{ actionId: string; count: number } | null>(null);
 	let fits = $state<Record<string, string>>({});
 	let tracks = $state<TracksOutcome | null>(null);
 	// "Make your copy this edition", for an edition that is not the current one.
@@ -129,7 +131,6 @@
 		searchArgs = null;
 		actionError = null;
 		noneRight = { done: null, error: null };
-		lastRemoval = null;
 		tracks = null;
 	}
 
@@ -184,7 +185,12 @@
 	const handBack = handBackAlbumEdition();
 	const undo = undoAlbumEdition();
 	const removeExtras = removeEditionExtras();
-	const restoreExtras = restoreEditionExtras();
+	const putBackFiles = putBackRemoval();
+	// The newest removal of extras from this copy that can be put back.
+	const removalsQuery = getAlbumRemovalsQuery(() => (open && canEdit ? copyId : ''));
+	const lastRemoval = $derived(
+		(removalsQuery.data ?? []).find((removal) => removal.kind === 'extras' && !removal.held) ?? null
+	);
 	const acquire = acquireEdition();
 	const sealCustom = sealCustomEdition();
 	const leaveUnmanaged = leaveAlbumUnmanaged();
@@ -200,7 +206,6 @@
 			chosen = null;
 			actionError = null;
 			noneRight = { done: null, error: null };
-			lastRemoval = null;
 			tracks = null;
 		});
 	});
@@ -471,8 +476,7 @@
 	async function moveExtras(trackIds: string[]): Promise<void> {
 		actionError = null;
 		try {
-			const answer = await removeExtras.mutateAsync({ localId: copyId, trackIds });
-			lastRemoval = { actionId: answer.action_id, count: answer.removed_track_ids.length };
+			await removeExtras.mutateAsync({ localId: copyId, trackIds });
 		} catch (error) {
 			actionError = failureSentence(error, "The files couldn't be moved.");
 		}
@@ -496,11 +500,11 @@
 		if (!lastRemoval) return;
 		actionError = null;
 		try {
-			const answer = await restoreExtras.mutateAsync({
-				localId: copyId,
-				actionId: lastRemoval.actionId
+			const answer = await putBackFiles.mutateAsync({
+				albumId: copyId,
+				removalId: lastRemoval.id,
+				releaseGroupMbid: group || null
 			});
-			lastRemoval = null;
 			if (answer.missing.length > 0) {
 				actionError = `Not in the recycle bin as it was, so not put back: ${answer.missing.join(', ')}`;
 			}
@@ -750,7 +754,7 @@
 						{canEdit}
 						primary={primaryKind ? primaryAction : undefined}
 						{actionError}
-						putBackCount={lastRemoval?.count ?? null}
+						putBackCount={lastRemoval?.files ?? null}
 						onremoveextras={moveExtras}
 						onputback={putBack}
 						{sourceReady}

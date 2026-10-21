@@ -9443,7 +9443,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Move files the album's edition has no place for (second copies, other\nversions and files not on it) to the recycle bin: every fate but\n`keep`. Only files the current plan marks that way are accepted;\nnothing runs on its own. Undo with\n`.../edition/extras/restore`.",
+        "summary": "Move files the album's edition has no place for (second copies, other\nversions and files not on it) to the recycle bin: every fate but\n`keep`. Only files the current plan marks that way are accepted;\nnothing runs on its own. The album's removals list it for Put back.",
         "operationId": "remove_extras",
         "parameters": [
           {
@@ -9539,115 +9539,6 @@
           },
           "503": {
             "description": "MusicBrainz is not answering",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "curator"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/library/albums/{album_id}/edition/extras/restore": {
-      "post": {
-        "tags": [
-          "library management"
-        ],
-        "summary": "Put back the files one removal of extras moved to the recycle bin.",
-        "operationId": "restore_extras",
-        "parameters": [
-          {
-            "name": "album_id",
-            "in": "path",
-            "description": "Local album id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RestoreExtrasBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Files put back and indexed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RestoreExtrasView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Curator role required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Nothing to take back",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "The files could not be put back; they stay in the recycle bin",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "The server is busy; try again",
             "content": {
               "application/json": {
                 "schema": {
@@ -10878,6 +10769,193 @@
           },
           "503": {
             "description": "MusicBrainz is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/{album_id}/removals": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "List the album's removals whose files are still in the recycle bin:\nwhole albums, single tracks and extras, newest first.",
+        "operationId": "list_album_removals",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id or release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removals that can be put back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumRemovalsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/{album_id}/removals/{removal_id}/put-back": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Put back the files one removal moved to the recycle bin, and list\ntheir tracks again with their plays and favourites. Another file at a\nfile's old place refuses the whole put-back; a copy gone from the bin\nis named and the rest come back.",
+        "operationId": "put_back_removal",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id or release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "removal_id",
+            "in": "path",
+            "description": "The removal's id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Files put back and indexed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PutBackView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown album, or nothing left to put back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The files could not be put back; they stay in the recycle bin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
             "content": {
               "application/json": {
                 "schema": {
@@ -36085,6 +36163,56 @@
           }
         }
       },
+      "AlbumRemovalView": {
+        "type": "object",
+        "description": "One removal of an album whose files can be put back.",
+        "required": [
+          "id",
+          "kind",
+          "removed_at",
+          "files",
+          "held"
+        ],
+        "properties": {
+          "files": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files whose copies are still in the recycle bin.",
+            "minimum": 0
+          },
+          "held": {
+            "type": "boolean",
+            "description": "A file write of the removal waits for an admin under \"Some file\nwrites need you\"; it can be put back once that is settled."
+          },
+          "id": {
+            "type": "string",
+            "description": "The removal's id, which Put back names."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RemovalKind"
+          },
+          "removed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the files were removed, unix milliseconds."
+          }
+        }
+      },
+      "AlbumRemovalsView": {
+        "type": "object",
+        "description": "An album's removals whose files can be put back, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlbumRemovalView"
+            }
+          }
+        }
+      },
       "AlbumRescanResponse": {
         "type": "object",
         "description": "The rescan request's answer.",
@@ -55543,6 +55671,22 @@
           }
         }
       },
+      "PutBackView": {
+        "type": "object",
+        "description": "What a put-back did not bring back.",
+        "required": [
+          "missing"
+        ],
+        "properties": {
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files that were not put back because their copy is gone from the\nrecycle bin or changed there, as paths inside their library folder.\nEmpty when every file went back."
+          }
+        }
+      },
       "QualityRecipeEntry": {
         "type": "object",
         "description": "One ordered, closed format-quality recipe entry. Unknown keys are\nrejected at decode so a future setting cannot silently become a\ndifferent recipe.",
@@ -57696,6 +57840,15 @@
           }
         }
       },
+      "RemovalKind": {
+        "type": "string",
+        "description": "What kind of removal an undo record undoes, read from its reason code.",
+        "enum": [
+          "album",
+          "track",
+          "extras"
+        ]
+      },
       "RemovalResponse": {
         "type": "object",
         "description": "What a removal took out of the catalog.",
@@ -57742,14 +57895,9 @@
         "type": "object",
         "description": "What removing extras did.",
         "required": [
-          "action_id",
           "removed_track_ids"
         ],
         "properties": {
-          "action_id": {
-            "type": "string",
-            "description": "Pass to the undo route to put the files back."
-          },
           "removed_track_ids": {
             "type": "array",
             "items": {
@@ -58690,34 +58838,6 @@
           "passed": {
             "type": "boolean",
             "description": "Whether the check passed."
-          }
-        }
-      },
-      "RestoreExtrasBody": {
-        "type": "object",
-        "description": "Take back a removal of extras.",
-        "required": [
-          "action_id"
-        ],
-        "properties": {
-          "action_id": {
-            "type": "string"
-          }
-        }
-      },
-      "RestoreExtrasView": {
-        "type": "object",
-        "description": "What did not go back.",
-        "required": [
-          "missing"
-        ],
-        "properties": {
-          "missing": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Files that were not put back because their copy is gone from the\nrecycle bin or changed there, as paths inside their library folder.\nEmpty when every file went back."
           }
         }
       },

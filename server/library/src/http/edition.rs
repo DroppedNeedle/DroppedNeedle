@@ -13,8 +13,8 @@
 //!   do to the files (kept, duplicate, other version, extra) and which
 //!   tracks are missing. Planning another release than the album's own is
 //!   for curators.
-//! - `POST /library/albums/{id}/edition/extras/remove` and `.../restore`:
-//!   move picked extras to the recycle bin, and put them back.
+//! - `POST /library/albums/{id}/edition/extras/remove`: move picked
+//!   extras to the recycle bin (Put back is on the album's removals).
 //! - `PUT /library/albums/{id}/edition/files/{track_id}`: match one file
 //!   to a track of the album's edition by hand.
 //! - `DELETE /library/albums/{id}/edition/files/{track_id}`: undo that
@@ -70,7 +70,6 @@ pub fn routes() -> Routes<LibrarySetup> {
         .admin(routes!(leave_unmanaged))
         .user(routes!(plan_edition))
         .curator(routes!(remove_extras))
-        .curator(routes!(restore_extras))
         .curator(routes!(match_edition_file, unmatch_edition_file))
         .curator(routes!(create_edition_tags))
         .curator(routes!(get_edition_tags))
@@ -827,31 +826,13 @@ pub struct RemoveExtrasBody {
 /// What removing extras did.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RemoveExtrasView {
-    /// Pass to the undo route to put the files back.
-    pub action_id: String,
     pub removed_track_ids: Vec<String>,
-}
-
-/// Take back a removal of extras.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct RestoreExtrasBody {
-    pub action_id: String,
-}
-
-/// What did not go back.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct RestoreExtrasView {
-    /// Files that were not put back because their copy is gone from the
-    /// recycle bin or changed there, as paths inside their library folder.
-    /// Empty when every file went back.
-    pub missing: Vec<String>,
 }
 
 /// Move files the album's edition has no place for (second copies, other
 /// versions and files not on it) to the recycle bin: every fate but
 /// `keep`. Only files the current plan marks that way are accepted;
-/// nothing runs on its own. Undo with
-/// `.../edition/extras/restore`.
+/// nothing runs on its own. The album's removals list it for Put back.
 #[utoipa::path(
     post,
     tag = "library management",
@@ -875,7 +856,7 @@ pub async fn remove_extras(
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<RemoveExtrasBody>,
 ) -> Result<Json<RemoveExtrasView>, ApiError> {
-    let (action_id, removed_track_ids) = Mutations::new(&state)
+    let removed = Mutations::new(&state)
         .remove_extras(&album_id, body.track_ids, caller.user_id())
         .await
         .map_err(|error| match error {
@@ -883,41 +864,8 @@ pub async fn remove_extras(
             ExtrasError::Remove(error) => ApiError::from(error),
         })?;
     Ok(Json(RemoveExtrasView {
-        action_id,
-        removed_track_ids,
+        removed_track_ids: removed.track_ids,
     }))
-}
-
-/// Put back the files one removal of extras moved to the recycle bin.
-#[utoipa::path(
-    post,
-    tag = "library management",
-    path = "/api/v3/library/albums/{album_id}/edition/extras/restore",
-    params(("album_id" = String, Path, description = "Local album id")),
-    request_body = RestoreExtrasBody,
-    responses(
-        (status = 200, description = "Files put back and indexed", body = RestoreExtrasView),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
-        (status = 404, description = "Nothing to take back"),
-        (status = 409, description = "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back"),
-        (status = 422, description = "The files could not be put back; they stay in the recycle bin"),
-        (status = 503, description = "The server is busy; try again"),
-    )
-)]
-pub async fn restore_extras(
-    State(state): State<LibrarySetup>,
-    caller: Curator,
-    Path(album_id): Path<String>,
-    ValidJson(body): ValidJson<RestoreExtrasBody>,
-) -> Result<Json<RestoreExtrasView>, ApiError> {
-    let actor = caller.user_id().to_owned();
-    let missing = tokio::task::spawn_blocking(move || {
-        Mutations::new(&state).restore_recycled(&album_id, &body.action_id, &actor)
-    })
-    .await
-    .map_err(ApiError::internal)??;
-    Ok(Json(RestoreExtrasView { missing }))
 }
 
 /// Albums whose match is a best guess waiting for a look (or, with

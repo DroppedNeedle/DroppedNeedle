@@ -117,6 +117,9 @@ export function removeLibraryTrack() {
 				queryKey: LibraryQueryKeyFactory.catalog.stats(authStore.user?.id)
 			});
 			await invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
+			await invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(authStore.user?.id)
+			});
 		}
 	}));
 }

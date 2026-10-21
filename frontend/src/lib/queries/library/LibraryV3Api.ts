@@ -87,9 +87,13 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/edition/extras/remove', {
 			path: { album_id: albumId }
 		}),
-	editionExtrasRestore: (albumId: string) =>
-		v3('/api/v3/library/albums/{album_id}/edition/extras/restore', {
-			path: { album_id: albumId }
+	// An album's removals whose files are still in the recycle bin, and
+	// putting one back.
+	albumRemovals: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/removals', { path: { album_id: albumId } }),
+	putBackRemoval: (albumId: string, removalId: string) =>
+		v3('/api/v3/library/albums/{album_id}/removals/{removal_id}/put-back', {
+			path: { album_id: albumId, removal_id: removalId }
 		}),
 	// One file matched to an edition track by hand (PUT), and its undo (DELETE).
 	editionFile: (albumId: string, trackId: string) =>

@@ -1094,13 +1094,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 }
             }
             if let Some(put_back) = put_back {
-                let spent: bool = conn
-                    .prepare_cached(super::sql::RESTORED_MARKER_EXISTS.text())?
-                    .query_row(
-                        rusqlite::params![super::put_back::marker(&put_back.action_id)],
-                        |row| row.get(0),
-                    )?;
-                if spent {
+                if super::put_back::spent(conn, &put_back.removal_bundle)? {
                     return Err(PublishError::Validation(
                         "the removal was already put back".into(),
                     ));
@@ -1732,9 +1726,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         self.journal_staged(&journal_id)
     }
 
-    /// Journal one file a put-back brings home, then copy its recycled
-    /// copy into the row's hidden temp beside home with the copy's
-    /// permission bits: read once, hashed once, read back once.
+    /// Journal one file a put-back brings home, then make the row's hidden
+    /// temp beside home: a hard link of its recycled copy when both are on
+    /// one filesystem, else a copy of it with the copy's permission bits
+    /// and modified time, read once, hashed once, read back once.
     fn prepare_put_back(
         &mut self,
         bundle: &PlanBundle,
@@ -1767,24 +1762,26 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             seq: 0,
             replaces: None,
         })?;
-        let bytes = super::put_back::read_copy(&self.sandbox, item)?;
-        let copy = std::fs::symlink_metadata(&item.copy).map_err(PublishError::from)?;
-        let bits = {
-            use std::os::unix::fs::PermissionsExt as _;
-            copy.permissions().mode() & 0o777
-        };
-        write_staged_temp(&temp, &bytes, Some(bits))?;
-        // The file comes home with the time it was last changed, not today.
-        let dated = copy.modified().and_then(|modified| {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            std::fs::OpenOptions::new()
-                .write(true)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(&temp)?
-                .set_modified(modified)
-        });
-        if let Err(error) = dated {
-            tracing::warn!(%error, "a file put back keeps today's modified time");
+        if !super::put_back::link_temp(&self.sandbox, item, &temp, self.place_seams)? {
+            let bytes = super::put_back::read_copy(&self.sandbox, item)?;
+            let copy = std::fs::symlink_metadata(&item.copy).map_err(PublishError::from)?;
+            let bits = {
+                use std::os::unix::fs::PermissionsExt as _;
+                copy.permissions().mode() & 0o777
+            };
+            write_staged_temp(&temp, &bytes, Some(bits))?;
+            // The file comes home with the time it was last changed, not today.
+            let dated = copy.modified().and_then(|modified| {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NOFOLLOW)
+                    .open(&temp)?
+                    .set_modified(modified)
+            });
+            if let Err(error) = dated {
+                tracing::warn!(%error, "a file put back keeps today's modified time");
+            }
         }
         self.temps
             .insert(journal_id.clone(), paths::FileStat::read(&temp)?);

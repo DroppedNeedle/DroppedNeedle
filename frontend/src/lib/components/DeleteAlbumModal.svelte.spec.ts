@@ -1,6 +1,6 @@
 import { page, userEvent } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
+import { renderWithQuery } from '$lib/test/render';
 
 const mutateAsync = vi.fn();
 
@@ -14,15 +14,13 @@ async function renderModal(ondeleted = vi.fn(), onclose = vi.fn()) {
 	return {
 		ondeleted,
 		onclose,
-		...(await render(DeleteAlbumModal, {
-			props: {
-				albumTitle: 'Blue Lines',
-				artistName: 'Massive Attack',
-				musicbrainzId: 'rg-1',
-				ondeleted,
-				onclose
-			}
-		} as unknown as Parameters<typeof render<typeof DeleteAlbumModal>>[1]))
+		...(await renderWithQuery(DeleteAlbumModal, {
+			albumTitle: 'Blue Lines',
+			artistName: 'Massive Attack',
+			musicbrainzId: 'rg-1',
+			ondeleted,
+			onclose
+		}))
 	};
 }
 
@@ -37,7 +35,7 @@ describe('DeleteAlbumModal', () => {
 
 		await expect.element(page.getByRole('heading', { name: 'Remove Album' })).toBeVisible();
 		await expect.element(page.getByText(/Blue Lines/)).toBeVisible();
-		await expect.element(page.getByText(/move to the recycle bin/)).toBeVisible();
+		await expect.element(page.getByText(/go to the recycle bin/)).toBeVisible();
 		await expect.element(page.getByText(/also remove/i)).not.toBeInTheDocument();
 		await expect.element(page.getByText(/Checking artist impact/i)).not.toBeInTheDocument();
 	});

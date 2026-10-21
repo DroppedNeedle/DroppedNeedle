@@ -346,7 +346,6 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("kernel/src/schema/template.rs", 1, TEST_TEMPLATE),
     ("library/src/adapters.rs", 1, LOOP_STEP),
     ("library/src/http/corrections.rs", 1, REQUEST),
-    ("library/src/http/edition.rs", 1, REQUEST),
     ("library/src/http/handlers.rs", 5, REQUEST),
     ("library/src/http/management.rs", 1, REQUEST),
     ("library/src/http/management_tools.rs", 1, REQUEST),

@@ -3172,27 +3172,9 @@ export interface paths {
          * Move files the album's edition has no place for (second copies, other
          *     versions and files not on it) to the recycle bin: every fate but
          *     `keep`. Only files the current plan marks that way are accepted;
-         *     nothing runs on its own. Undo with
-         *     `.../edition/extras/restore`.
+         *     nothing runs on its own. The album's removals list it for Put back.
          */
         post: operations["remove_extras"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/library/albums/{album_id}/edition/extras/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Put back the files one removal of extras moved to the recycle bin. */
-        post: operations["restore_extras"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3440,6 +3422,48 @@ export interface paths {
         get: operations["search_reidentification_releases"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/removals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the album's removals whose files are still in the recycle bin:
+         *     whole albums, single tracks and extras, newest first.
+         */
+        get: operations["list_album_removals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/removals/{removal_id}/put-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put back the files one removal moved to the recycle bin, and list
+         *     their tracks again with their plays and favourites. Another file at a
+         *     file's old place refuses the whole put-back; a copy gone from the bin
+         *     is named and the rest come back.
+         */
+        post: operations["put_back_removal"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10237,6 +10261,31 @@ export interface components {
             provider?: string | null;
             /** @description Sampled tracks in album order. */
             tracks?: components["schemas"]["PreviewTrackItem"][];
+        };
+        /** @description One removal of an album whose files can be put back. */
+        AlbumRemovalView: {
+            /**
+             * Format: int32
+             * @description Files whose copies are still in the recycle bin.
+             */
+            files: number;
+            /**
+             * @description A file write of the removal waits for an admin under "Some file
+             *     writes need you"; it can be put back once that is settled.
+             */
+            held: boolean;
+            /** @description The removal's id, which Put back names. */
+            id: string;
+            kind: components["schemas"]["RemovalKind"];
+            /**
+             * Format: int64
+             * @description When the files were removed, unix milliseconds.
+             */
+            removed_at: number;
+        };
+        /** @description An album's removals whose files can be put back, newest first. */
+        AlbumRemovalsView: {
+            items: components["schemas"]["AlbumRemovalView"][];
         };
         /** @description The rescan request's answer. */
         AlbumRescanResponse: {
@@ -19003,6 +19052,15 @@ export interface components {
             /** @description Mail-order stores. */
             physical: components["schemas"]["PurchaseLink"][];
         };
+        /** @description What a put-back did not bring back. */
+        PutBackView: {
+            /**
+             * @description Files that were not put back because their copy is gone from the
+             *     recycle bin or changed there, as paths inside their library folder.
+             *     Empty when every file went back.
+             */
+            missing: string[];
+        };
         /**
          * @description One ordered, closed format-quality recipe entry. Unknown keys are
          *     rejected at decode so a future setting cannot silently become a
@@ -19917,6 +19975,11 @@ export interface components {
              */
             year?: number | null;
         };
+        /**
+         * @description What kind of removal an undo record undoes, read from its reason code.
+         * @enum {string}
+         */
+        RemovalKind: "album" | "track" | "extras";
         /** @description What a removal took out of the catalog. */
         RemovalResponse: {
             /** @description The removed album (canonical local id) or track id. */
@@ -19933,8 +19996,6 @@ export interface components {
         };
         /** @description What removing extras did. */
         RemoveExtrasView: {
-            /** @description Pass to the undo route to put the files back. */
-            action_id: string;
             removed_track_ids: string[];
         };
         /** @description Bulk-remove body. */
@@ -20345,19 +20406,6 @@ export interface components {
             name: string;
             /** @description Whether the check passed. */
             passed: boolean;
-        };
-        /** @description Take back a removal of extras. */
-        RestoreExtrasBody: {
-            action_id: string;
-        };
-        /** @description What did not go back. */
-        RestoreExtrasView: {
-            /**
-             * @description Files that were not put back because their copy is gone from the
-             *     recycle bin or changed there, as paths inside their library folder.
-             *     Empty when every file went back.
-             */
-            missing: string[];
         };
         /**
          * @description Pre-restore verification report. Read-only: nothing here writes or moves
@@ -29945,87 +29993,6 @@ export interface operations {
             };
         };
     };
-    restore_extras: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Local album id */
-                album_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RestoreExtrasBody"];
-            };
-        };
-        responses: {
-            /** @description Files put back and indexed */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RestoreExtrasView"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Curator role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Nothing to take back */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description The files could not be put back; they stay in the recycle bin */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description The server is busy; try again */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     match_edition_file: {
         parameters: {
             query?: never;
@@ -30870,6 +30837,144 @@ export interface operations {
                 };
             };
             /** @description MusicBrainz is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_album_removals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id or release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removals that can be put back */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumRemovalsView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_back_removal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id or release-group MBID */
+                album_id: string;
+                /** @description The removal's id */
+                removal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Files put back and indexed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PutBackView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown album, or nothing left to put back */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The files could not be put back; they stay in the recycle bin */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
             503: {
                 headers: {
                     [name: string]: unknown;

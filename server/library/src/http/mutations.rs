@@ -2,7 +2,8 @@
 //! rescan one album (admin), re-enable management on an excluded album
 //! (admin), and hand albums the app stepped back from to automatic
 //! management again (admin). File removal always goes through the recycle bin; see
-//! [`crate::mutations`].
+//! [`crate::mutations`]. An album's removals whose files are still in the
+//! recycle bin are listed, and put back, by curators.
 
 use axum::{
     Json,
@@ -17,7 +18,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::error::refused;
 use super::models::snake;
-use crate::mutations::{MutationError, Mutations};
+use crate::mutations::{MutationError, Mutations, RemovalKind};
 use crate::scan::models::ScanState;
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::{Admin, Curator};
@@ -31,6 +32,106 @@ pub fn routes() -> Routes<LibrarySetup> {
         .admin(routes!(reenable_management))
         .admin(routes!(hand_back_management))
         .admin(routes!(hand_back_all))
+        .curator(routes!(list_album_removals))
+        .curator(routes!(put_back_removal))
+}
+
+/// One removal of an album whose files can be put back.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AlbumRemovalView {
+    /// The removal's id, which Put back names.
+    pub id: String,
+    pub kind: RemovalKind,
+    /// When the files were removed, unix milliseconds.
+    pub removed_at: i64,
+    /// Files whose copies are still in the recycle bin.
+    pub files: u32,
+    /// A file write of the removal waits for an admin under "Some file
+    /// writes need you"; it can be put back once that is settled.
+    pub held: bool,
+}
+
+/// An album's removals whose files can be put back, newest first.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AlbumRemovalsView {
+    pub items: Vec<AlbumRemovalView>,
+}
+
+/// What a put-back did not bring back.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PutBackView {
+    /// Files that were not put back because their copy is gone from the
+    /// recycle bin or changed there, as paths inside their library folder.
+    /// Empty when every file went back.
+    pub missing: Vec<String>,
+}
+
+/// List the album's removals whose files are still in the recycle bin:
+/// whole albums, single tracks and extras, newest first.
+#[utoipa::path(
+    get,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/removals",
+    params(("album_id" = String, Path, description = "Local album id or release-group MBID")),
+    responses(
+        (status = 200, description = "Removals that can be put back", body = AlbumRemovalsView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album"),
+        (status = 503, description = "The server is busy; try again"),
+    )
+)]
+pub async fn list_album_removals(
+    State(state): State<LibrarySetup>,
+    _caller: Curator,
+    Path(album_id): Path<String>,
+) -> Result<Json<AlbumRemovalsView>, ApiError> {
+    let listed = blocking(move || Mutations::new(&state).album_removals(&album_id)).await?;
+    Ok(Json(AlbumRemovalsView {
+        items: listed
+            .into_iter()
+            .map(|removal| AlbumRemovalView {
+                id: removal.id,
+                kind: removal.kind,
+                removed_at: removal.removed_at,
+                files: removal.files,
+                held: removal.held,
+            })
+            .collect(),
+    }))
+}
+
+/// Put back the files one removal moved to the recycle bin, and list
+/// their tracks again with their plays and favourites. Another file at a
+/// file's old place refuses the whole put-back; a copy gone from the bin
+/// is named and the rest come back.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/removals/{removal_id}/put-back",
+    params(
+        ("album_id" = String, Path, description = "Local album id or release-group MBID"),
+        ("removal_id" = String, Path, description = "The removal's id"),
+    ),
+    responses(
+        (status = 200, description = "Files put back and indexed", body = PutBackView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album, or nothing left to put back"),
+        (status = 409, description = "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back"),
+        (status = 422, description = "The files could not be put back; they stay in the recycle bin"),
+        (status = 503, description = "The server is busy; try again"),
+    )
+)]
+pub async fn put_back_removal(
+    State(state): State<LibrarySetup>,
+    caller: Curator,
+    Path((album_id, removal_id)): Path<(String, String)>,
+) -> Result<Json<PutBackView>, ApiError> {
+    let actor = caller.user_id().to_owned();
+    let missing =
+        blocking(move || Mutations::new(&state).put_back(&album_id, &removal_id, &actor)).await?;
+    Ok(Json(PutBackView { missing }))
 }
 
 /// Album removal options.

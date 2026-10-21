@@ -23,6 +23,7 @@
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
+	import RecycledRemovals from '$lib/components/library/RecycledRemovals.svelte';
 	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
 	import RetagPairCard from '$lib/components/library/RetagPairCard.svelte';
 	import { getRetagPairsQuery } from '$lib/queries/library/LibraryRetagPairQueries.svelte';
@@ -196,6 +197,14 @@
 
 			{#if authStore.isAdmin && localAlbumQuery.data}
 				<ManagementHoldSection album={localAlbumQuery.data} />
+			{/if}
+
+			{#if authStore.isTrusted && localAlbumId}
+				<RecycledRemovals
+					albumId={localAlbumId}
+					releaseGroupMbid={album.musicbrainz_id}
+					onputback={() => void state.refreshAll()}
+				/>
 			{/if}
 
 			{#each retagPairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}

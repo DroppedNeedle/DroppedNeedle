@@ -313,17 +313,16 @@ pub struct PlanBundle {
     pub added: Option<super::add::Added>,
 }
 
-/// Remove extras' undo: files one removal took to the recycle bin, going
+/// A removal's undo: files one removal took to the recycle bin, going
 /// back where they were.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PutBack {
-    /// The `edition_extras_recycled` action this undoes.
-    pub action_id: String,
-    pub album_id: String,
-    /// The account the restored action names, when a person asked.
-    pub actor: Option<String>,
     /// The removal's bundle, whose rows say where each file was and is.
+    /// Its undo record carries the same id.
     pub removal_bundle: String,
+    pub album_id: String,
+    /// The account the put-back action names, when a person asked.
+    pub actor: Option<String>,
     pub items: Vec<PutBackItem>,
     /// Root-relative paths of removed files that are not coming back:
     /// their copy is gone, or no longer holds the removed bytes.
@@ -354,6 +353,10 @@ pub struct PutBackItem {
     /// copied or deleted, and the commit only lists its track again.
     #[serde(default)]
     pub home_already: bool,
+    /// The copy is on the disk of home's folder and can be linked home,
+    /// so it needs no free space there.
+    #[serde(default)]
+    pub linkable: bool,
 }
 
 /// Where a removed file's copy is.
@@ -377,9 +380,9 @@ pub struct Removal {
     /// The account the catalog actions name, when a person asked.
     pub actor: Option<String>,
     pub items: Vec<RemoveItem>,
-    /// Remove extras' undo record, written in the commit.
+    /// The undo record, written in the commit when a file moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extras_action: Option<ExtrasAction>,
+    pub undo: Option<UndoRecord>,
     /// The removed album's clean-up outside the library, queued as an
     /// [`ALBUM_REMOVED`] job in the commit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -475,11 +478,12 @@ pub struct RemoveSeal {
     pub release_track_mbid: Option<String>,
 }
 
-/// The undo record Remove extras writes with its commit.
+/// The undo record a removal a person asked for writes with its commit,
+/// under the removal's own bundle id, so Put back finds it from the
+/// album's page.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ExtrasAction {
-    /// The catalog action's id, which Put back names.
-    pub id: String,
+pub struct UndoRecord {
+    /// The album the removal is listed on.
     pub album_id: String,
 }
 
@@ -1074,7 +1078,7 @@ impl DiskPreflight {
             *per_root.entry(item.dest_root.as_str()).or_insert(0) += item.staged_bytes_estimate;
         }
         let put_backs = bundle.put_back.iter().flat_map(|put_back| &put_back.items);
-        for item in put_backs.filter(|item| !item.home_already) {
+        for item in put_backs.filter(|item| !item.home_already && !item.linkable) {
             *per_root.entry(item.root_id.as_str()).or_insert(0) += item.fingerprint.size;
         }
         if let Some(added) = bundle.added.as_ref().filter(|added| added.undoes.is_none()) {

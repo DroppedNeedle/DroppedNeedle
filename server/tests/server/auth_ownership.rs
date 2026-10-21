@@ -653,7 +653,7 @@ const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
-        "/api/v3/library/albums/{album_id}/edition/extras/restore",
+        "/api/v3/library/albums/{album_id}/removals/{removal_id}/put-back",
         SHARED_ALBUM,
     ),
     (

@@ -6,6 +6,7 @@
 	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
 	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
 	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
+	import RecycledRemovals from '$lib/components/library/RecycledRemovals.svelte';
 	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
 	import RetagPairCard from '$lib/components/library/RetagPairCard.svelte';
 	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
@@ -290,6 +291,14 @@
 
 		{#if authStore.isAdmin}
 			<div class="mt-6"><ManagementHoldSection {album} /></div>
+		{/if}
+
+		{#if authStore.isTrusted}
+			<RecycledRemovals
+				class="mt-6"
+				albumId={album.id}
+				releaseGroupMbid={album.musicbrainz_release_group_id}
+			/>
 		{/if}
 
 		{#each retagPairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}

@@ -4080,16 +4080,18 @@ async fn put_back_refuses_an_occupied_path() {
         )
         .expect("admin row");
 
-    let (action, _) = Mutations::new(&library)
+    let action = Mutations::new(&library)
         .recycle_album_files(&album, std::slice::from_ref(&track), "admin")
-        .expect("file recycled");
+        .expect("file recycled")
+        .removal_id
+        .expect("removal id");
     let recycled = walk_files(&music.join(".recycle"));
     assert_eq!(recycled.len(), 1, "one file in the bin");
     plant(&music, "Band/LP/01.flac", "flac_full_02.flac");
     let newer_bytes = std::fs::read(&original).expect("newer file reads");
     assert_ne!(newer_bytes, removed_bytes);
 
-    let refused = Mutations::new(&library).restore_recycled(&album, &action, "admin");
+    let refused = Mutations::new(&library).put_back(&album, &action, "admin");
     assert!(
         matches!(
             &refused,
@@ -4111,7 +4113,7 @@ async fn put_back_refuses_an_occupied_path() {
 
     std::fs::remove_file(&original).expect("newer file moved away");
     let missing = Mutations::new(&library)
-        .restore_recycled(&album, &action, "admin")
+        .put_back(&album, &action, "admin")
         .expect("put back once the path is free");
     assert!(missing.is_empty(), "{missing:?}");
     assert_eq!(
@@ -4261,17 +4263,14 @@ async fn a_stopped_removal_keeps_each_file_with_its_track() {
         );
         let expected_gone = if rows_change { 0 } else { 2 };
         assert_eq!(gone, expected_gone, "{case}");
-        if extras {
-            let undo: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM library_catalog_actions \
-                     WHERE action_kind = 'edition_extras_recycled' AND local_album_id = ?1",
-                    [&album],
-                    |row| row.get(0),
-                )
-                .expect("count");
-            assert_eq!(undo, i64::from(gone == 2), "{case}: the undo record");
-        }
+        let listed = Mutations::new(&library)
+            .album_removals(&album)
+            .expect("removals read");
+        assert_eq!(
+            listed.len(),
+            usize::from(gone == 2),
+            "{case}: the removal is offered for Put back exactly when it took the files"
+        );
     }
 }
 
@@ -4308,9 +4307,11 @@ fn removed_extras(
             |row| row.get(0),
         )
         .expect("album id");
-    let (action, _) = Mutations::new(library)
+    let action = Mutations::new(library)
         .recycle_album_files(&album, &tracks, "admin")
-        .expect("files recycled");
+        .expect("files recycled")
+        .removal_id
+        .expect("removal id");
     (album, tracks, paths, action)
 }
 
@@ -4337,7 +4338,7 @@ fn availability_of(conn: &rusqlite::Connection, track: &str) -> String {
 fn restored_actions(conn: &rusqlite::Connection, album: &str) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM library_catalog_actions \
-         WHERE action_kind = 'edition_extras_restored' AND local_album_id = ?1",
+         WHERE action_kind = 'files_put_back' AND local_album_id = ?1",
         [album],
         |row| row.get(0),
     )
@@ -4354,21 +4355,165 @@ fn no_hidden_files(dir: &Path) -> bool {
     })
 }
 
+/// A removed album's page offers its removal while the files are in the
+/// recycle bin. Putting it back lists every track again under its own id
+/// on the same album, with its plays and favourites, and the removal is
+/// offered no more. A removal whose copies the bin's expiry deleted is
+/// not offered, and putting it back changes nothing.
+#[tokio::test]
+async fn a_removed_album_is_put_back_from_its_page() {
+    use droppedneedle_library::mutations::{MutationError, Mutations, RemovalKind};
+
+    let (scratch, library, music) = bare_library("lib-put-back-album").await;
+    plant(&music, "Back/01.flac", "flac_no_tags.flac");
+    plant(&music, "Back/02.flac", "flac_no_tags.flac");
+    plant(&music, "Gone/01.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let track_at = |rel: &str| -> String {
+        library
+            .scan_store
+            .track_at("music", rel)
+            .unwrap()
+            .expect("track indexed")
+    };
+    let album_of = |track: &str| -> String {
+        conn.query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [track],
+            |row| row.get(0),
+        )
+        .expect("album id")
+    };
+    let rels = ["Back/01.flac", "Back/02.flac"];
+    let tracks: Vec<String> = rels.iter().map(|rel| track_at(rel)).collect();
+    let album = album_of(&tracks[0]);
+    conn.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('admin', 'track', '{track}', 0), ('admin', 'album', '{album}', 0); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
+         artist_name, played_at) VALUES ('play-1', 'admin', '{track}', 'Song', 'Artist', \
+         '2026-01-01T00:00:00Z');",
+        track = tracks[0]
+    ))
+    .expect("favourites and a play");
+    let mutations = Mutations::new(&library);
+
+    let removal = mutations
+        .remove_album(&album, true, true, "admin")
+        .expect("album removed")
+        .removal_id
+        .expect("removal id");
+    let listed = mutations.album_removals(&album).expect("removals read");
+    assert_eq!(listed.len(), 1, "the removal is offered: {listed:?}");
+    assert_eq!(
+        (
+            listed[0].id.as_str(),
+            listed[0].kind,
+            listed[0].files,
+            listed[0].held
+        ),
+        (removal.as_str(), RemovalKind::Album, 2, false)
+    );
+
+    let missing = mutations
+        .put_back(&album, &removal, "admin")
+        .expect("album put back");
+    assert!(missing.is_empty(), "{missing:?}");
+    for (track, rel) in tracks.iter().zip(rels) {
+        assert!(music.join(rel).is_file(), "{rel} is home");
+        assert_eq!(&track_at(rel), track, "{rel} keeps its track id");
+        assert_eq!(availability_of(&conn, track), "indexed");
+        assert_eq!(album_of(track), album, "{rel} is on its album again");
+    }
+    let kept: i64 = conn
+        .query_row(
+            &format!(
+                "SELECT (SELECT COUNT(*) FROM library_user_favorites \
+                 WHERE (item_kind = 'track' AND item_id = '{track}') \
+                 OR (item_kind = 'album' AND item_id = '{album}')) \
+                 + (SELECT COUNT(*) FROM library_play_history \
+                 WHERE id = 'play-1' AND local_track_id = '{track}') \
+                 + (SELECT has_indexed_track FROM local_albums WHERE id = '{album}')",
+                track = tracks[0]
+            ),
+            [],
+            |row| row.get(0),
+        )
+        .expect("counts");
+    assert_eq!(
+        kept, 4,
+        "favourites, the play and the album's files are back"
+    );
+    assert!(
+        mutations
+            .album_removals(&album)
+            .expect("removals read")
+            .is_empty(),
+        "a removal put back is offered no more"
+    );
+
+    let gone_track = track_at("Gone/01.flac");
+    let gone_album = album_of(&gone_track);
+    let gone = mutations
+        .remove_album(&gone_album, true, true, "admin")
+        .expect("album removed")
+        .removal_id
+        .expect("removal id");
+    assert_eq!(
+        mutations.album_removals(&gone_album).expect("read").len(),
+        1
+    );
+    conn.execute(
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400 \
+         WHERE replaced_track_id = ?1",
+        [&gone_track],
+    )
+    .expect("copy ages past the retention");
+    library.recycle_expiry_tick(&|| true).expect("expiry runs");
+    assert!(
+        mutations
+            .album_removals(&gone_album)
+            .expect("removals read")
+            .is_empty(),
+        "an expired copy is not offered"
+    );
+    let refused = mutations.put_back(&gone_album, &gone, "admin");
+    assert!(
+        matches!(
+            &refused,
+            Err(MutationError::Conflict(reason)) if reason.code == "RECYCLED_FILES_GONE"
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(availability_of(&conn, &gone_track), "missing");
+}
+
 /// A put-back stopped at any step ends, once recovery has run, with
 /// every file either back home with its track listed and the undo spent,
 /// or still in the recycle bin with its track missing and the undo there
 /// to use: never a file at home without its track, never one in neither
 /// place. Only a put-back that committed answers that it put files back.
+/// It holds both when the bin is on the album's disk, where each file
+/// comes home as a hard link of its copy in the bin, and when it is not,
+/// where each file is copied.
 #[tokio::test]
 async fn a_put_back_stopped_at_any_step_ends_in_the_bin_or_home() {
     use droppedneedle_library::mutations::Mutations;
     use droppedneedle_library::publish::CrashPoint;
+    use droppedneedle_library::publish::place::Seams;
+    use std::os::unix::fs::MetadataExt as _;
 
     let (scratch, library, music) = bare_library("lib-put-back-stopped").await;
     let mut points = CrashPoint::all();
     points.push(CrashPoint::AfterFirstFileStaged);
     points.push(CrashPoint::AfterTempWritten);
-    for index in 0..points.len() {
+    let cases: Vec<(CrashPoint, bool)> = points
+        .into_iter()
+        .flat_map(|point| [(point, false), (point, true)])
+        .collect();
+    for index in 0..cases.len() {
         plant(&music, &format!("Case{index}/01.flac"), "flac_no_tags.flac");
         plant(&music, &format!("Case{index}/02.flac"), "flac_no_tags.flac");
     }
@@ -4377,15 +4522,46 @@ async fn a_put_back_stopped_at_any_step_ends_in_the_bin_or_home() {
     let conn = scratch_db(&scratch);
     let bin = music.join(".recycle");
 
-    for (index, point) in points.into_iter().enumerate() {
-        let case = format!("case {index} ({point:?})");
+    for (index, (point, copied)) in cases.into_iter().enumerate() {
+        let case = format!("case {index} ({point:?}, copied {copied})");
         let (album, tracks, paths, action) =
             removed_extras(&library, &music, &conn, &format!("Case{index}"));
         let binned = walk_files(&bin).len();
 
+        library.set_publish_seams(Seams {
+            copy_put_back: copied,
+            ..Seams::default()
+        });
         library.arm_publish_crash(Some(point));
-        let answer = Mutations::new(&library).restore_recycled(&album, &action, "admin");
+        let answer = Mutations::new(&library).put_back(&album, &action, "admin");
         library.arm_publish_crash(None);
+        library.set_publish_seams(Seams::default());
+        if matches!(
+            point,
+            CrashPoint::AfterStage
+                | CrashPoint::AfterFirstFileStaged
+                | CrashPoint::AfterTempWritten
+        ) {
+            let temps: Vec<PathBuf> = walk_files(&music.join(format!("Case{index}")))
+                .into_iter()
+                .filter(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name.to_string_lossy()
+                            .starts_with(".droppedneedle-management-")
+                    })
+                })
+                .collect();
+            assert!(!temps.is_empty(), "{case}: a temp waits beside home");
+            for temp in &temps {
+                let links = std::fs::metadata(temp).expect("temp stats").nlink();
+                assert_eq!(
+                    links,
+                    if copied { 1 } else { 2 },
+                    "{case}: {} is a link of its copy in the bin only on one disk",
+                    temp.display()
+                );
+            }
+        }
         let committed = matches!(
             point,
             CrashPoint::AfterCatalogCommit | CrashPoint::DuringCleanup
@@ -4461,7 +4637,7 @@ async fn a_file_that_lands_just_before_a_put_back_survives() {
         })),
         None,
     );
-    let answer = Mutations::new(&library).restore_recycled(&album, &action, "admin");
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
     library.set_publish_hooks(None, None);
     assert!(
         matches!(
@@ -4515,7 +4691,7 @@ async fn put_back_names_a_file_gone_from_the_bin() {
     std::fs::remove_file(&copy_of_02).expect("copy goes");
 
     let missing = Mutations::new(&library)
-        .restore_recycled(&album, &action, "admin")
+        .put_back(&album, &action, "admin")
         .expect("the rest come back");
     assert_eq!(missing, ["Gone/02.flac"]);
     assert!(paths[0].exists() && !paths[1].exists());
@@ -4548,21 +4724,23 @@ async fn put_back_names_a_file_gone_from_the_bin() {
     let after: String = conn
         .query_row(
             "SELECT after_json FROM library_catalog_actions \
-             WHERE action_kind = 'edition_extras_restored' AND local_album_id = ?1",
+             WHERE action_kind = 'files_put_back' AND local_album_id = ?1",
             [&album],
             |row| row.get(0),
         )
         .expect("audit row");
     assert!(after.contains("Gone/02.flac"), "{after}");
 
-    let (again, _) = Mutations::new(&library)
+    let again = Mutations::new(&library)
         .recycle_album_files(&album, std::slice::from_ref(&tracks[0]), "admin")
-        .expect("removed again");
+        .expect("removed again")
+        .removal_id
+        .expect("removal id");
     for copy in walk_files(&music.join(".recycle")) {
         std::fs::remove_file(copy).expect("copy goes");
     }
     for _ in 0..2 {
-        let refused = Mutations::new(&library).restore_recycled(&album, &again, "admin");
+        let refused = Mutations::new(&library).put_back(&album, &again, "admin");
         assert!(
             matches!(
                 &refused,
@@ -4606,7 +4784,7 @@ async fn put_back_names_a_copy_changed_in_the_bin() {
     drop(file);
 
     let missing = Mutations::new(&library)
-        .restore_recycled(&album, &action, "admin")
+        .put_back(&album, &action, "admin")
         .expect("the rest come back");
     assert_eq!(missing, ["Edited/02.flac"]);
     assert!(paths[0].exists() && !paths[1].exists());
@@ -4649,7 +4827,7 @@ async fn put_back_takes_a_file_still_waiting_for_the_bin() {
         "the files wait hidden"
     );
 
-    let answer = Mutations::new(&library).restore_recycled(&album, &action, "admin");
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
     assert!(answer.is_ok(), "{answer:?}");
     for (path, track) in paths.iter().zip(&tracks) {
         assert!(path.exists(), "{} is home", path.display());
@@ -4701,7 +4879,7 @@ async fn put_back_returns_a_track_that_gave_its_path_up() {
     )
     .expect("row gives its path up");
 
-    let answer = Mutations::new(&library).restore_recycled(&album, &action, "admin");
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
     assert!(answer.is_ok(), "{answer:?}");
     assert!(paths.iter().all(|path| path.exists()));
     for (name, track) in ["Moved/01.flac", "Moved/02.flac"].iter().zip(&tracks) {
@@ -4738,7 +4916,7 @@ async fn put_back_never_follows_a_link_in_the_library() {
     std::fs::remove_dir_all(&folder).expect("folder goes");
     std::os::unix::fs::symlink(&outside, &folder).expect("link made");
 
-    let refused = Mutations::new(&library).restore_recycled(&album, &action, "admin");
+    let refused = Mutations::new(&library).put_back(&album, &action, "admin");
     assert!(
         matches!(
             &refused,
@@ -4757,7 +4935,7 @@ async fn put_back_never_follows_a_link_in_the_library() {
     );
 
     std::fs::remove_file(&folder).expect("link goes");
-    let answer = Mutations::new(&library).restore_recycled(&album, &action, "admin");
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
     assert!(answer.is_ok(), "{answer:?}");
     assert!(paths.iter().all(|path| path.exists()));
 }

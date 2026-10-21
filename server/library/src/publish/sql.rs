@@ -92,15 +92,45 @@ droppedneedle_kernel::sql! {
              action_kind, local_album_id, local_track_id, before_json, after_json, reason_code, \
              created_at) VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, \
              ?7, ?8, ?9)";
-    /// A removal of extras (`?1`) on album `?2` whose undo is not spent
-    /// (no restored action names `?3`, its marker): its `after_json`.
-    pub(super) EXTRAS_ACTION_OPEN = "SELECT after_json FROM library_catalog_actions \
-             WHERE id = ?1 AND local_album_id = ?2 AND action_kind = 'edition_extras_recycled' \
-             AND NOT EXISTS (SELECT 1 FROM library_catalog_actions r \
-             WHERE r.action_kind = 'edition_extras_restored' AND r.before_json = ?3)";
-    /// Whether a restored action carries the marker `?1`.
-    pub(super) RESTORED_MARKER_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_catalog_actions \
-             WHERE action_kind = 'edition_extras_restored' AND before_json = ?1)";
+    /// A removal's undo record (`?1`) on album `?2`, or on an album merged
+    /// into it, that no put-back has spent yet: its `after_json`.
+    pub(super) RECYCLED_ACTION_OPEN = "WITH RECURSIVE albums(id, hops) AS ( \
+             SELECT ?2, 0 UNION SELECT b.id, albums.hops + 1 FROM local_albums b \
+             JOIN albums ON b.retired_into_album_id = albums.id WHERE albums.hops < 8) \
+             SELECT a.after_json FROM library_catalog_actions a \
+             WHERE a.id = ?1 AND a.action_kind = 'files_recycled' \
+             AND a.local_album_id IN (SELECT id FROM albums) \
+             AND NOT EXISTS (SELECT 1 FROM library_catalog_actions p \
+             WHERE p.action_kind = 'files_put_back' \
+             AND json_extract(p.before_json, '$.undoes') = a.id)";
+    /// Whether a put-back spent the undo record `?1`.
+    pub(super) PUT_BACK_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_catalog_actions \
+             WHERE action_kind = 'files_put_back' AND json_extract(before_json, '$.undoes') = ?1)";
+    /// The removals of album `?1` (or of an album merged into it) that can
+    /// still be put back: unspent, every file row settled or held for an
+    /// admin, newest first. `files` counts the copies still in the bin; a
+    /// held row never expires.
+    pub(crate) ALBUM_REMOVALS = "WITH RECURSIVE albums(id, hops) AS ( \
+             SELECT ?1, 0 UNION SELECT b.id, albums.hops + 1 FROM local_albums b \
+             JOIN albums ON b.retired_into_album_id = albums.id WHERE albums.hops < 8) \
+             SELECT id, reason_code, created_at, files, held FROM ( \
+             SELECT a.id, a.reason_code, a.created_at, \
+             (SELECT count(*) FROM library_publish_journal j \
+              JOIN library_publish_replacements r ON r.journal_id = j.id \
+              WHERE j.bundle_id = a.id AND j.kind = 'remove' \
+              AND (r.expired_at IS NULL OR j.state = 'needs_attention')) AS files, \
+             EXISTS (SELECT 1 FROM library_publish_journal j WHERE j.bundle_id = a.id \
+              AND j.kind = 'remove' AND j.state = 'needs_attention') AS held \
+             FROM library_catalog_actions a \
+             WHERE a.action_kind = 'files_recycled' \
+             AND a.local_album_id IN (SELECT id FROM albums) \
+             AND NOT EXISTS (SELECT 1 FROM library_catalog_actions p \
+              WHERE p.action_kind = 'files_put_back' \
+              AND json_extract(p.before_json, '$.undoes') = a.id) \
+             AND NOT EXISTS (SELECT 1 FROM library_publish_journal j WHERE j.bundle_id = a.id \
+              AND j.kind = 'remove' \
+              AND j.state IN ('prepared', 'staged', 'published', 'compensated'))) \
+             WHERE files > 0 ORDER BY created_at DESC, id";
     /// Whether an undo of an added file, recorded with the text `?1`, landed
     /// or is still settling.
     pub(super) TAKE_BACK_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_publish_operations o \

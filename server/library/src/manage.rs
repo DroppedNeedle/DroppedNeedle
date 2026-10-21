@@ -781,6 +781,8 @@ pub(crate) struct RemovalDone {
     /// Each file as (where it was, where it is now): its bin entry, or its
     /// hidden name while its move into the bin waits.
     pub recycled: Vec<(PathBuf, PathBuf)>,
+    /// The removal's id, when it wrote an undo record Put back names.
+    pub removal_id: Option<String>,
 }
 
 /// Revisions a publish is sealed with: the job's pins, which the live
@@ -1685,6 +1687,22 @@ impl LibrarySetup {
         }
     }
 
+    /// Make placement on the open publisher behave like a filesystem
+    /// without one of its steps. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_publish_seams(&self, seams: super::publish::place::Seams) {
+        let registry = self.live_registry();
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cell.refresh(&registry, &self.root_dirs).is_ok()
+            && let Ok(open) = cell.open()
+        {
+            open.publisher.set_place_seams(seams);
+        }
+    }
+
     /// Run `before_place` on the open publisher just before each file is
     /// placed, and `before_set_aside` just before each file is set aside,
     /// so a test can put something in the way. Tests only.
@@ -1786,7 +1804,7 @@ impl LibrarySetup {
         targets: &[super::publish::remove::Target],
         reason_code: &str,
         actor: Option<&str>,
-        extras: Option<super::publish::planner::ExtrasAction>,
+        undo: Option<super::publish::planner::UndoRecord>,
         album_removed: Option<super::publish::planner::AlbumRemoved>,
         entry: RemovalEntry,
     ) -> Result<RemovalDone, super::publish::remove::Refusal> {
@@ -1834,7 +1852,7 @@ impl LibrarySetup {
             targets,
             reason_code,
             actor,
-            extras,
+            undo,
             std::time::SystemTime::now(),
         )?;
         removal.album_removed = album_removed;
@@ -1914,28 +1932,37 @@ impl LibrarySetup {
                 recycled.push((PathBuf::from(&file.path), PathBuf::from(now_at)));
             }
         }
+        let removal_id = sealed
+            .bundle
+            .removal
+            .as_ref()
+            .is_some_and(|removal| {
+                removal.undo.is_some() && removal.items.iter().any(|item| item.file.is_some())
+            })
+            .then(|| bundle_id.to_owned());
         Ok(RemovalDone {
             track_ids,
             recycled,
+            removal_id,
         })
     }
 
-    /// Put back what the removal of extras `action_id` took from album
-    /// `album_id`, as one put-back bundle planned, sealed and published
-    /// under the publish lock and the guards of the folders the files came
-    /// from. A person is waiting: a lock or folder another write holds
-    /// answers busy at once. A put-back whose commit landed answers what
-    /// did not come back even when a later step failed: recovery finishes
-    /// it. Answers the root-relative paths of the files that did not come
-    /// back. Blocking.
+    /// Put back what the removal `removal_id` took from album `album_id`,
+    /// as one put-back bundle planned, sealed and published under the
+    /// publish lock and the guards of the folders the files came from.
+    /// Each copy is hashed before the lock is taken. A person is waiting:
+    /// a lock or folder another write holds answers busy at once. A
+    /// put-back whose commit landed answers what did not come back even
+    /// when a later step failed: recovery finishes it. Answers the
+    /// root-relative paths of the files that did not come back. Blocking.
     pub(crate) fn publish_put_back(
         &self,
-        action_id: &str,
+        removal_id: &str,
         album_id: &str,
         actor: &str,
     ) -> Result<Vec<String>, super::publish::put_back::Refusal> {
         use super::publish::put_back::{self, Refusal};
-        let roots = put_back::roots_of(&self.db, action_id, album_id)?;
+        let (roots, prehashed) = put_back::prepare(&self.db, removal_id, album_id)?;
         let mut cell = match self.publish.try_lock() {
             Ok(cell) => cell,
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
@@ -1963,10 +1990,11 @@ impl LibrarySetup {
             &open.sandbox,
             &registry,
             &bundle_id,
-            action_id,
+            removal_id,
             album_id,
             Some(actor),
             &roots,
+            &prehashed,
         )?;
         let missing = plan.missing.clone();
         let policy_revision = policy_revision_u64(&registry);

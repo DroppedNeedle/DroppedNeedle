@@ -108,6 +108,7 @@ let api: FakeApi;
 
 function routes(): FakeApi {
 	return fakeApi({
+		'GET /api/v3/library/albums/{album_id}/removals': { items: [] },
 		'GET /api/v3/albums/{album_id}/basic': ({ params }) => basic(params.album_id),
 		'GET /api/v3/albums/{album_id}/tracks': {
 			tracks: songs.map(([disc, position, title, length]) => ({

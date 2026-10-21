@@ -121,6 +121,9 @@ pub struct Seams {
     pub unsynced: bool,
     /// A copy to another disk stops part way with a write error.
     pub short_write: bool,
+    /// A put-back copies its file instead of linking it, as when the
+    /// recycle bin is on another disk.
+    pub copy_put_back: bool,
 }
 
 /// Place `hidden_from` at `to`, never replacing a file at `to`. `mode` is

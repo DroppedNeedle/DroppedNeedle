@@ -97,7 +97,6 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	writeEditionTags: () => mutation(),
 	undoTagWrite: () => mutation(),
 	removeEditionExtras: () => mutation(),
-	restoreEditionExtras: () => mutation(),
 	matchEditionFile: () => mutation(),
 	unmatchEditionFile: () => mutation(),
 	sealCustomEdition: () => mutation((...args: unknown[]) => h.seal(...args)),
@@ -129,6 +128,11 @@ vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
 }));
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryAlbumDetailQuery: () => ({ data: undefined })
+}));
+vi.mock('$lib/queries/library/RemovalQueries.svelte', () => ({
+	getAlbumRemovalsQuery: () => ({ data: [] }),
+	putBackRemoval: () => mutation(),
+	invalidateAlbumRemovals: () => Promise.resolve()
 }));
 vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
 	getReleaseEditionSearchQuery: () => ({ data: undefined, isError: false, isFetching: false })

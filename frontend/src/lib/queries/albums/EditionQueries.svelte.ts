@@ -149,22 +149,19 @@ export const getEditionPlanQuery = (
 	}));
 
 // Move the edition's extra files (second copies, files not on it) to the
-// recycle bin, and put them back. Never runs on its own.
+// recycle bin. Never runs on its own. The album's removals list it for
+// Put back.
 export function removeEditionExtras() {
 	return createMutation(() => ({
 		mutationFn: ({ localId, trackIds }: { localId: string; trackIds: string[] }) =>
 			api.global.v3.POST(LibraryV3Api.editionExtrasRemove(localId), { track_ids: trackIds }),
-		onSuccess: (_data, { localId }) =>
-			invalidateEditionScope({ userId: authStore.user?.id, localId })
-	}));
-}
-
-export function restoreEditionExtras() {
-	return createMutation(() => ({
-		mutationFn: ({ localId, actionId }: { localId: string; actionId: string }) =>
-			api.global.v3.POST(LibraryV3Api.editionExtrasRestore(localId), { action_id: actionId }),
-		onSuccess: (_data, { localId }) =>
-			invalidateEditionScope({ userId: authStore.user?.id, localId })
+		onSuccess: (_data, { localId }) => {
+			const userId = authStore.user?.id;
+			invalidateEditionScope({ userId, localId });
+			void invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(userId)
+			});
+		}
 	}));
 }
 

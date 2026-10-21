@@ -302,6 +302,7 @@
 							size="sm"
 							icon={Undo2}
 							class="self-start"
+							pendingLabel="Putting back..."
 							onclick={onputback}>{putBackButton(putBackCount)}</AsyncButton
 						>
 					{/if}

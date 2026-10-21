@@ -1,16 +1,23 @@
-//! Putting files Remove extras took to the recycle bin back, under
-//! `put_back` journal rows.
+//! Putting files a removal took to the recycle bin back, under `put_back`
+//! journal rows.
 //!
-//! Every path comes from the removal's own rows: home is the row's
-//! `(root, rel)`, resolved through the sandbox, and the copy is the row's
-//! bin entry, or its hidden name beside home while its move into the bin
-//! is still pending. The copy is copied to the row's hidden temp beside
-//! home, verified, and placed by a call that refuses a taken name. The
-//! commit re-indexes each track from its file, so the row keeps its id,
-//! and writes the restored action; until then the copy is untouched, so an
-//! unwind loses nothing. Only after the commit is the copy deleted, and
-//! only while it and the file at home both still hold the removed bytes.
-//! A copy in a bin that is no longer set is never deleted.
+//! Every removal a person asked for that moved a file writes an undo
+//! record (a `files_recycled` catalog action) under its bundle id; that id
+//! names the removal on the album's page and here. Every path comes from
+//! the removal's own rows: home is the row's `(root, rel)`, resolved
+//! through the sandbox, and the copy is the row's bin entry, or its hidden
+//! name beside home while its move into the bin is still pending. Each
+//! copy is hashed before the publish lock is taken; under it only its
+//! identity on disk is compared. The row's hidden temp beside home is a
+//! hard link of the copy when both are on one filesystem, checked to be
+//! that file, else a verified copy of it. The temp is placed by a call
+//! that refuses a taken name. The commit re-indexes each track from its
+//! file, so the row keeps its id, and writes the put-back action; until
+//! then the copy's name is untouched, so an unwind, which only removes the
+//! temp and what it placed, loses nothing. Only after the commit is the
+//! copy deleted, and only while it and the file at home both still hold
+//! the removed bytes. A copy in a bin that is no longer set is never
+//! deleted, and never linked.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -32,7 +39,7 @@ use crate::scan::store::CommitIndexedItem;
 pub enum Refusal {
     /// Another write holds the library folder or one of the tracks.
     Busy,
-    /// No removal of extras with that id is left to take back.
+    /// No removal with that id is left to take back.
     NothingToRestore,
     /// A track or its removal's rows are not as the put-back needs them.
     Changed,
@@ -72,10 +79,100 @@ impl From<droppedneedle_kernel::db::DbError> for Refusal {
     }
 }
 
-/// The `before_json` a restored action records, naming the removal it
+/// The `before_json` a put-back action records, naming the removal it
 /// undid. One per removal: its presence spends the undo.
-pub(crate) fn marker(action_id: &str) -> String {
-    serde_json::json!({ "undoes": action_id }).to_string()
+pub(crate) fn marker(removal_id: &str) -> String {
+    serde_json::json!({ "undoes": removal_id }).to_string()
+}
+
+/// The catalog action kind of a put-back.
+const PUT_BACK_KIND: &str = "files_put_back";
+
+/// Whether a put-back already spent the removal `removal_id`'s undo.
+pub(super) fn spent(conn: &Connection, removal_id: &str) -> rusqlite::Result<bool> {
+    conn.prepare_cached(sql::PUT_BACK_EXISTS.text())?
+        .query_row(params![removal_id], |row| row.get(0))
+}
+
+/// What kind of removal an undo record undoes, read from its reason code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RemovalKind {
+    /// A whole album's files.
+    Album,
+    /// One track's file (a track removal, or the second copy a duplicate
+    /// resolution sent away).
+    Track,
+    /// Files the album's edition has no place for.
+    Extras,
+}
+
+impl RemovalKind {
+    fn of(reason_code: &str) -> Option<Self> {
+        match reason_code {
+            "ALBUM_FILES_RECYCLED" => Some(Self::Album),
+            "FILE_RECYCLED" => Some(Self::Track),
+            "EDITION_EXTRA_RECYCLED" => Some(Self::Extras),
+            _ => None,
+        }
+    }
+}
+
+/// One removal an album's page can put back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    /// The removal's id (its bundle id).
+    pub id: String,
+    pub kind: RemovalKind,
+    /// When it was removed, unix milliseconds.
+    pub removed_at: i64,
+    /// Its files whose copies are still in the recycle bin.
+    pub files: u32,
+    /// A file write of it waits for an admin, so it can't be put back yet.
+    pub held: bool,
+}
+
+/// The removals of album `album_id` (a live album id) that can still be
+/// put back, newest first: not put back yet, every file settled or held,
+/// and at least one copy the bin's expiry has not deleted. A record with a
+/// reason this does not know is left out, with one warning per process.
+pub fn removals(db: &Db, album_id: &str) -> Result<Vec<Listed>, PublishError> {
+    static UNKNOWN_WARNED: std::sync::Once = std::sync::Once::new();
+    let rows: Vec<(String, Option<String>, f64, u32, bool)> =
+        db.read_blocking("publish.album_removals", |conn| {
+            let mut statement = conn.prepare_cached(sql::ALBUM_REMOVALS.text())?;
+            let rows = statement.query_map(params![album_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?;
+            Ok::<_, PublishError>(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, reason, at, files, held)| {
+            let Some(kind) = reason.as_deref().and_then(RemovalKind::of) else {
+                UNKNOWN_WARNED.call_once(|| {
+                    tracing::warn!(
+                        reason = reason.as_deref().unwrap_or(""),
+                        "a removal's undo record has a reason this version does not list"
+                    );
+                });
+                return None;
+            };
+            Some(Listed {
+                id,
+                kind,
+                removed_at: (at * 1000.0) as i64,
+                files,
+                held,
+            })
+        })
+        .collect())
 }
 
 /// One removal row, with what was planned for its file and its track now.
@@ -86,18 +183,16 @@ struct Found {
     track: Option<(String, String, String)>,
 }
 
-/// The removal `action_id` on album `album_id` undoes, when it is still
-/// there to undo: its bundle id and its rows.
+/// The removal `removal_id` on album `album_id` (or an album merged into
+/// it), when it is still there to undo: its bundle id and its rows.
 fn read_removal(
     conn: &Connection,
-    action_id: &str,
+    removal_id: &str,
     album_id: &str,
 ) -> Result<Result<(String, Vec<Found>), Refusal>, PublishError> {
     let after: Option<String> = conn
-        .prepare_cached(sql::EXTRAS_ACTION_OPEN.text())?
-        .query_row(params![action_id, album_id, marker(action_id)], |row| {
-            row.get(0)
-        })
+        .prepare_cached(sql::RECYCLED_ACTION_OPEN.text())?
+        .query_row(params![removal_id, album_id], |row| row.get(0))
         .optional()?;
     let Some(after) = after else {
         return Ok(Err(Refusal::NothingToRestore));
@@ -105,13 +200,14 @@ fn read_removal(
     let bundle_id = serde_json::from_str::<serde_json::Value>(&after)
         .ok()
         .and_then(|value| value.get("bundle_id")?.as_str().map(str::to_owned));
-    let Some(bundle_id) = bundle_id else {
-        tracing::info!(
-            action_id,
-            "a removal of extras with no bundle has nothing to take back"
+    if bundle_id.as_deref() != Some(removal_id) {
+        tracing::warn!(
+            removal_id,
+            "a removal's undo record names no bundle of its own; nothing is put back"
         );
         return Ok(Err(Refusal::NothingToRestore));
-    };
+    }
+    let bundle_id = removal_id.to_owned();
     let removal = super::operations::operation_json(conn, &bundle_id)?
         .and_then(|json| serde_json::from_str::<PlanBundle>(&json).ok())
         .and_then(|bundle| bundle.removal);
@@ -140,43 +236,84 @@ fn read_removal(
     Ok(Ok((bundle_id, found)))
 }
 
-/// The library folders the removal `action_id` took files from, so the
-/// caller can hold them before it plans. Empty when there is nothing to
-/// take back; the plan then says why.
-pub fn roots_of(db: &Db, action_id: &str, album_id: &str) -> Result<Vec<String>, PublishError> {
+/// Copies hashed before the publish lock: each path that held the removed
+/// bytes, with its identity on disk while it was read.
+pub type Prehashed = std::collections::BTreeMap<PathBuf, FileStat>;
+
+/// What a put-back reads before the publish lock: the library folders the
+/// removal `removal_id` took files from, so the caller can hold them, and
+/// each copy that holds the removed bytes (its bin entry, or its hidden
+/// name while its move into the bin waits), hashed once. Empty when there
+/// is nothing to take back; the plan then says why. A copy that can't be
+/// read here is left for the plan to read under the lock.
+pub fn prepare(
+    db: &Db,
+    removal_id: &str,
+    album_id: &str,
+) -> Result<(Vec<String>, Prehashed), PublishError> {
     let read = db.read_blocking("publish.put_back_roots", |conn| {
-        read_removal(conn, action_id, album_id)
+        read_removal(conn, removal_id, album_id)
     })?;
-    let mut roots: Vec<String> = match read {
-        Ok((_, found)) => found.into_iter().map(|found| found.row.dest_root).collect(),
-        Err(_) => Vec::new(),
+    let Ok((_, found)) = read else {
+        return Ok((Vec::new(), Prehashed::new()));
     };
+    let mut roots = Vec::new();
+    let mut hashed = Prehashed::new();
+    for found in &found {
+        roots.push(found.row.dest_root.clone());
+        let Some(file) = &found.file else {
+            continue;
+        };
+        let mut candidates = vec![PathBuf::from(&found.row.staged)];
+        if let Some(replaced) = &found.row.replaces {
+            candidates.push(PathBuf::from(&replaced.recycle_to));
+        }
+        for path in candidates {
+            if let Some(stat) = hash_copy(&path, file) {
+                hashed.insert(path, stat);
+            }
+        }
+    }
     roots.sort();
     roots.dedup();
-    Ok(roots)
+    Ok((roots, hashed))
 }
 
-/// Plan putting back what the removal `action_id` took from album
+/// The identity of the regular file at `path` when it holds `file`'s
+/// bytes and did not change while it was read.
+fn hash_copy(path: &Path, file: &RemoveFile) -> Option<FileStat> {
+    let before = FileStat::read(path).ok()?;
+    if before.size != file.fingerprint.size {
+        return None;
+    }
+    let bytes = paths::read_regular_file(path).ok()?;
+    let after = FileStat::read(path).ok()?;
+    (after == before && sha256_hex(&bytes) == file.fingerprint.sha256).then_some(after)
+}
+
+/// Plan putting back what the removal `removal_id` took from album
 /// `album_id`, under the publish lock, against `sandbox`. Only folders in
-/// `held` may be written. Per file: a copy that is gone, or holds other
-/// bytes, is named missing and the rest still come back; a file already
-/// at home with the removed bytes is left as it is. Another file at home
-/// while the copy is still there refuses the whole put-back, and so does a
-/// track that is not missing at its old path (or the hidden name it gave
-/// that path up for).
+/// `held` may be written. A copy in `prehashed` whose identity is
+/// unchanged is not read again. Per file: a copy that is gone, or holds
+/// other bytes, is named missing and the rest still come back; a file
+/// already at home with the removed bytes is left as it is. Another file
+/// at home while the copy is still there refuses the whole put-back, and
+/// so does a track that is not missing at its old path (or the hidden
+/// name it gave that path up for).
 #[allow(clippy::too_many_arguments)]
 pub fn plan(
     db: &Db,
     sandbox: &Sandbox,
     registry: &RootRegistry,
     bundle_id: &str,
-    action_id: &str,
+    removal_id: &str,
     album_id: &str,
     actor: Option<&str>,
     held: &[String],
+    prehashed: &Prehashed,
 ) -> Result<PutBack, Refusal> {
     let read = db.read_blocking("publish.plan_put_back", |conn| {
-        let read = read_removal(conn, action_id, album_id)?;
+        let read = read_removal(conn, removal_id, album_id)?;
         if let Ok((_, found)) = &read {
             let journals = JournalStore::new(conn);
             for found in found {
@@ -259,7 +396,7 @@ pub fn plan(
                     Refusal::OutsideRoot
                 }
             })?;
-        let copy_stat = check_copy(sandbox, &copy, copy_in, file)?;
+        let copy_stat = check_copy(sandbox, &copy, copy_in, file, prehashed.get(&copy))?;
         let gone = format!("{HIDDEN_PREFIX}gone/{track_id}/{rel}");
         let track_rel = match &found.track {
             Some((root, track_rel, availability))
@@ -322,6 +459,8 @@ pub fn plan(
             policy,
             policy_revision: registry.policy_revision().to_owned(),
             home_already,
+            linkable: copy_in != CopyIn::OldBin
+                && home_device(&home).is_some_and(|dev| dev == copy_stat.dev),
         });
     }
     if items.is_empty() {
@@ -332,13 +471,21 @@ pub fn plan(
         });
     }
     Ok(PutBack {
-        action_id: action_id.to_owned(),
+        removal_bundle,
         album_id: album_id.to_owned(),
         actor: actor.map(str::to_owned),
-        removal_bundle,
         items,
         missing,
     })
+}
+
+/// The device of home's folder, or of its nearest folder that is there.
+fn home_device(home: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    home.ancestors()
+        .skip(1)
+        .find_map(|folder| std::fs::metadata(folder).ok())
+        .map(|meta| meta.dev())
 }
 
 /// Whether a track row at `track_rel` may take its file back at `rel`:
@@ -389,14 +536,17 @@ fn old_entry(copy: &Path) -> Result<(), PublishError> {
 }
 
 /// The copy's identity when it may be read from where it is and holds
-/// the removed bytes, checked by its size and then its bytes. `None` when
-/// it is gone, is not a plain file, or holds other bytes; a copy that is
-/// there but cannot be read refuses, so the undo is not spent on it.
+/// the removed bytes, checked by its size and then its bytes, or by its
+/// whole identity when it is still the file `hashed` saw holding them.
+/// `None` when it is gone, is not a plain file, or holds other bytes; a
+/// copy that is there but cannot be read refuses, so the undo is not
+/// spent on it.
 fn check_copy(
     sandbox: &Sandbox,
     copy: &Path,
     copy_in: CopyIn,
     file: &RemoveFile,
+    hashed: Option<&FileStat>,
 ) -> Result<Option<FileStat>, Refusal> {
     if let Err(error) = copy_place(sandbox, copy, copy_in) {
         tracing::info!(%error, "a removed file's copy can't be read safely; it counts as gone");
@@ -415,6 +565,9 @@ fn check_copy(
         return Ok(None);
     }
     let stat = FileStat::of(&meta);
+    if hashed == Some(&stat) {
+        return Ok(Some(stat));
+    }
     match paths::read_regular_file(copy) {
         Ok(bytes) => Ok((sha256_hex(&bytes) == file.fingerprint.sha256).then_some(stat)),
         Err(PublishError::Io(error)) => Err(unreadable(&error)),
@@ -458,6 +611,41 @@ pub(super) fn read_copy(sandbox: &Sandbox, item: &PutBackItem) -> Result<Vec<u8>
         )));
     }
     Ok(bytes)
+}
+
+/// Make `temp` a hard link of the item's copy, checked to be that file as
+/// the plan found it. The copy's name and bytes are left alone. False,
+/// with nothing left behind, when it can't be linked (another
+/// filesystem, a bin no longer set, a copy whose identity moved since the
+/// plan, or a link that does not read back as the copy): the caller then
+/// copies and verifies its bytes.
+pub(super) fn link_temp(
+    sandbox: &Sandbox,
+    item: &PutBackItem,
+    temp: &Path,
+    seams: Seams,
+) -> Result<bool, PublishError> {
+    if item.copy_in == CopyIn::OldBin || seams.cross_device || seams.copy_put_back {
+        return Ok(false);
+    }
+    let copy = Path::new(&item.copy);
+    copy_place(sandbox, copy, item.copy_in)?;
+    if FileStat::read(copy).ok() != Some(item.copy_stat) {
+        return Ok(false);
+    }
+    if let Err(error) = std::fs::hard_link(copy, temp) {
+        tracing::debug!(%error, "a removed file is copied back: its copy can't be linked");
+        return Ok(false);
+    }
+    if FileStat::read(temp).is_ok_and(|now| item.copy_stat.same_moved(&now)) {
+        return Ok(true);
+    }
+    // A filesystem that reports another identity for a hard link: the
+    // link goes and the file is copied and verified instead.
+    if let Err(error) = std::fs::remove_file(temp) {
+        tracing::warn!(%error, "a put-back's hidden link was kept");
+    }
+    Ok(false)
 }
 
 /// Place a `put_back` row's temp on its home, by the call that refuses a
@@ -618,13 +806,10 @@ pub(super) fn commit(
     now: f64,
 ) -> Result<(), PublishError> {
     let put_back = &commit.put_back;
-    let spent: bool = conn
-        .prepare_cached(sql::RESTORED_MARKER_EXISTS.text())?
-        .query_row(params![marker(&put_back.action_id)], |row| row.get(0))?;
-    if spent {
+    if spent(conn, &put_back.removal_bundle)? {
         return Err(PublishError::Catalog(format!(
             "removal {} was already put back",
-            put_back.action_id
+            put_back.removal_bundle
         )));
     }
     for (item, indexed) in put_back.items.iter().zip(&commit.indexed) {
@@ -703,17 +888,17 @@ pub(super) fn commit(
         &super::remove::Action {
             id: &uuid::Uuid::new_v4().to_string(),
             actor: put_back.actor.as_deref(),
-            kind: "edition_extras_restored",
+            kind: PUT_BACK_KIND,
             album_id: &put_back.album_id,
             track_id: None,
-            before: &marker(&put_back.action_id),
+            before: &marker(&put_back.removal_bundle),
             after: &serde_json::json!({
                 "track_ids": track_ids,
                 "missing": put_back.missing,
                 "bundle_id": bundle_id,
             })
             .to_string(),
-            reason_code: "EDITION_EXTRA_RESTORED",
+            reason_code: "FILES_PUT_BACK",
             at: now,
         },
     )?;
