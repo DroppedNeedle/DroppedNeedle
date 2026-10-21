@@ -35,7 +35,7 @@ use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::MediaEngine;
-use droppedneedle_media::playback::services::PlaybackDeps;
+use droppedneedle_media::playback::PlaybackDeps;
 
 /// Subsonic audio over the stream engine.
 pub type CompatAudio = GatewayAudio<MediaEngine>;

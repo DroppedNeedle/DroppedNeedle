@@ -26,11 +26,12 @@ use playback::ports::{
     ProviderFailure, RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets,
     ServiceOutcome,
 };
-use playback::services::{
-    MixedDedup, PresenceRegistry, SESSION_TTL_SECS, ScrobbleDedup, SessionKey, SessionStore,
-    meets_subsonic_threshold, presence_key, should_scrobble_native, submit_session_scrobble,
-    subsonic_scrobble_threshold_ms,
+use playback::presence::{PresenceRegistry, presence_key};
+use playback::report::{MixedDedup, ScrobbleDedup, submit_session_scrobble};
+use playback::rules::{
+    meets_subsonic_threshold, should_scrobble_native, subsonic_scrobble_threshold_ms,
 };
+use playback::sessions::{SESSION_TTL_SECS, SessionKey, SessionStore};
 use playback::sqlite::PlaybackStore;
 use playback::warmup::{self, WarmupScope, WarmupStats};
 use serde_json::{Value, json};
@@ -841,7 +842,7 @@ async fn a_scrobble_reaches_listenbrainz_once() {
     };
     for _ in 0..2 {
         let answer =
-            playback::services::submit_scrobble(&rig.deps, "user-1", &request).expect("accepted");
+            playback::report::submit_scrobble(&rig.deps, "user-1", &request).expect("accepted");
         assert!(answer.accepted);
     }
     // Dropping the rig closes the queue; the worker delivers what is in it

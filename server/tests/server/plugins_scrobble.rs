@@ -403,7 +403,7 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
 /// out of the live feed at once, not after a restart.
 #[tokio::test]
 async fn saved_visibility_reaches_the_live_presence_feed() {
-    use droppedneedle_media::playback::services::{PresenceRegistry, PresenceUpdate};
+    use droppedneedle_media::playback::presence::{PresenceRegistry, PresenceUpdate};
     use droppedneedle_plugins::scrobble::update_prefs;
 
     let registry = PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new());

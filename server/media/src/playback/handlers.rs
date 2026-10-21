@@ -12,12 +12,15 @@ use axum::{
 };
 
 use super::{
+    PlaybackDeps,
     models::{
         NowPlayingDeleteQuery, NowPlayingHeartbeat, PlaybackProgressRequest,
         PlaybackProgressResponse, PlaybackStartRequest, PlaybackStartResponse, PlaybackStopRequest,
         PlaybackStopResponse, ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest,
     },
-    services::{self, PlaybackDeps},
+    presence, report,
+    rules::ServiceError,
+    sessions,
 };
 use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
@@ -25,7 +28,7 @@ use droppedneedle_kernel::events::NowPlayingSnapshot;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
 
-fn map(error: services::ServiceError) -> ApiError {
+fn map(error: ServiceError) -> ApiError {
     error.into_playback_error().into()
 }
 
@@ -51,7 +54,7 @@ pub async fn start_playback(
     User(user): User,
     ValidJson(body): ValidJson<PlaybackStartRequest>,
 ) -> Result<Json<PlaybackStartResponse>, ApiError> {
-    services::start_playback(&deps, user.user_id(), &body)
+    sessions::start_playback(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -74,7 +77,7 @@ pub async fn report_progress(
     User(user): User,
     ValidJson(body): ValidJson<PlaybackProgressRequest>,
 ) -> Result<Json<PlaybackProgressResponse>, ApiError> {
-    services::report_progress(&deps, user.user_id(), &body)
+    sessions::report_progress(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -97,7 +100,7 @@ pub async fn stop_playback(
     User(user): User,
     ValidJson(body): ValidJson<PlaybackStopRequest>,
 ) -> Result<Json<PlaybackStopResponse>, ApiError> {
-    services::stop_playback(&deps, user.user_id(), &body)
+    sessions::stop_playback(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -123,7 +126,7 @@ pub async fn submit_scrobble(
     User(user): User,
     ValidJson(body): ValidJson<ScrobbleSubmitRequest>,
 ) -> Result<Json<ScrobbleResponse>, ApiError> {
-    services::submit_scrobble(&deps, user.user_id(), &body)
+    report::submit_scrobble(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -145,7 +148,7 @@ pub async fn forward_now_playing(
     User(user): User,
     ValidJson(body): ValidJson<ScrobbleNowPlayingRequest>,
 ) -> Result<Json<ScrobbleResponse>, ApiError> {
-    services::forward_sink_now_playing(&deps, user.user_id(), &body)
+    report::forward_sink_now_playing(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -168,7 +171,7 @@ pub async fn now_playing(
     State(deps): State<PlaybackDeps>,
     _user: User,
 ) -> Json<NowPlayingSnapshot> {
-    Json(services::snapshot(&deps))
+    Json(presence::snapshot(&deps))
 }
 
 /// Record a native heartbeat (upsert presence).
@@ -188,7 +191,7 @@ pub async fn heartbeat(
     User(user): User,
     ValidJson(body): ValidJson<NowPlayingHeartbeat>,
 ) -> StatusCode {
-    services::heartbeat(&deps, user.user_id(), &body);
+    presence::heartbeat(&deps, user.user_id(), &body);
     StatusCode::NO_CONTENT
 }
 
@@ -210,7 +213,7 @@ pub async fn clear_now_playing(
     ValidQuery(query): ValidQuery<NowPlayingDeleteQuery>,
 ) -> StatusCode {
     let device = query.device.as_deref().unwrap_or("web");
-    services::clear_presence(&deps, user.user_id(), device);
+    presence::clear_presence(&deps, user.user_id(), device);
     StatusCode::NO_CONTENT
 }
 

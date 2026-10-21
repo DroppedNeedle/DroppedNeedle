@@ -50,12 +50,55 @@ pub mod handlers;
 pub mod models;
 pub mod plugin_events;
 pub mod ports;
+pub mod presence;
+pub mod report;
 pub mod reports;
+pub mod rules;
 pub mod scrobble_models;
-pub mod services;
+pub mod sessions;
 pub mod sqlite;
 pub mod warmup;
 
+use std::sync::Arc;
+
+use droppedneedle_kernel::clock::Clock;
+
 pub use handlers::routes;
-pub use services::PlaybackDeps;
 pub use warmup::{WarmupScope, WarmupStats};
+
+use ports::{PlayEvents, RemoteReporters, ScrobbleSinks};
+use presence::PresenceRegistry;
+use report::{MixedDedup, ScrobbleDedup};
+use sessions::SessionStore;
+use sqlite::PlaybackStore;
+
+/// Everything the reporting services need, built once and cloned into
+/// handlers. Ports stay behind traits; the session, presence, and dedup
+/// state is process-local by design (v2 single-process invariant).
+#[derive(Clone)]
+pub struct PlaybackDeps {
+    /// Track resolution for reporting.
+    pub catalog: Arc<PlaybackStore>,
+    /// External scrobble sinks (Last.fm / ListenBrainz).
+    pub sinks: Arc<dyn ScrobbleSinks>,
+    /// Outbound remote attribution (Jellyfin / Navidrome / Plex).
+    pub remotes: Arc<dyn RemoteReporters>,
+    /// Local play-history source of truth.
+    pub history: Arc<PlaybackStore>,
+    /// Per-user forwarding and visibility choices.
+    pub prefs: Arc<PlaybackStore>,
+    /// Display-name resolution for presence entries.
+    pub names: Arc<PlaybackStore>,
+    /// Bounded playback sessions.
+    pub sessions: SessionStore,
+    /// Live presence registry.
+    pub presence: PresenceRegistry,
+    /// Scrobble name dedup.
+    pub dedup: ScrobbleDedup,
+    /// Mixed-report dedup.
+    pub mixed: MixedDedup,
+    /// Clock for TTLs and timestamps.
+    pub clock: Arc<dyn Clock>,
+    /// Listeners for accepted plays (plugins).
+    pub events: Arc<dyn PlayEvents>,
+}

@@ -20,11 +20,12 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 
+use crate::playback::PlaybackDeps;
 use crate::playback::forwarding::{ForwardWorker, ScrobbleForwarder, StoredScrobbleCredentials};
+use crate::playback::presence::PresenceRegistry;
+use crate::playback::report::{MixedDedup, ScrobbleDedup};
 use crate::playback::reports::{ReportQueue, run_report_worker};
-use crate::playback::services::{
-    MixedDedup, PlaybackDeps, PresenceRegistry, ScrobbleDedup, SessionStore,
-};
+use crate::playback::sessions::SessionStore;
 use crate::playback::sqlite::PlaybackStore;
 use crate::remotes::adapter::ImportSink;
 use crate::remotes::connections::{

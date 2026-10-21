@@ -2,13 +2,13 @@
 //! services.
 //!
 //! Both protocols share one adapter. Scrobbles go through
-//! [`submit_track_scrobble`](droppedneedle_media::playback::services::submit_track_scrobble)
+//! [`submit_track_scrobble`](droppedneedle_media::playback::report::submit_track_scrobble)
 //! (history files the play under the track, sinks forward per prefs);
 //! presence goes through
-//! [`heartbeat`](droppedneedle_media::playback::services::heartbeat) /
-//! [`clear_presence`](droppedneedle_media::playback::services::clear_presence); the
+//! [`heartbeat`](droppedneedle_media::playback::presence::heartbeat) /
+//! [`clear_presence`](droppedneedle_media::playback::presence::clear_presence); the
 //! now-playing list reads
-//! [`PresenceRegistry::compat_now_playing`](droppedneedle_media::playback::services::PresenceRegistry::compat_now_playing),
+//! [`PresenceRegistry::compat_now_playing`](droppedneedle_media::playback::presence::PresenceRegistry::compat_now_playing),
 //! which already skips redacted and trackless rows. Failures never fail a
 //! report: unknown files resolve to nothing and service errors map to the
 //! caller's store error (code 0 on Subsonic).
@@ -18,13 +18,13 @@ use std::sync::{Arc, Mutex};
 
 use crate::jellyfin::seams::PlaybackSessions;
 use crate::subsonic::store::NowPlayingRow;
+use droppedneedle_media::playback::PlaybackDeps;
 use droppedneedle_media::playback::models::{
     NowPlayingHeartbeat, ScrobbleNowPlayingRequest, ScrobbleSubmitRequest,
 };
-use droppedneedle_media::playback::services::{
-    PlaybackDeps, clear_presence, compat_heartbeat, forward_sink_now_playing, normalize_client,
-    presence_cover_url, submit_track_scrobble,
-};
+use droppedneedle_media::playback::presence::{clear_presence, compat_heartbeat};
+use droppedneedle_media::playback::report::{forward_sink_now_playing, submit_track_scrobble};
+use droppedneedle_media::playback::rules::{normalize_client, presence_cover_url};
 
 /// Reporting adapter shared by both compat protocols.
 #[derive(Clone)]

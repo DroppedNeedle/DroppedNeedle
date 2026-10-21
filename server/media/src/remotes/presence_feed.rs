@@ -16,7 +16,7 @@ use super::jellyfin::JellyfinAdapter;
 use super::models::{SessionView, SourceName};
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
-use crate::playback::services::{ExternalSession, PresenceRegistry};
+use crate::playback::presence::{ExternalSession, PresenceRegistry};
 use droppedneedle_kernel::clock::{Clock, SystemClock};
 use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
