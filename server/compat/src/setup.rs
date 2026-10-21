@@ -83,6 +83,7 @@ impl CompatDeps {
         reads: &ReadsSetup,
     ) -> Self {
         let config = &platform.config;
+        let settings = LiveSettings::from_config(&platform.settings, engine.can_transcode());
         Self {
             users,
             crypto: platform.crypto.clone(),
@@ -91,7 +92,7 @@ impl CompatDeps {
             scan,
             library: CompatLibrary::from_reads(reads),
             queues: CompatQueues::new(reads.collections.db.clone()),
-            settings: LiveSettings::from_config(&platform.settings),
+            settings,
             listener: ListenerConfig {
                 port: config.port,
                 trusted_proxies: config.trusted_proxies.clone(),

@@ -34,12 +34,14 @@ pub struct LiveSettings(Arc<dyn SettingsSource>);
 
 impl LiveSettings {
     /// Settings read through live handles on `config` on every call.
-    pub fn from_config(config: &ConfigStore) -> Self {
+    /// `can_transcode` is whether the stream engine was built with an
+    /// ffmpeg.
+    pub fn from_config(config: &ConfigStore, can_transcode: bool) -> Self {
         Self(Arc::new(ConfigSettings {
             connect_apps: config.live(),
             security: config.live(),
             public_address: config.live(),
-            ffmpeg_available: droppedneedle_media::stream::transcode::ffmpeg_available(),
+            ffmpeg_available: can_transcode,
         }))
     }
 
@@ -207,7 +209,7 @@ mod tests {
         std::fs::write(dir.join("config.json"), config).expect("config writes");
         let crypto = Crypto::from_key_bytes(&[7u8; 32]).expect("test key");
         let store = ConfigStore::scratch(&dir, crypto).expect("store opens");
-        let live = LiveSettings::from_config(&store);
+        let live = LiveSettings::from_config(&store, false);
         std::fs::remove_dir_all(&dir).expect("scratch folder removed");
         [
             live.jellyfin().download_access,

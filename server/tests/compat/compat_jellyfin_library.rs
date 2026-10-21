@@ -4,10 +4,10 @@
 //! markers, audio routes, PlaybackInfo, session reports, playlists and
 //! token transports.
 //!
-//! The rig turns transcoding off, so every answer is the same on a host
-//! with ffmpeg and one without. Which requests would transcode is pinned
-//! by the decision rules below; what a transcode sends is not checked
-//! here.
+//! The rig is given no ffmpeg, so nothing transcodes and every answer is
+//! the same on a host with ffmpeg and one without. The transcoding rig is
+//! given the committed stand-in, which answers one line naming the muxer
+//! and bitrate it was asked for.
 //!
 //! The app locks out an address after five failed sign-ins. Requests that
 //! are meant to fail come through a proxy from an address of their own,
@@ -253,7 +253,7 @@ fn expected_user(name: &str, id: &str) -> Value {
         "EnableAllDevices": true,
         "EnabledDevices": [],
         "EnableMediaPlayback": true,
-        // The rig turns transcoding off, and it is offered only while it
+        // The rig has no ffmpeg, and transcoding is offered only while it
         // can be served.
         "EnableAudioPlaybackTranscoding": false,
         "EnableVideoPlaybackTranscoding": false,
@@ -315,11 +315,6 @@ async fn gates_and_system_routes() {
             "{key} is named"
         );
     }
-    let encoder = if droppedneedle_media::stream::transcode::ffmpeg_available() {
-        "System"
-    } else {
-        "NotFound"
-    };
     assert_shape(
         &body,
         &json!({
@@ -345,7 +340,8 @@ async fn gates_and_system_routes() {
             "InternalMetadataPath": "",
             "CastReceiverApplications": [],
             "HasUpdateAvailable": false,
-            "EncoderLocation": encoder,
+            // The app was given no ffmpeg.
+            "EncoderLocation": "NotFound",
             "TranscodingTempPath": "",
         }),
         "$",
@@ -861,7 +857,7 @@ async fn favorite_dialects_and_played_markers() {
     rig.stop().await;
 }
 
-/// Audio routes with transcoding off: every accepted request streams the
+/// Audio routes without ffmpeg: every accepted request streams the
 /// file as it is, whatever container, codec or ceiling the app asks for.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn audio_routes_stream_direct_while_transcoding_is_off() {
@@ -912,7 +908,7 @@ async fn audio_routes_stream_direct_while_transcoding_is_off() {
 /// Finamp 1.0.1: direct play and downloads via `/Items/{id}/File`,
 /// transcoded downloads via `/Audio/{id}/Universal` (capital U), and
 /// transcoded playback via the HLS playlist, which is not offered while
-/// transcoding is off.
+/// the app has no ffmpeg.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn finamp_file_universal_and_hls_routes() {
     let rig = CompatApp::start("jf-finamp-routes").await;
@@ -1014,7 +1010,7 @@ async fn playback_info_urls_play_and_transcode_fields_follow_policy() {
     let played = get(&rig, path, None).await;
     assert_eq!(played.bare(), (200, rig.file("one").len()));
 
-    // With transcoding off a low ceiling, in the query or in a POST body
+    // Without ffmpeg a low ceiling, in the query or in a POST body
     // (where Finamp's `UserId` is tolerated), still adds no transcoding
     // fields.
     let low = json(
@@ -1034,7 +1030,7 @@ async fn playback_info_urls_play_and_transcode_fields_follow_policy() {
         posted.json()["MediaSources"][0]
             .get("TranscodingUrl")
             .is_none(),
-        "transcoding offered while off"
+        "transcoding offered without ffmpeg"
     );
 
     let unknown = format!("/jellyfin/Items/{}/PlaybackInfo", "c".repeat(32));
@@ -1042,6 +1038,140 @@ async fn playback_info_urls_play_and_transcode_fields_follow_policy() {
         get(&rig, &unknown, Some(&auth)).await.status,
         StatusCode::NOT_FOUND
     );
+    rig.stop().await;
+}
+
+/// With an ffmpeg (the stand-in) and transcoding on: the user policy and
+/// System/Info offer it, a codec or a ceiling the source misses
+/// transcodes, HLS plays, and PlaybackInfo adds the transcoding fields.
+/// Turned off in Settings, transcoding is no longer offered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transcoding_answers_with_ffmpeg() {
+    let rig = CompatApp::transcoding("jf-transcoding").await;
+    let auth = finamp(&rig.secret);
+    let one = track_id(&rig, &auth, "One").await;
+    let transcoding = "EnableAudioPlaybackTranscoding";
+    let login = "/jellyfin/Users/AuthenticateByName";
+    let sign_in = || json!({"Username": PLAYER, "Pw": rig.secret});
+
+    let echo = send(&rig, "POST", login, None, Some(sign_in()))
+        .await
+        .json();
+    assert_eq!(echo["User"]["Policy"][transcoding], true);
+    let me = json(&rig, "/jellyfin/Users/Me", &auth).await;
+    assert_eq!(me["Policy"][transcoding], true);
+    let info = json(&rig, "/jellyfin/System/Info", &auth).await;
+    assert_eq!(info["EncoderLocation"], "System");
+
+    // Accepted containers (first pipe variant wins) stream direct; a codec
+    // mismatch or a client ceiling under the source bitrate transcodes, and
+    // unknown codecs fall back to opus.
+    let audio = |tail: &str| format!("/jellyfin/Audio/{one}/{tail}");
+    for (tail, transcoded) in [
+        ("universal?Container=mp3", None),
+        ("universal?Container=mp3%7Cmp4", None),
+        (
+            "universal?Container=ogg&AudioCodec=opus",
+            Some("ffmpeg stand-in: ogg "),
+        ),
+        (
+            "universal?Container=ogg&AudioCodec=aac",
+            Some("ffmpeg stand-in: ogg "),
+        ),
+        (
+            "stream?audioBitRate=64000",
+            Some("ffmpeg stand-in: mp3 64k\n"),
+        ),
+    ] {
+        let reply = get(&rig, &audio(tail), Some(&auth)).await;
+        assert_eq!(reply.status, StatusCode::OK, "{tail}");
+        match transcoded {
+            None => assert!(reply.body == rig.file("one"), "{tail} serves another file"),
+            Some(marker) => {
+                let body = String::from_utf8_lossy(&reply.body);
+                assert!(body.starts_with(marker), "{tail}: {body}");
+                assert_eq!(reply.header("accept-ranges"), "none", "{tail}");
+            }
+        }
+    }
+
+    // Finamp's transcoded playback: the HLS playlist and its one segment.
+    let query = format!(
+        "audioCodec=aac&segmentContainer=ts&audioBitRate=128000&ApiKey={}",
+        rig.secret
+    );
+    let playlist = get(&rig, &audio(&format!("main.m3u8?{query}")), None).await;
+    assert_eq!(playlist.status, StatusCode::OK);
+    assert_eq!(
+        playlist.header("content-type"),
+        "application/vnd.apple.mpegurl"
+    );
+    let text = String::from_utf8(playlist.body).expect("utf-8 playlist");
+    assert!(text.starts_with("#EXTM3U\n"), "{text}");
+    assert!(text.contains("#EXT-X-PLAYLIST-TYPE:VOD"), "{text}");
+    assert!(text.trim_end().ends_with("#EXT-X-ENDLIST"), "{text}");
+    let segment = text
+        .lines()
+        .find(|line| !line.starts_with('#'))
+        .expect("one segment line");
+    assert_eq!(segment, format!("main.ts?{query}"));
+    let head = send(
+        &rig,
+        "HEAD",
+        &audio(&format!("main.m3u8?{query}")),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(head.bare(), (200, 0));
+    assert_eq!(head.header("content-length"), text.len().to_string());
+    let ts = get(&rig, &audio(segment), None).await;
+    assert_eq!(ts.status, StatusCode::OK);
+    assert_eq!(
+        String::from_utf8_lossy(&ts.body),
+        "ffmpeg stand-in: mpegts 128k\n"
+    );
+
+    // PlaybackInfo offers transcoding; a low ceiling adds its fields.
+    let info_uri = format!("/jellyfin/Items/{one}/PlaybackInfo");
+    let info = json(&rig, &info_uri, &auth).await;
+    let source = &info["MediaSources"][0];
+    assert!(source.get("TranscodingUrl").is_none(), "{source}");
+    assert_eq!(source["SupportsTranscoding"], true);
+    let low = json(
+        &rig,
+        &format!("{info_uri}?maxStreamingBitrate=64000"),
+        &auth,
+    )
+    .await;
+    let source = &low["MediaSources"][0];
+    let transcode_url = source["TranscodingUrl"].as_str().expect("transcoding url");
+    assert!(
+        transcode_url.contains("/jellyfin/Audio/") && transcode_url.contains("AudioCodec=mp3"),
+        "{transcode_url}"
+    );
+    assert_eq!(source["TranscodingSubProtocol"], "http");
+    assert_eq!(source["TranscodingContainer"], "mp3");
+    // Same through a POST body; an opus default rides the ogg container.
+    rig.set_connect_apps(json!({"transcode_default_format": "opus"}))
+        .await;
+    let body = json!({"MaxStreamingBitrate": 64000, "UserId": "zzz"});
+    let posted = send(&rig, "POST", &info_uri, Some(&auth), Some(body)).await;
+    assert_eq!(posted.status, StatusCode::OK);
+    assert_eq!(
+        posted.json()["MediaSources"][0]["TranscodingContainer"],
+        "ogg"
+    );
+
+    // Turned off, transcoding is offered nowhere.
+    rig.set_connect_apps(json!({"transcoding_enabled": false}))
+        .await;
+    let echo = send(&rig, "POST", login, None, Some(sign_in()))
+        .await
+        .json();
+    assert_eq!(echo["User"]["Policy"][transcoding], false);
+    let me = json(&rig, "/jellyfin/Users/Me", &auth).await;
+    assert_eq!(me["Policy"][transcoding], false);
     rig.stop().await;
 }
 

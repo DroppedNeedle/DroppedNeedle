@@ -374,6 +374,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
         plugin_host.clone(),
         outbound.plex_tv.clone(),
+        outbound.ffmpeg.clone(),
         &providers,
         mix_hooks.clone(),
     )

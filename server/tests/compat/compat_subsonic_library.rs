@@ -1,7 +1,9 @@
 //! Subsonic wire contract through the whole app, over a library its own
 //! scanner filled: envelopes, error codes, response shapes per endpoint,
-//! cover art, binary endpoints, the transcode decision and mutations.
-//! The library is the one `reference/compat/library.json` lays out.
+//! cover art, binary endpoints, the transcode decision, transcoded streams
+//! and mutations. The library is the one `reference/compat/library.json`
+//! lays out. Only the transcoding app is given an ffmpeg: the committed
+//! stand-in.
 
 use axum::http::{HeaderMap, StatusCode};
 use serde_json::{Value, json};
@@ -1426,6 +1428,110 @@ async fn mutations_persist() {
     );
     let scan = admin.get("startScan", &[]).await;
     assert!(scan.text().contains("scanning=\"true\""), "{}", scan.text());
+    rig.stop().await;
+}
+
+/// With an ffmpeg (the stand-in) songs name what they transcode to, and a
+/// transcode streams without ranges or caching, answers HEAD without
+/// running ffmpeg and carries a length only when asked to estimate one.
+/// Signed transcode parameters stop working once transcoding is off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transcoding_streams() {
+    let rig = CompatApp::transcoding("compat-sub-transcoding").await;
+    let client = Client::player(&rig);
+    let ids = Ids::read(&client).await;
+    let (one, airbag) = (ids.song("One"), ids.song("Airbag"));
+
+    let text = client.get("getSong", &[("id", &one)]).await.text();
+    assert!(
+        text.contains("transcodedContentType=\"audio/mpeg\"")
+            && text.contains("transcodedSuffix=\"mp3\""),
+        "{text}"
+    );
+
+    let opus = [("id", one.as_str()), ("format", "opus")];
+    // HEAD answers the transcode headers without running ffmpeg.
+    let head = client.send("HEAD", "stream", &opus).await;
+    assert_eq!(
+        (head.status, head.content_type()),
+        (StatusCode::OK, "audio/ogg")
+    );
+    assert!(head.body.is_empty());
+    assert!(rig.ffmpeg_runs("one").is_empty(), "HEAD ran ffmpeg");
+
+    let stream = client.get("stream", &opus).await;
+    assert_eq!(
+        (stream.status, stream.content_type()),
+        (StatusCode::OK, "audio/ogg")
+    );
+    assert_eq!(stream.header("accept-ranges"), Some("none"));
+    assert_eq!(stream.header("cache-control"), Some("no-store"));
+    assert!(
+        stream.text().starts_with("ffmpeg stand-in: ogg "),
+        "{}",
+        stream.text()
+    );
+    assert_eq!(rig.ffmpeg_runs("one").len(), 1);
+
+    // Only transcodes carry the estimated length: the bitrate over the
+    // track's duration.
+    let estimate = [
+        ("id", airbag.as_str()),
+        ("format", "mp3"),
+        ("maxBitRate", "128"),
+        ("estimateContentLength", "true"),
+    ];
+    let stream = client.get("stream", &estimate).await;
+    assert_eq!(stream.text(), "ffmpeg stand-in: mp3 128k\n");
+    let length: u64 = stream
+        .header("content-length")
+        .expect("an estimated length")
+        .parse()
+        .expect("a number");
+    let seconds = named(&ids.songs, "title", "Airbag")["duration"]
+        .as_u64()
+        .expect("duration");
+    let per_second = 128 * 1000 / 8;
+    assert!(
+        (per_second * seconds.saturating_sub(1)..=per_second * (seconds + 1)).contains(&length),
+        "{length} for {seconds}s"
+    );
+
+    // Signed parameters for a transcode stream it, until transcoding is
+    // turned off.
+    let song = [("mediaId", airbag.as_str()), ("mediaType", "song")];
+    let mp3_only = br#"{"name":"Feishin","platform":"web","maxAudioBitrate":0,
+        "transcodingProfiles":[{"container":"mp3","audioCodec":"mp3","protocol":"http"}]}"#;
+    let text = client
+        .post("getTranscodeDecision", &song, "application/json", mp3_only)
+        .await
+        .text();
+    assert!(text.contains("canTranscode=\"true\""), "{text}");
+    let params = regex::Regex::new("transcodeParams=\"([^\"]+)\"")
+        .expect("pattern")
+        .captures(&text)
+        .unwrap_or_else(|| panic!("no transcodeParams: {text}"))[1]
+        .to_owned();
+    let signed = [
+        ("mediaId", airbag.as_str()),
+        ("mediaType", "song"),
+        ("transcodeParams", params.as_str()),
+    ];
+    let stream = client.get("getTranscodeStream", &signed).await;
+    assert_eq!(stream.text(), "ffmpeg stand-in: mp3 320k\n");
+
+    rig.set_connect_apps(json!({"transcoding_enabled": false}))
+        .await;
+    let refused = client.get("getTranscodeStream", &signed).await;
+    assert_eq!(
+        (refused.status, refused.content_type()),
+        (StatusCode::NOT_FOUND, "text/plain")
+    );
+    assert!(
+        refused.text().contains("Transcoding is disabled"),
+        "{}",
+        refused.text()
+    );
     rig.stop().await;
 }
 

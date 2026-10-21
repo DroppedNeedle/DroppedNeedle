@@ -19,7 +19,7 @@ use transcode::{
     OutFormat, RETRY_AFTER_SECONDS, STDERR_CAPTURE_BYTES, SUPPORTED_OUT_FORMATS, StdFfmpegSpawner,
     StreamPlan, TRANSCODE_GLOBAL_LIMIT, TRANSCODE_PRINCIPAL_LIMIT, TrackInfo, TranscodeBody,
     TranscodeError, TranscodeLease as _, TranscodeLeasePool as _, TranscodeSettings, Transcoder,
-    build_cmd, decide, ffmpeg_available,
+    build_cmd, decide,
 };
 
 // ---------------------------------------------------------------------------
@@ -611,9 +611,6 @@ async fn dropped_stream_kills_child_and_releases_once() {
 fn production_spawner_contract_without_ffmpeg() {
     assert_eq!(SUPPORTED_OUT_FORMATS, &["mp3", "opus"]);
     assert_eq!(STDERR_CAPTURE_BYTES, 2000, "bounded stderr capture");
-
-    // detect() and the decide() flag agree: both answer "is ffmpeg on PATH".
-    assert_eq!(StdFfmpegSpawner::detect().is_some(), ffmpeg_available());
 
     // A pinned path round-trips, and a missing binary fails to spawn with a
     // path-free error and no lease involvement at all.

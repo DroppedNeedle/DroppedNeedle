@@ -413,14 +413,14 @@ pub fn estimate_size(plan: &StreamPlan) -> Option<u64> {
     Some(bytes.max(0.0) as u64)
 }
 
-/// True when an `ffmpeg` executable is on `PATH` (v2 `ffmpeg_available`, the
-/// `shutil.which` half). Unlike v2 this is uncached, so a mid-process install
-/// is picked up; `decide()` takes the value as a parameter either way.
-pub fn ffmpeg_available() -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
+/// The first `ffmpeg` executable on `PATH`, or `None` when there is none
+/// (v2 `ffmpeg_available`, the `shutil.which` half). The server looks once,
+/// at boot; whether it found one is whether it can transcode.
+pub fn ffmpeg_on_path() -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
             .map(|dir| dir.join("ffmpeg"))
-            .any(|candidate| is_executable_file(&candidate))
+            .find(|candidate| is_executable_file(candidate))
     })
 }
 
@@ -732,17 +732,6 @@ pub struct StdFfmpegSpawner {
 }
 
 impl StdFfmpegSpawner {
-    /// Spawner using the `ffmpeg` found on `PATH`, or `None` when there is
-    /// none (the `decide()` ffmpeg-absent landing covers that case upstream).
-    pub fn detect() -> Option<Self> {
-        std::env::var_os("PATH").and_then(|paths| {
-            std::env::split_paths(&paths)
-                .map(|dir| dir.join("ffmpeg"))
-                .find(|candidate| is_executable_file(candidate))
-                .map(|ffmpeg| Self { ffmpeg })
-        })
-    }
-
     /// Spawner pinned to one binary path.
     pub fn with_path(path: PathBuf) -> Self {
         Self { ffmpeg: path }

@@ -1,0 +1,51 @@
+#!/bin/sh
+# Stands in for ffmpeg in tests. It checks the argument shape of the
+# server's transcode command, notes the run in `.ffmpeg-runs` beside the
+# source file, and writes one fixed line naming the muxer and bitrate to
+# stdout. Any other shape exits 2 with the reason on stderr.
+
+fail() {
+    echo "ffmpeg stand-in: $1" >&2
+    exit 2
+}
+
+input=
+muxer=
+bitrate=
+seek_after_input=
+last=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -ss)
+            [ -z "$input" ] || seek_after_input=yes
+            shift
+            ;;
+        -i)
+            shift
+            input=$1
+            ;;
+        -f)
+            shift
+            muxer=$1
+            ;;
+        -b:a)
+            shift
+            bitrate=$1
+            ;;
+    esac
+    last=$1
+    [ "$#" -gt 0 ] && shift
+done
+
+[ -n "$input" ] || fail "no -i"
+[ -f "$input" ] || fail "the input is not a file"
+[ -z "$seek_after_input" ] || fail "-ss after -i"
+case "$muxer" in
+    mp3 | ogg | mpegts) ;;
+    *) fail "unexpected muxer '$muxer'" ;;
+esac
+[ -n "$bitrate" ] || fail "no -b:a"
+[ "$last" = "pipe:1" ] || fail "output is not pipe:1"
+
+echo "$muxer $bitrate" >> "$(dirname "$input")/.ffmpeg-runs"
+printf 'ffmpeg stand-in: %s %s\n' "$muxer" "$bitrate"

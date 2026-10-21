@@ -44,7 +44,6 @@ use crate::stream::local_files::LibraryFiles;
 use crate::stream::routes::StreamState;
 use crate::stream::transcode::{
     FfmpegTranscoder, LocalTranscodeGate, OutFormat, StdFfmpegSpawner, TranscodeSettings,
-    ffmpeg_available,
 };
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::config::AppConfig;
@@ -114,9 +113,11 @@ impl MediaSetup {
     /// download ids (track ids) into files under the live library roots;
     /// `imports` is where remote playlist imports land; `plugins` hears
     /// accepted plays and serves `streaming_source` plugin streams;
-    /// `plex_tv` is the plex.tv root; scrobbles are forwarded through the
-    /// one ListenBrainz client and the one Last.fm client of `providers`,
-    /// and that ListenBrainz client checks a link before it is stored;
+    /// `plex_tv` is the plex.tv root; `ffmpeg` is the program transcodes
+    /// run, and with none the server streams every file as it is;
+    /// scrobbles are forwarded through the one ListenBrainz client and the
+    /// one Last.fm client of `providers`, and that ListenBrainz client
+    /// checks a link before it is stored;
     /// `mix` is the personal-mix standing grant the listening settings
     /// report and feed.
     #[allow(clippy::too_many_arguments)]
@@ -127,6 +128,7 @@ impl MediaSetup {
         imports: Arc<dyn ImportSink>,
         plugins: Arc<droppedneedle_plugins::host::PluginHost>,
         plex_tv: String,
+        ffmpeg: Option<PathBuf>,
         providers: &droppedneedle_providers::Providers,
         mix: Arc<dyn MixGrants>,
     ) -> Result<(Self, MediaWorkers), String> {
@@ -162,15 +164,17 @@ impl MediaSetup {
             http_factory.remote_audio().clone(),
             resolver.clone(),
         );
-        let spawner = StdFfmpegSpawner::detect()
-            .unwrap_or_else(|| StdFfmpegSpawner::with_path(PathBuf::from("ffmpeg")));
+        // Without an ffmpeg every plan lands direct, so the spawner's path
+        // is never run.
+        let spawner =
+            StdFfmpegSpawner::with_path(ffmpeg.clone().unwrap_or_else(|| PathBuf::from("ffmpeg")));
         let transcoder = FfmpegTranscoder::new(spawner, Arc::new(LocalTranscodeGate::new()));
         let gateway = Gateway::new(
             local_root(app_config),
             reader,
             transcoder,
             TranscodeSettings::default(),
-            ffmpeg_available(),
+            ffmpeg.is_some(),
         )
         .with_settings(config.live())
         .with_library(library)

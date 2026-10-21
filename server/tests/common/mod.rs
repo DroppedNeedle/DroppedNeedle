@@ -217,7 +217,7 @@ pub fn reads_inputs(dir: &Path) -> droppedneedle_catalog::reads::ReadsInputs {
 }
 
 /// Every outside service with a fixed address on the discard port, where
-/// nothing listens.
+/// nothing listens, and no ffmpeg, so nothing transcodes.
 pub fn closed_outbound() -> droppedneedle::bootstrap::Outbound {
     outbound_at("http://127.0.0.1:9")
 }
@@ -255,7 +255,15 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
         brainzmash: at("brainzmash"),
         identify_providers: droppedneedle::bootstrap::Port::live(),
         contribution_providers: droppedneedle::bootstrap::Port::live(),
+        ffmpeg: None,
     }
+}
+
+/// The committed program that stands in for ffmpeg: it checks the shape of
+/// the transcode command and answers one line,
+/// `ffmpeg stand-in: <muxer> <bitrate>`.
+pub fn ffmpeg_stand_in() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testkit/ffmpeg/ffmpeg")
 }
 
 /// The settings of the server `config` describes, while it is stopped:

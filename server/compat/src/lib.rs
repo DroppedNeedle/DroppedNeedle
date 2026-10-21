@@ -35,11 +35,11 @@
 //! filled (the `library_*` goldens). `COMPAT_BLESS=1` rewrites the goldens
 //! and is refused when `CI` is set. `tests/compat/compat_subsonic_library.rs`,
 //! `tests/compat/compat_jellyfin_library.rs` and
-//! `tests/compat/compat_catalog.rs` pin each protocol on that library. Its
-//! app turns transcoding off, so the answers with transcoding on are pinned
-//! over the test doubles in `tests/compat/compat_subsonic.rs` and
-//! `tests/compat/compat_jellyfin.rs`, until the test app can stand in for
-//! ffmpeg.
+//! `tests/compat/compat_catalog.rs` pin each protocol on that library. The
+//! test app is given no ffmpeg unless a test asks for the committed
+//! stand-in (`server/testkit/ffmpeg/ffmpeg`), which checks the transcode
+//! command and answers one fixed line; the answers with transcoding on run
+//! through it.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]

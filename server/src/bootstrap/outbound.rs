@@ -9,8 +9,11 @@
 //!
 //! It also carries the two provider ports the library's identification and
 //! contributions read through. `main` leaves both alone, so the live
-//! clients are built; a test puts scripted ones there.
+//! clients are built; a test puts scripted ones there. And it carries the
+//! ffmpeg the server transcodes with: [`Outbound::live`] finds it on
+//! `PATH` once, at boot; a test gives a stand-in or none.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use droppedneedle_acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints};
@@ -113,6 +116,9 @@ pub struct Outbound {
     pub identify_providers: Port<Arc<dyn IdentifyProviders>>,
     /// What library contributions ask Discogs and MusicBrainz through.
     pub contribution_providers: Port<ContribProviders>,
+    /// The ffmpeg program transcodes run. `None` turns transcoding off:
+    /// every stream is the file as it is.
+    pub ffmpeg: Option<PathBuf>,
 }
 
 impl Outbound {
@@ -147,6 +153,7 @@ impl Outbound {
             brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
             identify_providers: Port::live(),
             contribution_providers: Port::live(),
+            ffmpeg: droppedneedle_media::stream::transcode::ffmpeg_on_path(),
         }
     }
 

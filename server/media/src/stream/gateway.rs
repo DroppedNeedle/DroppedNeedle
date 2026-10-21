@@ -102,9 +102,9 @@ pub struct Gateway<R, T> {
 
 impl<R, T> Gateway<R, T> {
     /// Build a gateway over one local root, one remote reader, and one
-    /// ffmpeg service. Production passes [`ffmpeg_available()`] and reads
-    /// the transcode policy live ([`Self::with_settings`]); tests script
-    /// every seam.
+    /// ffmpeg service. `ffmpeg_present` is whether the builder was given an
+    /// ffmpeg. Production reads the transcode policy live
+    /// ([`Self::with_settings`]); tests script every seam.
     pub fn new(
         local_root: PathBuf,
         remote: R,
@@ -123,6 +123,12 @@ impl<R, T> Gateway<R, T> {
             ffmpeg_present,
             direct: Arc::new(DirectGate::new()),
         }
+    }
+
+    /// Whether this gateway can transcode: it was built with an ffmpeg.
+    /// The compat APIs read it to decide what they offer.
+    pub fn can_transcode(&self) -> bool {
+        self.ffmpeg_present
     }
 
     /// Read the transcode policy from `settings` on every open instead of

@@ -59,8 +59,18 @@ pub struct CompatApp {
 }
 
 impl CompatApp {
+    /// The app with no ffmpeg, so it never transcodes: every answer is the
+    /// same on a host with ffmpeg and one without.
     pub async fn start(tag: &str) -> Self {
         Self::start_with(tag, super::closed_outbound()).await
+    }
+
+    /// As [`CompatApp::start`], transcoding through the ffmpeg stand-in
+    /// with the default policy (on, mp3, at most 320 kbps).
+    pub async fn transcoding(tag: &str) -> Self {
+        let mut outbound = super::closed_outbound();
+        outbound.ffmpeg = Some(super::ffmpeg_stand_in());
+        Self::start_with(tag, outbound).await
     }
 
     /// As [`CompatApp::start`], reaching the outside world as `outbound`
@@ -141,9 +151,6 @@ impl CompatApp {
         assert_eq!(status, StatusCode::OK, "{apps}");
         apps["subsonic_enabled"] = json!(true);
         apps["jellyfin_enabled"] = json!(true);
-        // Whether a server can transcode depends on an ffmpeg on its PATH.
-        // Off, the answers are the same on a host with one and without.
-        apps["transcoding_enabled"] = json!(false);
         let (status, saved) = app
             .call("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
             .await;
@@ -195,6 +202,38 @@ impl CompatApp {
             .await;
         assert_eq!(status, StatusCode::CREATED, "{created}");
         created["secret"].as_str().expect("secret").to_owned()
+    }
+
+    /// Save the connect-apps settings with the fields of `patch` changed,
+    /// as the admin would.
+    pub async fn set_connect_apps(&self, patch: Value) {
+        let admin = self.app.login_admin().await;
+        let admin = [("authorization", admin.as_str())];
+        let (status, mut apps) = self
+            .app
+            .call("GET", "/api/v3/settings/connect-apps", &admin, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{apps}");
+        for (key, value) in patch.as_object().expect("patch is an object") {
+            apps[key] = value.clone();
+        }
+        let (status, saved) = self
+            .app
+            .call("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+    }
+
+    /// What the ffmpeg stand-in ran for sources in the folder of the
+    /// layout's track `key`, one `<muxer> <bitrate>` line per run.
+    pub fn ffmpeg_runs(&self, key: &str) -> Vec<String> {
+        let folder = self.track_path(key);
+        let folder = folder.parent().expect("album folder");
+        std::fs::read_to_string(folder.join(".ffmpeg-runs"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
     }
 
     /// The admin's app password.
@@ -269,17 +308,19 @@ impl CompatApp {
 
     /// The bytes of the planted file behind the layout's track `key`.
     pub fn file(&self, key: &str) -> Vec<u8> {
+        std::fs::read(self.track_path(key)).expect("planted file reads")
+    }
+
+    /// Where the layout's track `key` is planted.
+    fn track_path(&self, key: &str) -> PathBuf {
         let track = self.layout["tracks"]
             .as_array()
             .expect("tracks")
             .iter()
             .find(|track| track["key"] == key)
             .expect("track in the layout");
-        std::fs::read(
-            self.music
-                .join(track["path"].as_str().expect("planted path")),
-        )
-        .expect("planted file reads")
+        self.music
+            .join(track["path"].as_str().expect("planted path"))
     }
 
     pub async fn stop(self) {
