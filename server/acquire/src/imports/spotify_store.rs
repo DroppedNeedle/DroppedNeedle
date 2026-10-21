@@ -312,34 +312,21 @@ impl CollectionsPlaylistBridge {
         .map_err(|error| format!("spotify playlist refs read: {error}"))
     }
 
-    /// Replace every row on a playlist with `tracks`, in order.
+    /// Replace every row on a playlist with `tracks`, in order, in one
+    /// transaction: a failed write keeps the rows the playlist had.
     pub async fn replace_tracks(
         &self,
         playlist_id: &str,
         tracks: &[ImportedTrack],
     ) -> Result<(), String> {
-        let existing: Vec<String> = self
-            .playlists
-            .tracks(playlist_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(|track| track.id)
-            .collect();
-        if !existing.is_empty() {
-            self.playlists
-                .remove(playlist_id, &existing)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
         let entries = tracks.iter().map(entry_for).collect();
         match self
             .playlists
-            .insert(playlist_id, None, entries)
+            .replace_entries(playlist_id, entries)
             .await
             .map_err(|error| error.to_string())?
         {
-            Written::Done(_) => Ok(()),
+            Written::Done(()) => Ok(()),
             Written::Missing => Err(format!("playlist {playlist_id} is gone")),
         }
     }

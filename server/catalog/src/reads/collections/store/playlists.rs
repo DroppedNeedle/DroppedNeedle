@@ -548,6 +548,30 @@ impl PlaylistStore {
             .await
     }
 
+    /// Replace every entry with `entries`, in order, in one transaction: a
+    /// write that fails leaves the old entries in place.
+    pub async fn replace_entries(
+        &self,
+        playlist_id: &str,
+        entries: Vec<NewEntry>,
+    ) -> Result<Written<()>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .write("playlists.replace_entries", move |tx| {
+                let now = now_epoch();
+                if !touch(tx, &playlist_id, now)? {
+                    return Ok(Written::Missing);
+                }
+                tx.execute(
+                    "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
+                    params![playlist_id],
+                )?;
+                insert_entries(tx, &playlist_id, None, &entries, now)?;
+                Ok(Written::Done(()))
+            })
+            .await
+    }
+
     /// Remove entries by id, skipping unknown ids. Returns how many went.
     pub async fn remove(
         &self,

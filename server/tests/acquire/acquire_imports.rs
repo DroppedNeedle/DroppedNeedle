@@ -174,6 +174,15 @@ async fn playlist_rows(playlists: &PlaylistStore, playlist_id: &str) -> Vec<Play
     playlists.tracks(playlist_id).await.expect("rows read")
 }
 
+/// The row ids on one playlist, in order.
+async fn track_ids(playlists: &PlaylistStore, playlist_id: &str) -> Vec<String> {
+    playlist_rows(playlists, playlist_id)
+        .await
+        .into_iter()
+        .map(|row| row.id)
+        .collect()
+}
+
 fn authed_app(deps: ImportsDeps, user_id: &str, role: Role) -> Router {
     let principal = test_principal(user_id, role, "sess-1", SessionKind::Standard);
     with_test_principal(imports_router(deps), principal)
@@ -918,6 +927,62 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["playlists"][0]["imported_playlist_id"], playlist_id);
+}
+
+/// A re-import that fails while its tracks are written leaves the playlist
+/// as the last good import wrote it. The rows are replaced in one
+/// transaction, so nothing of the failed write lands.
+#[tokio::test]
+async fn spotify_failed_reimport_keeps_the_old_tracks() {
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
+    bundle
+        .resolver
+        .seed("Aurora Current", "Neon Meridian", "rg-mbid-1");
+
+    let (status, body) = post_json(
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
+        "/api/v3/acquire/spotify/playlists/sp-playlist-1/import",
+        json!({"name": "Neon Nights"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let playlist_id = body["playlist_id"]
+        .as_str()
+        .expect("playlist id")
+        .to_owned();
+    let done = poll_job_done(bundle.deps.clone(), &user_id, "sp-playlist-1").await;
+    assert_eq!(done["state"], "done");
+    let before = track_ids(&bundle.playlists, &playlist_id).await;
+    assert_eq!(before.len(), 2);
+
+    // Fail the insert of the second track, after the first one is written.
+    AcquireDb::new(auth.platform.db.clone())
+        .write("test.fail_second_track", |tx| {
+            tx.execute(
+                "CREATE TRIGGER fail_second_track BEFORE INSERT ON playlist_tracks \
+                 WHEN NEW.track_name = 'Glass Tides' \
+                 BEGIN SELECT RAISE(ABORT, 'injected'); END",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("trigger installs");
+
+    let (status, _) = post_json(
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
+        "/api/v3/acquire/spotify/playlists/sp-playlist-1/import",
+        json!({"name": "Neon Nights"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let done = poll_job_done(bundle.deps.clone(), &user_id, "sp-playlist-1").await;
+    assert_eq!(done["state"], "error", "{done}");
+    assert_eq!(track_ids(&bundle.playlists, &playlist_id).await, before);
 }
 
 #[tokio::test]
