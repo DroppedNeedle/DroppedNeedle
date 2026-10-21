@@ -17,17 +17,19 @@
 //!
 //! One writer thread owns the write connection. Puts are queued and dropped
 //! when the queue is full; deletes, the clear and the sweep wait for their
-//! commit. The writer keeps the rows under [`CAP_BYTES`] by deleting the
-//! oldest in the same transaction that took them over. Reads run on a few
+//! commit. A queued put reads back at once: reads look at the rows still
+//! queued before the file, so a page read right after a fetch sees it. The
+//! writer keeps the rows under [`CAP_BYTES`] by deleting the oldest in the
+//! same transaction that took them over. Reads run on a few
 //! read-only connections off the async worker threads, and a read that
 //! fails is a miss.
 
 pub(crate) mod sql;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -152,7 +154,9 @@ pub enum CacheError {
 type Ack = oneshot::Sender<Result<u64, CacheError>>;
 
 enum Op {
-    Put(CacheRow),
+    /// A row and its place in the queue, to drop it from the queued rows
+    /// once it is written.
+    Put(Arc<CacheRow>, u64),
     Delete(Vec<String>, Ack),
     Clear(Ack),
     Sweep(i64, Ack),
@@ -202,6 +206,12 @@ struct Shared {
     idle: Mutex<Vec<Connection>>,
     read_errors: Mutex<HashSet<String>>,
     write_failing: AtomicBool,
+    /// Puts not yet written, by key, with their place in the queue. Each
+    /// entry is a put in the queue or in the writer's batch, so the queue's
+    /// bound is this map's too.
+    queued: Mutex<HashMap<String, (u64, Arc<CacheRow>)>>,
+    /// The next put's place in the queue.
+    next: AtomicU64,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -260,6 +270,15 @@ impl Shared {
     fn give_back(&self, connection: Connection) {
         if !self.is_off() {
             lock(&self.idle).push(connection);
+        }
+    }
+
+    /// Drop the queued row under `key` if it is still the put at `place`;
+    /// a later put of the same key stays.
+    fn unqueue(&self, key: &str, place: u64) {
+        let mut queued = lock(&self.queued);
+        if queued.get(key).is_some_and(|(held, _)| *held == place) {
+            queued.remove(key);
         }
     }
 }
@@ -328,6 +347,8 @@ impl CacheDb {
                     idle: Mutex::new(Vec::new()),
                     read_errors: Mutex::new(HashSet::new()),
                     write_failing: AtomicBool::new(false),
+                    queued: Mutex::new(HashMap::new()),
+                    next: AtomicU64::new(0),
                 }),
                 queue: Mutex::new(None),
                 writer: Mutex::new(None),
@@ -367,6 +388,8 @@ impl CacheDb {
             idle: Mutex::new(Vec::new()),
             read_errors: Mutex::new(HashSet::new()),
             write_failing: AtomicBool::new(false),
+            queued: Mutex::new(HashMap::new()),
+            next: AtomicU64::new(0),
         });
         let (sender, receiver) = mpsc::channel(QUEUE);
         let writer_shared = Arc::clone(&shared);
@@ -408,8 +431,21 @@ impl CacheDb {
     }
 
     /// The row under `key`, or `None` when there is none, the cache is off
-    /// or the read failed.
+    /// or the read failed. A row still queued for the writer is read from
+    /// the queue.
     pub async fn get(&self, key: &str) -> Option<StoredRow> {
+        if !self.is_on() {
+            return None;
+        }
+        if let Some((_, row)) = lock(&self.inner.shared.queued).get(key) {
+            return Some(StoredRow {
+                kind: row.kind,
+                fetched_at: row.fetched_at,
+                fresh_until: row.fresh_until,
+                keep_until: row.keep_until,
+                value: row.value.clone(),
+            });
+        }
         let key = key.to_owned();
         self.read(move |connection| {
             connection
@@ -499,9 +535,15 @@ impl CacheDb {
         let Some(sender) = self.sender() else {
             return false;
         };
-        match sender.try_send(Op::Put(row)) {
+        let shared = &self.inner.shared;
+        let place = shared.next.fetch_add(1, Ordering::Relaxed);
+        let (key, row) = (row.key.clone(), Arc::new(row));
+        // Listed before it is sent, so the writer never unlists it first.
+        lock(&shared.queued).insert(key.clone(), (place, Arc::clone(&row)));
+        match sender.try_send(Op::Put(row, place)) {
             Ok(()) => true,
             Err(_) => {
+                shared.unqueue(&key, place);
                 tracing::debug!("provider cache queue full; an answer was not stored");
                 false
             }
@@ -766,11 +808,18 @@ impl Writer {
         }
         let mut total = self.total;
         let mut answers = Vec::new();
+        let queued: Vec<(String, u64)> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Put(row, place) => Some((row.key.clone(), *place)),
+                _ => None,
+            })
+            .collect();
         let outcome = (|| {
             let transaction = self.connection.transaction()?;
             for op in ops {
                 match op {
-                    Op::Put(row) => put(&transaction, &row, &mut total)?,
+                    Op::Put(row, _) => put(&transaction, &row, &mut total)?,
                     Op::Delete(keys, ack) => {
                         let mut gone = 0;
                         for key in keys {
@@ -802,6 +851,10 @@ impl Writer {
             }
             transaction.commit()
         })();
+        // Committed, the rows read from the file; failed, they are gone.
+        for (key, place) in queued {
+            self.shared.unqueue(&key, place);
+        }
         match outcome {
             Ok(()) => {
                 self.total = total;
@@ -919,6 +972,22 @@ mod tests {
         // A delete of no keys commits after every put queued before it.
         cache.delete(Vec::new()).await.expect("queue drains");
         cache.get(key).await
+    }
+
+    /// A row reads back as soon as it is queued, before the writer commits
+    /// it: a page that reads right after a fetch sees that fetch's answer.
+    #[tokio::test]
+    async fn a_queued_row_reads_before_it_commits() {
+        let cache = CacheDb::scratch();
+        assert!(cache.is_on());
+        // Another connection holds the write lock, so the writer cannot
+        // commit until it lets go.
+        let holder = Connection::open(&cache.inner.shared.path).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(cache.put(row("musicbrainz:queued", b"answer")));
+        let read = cache.get("musicbrainz:queued").await;
+        holder.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(read.and_then(|row| row.value), Some(b"answer".to_vec()));
     }
 
     /// A file of another version, one that is not a database, and one
