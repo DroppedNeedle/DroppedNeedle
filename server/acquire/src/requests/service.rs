@@ -2158,7 +2158,7 @@ impl RequestsService {
                     .map(|total| (total - snapshot.downloaded_bytes).max(0) as f64);
                 if snapshot.status == TaskStatus::Queued
                     && let Some(readiness) = &self.readiness
-                    && !(readiness.sources_ready)()
+                    && !readiness.sources.can_acquire()
                 {
                     item.waiting_reason = Some(WaitingReason::NoDownloadSource);
                 }

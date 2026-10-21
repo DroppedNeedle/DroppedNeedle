@@ -1395,7 +1395,9 @@ async fn edition_acquire_is_held_while_no_source_is_ready() {
     state.edition_plans = Some(Arc::new(PlannedEdition { complete: false }));
     let staging = crate::common::ScratchDir::new("edition-held");
     state.readiness = Some(AcquireReadiness {
-        sources_ready: Arc::new(|| false),
+        sources: droppedneedle_acquire::readiness::SourceReadiness::unprobed(
+            droppedneedle_acquire::worker::SourceList::Fixed(Arc::new(Vec::new())),
+        ),
         staging_root: staging.to_path_buf(),
     });
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");

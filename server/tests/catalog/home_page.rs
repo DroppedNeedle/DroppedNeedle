@@ -214,6 +214,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         pool.clone(),
         droppedneedle_catalog::reads::discover::adapters::content::IntegrationSettings::new(
             &crate::common::config_store(&dir),
+            Arc::new(crate::common::bundles::NoDownloadSource),
         ),
         art.clone(),
         None,

@@ -428,7 +428,10 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         queue_db: QueueDb::new(runtime.db().clone()),
         db: PageDb::new(runtime.db().clone()),
         advanced: config.live(),
-        integrations: IntegrationSettings::new(&config),
+        integrations: IntegrationSettings::new(
+            &config,
+            Arc::new(crate::common::bundles::NoDownloadSource),
+        ),
         queues: Arc::new(FakeQueues),
         warmer_enabled: false,
         warm: None,
@@ -436,7 +439,7 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
     let clock = ManualClock::at(1_790_000_000_000);
     let deps = ReadsDeps {
         content: Arc::new(LiveContent::new(
-            IntegrationSettings::new(&config),
+            IntegrationSettings::new(&config, Arc::new(crate::common::bundles::NoDownloadSource)),
             pool,
             page,
         )),

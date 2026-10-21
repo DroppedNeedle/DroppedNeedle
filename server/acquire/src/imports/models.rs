@@ -200,14 +200,16 @@ pub struct SourceGate {
 }
 
 /// Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
-/// is slskd or Usenet readiness; the gates unpack per source.
+/// says whether a download source is on; the gates unpack per source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AcquireHealth {
     /// Overall verdict: `ok`, `degraded`, or `error`.
     pub status: String,
-    /// True when at least one acquisition path can serve releases.
+    /// True when a download source is on: slskd, SABnzbd or a plugin
+    /// download client. Requests are taken while it is false, and wait.
     pub ready: bool,
-    /// Paths currently ready: any of `slskd`, `usenet`.
+    /// The sources that are on and answered the last probe: `soulseek`,
+    /// `usenet` or `plugin:<name>`.
     pub ready_via: Vec<String>,
     /// Independent per-source release gates.
     pub gates: Vec<SourceGate>,

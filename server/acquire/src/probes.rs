@@ -4,10 +4,12 @@
 //! The imports health traits are sync, but reachability needs HTTP. The
 //! split: [`LiveProbes`] implements all four traits over a [`ProbeCache`]
 //! snapshot, and [`refresh_probes`] recomputes the snapshot with real
-//! client health checks. Wiring runs one refresh at boot and repeats it on
-//! a slow loop, so the smoke and the status routes always render a fresh
-//! verdict without blocking a request on five network calls. Until the
-//! first refresh lands, a read answers from the saved settings alone.
+//! client health checks. Wiring runs one refresh at boot, again after a
+//! client's settings are saved, and on a slow loop, so the smoke and the
+//! status routes always render a fresh verdict without blocking a request
+//! on five network calls. A verdict is kept with the client set it probed:
+//! until a refresh lands for the current one, a read answers from the
+//! saved settings alone.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -46,10 +48,16 @@ pub struct CachedProbes {
     pub lidarr: ClientProbe,
 }
 
+/// The last refresh and the client set it probed.
+struct Refreshed {
+    inputs: Arc<ProbeInputs>,
+    probes: CachedProbes,
+}
+
 /// Shared verdict snapshot behind the live probes.
 pub struct ProbeCache {
     /// The last refresh, `None` until one lands.
-    inner: Mutex<Option<CachedProbes>>,
+    inner: Mutex<Option<Refreshed>>,
     /// The clients the saved settings build, which a read before the
     /// first refresh answers from.
     clients: Arc<LiveClients>,
@@ -64,21 +72,30 @@ impl ProbeCache {
         }
     }
 
-    /// Current snapshot: the last refresh, or before the first one the
-    /// enabled and configured flags of the saved settings.
+    /// Current snapshot: the last refresh of the clients the saved
+    /// settings build now, or until one lands, the enabled and configured
+    /// flags of those settings. A save is seen at once.
     pub fn snapshot(&self) -> CachedProbes {
-        let refreshed = match self.inner.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
+        let current = self.clients.current().probe_inputs.clone();
+        let guard = match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
         };
-        refreshed.unwrap_or_else(|| seed(&self.clients.current().probe_inputs))
+        match guard.as_ref() {
+            Some(refreshed) if Arc::ptr_eq(&refreshed.inputs, &current) => refreshed.probes.clone(),
+            _ => seed(&current),
+        }
     }
 
-    /// Replace the snapshot after a refresh pass.
-    pub fn update(&self, next: CachedProbes) {
+    /// Replace the snapshot after a refresh pass over `inputs`.
+    fn update(&self, inputs: &Arc<ProbeInputs>, probes: CachedProbes) {
+        let next = Some(Refreshed {
+            inputs: inputs.clone(),
+            probes,
+        });
         match self.inner.lock() {
-            Ok(mut guard) => *guard = Some(next),
-            Err(poisoned) => *poisoned.into_inner() = Some(next),
+            Ok(mut guard) => *guard = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
         }
     }
 }
@@ -175,8 +192,8 @@ pub struct ProbeInputs {
 /// Recompute every verdict with live health checks and store the snapshot.
 /// One erroring client never fails the pass: its verdict goes red while
 /// the others still refresh.
-pub async fn refresh_probes(cache: &ProbeCache, inputs: &ProbeInputs) {
-    cache.update(CachedProbes {
+pub async fn refresh_probes(cache: &ProbeCache, inputs: &Arc<ProbeInputs>) {
+    let probes = CachedProbes {
         slskd: refresh_slskd(inputs).await,
         slskd_mount: Some(refresh_slskd_mount(inputs).await),
         sabnzbd: refresh_sabnzbd(inputs).await,
@@ -184,7 +201,8 @@ pub async fn refresh_probes(cache: &ProbeCache, inputs: &ProbeInputs) {
         sabnzbd_complete_dir: refresh_sabnzbd_complete_dir(inputs).await,
         indexers: refresh_indexers(inputs).await,
         lidarr: refresh_lidarr(inputs).await,
-    });
+    };
+    cache.update(inputs, probes);
 }
 
 /// Verdicts from the settings alone (no network): enabled and configured

@@ -44,6 +44,7 @@ use super::downloads::state::{AttemptState, TaskStatus};
 use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskRow};
 use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
 use super::landing::LandingService;
+use super::readiness::SourceReadiness;
 use super::search_jobs::review::ReviewMode;
 use super::sources::JournalOwnership;
 use super::target::Targets;
@@ -593,29 +594,34 @@ pub struct DownloadWorker {
     reviews: review::Reviews,
     /// Where the cleanup warning is shown.
     health: Arc<ServiceHealth>,
+    /// Whether a download source is on, over the same sources.
+    readiness: SourceReadiness,
 }
 
 impl DownloadWorker {
     /// Wire the worker over the shared journal and the saved settings,
     /// sending live progress to `events` and the cleanup warning to
-    /// `health`.
+    /// `health`. `readiness` reads the same settings.
     pub fn new(
         journal: Arc<Journal>,
         settings: Arc<super::wiring::WorkerSettings>,
+        readiness: SourceReadiness,
         events: droppedneedle_kernel::events::EventHub,
         health: Arc<ServiceHealth>,
     ) -> Self {
-        Self::over(journal, Inputs::Live(settings), events, health)
+        Self::over(journal, Inputs::Live(settings), readiness, events, health)
     }
 
     fn over(
         journal: Arc<Journal>,
         inputs: Inputs,
+        readiness: SourceReadiness,
         events: droppedneedle_kernel::events::EventHub,
         health: Arc<ServiceHealth>,
     ) -> Self {
         let ownership = JournalOwnership::new(journal.clone(), None);
         Self {
+            readiness,
             journal,
             inputs,
             ownership,
@@ -663,6 +669,12 @@ impl DownloadWorker {
     /// Where landings stage files.
     pub fn staging_root(&self) -> PathBuf {
         self.inputs.staging_root()
+    }
+
+    /// Whether a download source is on: the answer requests, the health
+    /// smoke and Discover read too.
+    pub fn readiness(&self) -> &SourceReadiness {
+        &self.readiness
     }
 
     /// The sources turned on right now, in the configured try order.
@@ -715,12 +727,14 @@ impl DownloadWorker {
         events: droppedneedle_kernel::events::EventHub,
         health: Arc<ServiceHealth>,
     ) -> Self {
+        let sources = Arc::new(sources);
         Self::over(
             journal,
             Inputs::Fixed {
-                sources: Arc::new(sources),
+                sources: sources.clone(),
                 config: Box::new(config),
             },
+            SourceReadiness::unprobed(SourceList::Fixed(sources)),
             events,
             health,
         )

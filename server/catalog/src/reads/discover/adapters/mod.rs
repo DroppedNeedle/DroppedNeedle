@@ -64,6 +64,9 @@ pub struct DiscoverInputs {
     pub warm: Option<crate::reads::platform::artwork::warm::CoverWarm>,
     /// The requests side of discovery batches.
     pub batch_requests: Arc<dyn batches::BatchRequests>,
+    /// Whether a download source is on, for the "set up a download
+    /// client" prompts.
+    pub download_readiness: Arc<dyn content::DownloadReadiness>,
 }
 
 /// Build the production discover deps, each holding live handles from
@@ -112,14 +115,17 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
     let batches = batches::LiveBatches::new(inputs.db.clone(), Some(inputs.batch_requests.clone()));
     let (home, page, genre_art, charts) = home::wire(home::HomeWiring {
         pool: inputs.db.sqlx().clone(),
-        integrations: content::IntegrationSettings::new(config),
+        integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
         sources: sources.clone(),
         discover: page::PageInputs {
             sources: sources.clone(),
             queue_db: queue::store::QueueDb::new(inputs.db.clone()),
             db: page::store::PageDb::new(inputs.db.clone()),
             advanced: config.live(),
-            integrations: content::IntegrationSettings::new(config),
+            integrations: content::IntegrationSettings::new(
+                config,
+                inputs.download_readiness.clone(),
+            ),
             queues: queues.clone(),
             warmer_enabled: inputs.discover_warmer,
             warm: inputs.warm.clone(),
@@ -129,7 +135,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
     ReadsDeps {
         content: Arc::new(
             content::LiveContent::new(
-                content::IntegrationSettings::new(config),
+                content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
                 inputs.db.sqlx().clone(),
                 page,
             )

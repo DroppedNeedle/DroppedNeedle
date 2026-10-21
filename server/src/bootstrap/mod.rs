@@ -353,6 +353,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
                 acquire.requests.clone(),
                 Some(library.clone()),
             )),
+            download_readiness: Arc::new(acquire.readiness.clone()),
             cover_warm: Some(cover_warm),
         },
     );

@@ -11,8 +11,12 @@
 	// raw error_message, so that stays as the fallback.
 	const reason = $derived(task.reason ?? null);
 	const fallback = $derived(reason ? null : task.error_message);
+	// A queued task waiting for a download source is not a failure: it starts by itself.
+	const waiting = $derived(reason?.code === 'no_download_source');
 	const tone = $derived(
-		task.held_for_review || task.status === 'partial' ? 'text-warning/85' : 'text-error/80'
+		waiting || task.held_for_review || task.status === 'partial'
+			? 'text-warning/85'
+			: 'text-error/80'
 	);
 
 	// "7 of 12 imported, 2 held" when the import got part of the way.

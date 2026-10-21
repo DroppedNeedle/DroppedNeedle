@@ -21,10 +21,19 @@ use crate::reads::discover::{
 use droppedneedle_kernel::runtime_config::{
     ConfigStore, Listed, Live, Plain,
     secret_sections::{
-        DownloadClients, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
-        NavidromeConnection, PlexConnection, SlskdConnection, YouTubeConnection,
+        JellyfinConnection, LastFmSettings, ListenBrainzConnection, NavidromeConnection,
+        PlexConnection, YouTubeConnection,
     },
 };
+
+/// Whether a download source is on: slskd, SABnzbd or a plugin download
+/// client. Acquisition answers it from the same source list its worker
+/// uses. A trait because acquisition sits above the catalog, so the
+/// catalog cannot name its answer directly.
+pub trait DownloadReadiness: Send + Sync {
+    /// Whether music can be acquired now.
+    fn can_acquire(&self) -> bool;
+}
 
 /// One section now; a section that cannot be read counts as off, with a
 /// log line.
@@ -36,11 +45,10 @@ fn read<S: Listed + Default>(settings: &Live<S>) -> Arc<Plain<S>> {
 }
 
 /// The sections the v2 integration flags are read from, each a live
-/// handle.
+/// handle, and acquisition's answer on download sources.
 #[derive(Clone)]
 pub struct IntegrationSettings {
-    slskd: Live<SlskdConnection>,
-    download_clients: Live<DownloadClients>,
+    downloads: Arc<dyn DownloadReadiness>,
     listenbrainz: Live<ListenBrainzConnection>,
     lastfm: Live<LastFmSettings>,
     youtube: Live<YouTubeConnection>,
@@ -50,11 +58,11 @@ pub struct IntegrationSettings {
 }
 
 impl IntegrationSettings {
-    /// Live handles on the integration sections in `config`.
-    pub fn new(config: &ConfigStore) -> Self {
+    /// Live handles on the integration sections in `config`; whether a
+    /// download source is on comes from `downloads`.
+    pub fn new(config: &ConfigStore, downloads: Arc<dyn DownloadReadiness>) -> Self {
         Self {
-            slskd: config.live(),
-            download_clients: config.live(),
+            downloads,
             listenbrainz: config.live(),
             lastfm: config.live(),
             youtube: config.live(),
@@ -64,14 +72,9 @@ impl IntegrationSettings {
         }
     }
 
-    /// Whether some download client is set up: slskd or SABnzbd with a
-    /// URL and a key.
+    /// Whether a download source is on, as acquisition answers it.
     pub fn download_client_ready(&self) -> bool {
-        let slskd = read(&self.slskd);
-        let clients = read(&self.download_clients);
-        let sabnzbd = &clients.sabnzbd;
-        (slskd.enabled && !slskd.url.is_empty() && !slskd.api_key.is_empty())
-            || (sabnzbd.enabled && !sabnzbd.url.is_empty() && !sabnzbd.api_key.is_empty())
+        self.downloads.can_acquire()
     }
 
     /// The v2 integration flags, read from the current settings.

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use super::journal::Journal;
 use super::queue_rows::{ActivitySummary, ListFilter, QueueTask, Stopped, TaskFacts, Viewer};
-use super::reasons::{DecisionReason, QueueReason, task_reason};
+use super::reasons::{DecisionReason, QueueReason, task_reason, waiting_for_source};
 use super::sources::SourceHandle;
 use super::state::TaskStatus;
 use super::store::{QuarantineRow, TaskRow};
@@ -380,6 +380,7 @@ impl DownloadQueue {
             .as_ref()
             .map(|config| config.max_failover_attempts)
             .unwrap_or_default();
+        let no_source = !self.worker.readiness().can_acquire();
         Ok(rows
             .into_iter()
             .map(|row| {
@@ -395,7 +396,10 @@ impl DownloadQueue {
                     row.task.error_message.as_deref(),
                     facts.held_for_review,
                     decision.as_ref(),
-                );
+                )
+                .or_else(|| {
+                    (no_source && row.task.status == TaskStatus::Queued).then(waiting_for_source)
+                });
                 // Tasks paused on a held-file review show no countdown: it
                 // would never fire.
                 let next_retry_at = config.as_ref().and_then(|config| {

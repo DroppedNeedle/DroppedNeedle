@@ -32,6 +32,16 @@ impl QueueReason {
     }
 }
 
+/// Why a queued task has not started: no download source is on. It starts
+/// by itself once one is saved.
+pub fn waiting_for_source() -> QueueReason {
+    QueueReason::of(
+        "no_download_source",
+        "Waiting: no download source configured.",
+        "Turn on slskd, SABnzbd or a plugin source in Settings, Downloads. It starts by itself.",
+    )
+}
+
 /// The newest import decision, as far as the reason needs it.
 #[derive(Debug, Clone, Default)]
 pub struct DecisionReason<'a> {

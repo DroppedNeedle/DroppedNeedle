@@ -15,7 +15,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Acquisition health smoke: slskd or Usenet readiness plus the\nindependent per-source release gates.",
+        "summary": "Acquisition health smoke: whether a download source is on, plus the\nindependent per-source release gates.",
         "operationId": "get_health",
         "responses": {
           "200": {
@@ -34961,7 +34961,7 @@
     "schemas": {
       "AcquireHealth": {
         "type": "object",
-        "description": "Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`\nis slskd or Usenet readiness; the gates unpack per source.",
+        "description": "Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`\nsays whether a download source is on; the gates unpack per source.",
         "required": [
           "status",
           "ready",
@@ -34978,14 +34978,14 @@
           },
           "ready": {
             "type": "boolean",
-            "description": "True when at least one acquisition path can serve releases."
+            "description": "True when a download source is on: slskd, SABnzbd or a plugin\ndownload client. Requests are taken while it is false, and wait."
           },
           "ready_via": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Paths currently ready: any of `slskd`, `usenet`."
+            "description": "The sources that are on and answered the last probe: `soulseek`,\n`usenet` or `plugin:<name>`."
           },
           "status": {
             "type": "string",

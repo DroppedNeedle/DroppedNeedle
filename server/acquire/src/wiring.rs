@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
+use futures_util::future::BoxFuture;
 
 use super::db::AcquireDb;
 use super::dispatch::DownloadDispatch;
@@ -45,6 +46,7 @@ use super::imports::spotify_store::{
 use super::landing::LandingService;
 use super::landing::ports::LandingLibrary;
 use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes};
+use super::readiness::SourceReadiness;
 use super::requests::error::RequestsError;
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::{RequestStore, WantedStore};
@@ -108,6 +110,9 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(300);
 /// Job name of the probe refresh loop.
 pub const PROBE_JOB: &str = "acquire-probe-refresh";
 
+/// Job name of the loop that follows the source settings and plugins.
+pub const SOURCE_WATCH_JOB: &str = "acquire-source-watch";
+
 /// Every loop [`AcquireSetup::spawn_loops`] starts, by job name.
 pub const ACQUIRE_LOOPS: &[&str] = &[
     WANTED_JOB,
@@ -117,6 +122,7 @@ pub const ACQUIRE_LOOPS: &[&str] = &[
     PRUNE_JOB,
     super::worker::DOWNLOAD_WORKER_JOB,
     PROBE_JOB,
+    SOURCE_WATCH_JOB,
 ];
 
 /// The sections the acquisition clients are built from.
@@ -424,6 +430,14 @@ pub struct AcquireSetup {
     pub probes: Arc<LiveProbes>,
     /// Probe cache the refresh loop fills.
     pub probe_cache: Arc<ProbeCache>,
+    /// Whether a download source is on: requests, search, the queue, the
+    /// health smoke and Discover all read this one answer.
+    pub readiness: SourceReadiness,
+    /// What the readiness reads changes on: the source settings and, in
+    /// production, the plugin host.
+    source_notices: SourceNotices,
+    /// Asks the probe loop for a pass now.
+    probe_wake: Arc<watch::Sender<u64>>,
     /// Per-task staging root (manifests, drop jobs, quarantine).
     pub staging_root: PathBuf,
     /// Store-prune deps (request history and wanted rows).
@@ -673,7 +687,15 @@ impl AcquireSetup {
             clients.clone(),
             staging_root.clone(),
         ));
-        let ready = worker_settings.clone();
+        let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
+        let readiness = SourceReadiness::new(
+            SourceList::Live(worker_settings.clone()),
+            probe_cache.clone(),
+        );
+        let source_notices = SourceNotices {
+            settings: worker_settings.clone(),
+            plugins: Some(ports.plugins.clone()),
+        };
         let collections = ports.collections;
         let health = ports.providers.health.clone();
         let resolver = Arc::new(AlbumResolver::new(&ports.providers, config_store.live()));
@@ -688,7 +710,7 @@ impl AcquireSetup {
                 plugins: Some(ports.plugins.clone()),
                 edition_plans: Some(ports.edition_plans),
                 readiness: Some(AcquireReadiness {
-                    sources_ready: Arc::new(move || ready.has_source()),
+                    sources: readiness.clone(),
                     staging_root: staging_root.clone(),
                 }),
                 release_poll: ports.release_poll,
@@ -740,7 +762,6 @@ impl AcquireSetup {
         ));
         let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(spotify_service, events.clone()));
         let spotify_imports = SpotifyImports::new(platform.db.clone(), queue);
-        let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http.clone()),
@@ -754,6 +775,7 @@ impl AcquireSetup {
             resolver,
             spotify_imports,
             probes: Arc::new(LiveProbes::bundle(&probes)),
+            readiness: readiness.clone(),
             ids: ids.clone(),
             base_path: config.base_path.clone(),
             trusted_proxies: config.trusted_proxies.clone(),
@@ -772,6 +794,7 @@ impl AcquireSetup {
             DownloadWorker::new(
                 core.journal.clone(),
                 worker_settings,
+                readiness.clone(),
                 events.clone(),
                 health,
             )
@@ -799,6 +822,9 @@ impl AcquireSetup {
             clients,
             probes,
             probe_cache,
+            readiness,
+            source_notices,
+            probe_wake: Arc::new(watch::Sender::new(0)),
             staging_root,
             prune,
             events,
@@ -849,17 +875,18 @@ impl AcquireSetup {
             )),
             None,
         ));
+        let worker_settings = Arc::new(WorkerSettings::new(
+            &settings,
+            clients.clone(),
+            staging_root.clone(),
+        ));
         let core = core(
             &stores,
             ids.clone(),
             &staging_root,
             &settings,
             Arc::new(QuotaLedger::unlimited(db.clone())),
-            SourceList::Live(Arc::new(WorkerSettings::new(
-                &settings,
-                clients.clone(),
-                staging_root.clone(),
-            ))),
+            SourceList::Live(worker_settings.clone()),
             CorePorts {
                 plugins: None,
                 edition_plans: None,
@@ -899,6 +926,8 @@ impl AcquireSetup {
         let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(service, events.clone()));
         let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
+        // The worker here runs no sources, so neither does its readiness.
+        let readiness = SourceReadiness::unprobed(SourceList::Fixed(Arc::new(Vec::new())));
         // No runner takes these here: the tests on this bundle import no
         // playlists.
         let spotify_imports = SpotifyImports::new(
@@ -920,6 +949,7 @@ impl AcquireSetup {
             resolver,
             spotify_imports,
             probes: Arc::new(LiveProbes::bundle(&probes)),
+            readiness: readiness.clone(),
             ids: ids.clone(),
             base_path: String::new(),
             trusted_proxies: Default::default(),
@@ -973,6 +1003,12 @@ impl AcquireSetup {
             clients,
             probes,
             probe_cache,
+            readiness,
+            source_notices: SourceNotices {
+                settings: worker_settings,
+                plugins: None,
+            },
+            probe_wake: Arc::new(watch::Sender::new(0)),
             staging_root,
             prune,
             events,
@@ -1041,17 +1077,22 @@ impl AcquireSetup {
         spawn_sync_loop(supervisor, self.flows.sync_deps.clone())?;
         spawn_prune_loop(supervisor, self.prune.clone())?;
         super::worker::spawn_download_worker(self.worker.clone(), supervisor)?;
-        self.spawn_probe_loop(supervisor)
+        self.spawn_probe_loop(supervisor)?;
+        self.spawn_source_watch(supervisor)
     }
 
-    /// Probe refresh: one pass now, then every five minutes, each over the
-    /// clients the current settings build. A pass waiting on a slow client
-    /// ends at the stop; it only reads, and the cache keeps the last pass.
+    /// Probe refresh: one pass now, then one on every wake and at least
+    /// every five minutes, each over the clients the current settings
+    /// build. A pass waiting on a slow client ends at the stop; it only
+    /// reads, and the cache keeps the last pass.
     fn spawn_probe_loop(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
         let cache = self.probe_cache.clone();
         let clients = self.clients.clone();
-        supervisor.periodic(
+        let mut wake = self.probe_wake.subscribe();
+        wake.mark_changed();
+        supervisor.on_wakeup(
             PROBE_JOB,
+            wake,
             Schedule::new(PROBE_INTERVAL),
             FnTick(move |ctx: TickCtx| {
                 let cache = cache.clone();
@@ -1066,6 +1107,64 @@ impl AcquireSetup {
             }),
         )
     }
+
+    /// Follow everything the readiness reads. On a change, wake the
+    /// download worker, so a request held for want of a source starts at
+    /// once, and refresh the probes, so the status routes show the saved
+    /// client.
+    fn spawn_source_watch(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+        let mut settings = self.source_notices.settings.notices();
+        let mut plugins = self
+            .source_notices
+            .plugins
+            .as_ref()
+            .map(|host| host.subscribe());
+        let worker = self.worker.clone();
+        let probe_wake = self.probe_wake.clone();
+        supervisor.one_shot(SOURCE_WATCH_JOB, move |ctx| async move {
+            loop {
+                tokio::select! {
+                    () = ctx.token().cancelled() => return Ok(()),
+                    open = any_changed(&mut settings, plugins.as_mut()) => {
+                        if !open {
+                            tracing::warn!("a source settings notice closed; source changes are no longer followed");
+                            ctx.token().cancelled().await;
+                            return Ok(());
+                        }
+                    }
+                }
+                worker.wake();
+                probe_wake.send_modify(|count| *count = count.wrapping_add(1));
+            }
+        })
+    }
+}
+
+/// What the source readiness reads, followed for changes.
+#[derive(Clone)]
+struct SourceNotices {
+    settings: Arc<WorkerSettings>,
+    plugins: Option<Arc<PluginHost>>,
+}
+
+/// Wait for any notice to change. False when one closed.
+async fn any_changed(
+    settings: &mut [watch::Receiver<i64>],
+    plugins: Option<&mut watch::Receiver<u64>>,
+) -> bool {
+    let mut waits: Vec<BoxFuture<'_, bool>> = settings
+        .iter_mut()
+        .map(|notice| {
+            Box::pin(async move { notice.changed().await.is_ok() }) as BoxFuture<'_, bool>
+        })
+        .collect();
+    if let Some(notice) = plugins {
+        waits.push(Box::pin(async move { notice.changed().await.is_ok() }));
+    }
+    if waits.is_empty() {
+        return std::future::pending().await;
+    }
+    futures_util::future::select_all(waits).await.0
 }
 
 /// Flows bundle over the shared durable stores and live settings.
@@ -1338,11 +1437,13 @@ impl WorkerSettings {
             .unwrap_or_default()
     }
 
-    /// Whether a download source is on now: "get missing tracks" checks
-    /// this before it asks for anything, and queued downloads wait while
-    /// it is false.
-    pub(crate) fn has_source(&self) -> bool {
-        self.config().is_some() && !self.sources().is_empty()
+    /// One change notice per section the sources and tuning are read
+    /// from.
+    fn notices(&self) -> Vec<watch::Receiver<i64>> {
+        let mut notices = self.clients.settings.subscribe();
+        notices.push(self.source_priority.subscribe());
+        notices.push(self.musicbrainz.subscribe());
+        notices
     }
 
     /// Whether every section the worker cannot stand in for reads. While

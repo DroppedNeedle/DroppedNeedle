@@ -20,6 +20,7 @@ use droppedneedle_catalog::reads::collections::{
     CollectionsState, db::CollectionsDb, store::Stores,
 };
 use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, BatchRequests};
+use droppedneedle_catalog::reads::discover::adapters::content::DownloadReadiness;
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_catalog::reads::{ReadsInputs, ReadsPorts, ReadsSetup};
 use droppedneedle_kernel::platform::Platform;
@@ -156,6 +157,10 @@ pub fn reads_at(
         )),
         None => Arc::new(NoBatchRequests),
     };
+    let download_readiness: Arc<dyn DownloadReadiness> = match acquire {
+        Some(acquire) => Arc::new(acquire.readiness.clone()),
+        None => Arc::new(NoDownloadSource),
+    };
     ReadsSetup::build(
         platform,
         users,
@@ -167,6 +172,7 @@ pub fn reads_at(
             artwork,
             library_files: LibraryFiles::new(platform.db.sqlx().clone(), library.root_source()),
             batch_requests,
+            download_readiness,
             cover_warm: None,
         },
     )
@@ -190,6 +196,15 @@ impl Collections {
     /// The collections state over these stores.
     pub fn wired(&self) -> CollectionsState {
         CollectionsState::over(self.db.clone(), self.stores.clone())
+    }
+}
+
+/// Download readiness for a rig with no download system: no source is on.
+pub struct NoDownloadSource;
+
+impl DownloadReadiness for NoDownloadSource {
+    fn can_acquire(&self) -> bool {
+        false
     }
 }
 

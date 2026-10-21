@@ -175,7 +175,9 @@ Which edition a request fetches, how single tracks are found, following artists,
 
 ## Download sources
 
-Request buttons show whether or not a download source is turned on. A request made while none is on is accepted and held. The Requests page shows it as "Waiting: no download source configured", and it starts by itself once an admin turns a source on. From then on its card shows what the download is doing: searching, awaiting review or downloading.
+A download source is slskd or SABnzbd once it is turned on with a URL and an API key, or an enabled plugin download client (see [PLUGINS.md](PLUGINS.md)). It counts while it is down too: DroppedNeedle keeps retrying it, and the acquisition health check reports it as degraded. Requests, manual search, the health check and Discover's "set up a download client" prompt all go by this one answer.
+
+Request buttons show whether or not a download source is turned on. A request made while none is on is accepted and held. The Requests and Downloads pages show it as "Waiting: no download source configured", and it starts by itself as soon as an admin turns a source on or enables a plugin download client. From then on its card shows what the download is doing: searching, awaiting review or downloading.
 
 The Requests page also lists the downloads that auto-download starts for artists you follow, marked "Followed artist". They count toward your quota like any other request. When your request quota is full, the request still appears and waits as "Waiting: request quota full" ("Waiting: storage full" when your storage budget or the library's size cap is reached), then starts by itself once there is room.
 

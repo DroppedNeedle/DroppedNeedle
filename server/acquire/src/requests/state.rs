@@ -54,9 +54,9 @@ pub struct RequestsState {
 /// checked a source was set up and the staging disk had room).
 #[derive(Clone)]
 pub struct AcquireReadiness {
-    /// A download source (Soulseek, Usenet or a plugin) is on. Queued
-    /// downloads wait while this is false.
-    pub sources_ready: Arc<dyn Fn() -> bool + Send + Sync>,
+    /// Whether a download source (Soulseek, Usenet or a plugin) is on.
+    /// Queued downloads wait while none is.
+    pub sources: crate::readiness::SourceReadiness,
     /// Where downloads land before import.
     pub staging_root: std::path::PathBuf,
 }

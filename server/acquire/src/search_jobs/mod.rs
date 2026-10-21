@@ -259,7 +259,7 @@ impl SearchJobs {
                 crate::downloads::queue::SETTINGS_UNREADABLE.to_owned(),
             ));
         }
-        if self.worker.sources_now().is_empty() {
+        if !self.worker.readiness().can_acquire() {
             let reason = SearchReason::NoSources;
             return Err(SearchJobError::Conflict(format!(
                 "{} {}",

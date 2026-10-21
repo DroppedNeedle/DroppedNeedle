@@ -2,8 +2,9 @@
 //!
 //! Ports the v2 download-status halves (the download client `/status`,
 //! `/sabnzbd/status`, and the status service): saved-config probes whose verdicts
-//! travel in the body, never as leaked 5xx. The smoke answers one question:
-//! slskd or Usenet readiness. The four release gates (slskd,
+//! travel in the body, never as leaked 5xx. The smoke answers one question,
+//! whether music can be acquired, from [`crate::readiness`], the answer
+//! requests and Discover read too. The four release gates (slskd,
 //! SABnzbd, Newznab, Lidarr import) each gate independently: one red gate
 //! never flips another.
 //!
@@ -15,6 +16,7 @@ use super::models::{
     AcquireHealth, DownloadsMountView, SabnzbdStatusResponse, SlskdStatusResponse, SourceGate,
 };
 use super::mount::SlskdMountReport;
+use crate::readiness::Readiness;
 
 /// Live verdict from one client probe.
 #[derive(Debug, Clone, PartialEq)]
@@ -101,12 +103,12 @@ pub struct HealthProbes {
     pub lidarr: std::sync::Arc<dyn LidarrReadinessProbe>,
 }
 
-/// Build the acquisition health smoke: `ready` is slskd or Usenet
-/// readiness, and each release gate reports independently. Usenet readiness
-/// means the SABnzbd client probes clean; Newznab indexers gate Usenet
-/// *search* separately, so a bare client still counts the path ready while
-/// the Newznab gate stays red on its own.
-pub fn smoke(probes: &HealthProbes) -> AcquireHealth {
+/// Build the acquisition health smoke. `ready` is whether a download
+/// source is on (slskd, SABnzbd or a plugin), `ready_via` the ones the last
+/// probe reached, and each release gate reports independently. Newznab
+/// indexers gate Usenet *search* separately, so a bare client still counts
+/// the path ready while the Newznab gate stays red on its own.
+pub fn smoke(probes: &HealthProbes, readiness: &Readiness) -> AcquireHealth {
     let slskd = probes.slskd.status();
     let sabnzbd = probes.sabnzbd.status();
     let indexers = probes.newznab.indexers();
@@ -114,15 +116,12 @@ pub fn smoke(probes: &HealthProbes) -> AcquireHealth {
 
     let slskd_ready = slskd.enabled && slskd.configured && slskd.reachable;
     let usenet_ready = sabnzbd.enabled && sabnzbd.configured && sabnzbd.reachable;
-
-    let mut ready_via = Vec::new();
-    if slskd_ready {
-        ready_via.push("slskd".to_owned());
-    }
-    if usenet_ready {
-        ready_via.push(crate::downloads::source_tag::SourceTag::Usenet.to_string());
-    }
-    let ready = !ready_via.is_empty();
+    let ready = readiness.can_acquire();
+    let ready_via = readiness
+        .reachable
+        .iter()
+        .map(ToString::to_string)
+        .collect();
 
     let newznab_open = indexers
         .iter()
@@ -174,10 +173,8 @@ pub fn smoke(probes: &HealthProbes) -> AcquireHealth {
         },
     ];
 
-    // Overall verdict mirrors v2 `StatusService`: error when nothing can
-    // serve, degraded when some path is down but one serves, ok when every
-    // enabled path is up (a fully-disabled install still errors: ready is
-    // false with no path to serve).
+    // Error when no source is on, degraded when an enabled path is down,
+    // ok when every enabled path is up.
     let status = if !ready {
         "error"
     } else if gates.iter().any(|gate| gate.enabled && !gate.open) {

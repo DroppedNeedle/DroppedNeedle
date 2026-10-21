@@ -22,9 +22,11 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::follows::Follows;
 use droppedneedle_acquire::probes::{LiveProbes, ProbeCache, refresh_probes};
+use droppedneedle_acquire::readiness::SourceReadiness;
 use droppedneedle_acquire::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
 use droppedneedle_acquire::target::Targets;
-use droppedneedle_acquire::wiring::{ClientLives, LiveClients};
+use droppedneedle_acquire::wiring::{ClientLives, LiveClients, WorkerSettings};
+use droppedneedle_acquire::worker::SourceList;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
@@ -36,6 +38,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 };
 use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
 use droppedneedle_kernel::runtime_config::{ConfigError, Secret};
+use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_testkit::imports::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_PLAYLIST_NO_TRACK_ID,
     SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
@@ -93,6 +96,7 @@ struct Rig {
     playlists: PlaylistStore,
     clients: Arc<LiveClients>,
     probe_cache: Arc<ProbeCache>,
+    worker_settings: Arc<WorkerSettings>,
 }
 
 impl Rig {
@@ -106,6 +110,16 @@ impl Rig {
 const NEON_MERIDIAN_GROUP: &str = "5907a1b0-0000-4000-8000-000000000b01";
 
 fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Option<&str>) -> Rig {
+    rig_with(auth, api_base, accounts_base, cover_cdn, None)
+}
+
+fn rig_with(
+    auth: &AuthRig,
+    api_base: &str,
+    accounts_base: &str,
+    cover_cdn: Option<&str>,
+    plugins: Option<Arc<PluginHost>>,
+) -> Rig {
     let http = http_client();
     let platform = &auth.platform;
     let db = AcquireDb::new(platform.db.clone());
@@ -147,10 +161,15 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Optio
         platform.config.slskd_downloads_path.clone(),
         journal.clone(),
         Arc::new(Targets::new(journal, platform.config.imports_dir(), None)),
-        None,
+        plugins,
     ));
     let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
     let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
+    let worker_settings = Arc::new(WorkerSettings::new(
+        &platform.settings,
+        clients.clone(),
+        platform.config.imports_dir(),
+    ));
     let deps = ImportsDeps {
         lidarr: LidarrClient::new(http),
         lidarr_settings,
@@ -163,6 +182,10 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Optio
         resolver,
         spotify_imports,
         probes: Arc::new(LiveProbes::bundle(&probes)),
+        readiness: SourceReadiness::new(
+            SourceList::Live(worker_settings.clone()),
+            probe_cache.clone(),
+        ),
         ids: Arc::new(FixedIdGenerator),
         base_path: String::new(),
         trusted_proxies: Default::default(),
@@ -179,6 +202,7 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Optio
         playlists,
         clients,
         probe_cache,
+        worker_settings,
     }
 }
 
@@ -1519,7 +1543,7 @@ async fn slskd_gate_greens_independently() {
     assert_eq!(gate(&body, "sabnzbd")["open"], false);
     assert_eq!(gate(&body, "newznab")["open"], false);
     assert_eq!(gate(&body, "lidarr_import")["open"], false);
-    assert_eq!(body["ready_via"], json!(["slskd"]));
+    assert_eq!(body["ready_via"], json!(["soulseek"]));
 }
 
 #[tokio::test]
@@ -1590,6 +1614,191 @@ async fn sabnzbd_status_is_admin_only_with_mount_hint() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["code"], "FORBIDDEN");
+}
+
+/// A download setup the readiness table covers.
+#[derive(Debug, Clone, Copy)]
+enum SourceSetup {
+    Nothing,
+    SlskdOnly,
+    SabnzbdOnlyAndDown,
+    PluginOnly,
+}
+
+/// An idle plugin host with one enabled download-client plugin, `toy`.
+fn plugin_host_with_download_client(auth: &AuthRig, dir: &std::path::Path) -> Arc<PluginHost> {
+    let plugin_dir = dir.join("plugins/toy");
+    std::fs::create_dir_all(&plugin_dir).expect("plugin dir");
+    std::fs::write(
+        plugin_dir.join("plugin.toml"),
+        "[plugin]\n\
+         name = \"toy\"\n\
+         version = \"1.0.0\"\n\
+         api_version = 1\n\
+         entrypoint = \"plugin:Toy\"\n\
+         capabilities = [\"download_client\"]\n\
+         [[capability]]\n\
+         id = \"download_client\"\n\
+         source = \"toy\"\n\
+         display_name = \"Toy\"\n",
+    )
+    .expect("manifest");
+    let platform = &auth.platform;
+    let library = crate::common::library::library_core(
+        platform,
+        JobQueue::new(platform.db.clone(), platform.clock.clone()),
+    );
+    let host = PluginHost::new(
+        dir.join("plugins"),
+        platform.settings.clone(),
+        Arc::new(droppedneedle_plugins::fakes::FakeLauncher::new()),
+        Arc::new(droppedneedle_plugins::ticks::TickStoreKind::Memory(
+            droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore::new(),
+        )),
+        library,
+    );
+    host.load_all();
+    host.update_settings("toy", true, std::collections::HashMap::new())
+        .expect("plugin enabled");
+    host
+}
+
+/// What each consumer of the readiness answers for one setup: the health
+/// smoke, Discover's download-client flag, and whether a manual search
+/// starts. Requests and the download queue read the same answer as
+/// search, through the worker's readiness.
+async fn readiness_answers(setup: SourceSetup) -> (Vec<bool>, Vec<String>) {
+    use droppedneedle_acquire::requests::quota::QuotaLedger;
+    use droppedneedle_acquire::search_jobs::store::JobStore;
+    use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs};
+    use droppedneedle_acquire::worker::DownloadWorker;
+    use droppedneedle_catalog::reads::discover::adapters::content::IntegrationSettings;
+
+    let (auth, _, user_id) = seed_rig().await;
+    let scratch = crate::common::ScratchDir::new("readiness-table");
+    let mut _servers = Vec::new();
+    let plugins = match setup {
+        SourceSetup::Nothing => None,
+        SourceSetup::SlskdOnly => {
+            let slskd = MockSlskd::start().await.expect("mock slskd starts");
+            save_slskd(&auth, &slskd.base_url()).await;
+            _servers.push(slskd);
+            None
+        }
+        SourceSetup::SabnzbdOnlyAndDown => {
+            auth.config
+                .save_secret(DownloadClients {
+                    sabnzbd: SabnzbdConnection {
+                        enabled: true,
+                        url: closed_url().await,
+                        api_key: "sab-key".into(),
+                        ..SabnzbdConnection::default()
+                    },
+                })
+                .await
+                .expect("sabnzbd connection saves");
+            None
+        }
+        SourceSetup::PluginOnly => Some(plugin_host_with_download_client(&auth, &scratch)),
+    };
+    let rig = rig_with(
+        &auth,
+        "http://127.0.0.1:1",
+        "http://127.0.0.1:1",
+        None,
+        plugins,
+    );
+    rig.refresh_probes().await;
+    let readiness = rig.deps.readiness.clone();
+
+    let (_, health) = get_json(
+        authed_app(rig.deps.clone(), &user_id, Role::User),
+        "/api/v3/acquire/health",
+    )
+    .await;
+    let discover = IntegrationSettings::new(&auth.config, Arc::new(readiness.clone()))
+        .status()
+        .download_client;
+
+    let platform = &auth.platform;
+    let db = AcquireDb::new(platform.db.clone());
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
+    let targets = Arc::new(Targets::new(
+        journal.clone(),
+        platform.config.imports_dir(),
+        None,
+    ));
+    let worker = Arc::new(DownloadWorker::new(
+        journal,
+        rig.worker_settings.clone(),
+        readiness.clone(),
+        platform.events.clone(),
+        Default::default(),
+    ));
+    let jobs = Arc::new(SearchJobs::new(
+        JobStore::new(db.clone()),
+        worker,
+        targets,
+        Arc::new(QuotaLedger::unlimited(db)),
+        platform.events.clone(),
+    ));
+    let principal = test_principal(&user_id, Role::User, "sess-1", SessionKind::Standard);
+    let search = match jobs
+        .start(
+            &principal,
+            AlbumSearch {
+                artist_name: "Aurora Current".to_owned(),
+                album_title: "Neon Meridian".to_owned(),
+                year: None,
+                release_group_mbid: None,
+                release_mbid: None,
+            },
+        )
+        .await
+    {
+        Ok(_) => true,
+        Err(SearchJobError::Conflict(_)) => false,
+        Err(other) => panic!("search start failed: {other:?}"),
+    };
+
+    let reachable = readiness
+        .now()
+        .reachable
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    (
+        vec![
+            health["ready"].as_bool().expect("ready flag"),
+            discover,
+            search,
+        ],
+        reachable,
+    )
+}
+
+/// Whether music can be acquired has one answer. A source counts once it
+/// is turned on, whether or not it answers right now, and a plugin
+/// download client counts like slskd and SABnzbd. The health smoke,
+/// Discover's "set up a download client" prompt and manual search agree
+/// on every setup.
+#[tokio::test]
+async fn every_consumer_agrees_on_whether_music_can_be_acquired() {
+    let table = [
+        (SourceSetup::Nothing, false, Vec::<&str>::new()),
+        (SourceSetup::SlskdOnly, true, vec!["soulseek"]),
+        (SourceSetup::SabnzbdOnlyAndDown, true, Vec::new()),
+        (SourceSetup::PluginOnly, true, vec!["plugin:toy"]),
+    ];
+    for (setup, can_acquire, reachable) in table {
+        let (answers, reached) = readiness_answers(setup).await;
+        assert_eq!(
+            answers,
+            vec![can_acquire; answers.len()],
+            "{setup:?}: health, Discover and search"
+        );
+        assert_eq!(reached, reachable, "{setup:?}: reachable sources");
+    }
 }
 
 /// Stored secrets never surface in Debug: connection keys, the Spotify

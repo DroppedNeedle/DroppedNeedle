@@ -12,7 +12,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Acquisition health smoke: slskd or Usenet readiness plus the
+         * Acquisition health smoke: whether a download source is on, plus the
          *     independent per-source release gates.
          */
         get: operations["get_health"];
@@ -9721,14 +9721,20 @@ export interface components {
     schemas: {
         /**
          * @description Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
-         *     is slskd or Usenet readiness; the gates unpack per source.
+         *     says whether a download source is on; the gates unpack per source.
          */
         AcquireHealth: {
             /** @description Independent per-source release gates. */
             gates: components["schemas"]["SourceGate"][];
-            /** @description True when at least one acquisition path can serve releases. */
+            /**
+             * @description True when a download source is on: slskd, SABnzbd or a plugin
+             *     download client. Requests are taken while it is false, and wait.
+             */
             ready: boolean;
-            /** @description Paths currently ready: any of `slskd`, `usenet`. */
+            /**
+             * @description The sources that are on and answered the last probe: `soulseek`,
+             *     `usenet` or `plugin:<name>`.
+             */
             ready_via: string[];
             /** @description Overall verdict: `ok`, `degraded`, or `error`. */
             status: string;

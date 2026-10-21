@@ -22,7 +22,7 @@
 //!   candidates for one album, and the pick that starts a download.
 //!
 //! The `db`, `dispatch`, `search`, `sources`, `settings`, `probes`,
-//! `worker`, and `wiring` modules unify the per-area seams onto one
+//! `readiness`, `worker`, and `wiring` modules unify the per-area seams onto one
 //! production spelling each (one [`dispatch::DownloadDispatch`] starts
 //! every download, every source is one
 //! [`downloads::sources::DownloadSource`] in the worker's list, and so on)
@@ -45,6 +45,7 @@ pub mod library_removal;
 pub mod plugin_events;
 pub mod plugin_source;
 pub mod probes;
+pub mod readiness;
 pub mod requests;
 pub mod search;
 pub mod search_jobs;

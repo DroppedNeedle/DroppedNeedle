@@ -17,7 +17,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::Value;
@@ -141,7 +140,9 @@ pub struct PluginHost {
     running: Mutex<HashMap<String, Running>>,
     /// Serializes reloads so two saves cannot launch the same plugin twice.
     reload: Mutex<()>,
-    generation: AtomicU64,
+    /// Bumped after every reload; acquisition wakes its download worker
+    /// on it, so enabling a download client takes effect at once.
+    generation: tokio::sync::watch::Sender<u64>,
     /// Backs the `host.state.*` requests.
     state: Arc<dyn PluginStateStore>,
     /// Subscriber fan-out and publish bookkeeping.
@@ -172,7 +173,7 @@ impl PluginHost {
             plugins: Mutex::new(HashMap::new()),
             running: Mutex::new(HashMap::new()),
             reload: Mutex::new(()),
-            generation: AtomicU64::new(0),
+            generation: tokio::sync::watch::Sender::new(0),
             state,
             events: EventState::default(),
             library_writes: Default::default(),
@@ -197,7 +198,12 @@ impl PluginHost {
 
     /// Monotonic rebuild counter, bumped after every `load_all` swap.
     pub fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Relaxed)
+        *self.generation.borrow()
+    }
+
+    /// A notice that changes after every `load_all` swap.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.generation.subscribe()
     }
 
     /// Discover every plugin folder, then make the running set match:
@@ -253,7 +259,8 @@ impl PluginHost {
         if let Ok(mut guard) = self.plugins.lock() {
             *guard = plugins;
         }
-        self.generation.fetch_add(1, Ordering::Relaxed);
+        self.generation
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
     fn load_one(&self, plugin_dir: &Path, plugins: &mut HashMap<String, LoadedPlugin>) {

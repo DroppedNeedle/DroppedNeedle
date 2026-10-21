@@ -85,6 +85,8 @@ pub struct ImportsDeps {
     pub spotify_imports: SpotifyImports,
     /// Health probes behind the smoke and gates.
     pub probes: Arc<HealthProbes>,
+    /// Whether a download source is on, for the smoke.
+    pub readiness: crate::readiness::SourceReadiness,
     /// Fresh ids, the OAuth state fallback when the OS RNG fails.
     pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (between origin and callback, exactly once).
@@ -639,12 +641,12 @@ pub async fn get_spotify_job(
     Ok(Json(status))
 }
 
-/// Acquisition health smoke: slskd or Usenet readiness plus the
+/// Acquisition health smoke: whether a download source is on, plus the
 /// independent per-source release gates.
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/health",
     responses((status = 200, description = "Acquisition health", body = AcquireHealth)))]
 pub async fn get_health(State(deps): State<ImportsDeps>, _user: User) -> Json<AcquireHealth> {
-    Json(super::health::smoke(&deps.probes))
+    Json(super::health::smoke(&deps.probes, &deps.readiness.now()))
 }
 
 /// Live slskd client status (v2: any authenticated user may read it).

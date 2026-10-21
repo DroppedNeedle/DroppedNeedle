@@ -267,7 +267,7 @@ impl RequestsService {
         let waiting = self
             .readiness
             .as_ref()
-            .is_some_and(|readiness| !(readiness.sources_ready)());
+            .is_some_and(|readiness| !readiness.sources.can_acquire());
         let request = DispatchRequest {
             user_id: curator.user_id().to_owned(),
             target: DispatchTarget::Album {
