@@ -17,3 +17,28 @@ const FAILED_MODULE_LOAD = /dynamically imported module|Importing a module scrip
 export function isFailedModuleLoad(error: unknown): boolean {
 	return error instanceof TypeError && FAILED_MODULE_LOAD.test(error.message);
 }
+
+const MODULE_RELOAD_KEY = 'dn-module-reload-at';
+// A second failure this soon after a reload shows the error page and stays.
+const MODULE_RELOAD_WINDOW_MS = 60_000;
+// A network change can come in a burst; let it settle before reloading.
+const MODULE_RELOAD_DELAY_MS = 1_000;
+
+/**
+ * Reloads the page once after part of the app failed to download. The browser
+ * keeps a failed module download for the life of the page, so only a reload
+ * fetches the code again. Does nothing when the page already reloaded for this
+ * within the last minute, or session storage is unavailable, so an outage that
+ * lasts cannot loop.
+ */
+export function reloadAfterFailedModuleLoad(): void {
+	try {
+		const now = Date.now();
+		const last = Number(sessionStorage.getItem(MODULE_RELOAD_KEY) ?? 0);
+		if (now - last < MODULE_RELOAD_WINDOW_MS) return;
+		sessionStorage.setItem(MODULE_RELOAD_KEY, String(now));
+	} catch {
+		return;
+	}
+	setTimeout(() => location.reload(), MODULE_RELOAD_DELAY_MS);
+}
