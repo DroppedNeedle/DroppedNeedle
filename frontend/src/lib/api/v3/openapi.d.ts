@@ -13645,6 +13645,12 @@ export interface components {
              *     write echoes it.
              */
             identity_revision: number;
+            /**
+             * @description A file of the album sits in a folder that keeps its own tags (the
+             *     Local metadata policy, of the folder or a path rule): the app
+             *     writes no tags or names there, and downloads land as they came.
+             */
+            keeps_own_tags: boolean;
             placing?: null | components["schemas"]["EditionPlacingView"];
             /** @description Why the edition is what it is, and what to do about it. */
             reason: components["schemas"]["ReasonView"];

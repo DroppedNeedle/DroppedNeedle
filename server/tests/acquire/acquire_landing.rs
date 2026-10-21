@@ -2159,6 +2159,136 @@ async fn an_import_stopped_around_its_commit_keeps_its_match() {
     }
 }
 
+// A fetched track joining a copy in a folder that keeps its own tags (a
+// Local metadata path rule inside an automatically managed folder) lands
+// as it was downloaded, byte for byte, and is still matched; the naming
+// script alone would have put it outside that rule. A landing stopped just
+// before its catalog commit recovers the same way, with the folder's
+// policy on its row. The same download into an ordinary folder is tagged.
+#[tokio::test]
+async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        IdentificationPolicy, LibraryPathRule, TypedLibrary,
+    };
+    use droppedneedle_library::publish::CrashPoint;
+    use sha2::{Digest as _, Sha256};
+    let sha256 = |path: &Path| -> String {
+        Sha256::digest(std::fs::read(path).expect("file reads"))
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    for (own, crash) in [
+        (true, None),
+        (true, Some(CrashPoint::BeforeCatalogCommit)),
+        (false, None),
+    ] {
+        let case = format!("own tags {own}, stopped {crash:?}");
+        let lengths = fixture_lengths();
+        let e = editions(1, &lengths);
+        let rig = join_rig(vec![e.old.clone(), e.new.clone()]).await;
+        rig.plant(&copy_rel(1, MYSTERONS), 0, &e.old);
+        rig.scan().await;
+        let album = rig.album_of(&rig.track_at(&copy_rel(1, MYSTERONS)));
+        rig.set_edition(&album, &e.group, &e.new.id, "manual");
+        if own {
+            rig.library
+                .settings
+                .store()
+                .update_secret_blocking::<TypedLibrary, String, _>(|stored| {
+                    let mut library = stored.into_inner();
+                    for root in &mut library.library_roots {
+                        root.rules.push(LibraryPathRule {
+                            id: "own-rule".to_owned(),
+                            relative_path: "Copy 1".to_owned(),
+                            policy: IdentificationPolicy::LocalMetadata,
+                        });
+                    }
+                    Ok(library)
+                })
+                .expect("path rule saved");
+            rig.library.refresh_registry();
+        }
+        rig.ask(
+            "t-own",
+            &e.group,
+            &e.new.title,
+            "user",
+            Some(&e.new.id),
+            Some((&album, &e.new.id)),
+            &[(2, 1)],
+        )
+        .await;
+        let row = rig.task("t-own").await;
+        let manifest = droppedneedle_acquire::downloads::ManifestCodec
+            .decode(&serde_json::to_vec(&rig.manifest("t-own")).expect("bytes"))
+            .expect("manifest");
+        let landed = rig.landed("t-own", &e.new, 1, FIXTURES[1]);
+        // An album tag the release's tags would change.
+        let downloaded_album = e.new.title.to_lowercase();
+        save_tags(
+            &landed,
+            &[TagEdit::new(
+                TagField::Album,
+                vec![downloaded_album.clone()],
+            )],
+        )
+        .expect("download retagged");
+        let downloaded = sha256(&landed);
+        rig.library.arm_publish_crash(crash);
+        rig.acquire
+            .landing
+            .land(
+                &row,
+                None,
+                Some(&manifest),
+                Landed {
+                    files: vec![Reported {
+                        path: landed,
+                        size: None,
+                    }],
+                    mounts: vec![rig.downloads.clone()],
+                },
+                false,
+            )
+            .await;
+        rig.library.arm_publish_crash(None);
+        if crash.is_some() {
+            rig.library.publish_tick().expect("recovery runs");
+        }
+
+        let (track, on, _, _, availability) = rig.row_at(&copy_rel(1, SOUR_TIMES)).await;
+        assert_eq!(
+            (on.as_str(), availability.as_str()),
+            (album.as_str(), "indexed"),
+            "{case}"
+        );
+        let identity = rig
+            .identity(&track)
+            .await
+            .unwrap_or_else(|| panic!("matched: {case}"));
+        assert_eq!(identity.2, placed_on(&e.new, 1).2, "{case}");
+        let placed = rig.music.join(copy_rel(1, SOUR_TIMES));
+        let format = droppedneedle_library::tags::format_for_path(&placed).expect("format");
+        let (tag, _) = droppedneedle_library::tags::read::read_scan_metadata(&placed, format)
+            .expect("tags read");
+        let policy: String = rig
+            .scalar(&format!(
+                "SELECT applied_policy FROM local_tracks WHERE id = '{track}'"
+            ))
+            .await;
+        if own {
+            assert_eq!(sha256(&placed), downloaded, "{case}");
+            assert_eq!(tag.album, downloaded_album, "{case}");
+            assert_eq!(policy, "local_metadata", "{case}");
+        } else {
+            assert_ne!(sha256(&placed), downloaded, "{case}");
+            assert_eq!(tag.album, e.new.title, "{case}");
+            assert_eq!(policy, "automatic", "{case}");
+        }
+    }
+}
+
 // An upgrade lands in the album its old copy was on, on the edition a
 // person chose, even when the copy's files carry another edition's tags;
 // the old copy's play follows. With two copies of the album, "Get missing

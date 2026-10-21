@@ -169,6 +169,7 @@ function routes(): FakeApi {
 			candidates: [],
 			edition_kind: plan ? 'release' : 'none',
 			files_by_itself: true,
+			keeps_own_tags: false,
 			identifying: false,
 			identity_revision: 0,
 			placing: null,

@@ -1,7 +1,8 @@
 <!--
 	The edition plate on a library album's page: which edition the copy is,
-	who picked it and how many of its tracks the files hold. For curators it
-	opens the edition sheet, as `?edition=choose` in the address does.
+	who picked it, how many of its tracks the files hold and whether its
+	folder keeps its own tags. For curators it opens the edition sheet, as
+	`?edition=choose` in the address does.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -137,6 +138,9 @@
 					>{` · ${warning}`}</span
 				>{/each}
 		</span>
+		{#if status?.keeps_own_tags}
+			<span class="block text-xs text-base-content/55">Folder keeps its own tags</span>
+		{/if}
 		{#if copies.length > 1}
 			<span class="block text-xs text-base-content/55">{moreCopies(copies.length - 1)}</span>
 		{/if}

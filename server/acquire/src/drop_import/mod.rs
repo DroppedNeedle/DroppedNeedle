@@ -98,6 +98,9 @@ struct Organised {
     /// Better copies kept for review because the library's copy could not
     /// go to the recycle bin.
     blocked: usize,
+    /// Of `imported` and `bonus`, files placed in a folder that keeps its
+    /// own tags, as they came.
+    tags_kept: usize,
     /// Files that wait for review, grouped by why.
     leftovers: Vec<(Reason, Vec<PathBuf>)>,
     /// Release tracks now in the library, out of the edition's tracks.
@@ -797,6 +800,7 @@ impl DropImports {
             };
             match library.import(request).await {
                 Ok(receipt) => {
+                    done.tags_kept = receipt.tags_kept;
                     let skipped: HashSet<usize> =
                         receipt.skipped.iter().map(|(index, _)| *index).collect();
                     let refused: HashMap<usize, &str> = receipt
@@ -1244,6 +1248,9 @@ fn describe(done: &Organised, unreadable: usize, complete: bool) -> String {
     let mut text = parts.join(", ");
     if !text.is_empty() {
         text.push('.');
+    }
+    if done.tags_kept > 0 {
+        text.push_str(" Tags kept as they came.");
     }
     text
 }

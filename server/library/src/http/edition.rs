@@ -153,6 +153,10 @@ pub struct EditionStatusView {
     pub files_by_itself: bool,
     /// That write is still to happen.
     pub writing: bool,
+    /// A file of the album sits in a folder that keeps its own tags (the
+    /// Local metadata policy, of the folder or a path rule): the app
+    /// writes no tags or names there, and downloads land as they came.
+    pub keeps_own_tags: bool,
 }
 
 /// The chosen edition's files are still being placed on it.
@@ -163,8 +167,9 @@ pub struct EditionPlacingView {
 }
 
 impl EditionStatusView {
-    fn of(status: EditionStatus, writes: AutomaticWrites) -> Self {
+    fn of(status: EditionStatus, writes: AutomaticWrites, keeps_own_tags: bool) -> Self {
         Self {
+            keeps_own_tags,
             identity_revision: status.identity_revision,
             edition_kind: status.edition_kind,
             placing: status
@@ -458,13 +463,13 @@ fn read_status(
     let status = ops
         .edition_status(album_id)?
         .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
-    let writes = management
-        .writes_by_itself(album_id)
-        .map_err(|error| match error {
-            ManagementError::Busy(cause) => OperationError::Busy(cause),
-            other => OperationError::Store(other.to_string()),
-        })?;
-    Ok(EditionStatusView::of(status, writes))
+    let managed = |error| match error {
+        ManagementError::Busy(cause) => OperationError::Busy(cause),
+        other => OperationError::Store(other.to_string()),
+    };
+    let writes = management.writes_by_itself(album_id).map_err(managed)?;
+    let keeps_own_tags = management.keeps_own_tags(album_id).map_err(managed)?;
+    Ok(EditionStatusView::of(status, writes, keeps_own_tags))
 }
 
 async fn status_of(state: &LibrarySetup, album_id: &str) -> Result<EditionStatusView, ApiError> {

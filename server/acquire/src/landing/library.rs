@@ -414,6 +414,7 @@ impl LandingLibrary for LibraryLanding {
                     paths: album.paths,
                     skipped: album.skipped,
                     blocked: album.blocked,
+                    tags_kept: album.tags_kept,
                 }),
                 Err(ImportError::LocalFault(detail)) => Err(ImportFailure::LocalFault(detail)),
                 Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),

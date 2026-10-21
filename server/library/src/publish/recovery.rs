@@ -931,6 +931,11 @@ fn resume_precommit<C: Catalog>(
                         })
                         .unwrap_or_default();
                     super::planner::Adoption::recovered(
+                        recorded
+                            .items
+                            .iter()
+                            .find(|item| item.track_id == track_id)
+                            .and_then(|item| item.adopt.as_ref()),
                         provenance.task_id,
                         provenance.source_path,
                         provenance.ingest_source,

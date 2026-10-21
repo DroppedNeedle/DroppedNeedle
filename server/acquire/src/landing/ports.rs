@@ -108,6 +108,9 @@ pub struct ImportReceipt {
     /// not be moved to the recycle bin, by index, with the reason. Their
     /// old copies stay.
     pub blocked: Vec<(usize, String)>,
+    /// Of `paths`, the files placed in a folder that keeps its own tags:
+    /// their tags are as they came.
+    pub tags_kept: usize,
 }
 
 /// Why an import did not happen.

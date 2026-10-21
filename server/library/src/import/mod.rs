@@ -11,7 +11,10 @@
 //!    The scan skips the hidden prefix, and the publisher's rename then
 //!    never crosses a filesystem, whatever disk the download client used.
 //! 2. One bundle moves every copy to the path the import naming script gives
-//!    and writes the release's full tag set on the way.
+//!    and writes the release's full tag set on the way. A file whose
+//!    destination is in a folder that keeps its own tags (the Local
+//!    metadata policy, of the folder or a path rule) is placed as it came,
+//!    its tags untouched; the match is recorded all the same.
 //! 3. The publisher's catalog commit adds the tracks to the catalog in the
 //!    same transaction (from the published files' own tags, exactly as a
 //!    scan would index them), so no rescan is needed and nothing shows in
@@ -167,6 +170,9 @@ pub struct ImportedAlbum {
     /// Files not taken because a track they replace could not be taken
     /// away, by request index, with the reason. Their old copies stay.
     pub blocked: Vec<(usize, String)>,
+    /// Of `paths`, the files placed in a folder that keeps its own tags:
+    /// their tags are as they came.
+    pub tags_kept: usize,
 }
 
 /// Why an import did not happen.
@@ -192,6 +198,9 @@ struct Placement {
     dest_rel: String,
     format: String,
     tags: BTreeMap<String, Vec<String>>,
+    /// The policy covering the final destination, set under the publish
+    /// lock once a joined file's folder is known.
+    policy: EffectivePolicy,
     /// The track id the plan pins, set under the publish lock.
     track_id: String,
     /// The tracks this file replaces, read before the publish lock, or
@@ -297,6 +306,7 @@ impl LibrarySetup {
                 dest_rel,
                 format,
                 tags,
+                policy: root.policy,
                 track_id: String::new(),
                 replaces,
             });
@@ -373,6 +383,15 @@ impl LibrarySetup {
             if let (Some(folder), Some(name)) = (folder, Path::new(&placement.dest_rel).file_name())
             {
                 placement.dest_rel = format!("{folder}/{}", name.to_string_lossy());
+            }
+        }
+        // A folder that keeps its own tags takes the file as it came. The
+        // policy is read here, at the final destination and under the lock,
+        // so the bytes and the row's policy agree.
+        for placement in &mut placements {
+            placement.policy = root.policy_for(&root.path.join(&placement.dest_rel));
+            if placement.policy == EffectivePolicy::LocalMetadata {
+                placement.tags.clear();
             }
         }
         let bundle_id = self.ids.new_id();
@@ -510,6 +529,7 @@ impl LibrarySetup {
                 paths: Vec::new(),
                 skipped,
                 blocked,
+                tags_kept: 0,
             });
         }
         // Where a file sits on the join's release, when the import matched
@@ -530,8 +550,8 @@ impl LibrarySetup {
                         .map(|(_, old)| old.clone()),
                 })
         };
-        let dest_policy = |dest_rel: &str| super::publish::planner::Adoption {
-            policy: root.policy_for(&root.path.join(dest_rel)),
+        let dest_policy = |policy: EffectivePolicy| super::publish::planner::Adoption {
+            policy,
             policy_revision: registry.policy_revision().to_owned(),
             download_task_id: (import.origin == ImportOrigin::Download)
                 .then(|| import.task_id.clone()),
@@ -579,7 +599,7 @@ impl LibrarySetup {
                     adopt: Some(super::publish::planner::Adoption {
                         source_path: Some(placement.source.to_string_lossy().into_owned()),
                         track: joined_track(track),
-                        ..dest_policy(&placement.dest_rel)
+                        ..dest_policy(placement.policy)
                     }),
                     replaces: None,
                     outputs: Vec::new(),
@@ -676,12 +696,17 @@ impl LibrarySetup {
             .iter()
             .map(|item| root.path.join(&item.dest_rel))
             .collect();
+        let tags_kept = placements
+            .iter()
+            .filter(|placement| placement.policy == EffectivePolicy::LocalMetadata)
+            .count();
         Ok(ImportedAlbum {
             bundle_id: bundle.id.clone(),
             album_id,
             paths,
             skipped,
             blocked,
+            tags_kept,
         })
     }
 

@@ -247,10 +247,11 @@ pub struct JoinedTrack {
 }
 
 impl Adoption {
-    /// What a resumed commit knows: the provenance the import recorded
-    /// next to its staged copies, and the automatic policy (the next scan
-    /// re-reads the policy).
+    /// What a resumed commit knows: the policy the bundle journaled for
+    /// the file (`journaled`, automatic when it holds none), and the
+    /// provenance the import recorded next to its staged copies.
     pub fn recovered(
+        journaled: Option<&Adoption>,
         download_task_id: Option<String>,
         source_path: Option<String>,
         ingest_source: String,
@@ -258,8 +259,12 @@ impl Adoption {
         track: Option<JoinedTrack>,
     ) -> Self {
         Self {
-            policy: crate::scan::models::EffectivePolicy::Automatic,
-            policy_revision: String::new(),
+            policy: journaled.map_or(crate::scan::models::EffectivePolicy::Automatic, |adopt| {
+                adopt.policy
+            }),
+            policy_revision: journaled
+                .map(|adopt| adopt.policy_revision.clone())
+                .unwrap_or_default(),
             download_task_id,
             source_path,
             ingest_source,

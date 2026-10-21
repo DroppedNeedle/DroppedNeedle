@@ -419,6 +419,21 @@ impl Management {
         })
     }
 
+    /// Whether an indexed file of the album sits in a folder that keeps
+    /// its own tags, by the live folder settings. Blocking.
+    pub fn keeps_own_tags(&self, album_id: &str) -> Result<bool, ManagementError> {
+        let files = self
+            .setup
+            .db
+            .read_blocking("management.album_files", |conn| {
+                Ok::<_, ManagementError>(album_files(conn, album_id)?)
+            })?;
+        let registry = self.setup.live_registry();
+        Ok(files
+            .iter()
+            .any(|file| planner::keeps_own_tags(&registry, &file.root_id, &file.relative_path)))
+    }
+
     /// Look at the next waiting album that has settled, while no scan
     /// runs. True when one was looked at or handed back. Blocking.
     pub fn automatic_step(&self, settle: &mut Settle) -> Result<bool, ManagementError> {

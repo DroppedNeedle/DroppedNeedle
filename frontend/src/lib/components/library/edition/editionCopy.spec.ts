@@ -21,6 +21,7 @@ function status(overrides: Partial<EditionStatus> = {}): EditionStatus {
 		candidates: [],
 		edition_kind: 'release',
 		files_by_itself: true,
+		keeps_own_tags: false,
 		identifying: false,
 		identity_revision: 3,
 		placing: null,

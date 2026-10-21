@@ -43853,7 +43853,8 @@
           "edition_kind",
           "identifying",
           "files_by_itself",
-          "writing"
+          "writing",
+          "keeps_own_tags"
         ],
         "properties": {
           "album_id": {
@@ -43897,6 +43898,10 @@
             "type": "integer",
             "format": "int64",
             "description": "The identity's row revision, 0 when the album has none. A guarded\nwrite echoes it."
+          },
+          "keeps_own_tags": {
+            "type": "boolean",
+            "description": "A file of the album sits in a folder that keeps its own tags (the\nLocal metadata policy, of the folder or a path rule): the app\nwrites no tags or names there, and downloads land as they came."
           },
           "placing": {
             "oneOf": [
