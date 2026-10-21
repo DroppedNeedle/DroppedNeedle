@@ -3,11 +3,11 @@
 //! [`RequestStore`] keeps the request ledger in `request_history`, its
 //! listeners in `request_history_requesters` and per-user hides in
 //! `request_history_dismissals`. [`WantedStore`] keeps `wanted_watches`,
-//! shared by the wanted view and the watcher loop. [`FollowApprovalStore`],
-//! [`PersonalMixStore`] and [`EditionStore`] keep the approval queues and
-//! the in-flight edition acquires. Reads use the reader pool; every
-//! mutation is one writer-lane transaction, so each compare-and-swap reads
-//! and writes the row under the write lock.
+//! shared by the wanted view and the watcher loop. [`PersonalMixStore`] and
+//! [`EditionStore`] keep the mix approvals and the in-flight edition
+//! acquires; the follow approvals live with the follows. Reads use the
+//! reader pool; every mutation is one writer-lane transaction, so each
+//! compare-and-swap reads and writes the row under the write lock.
 //!
 //! Album rows key on the lowercased release-group MBID and track rows on
 //! `track:` plus the lowercased recording MBID (the v2 key scheme). Rows
@@ -15,13 +15,11 @@
 //! integer milliseconds, converted only by [`ms_from_secs`] and
 //! [`secs_from_ms`].
 
-mod approvals;
 mod editions;
 mod mixes;
 mod requests;
 mod wanted;
 
-pub use approvals::FollowApprovalStore;
 pub use editions::EditionStore;
 pub use mixes::PersonalMixStore;
 pub use requests::RequestStore;
@@ -32,7 +30,7 @@ use super::error::RequestsError;
 use droppedneedle_kernel::db::{DbError, map_sqlx_busy};
 
 /// Map a writer-lane failure: busy stays retryable, the rest is a fault.
-fn lane_error(operation: &'static str, error: DbError) -> RequestsError {
+pub(crate) fn lane_error(operation: &'static str, error: DbError) -> RequestsError {
     match error {
         DbError::Busy { .. } | DbError::LaneClosed => RequestsError::Busy {
             operation: operation.to_owned(),
@@ -42,7 +40,7 @@ fn lane_error(operation: &'static str, error: DbError) -> RequestsError {
 }
 
 /// Map a reader-pool failure the same way.
-fn read_error(operation: &'static str, error: sqlx::Error) -> RequestsError {
+pub(crate) fn read_error(operation: &'static str, error: sqlx::Error) -> RequestsError {
     lane_error(operation, map_sqlx_busy(operation, error))
 }
 
@@ -53,7 +51,7 @@ pub(super) const APPROVAL_REVOKED: &str = "revoked";
 
 /// Epoch seconds as stored: request, watch and approval times are integer
 /// milliseconds.
-pub(super) fn ms_from_secs(seconds: u64) -> i64 {
+pub(crate) fn ms_from_secs(seconds: u64) -> i64 {
     i64::try_from(seconds)
         .unwrap_or(i64::MAX)
         .saturating_mul(1000)
@@ -65,7 +63,7 @@ pub(super) fn ms_from_secs_f64(seconds: f64) -> i64 {
 }
 
 /// A stored millisecond time as epoch seconds, clamping negatives to zero.
-pub(super) fn secs_from_ms(millis: i64) -> u64 {
+pub(crate) fn secs_from_ms(millis: i64) -> u64 {
     u64::try_from(millis / 1000).unwrap_or(0)
 }
 

@@ -28,9 +28,7 @@ use super::models::{
     WantedActionResponse, WantedItem, WantedResponse, WantedRetryingItem,
 };
 use super::quota::QuotaLedger;
-use super::sqlite::{
-    EditionStore, FollowApprovalStore, PersonalMixStore, RequestStore, WantedStore, WatchChange,
-};
+use super::sqlite::{EditionStore, PersonalMixStore, RequestStore, WantedStore, WatchChange};
 use crate::db::AcquireDb;
 use crate::dispatch::{
     DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget,
@@ -38,6 +36,7 @@ use crate::dispatch::{
 };
 use crate::downloads::state::TaskStatus;
 use crate::edition::chosen_edition;
+use crate::follows::approvals::FollowApprovalStore;
 use droppedneedle_auth::{Admin, Principal};
 
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).

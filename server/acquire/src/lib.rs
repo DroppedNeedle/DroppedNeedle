@@ -8,6 +8,8 @@
 //! - [`slskd`] and [`usenet`] own the source clients and indexers.
 //! - [`flows`] runs the wanted watcher, follow poll, upgrade sweep and
 //!   request-status sweep.
+//! - [`follows`] owns the follows, their auto-download approvals and the
+//!   follow poll's cursors.
 //! - [`drop_import`] takes uploaded music into the library.
 //! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
 //! - [`landing`] verifies a finished download, matches it to the
@@ -34,6 +36,7 @@ pub mod downloads;
 pub mod drop_import;
 pub mod edition;
 pub mod flows;
+pub mod follows;
 pub mod imports;
 pub mod landing;
 pub mod library_removal;

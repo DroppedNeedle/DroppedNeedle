@@ -22,15 +22,13 @@ use droppedneedle_kernel::jobs::{
 };
 
 use super::seams::{CandidateSearch, FlowEvent, ObservedRelease, ReleasePoll, TickSink};
-use super::stores::{
-    AdminDirectory, CutoffList, FeedRelease, FollowCursor, FollowStore, Follower, LibraryPresence,
-    PendingRelease, UpgradePolicy,
-};
+use super::stores::{AdminDirectory, CutoffList, LibraryPresence, UpgradePolicy};
 use crate::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
 };
 use crate::downloads::journal::Journal;
 use crate::downloads::state::TaskStatus;
+use crate::follows::cursors::{FeedRelease, FollowCursor, FollowStore, Follower, PendingRelease};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{RequestStatus, WantedWatch, WatchState};
 use crate::requests::models::RequestKind;

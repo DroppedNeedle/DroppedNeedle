@@ -2,10 +2,10 @@
 
 use rusqlite::{OptionalExtension, params};
 
-use super::super::error::RequestsError;
-use super::super::ledger::{ApprovalBatch, ApprovalState, FollowApproval};
-use super::{lane_error, ms_from_secs, read_error, secs_from_ms};
 use crate::db::AcquireDb;
+use crate::requests::error::RequestsError;
+use crate::requests::ledger::{ApprovalBatch, ApprovalState, FollowApproval};
+use crate::requests::sqlite::{lane_error, ms_from_secs, read_error, secs_from_ms};
 
 /// Durable auto-download approvals plus import batches over
 /// `auto_download_approvals` (v2 `follow_store` approval half). Batch

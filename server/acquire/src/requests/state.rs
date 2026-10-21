@@ -6,11 +6,10 @@ use std::sync::Arc;
 
 use super::bridges::FollowDecisionSink;
 use super::quota::QuotaLedger;
-use super::sqlite::{
-    EditionStore, FollowApprovalStore, PersonalMixStore, RequestStore, WantedStore,
-};
+use super::sqlite::{EditionStore, PersonalMixStore, RequestStore, WantedStore};
 use crate::db::AcquireDb;
 use crate::dispatch::DownloadDispatch;
+use crate::follows::approvals::FollowApprovalStore;
 
 /// Everything the requests router needs, built once.
 #[derive(Clone)]

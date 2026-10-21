@@ -30,9 +30,8 @@ use super::flows::loops::{
 };
 use super::flows::seams::ReleasePoll;
 use super::flows::seams::{Candidate, CandidateSearch, TickSink};
-use super::flows::stores::{
-    AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradeWorklist,
-};
+use super::flows::stores::{AdminDirectory, LibraryPresence, UpgradeWorklist};
+use super::follows::cursors::FollowStore as FlowsFollowStore;
 use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
 use super::imports::jobs::{SpotifyImportJobs, SpotifyImports};
 use super::imports::lidarr::LidarrClient;

@@ -25,8 +25,9 @@ use droppedneedle_acquire::flows::{
         sync_tick, wanted_tick,
     },
     seams::{CandidateSearch, TickSink},
-    stores::{AdminDirectory, FollowStore, LibraryPresence, UpgradeWorklist},
+    stores::{AdminDirectory, LibraryPresence, UpgradeWorklist},
 };
+use droppedneedle_acquire::follows::cursors::FollowStore;
 use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord, RequestStatus, WatchState},

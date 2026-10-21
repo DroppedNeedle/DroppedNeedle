@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::requests::sqlite::FollowApprovalStore;
+use droppedneedle_acquire::follows::approvals::FollowApprovalStore;
 use droppedneedle_acquire::settings::{ApprovalSeedBridge, RequestsPendingSource};
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
