@@ -58,7 +58,8 @@ impl CollectionsService<'_> {
     /// the old id of a merged album or artist, or of a track that continued
     /// into another, rates the item that holds it. An id no live album or
     /// artist, or no streamable track, holds is not found, and nothing is
-    /// written.
+    /// written. A live album without files counts: its web page keeps its
+    /// rating.
     pub async fn rate(
         &self,
         user_id: &str,
@@ -74,15 +75,23 @@ impl CollectionsService<'_> {
         let current = items
             .current_id(kind.as_str(), item_id)
             .await
-            .map_err(library_error)?
-            .unwrap_or_else(|| item_id.to_owned());
-        let live = items
-            .existing(kind.as_str(), std::slice::from_ref(&current))
-            .await
             .map_err(library_error)?;
-        if !live.contains(&current) {
-            return Err(CollectionsError::NotFound);
-        }
+        let current = match (kind, current) {
+            // `current_id` names only a live album, with files or without.
+            (RatedKind::Album, Some(current)) => current,
+            (RatedKind::Album, None) => return Err(CollectionsError::NotFound),
+            (_, current) => {
+                let current = current.unwrap_or_else(|| item_id.to_owned());
+                let live = items
+                    .existing(kind.as_str(), std::slice::from_ref(&current))
+                    .await
+                    .map_err(library_error)?;
+                if !live.contains(&current) {
+                    return Err(CollectionsError::NotFound);
+                }
+                current
+            }
+        };
         self.set_rating(user_id, kind, &current, rating).await?;
         Ok(RatingStatusResponse {
             kind,
