@@ -842,10 +842,16 @@ pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<axum::Router, Str
         .map(|dir| dir.join("settings"))
         .ok_or_else(|| "scratch database has no directory".to_owned())?;
     let settings = crate::settings::scratch_settings(&dir)?;
+    let dispatch = crate::dispatch::UnifiedDispatch::new(
+        worker.journal().clone(),
+        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+        worker.staging_root(),
+        settings.live(),
+    );
     let upgrades = Upgrades::new(
         crate::flows::stores::UpgradeWorklist::new(db),
         settings.live(),
-        Arc::new(crate::flows::seams::ScriptedDownloads::new()),
+        Arc::new(dispatch),
     );
     Ok(routes()
         .with_state(DownloadsRoutes::new(worker, upgrades))

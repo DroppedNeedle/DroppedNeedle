@@ -18,7 +18,11 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::dispatch::Journal;
+use droppedneedle_acquire::probes::{LiveProbes, ProbeCache, refresh_probes};
 use droppedneedle_acquire::settings::ConfigSpotifySettings;
+use droppedneedle_acquire::target::Targets;
+use droppedneedle_acquire::wiring::{ClientLives, LiveClients};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
@@ -26,16 +30,18 @@ use droppedneedle_catalog::reads::collections::store::PlaylistStore;
 use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, start_runners};
 use droppedneedle_kernel::runtime_config::ConfigError;
 use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
+use droppedneedle_kernel::runtime_config::secret_sections::{
+    DownloadClients, SabnzbdConnection, SlskdConnection,
+};
 use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
 use droppedneedle_testkit::imports::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_PLAYLIST_NO_TRACK_ID,
     SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
 };
 use droppedneedle_testkit::musicbrainz::MockMusicBrainz;
+use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
+use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
 use imports::handlers::{ImportsDeps, imports_router};
-use imports::health::{
-    ClientProbe, HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
-};
 use imports::jobs::{SPEC, SpotifyImportJobs, SpotifyImports};
 use imports::lidarr::{
     LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
@@ -78,7 +84,7 @@ fn no_redirect_client() -> reqwest::Client {
 
 /// Fully wired module bundle for tests: the Spotify import on the
 /// production stores over the auth rig's database and settings, Lidarr on
-/// its memory stores, health on scripted probes.
+/// its memory stores, health on the live probes over the rig's settings.
 #[allow(dead_code)]
 struct Rig {
     deps: ImportsDeps,
@@ -87,10 +93,15 @@ struct Rig {
     approvals: Arc<MemoryApprovalSink>,
     spotify_links: Arc<SqliteSpotifyLinks>,
     playlists: PlaylistStore,
-    slskd: Arc<ScriptedSlskd>,
-    sabnzbd: Arc<ScriptedSabnzbd>,
-    newznab: Arc<ScriptedNewznab>,
-    lidarr_probe: Arc<ScriptedLidarr>,
+    clients: Arc<LiveClients>,
+    probe_cache: Arc<ProbeCache>,
+}
+
+impl Rig {
+    /// One probe pass over the saved settings, as the refresh loop runs it.
+    async fn refresh_probes(&self) {
+        refresh_probes(&self.probe_cache, &self.clients.current().probe_inputs).await;
+    }
 }
 
 /// The release group the MusicBrainz mock proves _Neon Meridian_ is.
@@ -107,7 +118,10 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
     let spotify_settings = Arc::new(ConfigSpotifySettings::new(platform.settings.clone()));
     let spotify_states = Arc::new(SqliteSpotifyStates::new(db.clone()));
     let spotify_links = Arc::new(SqliteSpotifyLinks::new(db.clone(), platform.crypto.clone()));
-    let spotify_playlists = Arc::new(CollectionsPlaylistBridge::new(playlists.clone(), db));
+    let spotify_playlists = Arc::new(CollectionsPlaylistBridge::new(
+        playlists.clone(),
+        db.clone(),
+    ));
     let providers = droppedneedle_providers::Providers::unpaced(Arc::new(
         droppedneedle_providers::ReqwestWire::new(&platform.http),
     ));
@@ -124,10 +138,17 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
     let import_jobs = SpotifyImportJobs::new(service, platform.events.clone());
     let queue = JobQueue::new(platform.db.clone(), platform.clock.clone());
     let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
-    let slskd = Arc::new(ScriptedSlskd::new());
-    let sabnzbd = Arc::new(ScriptedSabnzbd::new());
-    let newznab = Arc::new(ScriptedNewznab::new());
-    let lidarr_probe = Arc::new(ScriptedLidarr::new());
+    let journal = Arc::new(Journal::new(db));
+    let clients = Arc::new(LiveClients::new(
+        platform.http.shared().clone(),
+        ClientLives::new(&platform.settings),
+        platform.config.slskd_downloads_path.clone(),
+        journal.clone(),
+        Arc::new(Targets::new(journal, platform.config.imports_dir(), None)),
+        None,
+    ));
+    let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
+    let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
     let deps = ImportsDeps {
         lidarr: LidarrClient::new(http),
         lidarr_settings: lidarr_settings.clone(),
@@ -140,12 +161,7 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
         spotify_playlists,
         resolver,
         spotify_imports,
-        probes: Arc::new(HealthProbes {
-            slskd: slskd.clone(),
-            sabnzbd: sabnzbd.clone(),
-            newznab: newznab.clone(),
-            lidarr: lidarr_probe.clone(),
-        }),
+        probes: Arc::new(LiveProbes::bundle(&probes)),
         ids: Arc::new(FixedIdGenerator),
         base_path: String::new(),
         trusted_proxies: Default::default(),
@@ -163,10 +179,8 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
         approvals,
         spotify_links,
         playlists,
-        slskd,
-        sabnzbd,
-        newznab,
-        lidarr_probe,
+        clients,
+        probe_cache,
     }
 }
 
@@ -243,16 +257,6 @@ async fn seed_rig() -> (AuthRig, String, String) {
     let admin = rig.seed_user("root", Role::Admin).await;
     let user = rig.seed_user("ada", Role::User).await;
     (rig, admin.id, user.id)
-}
-
-fn open_client(version: &str, message: &str) -> ClientProbe {
-    ClientProbe {
-        enabled: true,
-        configured: true,
-        reachable: true,
-        version: Some(version.to_owned()),
-        message: message.to_owned(),
-    }
 }
 
 // --- Pure-semantics tests: MBID, URL, track-count, image, redirect URI ---
@@ -1349,7 +1353,7 @@ async fn spotify_sqlite_stores_persist_and_expire() {
 
 // --- Health smoke + per-source gate tests ---
 
-async fn seed_scripted_bases() -> (AuthRig, String, String, Rig) {
+async fn health_rig() -> (AuthRig, String, String, Rig) {
     let (auth, admin_id, user_id) = seed_rig().await;
     let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1");
     (auth, admin_id, user_id, bundle)
@@ -1364,9 +1368,54 @@ fn gate<'a>(body: &'a Value, source: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("{source} gate present"))
 }
 
+/// Save an enabled slskd connection at `url`.
+async fn save_slskd(auth: &AuthRig, url: &str) {
+    auth.config
+        .save_secret(SlskdConnection {
+            enabled: true,
+            url: url.to_owned(),
+            api_key: MOCK_API_KEY.into(),
+            ..SlskdConnection::default()
+        })
+        .await
+        .expect("slskd connection saves");
+}
+
+/// Serve the SABnzbd mock and save an enabled connection to it.
+async fn serve_sabnzbd(auth: &AuthRig) -> (SabnzbdMock, tokio::task::JoinHandle<()>) {
+    let mock = SabnzbdMock::new();
+    let (url, server) = serve_loopback(mock.router())
+        .await
+        .expect("mock sabnzbd serves");
+    auth.config
+        .save_secret(DownloadClients {
+            sabnzbd: SabnzbdConnection {
+                enabled: true,
+                url,
+                api_key: "sab-key".into(),
+                category: "music".to_owned(),
+                ..SabnzbdConnection::default()
+            },
+        })
+        .await
+        .expect("sabnzbd connection saves");
+    (mock, server)
+}
+
+/// A loopback address nothing listens on.
+async fn closed_url() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}")
+}
+
 #[tokio::test]
 async fn health_smoke_is_not_ready_with_no_source() {
-    let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
+    let (_auth, _, user_id, bundle) = health_rig().await;
+    bundle.refresh_probes().await;
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
@@ -1385,8 +1434,10 @@ async fn health_smoke_is_not_ready_with_no_source() {
 
 #[tokio::test]
 async fn slskd_gate_greens_independently() {
-    let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
-    bundle.slskd.set(open_client("1.4.3", "slskd 1.4.3"));
+    let (auth, _, user_id, bundle) = health_rig().await;
+    let slskd = MockSlskd::start().await.expect("mock slskd starts");
+    save_slskd(&auth, &slskd.base_url()).await;
+    bundle.refresh_probes().await;
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
@@ -1403,17 +1454,10 @@ async fn slskd_gate_greens_independently() {
 
 #[tokio::test]
 async fn health_degrades_when_an_enabled_path_is_down() {
-    let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
-    bundle.slskd.set(ClientProbe {
-        enabled: true,
-        configured: true,
-        reachable: false,
-        version: None,
-        message: "slskd is unreachable".to_owned(),
-    });
-    bundle
-        .sabnzbd
-        .set(open_client("4.5.1", "SABnzbd 4.5.1"), Vec::new(), None);
+    let (auth, _, user_id, bundle) = health_rig().await;
+    save_slskd(&auth, &closed_url().await).await;
+    let _sabnzbd = serve_sabnzbd(&auth).await;
+    bundle.refresh_probes().await;
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
@@ -1428,8 +1472,10 @@ async fn health_degrades_when_an_enabled_path_is_down() {
 
 #[tokio::test]
 async fn slskd_status_readable_by_any_user() {
-    let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
-    bundle.slskd.set(open_client("1.4.3", "slskd 1.4.3"));
+    let (auth, _, user_id, bundle) = health_rig().await;
+    let slskd = MockSlskd::start().await.expect("mock slskd starts");
+    save_slskd(&auth, &slskd.base_url()).await;
+    bundle.refresh_probes().await;
 
     let (status, body) = get_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
@@ -1439,7 +1485,7 @@ async fn slskd_status_readable_by_any_user() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["configured"], true);
     assert_eq!(body["reachable"], true);
-    assert_eq!(body["version"], "1.4.3");
+    assert_eq!(body["version"], "0.25.1.0");
 
     let (status, _) = get_json(anon_app(bundle.deps), "/api/v3/acquire/slskd/status").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -1447,12 +1493,14 @@ async fn slskd_status_readable_by_any_user() {
 
 #[tokio::test]
 async fn sabnzbd_status_is_admin_only_with_mount_hint() {
-    let (_auth, admin_id, user_id, bundle) = seed_scripted_bases().await;
-    bundle.sabnzbd.set(
-        open_client("4.3.2", "SABnzbd 4.3.2"),
-        vec!["music".to_owned(), "audiobooks".to_owned()],
-        Some("/completed".to_owned()),
-    );
+    let (auth, admin_id, user_id, bundle) = health_rig().await;
+    let (sabnzbd, _server) = serve_sabnzbd(&auth).await;
+    {
+        let mut state = sabnzbd.state();
+        state.categories = vec!["music".to_owned(), "audiobooks".to_owned()];
+        state.complete_dir = "/completed".to_owned();
+    }
+    bundle.refresh_probes().await;
 
     let (status, body) = get_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
@@ -1461,7 +1509,7 @@ async fn sabnzbd_status_is_admin_only_with_mount_hint() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["valid"], true);
-    assert_eq!(body["version"], "4.3.2");
+    assert_eq!(body["version"], "5.0.4");
     assert_eq!(body["categories"], json!(["music", "audiobooks"]));
     assert_eq!(body["complete_dir"], "/completed");
 

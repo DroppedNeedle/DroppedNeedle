@@ -2,11 +2,13 @@
 //! quotas, the wanted and approval queues, and restart survival.
 //!
 //! Each test mounts the requests routes, signed in through the test sign-in
-//! layer, over a scratch database. The scripted dispatch stands in for the
-//! downloads side; every row it touches is a real SQLite row.
+//! layer, over a scratch database. Asks dispatch into the real download
+//! journal on the same database; a test settles a task the way the worker
+//! would.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use droppedneedle_acquire::requests::mix::{
     MixGrantHooks, MixSources, PersonalMixBuilder, SkipReason,
@@ -34,10 +36,12 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use droppedneedle_acquire::db::AcquireDb;
-use droppedneedle_acquire::downloads::manifest::{PlannedAlbum, ReplaceVersion};
+use droppedneedle_acquire::dispatch::UnifiedDispatch;
+use droppedneedle_acquire::downloads::manifest::{ManifestCodec, PlannedAlbum, ReplaceVersion};
+use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::requests::{
     self, RequestsState,
-    dispatch::{DispatchTaskState, RetrySchedule, ScriptedDispatch},
+    dispatch::{DispatchTaskState, DownloadDispatch as _},
     ledger::{WATCH_WATCHING, WantedWatch},
     models::RequestKind,
     quota::{QuotaLedger, QuotaPolicy},
@@ -65,7 +69,7 @@ const MBID_C: &str = "33333333-3333-4333-8333-333333333333";
 const ARTIST: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 /// State over a scratch database with every test user present.
-async fn setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
+async fn setup() -> (RequestsState, AcquireDb, Downloads) {
     let (state, db, dispatch) = RequestsState::for_tests().expect("requests state builds");
     for (id, name, role) in [
         ("u-ada", "Ada", "user"),
@@ -75,7 +79,116 @@ async fn setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
     ] {
         db.add_user(id, name, role).await.expect("user row");
     }
-    (state, db, dispatch)
+    let staging = db.path().parent().expect("scratch dir").join("staging");
+    let downloads = Downloads {
+        dispatch,
+        staging,
+        taken: Mutex::new(0),
+        cancels: Mutex::new(HashSet::new()),
+    };
+    (state, db, downloads)
+}
+
+/// One task the dispatch wrote, with what its manifest asks for.
+struct Dispatched {
+    id: String,
+    user_id: String,
+    release_mbid: Option<String>,
+    wanted: Vec<(u32, u32)>,
+    planned_album: Option<PlannedAlbum>,
+}
+
+/// The download journal behind a state, read the way the worker reads it.
+struct Downloads {
+    dispatch: Arc<UnifiedDispatch>,
+    staging: PathBuf,
+    /// Tasks already handed out by `take_calls`.
+    taken: Mutex<usize>,
+    /// Cancelled tasks already handed out by `take_cancels`.
+    cancels: Mutex<HashSet<String>>,
+}
+
+impl Downloads {
+    /// Every task id, oldest first.
+    async fn ids(&self) -> Vec<String> {
+        sqlx::query_scalar("SELECT id FROM download_tasks ORDER BY created_at, rowid")
+            .fetch_all(self.dispatch.journal().db().pool())
+            .await
+            .expect("task ids read")
+    }
+
+    /// The `n`th task dispatched (1-based).
+    async fn task(&self, n: usize) -> String {
+        self.ids().await[n - 1].clone()
+    }
+
+    /// The tasks dispatched since the last call, oldest first.
+    async fn take_calls(&self) -> Vec<Dispatched> {
+        let ids = self.ids().await;
+        let from = std::mem::replace(&mut *self.taken.lock().unwrap(), ids.len());
+        let mut out = Vec::new();
+        for id in &ids[from..] {
+            let row = self
+                .dispatch
+                .journal()
+                .read_task(id)
+                .await
+                .expect("task reads")
+                .expect("task row");
+            let bytes = std::fs::read(ManifestCodec::path(&self.staging, id)).expect("manifest");
+            let manifest = ManifestCodec.decode(&bytes).expect("manifest decodes");
+            out.push(Dispatched {
+                id: row.id,
+                user_id: row.user_id,
+                release_mbid: manifest.release_mbid,
+                wanted: manifest
+                    .album_wanted
+                    .iter()
+                    .map(|position| (position.disc, position.track))
+                    .collect(),
+                planned_album: manifest.planned_album,
+            });
+        }
+        out
+    }
+
+    /// The tasks cancelled since the last call.
+    async fn take_cancels(&self) -> Vec<String> {
+        let cancelled: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM download_tasks WHERE status = 'cancelled' \
+             ORDER BY updated_at, rowid",
+        )
+        .fetch_all(self.dispatch.journal().db().pool())
+        .await
+        .expect("cancelled tasks read");
+        let mut seen = self.cancels.lock().unwrap();
+        cancelled
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .collect()
+    }
+
+    /// Settle one task as the worker would.
+    async fn settle(&self, task_id: &str, status: TaskStatus) {
+        let task_id = task_id.to_owned();
+        self.dispatch
+            .journal()
+            .run("test.settle", move |store| {
+                store.transition_task(&task_id, status, 1_700_000_000.0, None)
+            })
+            .await
+            .expect("task settles");
+    }
+
+    /// The task landed and imported.
+    async fn land(&self, task_id: &str) {
+        self.settle(task_id, TaskStatus::Completed).await;
+    }
+
+    /// The task failed.
+    async fn fail(&self, task_id: &str) {
+        self.settle(task_id, TaskStatus::Failed).await;
+    }
 }
 
 /// The download policy beside `db`, saved as `policy`.
@@ -87,7 +200,7 @@ fn saved_policy(db: &AcquireDb, policy: DownloadPolicy) -> Live<DownloadPolicy> 
 }
 
 /// A fresh state over the same database: what a restart sees.
-fn rebuilt(db: &AcquireDb, quota: QuotaPolicy, dispatch: Arc<ScriptedDispatch>) -> RequestsState {
+fn rebuilt(db: &AcquireDb, quota: QuotaPolicy, downloads: &Downloads) -> RequestsState {
     let policy = saved_policy(
         db,
         DownloadPolicy {
@@ -99,7 +212,7 @@ fn rebuilt(db: &AcquireDb, quota: QuotaPolicy, dispatch: Arc<ScriptedDispatch>) 
         },
     );
     let quota = Arc::new(QuotaLedger::new(policy, db.clone()));
-    RequestsState::new(db, quota, dispatch)
+    RequestsState::new(db, quota, downloads.dispatch.clone())
 }
 
 async fn call(
@@ -194,7 +307,7 @@ async fn requests_and_approvals_survive_a_rebuild() {
         .unwrap();
     state.wanted.enrol(watch(MBID_C, "u-ada")).await.unwrap();
 
-    let after = rebuilt(&db, QuotaPolicy::default(), dispatch);
+    let after = rebuilt(&db, QuotaPolicy::default(), &dispatch);
     let (_, approvals) = call(
         &after,
         Method::GET,
@@ -239,19 +352,19 @@ async fn requests_and_approvals_survive_a_rebuild() {
 async fn approval_dispatches_and_the_landing_imports() {
     let (state, _db, dispatch) = setup().await;
     ask(&state, ADA, MBID_A).await;
-    assert!(dispatch.take_calls().is_empty());
+    assert!(dispatch.take_calls().await.is_empty());
     let uri = format!("/api/v3/requests/approvals/{MBID_A}/approve");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let calls = dispatch.take_calls();
+    let calls = dispatch.take_calls().await;
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].user_id, "u-ada", "the owner, never the approver");
     // A second approval loses the claim instead of dispatching again.
     let (_, again) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(again["success"], false);
-    assert!(dispatch.take_calls().is_empty());
+    assert!(dispatch.take_calls().await.is_empty());
 
-    dispatch.land("task-1");
+    dispatch.land(&calls[0].id).await;
     let (_, active) = call(
         &state,
         Method::GET,
@@ -281,7 +394,8 @@ async fn duplicate_ask_attaches_a_listener() {
     let (status, body) = ask(&state, BOB, MBID_A).await;
     assert_eq!(status, StatusCode::ACCEPTED);
     assert_eq!(body["message"], "Request already in progress");
-    assert_eq!(dispatch.take_calls().len(), 1);
+    let calls = dispatch.take_calls().await;
+    assert_eq!(calls.len(), 1);
     let (_, all) = call(
         &state,
         Method::GET,
@@ -291,7 +405,7 @@ async fn duplicate_ask_attaches_a_listener() {
     )
     .await;
     assert_eq!(all["count"], 1);
-    assert_eq!(all["items"][0]["task_id"], "task-1");
+    assert_eq!(all["items"][0]["task_id"], calls[0].id.as_str());
 }
 
 // A batch skips raw and live duplicates and dispatches the new rows.
@@ -299,7 +413,7 @@ async fn duplicate_ask_attaches_a_listener() {
 async fn batch_dedupes_and_dispatches_new_rows() {
     let (state, _db, dispatch) = setup().await;
     ask(&state, TRUSTED, MBID_A).await;
-    dispatch.take_calls();
+    dispatch.take_calls().await;
     let item = |mbid: &str| json!({"musicbrainz_id": mbid, "artist_name": "A", "album_title": "B"});
     let (status, body) = call(
         &state,
@@ -312,7 +426,7 @@ async fn batch_dedupes_and_dispatches_new_rows() {
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert_eq!(body["requested"], 2);
     assert_eq!(body["skipped"], 2);
-    assert_eq!(dispatch.take_calls().len(), 2);
+    assert_eq!(dispatch.take_calls().await.len(), 2);
 }
 
 // Strangers may not cancel, listeners detach, owners stop the task.
@@ -327,12 +441,12 @@ async fn cancel_matrix() {
     let (_, detached) = call(&state, Method::DELETE, &uri, Some(BOB), None).await;
     assert_eq!(detached["success"], true);
     assert!(
-        dispatch.take_cancels().is_empty(),
+        dispatch.take_cancels().await.is_empty(),
         "a listener never stops the task"
     );
     let (_, cancelled) = call(&state, Method::DELETE, &uri, Some(TRUSTED), None).await;
     assert_eq!(cancelled["success"], true, "{cancelled}");
-    assert_eq!(dispatch.take_cancels(), vec!["task-1".to_owned()]);
+    assert_eq!(dispatch.take_cancels().await, vec![dispatch.task(1).await]);
     let (_, history) = call(
         &state,
         Method::GET,
@@ -353,10 +467,10 @@ async fn request_quota_survives_a_restart() {
         request_count: 1,
         ..QuotaPolicy::default()
     };
-    let state = rebuilt(&db, limited.clone(), dispatch.clone());
+    let state = rebuilt(&db, limited.clone(), &dispatch);
     assert_eq!(ask(&state, ADA, MBID_A).await.0, StatusCode::ACCEPTED);
 
-    let state = rebuilt(&db, limited, dispatch);
+    let state = rebuilt(&db, limited, &dispatch);
     let (status, body) = ask(&state, ADA, MBID_B).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(body["error"]["code"], "QUOTA_EXCEEDED");
@@ -397,7 +511,7 @@ async fn an_unreadable_download_policy_refuses_requests_until_saved() {
         .join("broken-settings");
     let store = unreadable_policy_store(&dir);
     let quota = Arc::new(QuotaLedger::new(store.live(), db.clone()));
-    let state = RequestsState::new(&db, quota, dispatch.clone());
+    let state = RequestsState::new(&db, quota, dispatch.dispatch.clone());
 
     let (status, _) = ask(&state, ADA, MBID_A).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -410,7 +524,7 @@ async fn an_unreadable_download_policy_refuses_requests_until_saved() {
     )
     .await;
     assert_eq!(history["items"], json!([]));
-    assert!(dispatch.take_calls().is_empty());
+    assert!(dispatch.take_calls().await.is_empty());
 
     store
         .save_blocking(DownloadPolicy {
@@ -453,7 +567,7 @@ async fn library_cap_reads_the_library() {
             max_library_gb: 1,
             ..QuotaPolicy::default()
         },
-        dispatch,
+        &dispatch,
     );
     let (status, body) = ask(&state, ADMIN, MBID_A).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -474,7 +588,7 @@ async fn retry_keeps_approval_provenance() {
         None,
     )
     .await;
-    dispatch.fail("task-1");
+    dispatch.fail(&dispatch.task(1).await).await;
     call(
         &state,
         Method::POST,
@@ -483,7 +597,7 @@ async fn retry_keeps_approval_provenance() {
         None,
     )
     .await;
-    dispatch.take_calls();
+    dispatch.take_calls().await;
 
     let (_, retried) = call(
         &state,
@@ -494,7 +608,7 @@ async fn retry_keeps_approval_provenance() {
     )
     .await;
     assert_eq!(retried["success"], true, "{retried}");
-    assert_eq!(dispatch.take_calls().len(), 1);
+    assert_eq!(dispatch.take_calls().await.len(), 1);
     // A rejected row is not retryable at all.
     let (_, rejected) = call(
         &state,
@@ -505,7 +619,7 @@ async fn retry_keeps_approval_provenance() {
     )
     .await;
     assert_eq!(rejected["success"], false);
-    assert!(dispatch.take_calls().is_empty());
+    assert!(dispatch.take_calls().await.is_empty());
 }
 
 // Wanted actions check ownership; a fulfilled watch refuses; the retrying
@@ -541,7 +655,7 @@ async fn wanted_view_and_actions() {
     );
 
     ask(&state, TRUSTED, MBID_B).await;
-    dispatch.fail("task-1");
+    dispatch.fail(&dispatch.task(1).await).await;
     call(
         &state,
         Method::POST,
@@ -550,14 +664,6 @@ async fn wanted_view_and_actions() {
         None,
     )
     .await;
-    dispatch.set_retry(
-        "task-1",
-        RetrySchedule {
-            retry_count: 1,
-            max_attempts: 6,
-            next_retry_at: 1_700_000_900,
-        },
-    );
     let (_, wanted) = call(
         &state,
         Method::GET,
@@ -566,8 +672,10 @@ async fn wanted_view_and_actions() {
         None,
     )
     .await;
+    // The default policy retries a failed download six times; none spent.
     assert_eq!(wanted["retrying"][0]["musicbrainz_id"], MBID_B);
-    assert_eq!(wanted["retrying"][0]["retry_count"], 1);
+    assert_eq!(wanted["retrying"][0]["retry_count"], 0);
+    assert_eq!(wanted["retrying"][0]["max_attempts"], 6);
 }
 
 // Auto-download approvals: single approve, then a batch reject.
@@ -758,7 +866,7 @@ async fn personal_mix_grant_build_and_refresh() {
     let playlist = built.playlist_id.expect("mix playlist");
     assert_eq!(playlists.tracks(&playlist).await.unwrap().len(), 2);
     assert_eq!(
-        dispatch.take_calls().len(),
+        dispatch.take_calls().await.len(),
         2,
         "granted asks dispatch straight away"
     );
@@ -797,8 +905,10 @@ async fn history_pages_and_clears() {
         ask(&state, TRUSTED, mbid).await;
     }
     ask(&state, BOB, MBID_A).await;
-    for task in ["task-1", "task-2", "task-3"] {
-        dispatch.land(task);
+    let tasks = dispatch.take_calls().await;
+    assert_eq!(tasks.len(), 3);
+    for task in &tasks {
+        dispatch.land(&task.id).await;
     }
     let (_, page) = call(
         &state,
@@ -915,13 +1025,17 @@ async fn recovery_finishes_cancels_and_dispatches() {
         )
         .await
         .unwrap();
-    dispatch.take_calls();
+    dispatch.take_calls().await;
 
     let report = RequestsService::new(&state).recover().await.unwrap();
     assert_eq!((report.cancelled, report.redispatched), (1, 1));
-    assert_eq!(dispatch.take_cancels(), vec!["task-1".to_owned()]);
-    assert_eq!(dispatch.state_of("task-1"), DispatchTaskState::Cancelled);
-    let calls = dispatch.take_calls();
+    let first = dispatch.task(1).await;
+    assert_eq!(dispatch.take_cancels().await, vec![first.clone()]);
+    assert_eq!(
+        dispatch.dispatch.task_state(&first).await.unwrap(),
+        DispatchTaskState::Cancelled
+    );
+    let calls = dispatch.take_calls().await;
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].user_id, "u-ada");
     let row = state
@@ -1031,7 +1145,7 @@ async fn seed_edition_album(db: &AcquireDb) {
 
 /// A state whose library plans album "al1" (see [`PlannedEdition`]), with
 /// upgrades below lossless on.
-async fn edition_setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
+async fn edition_setup() -> (RequestsState, AcquireDb, Downloads) {
     let (mut state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
     state.edition_plans = Some(Arc::new(PlannedEdition { complete: false }));
@@ -1063,7 +1177,7 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
         (&body["requested"], &body["upgrades"], &body["versions"]),
         (&json!(1), &json!(1), &json!(0))
     );
-    let calls = dispatch.take_calls();
+    let calls = dispatch.take_calls().await;
     assert_eq!(calls.len(), 1, "one download for the album");
     assert_eq!(calls[0].release_mbid.as_deref(), Some("rel-1"));
     assert_eq!(calls[0].wanted, vec![(1, 2), (1, 3)], "your version stays");
@@ -1080,7 +1194,7 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "already_in_progress");
-    assert!(dispatch.take_calls().is_empty(), "never two at once");
+    assert!(dispatch.take_calls().await.is_empty(), "never two at once");
 
     // "replace_versions" is on when not given.
     let replacing = asked;
@@ -1095,7 +1209,7 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
         body["message"],
         "Downloading the 1 missing track of this edition and 1 in this edition's version."
     );
-    let calls = dispatch.take_calls();
+    let calls = dispatch.take_calls().await;
     assert_eq!(calls[0].wanted, vec![(1, 2), (1, 3), (1, 4)]);
     assert_eq!(
         calls[0]
@@ -1131,7 +1245,7 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
             )),
         "{body}"
     );
-    assert_eq!(dispatch.take_calls()[0].wanted, vec![(1, 2), (1, 3)]);
+    assert_eq!(dispatch.take_calls().await[0].wanted, vec![(1, 2), (1, 3)]);
 
     // Only a version left, not asked for (upgrades off).
     let (mut state, db, dispatch) = setup().await;
@@ -1144,7 +1258,7 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
         body["message"],
         "Every track of this edition is in your library, 1 of them in another version."
     );
-    assert!(dispatch.take_calls().is_empty());
+    assert!(dispatch.take_calls().await.is_empty());
 }
 
 /// The library's plan, unavailable (MusicBrainz down).
@@ -1198,7 +1312,7 @@ async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let calls = dispatch.take_calls();
+    let calls = dispatch.take_calls().await;
     assert_eq!(calls.len(), 1, "{body}");
     assert_eq!(calls[0].release_mbid.as_deref(), Some("rel-x"));
     assert_eq!(
@@ -1234,5 +1348,5 @@ async fn edition_acquire_is_held_while_no_source_is_ready() {
             .is_some_and(|message| message.contains("waits")),
         "{body}"
     );
-    assert_eq!(dispatch.take_calls().len(), 1, "queued, not refused");
+    assert_eq!(dispatch.take_calls().await.len(), 1, "queued, not refused");
 }

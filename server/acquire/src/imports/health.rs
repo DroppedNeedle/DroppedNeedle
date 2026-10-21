@@ -8,11 +8,8 @@
 //! never flips another.
 //!
 //! Every probe is a minimal local trait. The live implementations sit over
-//! the slskd and SABnzbd clients and the Newznab indexers; tests use the
-//! scripted probes below instead.
-
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::Mutex;
+//! the slskd and SABnzbd clients and the Newznab indexers
+//! (`crate::probes`).
 
 use super::models::{
     AcquireHealth, DownloadsMountView, SabnzbdStatusResponse, SlskdStatusResponse, SourceGate,
@@ -80,43 +77,6 @@ pub trait LidarrReadinessProbe: Send + Sync {
     fn status(&self) -> ClientProbe;
 }
 
-/// Scripted slskd probe for tests.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct ScriptedSlskd {
-    inner: Mutex<ClientProbe>,
-}
-
-/// Scripted SABnzbd probe.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct ScriptedSabnzbd {
-    inner: Mutex<ScriptedSabnzbdState>,
-}
-
-/// Scripted SABnzbd state.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-struct ScriptedSabnzbdState {
-    status: ClientProbe,
-    categories: Vec<String>,
-    complete_dir: Option<String>,
-}
-
-/// Scripted Newznab probes.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct ScriptedNewznab {
-    inner: Mutex<Vec<IndexerProbe>>,
-}
-
-/// Scripted Lidarr readiness.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct ScriptedLidarr {
-    inner: Mutex<ClientProbe>,
-}
-
 impl Default for ClientProbe {
     fn default() -> Self {
         Self {
@@ -126,131 +86,6 @@ impl Default for ClientProbe {
             version: None,
             message: "Not configured".to_owned(),
         }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ScriptedSlskd {
-    /// Unconfigured probe.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Script one verdict.
-    pub fn set(&self, status: ClientProbe) {
-        *self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = status;
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl SlskdProbe for ScriptedSlskd {
-    fn status(&self) -> ClientProbe {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ScriptedSabnzbd {
-    /// Unconfigured probe.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Script one verdict with categories and completed dir.
-    pub fn set(&self, status: ClientProbe, categories: Vec<String>, complete_dir: Option<String>) {
-        *self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = ScriptedSabnzbdState {
-            status,
-            categories,
-            complete_dir,
-        };
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl SabnzbdProbe for ScriptedSabnzbd {
-    fn status(&self) -> ClientProbe {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .status
-            .clone()
-    }
-
-    fn categories(&self) -> Vec<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .categories
-            .clone()
-    }
-
-    fn complete_dir(&self) -> Option<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .complete_dir
-            .clone()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ScriptedNewznab {
-    /// No indexers.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Script the indexer list.
-    pub fn set(&self, indexers: Vec<IndexerProbe>) {
-        *self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = indexers;
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl NewznabProbe for ScriptedNewznab {
-    fn indexers(&self) -> Vec<IndexerProbe> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ScriptedLidarr {
-    /// Unconfigured probe.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Script one verdict.
-    pub fn set(&self, status: ClientProbe) {
-        *self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = status;
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl LidarrReadinessProbe for ScriptedLidarr {
-    fn status(&self) -> ClientProbe {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
     }
 }
 

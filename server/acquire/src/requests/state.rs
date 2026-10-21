@@ -94,17 +94,27 @@ impl RequestsState {
         }
     }
 
-    /// Test state over a scratch database and the scripted dispatch.
-    /// Returns the state, the database (to seed users and rows) and the
-    /// fake (to script outcomes and flip task states). Call inside a tokio
-    /// runtime.
+    /// Test state over a scratch database and the download journal on it,
+    /// with default settings and staging beside the database. Returns the
+    /// state, the database (to seed users and rows) and the dispatch (to
+    /// read and settle its tasks). Call inside a tokio runtime.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests() -> Result<(Self, AcquireDb, Arc<super::dispatch::ScriptedDispatch>), String>
-    {
-        use super::dispatch::ScriptedDispatch;
+    pub fn for_tests() -> Result<(Self, AcquireDb, Arc<crate::dispatch::UnifiedDispatch>), String> {
+        use crate::dispatch::{Journal, UnifiedDispatch};
 
         let db = AcquireDb::scratch()?;
-        let dispatch = ScriptedDispatch::new();
+        let dir = db
+            .path()
+            .parent()
+            .ok_or_else(|| "scratch database has no directory".to_owned())?
+            .to_path_buf();
+        let settings = crate::settings::scratch_settings(&dir.join("settings"))?;
+        let dispatch = Arc::new(UnifiedDispatch::new(
+            Arc::new(Journal::new(db.clone())),
+            Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+            dir.join("staging"),
+            settings.live(),
+        ));
         let quota = Arc::new(QuotaLedger::unlimited(db.clone()));
         Ok((Self::new(&db, quota, dispatch.clone()), db, dispatch))
     }

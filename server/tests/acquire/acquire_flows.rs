@@ -3,34 +3,47 @@
 //!
 //! Ticks take an explicit `now`; the loop test runs on paused tokio time
 //! and bounds its waits in wall-clock time. Stores sit on a scratch
-//! database; downloads, search and polls are scripted seams.
+//! database and downloads go into the real journal on it. Candidate search
+//! asks the slskd mock, the follow poll reads MusicBrainz pages from a
+//! scripted wire, and flow notices go to a real event hub.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::dispatch::{Journal, UnifiedDispatch};
+use droppedneedle_acquire::downloads::state::TaskStatus;
+use droppedneedle_acquire::downloads::store::{NewTask, TaskRow};
 use droppedneedle_acquire::flows::{
-    self,
     loops::{
         FollowDeps, PruneDeps, SYNC_INITIAL_DELAY, SYNC_INTERVAL, SYNC_JOB, SweepDeps, SyncDeps,
         WantedDeps, follow_tick, interval_seconds, prune_tick, spawn_sync_loop, sweep_tick,
         sync_tick, wanted_tick,
     },
-    seams::{
-        Candidate, MemoryTicks, ObservedRelease, ScriptedDownloads, ScriptedPoll, ScriptedSearch,
-    },
-    stores::{AdminDirectory, FollowStore, LibraryPresence, MemoryWorklist, UpgradeItem},
+    seams::{CandidateSearch, TickSink},
+    stores::{AdminDirectory, FollowStore, LibraryPresence, UpgradeWorklist},
 };
+use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord},
     models::RequestKind,
     sqlite::{RequestStore, WantedStore},
 };
 use droppedneedle_acquire::search_jobs::store::JobStore;
+use droppedneedle_acquire::target::Targets;
+use droppedneedle_acquire::wiring::{ClientLives, LiveClients};
 use droppedneedle_kernel::db::{DbRuntime, JobState};
+use droppedneedle_kernel::events::EventHub;
+use droppedneedle_kernel::events::model::names;
+use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
 use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, WantedWatcher};
+use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::executor::ScriptedWire;
+use droppedneedle_providers::musicbrainz::MbSource;
+use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 
 const NOW: i64 = 1_700_000_000;
 /// Scratch directory, removed when the test ends.
@@ -90,21 +103,129 @@ async fn status_of(store: &RequestStore, key: &str) -> String {
         .status
 }
 
-struct Wanted {
-    deps: WantedDeps,
-    search: Arc<ScriptedSearch>,
-    downloads: Arc<ScriptedDownloads>,
-    library: Arc<LibraryPresence>,
-    ticks: Arc<MemoryTicks>,
-}
-
 /// Settings beside `db`, at their defaults until a test saves one.
 fn settings(db: &AcquireDb) -> ConfigStore {
     let dir = db.path().parent().expect("scratch dir").join("settings");
     droppedneedle_acquire::settings::scratch_settings(&dir).expect("settings open")
 }
 
-fn wanted(db: &AcquireDb) -> Wanted {
+/// The production dispatch over the download journal on `db`.
+fn dispatch(db: &AcquireDb, settings: &ConfigStore) -> Arc<UnifiedDispatch> {
+    let staging = db.path().parent().expect("scratch dir").join("staging");
+    Arc::new(UnifiedDispatch::new(
+        Arc::new(Journal::new(db.clone())),
+        Arc::new(UuidGenerator),
+        staging,
+        settings.live(),
+    ))
+}
+
+/// One album task for `user-1` in the journal, moved to `status`.
+async fn seed_task(db: &AcquireDb, id: &str, rg_mbid: &str, status: TaskStatus) {
+    let task = NewTask {
+        id: id.to_owned(),
+        user_id: "user-1".to_owned(),
+        artist_name: "Massive Attack".to_owned(),
+        album_title: rg_mbid.to_owned(),
+        release_group_mbid: rg_mbid.to_owned(),
+        origin: "user".to_owned(),
+        retry_count: 0,
+    };
+    let id = id.to_owned();
+    Journal::new(db.clone())
+        .run("test.seed_task", move |store| {
+            store.insert_task(&task, NOW as f64)?;
+            if status != TaskStatus::Queued {
+                store.transition_task(&id, status, NOW as f64, None)?;
+            }
+            Ok(())
+        })
+        .await
+        .expect("task seeds");
+}
+
+/// Move one journal task to `status`, as the worker would.
+async fn settle(db: &AcquireDb, id: &str, status: TaskStatus) {
+    let id = id.to_owned();
+    Journal::new(db.clone())
+        .run("test.settle", move |store| {
+            store.transition_task(&id, status, NOW as f64, None)
+        })
+        .await
+        .expect("task settles");
+}
+
+/// Every task in the journal, oldest first.
+async fn tasks(db: &AcquireDb) -> Vec<TaskRow> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM download_tasks ORDER BY created_at, rowid")
+            .fetch_all(db.pool())
+            .await
+            .expect("task ids read");
+    let journal = Journal::new(db.clone());
+    let mut rows = Vec::new();
+    for id in ids {
+        rows.push(journal.read_task(&id).await.unwrap().expect("task row"));
+    }
+    rows
+}
+
+/// The notices `user` would be shown on connecting now, by name.
+async fn notices(events: &EventHub, user: &str) -> Vec<&'static str> {
+    let mut stream = events.subscribe(user);
+    let mut names = Vec::new();
+    while let Ok(Some(frame)) = tokio::time::timeout(Duration::ZERO, stream.next()).await {
+        names.push(frame.name());
+    }
+    names
+}
+
+/// The production tick sink over `events`, with no plugin host.
+fn ticks(events: &EventHub) -> Arc<dyn TickSink> {
+    Arc::new(FlowTicks::new(None, events.clone()))
+}
+
+struct Wanted {
+    deps: WantedDeps,
+    library: Arc<LibraryPresence>,
+    events: EventHub,
+    _slskd: MockSlskd,
+}
+
+/// The candidate search the saved settings build, over the slskd mock.
+async fn search_over(
+    db: &AcquireDb,
+    settings: &ConfigStore,
+) -> (Arc<dyn CandidateSearch>, MockSlskd) {
+    let slskd = MockSlskd::start().await.expect("mock slskd starts");
+    settings
+        .save_secret_blocking(SlskdConnection {
+            enabled: true,
+            url: slskd.base_url(),
+            api_key: MOCK_API_KEY.into(),
+            ..SlskdConnection::default()
+        })
+        .expect("slskd connection saves");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let journal = Arc::new(Journal::new(db.clone()));
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
+        .expect("http client factory")
+        .shared()
+        .clone();
+    let clients = LiveClients::new(
+        http,
+        ClientLives::new(settings),
+        dir.join("slskd"),
+        journal.clone(),
+        Arc::new(Targets::new(journal, dir.join("staging"), None)),
+        None,
+    );
+    let search = clients.current().search.clone().expect("the policy reads");
+    (search, slskd)
+}
+
+async fn wanted(db: &AcquireDb) -> Wanted {
+    db.add_user("user-1", "Owner", "user").await.unwrap();
     let settings = settings(db);
     settings
         .save_blocking(WantedWatcher {
@@ -114,24 +235,22 @@ fn wanted(db: &AcquireDb) -> Wanted {
             auto_download_on_find: true,
         })
         .expect("watcher settings save");
-    let search = Arc::new(ScriptedSearch::new());
-    let downloads = Arc::new(ScriptedDownloads::new());
+    let (search, slskd) = search_over(db, &settings).await;
     let library = Arc::new(LibraryPresence::new());
-    let ticks = Arc::new(MemoryTicks::new());
+    let events = EventHub::new();
     Wanted {
         deps: WantedDeps {
             settings: settings.live(),
             watches: WantedStore::new(db.clone()),
             ledger: RequestStore::new(db.clone()),
-            search: search.clone(),
-            downloads: downloads.clone(),
+            search,
+            downloads: dispatch(db, &settings),
             library: library.clone(),
-            ticks: ticks.clone(),
+            ticks: ticks(&events),
         },
-        search,
-        downloads,
         library,
-        ticks,
+        events,
+        _slskd: slskd,
     }
 }
 
@@ -140,7 +259,7 @@ fn wanted(db: &AcquireDb) -> Wanted {
 #[tokio::test]
 async fn wanted_enrols_then_auto_downloads() {
     let db = AcquireDb::scratch().unwrap();
-    let rig = wanted(&db);
+    let rig = wanted(&db).await;
     seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
 
     let first = wanted_tick(NOW, &rig.deps).await;
@@ -155,18 +274,13 @@ async fn wanted_enrols_then_auto_downloads() {
     let again = wanted_tick(NOW, &rig.deps).await;
     assert_eq!(again.enrolled, 0);
 
-    rig.search.set(
-        "Massive Attack",
-        "Blue Lines",
-        Ok(vec![Candidate {
-            title: "Blue Lines".to_owned(),
-            source: "slskd".to_owned(),
-        }]),
-    );
     let due = watch.next_check_at as i64;
     let checked = wanted_tick(due, &rig.deps).await;
     assert_eq!((checked.checked, checked.dispatched), (1, 1));
-    assert_eq!(rig.downloads.dispatched()[0].origin, "wanted");
+    let queued = tasks(&db).await;
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].origin, "retry", "a wanted find queues as a retry");
+    assert_eq!(queued[0].release_group_mbid, "rg-blue");
     let row = rig
         .deps
         .ledger
@@ -174,15 +288,18 @@ async fn wanted_enrols_then_auto_downloads() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.task_id.as_deref(), Some("task-1"));
-    assert_eq!(rig.ticks.of_kind("wanted.dispatched").len(), 1);
+    assert_eq!(row.task_id.as_deref(), Some(queued[0].id.as_str()));
+    assert_eq!(
+        notices(&rig.events, "user-1").await,
+        [names::WANTED_AUTO_DISPATCHED]
+    );
 }
 
 // A watch the library now holds is fulfilled and its request imported.
 #[tokio::test]
 async fn wanted_satisfied_from_the_library() {
     let db = AcquireDb::scratch().unwrap();
-    let rig = wanted(&db);
+    let rig = wanted(&db).await;
     seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
     wanted_tick(NOW, &rig.deps).await;
     rig.library.add(&["rg-blue"]);
@@ -192,7 +309,11 @@ async fn wanted_satisfied_from_the_library() {
     assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "imported");
     let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
     assert_eq!(watch.state, "fulfilled");
-    assert_eq!(rig.ticks.of_kind("request_fulfilled").len(), 1);
+    assert_eq!(
+        notices(&rig.events, "user-1").await,
+        [names::WANTED_FULFILLED]
+    );
+    assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
 }
 
 // Status sync maps task states onto requests, stamps terminal rows, and
@@ -200,27 +321,19 @@ async fn wanted_satisfied_from_the_library() {
 #[tokio::test]
 async fn status_sync_maps_and_stamps() {
     let db = AcquireDb::scratch().unwrap();
+    db.add_user("user-1", "Owner", "user").await.unwrap();
     let ledger = RequestStore::new(db.clone());
     seed_request(&ledger, "rg-done", "downloading", Some("task-done")).await;
     seed_request(&ledger, "rg-short", "downloading", Some("task-short")).await;
     seed_request(&ledger, "rg-taskless", "pending", None).await;
-    let downloads = Arc::new(ScriptedDownloads::new());
-    downloads.set_status("task-done", "completed");
-    downloads.set_status("task-short", "partial");
-    downloads.set_album_task(
-        "rg-taskless",
-        flows::seams::DownloadTaskView {
-            task_id: "task-x".to_owned(),
-            status: "downloading".to_owned(),
-            album_mbid: Some("rg-taskless".to_owned()),
-        },
-    );
-    let ticks = Arc::new(MemoryTicks::new());
+    seed_task(&db, "task-done", "rg-done", TaskStatus::Completed).await;
+    seed_task(&db, "task-short", "rg-short", TaskStatus::Partial).await;
+    seed_task(&db, "task-x", "rg-taskless", TaskStatus::Downloading).await;
     let deps = SyncDeps {
         ledger: ledger.clone(),
-        downloads,
+        downloads: dispatch(&db, &settings(&db)),
         library: Arc::new(LibraryPresence::new()),
-        ticks: ticks.clone(),
+        ticks: ticks(&EventHub::new()),
     };
     let summary = sync_tick(NOW, &deps).await;
     assert_eq!((summary.reconciled, summary.imported), (3, 1));
@@ -233,7 +346,29 @@ async fn status_sync_maps_and_stamps() {
         .unwrap()
         .unwrap();
     assert_eq!(done.completed_at, Some(NOW as u64));
-    assert_eq!(ticks.of_kind("request_fulfilled").len(), 1);
+}
+
+/// One page of an artist's release groups, as the MusicBrainz browse
+/// endpoint answers it.
+fn browse_page(releases: &[(&str, &str, &str, &[&str])]) -> String {
+    let groups: Vec<serde_json::Value> = releases
+        .iter()
+        .map(|(id, date, kind, secondary)| {
+            serde_json::json!({
+                "id": id,
+                "title": id,
+                "first-release-date": date,
+                "primary-type": kind,
+                "secondary-types": secondary,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "release-group-count": groups.len(),
+        "release-group-offset": 0,
+        "release-groups": groups,
+    })
+    .to_string()
 }
 
 // The follow poll baselines first, then adds new releases to the feed and
@@ -257,60 +392,68 @@ async fn follow_poll_baselines_then_emits() {
     .await
     .unwrap();
     let follows = FollowStore::new(db.clone());
-    let release = |rg: &str, date: &str, kind: &str, secondary: &[&str]| ObservedRelease {
-        rg_mbid: rg.to_owned(),
-        title: rg.to_owned(),
-        first_release_date: Some(date.to_owned()),
-        primary_type: Some(kind.to_owned()),
-        secondary_types: secondary.iter().map(|value| value.to_string()).collect(),
-    };
-    let poll = Arc::new(ScriptedPoll::new());
-    poll.set(
-        "Artist-1",
-        Ok(vec![release("rg-old", "2020-01-01", "Album", &[])]),
+    // The first poll reads the old page; every later poll the new one.
+    const MB: &str = "http://musicbrainz.test/ws/2";
+    let wire = Arc::new(ScriptedWire::new());
+    let json = [("content-type", "application/json")];
+    let url = format!("{MB}/release-group");
+    wire.answer(
+        &url,
+        200,
+        &json,
+        browse_page(&[("rg-old", "2020-01-01", "Album", &[])]),
     );
-    let downloads = Arc::new(ScriptedDownloads::new());
+    wire.answer(
+        &url,
+        200,
+        &json,
+        browse_page(&[
+            ("rg-old", "2020-01-01", "Album", &[]),
+            ("rg-new", "2024-06-01", "Album", &[]),
+            ("rg-future", "2025-01-01", "Single", &[]),
+            ("rg-sloppy", "2024-06", "Album", &[]),
+            ("rg-live", "2024-06-01", "Album", &["Live"]),
+            ("rg-owned", "2024-06-01", "Album", &[]),
+        ]),
+    );
+    let providers = droppedneedle_providers::Providers::unpaced(wire);
+    let poll =
+        droppedneedle_acquire::search::MusicBrainzReleasePoll::new(providers.musicbrainz.fixed(
+            MbSource::Mirror {
+                base_url: MB.to_owned(),
+                rate_per_sec: 0.0,
+            },
+            RequestPriority::BackgroundSync,
+        ));
     let library = Arc::new(LibraryPresence::new());
     library.add(&["rg-owned"]);
+    let settings = settings(&db);
     let deps = FollowDeps {
         follows: follows.clone(),
-        poll: poll.clone(),
-        downloads: downloads.clone(),
+        poll: Arc::new(poll),
+        downloads: dispatch(&db, &settings),
         library,
-        ticks: Arc::new(MemoryTicks::new()),
-        preferences: settings(&db).live(),
+        ticks: ticks(&EventHub::new()),
+        preferences: settings.live(),
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
     let first = follow_tick(NOW, &deps).await;
     assert_eq!(first.baselined, 1);
-    assert!(downloads.dispatched().is_empty());
+    assert!(tasks(&db).await.is_empty());
     let again = follow_tick(NOW + 3_600, &deps).await;
     assert_eq!(again.artists_polled, 0, "a polled artist waits a day");
 
-    poll.set(
-        "Artist-1",
-        Ok(vec![
-            release("rg-old", "2020-01-01", "Album", &[]),
-            release("rg-new", "2024-06-01", "Album", &[]),
-            release("rg-future", "2025-01-01", "Single", &[]),
-            release("rg-sloppy", "2024-06", "Album", &[]),
-            release("rg-live", "2024-06-01", "Album", &["Live"]),
-            release("rg-owned", "2024-06-01", "Album", &[]),
-        ]),
-    );
     let second = follow_tick(NOW + 86_400, &deps).await;
     assert_eq!(
         second.new_releases, 2,
         "rg-new and rg-future reach the feed"
     );
     assert_eq!(second.enqueued, 1, "one task per release");
-    let dispatched = downloads.dispatched();
-    assert_eq!(
-        dispatched[0].user_id, "user-1",
-        "only the approved follower"
-    );
-    assert_eq!(dispatched[0].mbid, "rg-new");
-    assert_eq!(dispatched[0].artist, "The Band");
+    let queued = tasks(&db).await;
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].user_id, "user-1", "only the approved follower");
+    assert_eq!(queued[0].release_group_mbid, "rg-new");
+    assert_eq!(queued[0].artist_name, "The Band");
     let cursor = follows.get("artist-1").await.unwrap().unwrap();
     assert_eq!(cursor.pending.len(), 1);
     assert_eq!(cursor.pending[0].rg_mbid, "rg-future");
@@ -327,22 +470,42 @@ async fn follow_poll_baselines_then_emits() {
 #[tokio::test]
 async fn upgrade_sweep_gates_and_cap() {
     let db = AcquireDb::scratch().unwrap();
-    let worklist = MemoryWorklist(
-        (0..4)
-            .map(|n| UpgradeItem {
-                rg_mbid: format!("rg-{n}"),
-                artist: "A".to_owned(),
-                title: "T".to_owned(),
-                current_tier: "low",
-                track_count: 1,
-                year: None,
-                artist_mbid: None,
-            })
-            .collect(),
-    );
+    // Four albums below the cutoff, one 128 kbps file each.
+    db.write("test.seed_library", |tx| {
+        tx.execute_batch(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+               VALUES ('ar1', 'A', 'a', 'person', 0, 0);",
+        )?;
+        for n in 0..4 {
+            tx.execute(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                   album_artist_id, album_artist_name, grouping_source, created_at, updated_at)
+                   VALUES (?1, 'r1', ?1, 'T', 't', 'ar1', 'A', 'automatic', 0, 0)",
+                [format!("al{n}")],
+            )?;
+            tx.execute(
+                "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+                   path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+                   album_title, album_title_folded, file_format, bit_rate, ingest_source,
+                   imported_at, membership_source, availability, embedded_release_group_mbid)
+                   VALUES (?1, ?2, 'r1', ?3, ?3, ?1, 1, 0, 's', 'T', 't', 'T', 't', 'mp3', 128,
+                     'scan', 0, 'automatic', 'indexed', ?4)",
+                [
+                    format!("t{n}"),
+                    format!("al{n}"),
+                    format!("/m/{n}.mp3"),
+                    format!("rg-{n}"),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.add_user("user-1", "Owner", "user").await.unwrap();
+    // rg-0 is already downloading, so the sweep queues nothing for it.
+    seed_task(&db, "task-0", "rg-0", TaskStatus::Downloading).await;
     let admins = AdminDirectory::over_users(db.clone());
-    let downloads = Arc::new(ScriptedDownloads::new());
-    downloads.mark_in_library("rg-0");
     let settings = settings(&db);
     settings
         .save_blocking(DownloadPolicy {
@@ -356,18 +519,26 @@ async fn upgrade_sweep_gates_and_cap() {
         .expect("download policy saves");
     let deps = SweepDeps {
         policy: settings.live(),
-        worklist: Arc::new(worklist),
+        worklist: Arc::new(UpgradeWorklist::new(db.clone())),
         admins,
-        downloads: downloads.clone(),
-        ticks: Arc::new(MemoryTicks::new()),
+        downloads: dispatch(&db, &settings),
+        ticks: ticks(&EventHub::new()),
     };
     let idle = sweep_tick(NOW, &deps).await;
     assert!(idle.skipped_no_admin);
     db.add_user("admin-1", "Admin", "admin").await.unwrap();
     let swept = sweep_tick(NOW, &deps).await;
-    assert_eq!(swept.enqueued, 2, "already-in-library never counts");
-    let grabs = downloads.upgrades();
-    assert_eq!(grabs[0].mbid, "rg-1");
+    assert_eq!(
+        swept.enqueued, 2,
+        "an album already downloading never counts"
+    );
+    let grabs: Vec<TaskRow> = tasks(&db)
+        .await
+        .into_iter()
+        .filter(|task| task.origin == "upgrade")
+        .collect();
+    assert_eq!(grabs.len(), 2);
+    assert_eq!(grabs[0].release_group_mbid, "rg-1");
     assert_eq!(grabs[0].user_id, "admin-1");
 }
 
@@ -377,20 +548,19 @@ async fn upgrade_sweep_gates_and_cap() {
 #[tokio::test]
 async fn loop_cadence_and_shutdown() {
     let (runtime, db, _dir) = runtime("loops").await;
+    db.add_user("user-1", "Owner", "user").await.unwrap();
     let ledger = RequestStore::new(db.clone());
     seed_request(&ledger, "rg-1", "downloading", Some("task-9")).await;
-    seed_request(&ledger, "rg-2", "downloading", Some("task-10")).await;
-    let downloads = Arc::new(ScriptedDownloads::new());
-    downloads.set_status("task-9", "completed");
-    downloads.set_status("task-10", "downloading");
-    let ticks = Arc::new(MemoryTicks::new());
+    // rg-2 starts pending, so the first pass is seen to reach it too.
+    seed_request(&ledger, "rg-2", "pending", Some("task-10")).await;
+    seed_task(&db, "task-9", "rg-1", TaskStatus::Completed).await;
+    seed_task(&db, "task-10", "rg-2", TaskStatus::Downloading).await;
     let deps = Arc::new(SyncDeps {
         ledger: ledger.clone(),
-        downloads: downloads.clone(),
+        downloads: dispatch(&db, &settings(&db)),
         library: Arc::new(LibraryPresence::new()),
-        ticks: ticks.clone(),
+        ticks: ticks(&EventHub::new()),
     });
-    let imported = || ticks.of_kind("request_fulfilled").len();
     let supervisor = Supervisor::start(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
@@ -401,25 +571,38 @@ async fn loop_cadence_and_shutdown() {
     tokio::time::pause();
 
     spawn_sync_loop(&supervisor, deps.clone()).unwrap();
-    settle().await;
+    settle_loop().await;
     tokio::time::advance(SYNC_INITIAL_DELAY - Duration::from_secs(1)).await;
-    settle().await;
+    settle_loop().await;
     supervisor.cancel(SYNC_JOB, GRACE).await;
-    assert_eq!(imported(), 0, "a pass ran inside the startup delay");
+    assert_eq!(
+        unpaused_status(&ledger, "rg-1").await,
+        "downloading",
+        "a pass ran inside the startup delay"
+    );
     let row =
         crate::common::loop_row(runtime.db(), SYNC_JOB, |row| row.state != JobState::Running).await;
     assert_eq!(row.state, JobState::Stopped);
 
     spawn_sync_loop(&supervisor, deps).unwrap();
-    settle().await;
+    settle_loop().await;
     tokio::time::advance(SYNC_INITIAL_DELAY).await;
-    until("the first pass", || imported() == 1).await;
-    downloads.set_status("task-10", "completed");
+    until("the first pass", &ledger, "rg-1", "imported").await;
+    until("the first pass", &ledger, "rg-2", "downloading").await;
+    // Written with the clock running: an idle runtime on a paused clock
+    // would jump straight to the loop's next pass while the write waits.
+    tokio::time::resume();
+    settle(&db, "task-10", TaskStatus::Completed).await;
+    tokio::time::pause();
     tokio::time::advance(SYNC_INTERVAL - Duration::from_secs(1)).await;
-    settle().await;
-    assert_eq!(imported(), 1, "a pass ran inside the interval");
+    settle_loop().await;
+    assert_eq!(
+        unpaused_status(&ledger, "rg-2").await,
+        "downloading",
+        "a pass ran inside the interval"
+    );
     tokio::time::advance(Duration::from_secs(1)).await;
-    until("the second pass", || imported() == 2).await;
+    until("the second pass", &ledger, "rg-2", "imported").await;
 
     supervisor.shutdown(GRACE).await;
     // Store reads wait for a pooled connection on a tokio timer, which the
@@ -437,19 +620,38 @@ const GRACE: Duration = Duration::from_secs(5);
 
 /// Let the loop run what is due now, or start its wait. Yields instead of
 /// sleeping, so the paused clock stays put.
-async fn settle() {
+async fn settle_loop() {
     for _ in 0..50 {
         tokio::task::yield_now().await;
         std::thread::sleep(Duration::from_millis(2));
     }
 }
 
-/// Wait until `done`, bounded in wall-clock time. The pass's database
-/// calls wait on tokio timers too, so each turn moves the paused clock by a
-/// millisecond.
-async fn until(what: &str, done: impl Fn() -> bool) {
+/// A request's status, read with the clock running: the read waits for a
+/// pooled connection on a tokio timer, which the paused clock could run
+/// out at once. The loop's next wait is a minute away, so it stays put.
+async fn unpaused_status(ledger: &RequestStore, key: &str) -> String {
+    tokio::time::resume();
+    let status = status_of(ledger, key).await;
+    tokio::time::pause();
+    status
+}
+
+/// Wait until the request `key` reads `status`, bounded in wall-clock
+/// time. The pass's database calls wait on tokio timers too, so each turn
+/// moves the paused clock by a millisecond.
+async fn until(what: &str, ledger: &RequestStore, key: &str, status: &str) {
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    while !done() {
+    loop {
+        // Read with the clock running, as in `unpaused_status`.
+        tokio::time::resume();
+        let row = ledger.get(RequestKind::Album, key).await;
+        tokio::time::pause();
+        if let Ok(Some(row)) = row
+            && row.status == status
+        {
+            return;
+        }
         assert!(std::time::Instant::now() < deadline, "{what} never came");
         tokio::time::advance(Duration::from_millis(1)).await;
         std::thread::sleep(Duration::from_millis(2));

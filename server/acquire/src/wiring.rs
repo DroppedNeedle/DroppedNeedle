@@ -897,9 +897,6 @@ impl AcquireSetup {
         events: EventHub,
         library: Option<Arc<dyn LandingLibrary>>,
     ) -> Result<Self, String> {
-        use super::imports::health::{
-            HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
-        };
         use super::imports::lidarr::{MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings};
         use droppedneedle_catalog::reads::collections::db::CollectionsDb;
         use droppedneedle_catalog::reads::collections::store::PlaylistStore;
@@ -975,6 +972,8 @@ impl AcquireSetup {
             resolver.clone(),
         ));
         let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(service, events.clone()));
+        let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
+        let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         // No runner takes these here: the tests on this bundle import no
         // playlists.
         let spotify_imports = SpotifyImports::new(
@@ -996,12 +995,7 @@ impl AcquireSetup {
             spotify_playlists,
             resolver,
             spotify_imports,
-            probes: Arc::new(HealthProbes {
-                slskd: Arc::new(ScriptedSlskd::new()),
-                sabnzbd: Arc::new(ScriptedSabnzbd::new()),
-                newznab: Arc::new(ScriptedNewznab::new()),
-                lidarr: Arc::new(ScriptedLidarr::new()),
-            }),
+            probes: Arc::new(LiveProbes::bundle(&probes)),
             ids: ids.clone(),
             base_path: String::new(),
             trusted_proxies: Default::default(),
@@ -1039,8 +1033,6 @@ impl AcquireSetup {
             events.clone(),
         ));
         let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
-        let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
-        let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let prune = Arc::new(PruneDeps {
             settings: settings.live(),
             ledger: core.requests.store.clone(),

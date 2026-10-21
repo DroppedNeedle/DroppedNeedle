@@ -481,21 +481,6 @@ impl CutoffList for UpgradeWorklist {
     }
 }
 
-/// A fixed worklist for tests.
-#[cfg(any(test, feature = "test-support"))]
-pub struct MemoryWorklist(pub Vec<UpgradeItem>);
-
-#[cfg(any(test, feature = "test-support"))]
-impl CutoffList for MemoryWorklist {
-    fn cutoff_unmet<'a>(
-        &'a self,
-        _cutoff: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<UpgradeItem>, StoreFailure>> {
-        let items = self.0.clone();
-        Box::pin(async move { Ok(items) })
-    }
-}
-
 /// Background-upgrade policy (v2 `download_policy` upgrade half).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradePolicy {
