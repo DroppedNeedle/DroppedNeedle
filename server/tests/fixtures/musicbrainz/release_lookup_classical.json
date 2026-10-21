@@ -1,0 +1,1285 @@
+{
+  "id": "7ce871a0-34b2-40e0-a77e-39b1268f1f61",
+  "status": "Official",
+  "packaging": "None",
+  "date": "",
+  "title": "Beethoven: Piano Concerto no. 3 / Sibelius: Symphony no. 5",
+  "release-events": [
+    {
+      "area": {
+        "name": "[Worldwide]",
+        "type-id": null,
+        "disambiguation": "",
+        "iso-3166-1-codes": [
+          "XW"
+        ],
+        "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+        "sort-name": "[Worldwide]",
+        "type": null
+      },
+      "date": ""
+    }
+  ],
+  "genres": [
+    {
+      "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7",
+      "count": 1,
+      "name": "romantic classical",
+      "disambiguation": ""
+    }
+  ],
+  "text-representation": {
+    "script": "Latn",
+    "language": null
+  },
+  "artist-credit": [
+    {
+      "joinphrase": ", ",
+      "name": "Herbert von Karajan",
+      "artist": {
+        "name": "Herbert von Karajan",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "conductor",
+        "country": "AT",
+        "genres": [
+          {
+            "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+            "count": 6,
+            "name": "classical",
+            "disambiguation": ""
+          },
+          {
+            "disambiguation": "",
+            "name": "instrumental",
+            "id": "4ae63770-68af-4fae-b0f1-5e53f372c743",
+            "count": 1
+          },
+          {
+            "count": 1,
+            "id": "56e0b906-1018-4a55-8ec7-86746272116e",
+            "disambiguation": "",
+            "name": "opera"
+          }
+        ],
+        "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+        "sort-name": "Karajan, Herbert von",
+        "type": "Person"
+      }
+    },
+    {
+      "name": "Glenn Gould",
+      "joinphrase": " & ",
+      "artist": {
+        "disambiguation": "pianist",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "name": "Glenn Gould",
+        "genres": [
+          {
+            "name": "baroque",
+            "disambiguation": "",
+            "count": 3,
+            "id": "9e44c2c9-8c44-4aa6-9de3-0f3e75b49f1b"
+          },
+          {
+            "name": "classical",
+            "disambiguation": "",
+            "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+            "count": 5
+          },
+          {
+            "id": "4ae63770-68af-4fae-b0f1-5e53f372c743",
+            "count": 1,
+            "name": "instrumental",
+            "disambiguation": ""
+          }
+        ],
+        "country": "CA",
+        "type": "Person",
+        "sort-name": "Gould, Glenn",
+        "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa"
+      }
+    },
+    {
+      "artist": {
+        "genres": [
+          {
+            "name": "classical",
+            "disambiguation": "",
+            "count": 5,
+            "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4"
+          },
+          {
+            "name": "classical period",
+            "disambiguation": "",
+            "id": "095695ad-5a3e-4eda-b169-6f3f9cc9fa0d",
+            "count": 1
+          },
+          {
+            "count": 1,
+            "id": "7969288f-182d-4cef-b68d-870cc4c753da",
+            "name": "concerto",
+            "disambiguation": ""
+          },
+          {
+            "count": 1,
+            "id": "4ae63770-68af-4fae-b0f1-5e53f372c743",
+            "disambiguation": "",
+            "name": "instrumental"
+          },
+          {
+            "count": 1,
+            "id": "e328c306-8e35-46d2-93c3-623412ec7c13",
+            "disambiguation": "",
+            "name": "modern classical"
+          },
+          {
+            "disambiguation": "",
+            "name": "orchestral",
+            "id": "f3fe6570-1e79-4ed5-8eb9-9ed64d631871",
+            "count": 2
+          },
+          {
+            "name": "symphony",
+            "disambiguation": "",
+            "count": 2,
+            "id": "50294a4d-61f0-4dc8-a20f-4708d52fe78a"
+          },
+          {
+            "name": "western classical",
+            "disambiguation": "",
+            "count": 1,
+            "id": "bf9955d6-c3eb-466d-95ca-30f3848fc9ea"
+          }
+        ],
+        "country": null,
+        "disambiguation": "",
+        "name": "Berliner Philharmoniker",
+        "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+        "type": "Orchestra",
+        "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+        "sort-name": "Berliner Philharmoniker"
+      },
+      "name": "Berliner Philharmoniker",
+      "joinphrase": ""
+    }
+  ],
+  "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+  "quality": "normal",
+  "asin": null,
+  "cover-art-archive": {
+    "darkened": false,
+    "count": 1,
+    "front": true,
+    "back": false,
+    "artwork": true
+  },
+  "release-group": {
+    "genres": [
+      {
+        "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+        "count": 1,
+        "name": "classical",
+        "disambiguation": ""
+      }
+    ],
+    "title": "Beethoven: Concerto for Piano and Orchestra no. 3 / Sibelius: Symphony no. 5",
+    "artist-credit": [
+      {
+        "artist": {
+          "country": "DE",
+          "genres": [
+            {
+              "name": "classical",
+              "disambiguation": "",
+              "count": 27,
+              "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4"
+            },
+            {
+              "count": 3,
+              "id": "095695ad-5a3e-4eda-b169-6f3f9cc9fa0d",
+              "name": "classical period",
+              "disambiguation": ""
+            },
+            {
+              "name": "concerto",
+              "disambiguation": "",
+              "count": 2,
+              "id": "7969288f-182d-4cef-b68d-870cc4c753da"
+            },
+            {
+              "count": 1,
+              "id": "4ae63770-68af-4fae-b0f1-5e53f372c743",
+              "disambiguation": "",
+              "name": "instrumental"
+            },
+            {
+              "disambiguation": "",
+              "name": "mass",
+              "count": 1,
+              "id": "de77d1c8-eae4-41f2-930c-91efd9979915"
+            },
+            {
+              "id": "56e0b906-1018-4a55-8ec7-86746272116e",
+              "count": 3,
+              "name": "opera",
+              "disambiguation": ""
+            },
+            {
+              "disambiguation": "",
+              "name": "orchestral",
+              "id": "f3fe6570-1e79-4ed5-8eb9-9ed64d631871",
+              "count": 2
+            },
+            {
+              "count": 7,
+              "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7",
+              "name": "romantic classical",
+              "disambiguation": ""
+            },
+            {
+              "name": "sonata",
+              "disambiguation": "",
+              "id": "ef8227d2-a286-47af-85c8-d5b6bec1f9db",
+              "count": 3
+            },
+            {
+              "id": "50294a4d-61f0-4dc8-a20f-4708d52fe78a",
+              "count": 2,
+              "name": "symphony",
+              "disambiguation": ""
+            }
+          ],
+          "name": "Ludwig van Beethoven",
+          "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+          "disambiguation": "German composer",
+          "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+          "sort-name": "Beethoven, Ludwig van",
+          "type": "Person"
+        },
+        "joinphrase": ", ",
+        "name": "Beethoven"
+      },
+      {
+        "name": "Sibelius",
+        "joinphrase": "; ",
+        "artist": {
+          "genres": [
+            {
+              "name": "classical",
+              "disambiguation": "",
+              "count": 3,
+              "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4"
+            },
+            {
+              "name": "romantic classical",
+              "disambiguation": "",
+              "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7",
+              "count": 2
+            }
+          ],
+          "country": "FI",
+          "disambiguation": "Finnish composer",
+          "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+          "name": "Jean Sibelius",
+          "type": "Person",
+          "sort-name": "Sibelius, Jean",
+          "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75"
+        }
+      },
+      {
+        "name": "Glenn Gould",
+        "joinphrase": ", ",
+        "artist": {
+          "disambiguation": "pianist",
+          "name": "Glenn Gould",
+          "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+          "country": "CA",
+          "type": "Person",
+          "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+          "sort-name": "Gould, Glenn"
+        }
+      },
+      {
+        "joinphrase": ", ",
+        "name": "Herbert von Karajan",
+        "artist": {
+          "country": "AT",
+          "disambiguation": "conductor",
+          "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+          "name": "Herbert von Karajan",
+          "type": "Person",
+          "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+          "sort-name": "Karajan, Herbert von"
+        }
+      },
+      {
+        "artist": {
+          "country": null,
+          "name": "Berliner Philharmoniker",
+          "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+          "disambiguation": "",
+          "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+          "sort-name": "Berliner Philharmoniker",
+          "type": "Orchestra"
+        },
+        "name": "Berliner Philharmoniker",
+        "joinphrase": ""
+      }
+    ],
+    "first-release-date": "2008",
+    "disambiguation": "",
+    "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+    "id": "94416ade-2459-4d90-af9e-0a8615e9177f",
+    "secondary-type-ids": [
+      "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+    ],
+    "secondary-types": [
+      "Live"
+    ],
+    "primary-type": "Album"
+  },
+  "barcode": "888880520562",
+  "label-info": [
+    {
+      "label": {
+        "label-code": 13781,
+        "genres": [
+          {
+            "count": 1,
+            "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+            "name": "classical",
+            "disambiguation": ""
+          }
+        ],
+        "type-id": "e9ad53b0-e3d0-3885-a10b-8193d501338c",
+        "name": "Berliner Philharmoniker Recordings",
+        "disambiguation": "",
+        "sort-name": "Berliner Philharmoniker Recordings",
+        "id": "ff5bd6ba-cc5b-4b7c-b78a-bdf688851676",
+        "type": "Publisher"
+      },
+      "catalog-number": null
+    },
+    {
+      "label": {
+        "sort-name": "Sony Classical",
+        "id": "10920823-9ed8-45d9-adb3-69fc22475ab0",
+        "type": "Imprint",
+        "genres": [
+          {
+            "disambiguation": "",
+            "name": "classical",
+            "count": 4,
+            "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4"
+          }
+        ],
+        "label-code": 6868,
+        "type-id": "b6285b2a-3514-3d43-80df-fcf528824ded",
+        "name": "Sony Classical",
+        "disambiguation": ""
+      },
+      "catalog-number": null
+    }
+  ],
+  "packaging-id": "119eba76-b343-3e02-a292-f0f00644bb9b",
+  "relations": [
+    {
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "type-id": "08445ccf-7b99-4438-9f9a-fb9ac18099ee",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "type": "free streaming",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "url": {
+        "id": "eed3a074-6da6-4724-a0d1-3de1db0216bd",
+        "resource": "https://open.spotify.com/album/0xtwpfP5APgI1QE6KfDYfP"
+      },
+      "begin": null
+    },
+    {
+      "target-type": "url",
+      "attributes": [],
+      "type": "free streaming",
+      "direction": "forward",
+      "url": {
+        "resource": "https://www.deezer.com/album/7061451",
+        "id": "1fd40a62-20cf-4042-96c1-23e4cd3c2f11"
+      },
+      "begin": null,
+      "target-credit": "",
+      "type-id": "08445ccf-7b99-4438-9f9a-fb9ac18099ee",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": ""
+    },
+    {
+      "target-credit": "",
+      "type-id": "98e08c20-8402-4163-8970-53504bb6a1e4",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-type": "url",
+      "attributes": [],
+      "type": "purchase for download",
+      "direction": "forward",
+      "url": {
+        "resource": "https://music.apple.com/gb/album/337316434",
+        "id": "da78232f-5f34-46e8-b5ac-f0d7b52cb403"
+      },
+      "begin": null
+    },
+    {
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": false,
+      "type-id": "320adf26-96fa-4183-9045-1f5f32f833cb",
+      "attribute-ids": {},
+      "end": null,
+      "target-credit": "",
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "resource": "https://music.apple.com/gb/album/337316434",
+        "id": "da78232f-5f34-46e8-b5ac-f0d7b52cb403"
+      },
+      "type": "streaming",
+      "target-type": "url",
+      "attributes": []
+    }
+  ],
+  "country": "XW",
+  "media": [
+    {
+      "id": "e5abc044-7880-439d-80dc-2f3311efd5f5",
+      "format": "Digital Media",
+      "track-count": 7,
+      "position": 1,
+      "title": "",
+      "format-id": "907a28d9-b3b2-3ef6-89a8-7b18d91d4794",
+      "tracks": [
+        {
+          "number": "1",
+          "id": "ed4f20f0-61cf-439d-9c64-1d9acb043cbb",
+          "artist-credit": [
+            {
+              "artist": {
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "name": "Ludwig van Beethoven",
+                "disambiguation": "German composer",
+                "country": "DE",
+                "genres": [
+                  {
+                    "disambiguation": "",
+                    "name": "classical",
+                    "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                    "count": 27
+                  },
+                  {
+                    "disambiguation": "",
+                    "name": "classical period",
+                    "count": 3,
+                    "id": "095695ad-5a3e-4eda-b169-6f3f9cc9fa0d"
+                  },
+                  {
+                    "disambiguation": "",
+                    "name": "concerto",
+                    "count": 2,
+                    "id": "7969288f-182d-4cef-b68d-870cc4c753da"
+                  },
+                  {
+                    "count": 1,
+                    "id": "4ae63770-68af-4fae-b0f1-5e53f372c743",
+                    "disambiguation": "",
+                    "name": "instrumental"
+                  },
+                  {
+                    "id": "de77d1c8-eae4-41f2-930c-91efd9979915",
+                    "count": 1,
+                    "disambiguation": "",
+                    "name": "mass"
+                  },
+                  {
+                    "count": 3,
+                    "id": "56e0b906-1018-4a55-8ec7-86746272116e",
+                    "name": "opera",
+                    "disambiguation": ""
+                  },
+                  {
+                    "name": "orchestral",
+                    "disambiguation": "",
+                    "count": 2,
+                    "id": "f3fe6570-1e79-4ed5-8eb9-9ed64d631871"
+                  },
+                  {
+                    "count": 7,
+                    "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7",
+                    "disambiguation": "",
+                    "name": "romantic classical"
+                  },
+                  {
+                    "name": "sonata",
+                    "disambiguation": "",
+                    "id": "ef8227d2-a286-47af-85c8-d5b6bec1f9db",
+                    "count": 3
+                  },
+                  {
+                    "id": "50294a4d-61f0-4dc8-a20f-4708d52fe78a",
+                    "count": 2,
+                    "disambiguation": "",
+                    "name": "symphony"
+                  }
+                ],
+                "sort-name": "Beethoven, Ludwig van",
+                "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+                "type": "Person"
+              },
+              "joinphrase": "",
+              "name": "Ludwig van Beethoven"
+            }
+          ],
+          "recording": {
+            "id": "33ea7e59-3691-4414-92d3-6bce48d5d9cc",
+            "isrcs": [
+              "DEE860800220"
+            ],
+            "artist-credit": [
+              {
+                "artist": {
+                  "country": "CA",
+                  "disambiguation": "pianist",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "name": "Glenn Gould",
+                  "type": "Person",
+                  "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+                  "sort-name": "Gould, Glenn"
+                },
+                "name": "Glenn Gould",
+                "joinphrase": ", "
+              },
+              {
+                "artist": {
+                  "type": "Orchestra",
+                  "sort-name": "Berliner Philharmoniker",
+                  "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+                  "disambiguation": "",
+                  "name": "Berliner Philharmoniker",
+                  "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+                  "country": null
+                },
+                "name": "Berliner Philharmoniker",
+                "joinphrase": ", "
+              },
+              {
+                "name": "Herbert von Karajan",
+                "joinphrase": "",
+                "artist": {
+                  "country": "AT",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "name": "Herbert von Karajan",
+                  "disambiguation": "conductor",
+                  "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+                  "sort-name": "Karajan, Herbert von",
+                  "type": "Person"
+                }
+              }
+            ],
+            "disambiguation": "",
+            "video": false,
+            "genres": [
+              {
+                "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                "count": 1,
+                "name": "classical",
+                "disambiguation": ""
+              },
+              {
+                "count": 1,
+                "id": "7969288f-182d-4cef-b68d-870cc4c753da",
+                "name": "concerto",
+                "disambiguation": ""
+              }
+            ],
+            "length": 979306,
+            "title": "Piano Concerto no. 3 in C minor, op. 37: I. Allegro con brio"
+          },
+          "title": "Piano Concerto no. 3 in C minor, op. 37: I. Allegro con brio",
+          "position": 1,
+          "length": 979293
+        },
+        {
+          "recording": {
+            "isrcs": [
+              "DEE860800221",
+              "DEE860800222"
+            ],
+            "id": "4dc5cfc5-75f0-4fec-9604-ade18169a55c",
+            "disambiguation": "",
+            "artist-credit": [
+              {
+                "artist": {
+                  "country": "CA",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "name": "Glenn Gould",
+                  "disambiguation": "pianist",
+                  "sort-name": "Gould, Glenn",
+                  "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+                  "type": "Person"
+                },
+                "name": "Glenn Gould",
+                "joinphrase": ", "
+              },
+              {
+                "artist": {
+                  "country": null,
+                  "disambiguation": "",
+                  "name": "Berliner Philharmoniker",
+                  "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+                  "type": "Orchestra",
+                  "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+                  "sort-name": "Berliner Philharmoniker"
+                },
+                "joinphrase": ", ",
+                "name": "Berliner Philharmoniker"
+              },
+              {
+                "artist": {
+                  "disambiguation": "conductor",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "name": "Herbert von Karajan",
+                  "country": "AT",
+                  "type": "Person",
+                  "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+                  "sort-name": "Karajan, Herbert von"
+                },
+                "joinphrase": "",
+                "name": "Herbert von Karajan"
+              }
+            ],
+            "title": "Piano Concerto no. 3 in C minor, op. 37: II. Largo",
+            "length": 569360,
+            "genres": [
+              {
+                "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                "count": 1,
+                "name": "classical",
+                "disambiguation": ""
+              },
+              {
+                "name": "concerto",
+                "disambiguation": "",
+                "id": "7969288f-182d-4cef-b68d-870cc4c753da",
+                "count": 1
+              }
+            ],
+            "video": false
+          },
+          "position": 2,
+          "title": "Piano Concerto no. 3 in C minor, op. 37: II. Largo",
+          "length": 570427,
+          "artist-credit": [
+            {
+              "artist": {
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "name": "Ludwig van Beethoven",
+                "disambiguation": "German composer",
+                "genres": [
+                  {
+                    "count": 27,
+                    "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                    "name": "classical",
+                    "disambiguation": ""
+                  },
+                  {
+                    "count": 3,
+                    "id": "095695ad-5a3e-4eda-b169-6f3f9cc9fa0d",
+                    "name": "classical period",
+                    "disambiguation": ""
+                  },
+                  {
+                    "name": "concerto",
+                    "disambiguation": "",
+                    "count": 2,
+                    "id": "7969288f-182d-4cef-b68d-870cc4c753da"
+                  },
+                  {
+                    "name": "instrumental",
+                    "disambiguation": "",
+                    "id": "4ae63770-68af-4fae-b0f1-5e53f372c743",
+                    "count": 1
+                  },
+                  {
+                    "count": 1,
+                    "id": "de77d1c8-eae4-41f2-930c-91efd9979915",
+                    "name": "mass",
+                    "disambiguation": ""
+                  },
+                  {
+                    "id": "56e0b906-1018-4a55-8ec7-86746272116e",
+                    "count": 3,
+                    "name": "opera",
+                    "disambiguation": ""
+                  },
+                  {
+                    "name": "orchestral",
+                    "disambiguation": "",
+                    "id": "f3fe6570-1e79-4ed5-8eb9-9ed64d631871",
+                    "count": 2
+                  },
+                  {
+                    "disambiguation": "",
+                    "name": "romantic classical",
+                    "count": 7,
+                    "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7"
+                  },
+                  {
+                    "name": "sonata",
+                    "disambiguation": "",
+                    "id": "ef8227d2-a286-47af-85c8-d5b6bec1f9db",
+                    "count": 3
+                  },
+                  {
+                    "count": 2,
+                    "id": "50294a4d-61f0-4dc8-a20f-4708d52fe78a",
+                    "name": "symphony",
+                    "disambiguation": ""
+                  }
+                ],
+                "country": "DE",
+                "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+                "sort-name": "Beethoven, Ludwig van",
+                "type": "Person"
+              },
+              "name": "Ludwig van Beethoven",
+              "joinphrase": ""
+            }
+          ],
+          "number": "2",
+          "id": "c638fd85-2e96-4529-9e4e-61ec2085a16f"
+        },
+        {
+          "artist-credit": [
+            {
+              "name": "Ludwig van Beethoven",
+              "joinphrase": "",
+              "artist": {
+                "genres": [
+                  {
+                    "count": 27,
+                    "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                    "disambiguation": "",
+                    "name": "classical"
+                  },
+                  {
+                    "name": "classical period",
+                    "disambiguation": "",
+                    "count": 3,
+                    "id": "095695ad-5a3e-4eda-b169-6f3f9cc9fa0d"
+                  },
+                  {
+                    "id": "7969288f-182d-4cef-b68d-870cc4c753da",
+                    "count": 2,
+                    "disambiguation": "",
+                    "name": "concerto"
+                  },
+                  {
+                    "id": "4ae63770-68af-4fae-b0f1-5e53f372c743",
+                    "count": 1,
+                    "name": "instrumental",
+                    "disambiguation": ""
+                  },
+                  {
+                    "name": "mass",
+                    "disambiguation": "",
+                    "count": 1,
+                    "id": "de77d1c8-eae4-41f2-930c-91efd9979915"
+                  },
+                  {
+                    "name": "opera",
+                    "disambiguation": "",
+                    "count": 3,
+                    "id": "56e0b906-1018-4a55-8ec7-86746272116e"
+                  },
+                  {
+                    "id": "f3fe6570-1e79-4ed5-8eb9-9ed64d631871",
+                    "count": 2,
+                    "disambiguation": "",
+                    "name": "orchestral"
+                  },
+                  {
+                    "count": 7,
+                    "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7",
+                    "disambiguation": "",
+                    "name": "romantic classical"
+                  },
+                  {
+                    "name": "sonata",
+                    "disambiguation": "",
+                    "id": "ef8227d2-a286-47af-85c8-d5b6bec1f9db",
+                    "count": 3
+                  },
+                  {
+                    "disambiguation": "",
+                    "name": "symphony",
+                    "id": "50294a4d-61f0-4dc8-a20f-4708d52fe78a",
+                    "count": 2
+                  }
+                ],
+                "country": "DE",
+                "disambiguation": "German composer",
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "name": "Ludwig van Beethoven",
+                "type": "Person",
+                "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+                "sort-name": "Beethoven, Ludwig van"
+              }
+            }
+          ],
+          "length": 608307,
+          "position": 3,
+          "title": "Piano Concerto no. 3 in C minor, op. 37: III. Rondo. Allegro",
+          "recording": {
+            "disambiguation": "",
+            "artist-credit": [
+              {
+                "artist": {
+                  "disambiguation": "pianist",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "name": "Glenn Gould",
+                  "country": "CA",
+                  "type": "Person",
+                  "sort-name": "Gould, Glenn",
+                  "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa"
+                },
+                "joinphrase": ", ",
+                "name": "Glenn Gould"
+              },
+              {
+                "name": "Berliner Philharmoniker",
+                "joinphrase": ", ",
+                "artist": {
+                  "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+                  "sort-name": "Berliner Philharmoniker",
+                  "type": "Orchestra",
+                  "country": null,
+                  "name": "Berliner Philharmoniker",
+                  "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+                  "disambiguation": ""
+                }
+              },
+              {
+                "name": "Herbert von Karajan",
+                "joinphrase": "",
+                "artist": {
+                  "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+                  "sort-name": "Karajan, Herbert von",
+                  "type": "Person",
+                  "country": "AT",
+                  "name": "Herbert von Karajan",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "disambiguation": "conductor"
+                }
+              }
+            ],
+            "length": 613973,
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor op. 37: III. Rondo (Allegro)",
+            "video": false,
+            "genres": [
+              {
+                "name": "classical",
+                "disambiguation": "",
+                "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                "count": 1
+              },
+              {
+                "disambiguation": "",
+                "name": "concerto",
+                "id": "7969288f-182d-4cef-b68d-870cc4c753da",
+                "count": 1
+              }
+            ],
+            "isrcs": [],
+            "id": "b0cdd16b-765d-48ab-bd87-a066ca9eb923"
+          },
+          "id": "fc2ed76e-b15f-42ea-9b58-523e9db6229e",
+          "number": "3"
+        },
+        {
+          "id": "5152988f-752f-4487-b9e3-b694cd20ed9e",
+          "number": "4",
+          "position": 4,
+          "length": 745414,
+          "title": "Symphony no. 5 in E-flat major, op. 82: I. Tempo molto moderato - Largamente Allegro moderato",
+          "recording": {
+            "video": false,
+            "genres": [
+              {
+                "disambiguation": "",
+                "name": "classical",
+                "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                "count": 1
+              },
+              {
+                "id": "50294a4d-61f0-4dc8-a20f-4708d52fe78a",
+                "count": 1,
+                "disambiguation": "",
+                "name": "symphony"
+              }
+            ],
+            "title": "Symphony no. 5 in E-flat major op. 82: I. Tempo molto morderato – Largamente – Allegro moderato",
+            "length": 745480,
+            "artist-credit": [
+              {
+                "artist": {
+                  "disambiguation": "",
+                  "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+                  "name": "Berliner Philharmoniker",
+                  "country": null,
+                  "type": "Orchestra",
+                  "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+                  "sort-name": "Berliner Philharmoniker"
+                },
+                "name": "Berliner Philharmoniker",
+                "joinphrase": ", "
+              },
+              {
+                "artist": {
+                  "type": "Person",
+                  "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+                  "sort-name": "Karajan, Herbert von",
+                  "disambiguation": "conductor",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "name": "Herbert von Karajan",
+                  "country": "AT"
+                },
+                "name": "Herbert von Karajan",
+                "joinphrase": ""
+              }
+            ],
+            "disambiguation": "",
+            "id": "aeba0607-2a02-47e0-a167-21cdf59a8bea",
+            "isrcs": [
+              "DEE860800224"
+            ]
+          },
+          "artist-credit": [
+            {
+              "name": "Jean Sibelius",
+              "joinphrase": "",
+              "artist": {
+                "disambiguation": "Finnish composer",
+                "name": "Jean Sibelius",
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "country": "FI",
+                "genres": [
+                  {
+                    "disambiguation": "",
+                    "name": "classical",
+                    "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                    "count": 3
+                  },
+                  {
+                    "name": "romantic classical",
+                    "disambiguation": "",
+                    "count": 2,
+                    "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7"
+                  }
+                ],
+                "type": "Person",
+                "sort-name": "Sibelius, Jean",
+                "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75"
+              }
+            }
+          ]
+        },
+        {
+          "recording": {
+            "id": "db9b31a7-6f37-4505-917c-f2fdb4782cec",
+            "isrcs": [
+              "DEE860800225"
+            ],
+            "genres": [
+              {
+                "name": "classical",
+                "disambiguation": "",
+                "count": 1,
+                "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4"
+              },
+              {
+                "id": "50294a4d-61f0-4dc8-a20f-4708d52fe78a",
+                "count": 1,
+                "disambiguation": "",
+                "name": "symphony"
+              }
+            ],
+            "video": false,
+            "title": "Symphony no. 5 in E-flat major op. 82: II. Andante mosso",
+            "length": 465720,
+            "artist-credit": [
+              {
+                "name": "Berliner Philharmoniker",
+                "joinphrase": ", ",
+                "artist": {
+                  "disambiguation": "",
+                  "name": "Berliner Philharmoniker",
+                  "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+                  "country": null,
+                  "type": "Orchestra",
+                  "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+                  "sort-name": "Berliner Philharmoniker"
+                }
+              },
+              {
+                "joinphrase": "",
+                "name": "Herbert von Karajan",
+                "artist": {
+                  "disambiguation": "conductor",
+                  "name": "Herbert von Karajan",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "country": "AT",
+                  "type": "Person",
+                  "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+                  "sort-name": "Karajan, Herbert von"
+                }
+              }
+            ],
+            "disambiguation": ""
+          },
+          "title": "Symphony no. 5 in E-flat major, op. 82: II. Andante mosso, quasi allegretto",
+          "position": 5,
+          "length": 465648,
+          "artist-credit": [
+            {
+              "artist": {
+                "genres": [
+                  {
+                    "disambiguation": "",
+                    "name": "classical",
+                    "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                    "count": 3
+                  },
+                  {
+                    "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7",
+                    "count": 2,
+                    "disambiguation": "",
+                    "name": "romantic classical"
+                  }
+                ],
+                "country": "FI",
+                "disambiguation": "Finnish composer",
+                "name": "Jean Sibelius",
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "type": "Person",
+                "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75",
+                "sort-name": "Sibelius, Jean"
+              },
+              "name": "Jean Sibelius",
+              "joinphrase": ""
+            }
+          ],
+          "number": "5",
+          "id": "e0b9f0ae-7d10-46b6-ac09-2cd5c61d6e55"
+        },
+        {
+          "title": "Symphony no. 5 in E-flat major, op. 82: III. Allegro molto - Largamente assai",
+          "length": 614012,
+          "position": 6,
+          "recording": {
+            "id": "10ba649f-8cf1-4b6f-b117-86552f5964f4",
+            "isrcs": [
+              "DEE860800226"
+            ],
+            "video": false,
+            "genres": [
+              {
+                "disambiguation": "",
+                "name": "classical",
+                "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                "count": 1
+              },
+              {
+                "disambiguation": "",
+                "name": "symphony",
+                "count": 1,
+                "id": "50294a4d-61f0-4dc8-a20f-4708d52fe78a"
+              }
+            ],
+            "title": "Symphony no. 5 in E-flat major op. 82: III. Allegro molto",
+            "length": 614066,
+            "artist-credit": [
+              {
+                "artist": {
+                  "country": null,
+                  "name": "Berliner Philharmoniker",
+                  "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+                  "disambiguation": "",
+                  "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+                  "sort-name": "Berliner Philharmoniker",
+                  "type": "Orchestra"
+                },
+                "name": "Berliner Philharmoniker",
+                "joinphrase": ", "
+              },
+              {
+                "joinphrase": "",
+                "name": "Herbert von Karajan",
+                "artist": {
+                  "disambiguation": "conductor",
+                  "name": "Herbert von Karajan",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "country": "AT",
+                  "type": "Person",
+                  "sort-name": "Karajan, Herbert von",
+                  "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+                }
+              }
+            ],
+            "disambiguation": ""
+          },
+          "artist-credit": [
+            {
+              "artist": {
+                "name": "Jean Sibelius",
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "disambiguation": "Finnish composer",
+                "genres": [
+                  {
+                    "count": 3,
+                    "id": "6ed4e4d1-9a97-4e2c-b8df-083754f154f4",
+                    "name": "classical",
+                    "disambiguation": ""
+                  },
+                  {
+                    "name": "romantic classical",
+                    "disambiguation": "",
+                    "count": 2,
+                    "id": "bdebe8fd-c5b6-4b89-bb2a-ece612f1caa7"
+                  }
+                ],
+                "country": "FI",
+                "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75",
+                "sort-name": "Sibelius, Jean",
+                "type": "Person"
+              },
+              "name": "Jean Sibelius",
+              "joinphrase": ""
+            }
+          ],
+          "id": "d48bc653-137d-48be-bf31-2f73f10adf0c",
+          "number": "6"
+        },
+        {
+          "number": "7",
+          "id": "c1d6d454-853d-428f-b4d1-8ac6d9b46180",
+          "artist-credit": [
+            {
+              "artist": {
+                "country": "AT",
+                "disambiguation": "conductor",
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "name": "Herbert von Karajan",
+                "type": "Person",
+                "sort-name": "Karajan, Herbert von",
+                "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+              },
+              "joinphrase": ", ",
+              "name": "Herbert von Karajan"
+            },
+            {
+              "artist": {
+                "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+                "sort-name": "Gould, Glenn",
+                "type": "Person",
+                "name": "Glenn Gould",
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "disambiguation": "pianist",
+                "country": "CA"
+              },
+              "joinphrase": " & ",
+              "name": "Glenn Gould"
+            },
+            {
+              "name": "Ingrid El Sigai",
+              "joinphrase": "",
+              "artist": {
+                "genres": [],
+                "country": null,
+                "disambiguation": "",
+                "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                "name": "Ingrid El Sigai",
+                "type": "Person",
+                "sort-name": "Sigai, Ingrid El",
+                "id": "93439e7f-ecba-4237-9b7c-3bc1e0217566"
+              }
+            }
+          ],
+          "recording": {
+            "isrcs": [
+              "DEE860800262"
+            ],
+            "id": "81a06ba7-b9f6-447b-ac6a-4cef8d8fa067",
+            "disambiguation": "",
+            "artist-credit": [
+              {
+                "name": "Herbert von Karajan",
+                "joinphrase": ", ",
+                "artist": {
+                  "country": "AT",
+                  "disambiguation": "conductor",
+                  "name": "Herbert von Karajan",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "type": "Person",
+                  "sort-name": "Karajan, Herbert von",
+                  "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+                }
+              },
+              {
+                "artist": {
+                  "disambiguation": "pianist",
+                  "name": "Glenn Gould",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "country": "CA",
+                  "type": "Person",
+                  "sort-name": "Gould, Glenn",
+                  "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa"
+                },
+                "name": "Glenn Gould",
+                "joinphrase": " & "
+              },
+              {
+                "artist": {
+                  "type": "Person",
+                  "id": "93439e7f-ecba-4237-9b7c-3bc1e0217566",
+                  "sort-name": "Sigai, Ingrid El",
+                  "disambiguation": "",
+                  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+                  "name": "Ingrid El Sigai",
+                  "country": null
+                },
+                "name": "Ingrid El Sigai",
+                "joinphrase": ""
+              }
+            ],
+            "title": "Glenn Gould und Herbert von Karajan - Protokoll einer \"unmöglichen Partnerschaft\"",
+            "length": 731948,
+            "genres": [],
+            "video": false
+          },
+          "position": 7,
+          "length": 731948,
+          "title": "Glenn Gould und Herbert von Karajan - Protokoll einer \"unmöglichen Partnerschaft\""
+        }
+      ],
+      "track-offset": 0
+    }
+  ],
+  "disambiguation": ""
+}

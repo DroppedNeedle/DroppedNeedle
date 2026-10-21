@@ -1,0 +1,81 @@
+{
+  "relations": [
+    {
+      "begin": null,
+      "attributes": [],
+      "end": null,
+      "type": "free streaming",
+      "url": {
+        "resource": "https://open.spotify.com/track/5VRZW8TCXkwoCn0dAjfZBQ",
+        "id": "652a5787-8511-402f-be50-6efd4f3649a4"
+      },
+      "target-credit": "",
+      "direction": "forward",
+      "source-credit": "",
+      "target-type": "url",
+      "ended": false,
+      "attribute-values": {},
+      "attribute-ids": {},
+      "type-id": "7e41ef12-a124-4324-afdb-fdbae687a89c"
+    },
+    {
+      "attribute-ids": {},
+      "type-id": "7e41ef12-a124-4324-afdb-fdbae687a89c",
+      "attribute-values": {},
+      "target-type": "url",
+      "ended": false,
+      "direction": "forward",
+      "source-credit": "",
+      "target-credit": "",
+      "url": {
+        "resource": "https://www.deezer.com/track/71878000",
+        "id": "ac6a8467-3391-45a1-ba1f-ca9c8b352b49"
+      },
+      "type": "free streaming",
+      "end": null,
+      "begin": null,
+      "attributes": []
+    },
+    {
+      "end": null,
+      "begin": null,
+      "attributes": [],
+      "type": "purchase for download",
+      "target-credit": "",
+      "url": {
+        "id": "a7f185b4-a72b-45a6-b554-c1ec30f004ab",
+        "resource": "https://music.apple.com/gb/song/337317073"
+      },
+      "target-type": "url",
+      "ended": false,
+      "direction": "forward",
+      "source-credit": "",
+      "attribute-ids": {},
+      "type-id": "92777657-504c-4acb-bd33-51a201bd57e1",
+      "attribute-values": {}
+    },
+    {
+      "target-credit": "",
+      "url": {
+        "id": "a7f185b4-a72b-45a6-b554-c1ec30f004ab",
+        "resource": "https://music.apple.com/gb/song/337317073"
+      },
+      "type": "streaming",
+      "end": null,
+      "attributes": [],
+      "begin": null,
+      "type-id": "b5f3058a-666c-406f-aafb-f9249fc7b122",
+      "attribute-ids": {},
+      "attribute-values": {},
+      "ended": false,
+      "target-type": "url",
+      "source-credit": "",
+      "direction": "forward"
+    }
+  ],
+  "length": 979306,
+  "video": false,
+  "id": "33ea7e59-3691-4414-92d3-6bce48d5d9cc",
+  "disambiguation": "",
+  "title": "Piano Concerto no. 3 in C minor, op. 37: I. Allegro con brio"
+}

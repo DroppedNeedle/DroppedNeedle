@@ -37,14 +37,13 @@ pub struct ArtistRef {
     /// Sort name (`"Beatles, The"` style), when the service sends one.
     #[serde(rename = "sort-name", default)]
     pub sort_name: Option<String>,
-    /// Aliases, under the `aliases` include. Checked on 2026-10-15
-    /// against release lookups from BrainzMash ws/2 with
-    /// `inc=recordings+artist-credits+aliases` (and the relation
-    /// includes; `server/tests/fixtures/musicbrainz/release_names_*.json`): the
-    /// artists of the release's and each release track's credit carry the
-    /// key, `[]` when the artist has none; recording-level credits and
-    /// relationship artists never carry it. A missing key means not
-    /// fetched.
+    /// Aliases, under the `aliases` include. Seen on 2026-10-15 per
+    /// `server/tests/fixtures/musicbrainz/README.md`: BrainzMash release
+    /// lookups with `inc=recordings+artist-credits+aliases` and the relation
+    /// includes (`release_names_*.json`). The artists of the release's and
+    /// each release track's credit carry the key, `[]` when the artist has
+    /// none; recording-level credits and relationship artists never carry
+    /// it. A missing key means not fetched.
     #[serde(default)]
     pub aliases: Option<Vec<Alias>>,
 }
@@ -253,12 +252,12 @@ pub struct EntityRef {
 /// otherwise (management notes).
 ///
 /// The credit fields (artist name and sort name, `attributes`,
-/// `target-credit`, `direction`, works' own `relations`) were checked on
-/// 2026-10-15 against two release lookups from BrainzMash ws/2 with
-/// `inc=recordings+artist-rels+recording-level-rels+work-rels+work-level-rels`
-/// (`server/tests/fixtures/musicbrainz/release_relations_*.json`): `target-credit`
-/// is an empty string when the artist is credited under their own name,
-/// and `attributes` is always a list, empty when there are none.
+/// `target-credit`, `direction`, works' own `relations`) were seen on
+/// 2026-10-15 per `server/tests/fixtures/musicbrainz/README.md`: two
+/// BrainzMash release lookups with the relation includes
+/// (`release_relations_*.json`). `target-credit` is an empty string when the
+/// artist is credited under their own name, and `attributes` is always a
+/// list, empty when there are none.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Relation {
     /// Relationship type name.
@@ -319,7 +318,8 @@ pub struct Tag {
 }
 
 /// One artist alias. `primary`, `locale` and `type-id` are null on
-/// aliases that have none (BrainzMash ws/2, 2026-10-15).
+/// aliases that have none (seen on 2026-10-15 per
+/// `server/tests/fixtures/musicbrainz/README.md`).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Alias {
     /// Alias text.
@@ -338,6 +338,23 @@ pub struct Alias {
 }
 
 /// Full release lookup document (identity-readiness surface).
+///
+/// Seen on 2026-10-15 per `server/tests/fixtures/musicbrainz/README.md`
+/// (BrainzMash ws/2, `release/{mbid}`): with
+/// `inc=artist-rels+recording-level-rels+recordings+work-level-rels+work-rels`,
+/// `release_relations_classical.json` and `release_relations_pop.json`; with
+/// `inc=aliases+artist-credits+recordings`, `release_names_sakamoto.json` and
+/// `release_names_utada.json`; with both sets, `release_names_classical.json`.
+///
+/// Verified against api.brainzmash.cc/ws/2/release/{mbid} on 2026-10-21:
+/// tests/fixtures/musicbrainz/release_lookup_classical.json, read with
+/// `inc=artist-credits+genres+isrcs+labels+recordings+release-groups+url-rels`
+/// (BrainzMash mirror). The lookups with `inc=release-groups`, `url-rels`,
+/// `recordings`, `labels+recordings+url-rels`,
+/// `artist-credits+labels+recordings+release-groups+url-rels`,
+/// `artist-credits+genres+isrcs+labels+recordings+release-groups` and
+/// `isrcs+recordings+release-groups` are subsets of that include set, so that
+/// answer covers them as recorded.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct MbRelease {
     /// Release MBID: required identity.
@@ -395,6 +412,13 @@ pub struct MbRelease {
 }
 
 /// Release-group lookup document.
+///
+/// Verified against api.brainzmash.cc/ws/2/release-group/{mbid} on 2026-10-21:
+/// tests/fixtures/musicbrainz/release_group_lookup_ok_computer.json, read with
+/// `inc=artist-credits+media+releases+tags+url-rels` (BrainzMash mirror). The
+/// lookups with `inc=artist-credits+media+releases+url-rels` and
+/// `inc=artist-credits+releases+tags+url-rels` are subsets of that include set,
+/// so that answer covers them as recorded.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct MbReleaseGroup {
     /// Release-group MBID: required identity.
@@ -456,6 +480,18 @@ pub struct LifeSpan {
 }
 
 /// Artist lookup document.
+///
+/// Seen on 2026-10-17 per `server/tests/fixtures/musicbrainz/README.md`
+/// (BrainzMash ws/2, `artist/{mbid}` with no include):
+/// `artist_merged_canonical.json`, the merge target. The 301 is answered
+/// with `artist_merged_redirect.json` and the 404 with
+/// `artist_merged_missing.json`.
+///
+/// Verified against api.brainzmash.cc/ws/2/artist/{mbid} on 2026-10-21:
+/// tests/fixtures/musicbrainz/artist_lookup_radiohead.json, read with
+/// `inc=aliases+tags+url-rels` (BrainzMash mirror). The lookup with
+/// `inc=url-rels` is a subset of that include set, so that answer covers it as
+/// recorded.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct MbArtist {
     /// Artist MBID: required identity.
@@ -513,6 +549,11 @@ pub struct RecordingRelease {
 }
 
 /// Recording lookup document.
+///
+/// Verified against api.brainzmash.cc/ws/2/recording/{mbid} on 2026-10-21:
+/// tests/fixtures/musicbrainz/recording_lookup_url_rels.json, read with
+/// `inc=url-rels`, and tests/fixtures/musicbrainz/recording_lookup_plain.json,
+/// read with no include (BrainzMash mirror).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct MbRecording {
     /// Recording MBID: required identity (canonical after redirects).
@@ -541,6 +582,11 @@ pub struct MbRecording {
 /// artist-credit, label-info, and medium facets without any `inc`
 /// parameter; optional fields stay absent on many releases (live
 /// 2026-08-11).
+///
+/// Verified against api.brainzmash.cc/ws/2/release on 2026-10-21:
+/// tests/fixtures/musicbrainz/search_release_ok_computer.json, a search for
+/// `release:"OK Computer" AND artist:"Radiohead"` with `limit=5` (BrainzMash
+/// mirror).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ReleaseSearchHit {
     /// Release MBID: required identity.
@@ -587,6 +633,10 @@ pub struct ReleaseSearchHit {
 }
 
 /// Release-group search hit.
+///
+/// Verified against api.brainzmash.cc/ws/2/release-group on 2026-10-21:
+/// tests/fixtures/musicbrainz/search_release_group_ok_computer.json, a text
+/// search for OK Computer with `limit=5` (BrainzMash mirror).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ReleaseGroupSearchHit {
     /// Release-group MBID: required identity.
@@ -618,6 +668,11 @@ pub struct ReleaseGroupSearchHit {
 }
 
 /// Artist search hit.
+///
+/// Verified against api.brainzmash.cc/ws/2/artist on 2026-10-21:
+/// tests/fixtures/musicbrainz/search_artist_radiohead.json, a text search for
+/// Radiohead with `limit=5` (BrainzMash mirror). The connection check sends the
+/// same kind of search with another query, so it shares this answer shape.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ArtistSearchHit {
     /// Artist MBID: required identity.
@@ -699,6 +754,15 @@ where
 /// URL-resolution response: the full relation list, retained so a
 /// multi-target response reads as ambiguity rather than silently selecting
 /// its first item (live 2026-07-21, contribution notes).
+///
+/// Verified against api.brainzmash.cc/ws/2/url on 2026-10-21:
+/// tests/fixtures/musicbrainz/url_lookup_discogs_release.json, read with
+/// `inc=release-group-rels+release-rels` for
+/// `resource=https://www.discogs.com/release/249504` (BrainzMash mirror). The
+/// `inc=release-rels` and `inc=release-group-rels` lookups are subsets of that
+/// include set, so that answer covers them as recorded. The same include set
+/// for `https://en.wikipedia.org/wiki/OK_Computer` answered 404 that day, so no
+/// answer is kept for it.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct UrlResolution {
     /// Resource URL echoed back.
@@ -722,6 +786,10 @@ impl UrlResolution {
 /// One page of an artist's release groups from the browse endpoint
 /// (`/release-group?artist=`). The envelope is
 /// `{"release-group-count", "release-group-offset", "release-groups"}`.
+///
+/// Verified against api.brainzmash.cc/ws/2/release-group?artist={mbid} on
+/// 2026-10-21: tests/fixtures/musicbrainz/browse_release_groups_radiohead.json,
+/// with `inc=artist-credits`, `limit=5` and `offset=0` (BrainzMash mirror).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ReleaseGroupBrowsePage {
     /// Total release groups the artist has.

@@ -1,0 +1,407 @@
+{
+  "created": "2026-10-21T03:29:44.961Z",
+  "count": 39,
+  "offset": 0,
+  "releases": [
+    {
+      "id": "e8c3ff98-75f0-383f-a7d1-35db67661d89",
+      "score": 100,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "artist-credit-id": "021661c1-84c5-30d7-9bb2-f0766affb734",
+      "count": 2,
+      "title": "OK Computer",
+      "status": "Official",
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "sort-name": "Radiohead"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "b1392450-e666-3926-a536-22c65f834433",
+        "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "title": "OK Computer",
+        "primary-type": "Album"
+      },
+      "date": "2009-04-01",
+      "country": "JP",
+      "release-events": [
+        {
+          "date": "2009-04-01",
+          "area": {
+            "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+            "name": "Japan",
+            "sort-name": "Japan",
+            "iso-3166-1-codes": [
+              "JP"
+            ]
+          }
+        }
+      ],
+      "barcode": "4988006871472",
+      "asin": "B001STY9YU",
+      "label-info": [
+        {
+          "catalog-number": "TOCP-70715",
+          "label": {
+            "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+            "name": "EMI"
+          }
+        },
+        {
+          "catalog-number": "TOCP-70716",
+          "label": {
+            "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+            "name": "EMI"
+          }
+        }
+      ],
+      "track-count": 27,
+      "media": [
+        {
+          "id": "87265a1a-bf22-3b21-acf5-08ed7ce8d20b",
+          "format": "CD",
+          "disc-count": 15,
+          "track-count": 12
+        },
+        {
+          "id": "32d20ad0-c6bb-396f-8665-b6a237261ed8",
+          "format": "CD",
+          "disc-count": 1,
+          "track-count": 15
+        }
+      ]
+    },
+    {
+      "id": "a736eb98-ba6b-3e42-ad80-a65f648910a3",
+      "score": 100,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging-id": "815b7785-8284-3926-8f04-e48bc6c4d102",
+      "artist-credit-id": "021661c1-84c5-30d7-9bb2-f0766affb734",
+      "count": 3,
+      "title": "OK Computer",
+      "status": "Official",
+      "packaging": "Other",
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "sort-name": "Radiohead"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "b1392450-e666-3926-a536-22c65f834433",
+        "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "title": "OK Computer",
+        "primary-type": "Album"
+      },
+      "date": "2009-04-01",
+      "country": "JP",
+      "release-events": [
+        {
+          "date": "2009-04-01",
+          "area": {
+            "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+            "name": "Japan",
+            "sort-name": "Japan",
+            "iso-3166-1-codes": [
+              "JP"
+            ]
+          }
+        }
+      ],
+      "barcode": "4988006871502",
+      "asin": "B001STY9Z4",
+      "label-info": [
+        {
+          "catalog-number": "TOCP-70727",
+          "label": {
+            "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+            "name": "EMI"
+          }
+        },
+        {
+          "catalog-number": "TOCP-70728",
+          "label": {
+            "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+            "name": "EMI"
+          }
+        }
+      ],
+      "track-count": 33,
+      "media": [
+        {
+          "id": "f0320137-4df8-3067-a98e-2fc6224506f7",
+          "format": "CD",
+          "disc-count": 15,
+          "track-count": 12
+        },
+        {
+          "id": "88f3fcc0-f110-35c9-8d41-b25f41d6ccda",
+          "format": "CD",
+          "disc-count": 1,
+          "track-count": 15
+        },
+        {
+          "id": "5528c0ca-5888-3566-9708-4213035ad790",
+          "format": "DVD-Video",
+          "disc-count": 0,
+          "track-count": 6
+        }
+      ]
+    },
+    {
+      "id": "175d6ac9-7185-357c-af04-5887dc3ea788",
+      "score": 100,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "artist-credit-id": "021661c1-84c5-30d7-9bb2-f0766affb734",
+      "count": 1,
+      "title": "OK Computer",
+      "status": "Official",
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "sort-name": "Radiohead"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "b1392450-e666-3926-a536-22c65f834433",
+        "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "title": "OK Computer",
+        "primary-type": "Album"
+      },
+      "date": "2006-09-06",
+      "country": "JP",
+      "release-events": [
+        {
+          "date": "2006-09-06",
+          "area": {
+            "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+            "name": "Japan",
+            "sort-name": "Japan",
+            "iso-3166-1-codes": [
+              "JP"
+            ]
+          }
+        }
+      ],
+      "barcode": "4988006846333",
+      "asin": "B000GW87PM",
+      "label-info": [
+        {
+          "catalog-number": "TOCP-53834",
+          "label": {
+            "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+            "name": "EMI"
+          }
+        },
+        {
+          "catalog-number": "TOCP-53834",
+          "label": {
+            "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+            "name": "Parlophone"
+          }
+        }
+      ],
+      "track-count": 12,
+      "media": [
+        {
+          "id": "5ac40405-4a2e-3636-91ce-c84944de8ef9",
+          "format": "CD",
+          "disc-count": 15,
+          "track-count": 12
+        }
+      ]
+    },
+    {
+      "id": "bdf93ecb-85e8-3505-98f7-e2e8c5052723",
+      "score": 100,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "artist-credit-id": "021661c1-84c5-30d7-9bb2-f0766affb734",
+      "count": 2,
+      "title": "OK Computer",
+      "status": "Official",
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "sort-name": "Radiohead"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "b1392450-e666-3926-a536-22c65f834433",
+        "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "title": "OK Computer",
+        "primary-type": "Album"
+      },
+      "date": "2009-03-23",
+      "country": "GB",
+      "release-events": [
+        {
+          "date": "2009-03-23",
+          "area": {
+            "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+            "name": "United Kingdom",
+            "sort-name": "United Kingdom",
+            "iso-3166-1-codes": [
+              "GB"
+            ]
+          }
+        }
+      ],
+      "barcode": "5099969362323",
+      "asin": "B001PPF12Q",
+      "label-info": [
+        {
+          "catalog-number": "RHEADCD 3",
+          "label": {
+            "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+            "name": "EMI"
+          }
+        }
+      ],
+      "track-count": 27,
+      "media": [
+        {
+          "id": "dd83a2ae-e75b-379c-acbc-bf88026b73e5",
+          "format": "CD",
+          "disc-count": 15,
+          "track-count": 12
+        },
+        {
+          "id": "ccef1441-f066-38f9-8125-acf3740dd17f",
+          "format": "CD",
+          "disc-count": 1,
+          "track-count": 15
+        }
+      ]
+    },
+    {
+      "id": "9eff0482-170f-3e93-8c65-73ce18e10ee7",
+      "score": 100,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging-id": "815b7785-8284-3926-8f04-e48bc6c4d102",
+      "artist-credit-id": "021661c1-84c5-30d7-9bb2-f0766affb734",
+      "count": 3,
+      "title": "OK Computer",
+      "status": "Official",
+      "packaging": "Other",
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "sort-name": "Radiohead"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "b1392450-e666-3926-a536-22c65f834433",
+        "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "title": "OK Computer",
+        "primary-type": "Album"
+      },
+      "date": "2009-03-23",
+      "country": "XE",
+      "release-events": [
+        {
+          "date": "2009-03-23",
+          "area": {
+            "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+            "name": "Europe",
+            "sort-name": "Europe",
+            "iso-3166-1-codes": [
+              "XE"
+            ]
+          }
+        }
+      ],
+      "barcode": "5099969362620",
+      "asin": "B001PSQG1I",
+      "label-info": [
+        {
+          "catalog-number": "RHEADCDX 3",
+          "label": {
+            "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+            "name": "EMI"
+          }
+        }
+      ],
+      "track-count": 33,
+      "media": [
+        {
+          "id": "7c02cf7b-63df-3d19-80a0-690bdc83feee",
+          "format": "CD",
+          "disc-count": 1,
+          "track-count": 12
+        },
+        {
+          "id": "0b00bd22-0ea5-3af9-8c79-23694c0f0213",
+          "format": "CD",
+          "disc-count": 1,
+          "track-count": 15
+        },
+        {
+          "id": "128964d6-b598-3478-a8a7-255ab18f6a08",
+          "format": "DVD-Video",
+          "disc-count": 0,
+          "track-count": 6
+        }
+      ],
+      "tags": [
+        {
+          "count": 1,
+          "name": "2009"
+        },
+        {
+          "count": 0,
+          "name": "composite release"
+        },
+        {
+          "count": 0,
+          "name": "top moumoute"
+        }
+      ]
+    }
+  ]
+}

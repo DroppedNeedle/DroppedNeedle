@@ -1,0 +1,1282 @@
+{
+  "life-span": {
+    "begin": "1991",
+    "ended": false,
+    "end": null
+  },
+  "aliases": [
+    {
+      "type": "Search hint",
+      "sort-name": "Radio Head",
+      "primary": null,
+      "begin": null,
+      "end": null,
+      "name": "Radio Head",
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "ended": false,
+      "locale": null
+    },
+    {
+      "type": "Artist name",
+      "sort-name": "Radiohead",
+      "primary": true,
+      "begin": null,
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "name": "Radiohead",
+      "locale": "en",
+      "ended": false
+    },
+    {
+      "primary": null,
+      "begin": null,
+      "locale": null,
+      "ended": false,
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "name": "Radiohead & Thom Yorke",
+      "end": null,
+      "sort-name": "Radiohead & Thom Yorke",
+      "type": "Search hint"
+    },
+    {
+      "primary": null,
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "locale": null,
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "name": "r/head",
+      "type": "Search hint",
+      "sort-name": "r/head"
+    },
+    {
+      "locale": "ja",
+      "ended": false,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "name": "レディオヘッド",
+      "end": null,
+      "primary": true,
+      "begin": null,
+      "sort-name": "れでぃおへっど",
+      "type": "Artist name"
+    },
+    {
+      "name": "电台司令",
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "ended": false,
+      "locale": "zh",
+      "end": null,
+      "primary": true,
+      "begin": null,
+      "sort-name": "电台司令",
+      "type": "Artist name"
+    }
+  ],
+  "begin-area": {
+    "disambiguation": "",
+    "name": "Abingdon-on-Thames",
+    "type-id": null,
+    "type": null,
+    "id": "d840d4b3-8987-4626-928b-398de760cc24",
+    "sort-name": "Abingdon-on-Thames"
+  },
+  "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+  "tags": [
+    {
+      "count": 2,
+      "name": "alternative"
+    },
+    {
+      "name": "alternative rock",
+      "count": 43
+    },
+    {
+      "count": 2,
+      "name": "alternative rock music"
+    },
+    {
+      "count": 1,
+      "name": "ambient pop"
+    },
+    {
+      "count": 3,
+      "name": "art pop"
+    },
+    {
+      "name": "art rock",
+      "count": 30
+    },
+    {
+      "name": "british",
+      "count": 14
+    },
+    {
+      "count": 2,
+      "name": "britpop"
+    },
+    {
+      "name": "britrock",
+      "count": 1
+    },
+    {
+      "name": "chamber pop",
+      "count": 1
+    },
+    {
+      "name": "crossover prog",
+      "count": 1
+    },
+    {
+      "name": "electronic",
+      "count": 14
+    },
+    {
+      "count": 1,
+      "name": "electronic rock"
+    },
+    {
+      "count": 2,
+      "name": "electronica"
+    },
+    {
+      "count": 1,
+      "name": "english"
+    },
+    {
+      "count": 3,
+      "name": "experimental"
+    },
+    {
+      "name": "experimental rock",
+      "count": 14
+    },
+    {
+      "name": "idm",
+      "count": 1
+    },
+    {
+      "count": 5,
+      "name": "indie rock"
+    },
+    {
+      "name": "indietronica",
+      "count": 1
+    },
+    {
+      "name": "oxford",
+      "count": 1
+    },
+    {
+      "name": "post-britpop",
+      "count": 2
+    },
+    {
+      "name": "post-grunge",
+      "count": 1
+    },
+    {
+      "name": "progressive rock music",
+      "count": 2
+    },
+    {
+      "count": 19,
+      "name": "rock"
+    },
+    {
+      "count": 1,
+      "name": "uk"
+    },
+    {
+      "count": 1,
+      "name": "vyrzukhisuc-artiest"
+    }
+  ],
+  "type": "Group",
+  "area": {
+    "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+    "sort-name": "United Kingdom",
+    "type": null,
+    "name": "United Kingdom",
+    "type-id": null,
+    "disambiguation": "",
+    "iso-3166-1-codes": [
+      "GB"
+    ]
+  },
+  "end-area": null,
+  "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+  "name": "Radiohead",
+  "disambiguation": "",
+  "relations": [
+    {
+      "type-id": "d028a975-000c-4525-9333-d3c8425e4b54",
+      "ended": true,
+      "end": "2020-11-19",
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-credit": "",
+      "direction": "forward",
+      "url": {
+        "resource": "https://www.bbc.co.uk/music/artists/a74b1b7f-71a5-4011-9441-d0b5e4122711",
+        "id": "367918c3-81d5-424f-9447-005530da230b"
+      },
+      "begin": null,
+      "target-type": "url",
+      "attributes": [],
+      "type": "BBC Music page"
+    },
+    {
+      "target-credit": "",
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "94c8b0cc-4477-4106-932c-da60e63de61c",
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "attributes": [],
+      "target-type": "url",
+      "type": "IMDb",
+      "url": {
+        "id": "ee19e006-c9cb-4fd0-b4fe-120db8d0d17e",
+        "resource": "https://www.imdb.com/name/nm1955602/"
+      },
+      "begin": null,
+      "direction": "forward"
+    },
+    {
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "resource": "http://viaf.org/viaf/141028845",
+        "id": "bf63ace1-91d8-4fd2-8365-8fe4cc26af96"
+      },
+      "target-type": "url",
+      "attributes": [],
+      "type": "VIAF",
+      "ended": false,
+      "type-id": "e8571dcc-35d4-4e91-a577-a3382fd84460",
+      "attribute-ids": {},
+      "end": null,
+      "attribute-values": {},
+      "source-credit": "",
+      "target-credit": ""
+    },
+    {
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": false,
+      "type-id": "6b3e3c85-0002-4f34-aca6-80ace0d7e846",
+      "attribute-ids": {},
+      "end": null,
+      "type": "allmusic",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "id": "a049e9f0-b290-461d-8977-031464a00ead",
+        "resource": "https://www.allmusic.com/artist/mn0000326249"
+      }
+    },
+    {
+      "target-type": "url",
+      "attributes": [],
+      "type": "bandcamp",
+      "direction": "forward",
+      "url": {
+        "resource": "https://radiohead.bandcamp.com/",
+        "id": "146f8bf6-cc29-4317-aae4-459579ebacb2"
+      },
+      "begin": null,
+      "target-credit": "",
+      "type-id": "c550166e-0548-4a18-b1d4-e2ae423a3e88",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": ""
+    },
+    {
+      "type": "bandsintown",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "resource": "https://www.bandsintown.com/a/25874",
+        "id": "3f41e9cc-5cba-4379-ad74-5bf7078c52cf"
+      },
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": false,
+      "type-id": "ea45ed3d-2d5e-456e-8c32-94b6f51426e2",
+      "attribute-ids": {},
+      "end": null
+    },
+    {
+      "begin": null,
+      "url": {
+        "id": "29ac18ae-bf7e-4cc6-9c69-6ccd23ac8e3e",
+        "resource": "https://radiohead.tumblr.com/"
+      },
+      "direction": "forward",
+      "attributes": [],
+      "target-type": "url",
+      "type": "blog",
+      "attribute-ids": {},
+      "end": null,
+      "ended": true,
+      "type-id": "eb535226-f8ca-499d-9b18-6a144df4ae6f",
+      "source-credit": "",
+      "attribute-values": {},
+      "target-credit": ""
+    },
+    {
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": true,
+      "type-id": "4fb0eeec-a6eb-4ae3-ad52-b55765b94e8f",
+      "attribute-ids": {},
+      "end": null,
+      "target-credit": "",
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "id": "1368e9f8-bb88-42f5-975d-1546d3982744",
+        "resource": "http://www.btinternet.com/~r.j.arthur/rh/rhdisc.htm"
+      },
+      "type": "discography page",
+      "target-type": "url",
+      "attributes": []
+    },
+    {
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "04a5b104-a4c2-4bac-99a1-7b837c37d9e4",
+      "ended": false,
+      "target-credit": "",
+      "url": {
+        "resource": "https://www.discogs.com/artist/3840",
+        "id": "f49de6eb-d9db-4474-9406-f3b02ec95b42"
+      },
+      "begin": null,
+      "direction": "forward",
+      "type": "discogs",
+      "attributes": [],
+      "target-type": "url"
+    },
+    {
+      "direction": "forward",
+      "url": {
+        "resource": "https://citizeninsane.eu/",
+        "id": "a4959102-45c2-49af-be06-66978ab1353c"
+      },
+      "begin": null,
+      "target-type": "url",
+      "attributes": [],
+      "type": "fanpage",
+      "type-id": "f484f897-81cc-406e-96f9-cd799a04ee24",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-credit": ""
+    },
+    {
+      "ended": false,
+      "type-id": "769085a1-c2f7-4c24-a532-2375a77693bd",
+      "attribute-ids": {},
+      "end": null,
+      "attribute-values": {},
+      "source-credit": "",
+      "target-credit": "",
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "id": "6e039c97-4476-4ddc-ab54-d226e8db5fb4",
+        "resource": "https://open.spotify.com/artist/4Z8W4fKeB5YxbusRsdQVPb"
+      },
+      "target-type": "url",
+      "attributes": [],
+      "type": "free streaming"
+    },
+    {
+      "target-credit": "",
+      "type-id": "769085a1-c2f7-4c24-a532-2375a77693bd",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "Radiohead",
+      "target-type": "url",
+      "attributes": [],
+      "type": "free streaming",
+      "direction": "forward",
+      "url": {
+        "resource": "https://www.deezer.com/artist/323887691",
+        "id": "f07ef422-6e44-47d0-9b8a-b62dacdff9ed"
+      },
+      "begin": null
+    },
+    {
+      "target-credit": "",
+      "type-id": "769085a1-c2f7-4c24-a532-2375a77693bd",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-type": "url",
+      "attributes": [],
+      "type": "free streaming",
+      "direction": "forward",
+      "url": {
+        "id": "30190b6d-8f53-42f2-8e89-104cbe6c9020",
+        "resource": "https://www.deezer.com/artist/399"
+      },
+      "begin": null
+    },
+    {
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": false,
+      "type-id": "08db8098-c0df-4b78-82c3-c8697b4bba7f",
+      "attribute-ids": {},
+      "end": null,
+      "type": "last.fm",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "resource": "https://www.last.fm/music/Radiohead",
+        "id": "1c7263b7-fda0-41a8-901a-d7c1f1868245"
+      }
+    },
+    {
+      "attributes": [],
+      "target-type": "url",
+      "type": "lyrics",
+      "url": {
+        "id": "ed393d0a-08c9-4073-9258-1ca4850b93a6",
+        "resource": "http://muzikum.eu/en/122-3909/radiohead/lyrics.html"
+      },
+      "begin": null,
+      "direction": "forward",
+      "target-credit": "",
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "e4d73442-3762-45a8-905c-401da65544ed",
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {}
+    },
+    {
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "e4d73442-3762-45a8-905c-401da65544ed",
+      "ended": false,
+      "target-credit": "",
+      "url": {
+        "resource": "https://genius.com/artists/Radiohead",
+        "id": "26134a4b-2d16-4b78-80e5-75731400e11c"
+      },
+      "begin": null,
+      "direction": "forward",
+      "type": "lyrics",
+      "attributes": [],
+      "target-type": "url"
+    },
+    {
+      "type-id": "bac47923-ecde-4b59-822e-d08f0cd10156",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-credit": "",
+      "direction": "forward",
+      "url": {
+        "resource": "https://myspace.com/radiohead",
+        "id": "394f52d1-c7fa-4c20-8130-00760ee1687f"
+      },
+      "begin": null,
+      "target-type": "url",
+      "attributes": [],
+      "type": "myspace"
+    },
+    {
+      "target-type": "url",
+      "attributes": [],
+      "type": "official homepage",
+      "direction": "forward",
+      "url": {
+        "resource": "http://www.radiohead.com/",
+        "id": "3731db81-d717-4658-a7b1-f2ef13c3033b"
+      },
+      "begin": null,
+      "target-credit": "",
+      "type-id": "fe33d22f-c3b0-4d68-bd53-a856badf2b15",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": ""
+    },
+    {
+      "type": "other databases",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "url": {
+        "id": "009b220d-048b-4f25-92d0-bcd895edd5f7",
+        "resource": "https://jaxsta.com/profile/0e8bd208-ea18-4a75-853d-7391f4c715b2"
+      },
+      "begin": null,
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "ended": true,
+      "end": "2025-12-17",
+      "attribute-ids": {}
+    },
+    {
+      "target-credit": "",
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "attributes": [],
+      "target-type": "url",
+      "type": "other databases",
+      "url": {
+        "resource": "http://id.loc.gov/authorities/names/no97045991",
+        "id": "34971dc6-36b4-475d-bb8e-315ae786e59c"
+      },
+      "begin": null,
+      "direction": "forward"
+    },
+    {
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "type": "other databases",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "url": {
+        "id": "576daeb8-fb7d-4935-8f2c-9c8d1429d197",
+        "resource": "http://musicmoz.org/Bands_and_Artists/R/Radiohead/"
+      },
+      "begin": null
+    },
+    {
+      "target-credit": "",
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "source-credit": "",
+      "attribute-values": {},
+      "attributes": [],
+      "target-type": "url",
+      "type": "other databases",
+      "begin": null,
+      "url": {
+        "resource": "http://www.spirit-of-rock.com/groupe-groupe-Radiohead-l-en.html",
+        "id": "6e886796-1f0a-416f-a885-2076b2f4b40e"
+      },
+      "direction": "forward"
+    },
+    {
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "ended": false,
+      "target-credit": "",
+      "url": {
+        "resource": "https://catalogue.bnf.fr/ark:/12148/cb139551041",
+        "id": "40243f8e-2ff5-4430-a3a4-39fb8806ed31"
+      },
+      "begin": null,
+      "direction": "forward",
+      "type": "other databases",
+      "attributes": [],
+      "target-type": "url"
+    },
+    {
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "target-credit": "",
+      "begin": null,
+      "url": {
+        "resource": "https://d-nb.info/gnd/1707341-8",
+        "id": "6cbf54b8-1784-4291-a556-a7964465e5e0"
+      },
+      "direction": "forward",
+      "type": "other databases",
+      "attributes": [],
+      "target-type": "url"
+    },
+    {
+      "target-credit": "",
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-type": "url",
+      "attributes": [],
+      "type": "other databases",
+      "direction": "forward",
+      "url": {
+        "id": "cad9ff22-75db-4764-800e-e7adbfb776d7",
+        "resource": "https://imvdb.com/n/radiohead"
+      },
+      "begin": null
+    },
+    {
+      "type": "other databases",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "resource": "https://rateyourmusic.com/artist/radiohead",
+        "id": "eea480e0-b897-40cc-b4b1-e023479e2a27"
+      },
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": false,
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "attribute-ids": {},
+      "end": null
+    },
+    {
+      "attribute-values": {},
+      "source-credit": "",
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "target-credit": "",
+      "direction": "forward",
+      "url": {
+        "resource": "https://www.45cat.com/artist/radiohead",
+        "id": "c38f3cc3-da8a-46a6-9669-29c648586c5c"
+      },
+      "begin": null,
+      "type": "other databases",
+      "target-type": "url",
+      "attributes": []
+    },
+    {
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "resource": "https://www.idref.fr/069877327",
+        "id": "ae68c37c-06c0-40ae-aa87-e5c34b028bb2"
+      },
+      "target-type": "url",
+      "attributes": [],
+      "type": "other databases",
+      "ended": false,
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "attribute-ids": {},
+      "end": null,
+      "attribute-values": {},
+      "source-credit": "",
+      "target-credit": ""
+    },
+    {
+      "begin": null,
+      "url": {
+        "resource": "https://www.musik-sammler.de/artist/3211/",
+        "id": "4ca78926-53f6-4a16-bbc0-1f9a5882cbfd"
+      },
+      "direction": "forward",
+      "attributes": [],
+      "target-type": "url",
+      "type": "other databases",
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "source-credit": "",
+      "attribute-values": {},
+      "target-credit": ""
+    },
+    {
+      "target-credit": "",
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "attributes": [],
+      "target-type": "url",
+      "type": "other databases",
+      "url": {
+        "id": "38661e80-a14b-46d6-bbda-aa1005cac6d5",
+        "resource": "https://www.progarchives.com/artist.asp?id=1492"
+      },
+      "begin": null,
+      "direction": "forward"
+    },
+    {
+      "target-credit": "",
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-type": "url",
+      "attributes": [],
+      "type": "other databases",
+      "direction": "forward",
+      "url": {
+        "resource": "https://www.whosampled.com/Radiohead/",
+        "id": "63cd6f49-b397-4c95-bdee-af315024bd0b"
+      },
+      "begin": null
+    },
+    {
+      "begin": null,
+      "url": {
+        "resource": "https://ra.co/dj/radiohead",
+        "id": "2b420271-a373-4020-8529-d4bc8c87fe45"
+      },
+      "direction": "forward",
+      "attributes": [],
+      "target-type": "url",
+      "type": "other databases",
+      "attribute-ids": {},
+      "end": null,
+      "ended": true,
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "source-credit": "",
+      "attribute-values": {},
+      "target-credit": ""
+    },
+    {
+      "begin": null,
+      "url": {
+        "resource": "https://www.worldcat.org/identities/lccn-no97045991",
+        "id": "3d9ca3df-7462-454c-9634-b27a069b6eca"
+      },
+      "direction": "forward",
+      "type": "other databases",
+      "attributes": [],
+      "target-type": "url",
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {},
+      "end": null,
+      "ended": true,
+      "type-id": "d94fb61c-fa20-4e3c-a19a-71a949fb2c55",
+      "target-credit": ""
+    },
+    {
+      "attribute-ids": {},
+      "end": "2020-10-12",
+      "ended": true,
+      "type-id": "f8319a2f-f824-4617-81c8-be6560b3b203",
+      "source-credit": "",
+      "attribute-values": {},
+      "target-credit": "",
+      "begin": null,
+      "url": {
+        "id": "30a866a8-cb61-41df-8cd2-44506da6687f",
+        "resource": "https://play.google.com/store/music/artist?id=A3qpbllyfot4yhqo7isoomtctli"
+      },
+      "direction": "forward",
+      "attributes": [],
+      "target-type": "url",
+      "type": "purchase for download"
+    },
+    {
+      "attributes": [],
+      "target-type": "url",
+      "type": "purchase for download",
+      "url": {
+        "resource": "https://music.apple.com/gb/artist/657515",
+        "id": "b7d62bce-c3ab-48dc-b573-33c205667b77"
+      },
+      "begin": null,
+      "direction": "forward",
+      "target-credit": "",
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "f8319a2f-f824-4617-81c8-be6560b3b203",
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {}
+    },
+    {
+      "begin": null,
+      "url": {
+        "resource": "https://open.qobuz.com/artist/43840",
+        "id": "a0aa7955-c642-4180-9d4e-4085024b8796"
+      },
+      "direction": "forward",
+      "type": "purchase for download",
+      "attributes": [],
+      "target-type": "url",
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "f8319a2f-f824-4617-81c8-be6560b3b203",
+      "target-credit": ""
+    },
+    {
+      "target-credit": "",
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "f8319a2f-f824-4617-81c8-be6560b3b203",
+      "ended": false,
+      "type": "purchase for download",
+      "attributes": [],
+      "target-type": "url",
+      "url": {
+        "resource": "https://uk.7digital.com/artist/radiohead/",
+        "id": "e01ea2e5-c67f-4ebb-bd37-10a58bb96c73"
+      },
+      "begin": null,
+      "direction": "forward"
+    },
+    {
+      "target-type": "url",
+      "attributes": [],
+      "type": "purchase for download",
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "resource": "https://www.beatport.com/artist/radiohead/112220",
+        "id": "b511cf6c-c1c1-4762-b956-7e6239b68491"
+      },
+      "target-credit": "",
+      "ended": false,
+      "type-id": "f8319a2f-f824-4617-81c8-be6560b3b203",
+      "attribute-ids": {},
+      "end": null,
+      "attribute-values": {},
+      "source-credit": ""
+    },
+    {
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": false,
+      "type-id": "f8319a2f-f824-4617-81c8-be6560b3b203",
+      "attribute-ids": {},
+      "end": null,
+      "type": "purchase for download",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "id": "8c292bf0-88eb-4f82-a8b5-cd646a304b4d",
+        "resource": "https://www.qobuz.com/us-en/interpreter/radiohead/43840"
+      }
+    },
+    {
+      "target-credit": "",
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {},
+      "end": "2018-06-30",
+      "ended": true,
+      "type-id": "b6f02157-a9d3-4f24-9057-0675b2dbc581",
+      "type": "purevolume",
+      "attributes": [],
+      "target-type": "url",
+      "begin": null,
+      "url": {
+        "resource": "http://www.purevolume.com/radiohead",
+        "id": "48a20b7b-7562-429e-9445-631513c3ec5c"
+      },
+      "direction": "forward"
+    },
+    {
+      "begin": null,
+      "url": {
+        "resource": "https://secondhandsongs.com/artist/2279",
+        "id": "12b0c9db-610d-459c-8f0e-59a15dd75b02"
+      },
+      "direction": "forward",
+      "type": "secondhandsongs",
+      "attributes": [],
+      "target-type": "url",
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "79c5b84d-a206-4f4c-9832-78c028c312c3",
+      "target-credit": ""
+    },
+    {
+      "url": {
+        "id": "8f2eb7f5-62a7-4a1d-944e-2e7a7f218a4b",
+        "resource": "https://www.setlist.fm/setlists/radiohead-bd6bd12.html"
+      },
+      "begin": null,
+      "direction": "forward",
+      "attributes": [],
+      "target-type": "url",
+      "type": "setlistfm",
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "bf5d0d5e-27a1-4e94-9df7-3cdc67b3b207",
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "target-credit": ""
+    },
+    {
+      "end": "2019-04",
+      "attribute-ids": {},
+      "type-id": "99429741-f3f6-484b-84f8-23af51991770",
+      "ended": true,
+      "source-credit": "",
+      "attribute-values": {},
+      "target-credit": "",
+      "url": {
+        "resource": "https://plus.google.com/118195887388913664436",
+        "id": "f866b186-5f45-4e5c-b540-937a2c1499b9"
+      },
+      "begin": null,
+      "direction": "forward",
+      "attributes": [],
+      "target-type": "url",
+      "type": "social network"
+    },
+    {
+      "url": {
+        "id": "73921e0c-9418-4acd-9558-2fe2fad0690b",
+        "resource": "https://twitter.com/radiohead"
+      },
+      "begin": null,
+      "direction": "forward",
+      "type": "social network",
+      "attributes": [],
+      "target-type": "url",
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "99429741-f3f6-484b-84f8-23af51991770",
+      "ended": false,
+      "target-credit": ""
+    },
+    {
+      "target-credit": "",
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "99429741-f3f6-484b-84f8-23af51991770",
+      "ended": false,
+      "type": "social network",
+      "attributes": [],
+      "target-type": "url",
+      "url": {
+        "resource": "https://www.facebook.com/radiohead",
+        "id": "672927f0-2fd2-41e0-aaef-8fc567a5a018"
+      },
+      "begin": null,
+      "direction": "forward"
+    },
+    {
+      "target-type": "url",
+      "attributes": [],
+      "type": "social network",
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "resource": "https://www.instagram.com/radiohead/",
+        "id": "c78b1c08-d005-41e3-ad04-ad23203e2cf5"
+      },
+      "target-credit": "",
+      "ended": false,
+      "type-id": "99429741-f3f6-484b-84f8-23af51991770",
+      "attribute-ids": {},
+      "end": null,
+      "attribute-values": {},
+      "source-credit": ""
+    },
+    {
+      "target-type": "url",
+      "attributes": [],
+      "type": "social network",
+      "direction": "forward",
+      "url": {
+        "id": "b0400b59-1231-4bc6-b368-eceba8f3d10a",
+        "resource": "https://www.tiktok.com/@radiohead"
+      },
+      "begin": null,
+      "target-credit": "",
+      "type-id": "99429741-f3f6-484b-84f8-23af51991770",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": ""
+    },
+    {
+      "attribute-values": {},
+      "source-credit": "",
+      "type-id": "aac9c4bc-a5b9-30b8-9839-e3ac314c6e58",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "target-credit": "",
+      "direction": "forward",
+      "url": {
+        "id": "6697b5fd-df66-4562-a35f-837951b2c2ff",
+        "resource": "https://www.songkick.com/artists/253846"
+      },
+      "begin": null,
+      "type": "songkick",
+      "target-type": "url",
+      "attributes": []
+    },
+    {
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": false,
+      "type-id": "89e4a949-0976-440d-bda1-5f772c1e5710",
+      "attribute-ids": {},
+      "end": null,
+      "type": "soundcloud",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "begin": null,
+      "url": {
+        "id": "c27c627e-8b38-455d-bfde-74ac2ea8d0f8",
+        "resource": "https://soundcloud.com/radiohead"
+      }
+    },
+    {
+      "type": "streaming",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "url": {
+        "resource": "https://music.amazon.co.uk/artists/B000QJXOGC",
+        "id": "0a419c0b-b7cf-465c-a7cf-4dac3ce0048a"
+      },
+      "begin": null,
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "type-id": "63cc5d1f-f096-4c94-a43f-ecb32ea94161",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {}
+    },
+    {
+      "direction": "forward",
+      "url": {
+        "id": "b7d62bce-c3ab-48dc-b573-33c205667b77",
+        "resource": "https://music.apple.com/gb/artist/657515"
+      },
+      "begin": null,
+      "target-type": "url",
+      "attributes": [],
+      "type": "streaming",
+      "type-id": "63cc5d1f-f096-4c94-a43f-ecb32ea94161",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-credit": ""
+    },
+    {
+      "target-credit": "",
+      "attribute-values": {},
+      "source-credit": "",
+      "type-id": "63cc5d1f-f096-4c94-a43f-ecb32ea94161",
+      "ended": false,
+      "end": null,
+      "attribute-ids": {},
+      "type": "streaming",
+      "target-type": "url",
+      "attributes": [],
+      "direction": "forward",
+      "url": {
+        "id": "a0aa7955-c642-4180-9d4e-4085024b8796",
+        "resource": "https://open.qobuz.com/artist/43840"
+      },
+      "begin": null
+    },
+    {
+      "begin": null,
+      "url": {
+        "resource": "https://tidal.com/artist/64518",
+        "id": "76c75fc1-9fe0-4fef-bdd3-cbc6b8dda15b"
+      },
+      "direction": "forward",
+      "attributes": [],
+      "target-type": "url",
+      "type": "streaming",
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "63cc5d1f-f096-4c94-a43f-ecb32ea94161",
+      "source-credit": "",
+      "attribute-values": {},
+      "target-credit": ""
+    },
+    {
+      "target-credit": "",
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "63cc5d1f-f096-4c94-a43f-ecb32ea94161",
+      "type": "streaming",
+      "attributes": [],
+      "target-type": "url",
+      "begin": null,
+      "url": {
+        "id": "8c292bf0-88eb-4f82-a8b5-cd646a304b4d",
+        "resource": "https://www.qobuz.com/us-en/interpreter/radiohead/43840"
+      },
+      "direction": "forward"
+    },
+    {
+      "target-credit": "",
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "0af15ab3-c615-46d6-b95b-a5fcd2a92ed9",
+      "source-credit": "",
+      "attribute-values": {},
+      "attributes": [],
+      "target-type": "url",
+      "type": "vgmdb",
+      "begin": null,
+      "url": {
+        "id": "56499137-ada8-410c-becd-eb3be4d970f2",
+        "resource": "https://vgmdb.net/artist/13395"
+      },
+      "direction": "forward"
+    },
+    {
+      "type-id": "d86c9450-b6d0-4760-a275-e7547495b48b",
+      "ended": true,
+      "end": null,
+      "attribute-ids": {},
+      "attribute-values": {},
+      "source-credit": "",
+      "target-credit": "",
+      "direction": "forward",
+      "url": {
+        "id": "f5f90b02-971b-47a9-876e-89217163ef85",
+        "resource": "https://www.dailymotion.com/Radiohead-vevo"
+      },
+      "begin": null,
+      "target-type": "url",
+      "attributes": [],
+      "type": "video channel"
+    },
+    {
+      "attributes": [],
+      "target-type": "url",
+      "type": "wikidata",
+      "begin": null,
+      "url": {
+        "id": "0d8cb250-f92f-4481-bb00-a0b40391912b",
+        "resource": "https://www.wikidata.org/wiki/Q44190"
+      },
+      "direction": "forward",
+      "target-credit": "",
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "689870a4-a1e4-4912-b17f-7b2664215698",
+      "source-credit": "",
+      "attribute-values": {}
+    },
+    {
+      "target-credit": "",
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "type-id": "6a540e5b-58c6-4192-b6ba-dbc71ec8fcf0",
+      "ended": true,
+      "type": "youtube",
+      "attributes": [],
+      "target-type": "url",
+      "url": {
+        "resource": "https://www.youtube.com/channel/UCq19-LqvG35A-30oyAiPiqA",
+        "id": "22860cdc-8580-47f6-83f1-b635535d83a9"
+      },
+      "begin": null,
+      "direction": "forward"
+    },
+    {
+      "attributes": [],
+      "target-type": "url",
+      "type": "youtube music",
+      "begin": null,
+      "url": {
+        "id": "09b9101a-7cf0-4bc6-8a83-9d3f5275b839",
+        "resource": "https://music.youtube.com/channel/UCr_iyUANcn9OX_yy9piYoLw"
+      },
+      "direction": "forward",
+      "target-credit": "",
+      "attribute-ids": {},
+      "end": null,
+      "ended": false,
+      "type-id": "631712a0-7525-42ba-b7a3-605aa7a238c4",
+      "source-credit": "",
+      "attribute-values": {}
+    }
+  ],
+  "country": "GB",
+  "gender-id": null,
+  "ipis": [],
+  "isnis": [
+    "0000000115475162"
+  ],
+  "sort-name": "Radiohead",
+  "gender": null
+}

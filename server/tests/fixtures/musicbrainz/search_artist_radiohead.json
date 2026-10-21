@@ -1,0 +1,325 @@
+{
+  "created": "2026-10-21T03:29:19.912Z",
+  "count": 31,
+  "offset": 0,
+  "artists": [
+    {
+      "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "type": "Group",
+      "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+      "score": 100,
+      "name": "Radiohead",
+      "sort-name": "Radiohead",
+      "country": "GB",
+      "area": {
+        "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+        "type": "Country",
+        "type-id": "06dd0ae4-8c74-30bb-b43d-95dcedf961de",
+        "name": "United Kingdom",
+        "sort-name": "United Kingdom",
+        "life-span": {
+          "ended": null
+        }
+      },
+      "begin-area": {
+        "id": "d840d4b3-8987-4626-928b-398de760cc24",
+        "type": "City",
+        "type-id": "6fd8f29a-3d0a-32fc-980d-ea697b69da78",
+        "name": "Abingdon-on-Thames",
+        "sort-name": "Abingdon-on-Thames",
+        "life-span": {
+          "ended": null
+        }
+      },
+      "isnis": [
+        "0000000115475162"
+      ],
+      "life-span": {
+        "begin": "1991",
+        "ended": null
+      },
+      "aliases": [
+        {
+          "sort-name": "Radio Head",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Radio Head",
+          "locale": null,
+          "type": "Search hint",
+          "primary": null,
+          "begin-date": null,
+          "end-date": null
+        },
+        {
+          "sort-name": "Radiohead & Thom Yorke",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Radiohead & Thom Yorke",
+          "locale": null,
+          "type": "Search hint",
+          "primary": null,
+          "begin-date": null,
+          "end-date": null
+        },
+        {
+          "sort-name": "れでぃおへっど",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "レディオヘッド",
+          "locale": "ja",
+          "type": "Artist name",
+          "primary": true,
+          "begin-date": null,
+          "end-date": null
+        },
+        {
+          "sort-name": "电台司令",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "电台司令",
+          "locale": "zh",
+          "type": "Artist name",
+          "primary": true,
+          "begin-date": null,
+          "end-date": null
+        },
+        {
+          "sort-name": "r/head",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "r/head",
+          "locale": null,
+          "type": "Search hint",
+          "primary": null,
+          "begin-date": null,
+          "end-date": null
+        },
+        {
+          "sort-name": "Radiohead",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Radiohead",
+          "locale": "en",
+          "type": "Artist name",
+          "primary": true,
+          "begin-date": null,
+          "end-date": null
+        }
+      ],
+      "tags": [
+        {
+          "count": 2,
+          "name": "post-britpop"
+        },
+        {
+          "count": 5,
+          "name": "indie rock"
+        },
+        {
+          "count": 3,
+          "name": "art pop"
+        },
+        {
+          "count": 0,
+          "name": "lolicore"
+        },
+        {
+          "count": 1,
+          "name": "indietronica"
+        },
+        {
+          "count": 0,
+          "name": "new grave"
+        },
+        {
+          "count": 1,
+          "name": "britrock"
+        },
+        {
+          "count": 14,
+          "name": "experimental rock"
+        },
+        {
+          "count": 0,
+          "name": "post-rock"
+        },
+        {
+          "count": 1,
+          "name": "crossover prog"
+        },
+        {
+          "count": 30,
+          "name": "art rock"
+        },
+        {
+          "count": 43,
+          "name": "alternative rock"
+        },
+        {
+          "count": 19,
+          "name": "rock"
+        },
+        {
+          "count": 1,
+          "name": "idm"
+        },
+        {
+          "count": -1,
+          "name": "england"
+        },
+        {
+          "count": 1,
+          "name": "post-grunge"
+        },
+        {
+          "count": 1,
+          "name": "electronic rock"
+        },
+        {
+          "count": 0,
+          "name": "grunge"
+        },
+        {
+          "count": 2,
+          "name": "alternative"
+        },
+        {
+          "count": 3,
+          "name": "experimental"
+        },
+        {
+          "count": 1,
+          "name": "vyrzukhisuc-artiest"
+        },
+        {
+          "count": 1,
+          "name": "ambient pop"
+        },
+        {
+          "count": 0,
+          "name": "parlophone"
+        },
+        {
+          "count": 1,
+          "name": "uk"
+        },
+        {
+          "count": 0,
+          "name": "nude"
+        },
+        {
+          "count": 0,
+          "name": "bootleg"
+        },
+        {
+          "count": 0,
+          "name": "britannique"
+        },
+        {
+          "count": 2,
+          "name": "alternative rock music"
+        },
+        {
+          "count": 2,
+          "name": "progressive rock music"
+        },
+        {
+          "count": 2,
+          "name": "electronica"
+        },
+        {
+          "count": 14,
+          "name": "electronic"
+        },
+        {
+          "count": 1,
+          "name": "english"
+        },
+        {
+          "count": 0,
+          "name": "melancholic"
+        },
+        {
+          "count": 0,
+          "name": "rock and indie"
+        },
+        {
+          "count": -1,
+          "name": "c’était mieux avant"
+        },
+        {
+          "count": 1,
+          "name": "oxford"
+        },
+        {
+          "count": -1,
+          "name": "sacred cows"
+        },
+        {
+          "count": 2,
+          "name": "britpop"
+        },
+        {
+          "count": 14,
+          "name": "british"
+        },
+        {
+          "count": 0,
+          "name": "trap edm"
+        },
+        {
+          "count": -1,
+          "name": "1992-1998"
+        },
+        {
+          "count": 1,
+          "name": "chamber pop"
+        }
+      ]
+    },
+    {
+      "id": "33bfaa56-037f-4f7d-9a0a-c2412c636e56",
+      "score": 65,
+      "name": "Radiohead 2",
+      "sort-name": "Radiohead 2",
+      "life-span": {
+        "ended": null
+      }
+    },
+    {
+      "id": "3ecaa799-94ae-45cd-9ad1-bcabae4073e1",
+      "score": 65,
+      "name": "radiohead 3",
+      "sort-name": "radiohead 3",
+      "disambiguation": "Capsmusic LTD. artist",
+      "life-span": {
+        "ended": null
+      }
+    },
+    {
+      "id": "118b7a68-9249-4f5a-91f4-1fd046c07f8f",
+      "score": 65,
+      "name": "DJ Radiohead",
+      "sort-name": "Radiohead, DJ",
+      "life-span": {
+        "ended": null
+      }
+    },
+    {
+      "id": "0deacafb-9e4f-40ad-ba21-9878ff4ff050",
+      "type": "Group",
+      "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+      "score": 65,
+      "name": "Just Radiohead",
+      "sort-name": "Just Radiohead",
+      "country": "GB",
+      "area": {
+        "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+        "type": "Country",
+        "type-id": "06dd0ae4-8c74-30bb-b43d-95dcedf961de",
+        "name": "United Kingdom",
+        "sort-name": "United Kingdom",
+        "life-span": {
+          "ended": null
+        }
+      },
+      "life-span": {
+        "ended": null
+      }
+    }
+  ]
+}

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use droppedneedle_providers::coverart::{DownloadSize, EntityKind};
 use droppedneedle_providers::executor::ScriptedWire;
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
+use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
 use droppedneedle_providers::{
     PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority,
 };
@@ -42,6 +43,15 @@ enum Provider {
     AudioDbAlbumSearch,
     DiscogsRelease(&'static str),
     DiscogsSearch,
+    MusicBrainzRelease(&'static str, &'static [&'static str]),
+    MusicBrainzReleaseGroup(&'static str, &'static [&'static str]),
+    MusicBrainzArtist(&'static str, &'static [&'static str]),
+    MusicBrainzRecording(&'static str, &'static [&'static str]),
+    MusicBrainzUrl(&'static str, &'static [&'static str]),
+    MusicBrainzArtistSearch(&'static str),
+    MusicBrainzReleaseGroupSearch(&'static str),
+    MusicBrainzReleaseSearch(&'static str, &'static str),
+    MusicBrainzBrowse(&'static str),
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -69,6 +79,47 @@ const COVER_ART_RELEASE_MBID: &str = "30702389-5c67-4438-9ea0-2351c8de0f1d";
 /// take them.
 const AUDIODB_ARTIST_MBID: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
 const AUDIODB_ALBUM_MBID: &str = "b1392450-e666-3926-a536-22c65f834433";
+/// The releases and the artist of the recorded MusicBrainz answers, and the
+/// include sets each was read with.
+const MB_CLASSICAL_RELEASE_MBID: &str = "7ce871a0-34b2-40e0-a77e-39b1268f1f61";
+const MB_POP_RELEASE_MBID: &str = "863644bd-df97-3259-a17c-e0d51a6ffcc0";
+const MB_SAKAMOTO_RELEASE_MBID: &str = "82316878-b6ff-44da-8be3-96c253d36cc7";
+const MB_UTADA_RELEASE_MBID: &str = "d4ed5eba-fa9d-4325-8279-093fccdb4a45";
+const MB_MERGED_ARTIST_MBID: &str = "ffbcb0c1-37ad-4df8-a78d-e31bd590d7ea";
+const MB_RECORDING_MBID: &str = "33ea7e59-3691-4414-92d3-6bce48d5d9cc";
+const MB_OK_COMPUTER_GROUP_MBID: &str = "b1392450-e666-3926-a536-22c65f834433";
+const MB_RADIOHEAD_MBID: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+const MB_RELEASE_INCLUDES: &[&str] = &[
+    "artist-credits",
+    "genres",
+    "isrcs",
+    "labels",
+    "recordings",
+    "release-groups",
+    "url-rels",
+];
+const MB_RELEASE_GROUP_INCLUDES: &[&str] =
+    &["artist-credits", "media", "releases", "tags", "url-rels"];
+const MB_ARTIST_INCLUDES: &[&str] = &["aliases", "tags", "url-rels"];
+const MB_DISCOGS_RELEASE_URL: &str = "https://www.discogs.com/release/249504";
+const MB_URL_INCLUDES: &[&str] = &["release-group-rels", "release-rels"];
+const MB_RELATION_INCLUDES: &[&str] = &[
+    "artist-rels",
+    "recording-level-rels",
+    "recordings",
+    "work-level-rels",
+    "work-rels",
+];
+const MB_NAME_INCLUDES: &[&str] = &["aliases", "artist-credits", "recordings"];
+const MB_NAME_AND_RELATION_INCLUDES: &[&str] = &[
+    "aliases",
+    "artist-credits",
+    "artist-rels",
+    "recording-level-rels",
+    "recordings",
+    "work-level-rels",
+    "work-rels",
+];
 
 /// One recorded answer.
 struct Row {
@@ -79,6 +130,10 @@ struct Row {
     /// A JSON Pointer to the field that identifies the answer. Without it,
     /// decoding fails.
     identity: &'static str,
+    /// The payload kind a missing identity fails as. An answer read whole
+    /// fails as a decode error; a search page reports a hit without its id as
+    /// a contract break.
+    kind: PayloadKind,
 }
 
 const ROWS: &[Row] = &[
@@ -86,211 +141,388 @@ const ROWS: &[Row] = &[
         name: "lrclib /api/get",
         provider: Provider::Lrclib,
         body: include_str!("../fixtures/lrclib/get_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/id",
     },
     Row {
         name: "open-meteo /v1/search, latitude",
         provider: Provider::Geocoding,
         body: include_str!("../fixtures/geocoding/search_liverpool.json"),
+        kind: PayloadKind::Decode,
         identity: "/results/0/latitude",
     },
     Row {
         name: "open-meteo /v1/search, longitude",
         provider: Provider::Geocoding,
         body: include_str!("../fixtures/geocoding/search_liverpool.json"),
+        kind: PayloadKind::Decode,
         identity: "/results/0/longitude",
     },
     Row {
         name: "deezer /search, track id",
         provider: Provider::DeezerTrack,
         body: include_str!("../fixtures/deezer/search_artist.json"),
+        kind: PayloadKind::Decode,
         identity: "/data/0/id",
     },
     Row {
         name: "deezer /search/album, album id",
         provider: Provider::DeezerAlbumSearch,
         body: DEEZER_ALBUM_SEARCH_BODY,
+        kind: PayloadKind::Decode,
         identity: "/data/0/id",
     },
     Row {
         name: "deezer /album/{id}/tracks, track id",
         provider: Provider::DeezerAlbumTracks,
         body: DEEZER_ALBUM_TRACKS_BODY,
+        kind: PayloadKind::Decode,
         identity: "/data/0/id",
     },
     Row {
         name: "deezer /artist/{id}, artist id",
         provider: Provider::DeezerArtist,
         body: include_str!("../fixtures/deezer/artist.json"),
+        kind: PayloadKind::Decode,
         identity: "/id",
     },
     Row {
         name: "wikidata list=search, item id",
         provider: Provider::WikidataSearch,
         body: include_str!("../fixtures/wikidata/search_p434.json"),
+        kind: PayloadKind::Decode,
         identity: "/query/search/0/title",
     },
     Row {
         name: "wikidata wbgetclaims for every property, claims",
         provider: Provider::WikidataPictureClaims,
         body: include_str!("../fixtures/wikidata/claims_all.json"),
+        kind: PayloadKind::Decode,
         identity: "/claims",
     },
     Row {
         name: "itunes /search album, collection id",
         provider: Provider::ItunesAlbum,
         body: include_str!("../fixtures/itunes/search_album.json"),
+        kind: PayloadKind::Decode,
         identity: "/results/0/collectionId",
     },
     Row {
         name: "itunes /search song, track id",
         provider: Provider::ItunesTrack,
         body: include_str!("../fixtures/itunes/search_track.json"),
+        kind: PayloadKind::Decode,
         identity: "/results/0/trackId",
     },
     Row {
         name: "itunes /search song, album tracks, track id",
         provider: Provider::ItunesAlbumTracks,
         body: include_str!("../fixtures/itunes/search_album_tracks.json"),
+        kind: PayloadKind::Decode,
         identity: "/results/0/trackId",
     },
     Row {
         name: "wikidata Special:EntityData, entity id",
         provider: Provider::WikidataEntity,
         body: include_str!("../fixtures/wikidata/entity_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/entities/Q44190/id",
     },
     Row {
         name: "wikidata Special:EntityData, the entity asked for",
         provider: Provider::WikidataEntity,
         body: include_str!("../fixtures/wikidata/entity_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/entities/Q44190",
     },
     Row {
         name: "wikidata wbgetclaims, P18 file name",
         provider: Provider::WikidataClaims,
         body: WIKIDATA_CLAIMS_BODY,
+        kind: PayloadKind::Decode,
         identity: "/claims/P18/0/mainsnak/datavalue/value",
     },
     Row {
         name: "en.wikipedia query extracts, page id",
         provider: Provider::WikipediaExtract,
         body: include_str!("../fixtures/wikidata/extract_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/query/pages/38252/pageid",
     },
     Row {
         name: "commons imageinfo, file url",
         provider: Provider::CommonsImage,
         body: include_str!("../fixtures/wikidata/commons_imageinfo_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/query/pages/179695193/imageinfo/0/url",
     },
     Row {
         name: "wikidata Special:EntityData, redirected id, the target entity",
         provider: Provider::WikidataRedirect,
         body: include_str!("../fixtures/wikidata/entity_redirect.json"),
+        kind: PayloadKind::Decode,
         identity: "/entities/Q1",
     },
     Row {
         name: "github /repos/{owner}/{repo}/releases, tag name",
         provider: Provider::GithubReleases,
         body: include_str!("../fixtures/github/releases_list.json"),
+        kind: PayloadKind::Decode,
         identity: "/0/tag_name",
     },
     Row {
         name: "coverartarchive /release/{mbid}, image list",
         provider: Provider::CoverArtRelease,
         body: include_str!("../fixtures/coverartarchive/release_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/images",
     },
     Row {
         name: "coverartarchive /release/{mbid}, image id",
         provider: Provider::CoverArtRelease,
         body: include_str!("../fixtures/coverartarchive/release_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/images/0/id",
     },
     Row {
         name: "coverartarchive /release-group/{mbid}, image list",
         provider: Provider::CoverArtReleaseGroup,
         body: include_str!("../fixtures/coverartarchive/release_group_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/images",
     },
     Row {
         name: "coverartarchive /release-group/{mbid}, image id",
         provider: Provider::CoverArtReleaseGroup,
         body: include_str!("../fixtures/coverartarchive/release_group_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/images/0/id",
     },
     Row {
         name: "audiodb /artist-mb.php, artist list",
         provider: Provider::AudioDbArtistMbid,
         body: include_str!("../fixtures/audiodb/artist_mb_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/artists",
     },
     Row {
         name: "audiodb /artist-mb.php, artist id",
         provider: Provider::AudioDbArtistMbid,
         body: include_str!("../fixtures/audiodb/artist_mb_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/artists/0/idArtist",
     },
     Row {
         name: "audiodb /album-mb.php, album list",
         provider: Provider::AudioDbAlbumMbid,
         body: include_str!("../fixtures/audiodb/album_mb_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/album",
     },
     Row {
         name: "audiodb /album-mb.php, album id",
         provider: Provider::AudioDbAlbumMbid,
         body: include_str!("../fixtures/audiodb/album_mb_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/album/0/idAlbum",
     },
     Row {
         name: "audiodb /search.php, artist list",
         provider: Provider::AudioDbArtistSearch,
         body: include_str!("../fixtures/audiodb/search_artist_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/artists",
     },
     Row {
         name: "audiodb /search.php, artist id",
         provider: Provider::AudioDbArtistSearch,
         body: include_str!("../fixtures/audiodb/search_artist_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/artists/0/idArtist",
     },
     Row {
         name: "audiodb /searchalbum.php, album list",
         provider: Provider::AudioDbAlbumSearch,
         body: include_str!("../fixtures/audiodb/search_album_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/album",
     },
     Row {
         name: "audiodb /searchalbum.php, album id",
         provider: Provider::AudioDbAlbumSearch,
         body: include_str!("../fixtures/audiodb/search_album_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/album/0/idAlbum",
     },
     Row {
         name: "discogs /releases/{id}, release id (7 inch)",
         provider: Provider::DiscogsRelease("249504"),
         body: include_str!("../fixtures/discogs/release_249504.json"),
+        kind: PayloadKind::Decode,
         identity: "/id",
     },
     Row {
         name: "discogs /releases/{id}, release id (CD with index rows)",
         provider: Provider::DiscogsRelease("3562468"),
         body: include_str!("../fixtures/discogs/release_3562468.json"),
+        kind: PayloadKind::Decode,
         identity: "/id",
     },
     Row {
         name: "discogs /database/search, hit list",
         provider: Provider::DiscogsSearch,
         body: include_str!("../fixtures/discogs/search_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/results",
     },
     Row {
         name: "discogs /database/search, hit id",
         provider: Provider::DiscogsSearch,
         body: include_str!("../fixtures/discogs/search_found.json"),
+        kind: PayloadKind::Decode,
         identity: "/results/0/id",
+    },
+    Row {
+        name: "musicbrainz /release/{mbid}, release id (relations, classical)",
+        provider: Provider::MusicBrainzRelease(MB_CLASSICAL_RELEASE_MBID, MB_RELATION_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/release_relations_classical.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /release/{mbid}, release id (relations, pop)",
+        provider: Provider::MusicBrainzRelease(MB_POP_RELEASE_MBID, MB_RELATION_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/release_relations_pop.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /release/{mbid}, artist id (names, Sakamoto)",
+        provider: Provider::MusicBrainzRelease(MB_SAKAMOTO_RELEASE_MBID, MB_NAME_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/release_names_sakamoto.json"),
+        kind: PayloadKind::Decode,
+        identity: "/artist-credit/0/artist/id",
+    },
+    Row {
+        name: "musicbrainz /release/{mbid}, release id (names, Utada)",
+        provider: Provider::MusicBrainzRelease(MB_UTADA_RELEASE_MBID, MB_NAME_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/release_names_utada.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /release/{mbid}, recording id (names and relations, classical)",
+        provider: Provider::MusicBrainzRelease(
+            MB_CLASSICAL_RELEASE_MBID,
+            MB_NAME_AND_RELATION_INCLUDES,
+        ),
+        body: include_str!("../fixtures/musicbrainz/release_names_classical.json"),
+        kind: PayloadKind::Decode,
+        identity: "/media/0/tracks/0/recording/id",
+    },
+    Row {
+        name: "musicbrainz /artist/{mbid}, artist id (merge target)",
+        provider: Provider::MusicBrainzArtist(MB_MERGED_ARTIST_MBID, &[]),
+        body: include_str!("../fixtures/musicbrainz/artist_merged_canonical.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /release/{mbid}, release id (all release includes, classical)",
+        provider: Provider::MusicBrainzRelease(MB_CLASSICAL_RELEASE_MBID, MB_RELEASE_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/release_lookup_classical.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /release/{mbid}, release group id (all release includes, classical)",
+        provider: Provider::MusicBrainzRelease(MB_CLASSICAL_RELEASE_MBID, MB_RELEASE_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/release_lookup_classical.json"),
+        kind: PayloadKind::Decode,
+        identity: "/release-group/id",
+    },
+    Row {
+        name: "musicbrainz /release/{mbid}, recording id (all release includes, classical)",
+        provider: Provider::MusicBrainzRelease(MB_CLASSICAL_RELEASE_MBID, MB_RELEASE_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/release_lookup_classical.json"),
+        kind: PayloadKind::Decode,
+        identity: "/media/0/tracks/0/recording/id",
+    },
+    Row {
+        name: "musicbrainz /recording/{mbid}, recording id (url relations)",
+        provider: Provider::MusicBrainzRecording(MB_RECORDING_MBID, &["url-rels"]),
+        body: include_str!("../fixtures/musicbrainz/recording_lookup_url_rels.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /recording/{mbid}, recording id (no include)",
+        provider: Provider::MusicBrainzRecording(MB_RECORDING_MBID, &[]),
+        body: include_str!("../fixtures/musicbrainz/recording_lookup_plain.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /release-group/{mbid}, release group id (all release group includes)",
+        provider: Provider::MusicBrainzReleaseGroup(
+            MB_OK_COMPUTER_GROUP_MBID,
+            MB_RELEASE_GROUP_INCLUDES,
+        ),
+        body: include_str!("../fixtures/musicbrainz/release_group_lookup_ok_computer.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /release-group/{mbid}, release id (listed releases)",
+        provider: Provider::MusicBrainzReleaseGroup(
+            MB_OK_COMPUTER_GROUP_MBID,
+            MB_RELEASE_GROUP_INCLUDES,
+        ),
+        body: include_str!("../fixtures/musicbrainz/release_group_lookup_ok_computer.json"),
+        kind: PayloadKind::Decode,
+        identity: "/releases/0/id",
+    },
+    Row {
+        name: "musicbrainz /artist/{mbid}, artist id (aliases, tags, url relations)",
+        provider: Provider::MusicBrainzArtist(MB_RADIOHEAD_MBID, MB_ARTIST_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/artist_lookup_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
+        name: "musicbrainz /url, release id (Discogs release URL, release relations)",
+        provider: Provider::MusicBrainzUrl(MB_DISCOGS_RELEASE_URL, MB_URL_INCLUDES),
+        body: include_str!("../fixtures/musicbrainz/url_lookup_discogs_release.json"),
+        kind: PayloadKind::Decode,
+        identity: "/relations/0/release/id",
+    },
+    Row {
+        name: "musicbrainz /artist, search hit id (text)",
+        provider: Provider::MusicBrainzArtistSearch("Radiohead"),
+        body: include_str!("../fixtures/musicbrainz/search_artist_radiohead.json"),
+        kind: PayloadKind::Contract,
+        identity: "/artists/0/id",
+    },
+    Row {
+        name: "musicbrainz /release-group, search hit id (text)",
+        provider: Provider::MusicBrainzReleaseGroupSearch("OK Computer"),
+        body: include_str!("../fixtures/musicbrainz/search_release_group_ok_computer.json"),
+        kind: PayloadKind::Contract,
+        identity: "/release-groups/0/id",
+    },
+    Row {
+        name: "musicbrainz /release, search hit id (title and artist)",
+        provider: Provider::MusicBrainzReleaseSearch("OK Computer", "Radiohead"),
+        body: include_str!("../fixtures/musicbrainz/search_release_ok_computer.json"),
+        kind: PayloadKind::Contract,
+        identity: "/releases/0/id",
+    },
+    Row {
+        name: "musicbrainz /release-group?artist, release group id (browse)",
+        provider: Provider::MusicBrainzBrowse(MB_RADIOHEAD_MBID),
+        body: include_str!("../fixtures/musicbrainz/browse_release_groups_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/release-groups/0/id",
     },
 ];
 
@@ -554,6 +786,87 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .await?;
             Ok(!candidates.is_empty())
         }
+        Provider::MusicBrainzRelease(mbid, includes) => {
+            let providers = musicbrainz_answer(&format!("/release/{mbid}"), body);
+            let release = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .lookup_release(mbid, includes, Criticality::IdentityCritical)
+                .await?;
+            Ok(release.is_some())
+        }
+        Provider::MusicBrainzReleaseGroup(mbid, includes) => {
+            let providers = musicbrainz_answer(&format!("/release-group/{mbid}"), body);
+            let group = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .lookup_release_group(mbid, includes, Criticality::IdentityCritical)
+                .await?;
+            Ok(group.is_some())
+        }
+        Provider::MusicBrainzArtist(mbid, includes) => {
+            let providers = musicbrainz_answer(&format!("/artist/{mbid}"), body);
+            let artist = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .lookup_artist(mbid, includes, Criticality::IdentityCritical)
+                .await?;
+            Ok(artist.is_some())
+        }
+        Provider::MusicBrainzRecording(mbid, includes) => {
+            let providers = musicbrainz_answer(&format!("/recording/{mbid}"), body);
+            let recording = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .lookup_recording(mbid, includes, Criticality::IdentityCritical)
+                .await?;
+            Ok(recording.is_some())
+        }
+        Provider::MusicBrainzUrl(resource, includes) => {
+            let providers = musicbrainz_answer("/url", body);
+            let resolution = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .resolve_url(resource, includes, Criticality::IdentityCritical)
+                .await?;
+            Ok(!resolution.relations.is_empty())
+        }
+        Provider::MusicBrainzArtistSearch(text) => {
+            let providers = musicbrainz_answer("/artist", body);
+            let page = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .search_artists_text(text, 5, 0, Criticality::IdentityCritical)
+                .await?;
+            Ok(!page.items.is_empty())
+        }
+        Provider::MusicBrainzReleaseGroupSearch(text) => {
+            let providers = musicbrainz_answer("/release-group", body);
+            let page = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .search_release_groups_text(text, 5, 0, Criticality::IdentityCritical)
+                .await?;
+            Ok(!page.items.is_empty())
+        }
+        Provider::MusicBrainzReleaseSearch(title, artist) => {
+            let providers = musicbrainz_answer("/release", body);
+            let page = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .search_releases(title, artist, 5, Criticality::IdentityCritical)
+                .await?;
+            Ok(!page.items.is_empty())
+        }
+        Provider::MusicBrainzBrowse(artist) => {
+            let providers = musicbrainz_answer("/release-group", body);
+            let page = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .browse_artist_release_groups(artist, 5, 0, Criticality::IdentityCritical)
+                .await?;
+            Ok(!page.items.is_empty())
+        }
     }
 }
 
@@ -658,6 +971,25 @@ fn wikidata_answers(answers: &[(&str, &str)]) -> Providers {
     )
 }
 
+/// Serves `body` from the MusicBrainz address for `path` and returns the
+/// providers that read it.
+fn musicbrainz_answer(path: &str, body: &str) -> Providers {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{}{path}", musicbrainz::MB_API_BASE),
+        200,
+        &[],
+        body.as_bytes().to_vec(),
+    );
+    Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    )
+}
+
 #[tokio::test]
 async fn recorded_answers_decode_and_need_their_identity() {
     for row in ROWS {
@@ -680,16 +1012,11 @@ async fn recorded_answers_decode_and_need_their_identity() {
             .await
             .expect_err(row.name);
         assert!(
-            matches!(
-                error,
-                ProviderError::Payload {
-                    kind: PayloadKind::Decode,
-                    ..
-                }
-            ),
-            "{}: without `{}` the answer must fail decoding: {error:?}",
+            matches!(&error, ProviderError::Payload { kind, .. } if *kind == row.kind),
+            "{}: without `{}` the answer must fail as {:?}: {error:?}",
             row.name,
-            row.identity
+            row.identity,
+            row.kind
         );
     }
 }

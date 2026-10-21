@@ -1,0 +1,131 @@
+{
+  "release-groups": [
+    {
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "id": "9c5abe48-3918-40e9-84da-c843d147da4a",
+      "primary-type": "Album",
+      "title": "Radiotick Tracks 2",
+      "disambiguation": "",
+      "first-release-date": "1997",
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "joinphrase": "",
+          "artist": {
+            "country": "GB",
+            "disambiguation": "",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "name": "Radiohead",
+            "type": "Group",
+            "sort-name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          }
+        }
+      ]
+    },
+    {
+      "title": "OK Computer",
+      "disambiguation": "",
+      "first-release-date": "1997-05-21",
+      "artist-credit": [
+        {
+          "joinphrase": "",
+          "name": "Radiohead",
+          "artist": {
+            "name": "Radiohead",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "disambiguation": "",
+            "country": "GB",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "sort-name": "Radiohead",
+            "type": "Group"
+          }
+        }
+      ],
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "id": "b1392450-e666-3926-a536-22c65f834433",
+      "primary-type": "Album"
+    },
+    {
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "joinphrase": "",
+          "artist": {
+            "country": "GB",
+            "disambiguation": "",
+            "name": "Radiohead",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "type": "Group",
+            "sort-name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          }
+        }
+      ],
+      "first-release-date": "1994-11-29",
+      "disambiguation": "",
+      "title": "The Bends",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "id": "b8048f24-c026-3398-b23a-b5e50716cbc7",
+      "secondary-type-ids": [],
+      "secondary-types": []
+    },
+    {
+      "artist-credit": [
+        {
+          "artist": {
+            "country": "GB",
+            "name": "Radiohead",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "type": "Group"
+          },
+          "joinphrase": "",
+          "name": "Radiohead"
+        }
+      ],
+      "first-release-date": "1993-02-22",
+      "disambiguation": "",
+      "title": "Pablo Honey",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "id": "cd76f76b-ff15-3784-a71d-4da3078a6851",
+      "secondary-types": [],
+      "secondary-type-ids": []
+    },
+    {
+      "artist-credit": [
+        {
+          "artist": {
+            "type": "Group",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "sort-name": "Radiohead",
+            "country": "GB",
+            "disambiguation": "",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "name": "Radiohead"
+          },
+          "name": "Radiohead",
+          "joinphrase": ""
+        }
+      ],
+      "first-release-date": "2000-08-03",
+      "disambiguation": "",
+      "title": "Kid A",
+      "primary-type": "Album",
+      "id": "e75c0549-ad55-39e3-8025-c72c5d4a3c5d",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-types": [],
+      "secondary-type-ids": []
+    }
+  ],
+  "release-group-offset": 0,
+  "release-group-count": 587
+}

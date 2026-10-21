@@ -1,0 +1,5136 @@
+{
+  "relations": [
+    {
+      "attribute-values": {},
+      "type-id": "a50a1d20-2b20-4d2c-9a29-eb771dd78386",
+      "target-type": "url",
+      "url": {
+        "resource": "https://www.allmusic.com/album/mw0000024289",
+        "id": "11137828-3d75-4801-9753-6e213d8f4c67"
+      },
+      "end": null,
+      "target-credit": "",
+      "attribute-ids": {},
+      "source-credit": "",
+      "direction": "forward",
+      "type": "allmusic",
+      "attributes": [],
+      "ended": false,
+      "begin": null
+    },
+    {
+      "type-id": "5849de4a-78ae-4876-975d-2181107e70b7",
+      "attribute-values": {},
+      "end": null,
+      "url": {
+        "id": "c0bccb62-988a-46a7-b0ee-54354088467f",
+        "resource": "https://www.last.fm/music/Radiohead/OK+Computer"
+      },
+      "target-type": "url",
+      "type": "discography entry",
+      "direction": "forward",
+      "source-credit": "",
+      "target-credit": "",
+      "attribute-ids": {},
+      "begin": null,
+      "ended": false,
+      "attributes": []
+    },
+    {
+      "attribute-ids": {},
+      "target-credit": "",
+      "direction": "forward",
+      "source-credit": "",
+      "type": "discogs",
+      "ended": false,
+      "attributes": [],
+      "begin": null,
+      "attribute-values": {},
+      "type-id": "99e550f3-5ab4-3110-b5b9-fe01d970b126",
+      "target-type": "url",
+      "url": {
+        "resource": "https://www.discogs.com/master/21491",
+        "id": "56db613c-e663-4f15-bc41-d00f47ebff73"
+      },
+      "end": null
+    },
+    {
+      "type": "lyrics",
+      "direction": "forward",
+      "source-credit": "",
+      "attribute-ids": {},
+      "target-credit": "",
+      "begin": null,
+      "ended": false,
+      "attributes": [],
+      "type-id": "156344d3-da8b-40c6-8b10-7b1c22727124",
+      "attribute-values": {},
+      "end": null,
+      "url": {
+        "resource": "https://genius.com/albums/Radiohead/Ok-computer",
+        "id": "a4dfc85f-c718-412e-8598-a1f14392b7b8"
+      },
+      "target-type": "url"
+    },
+    {
+      "type-id": "38320e40-9f4a-3ae7-8cb2-3f3c9c5d856d",
+      "attribute-values": {},
+      "end": null,
+      "url": {
+        "id": "c549a010-8991-41b7-8b65-beb948fa9e2f",
+        "resource": "http://musicmoz.org/Bands_and_Artists/R/Radiohead/Discography/OK_Computer/"
+      },
+      "target-type": "url",
+      "type": "other databases",
+      "source-credit": "",
+      "direction": "forward",
+      "target-credit": "",
+      "attribute-ids": {},
+      "begin": null,
+      "ended": false,
+      "attributes": []
+    },
+    {
+      "direction": "forward",
+      "source-credit": "",
+      "target-credit": "",
+      "attribute-ids": {},
+      "type": "other databases",
+      "ended": false,
+      "attributes": [],
+      "begin": null,
+      "attribute-values": {},
+      "type-id": "38320e40-9f4a-3ae7-8cb2-3f3c9c5d856d",
+      "url": {
+        "id": "9ca7c985-00b8-40a9-a9a9-a9cbaf4a305f",
+        "resource": "http://www.musik-sammler.de/album/30875"
+      },
+      "target-type": "url",
+      "end": null
+    },
+    {
+      "ended": false,
+      "attributes": [],
+      "begin": null,
+      "attribute-ids": {},
+      "target-credit": "",
+      "source-credit": "",
+      "direction": "forward",
+      "type": "other databases",
+      "target-type": "url",
+      "url": {
+        "id": "826b133b-5bec-4d59-bf68-a0e77982c6a0",
+        "resource": "https://rateyourmusic.com/release/album/radiohead/ok_computer/"
+      },
+      "end": null,
+      "attribute-values": {},
+      "type-id": "38320e40-9f4a-3ae7-8cb2-3f3c9c5d856d"
+    },
+    {
+      "target-credit": "",
+      "attribute-ids": {},
+      "direction": "forward",
+      "source-credit": "",
+      "type": "other databases",
+      "attributes": [],
+      "ended": false,
+      "begin": null,
+      "attribute-values": {},
+      "type-id": "38320e40-9f4a-3ae7-8cb2-3f3c9c5d856d",
+      "target-type": "url",
+      "url": {
+        "id": "96b97a44-0615-4afa-9330-1ef5282927c0",
+        "resource": "https://www.offiziellecharts.de/charts/album-details-2562"
+      },
+      "end": null
+    },
+    {
+      "end": null,
+      "url": {
+        "id": "2bd72cef-77aa-404d-8018-a07c1ced59d3",
+        "resource": "https://www.progarchives.com/album.asp?id=7066"
+      },
+      "target-type": "url",
+      "type-id": "38320e40-9f4a-3ae7-8cb2-3f3c9c5d856d",
+      "attribute-values": {},
+      "begin": null,
+      "ended": false,
+      "attributes": [],
+      "type": "other databases",
+      "direction": "forward",
+      "source-credit": "",
+      "attribute-ids": {},
+      "target-credit": ""
+    },
+    {
+      "type": "other databases",
+      "attribute-ids": {},
+      "target-credit": "",
+      "source-credit": "",
+      "direction": "forward",
+      "begin": null,
+      "ended": false,
+      "attributes": [],
+      "type-id": "38320e40-9f4a-3ae7-8cb2-3f3c9c5d856d",
+      "attribute-values": {},
+      "end": null,
+      "target-type": "url",
+      "url": {
+        "resource": "https://www.spirit-of-rock.com/en/album/OK_Computer/3113",
+        "id": "c5754006-635d-4a4d-a4a4-1fa88842bb76"
+      }
+    },
+    {
+      "source-credit": "",
+      "direction": "forward",
+      "target-credit": "",
+      "attribute-ids": {},
+      "type": "review",
+      "attributes": [],
+      "ended": false,
+      "begin": null,
+      "attribute-values": {},
+      "type-id": "c3ac9c3b-f546-4d15-873f-b294d2c1b708",
+      "url": {
+        "resource": "http://articles.chicagotribune.com/1997-07-04/entertainment/9707040186_1_ambition-ugly-star",
+        "id": "12fc103b-e397-4370-9d3c-1cf290d2c4fa"
+      },
+      "target-type": "url",
+      "end": null
+    },
+    {
+      "type-id": "c3ac9c3b-f546-4d15-873f-b294d2c1b708",
+      "attribute-values": {},
+      "end": null,
+      "target-type": "url",
+      "url": {
+        "resource": "http://content.time.com/time/magazine/article/0,9171,986902,00.html",
+        "id": "2654ebf2-896e-4a24-ae85-3c7eee906f83"
+      },
+      "type": "review",
+      "attribute-ids": {},
+      "target-credit": "",
+      "source-credit": "",
+      "direction": "forward",
+      "begin": null,
+      "attributes": [],
+      "ended": false
+    },
+    {
+      "begin": null,
+      "ended": false,
+      "attributes": [],
+      "type": "review",
+      "direction": "forward",
+      "source-credit": "",
+      "target-credit": "",
+      "attribute-ids": {},
+      "end": null,
+      "url": {
+        "id": "938be333-5275-4201-bfc6-feb7b7bd6635",
+        "resource": "http://web.archive.org/web/20010303103405/www.pitchforkmedia.com/record-reviews/r/radiohead/ok-computer.shtml"
+      },
+      "target-type": "url",
+      "type-id": "c3ac9c3b-f546-4d15-873f-b294d2c1b708",
+      "attribute-values": {}
+    },
+    {
+      "end": null,
+      "url": {
+        "id": "ff1be385-cae3-4d32-81e4-a2040ab29904",
+        "resource": "http://www.ew.com/ew/article/0,,20202376,00.html"
+      },
+      "target-type": "url",
+      "type-id": "c3ac9c3b-f546-4d15-873f-b294d2c1b708",
+      "attribute-values": {},
+      "begin": null,
+      "ended": false,
+      "attributes": [],
+      "type": "review",
+      "direction": "forward",
+      "source-credit": "",
+      "target-credit": "",
+      "attribute-ids": {}
+    },
+    {
+      "attribute-ids": {},
+      "target-credit": "",
+      "source-credit": "",
+      "direction": "forward",
+      "type": "review",
+      "ended": false,
+      "attributes": [],
+      "begin": null,
+      "attribute-values": {},
+      "type-id": "c3ac9c3b-f546-4d15-873f-b294d2c1b708",
+      "target-type": "url",
+      "url": {
+        "id": "057bf38d-02c8-4c36-b729-d38d83c560a8",
+        "resource": "http://www.inmusicwetrust.com/articles/01r36.html"
+      },
+      "end": null
+    },
+    {
+      "ended": false,
+      "attributes": [],
+      "begin": null,
+      "direction": "forward",
+      "source-credit": "",
+      "attribute-ids": {},
+      "target-credit": "",
+      "type": "review",
+      "url": {
+        "resource": "https://www.bbc.co.uk/music/reviews/wcp2",
+        "id": "cd7038be-dfe8-4260-bab4-71011d50f8dd"
+      },
+      "target-type": "url",
+      "end": null,
+      "attribute-values": {},
+      "type-id": "c3ac9c3b-f546-4d15-873f-b294d2c1b708"
+    },
+    {
+      "attributes": [],
+      "ended": false,
+      "begin": null,
+      "source-credit": "",
+      "direction": "forward",
+      "attribute-ids": {},
+      "target-credit": "",
+      "type": "wikidata",
+      "url": {
+        "id": "d27dd960-9b18-44a0-9bb4-1fa53f58e33e",
+        "resource": "https://www.wikidata.org/wiki/Q202996"
+      },
+      "target-type": "url",
+      "end": null,
+      "attribute-values": {},
+      "type-id": "b988d08c-5d86-4a57-9557-c83b399e3580"
+    }
+  ],
+  "tags": [
+    {
+      "count": 1,
+      "name": "1997"
+    },
+    {
+      "name": "5+ wochen",
+      "count": 2
+    },
+    {
+      "count": 1,
+      "name": "acoustic"
+    },
+    {
+      "name": "alienation",
+      "count": 2
+    },
+    {
+      "name": "alt rock",
+      "count": 1
+    },
+    {
+      "name": "alternative",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "alternative & punk"
+    },
+    {
+      "name": "alternative and punk",
+      "count": 2
+    },
+    {
+      "count": 1,
+      "name": "alternative pop/rock"
+    },
+    {
+      "name": "alternative rock",
+      "count": 27
+    },
+    {
+      "name": "alternative/indie",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "alternative/indie rock"
+    },
+    {
+      "name": "anti-authoritarian",
+      "count": 1
+    },
+    {
+      "name": "anticonsumerism",
+      "count": 1
+    },
+    {
+      "count": 2,
+      "name": "anxious"
+    },
+    {
+      "count": 15,
+      "name": "art rock"
+    },
+    {
+      "name": "atmospheric",
+      "count": 4
+    },
+    {
+      "count": 1,
+      "name": "brit rock"
+    },
+    {
+      "name": "britannique",
+      "count": 1
+    },
+    {
+      "name": "british",
+      "count": 1
+    },
+    {
+      "name": "britpop",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "britrock"
+    },
+    {
+      "count": 1,
+      "name": "cd"
+    },
+    {
+      "count": 3,
+      "name": "cold"
+    },
+    {
+      "name": "contemporary rock",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "cynical"
+    },
+    {
+      "name": "dense",
+      "count": 1
+    },
+    {
+      "name": "depressive",
+      "count": 1
+    },
+    {
+      "name": "discogs/the most popular album released every year from 1950 to 2020",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "dystopian"
+    },
+    {
+      "name": "electronic",
+      "count": 2
+    },
+    {
+      "name": "english",
+      "count": 2
+    },
+    {
+      "count": 3,
+      "name": "existential"
+    },
+    {
+      "name": "experimental",
+      "count": 3
+    },
+    {
+      "count": 2,
+      "name": "experimental rock"
+    },
+    {
+      "name": "falsetto",
+      "count": 1
+    },
+    {
+      "name": "futuristic",
+      "count": 3
+    },
+    {
+      "name": "i own this",
+      "count": 1
+    },
+    {
+      "count": 2,
+      "name": "indie rock"
+    },
+    {
+      "count": 1,
+      "name": "insecure"
+    },
+    {
+      "count": 1,
+      "name": "introspective"
+    },
+    {
+      "name": "leftfield",
+      "count": 2
+    },
+    {
+      "count": 3,
+      "name": "lonely"
+    },
+    {
+      "count": 1,
+      "name": "longing"
+    },
+    {
+      "name": "male vocalist",
+      "count": 1
+    },
+    {
+      "count": 3,
+      "name": "melancholic"
+    },
+    {
+      "name": "melodic",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "mental health"
+    },
+    {
+      "name": "neo-psychedelia",
+      "count": 1
+    },
+    {
+      "name": "nihilistic",
+      "count": 2
+    },
+    {
+      "name": "offizielle charts",
+      "count": 2
+    },
+    {
+      "name": "owned",
+      "count": 1
+    },
+    {
+      "name": "paranoia",
+      "count": 1
+    },
+    {
+      "name": "passionate",
+      "count": 1
+    },
+    {
+      "name": "pessimistic",
+      "count": 1
+    },
+    {
+      "name": "poetic",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "political"
+    },
+    {
+      "count": 2,
+      "name": "pop rock"
+    },
+    {
+      "count": 1,
+      "name": "pop/rock"
+    },
+    {
+      "count": 1,
+      "name": "poprock"
+    },
+    {
+      "count": 4,
+      "name": "post-britpop"
+    },
+    {
+      "count": 1,
+      "name": "progressive"
+    },
+    {
+      "name": "rock",
+      "count": 13
+    },
+    {
+      "name": "rock and indie",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "rock/alternative rock"
+    },
+    {
+      "count": 1,
+      "name": "sad"
+    },
+    {
+      "count": 1,
+      "name": "sarcastic"
+    },
+    {
+      "name": "serious",
+      "count": 1
+    },
+    {
+      "count": 3,
+      "name": "space rock revival"
+    },
+    {
+      "name": "technology",
+      "count": 1
+    },
+    {
+      "count": 1,
+      "name": "travel"
+    },
+    {
+      "count": 1,
+      "name": "uk"
+    },
+    {
+      "count": 1,
+      "name": "urban"
+    },
+    {
+      "count": 1,
+      "name": "vyrzukhisuc-album"
+    }
+  ],
+  "secondary-type-ids": [],
+  "artist-credit": [
+    {
+      "name": "Radiohead",
+      "joinphrase": "",
+      "artist": {
+        "country": "GB",
+        "name": "Radiohead",
+        "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+        "tags": [
+          {
+            "name": "alternative",
+            "count": 2
+          },
+          {
+            "name": "alternative rock",
+            "count": 43
+          },
+          {
+            "count": 2,
+            "name": "alternative rock music"
+          },
+          {
+            "name": "ambient pop",
+            "count": 1
+          },
+          {
+            "count": 3,
+            "name": "art pop"
+          },
+          {
+            "count": 30,
+            "name": "art rock"
+          },
+          {
+            "count": 14,
+            "name": "british"
+          },
+          {
+            "name": "britpop",
+            "count": 2
+          },
+          {
+            "count": 1,
+            "name": "britrock"
+          },
+          {
+            "count": 1,
+            "name": "chamber pop"
+          },
+          {
+            "name": "crossover prog",
+            "count": 1
+          },
+          {
+            "name": "electronic",
+            "count": 14
+          },
+          {
+            "count": 1,
+            "name": "electronic rock"
+          },
+          {
+            "count": 2,
+            "name": "electronica"
+          },
+          {
+            "name": "english",
+            "count": 1
+          },
+          {
+            "name": "experimental",
+            "count": 3
+          },
+          {
+            "name": "experimental rock",
+            "count": 14
+          },
+          {
+            "name": "idm",
+            "count": 1
+          },
+          {
+            "count": 5,
+            "name": "indie rock"
+          },
+          {
+            "name": "indietronica",
+            "count": 1
+          },
+          {
+            "name": "oxford",
+            "count": 1
+          },
+          {
+            "count": 2,
+            "name": "post-britpop"
+          },
+          {
+            "name": "post-grunge",
+            "count": 1
+          },
+          {
+            "count": 2,
+            "name": "progressive rock music"
+          },
+          {
+            "name": "rock",
+            "count": 19
+          },
+          {
+            "name": "uk",
+            "count": 1
+          },
+          {
+            "count": 1,
+            "name": "vyrzukhisuc-artiest"
+          }
+        ],
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "type": "Group",
+        "disambiguation": "",
+        "sort-name": "Radiohead"
+      }
+    }
+  ],
+  "id": "b1392450-e666-3926-a536-22c65f834433",
+  "title": "OK Computer",
+  "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+  "disambiguation": "",
+  "releases": [
+    {
+      "date": "1997-05-21",
+      "packaging-id": null,
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "release-events": [
+        {
+          "date": "1997-05-21",
+          "area": {
+            "disambiguation": "",
+            "name": "Japan",
+            "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+            "sort-name": "Japan",
+            "iso-3166-1-codes": [
+              "JP"
+            ],
+            "type-id": null,
+            "type": null
+          }
+        }
+      ],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "type": "Group",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          },
+          "joinphrase": ""
+        }
+      ],
+      "tags": [
+        {
+          "count": 1,
+          "name": "rock"
+        }
+      ],
+      "id": "1834eae1-741b-3c03-9ca5-0df3decb43ea",
+      "media": [
+        {
+          "title": "",
+          "position": 1,
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "id": "060959f3-0d81-38b3-be26-c32f80ca68e9",
+          "track-count": 12
+        }
+      ],
+      "country": "JP",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "title": "OK Computer",
+      "packaging": null,
+      "barcode": "4988006729254",
+      "disambiguation": "",
+      "quality": "normal",
+      "status": "Official"
+    },
+    {
+      "date": "1997-06-16",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "release-events": [
+        {
+          "date": "1997-06-16",
+          "area": {
+            "name": "Europe",
+            "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+            "sort-name": "Europe",
+            "disambiguation": "",
+            "type": null,
+            "iso-3166-1-codes": [
+              "XE"
+            ],
+            "type-id": null
+          }
+        },
+        {
+          "date": "1997-06-16",
+          "area": {
+            "sort-name": "France",
+            "id": "08310658-51eb-3801-80de-5a0739207115",
+            "name": "France",
+            "disambiguation": "",
+            "type": null,
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "FR"
+            ]
+          }
+        },
+        {
+          "area": {
+            "disambiguation": "",
+            "sort-name": "Germany",
+            "id": "85752fda-13c4-31a3-bee5-0e5cb1f51dad",
+            "name": "Germany",
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "DE"
+            ],
+            "type": null
+          },
+          "date": "1997-06-16"
+        },
+        {
+          "date": "1997-06-16",
+          "area": {
+            "disambiguation": "",
+            "name": "Italy",
+            "sort-name": "Italy",
+            "id": "c6500277-9a3d-349b-bf30-41afdbf42add",
+            "iso-3166-1-codes": [
+              "IT"
+            ],
+            "type-id": null,
+            "type": null
+          }
+        },
+        {
+          "date": "1997-06-16",
+          "area": {
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "GB"
+            ],
+            "type": null,
+            "disambiguation": "",
+            "sort-name": "United Kingdom",
+            "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+            "name": "United Kingdom"
+          }
+        }
+      ],
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "tags": [
+        {
+          "count": 1,
+          "name": "1997"
+        },
+        {
+          "count": 4,
+          "name": "alternative rock"
+        },
+        {
+          "count": 1,
+          "name": "art rock"
+        }
+      ],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "type": "Group",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "name": "alternative rock",
+                "count": 43
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "country": "GB"
+          },
+          "joinphrase": ""
+        }
+      ],
+      "id": "425d8db9-88a3-31e2-bd23-b1a967626dd5",
+      "country": "XE",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging": "Jewel Case",
+      "media": [
+        {
+          "track-count": 12,
+          "id": "4a2a764a-fd63-3cdf-a2bb-f0e41c97a9e4",
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "position": 1,
+          "title": ""
+        }
+      ],
+      "disambiguation": "UDEN",
+      "barcode": "724385522925",
+      "status": "Official",
+      "quality": "normal"
+    },
+    {
+      "artist-credit": [
+        {
+          "joinphrase": "",
+          "artist": {
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "name": "electronic rock",
+                "count": 1
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "name": "indie rock",
+                "count": 5
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "type": "Group",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "country": "GB"
+          },
+          "name": "Radiohead"
+        }
+      ],
+      "tags": [],
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "release-events": [
+        {
+          "date": "1997-06-16",
+          "area": {
+            "name": "Europe",
+            "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+            "sort-name": "Europe",
+            "disambiguation": "",
+            "type": null,
+            "iso-3166-1-codes": [
+              "XE"
+            ],
+            "type-id": null
+          }
+        }
+      ],
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1997-06-16",
+      "status": "Official",
+      "quality": "normal",
+      "disambiguation": "EMI UDEN, made in Italy, printed in Italy",
+      "barcode": "724385522925",
+      "media": [
+        {
+          "title": "",
+          "position": 1,
+          "id": "7b8296aa-96c5-3817-8ab4-cb28bddf6932",
+          "track-count": 12,
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31"
+        }
+      ],
+      "country": "XE",
+      "packaging": "Jewel Case",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "id": "52709206-8816-3c12-9ff6-f957f2f1eecf"
+    },
+    {
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1997-06-16",
+      "artist-credit": [
+        {
+          "joinphrase": "",
+          "artist": {
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "name": "alternative rock",
+                "count": 43
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "name": "electronic rock",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "type": "Group",
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "country": "GB",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead"
+          },
+          "name": "Radiohead"
+        }
+      ],
+      "tags": [],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "release-events": [
+        {
+          "area": {
+            "sort-name": "Europe",
+            "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+            "name": "Europe",
+            "disambiguation": "",
+            "type": null,
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "XE"
+            ]
+          },
+          "date": "1997-06-16"
+        },
+        {
+          "date": "1997-06-16",
+          "area": {
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "GB"
+            ],
+            "type": null,
+            "disambiguation": "",
+            "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+            "sort-name": "United Kingdom",
+            "name": "United Kingdom"
+          }
+        }
+      ],
+      "media": [
+        {
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "id": "1accdde5-fe06-3bd1-b51d-0067f3928ec9",
+          "track-count": 12,
+          "title": "",
+          "position": 1
+        }
+      ],
+      "packaging": "Jewel Case",
+      "country": "XE",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "title": "OK Computer",
+      "id": "c7569949-0f67-4682-a0d8-75c4290c52dc",
+      "status": "Official",
+      "quality": "normal",
+      "disambiguation": "EMI SWINDON",
+      "barcode": "724385522925"
+    },
+    {
+      "media": [
+        {
+          "id": "18af1966-d516-30bc-885e-1990cd40613b",
+          "track-count": 12,
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "title": "",
+          "position": 1
+        }
+      ],
+      "country": "XE",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging": "Jewel Case",
+      "title": "OK Computer",
+      "id": "ad0e6676-3e55-4bd6-a9ed-7f6424fd46f6",
+      "status": "Official",
+      "quality": "normal",
+      "disambiguation": "made in Italy; printed in Holland",
+      "barcode": "724385522925",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1997-06-16",
+      "artist-credit": [
+        {
+          "joinphrase": "",
+          "artist": {
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "name": "alternative rock",
+                "count": 43
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "name": "electronic rock",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "type": "Group",
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          },
+          "name": "Radiohead"
+        }
+      ],
+      "tags": [],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "release-events": [
+        {
+          "area": {
+            "disambiguation": "",
+            "name": "Europe",
+            "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+            "sort-name": "Europe",
+            "iso-3166-1-codes": [
+              "XE"
+            ],
+            "type-id": null,
+            "type": null
+          },
+          "date": "1997-06-16"
+        }
+      ]
+    },
+    {
+      "barcode": "724385522918",
+      "disambiguation": "",
+      "quality": "normal",
+      "status": "Official",
+      "id": "541a0976-ca45-3c0f-89e5-26bc376f58d1",
+      "packaging": "Cardboard/Paper Sleeve",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "country": "GB",
+      "media": [
+        {
+          "title": "",
+          "position": 1,
+          "format": "12\" Vinyl",
+          "format-id": "3e9080b0-5e6c-34ab-bd15-f526b6306a64",
+          "id": "b733d429-17e9-364f-868d-22f14b1a6604",
+          "track-count": 6
+        },
+        {
+          "format-id": "3e9080b0-5e6c-34ab-bd15-f526b6306a64",
+          "format": "12\" Vinyl",
+          "track-count": 6,
+          "id": "0137e787-7e2e-37ed-9129-1b296d808094",
+          "position": 2,
+          "title": ""
+        }
+      ],
+      "release-events": [
+        {
+          "date": "1997-06-16",
+          "area": {
+            "type": null,
+            "iso-3166-1-codes": [
+              "GB"
+            ],
+            "type-id": null,
+            "name": "United Kingdom",
+            "sort-name": "United Kingdom",
+            "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+            "disambiguation": ""
+          }
+        }
+      ],
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "tags": [],
+      "artist-credit": [
+        {
+          "joinphrase": "",
+          "artist": {
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "name": "vyrzukhisuc-artiest",
+                "count": 1
+              }
+            ],
+            "type": "Group",
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "country": "GB",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead"
+          },
+          "name": "Radiohead"
+        }
+      ],
+      "date": "1997-06-16",
+      "packaging-id": "f7101ce3-0384-39ce-9fde-fbbd0044d35f"
+    },
+    {
+      "status": "Official",
+      "quality": "normal",
+      "disambiguation": "",
+      "barcode": "724385522949",
+      "country": "GB",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "title": "OK Computer",
+      "packaging": "Cassette Case",
+      "media": [
+        {
+          "title": "",
+          "position": 1,
+          "id": "2de5342c-a798-35cc-bf75-97f06c7cdbde",
+          "track-count": 12,
+          "format": "Cassette",
+          "format-id": "f5e6e254-8f39-331c-936b-9c69d686dc47"
+        }
+      ],
+      "id": "fba5f8fe-c6c8-4511-8562-c9febf482674",
+      "tags": [],
+      "artist-credit": [
+        {
+          "artist": {
+            "country": "GB",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "name": "electronic rock",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type": "Group",
+            "disambiguation": "",
+            "sort-name": "Radiohead"
+          },
+          "joinphrase": "",
+          "name": "Radiohead"
+        }
+      ],
+      "release-events": [
+        {
+          "date": "1997-06-16",
+          "area": {
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "GB"
+            ],
+            "type": null,
+            "disambiguation": "",
+            "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+            "sort-name": "United Kingdom",
+            "name": "United Kingdom"
+          }
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "packaging-id": "c70b737a-0114-39a9-88f7-82843e54f906",
+      "date": "1997-06-16"
+    },
+    {
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1997-06-16",
+      "tags": [],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "joinphrase": "",
+          "artist": {
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "name": "electronic rock",
+                "count": 1
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "type": "Group",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "country": "GB"
+          }
+        }
+      ],
+      "release-events": [
+        {
+          "date": "1997-06-16",
+          "area": {
+            "disambiguation": "",
+            "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+            "sort-name": "United Kingdom",
+            "name": "United Kingdom",
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "GB"
+            ],
+            "type": null
+          }
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "country": "GB",
+      "packaging": "Jewel Case",
+      "media": [
+        {
+          "id": "ad2084dc-e6ca-38c1-b651-2974ca2c555d",
+          "track-count": 12,
+          "format-id": "671c5ed4-20e3-3a62-b6ea-f155cde04258",
+          "format": "MiniDisc",
+          "title": "",
+          "position": 1
+        }
+      ],
+      "id": "a64e09a7-2f26-4d7a-8505-f2561ad3299b",
+      "quality": "normal",
+      "status": "Official",
+      "barcode": "724385522987",
+      "disambiguation": ""
+    },
+    {
+      "id": "4b3d18cc-8937-36f4-8de0-481088be58e6",
+      "country": "CA",
+      "packaging": "Jewel Case",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "title": "OK Computer",
+      "media": [
+        {
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "id": "20c649f0-1349-3dc9-993b-07aa88dad03c",
+          "track-count": 12,
+          "title": "",
+          "position": 1
+        }
+      ],
+      "barcode": "724385522925",
+      "disambiguation": "",
+      "quality": "normal",
+      "status": "Official",
+      "date": "1997-06-17",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "release-events": [
+        {
+          "date": "1997-06-17",
+          "area": {
+            "name": "Canada",
+            "id": "71bbafaa-e825-3e15-8ca9-017dcad1748b",
+            "sort-name": "Canada",
+            "disambiguation": "",
+            "type": null,
+            "iso-3166-1-codes": [
+              "CA"
+            ],
+            "type-id": null
+          }
+        }
+      ],
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "tags": [],
+      "artist-credit": [
+        {
+          "artist": {
+            "type": "Group",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "name": "electronic rock",
+                "count": 1
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          },
+          "joinphrase": "",
+          "name": "Radiohead"
+        }
+      ]
+    },
+    {
+      "release-events": [
+        {
+          "date": "1997-07-01",
+          "area": {
+            "disambiguation": "",
+            "sort-name": "United States",
+            "id": "489ce91b-6658-3307-9877-795b68554c98",
+            "name": "United States",
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "US"
+            ],
+            "type": null
+          }
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "tags": [],
+      "artist-credit": [
+        {
+          "artist": {
+            "type": "Group",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          },
+          "joinphrase": "",
+          "name": "Radiohead"
+        }
+      ],
+      "date": "1997-07-01",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "disambiguation": "",
+      "barcode": "724385522925",
+      "status": "Official",
+      "quality": "normal",
+      "id": "6a09041b-0f79-3278-88d9-0552dd28d37f",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "country": "US",
+      "packaging": "Jewel Case",
+      "media": [
+        {
+          "title": "",
+          "position": 1,
+          "id": "f62bbec0-cb4a-3519-b584-923b7fd5ac75",
+          "track-count": 12,
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD"
+        }
+      ]
+    },
+    {
+      "media": [
+        {
+          "id": "f08fb5b1-a264-379d-b3b1-cbf569b389e9",
+          "track-count": 12,
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "title": "",
+          "position": 1
+        }
+      ],
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "title": "OK Computer",
+      "packaging": "Jewel Case",
+      "country": "US",
+      "id": "0b6b4ba0-d36f-47bd-b4ea-6a5b91842d29",
+      "status": "Official",
+      "quality": "normal",
+      "disambiguation": "",
+      "barcode": null,
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1997-07-01",
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "joinphrase": "",
+          "artist": {
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "country": "GB",
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "type": "Group",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "name": "indie rock",
+                "count": 5
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ]
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "rock",
+          "count": 1
+        }
+      ],
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "release-events": [
+        {
+          "date": "1997-07-01",
+          "area": {
+            "disambiguation": "",
+            "sort-name": "United States",
+            "id": "489ce91b-6658-3307-9877-795b68554c98",
+            "name": "United States",
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "US"
+            ],
+            "type": null
+          }
+        }
+      ]
+    },
+    {
+      "quality": "normal",
+      "status": "Official",
+      "barcode": "724385522925",
+      "disambiguation": "",
+      "media": [
+        {
+          "id": "e99cbbcd-0007-3c7c-9ff4-9187bd9940fc",
+          "track-count": 12,
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "title": "",
+          "position": 1
+        }
+      ],
+      "packaging": "Jewel Case",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "country": "AR",
+      "id": "3c8cbdc8-555f-3987-8f03-6baf9488d1b0",
+      "artist-credit": [
+        {
+          "joinphrase": "",
+          "artist": {
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "name": "vyrzukhisuc-artiest",
+                "count": 1
+              }
+            ],
+            "type": "Group",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "country": "GB"
+          },
+          "name": "Radiohead"
+        }
+      ],
+      "tags": [],
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "release-events": [
+        {
+          "date": "1997",
+          "area": {
+            "iso-3166-1-codes": [
+              "AR"
+            ],
+            "type-id": null,
+            "type": null,
+            "disambiguation": "",
+            "name": "Argentina",
+            "sort-name": "Argentina",
+            "id": "0df04709-c7d8-3b55-a6ea-f3e5069a947b"
+          }
+        }
+      ],
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1997"
+    },
+    {
+      "country": "AU",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging": "Jewel Case",
+      "media": [
+        {
+          "position": 1,
+          "title": "",
+          "track-count": 12,
+          "id": "7647fef2-e3cd-344a-987d-7e9c80942bf8",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD"
+        }
+      ],
+      "id": "e16cda60-6e6d-4a32-8d7c-e12d9aeb72de",
+      "status": "Official",
+      "quality": "normal",
+      "disambiguation": "",
+      "barcode": "724385522925",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1997",
+      "tags": [],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "country": "GB",
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "type": "Group",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "name": "electronic rock",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "name": "indie rock",
+                "count": 5
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "name": "vyrzukhisuc-artiest",
+                "count": 1
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+          },
+          "joinphrase": ""
+        }
+      ],
+      "release-events": [
+        {
+          "area": {
+            "type": null,
+            "iso-3166-1-codes": [
+              "AU"
+            ],
+            "type-id": null,
+            "name": "Australia",
+            "id": "106e0bec-b638-3b37-b731-f53d507dc00e",
+            "sort-name": "Australia",
+            "disambiguation": ""
+          },
+          "date": "1997"
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      }
+    },
+    {
+      "country": "CA",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "title": "OK Computer",
+      "packaging": "Jewel Case",
+      "media": [
+        {
+          "id": "76478a1d-895c-34f8-bf5b-50ad58f3f7fb",
+          "track-count": 12,
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "title": "",
+          "position": 1
+        }
+      ],
+      "id": "ab2c2726-a2c4-4f4d-a207-c1985c3f9a1b",
+      "quality": "normal",
+      "status": "Official",
+      "barcode": "",
+      "disambiguation": "BMG club version",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1997",
+      "tags": [],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "type": "Group",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          },
+          "joinphrase": ""
+        }
+      ],
+      "release-events": [
+        {
+          "area": {
+            "disambiguation": "",
+            "name": "Canada",
+            "sort-name": "Canada",
+            "id": "71bbafaa-e825-3e15-8ca9-017dcad1748b",
+            "iso-3166-1-codes": [
+              "CA"
+            ],
+            "type-id": null,
+            "type": null
+          },
+          "date": "1997"
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      }
+    },
+    {
+      "tags": [],
+      "artist-credit": [
+        {
+          "joinphrase": "",
+          "artist": {
+            "country": "GB",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "name": "alternative rock",
+                "count": 43
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "type": "Group",
+            "disambiguation": "",
+            "sort-name": "Radiohead"
+          },
+          "name": "Radiohead"
+        }
+      ],
+      "release-events": [
+        {
+          "area": {
+            "type": null,
+            "iso-3166-1-codes": [
+              "XE"
+            ],
+            "type-id": null,
+            "name": "Europe",
+            "sort-name": "Europe",
+            "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+            "disambiguation": ""
+          },
+          "date": "1997"
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "packaging-id": "8f931351-d2e2-310f-afc6-37b89ddba246",
+      "date": "1997",
+      "quality": "normal",
+      "status": "Official",
+      "barcode": "724382133827",
+      "disambiguation": "",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging": "Digipak",
+      "country": "XE",
+      "media": [
+        {
+          "title": "OK Computer",
+          "position": 1,
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "id": "3821105b-3aca-3a9a-81ee-3ba111610b67",
+          "track-count": 12
+        },
+        {
+          "position": 2,
+          "title": "Karma Police",
+          "track-count": 3,
+          "id": "364a6659-4d19-3fc1-9d2d-9ddc3c9fe5e9",
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31"
+        }
+      ],
+      "id": "52e7fc61-fcf3-4b46-ac72-38e9644bf982"
+    },
+    {
+      "date": "1997",
+      "packaging-id": "c70b737a-0114-39a9-88f7-82843e54f906",
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "release-events": [
+        {
+          "area": {
+            "disambiguation": "",
+            "name": "Poland",
+            "id": "dd7f80c8-f017-3d01-8608-2a8c9c32b954",
+            "sort-name": "Poland",
+            "iso-3166-1-codes": [
+              "PL"
+            ],
+            "type-id": null,
+            "type": null
+          },
+          "date": "1997"
+        }
+      ],
+      "artist-credit": [
+        {
+          "artist": {
+            "type": "Group",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "name": "alternative rock",
+                "count": 43
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "name": "indie rock",
+                "count": 5
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          },
+          "joinphrase": "",
+          "name": "Radiohead"
+        }
+      ],
+      "tags": [],
+      "id": "9c1e5e9e-9f40-4cd8-94a4-785fa5d0b613",
+      "media": [
+        {
+          "format-id": "f5e6e254-8f39-331c-936b-9c69d686dc47",
+          "format": "Cassette",
+          "id": "d6101d08-eb00-388e-a181-8b009b687b53",
+          "track-count": 12,
+          "title": "",
+          "position": 1
+        }
+      ],
+      "title": "OK Computer",
+      "country": "PL",
+      "packaging": "Cassette Case",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "barcode": "724385522949",
+      "disambiguation": "",
+      "quality": "normal",
+      "status": "Official"
+    },
+    {
+      "id": "16f227a1-fa4a-4d7e-bba2-6a8ca18c33a8",
+      "title": "OK Computer",
+      "packaging": "Jewel Case",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "country": null,
+      "media": [
+        {
+          "track-count": 12,
+          "id": "b6039045-cae7-3958-802b-aada59ae8112",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "position": 1,
+          "title": ""
+        }
+      ],
+      "barcode": "724385522925",
+      "disambiguation": "",
+      "quality": "normal",
+      "status": "Official",
+      "date": "1997",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "release-events": [
+        {
+          "area": null,
+          "date": "1997"
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "tags": [],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "name": "alternative rock",
+                "count": 43
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type": "Group",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "country": "GB"
+          },
+          "joinphrase": ""
+        }
+      ]
+    },
+    {
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "title": "OK Computer",
+      "packaging": "Jewel Case",
+      "country": "XE",
+      "media": [
+        {
+          "track-count": 12,
+          "id": "c29f13c1-6441-3f76-b058-e2c77c6f21c3",
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "position": 1,
+          "title": ""
+        }
+      ],
+      "id": "1c16cd42-472f-47cc-9848-d081d0737a7c",
+      "quality": "normal",
+      "status": "Official",
+      "barcode": "724385522925",
+      "disambiguation": "repress, Sonopress",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "date": "1999",
+      "tags": [],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "country": "GB",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "type": "Group",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "sort-name": "Radiohead",
+            "disambiguation": ""
+          },
+          "joinphrase": ""
+        }
+      ],
+      "release-events": [
+        {
+          "date": "1999",
+          "area": {
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "XE"
+            ],
+            "type": null,
+            "disambiguation": "",
+            "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+            "sort-name": "Europe",
+            "name": "Europe"
+          }
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      }
+    },
+    {
+      "id": "175d6ac9-7185-357c-af04-5887dc3ea788",
+      "media": [
+        {
+          "id": "5ac40405-4a2e-3636-91ce-c84944de8ef9",
+          "track-count": 12,
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "title": "",
+          "position": 1
+        }
+      ],
+      "title": "OK Computer",
+      "country": "JP",
+      "packaging": null,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "disambiguation": "",
+      "barcode": "4988006846333",
+      "status": "Official",
+      "quality": "normal",
+      "date": "2006-09-06",
+      "packaging-id": null,
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "release-events": [
+        {
+          "area": {
+            "disambiguation": "",
+            "name": "Japan",
+            "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+            "sort-name": "Japan",
+            "iso-3166-1-codes": [
+              "JP"
+            ],
+            "type-id": null,
+            "type": null
+          },
+          "date": "2006-09-06"
+        }
+      ],
+      "artist-credit": [
+        {
+          "artist": {
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "name": "indie rock",
+                "count": 5
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type": "Group",
+            "disambiguation": "",
+            "sort-name": "Radiohead"
+          },
+          "joinphrase": "",
+          "name": "Radiohead"
+        }
+      ],
+      "tags": []
+    },
+    {
+      "date": "2008",
+      "packaging-id": "f7101ce3-0384-39ce-9fde-fbbd0044d35f",
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "release-events": [
+        {
+          "area": {
+            "disambiguation": "",
+            "name": "United States",
+            "sort-name": "United States",
+            "id": "489ce91b-6658-3307-9877-795b68554c98",
+            "iso-3166-1-codes": [
+              "US"
+            ],
+            "type-id": null,
+            "type": null
+          },
+          "date": "2008"
+        }
+      ],
+      "artist-credit": [
+        {
+          "artist": {
+            "country": "GB",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type": "Group",
+            "disambiguation": "",
+            "sort-name": "Radiohead"
+          },
+          "joinphrase": "",
+          "name": "Radiohead"
+        }
+      ],
+      "tags": [],
+      "id": "51df2038-5682-303e-9d87-7aeb99660433",
+      "media": [
+        {
+          "id": "3684f558-86f0-3b72-9dac-9ad70844d853",
+          "track-count": 6,
+          "format": "12\" Vinyl",
+          "format-id": "3e9080b0-5e6c-34ab-bd15-f526b6306a64",
+          "title": "",
+          "position": 1
+        },
+        {
+          "title": "",
+          "position": 2,
+          "format-id": "3e9080b0-5e6c-34ab-bd15-f526b6306a64",
+          "format": "12\" Vinyl",
+          "id": "819612aa-999f-3a22-a169-efe290014505",
+          "track-count": 6
+        }
+      ],
+      "country": "US",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging": "Cardboard/Paper Sleeve",
+      "disambiguation": "",
+      "barcode": "724385522918",
+      "status": "Official",
+      "quality": "normal"
+    },
+    {
+      "id": "9eff0482-170f-3e93-8c65-73ce18e10ee7",
+      "country": "XE",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging": "Other",
+      "media": [
+        {
+          "position": 1,
+          "title": "",
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "track-count": 12,
+          "id": "7c02cf7b-63df-3d19-80a0-690bdc83feee"
+        },
+        {
+          "title": "",
+          "position": 2,
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "id": "0b00bd22-0ea5-3af9-8c79-23694c0f0213",
+          "track-count": 15
+        },
+        {
+          "format": "DVD-Video",
+          "format-id": "bb71fd58-ff93-32b4-a201-4ad1b2a80e5f",
+          "track-count": 6,
+          "id": "128964d6-b598-3478-a8a7-255ab18f6a08",
+          "position": 3,
+          "title": ""
+        }
+      ],
+      "barcode": "5099969362620",
+      "disambiguation": "",
+      "quality": "normal",
+      "status": "Official",
+      "date": "2009-03-23",
+      "packaging-id": "815b7785-8284-3926-8f04-e48bc6c4d102",
+      "release-events": [
+        {
+          "date": "2009-03-23",
+          "area": {
+            "name": "Europe",
+            "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+            "sort-name": "Europe",
+            "disambiguation": "",
+            "type": null,
+            "iso-3166-1-codes": [
+              "XE"
+            ],
+            "type-id": null
+          }
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "tags": [
+        {
+          "count": 1,
+          "name": "2009"
+        }
+      ],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "joinphrase": "",
+          "artist": {
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "country": "GB",
+            "disambiguation": "",
+            "sort-name": "Radiohead",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "name": "electronic",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "name": "indie rock",
+                "count": 5
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "count": 19,
+                "name": "rock"
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "name": "vyrzukhisuc-artiest",
+                "count": 1
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "type": "Group"
+          }
+        }
+      ]
+    },
+    {
+      "artist-credit": [
+        {
+          "joinphrase": "",
+          "artist": {
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "type": "Group",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "count": 2,
+                "name": "alternative rock music"
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "name": "electronic rock",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "name": "experimental rock",
+                "count": 14
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "name": "indie rock",
+                "count": 5
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "name": "vyrzukhisuc-artiest",
+                "count": 1
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "sort-name": "Radiohead",
+            "disambiguation": ""
+          },
+          "name": "Radiohead"
+        }
+      ],
+      "tags": [],
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "release-events": [
+        {
+          "area": {
+            "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+            "sort-name": "United Kingdom",
+            "name": "United Kingdom",
+            "disambiguation": "",
+            "type": null,
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "GB"
+            ]
+          },
+          "date": "2009-03-23"
+        }
+      ],
+      "packaging-id": null,
+      "date": "2009-03-23",
+      "quality": "normal",
+      "status": "Official",
+      "barcode": "5099969362323",
+      "disambiguation": "",
+      "media": [
+        {
+          "title": "",
+          "position": 1,
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "id": "dd83a2ae-e75b-379c-acbc-bf88026b73e5",
+          "track-count": 12
+        },
+        {
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "track-count": 15,
+          "id": "ccef1441-f066-38f9-8125-acf3740dd17f",
+          "position": 2,
+          "title": "bonus disc"
+        }
+      ],
+      "country": "GB",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging": null,
+      "id": "bdf93ecb-85e8-3505-98f7-e2e8c5052723"
+    },
+    {
+      "quality": "normal",
+      "status": "Official",
+      "barcode": "5099969362927",
+      "disambiguation": "",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "country": "CA",
+      "packaging": null,
+      "title": "OK Computer",
+      "media": [
+        {
+          "position": 1,
+          "title": "",
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "track-count": 12,
+          "id": "2026288f-d16b-3342-9946-ab95c9740f5b"
+        },
+        {
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "id": "a5a1ae71-d09d-3fd2-b54e-b02be167373c",
+          "track-count": 15,
+          "title": "",
+          "position": 2
+        },
+        {
+          "format": "DVD-Video",
+          "format-id": "bb71fd58-ff93-32b4-a201-4ad1b2a80e5f",
+          "id": "65fbfe08-2487-388a-803a-185ee3d307ff",
+          "track-count": 6,
+          "title": "",
+          "position": 3
+        }
+      ],
+      "id": "7169a92a-4dc1-42bb-9a21-c1c9223b68a8",
+      "tags": [],
+      "artist-credit": [
+        {
+          "artist": {
+            "country": "GB",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "name": "ambient pop",
+                "count": 1
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "name": "british",
+                "count": 14
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "britrock"
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "english"
+              },
+              {
+                "count": 3,
+                "name": "experimental"
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "name": "indietronica",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "oxford"
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "post-grunge"
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "count": 1,
+                "name": "vyrzukhisuc-artiest"
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "type": "Group",
+            "disambiguation": "",
+            "sort-name": "Radiohead"
+          },
+          "joinphrase": "",
+          "name": "Radiohead"
+        }
+      ],
+      "release-events": [
+        {
+          "area": {
+            "name": "Canada",
+            "sort-name": "Canada",
+            "id": "71bbafaa-e825-3e15-8ca9-017dcad1748b",
+            "disambiguation": "",
+            "type": null,
+            "iso-3166-1-codes": [
+              "CA"
+            ],
+            "type-id": null
+          },
+          "date": "2009-03-24"
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "packaging-id": null,
+      "date": "2009-03-24"
+    },
+    {
+      "release-events": [
+        {
+          "area": {
+            "type": null,
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "US"
+            ],
+            "sort-name": "United States",
+            "id": "489ce91b-6658-3307-9877-795b68554c98",
+            "name": "United States",
+            "disambiguation": ""
+          },
+          "date": "2009-03-24"
+        }
+      ],
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "tags": [],
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "artist": {
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "name": "Radiohead",
+            "country": "GB",
+            "sort-name": "Radiohead",
+            "disambiguation": "",
+            "type": "Group",
+            "tags": [
+              {
+                "count": 2,
+                "name": "alternative"
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "count": 3,
+                "name": "art pop"
+              },
+              {
+                "count": 30,
+                "name": "art rock"
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "name": "britpop",
+                "count": 2
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "count": 1,
+                "name": "chamber pop"
+              },
+              {
+                "count": 1,
+                "name": "crossover prog"
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "name": "electronica",
+                "count": 2
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "count": 1,
+                "name": "idm"
+              },
+              {
+                "count": 5,
+                "name": "indie rock"
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "name": "post-britpop",
+                "count": 2
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "progressive rock music"
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "count": 1,
+                "name": "uk"
+              },
+              {
+                "name": "vyrzukhisuc-artiest",
+                "count": 1
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+          },
+          "joinphrase": ""
+        }
+      ],
+      "date": "2009-03-24",
+      "packaging-id": "8f931351-d2e2-310f-afc6-37b89ddba246",
+      "barcode": "5099969362323",
+      "disambiguation": "special collector’s edition",
+      "quality": "normal",
+      "status": "Official",
+      "id": "d4635a34-caf5-3b35-9a5b-d805f1126633",
+      "title": "OK Computer",
+      "country": "US",
+      "packaging": "Digipak",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "media": [
+        {
+          "track-count": 12,
+          "id": "f9ade95d-4a12-318b-88df-158f21df15a1",
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "position": 1,
+          "title": ""
+        },
+        {
+          "position": 2,
+          "title": "",
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "track-count": 15,
+          "id": "366977d1-a3c8-361a-8863-ab48e20d82e8"
+        }
+      ]
+    },
+    {
+      "artist-credit": [
+        {
+          "name": "Radiohead",
+          "joinphrase": "",
+          "artist": {
+            "country": "GB",
+            "name": "Radiohead",
+            "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "type": "Group",
+            "tags": [
+              {
+                "name": "alternative",
+                "count": 2
+              },
+              {
+                "count": 43,
+                "name": "alternative rock"
+              },
+              {
+                "name": "alternative rock music",
+                "count": 2
+              },
+              {
+                "count": 1,
+                "name": "ambient pop"
+              },
+              {
+                "name": "art pop",
+                "count": 3
+              },
+              {
+                "name": "art rock",
+                "count": 30
+              },
+              {
+                "count": 14,
+                "name": "british"
+              },
+              {
+                "count": 2,
+                "name": "britpop"
+              },
+              {
+                "name": "britrock",
+                "count": 1
+              },
+              {
+                "name": "chamber pop",
+                "count": 1
+              },
+              {
+                "name": "crossover prog",
+                "count": 1
+              },
+              {
+                "count": 14,
+                "name": "electronic"
+              },
+              {
+                "count": 1,
+                "name": "electronic rock"
+              },
+              {
+                "count": 2,
+                "name": "electronica"
+              },
+              {
+                "name": "english",
+                "count": 1
+              },
+              {
+                "name": "experimental",
+                "count": 3
+              },
+              {
+                "count": 14,
+                "name": "experimental rock"
+              },
+              {
+                "name": "idm",
+                "count": 1
+              },
+              {
+                "name": "indie rock",
+                "count": 5
+              },
+              {
+                "count": 1,
+                "name": "indietronica"
+              },
+              {
+                "name": "oxford",
+                "count": 1
+              },
+              {
+                "count": 2,
+                "name": "post-britpop"
+              },
+              {
+                "name": "post-grunge",
+                "count": 1
+              },
+              {
+                "name": "progressive rock music",
+                "count": 2
+              },
+              {
+                "name": "rock",
+                "count": 19
+              },
+              {
+                "name": "uk",
+                "count": 1
+              },
+              {
+                "name": "vyrzukhisuc-artiest",
+                "count": 1
+              }
+            ],
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "sort-name": "Radiohead",
+            "disambiguation": ""
+          }
+        }
+      ],
+      "tags": [],
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "release-events": [
+        {
+          "date": "2009-04-01",
+          "area": {
+            "disambiguation": "",
+            "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+            "sort-name": "Japan",
+            "name": "Japan",
+            "type-id": null,
+            "iso-3166-1-codes": [
+              "JP"
+            ],
+            "type": null
+          }
+        }
+      ],
+      "packaging-id": null,
+      "date": "2009-04-01",
+      "status": "Official",
+      "quality": "normal",
+      "disambiguation": "",
+      "barcode": "4988006871472",
+      "media": [
+        {
+          "position": 1,
+          "title": "",
+          "format": "CD",
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "track-count": 12,
+          "id": "87265a1a-bf22-3b21-acf5-08ed7ce8d20b"
+        },
+        {
+          "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+          "format": "CD",
+          "track-count": 15,
+          "id": "32d20ad0-c6bb-396f-8665-b6a237261ed8",
+          "position": 2,
+          "title": "bonus disc"
+        }
+      ],
+      "country": "JP",
+      "title": "OK Computer",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "packaging": null,
+      "id": "e8c3ff98-75f0-383f-a7d1-35db67661d89"
+    }
+  ],
+  "primary-type": "Album",
+  "first-release-date": "1997-05-21",
+  "secondary-types": []
+}

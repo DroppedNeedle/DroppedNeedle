@@ -18,9 +18,8 @@ use std::time::Duration;
 const RELEASE_MBID: &str = "aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b";
 const AVALON_MBID: &str = "0687c8a5-40a2-4a0c-bdc9-c1d80d94bef5";
 const IMMUNITY_MBID: &str = "c85ad49c-6bfb-4bdc-96f8-f5f305a8799e";
-const IMMUNITY_GROUP_MBID: &str = "fc97b087-221c-4ea4-9dd9-5277a52eb84a";
 const RETIRED_RECORDING_MBID: &str = "5224cfc7-b3bb-4008-a41b-21b168dc631f";
-const CANONICAL_RECORDING_MBID: &str = "beaf82cd-24f9-4163-b1a9-022339a30f77";
+const CANONICAL_RECORDING_MBID: &str = "33ea7e59-3691-4414-92d3-6bce48d5d9cc";
 const ARTIST_MBID: &str = "5441c29d-3602-4898-b1a1-b77fa23b8e50";
 const GROUP_MBID: &str = "dcff25f1-702d-3b5e-b0da-d48172e6e62a";
 
@@ -632,34 +631,29 @@ async fn exact_release_fails_closed_without_provider_group() {
 
     let fake = fast_mb();
     fake.script(
-        &mb_url(&format!("/release/{IMMUNITY_MBID}")),
+        &mb_url(&format!("/release/{CLASSICAL_MBID}")),
         Ok(raw(
             200,
             vec![],
-            serde_json::json!({
-                "id": IMMUNITY_MBID,
-                "release-group": {"id": IMMUNITY_GROUP_MBID, "title": "Immunity"}
-            })
-            .to_string()
-            .into_bytes(),
+            include_bytes!("../fixtures/musicbrainz/release_lookup_classical.json").to_vec(),
         )),
     );
     fake.script(
-        &mb_url(&format!("/release/{IMMUNITY_MBID}")),
+        &mb_url(&format!("/release/{CLASSICAL_MBID}")),
         Err("reset".to_owned()),
     );
     let client = official_client(fake.clone());
     let found = client
-        .lookup_exact_release(IMMUNITY_MBID, musicbrainz::Criticality::IdentityCritical)
+        .lookup_exact_release(CLASSICAL_MBID, musicbrainz::Criticality::IdentityCritical)
         .await
         .expect("exact release with group decodes");
     let release = found.expect("present").entity;
     assert_eq!(
         release.release_group.expect("group").id,
-        IMMUNITY_GROUP_MBID
+        CLASSICAL_GROUP_MBID
     );
     let group = client
-        .resolve_release_to_release_group(IMMUNITY_MBID, musicbrainz::Criticality::BestEffort)
+        .resolve_release_to_release_group(CLASSICAL_MBID, musicbrainz::Criticality::BestEffort)
         .await
         .expect("a dead follow-up degrades to absence");
     assert!(
@@ -692,8 +686,7 @@ async fn retired_recording_redirect_proves_canonical_id() {
         Ok(raw(
             200,
             vec![],
-            format!(r#"{{"id": "{CANONICAL_RECORDING_MBID}", "title": "Merged Track"}}"#)
-                .into_bytes(),
+            include_bytes!("../fixtures/musicbrainz/recording_lookup_plain.json").to_vec(),
         )),
     );
     fake.script(
@@ -1219,6 +1212,7 @@ fn sniff_accepts_raster_only() {
 // ---------------------------------------------------------------------------
 
 const CLASSICAL_MBID: &str = "7ce871a0-34b2-40e0-a77e-39b1268f1f61";
+const CLASSICAL_GROUP_MBID: &str = "94416ade-2459-4d90-af9e-0a8615e9177f";
 
 fn relations_probe(name: &str) -> serde_json::Value {
     let path = format!(

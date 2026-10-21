@@ -1,0 +1,53 @@
+{
+  "relations": [
+    {
+      "type-id": "4a78823c-1c53-4176-a5f3-58026c76f2bc",
+      "attribute-values": {},
+      "end": null,
+      "release": {
+        "quality": "normal",
+        "status": null,
+        "text-representation": {
+          "script": "Latn",
+          "language": "eng"
+        },
+        "release-events": [
+          {
+            "date": "1987-07-27",
+            "area": {
+              "name": "United Kingdom",
+              "sort-name": "United Kingdom",
+              "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+              "disambiguation": "",
+              "type": null,
+              "iso-3166-1-codes": [
+                "GB"
+              ],
+              "type-id": null
+            }
+          }
+        ],
+        "barcode": "5012394144777",
+        "disambiguation": "",
+        "packaging-id": null,
+        "packaging": null,
+        "status-id": null,
+        "title": "Never Gonna Give You Up",
+        "country": "GB",
+        "date": "1987-07-27",
+        "id": "dc919562-19c7-42c8-961c-7ed5520f00bb"
+      },
+      "target-type": "release",
+      "type": "discogs",
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-ids": {},
+      "target-credit": "",
+      "begin": null,
+      "attributes": [],
+      "ended": false
+    }
+  ],
+  "id": "bedebcba-1620-4017-9ec7-63c497115473",
+  "resource": "https://www.discogs.com/release/249504"
+}
