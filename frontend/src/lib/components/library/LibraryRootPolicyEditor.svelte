@@ -36,7 +36,7 @@
 
 	const policyCopy: Record<LibraryIdentificationPolicy, string> = {
 		local_metadata:
-			'Use file tags and embedded IDs. Do not search external metadata automatically.',
+			'Use file tags and embedded IDs. Do not search external metadata automatically. Library Management leaves these files alone; the tag editor still works.',
 		automatic: 'Index files first, then try to identify albums in the background.',
 		excluded:
 			'Keep files on disk but hide this path from DroppedNeedle and connected music clients.'

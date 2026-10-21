@@ -9807,6 +9807,140 @@ async fn step_at(managed: &ManagedLibrary, settle: &mut Settle, start: f64, at: 
     looked.expect("automatic step")
 }
 
+/// An album in a folder set to Local metadata keeps its own tags: with an
+/// edition someone chose and management on for its library folder,
+/// neither a person's preview nor automatic management plans a write
+/// there, and both say why. The same album in an ordinary folder is
+/// managed.
+#[tokio::test]
+async fn management_leaves_a_folder_that_keeps_its_own_tags() {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        IdentificationPolicy, LibraryPathRule, TypedLibrary,
+    };
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+    let managed = ManagedLibrary::start("lib-own-tags", |_| {}).await;
+    let mut albums = Vec::new();
+    for folder in ["own", "plain"] {
+        let (album, tracks) = managed.add_album(folder, 1).await;
+        let current: String = managed
+            .db()
+            .query_row(
+                "SELECT release_mbid FROM local_album_external_identities \
+                 WHERE local_album_id = ?1",
+                [&album],
+                |row| row.get(0),
+            )
+            .expect("edition");
+        // The first album has REL_1 and REL_2; a later one's two editions
+        // differ only in their second id group.
+        let other = match current.as_str() {
+            REL_1 => REL_2.to_owned(),
+            REL_2 => REL_1.to_owned(),
+            _ if current.contains("-0000-") => current.replacen("-0000-", "-0001-", 1),
+            _ => current.replacen("-0001-", "-0000-", 1),
+        };
+        droppedneedle_library::operations::service::Operations::new(&managed.library)
+            .choose_edition(&album, &other, Some("admin"))
+            .await
+            .expect("edition chosen");
+        albums.push((album, tracks));
+    }
+    let [(own, own_tracks), (plain, plain_tracks)] =
+        <[_; 2]>::try_from(albums).expect("two albums");
+    managed
+        .library
+        .settings
+        .store()
+        .update_secret_blocking::<TypedLibrary, String, _>(|stored| {
+            let mut library = stored.into_inner();
+            for root in &mut library.library_roots {
+                root.rules.push(LibraryPathRule {
+                    id: "own-rule".to_owned(),
+                    relative_path: "own".to_owned(),
+                    policy: IdentificationPolicy::LocalMetadata,
+                });
+            }
+            Ok(library)
+        })
+        .expect("path rule saved");
+    managed.library.refresh_registry();
+    managed.activate().await;
+    let own_file = managed.path(&own_tracks[0]);
+    let own_before = file_sha256(&own_file);
+    let plain_before = file_sha256(&managed.path(&plain_tracks[0]));
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&own], "own-preview")
+        .await;
+    assert!(!items.is_empty());
+    for item in &items {
+        assert_eq!(item.eligibility, Eligibility::Blocked);
+        assert_eq!(
+            item.reason().map(|reason| reason.code.as_str()),
+            Some("LOCAL_METADATA")
+        );
+    }
+    // A person's own edit of a tag there is the folder's own tags: it plans.
+    let management = managed.management();
+    let edit = management
+        .create_tag_edit(
+            droppedneedle_library::management::tag_edit::TagEditRequest {
+                local_track_id: own_tracks[0].clone(),
+                mode: droppedneedle_library::management::models::TagEditMode::SaveOverride,
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .policy_revision()
+                    .expect("policy revision"),
+                fields: vec![("title".to_owned(), serde_json::json!("Typo Fixed"))],
+                idempotency_key: Some("own-edit".to_owned()),
+            },
+            "admin",
+        )
+        .expect("edit preview");
+    assert!(
+        management_step(&managed.library).await,
+        "edit planning runs"
+    );
+    let items = management
+        .items(&edit.job_id, -1, 100, &Default::default())
+        .expect("items")
+        .items;
+    assert!(
+        items.iter().any(|item| item.eligibility.writes()),
+        "a tag edit in the folder still plans: {:?}",
+        items.iter().map(|item| item.reason()).collect::<Vec<_>>()
+    );
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&plain], "plain-preview")
+        .await;
+    assert!(
+        items
+            .iter()
+            .all(|item| item.eligibility.writes() && item.diff.changes_anything()),
+        "the ordinary folder's album is planned"
+    );
+
+    managed.look(&own).await;
+    assert!(
+        managed
+            .skipped_codes()
+            .contains(&(own.clone(), "LOCAL_METADATA".to_owned()))
+    );
+    assert_eq!(managed.automatic_runs().len(), 0, "no run for the album");
+    assert_eq!(file_sha256(&own_file), own_before, "its file is untouched");
+
+    managed.look(&plain).await;
+    let runs = managed.automatic_runs();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0, "succeeded");
+    assert_ne!(
+        file_sha256(&managed.path(&plain_tracks[0])),
+        plain_before,
+        "the ordinary folder's album is written"
+    );
+}
+
 fn title_edit(value: &str) -> droppedneedle_library::tags::TagEdit {
     droppedneedle_library::tags::TagEdit::verbatim(
         droppedneedle_library::tags::TagField::Title,

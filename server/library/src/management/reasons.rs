@@ -144,6 +144,18 @@ pub fn root_unavailable() -> ItemReason {
     )
 }
 
+/// An album in a folder set to Local metadata: its files keep their own
+/// tags and names, whatever asked for them to be managed.
+pub const KEEPS_OWN_TAGS: Reason = Reason {
+    code: "LOCAL_METADATA",
+    message: "This album's folder keeps its own tags, so its files are left alone.",
+    action: "To have them managed, change the folder's policy, or the path rule that covers them, in Settings > Library. The tag editor still works here.",
+};
+
+pub fn keeps_own_tags() -> ItemReason {
+    KEEPS_OWN_TAGS.into()
+}
+
 pub fn symlink_unsupported() -> ItemReason {
     ItemReason::new(
         "SYMLINK_UNSUPPORTED",

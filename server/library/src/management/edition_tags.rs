@@ -14,7 +14,7 @@ use super::models::{
 };
 use super::service::{ApplyRequest, JobSpec, Management, PAGE_MAX};
 use super::store::Snapshot;
-use super::{profile, takeover};
+use super::{profile, reasons, takeover};
 use crate::operations::reasons::Reason;
 
 /// Why an edition's tags were not queued or reached.
@@ -111,6 +111,8 @@ pub struct EditionTagsJob {
 /// What the album holds, read in one go.
 struct Album {
     roots: Vec<String>,
+    /// Each file's root and path.
+    files: Vec<(String, String)>,
     identity: Option<crate::identify::models::PriorAlbumIdentity>,
     custom: bool,
     held: bool,
@@ -120,15 +122,17 @@ struct Album {
 
 fn album(conn: &Connection, album_id: &str, release_mbid: &str) -> rusqlite::Result<Option<Album>> {
     let mut statement = conn.prepare(
-        "SELECT DISTINCT root_id FROM local_tracks \
+        "SELECT root_id, relative_path FROM local_tracks \
          WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY root_id",
     )?;
-    let roots = statement
-        .query_map(params![album_id], |row| row.get(0))?
-        .collect::<rusqlite::Result<Vec<String>>>()?;
-    if roots.is_empty() {
+    let files = statement
+        .query_map(params![album_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
+    if files.is_empty() {
         return Ok(None);
     }
+    let mut roots: Vec<String> = files.iter().map(|(root, _)| root.clone()).collect();
+    roots.dedup();
     let custom = conn
         .query_row(
             "SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1",
@@ -154,6 +158,7 @@ fn album(conn: &Connection, album_id: &str, release_mbid: &str) -> rusqlite::Res
         .optional()?;
     Ok(Some(Album {
         roots,
+        files,
         identity: crate::identify::sqlite::album_identity_row(conn, album_id)?,
         custom,
         held: excluded || takeover::is_marked(conn, album_id)?,
@@ -211,6 +216,14 @@ impl Management {
         let [root] = found.roots.as_slice() else {
             return refused(TWO_FOLDERS);
         };
+        let registry = self.setup.live_registry();
+        if found
+            .files
+            .iter()
+            .any(|(root, path)| super::planner::keeps_own_tags(&registry, root, path))
+        {
+            return refused(reasons::KEEPS_OWN_TAGS);
+        }
         let Some(stored) = self.readable_settings() else {
             return refused(SETTINGS_UNREADABLE);
         };
@@ -229,7 +242,6 @@ impl Management {
             ids: found.mapped,
             catalog_filter: None,
         };
-        let registry = self.setup.live_registry();
         Ok(self.start_job(JobSpec {
             mode: JobMode::Preview,
             origin: Origin::Manual,

@@ -143,6 +143,7 @@ pub fn skip_reason(code: &str) -> ItemReason {
             "This album is kept out of file organizing.",
             "Re-enable organizing on the album page.",
         ),
+        code if code == reasons::KEEPS_OWN_TAGS.code => reasons::keeps_own_tags(),
         takeover::TAKEN_OVER => reason(
             code,
             "This album's files were changed outside DroppedNeedle, so it is left unmanaged.",
@@ -639,7 +640,8 @@ impl Management {
             }
             return Ok(Gate::Closed(Verdict::Done("NOT_AUTOMATIC")));
         };
-        let policy = self.setup.live_registry().policy_revision().to_owned();
+        let registry = self.setup.live_registry();
+        let policy = registry.policy_revision().to_owned();
         let pinned_policy = self.activation_policy_revision()?;
         if !activation_is_current(&stored, &assignment, &pinned_policy)
             && !migration_carry_applies(&stored, &assignment, &pinned_policy)
@@ -677,6 +679,12 @@ impl Management {
         })?;
         if excluded {
             return Ok(Gate::Closed(Verdict::Park("EXCLUDED")));
+        }
+        if files
+            .iter()
+            .any(|file| planner::keeps_own_tags(&registry, &file.root_id, &file.relative_path))
+        {
+            return Ok(Gate::Closed(Verdict::Park(reasons::KEEPS_OWN_TAGS.code)));
         }
         // The only place an automatic file write starts: an album the app
         // stepped back from waits here until a person hands it back.

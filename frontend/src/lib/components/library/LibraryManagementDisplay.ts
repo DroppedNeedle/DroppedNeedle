@@ -472,6 +472,7 @@ export const MANAGEMENT_REASON_LABELS: Record<string, string> = {
 	POLICY_CHANGED: 'Library policy changed after this preview was planned',
 	OVERRIDE_CHANGED: 'Root override changed after this preview was planned',
 	ROOT_UNAVAILABLE: 'Source root unavailable',
+	LOCAL_METADATA: 'Folder keeps its own tags',
 	ROOT_READ_ONLY: 'Destination root is read-only',
 	OUT_OF_ROOT: 'File sits outside the configured roots',
 	SYMLINK_UNSUPPORTED: 'Symbolic links cannot be organized',

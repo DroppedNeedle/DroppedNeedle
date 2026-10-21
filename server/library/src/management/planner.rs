@@ -84,6 +84,22 @@ pub(crate) fn remap_gate(
     Ok(attempts.map(reasons::edition_remap_pending))
 }
 
+/// Whether the file sits where its folder keeps its own tags (the Local
+/// metadata policy, from the folder or a path rule). Management never plans
+/// its profile's tags or names for an album with such a file, whatever
+/// asked for it; a person's own tag edit is the one exception.
+pub(crate) fn keeps_own_tags(registry: &RootRegistry, root_id: &str, relative_path: &str) -> bool {
+    registry.resolve(root_id).is_some_and(|root| {
+        root.policy_for(&root.path.join(relative_path)) == EffectivePolicy::LocalMetadata
+    })
+}
+
+fn album_keeps_own_tags(ctx: &PlanContext<'_>, tracks: &[CatalogTrack]) -> bool {
+    tracks
+        .iter()
+        .any(|track| keeps_own_tags(ctx.registry, &track.root_id, &track.relative_path))
+}
+
 /// Whether management may touch unconfirmed matches, read per call.
 pub(crate) fn manage_unconfirmed(setup: &LibrarySetup) -> bool {
     setup.settings.editions.manage_unconfirmed()
@@ -1867,6 +1883,14 @@ pub fn plan_album(
         }
         return Ok(items);
     }
+    // A person's tag edit writes only the fields they named, never a name
+    // or a path: it edits the folder's own tags, so it goes ahead.
+    if ctx.tag_edit.is_none() && album_keeps_own_tags(ctx, tracks) {
+        for item in &mut items {
+            item.block(reasons::keeps_own_tags());
+        }
+        return Ok(items);
+    }
     let (mut release, release_mbid, release_group_mbid, album_identity_revision) =
         match album_state(ctx, &scope.album_id, person, edition)? {
             AlbumState::Blocked(reason) => {
@@ -2018,6 +2042,10 @@ pub fn plan_one(
     ordinal: i64,
 ) -> Result<PlannedItem, ManagementError> {
     let mut item = base_item(track, scope, ordinal, 0);
+    if album_keeps_own_tags(ctx, std::slice::from_ref(track)) {
+        item.block(reasons::keeps_own_tags());
+        return Ok(item);
+    }
     // Duplicate resolution is not held back by an edition being placed.
     match album_state(ctx, &scope.album_id, false, None)? {
         AlbumState::Blocked(reason) => item.block(reason),
