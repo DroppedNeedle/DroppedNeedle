@@ -26,6 +26,7 @@ use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
 use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
+use droppedneedle_library::management::automatic::{SETTLE_SECONDS, Settle};
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
 use droppedneedle_library::scan::SqliteScanStore;
 use droppedneedle_library::wiring::LibrarySetup;
@@ -9507,6 +9508,134 @@ impl ManagedLibrary {
             .items;
         (handle, items)
     }
+}
+
+/// Automatic management settles album by album: catalog changes made for
+/// other albums never hold one back. An album is looked at 30 s after it
+/// was queued, while no identification job of its own is live and no scan
+/// runs. Time is passed in, so nothing sleeps.
+#[tokio::test]
+async fn automatic_management_settles_per_album() {
+    let managed = ManagedLibrary::start("lib-settle", |_| {}).await;
+    let (ready, _) = managed.add_album("ready", 1).await;
+    let (identifying, _) = managed.add_album("identifying", 1).await;
+    let (late, _) = managed.add_album("late", 1).await;
+    managed.activate().await;
+    let start = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs_f64();
+    managed.library.queue_automatic_management(&ready);
+    managed.library.queue_automatic_management(&identifying);
+    managed
+        .db()
+        .execute(
+            "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
+             input_revision, idempotency_key, created_ms, updated_ms) \
+             VALUES ('live-job', ?1, 'automatic', 0, 'queued', 'r', 'live-job', 0, 0)",
+            [&identifying],
+        )
+        .expect("live identification job");
+    let mut settle = Settle::default();
+    let queued = |album: &str| -> bool {
+        managed
+            .db()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
+                 WHERE local_album_id = ?1 AND attempts = 0 AND last_reason_code IS NULL)",
+                [album],
+                |row| row.get(0),
+            )
+            .expect("queue read")
+    };
+
+    assert!(
+        !step_at(&managed, &mut settle, start, 1.0).await,
+        "nothing is looked at right after a start"
+    );
+    assert!(
+        step_at(&managed, &mut settle, start, SETTLE_SECONDS + 5.0).await,
+        "a due album is looked at while the catalog keeps moving"
+    );
+    while management_step(&managed.library).await {}
+    assert!(!queued(&ready), "the due album was managed");
+    assert_eq!(managed.automatic_runs().len(), 1);
+
+    assert!(
+        !step_at(&managed, &mut settle, start, SETTLE_SECONDS + 10.0).await,
+        "an album with a live identification job waits"
+    );
+    assert!(queued(&identifying), "waiting spends no try");
+    droppedneedle_library::management::automatic::queue(
+        &managed.db(),
+        &late,
+        start + SETTLE_SECONDS + 11.0,
+    )
+    .expect("queued");
+    assert!(
+        !step_at(&managed, &mut settle, start, 2.0 * SETTLE_SECONDS + 10.0).await,
+        "an album queued later waits its own window"
+    );
+    assert!(queued(&late));
+    assert!(step_at(&managed, &mut settle, start, 2.0 * SETTLE_SECONDS + 12.0).await);
+    while management_step(&managed.library).await {}
+    assert!(
+        !queued(&late),
+        "the album was managed once its window passed"
+    );
+    assert!(queued(&identifying));
+
+    managed
+        .db()
+        .execute(
+            "UPDATE library_identify_jobs SET state = 'succeeded' WHERE id = 'live-job'",
+            [],
+        )
+        .expect("identification done");
+    let registry = managed.library.live_registry();
+    managed
+        .library
+        .coordinator
+        .request_run(&droppedneedle_library::scan::ScanRequest {
+            kind: droppedneedle_library::scan::ScanKind::Incremental,
+            trigger: droppedneedle_library::scan::ScanTrigger::Manual,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: None,
+            policy_revision: registry.policy_revision().to_owned(),
+        })
+        .expect("scan requested");
+    assert!(
+        !step_at(&managed, &mut settle, start, 2.0 * SETTLE_SECONDS + 20.0).await,
+        "a running scan holds every album back"
+    );
+    assert!(queued(&identifying));
+    drain_scans(&managed.library).await;
+    assert!(
+        step_at(&managed, &mut settle, start, 2.0 * SETTLE_SECONDS + 30.0).await,
+        "the album is looked at once the scan is done"
+    );
+}
+
+/// One automatic step at `start + at`, after an identification seal for
+/// some other album bumped the catalog revision.
+async fn step_at(managed: &ManagedLibrary, settle: &mut Settle, start: f64, at: f64) -> bool {
+    managed
+        .db()
+        .execute(
+            "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
+            [],
+        )
+        .expect("revision bumped");
+    let management = managed.management();
+    let mut state = std::mem::take(settle);
+    let (state, looked) = tokio::task::spawn_blocking(move || {
+        let looked = management.automatic_step_at(&mut state, start + at);
+        (state, looked)
+    })
+    .await
+    .expect("worker joins");
+    *settle = state;
+    looked.expect("automatic step")
 }
 
 fn title_edit(value: &str) -> droppedneedle_library::tags::TagEdit {

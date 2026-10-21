@@ -8,10 +8,13 @@
 //! waits on the operations page with its reasons.
 //!
 //! Albums wait in `library_management_automatic_queue`. The worker looks
-//! at one only after the catalog has been still for a moment (so a scan
-//! or an import has finished writing, and never right after a start),
-//! and while no scan runs. An album it skips for a reason the person can
-//! act on stays listed with that reason until it is queued again.
+//! at one only a moment after it was last queued and its identification
+//! last landed, while no identification of it is queued, running or
+//! deferred (so its own writes have settled, and never right after a
+//! start), and while no scan runs.
+//! Changes to other albums never hold it back. An album it skips for a
+//! reason the person can act on stays listed with that reason until it is
+//! queued again.
 
 use droppedneedle_kernel::db::Lane;
 use rusqlite::{Connection, OptionalExtension as _, params};
@@ -31,8 +34,8 @@ use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementRootAssignment,
 };
 
-/// How long the catalog must be still before automatic management looks
-/// at an album (v2's settle window).
+/// How long after it was last queued automatic management looks at an
+/// album (v2's settle window, per album).
 pub const SETTLE_SECONDS: f64 = 30.0;
 /// How many times an album that is not ready yet is looked at again.
 const MAX_ATTEMPTS: i64 = 8;
@@ -44,11 +47,10 @@ pub(super) const PARKED: f64 = 1.0e15;
 /// back.
 pub const SCAN_HELD_BACK: &str = "SCAN_HELD_BACK";
 
-/// The catalog revision the worker saw last, and when it last moved.
+/// When the worker first looked, so the first looks after a start wait.
 #[derive(Debug, Clone, Default)]
 pub struct Settle {
-    revision: Option<i64>,
-    changed_at: Option<f64>,
+    started_at: Option<f64>,
 }
 
 /// Whether the app writes an album's files by itself, and whether it is
@@ -295,14 +297,6 @@ impl crate::wiring::LibrarySetup {
     }
 }
 
-fn catalog_revision(conn: &Connection) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT value FROM library_catalog_revision WHERE singleton = 1",
-        [],
-        |row| row.get(0),
-    )
-}
-
 /// One indexed file of an album.
 struct AlbumFile {
     id: String,
@@ -424,13 +418,21 @@ impl Management {
         })
     }
 
-    /// Look at the next waiting album once the catalog has settled and no
-    /// scan runs. True when one was looked at or handed back. Blocking.
+    /// Look at the next waiting album that has settled, while no scan
+    /// runs. True when one was looked at or handed back. Blocking.
     pub fn automatic_step(&self, settle: &mut Settle) -> Result<bool, ManagementError> {
+        self.automatic_step_at(settle, now_unix())
+    }
+
+    /// [`Self::automatic_step`] at `now` (unix seconds). Blocking.
+    pub fn automatic_step_at(
+        &self,
+        settle: &mut Settle,
+        now: f64,
+    ) -> Result<bool, ManagementError> {
         // Albums a person handed back all at once come first, one a step.
         // That writes no music file, so it waits for neither a scan nor a
-        // settled catalog.
-        let now = now_unix();
+        // settled album.
         if let Some(album_id) = self
             .setup
             .db
@@ -461,23 +463,10 @@ impl Management {
         if !self.setup.coordinator.current().is_empty() {
             return Ok(false);
         }
-        let revision = self
-            .setup
-            .db
-            .read_blocking("management.catalog_revision", |conn| {
-                Ok::<_, ManagementError>(catalog_revision(conn)?)
-            })?;
-        // A start counts as a change: the first look waits the settle
-        // window too, so a boot-time scan or import can begin first.
-        if settle.revision != Some(revision) {
-            settle.revision = Some(revision);
-            settle.changed_at = Some(now);
-            return Ok(false);
-        }
-        if settle
-            .changed_at
-            .is_some_and(|at| now - at < SETTLE_SECONDS)
-        {
+        // The first looks after a start wait the settle window too, so a
+        // boot-time scan or import can begin first.
+        let started_at = *settle.started_at.get_or_insert(now);
+        if now - started_at < SETTLE_SECONDS {
             return Ok(false);
         }
         if planner::manage_unconfirmed(&self.setup) {
@@ -487,24 +476,32 @@ impl Management {
                     Ok::<_, ManagementError>(wake(conn, Some("UNCONFIRMED_MATCH"), now)?)
                 })?;
         }
-        self.automatic_next()
+        self.look_at_due(now, Some(now - SETTLE_SECONDS))
     }
 
-    /// Look at the next waiting album that is due. Blocking.
+    /// Look at the next waiting album that is due, settled or not.
+    /// Blocking.
     pub fn automatic_next(&self) -> Result<bool, ManagementError> {
-        let now = now_unix();
+        self.look_at_due(now_unix(), None)
+    }
+
+    /// Look at the next album due at `now`. With `settled_before`, only
+    /// one queued by then whose identification is not live and has not
+    /// landed since. A busy read
+    /// is an error, never an empty queue. Blocking.
+    fn look_at_due(&self, now: f64, settled_before: Option<f64>) -> Result<bool, ManagementError> {
         let due: Option<(String, i64)> =
             self.setup
                 .db
                 .read_blocking("management.automatic_due", |conn| {
-                    Ok::<_, ManagementError>(conn
-                .query_row(
-                    "SELECT local_album_id, attempts FROM library_management_automatic_queue \
-                     WHERE not_before <= ?1 ORDER BY not_before, local_album_id LIMIT 1",
-                    params![now],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?)
+                    Ok::<_, ManagementError>(
+                        conn.query_row(
+                            super::sql::AUTOMATIC_DUE.text(),
+                            params![now, settled_before],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .optional()?,
+                    )
                 })?;
         let Some((album_id, attempts)) = due else {
             return Ok(false);
