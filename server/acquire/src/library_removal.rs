@@ -1,21 +1,34 @@
 //! Acquisition's side of an album removal (v2 `purge_album_downloads`
-//! plus the wanted follow-up): the album's failed downloads stop
-//! retrying, its held files, held rows and blocklist entries go, and its
-//! wanted watch stops or rearms. Every step is best effort and logged:
-//! the user already confirmed the removal.
-
-use std::sync::Arc;
+//! plus the wanted follow-up), run as the library's `library.album_removed`
+//! job, which the removal queues in its own commit: the album's failed
+//! downloads stop retrying, its held files, held rows and blocklist
+//! entries go, and its wanted watch stops or rearms.
+//!
+//! Safe to run again: only rows made at or before the removal are
+//! touched, so a request made since keeps its task, held files and watch.
+//! Held files are deleted before the one write that drops their rows and
+//! finishes the job, so a run that stops in between finds them again.
 
 use futures_util::future::BoxFuture;
 
-use super::downloads::journal::Journal;
-use super::requests::sqlite::WantedStore;
-use droppedneedle_library::mutations::AlbumRemovalHook;
+use droppedneedle_kernel::db::{Db, DbError, Lane};
+use droppedneedle_kernel::jobs::queue::{
+    JobCtx, JobError, JobHandler, KindSpec, Outcome, PAYLOAD_INVALID,
+};
+use droppedneedle_library::mutations::{ALBUM_REMOVED, AlbumRemovedJob};
+
+use super::downloads::store::{DownloadStore, StoreError};
+use super::requests::sqlite::{rearm_after_removal, stop_after_removal};
+
+/// How the clean-up runs: the queue's defaults.
+pub const SPEC: KindSpec = KindSpec::new(ALBUM_REMOVED);
+
+/// A clean-up write that did not finish.
+const CLEANUP_FAILED: &str = "CLEANUP_FAILED";
 
 /// Cleans up download and wanted state for removed albums.
 pub struct AcquireAlbumCleanup {
-    journal: Arc<Journal>,
-    wanted: WantedStore,
+    db: Db,
 }
 
 impl AcquireAlbumCleanup {
@@ -23,71 +36,117 @@ impl AcquireAlbumCleanup {
     /// acquisition bundle is built on.
     pub fn new(stores: &super::wiring::AcquireStores) -> Self {
         Self {
-            journal: stores.journal.clone(),
-            wanted: stores.wanted.clone(),
+            db: stores.db.db().clone(),
         }
     }
 }
 
-impl AlbumRemovalHook for AcquireAlbumCleanup {
-    fn album_removed<'a>(
-        &'a self,
-        release_group_mbid: &'a str,
-        stop_wanted: bool,
-    ) -> BoxFuture<'a, ()> {
+/// What the clean-up's write did.
+struct Cleaned {
+    retries_cancelled: usize,
+    held_removed: usize,
+    wanted_changed: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum CleanupError {
+    #[error(transparent)]
+    Db(#[from] DbError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error(transparent)]
+    Job(#[from] JobError),
+}
+
+impl From<rusqlite::Error> for CleanupError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Db(DbError::from(error))
+    }
+}
+
+impl CleanupError {
+    fn is_busy(&self) -> bool {
+        match self {
+            Self::Db(error) => matches!(error, DbError::Busy { .. } | DbError::LaneClosed),
+            Self::Job(error) => error.is_busy(),
+            Self::Store(_) => false,
+        }
+    }
+}
+
+impl JobHandler for AcquireAlbumCleanup {
+    fn run(&self, job: JobCtx) -> BoxFuture<'static, Outcome> {
+        let db = self.db.clone();
         Box::pin(async move {
-            let group = release_group_mbid.to_owned();
+            let Ok(removed) = job.payload::<AlbumRemovedJob>() else {
+                return Outcome::Fail {
+                    code: PAYLOAD_INVALID,
+                };
+            };
+            match clean_up(&db, job, &removed).await {
+                Ok(()) => Outcome::Done,
+                Err(error) if error.is_busy() => Outcome::Busy,
+                Err(error) => {
+                    tracing::warn!(%error, "clean-up after an album removal did not finish");
+                    Outcome::Retry {
+                        code: CLEANUP_FAILED,
+                        at: None,
+                    }
+                }
+            }
+        })
+    }
+}
+
+async fn clean_up(db: &Db, job: JobCtx, removed: &AlbumRemovedJob) -> Result<(), CleanupError> {
+    let (group, removed_at) = (removed.release_group_mbid.clone(), removed.removed_at);
+    let held_paths = db
+        .read("downloads.removed_album_held", move |conn| {
+            Ok::<_, CleanupError>(DownloadStore::new(conn).held_paths_before(&group, removed_at)?)
+        })
+        .await?;
+    let unlinked = tokio::task::spawn_blocking(move || {
+        for path in &held_paths {
+            if let Err(error) = std::fs::remove_file(path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(%error, "held file of a removed album was kept");
+            }
+        }
+    })
+    .await;
+    if let Err(error) = unlinked {
+        tracing::warn!(%error, "held file cleanup did not finish");
+    }
+    let job_removed = removed.clone();
+    let cleaned = db
+        .write(Lane::Background, "downloads.removed_album", move |tx| {
+            let removed = job_removed;
+            let group = removed.release_group_mbid.as_str();
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|elapsed| elapsed.as_secs_f64())
                 .unwrap_or(0.0);
-            match self
-                .journal
-                .run_foreground("downloads.purge_album", move |store| {
-                    store.purge_album(&group, now)
-                })
-                .await
-            {
-                Ok(purge) => {
-                    let held = purge.held_paths.len();
-                    let unlinked = tokio::task::spawn_blocking(move || {
-                        for path in &purge.held_paths {
-                            if let Err(error) = std::fs::remove_file(path)
-                                && error.kind() != std::io::ErrorKind::NotFound
-                            {
-                                tracing::warn!(%error, "held file of a removed album was kept");
-                            }
-                        }
-                    })
-                    .await;
-                    if let Err(error) = unlinked {
-                        tracing::warn!(%error, "held file cleanup did not finish");
-                    }
-                    tracing::info!(
-                        release_group_mbid,
-                        retries_cancelled = purge.retries_cancelled,
-                        held_files = held,
-                        "download state of a removed album cleaned up"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(%error, release_group_mbid, "download cleanup after album removal failed");
-                }
-            }
-            let wanted = if stop_wanted {
-                self.wanted.stop_after_removal(release_group_mbid).await
+            let purge = DownloadStore::new(tx).purge_album(group, removed.removed_at, now)?;
+            let wanted_changed = if removed.stop_wanted {
+                stop_after_removal(tx, group, removed.removed_at)?
             } else {
-                self.wanted
-                    .rearm_after_removal(release_group_mbid, now as u64)
-                    .await
+                rearm_after_removal(tx, group, removed.removed_at, now)?
             };
-            if let Err(error) = wanted {
-                tracing::warn!(
-                    ?error,
-                    release_group_mbid,
-                    "wanted follow-up after album removal failed"
-                );
-            }
+            job.complete(tx)?;
+            Ok::<_, CleanupError>(Cleaned {
+                retries_cancelled: purge.retries_cancelled,
+                held_removed: purge.held_removed,
+                wanted_changed,
+            })
         })
-    }
+        .await?;
+    tracing::info!(
+        release_group_mbid = removed.release_group_mbid,
+        retries_cancelled = cleaned.retries_cancelled,
+        held_files = cleaned.held_removed,
+        wanted_changed = cleaned.wanted_changed,
+        "download state of a removed album cleaned up"
+    );
+    Ok(())
 }

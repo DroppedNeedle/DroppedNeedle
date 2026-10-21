@@ -42,7 +42,7 @@ use crate::{
 };
 use droppedneedle_acquire::{
     AcquireSetup,
-    library_removal::AcquireAlbumCleanup,
+    library_removal::{self, AcquireAlbumCleanup},
     requests::discovery::DiscoveryBatchRequests,
     wiring::{AcquirePorts, AcquireStores},
 };
@@ -288,6 +288,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let collections_db = CollectionsDb::new(db.clone());
     let collections = Stores::new(&collections_db);
     let acquire_stores = AcquireStores::open(db);
+    let album_cleanup = Arc::new(AcquireAlbumCleanup::new(&acquire_stores));
     // Read live, so a source switch in Settings reaches the long-lived
     // clients without a restart.
     let mb_source = providers.musicbrainz.live_source(config_store.live());
@@ -298,15 +299,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         mb_source.clone(),
         queues.queue().clone(),
         outbound.library(),
-        library_ports(
-            p,
-            &providers,
-            &auth,
-            &artwork,
-            &scans,
-            library_fs,
-            &acquire_stores,
-        )?,
+        library_ports(p, &providers, &auth, &artwork, &scans, library_fs)?,
     )
     .map_err(stage("library setup"))?;
     let acquire = AcquireSetup::build(
@@ -443,6 +436,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         droppedneedle_acquire::imports::jobs::SPEC,
         acquire.spotify_import_jobs.clone(),
     )
+    .with_job(library_removal::SPEC, album_cleanup)
     .with_discovery_demand(Arc::new(
         droppedneedle_catalog::reads::discover::demand::ContentDemand(
             reads.discover.content.clone(),
@@ -568,8 +562,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     })
 }
 
-/// What the library calls outside itself. Removing an album clears its
-/// download and wanted state. Completed scans refresh the library's
+/// What the library calls outside itself. Completed scans refresh the library's
 /// images, as v2 did after a sync. Library Management plans genres, lyrics
 /// and covers through the same clients and artwork cache the pages use, and
 /// AcoustID ids on identification's shared rate limit.
@@ -581,7 +574,6 @@ fn library_ports(
     artwork: &ArtworkService,
     scans: &jobs::ScansEnded,
     fs: droppedneedle_library::scan::fs::FsCoordinator,
-    acquire: &AcquireStores,
 ) -> Result<droppedneedle_library::wiring::LibraryPorts, BootError> {
     let enrichment = LiveEnrichment {
         acoustid: providers.acoustid.clone(),
@@ -596,7 +588,6 @@ fn library_ports(
     };
     let scans = scans.clone();
     Ok(droppedneedle_library::wiring::LibraryPorts {
-        removal: Arc::new(AcquireAlbumCleanup::new(acquire)),
         enrichment: Some(Arc::new(enrichment)),
         scan_completed: Arc::new(move || scans.bump()),
         fs,

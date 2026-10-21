@@ -3786,7 +3786,7 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
     assert_eq!(std::fs::read_dir(&bin).expect("bin exists").count(), 1);
 
     let removed = Mutations::new(&library)
-        .remove_album(&album, true, "admin")
+        .remove_album(&album, true, true, "admin")
         .expect("album removed");
     assert_eq!(
         removed.track_ids.len(),
@@ -3810,6 +3810,94 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
             .expect("re-enable answers"),
         "an album that was never excluded reports false"
     );
+}
+
+/// A removed album's download and wanted clean-up is written with the
+/// removal itself: when the process stops right after the removal's
+/// commit, the clean-up still runs once after the restart.
+#[tokio::test]
+async fn album_cleanup_survives_a_stop_after_the_removal() {
+    use droppedneedle_library::mutations::Mutations;
+
+    let rig = Rig::start("lib-remove-cleanup").await;
+    let music = rig.app.config.root_app_dir.join("music");
+    plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
+    rig.app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "Band/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    let held = rig.app.config.root_app_dir.join("held/01.flac");
+    std::fs::create_dir_all(held.parent().expect("held folder")).expect("held folder");
+    std::fs::write(&held, b"held").expect("held file");
+    rig.scan_store
+        .db()
+        .run_sql(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', 'rg-gone', 'manual', 0); \
+             INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('fan', 'Fan', 'user', '2026-01-01T00:00:00Z'); \
+             INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
+             album_title, status, created_at, updated_at) \
+             VALUES ('task-old', 'fan', 'rg-gone', 'Band', 'LP', 'failed', 1767225600.0, \
+             1767225600.0); \
+             INSERT INTO held_imports (user_id, release_group_mbid, held_path, reason, \
+             created_at) VALUES ('fan', 'rg-gone', '{}', 'verify_failed', 1767225600.0); \
+             INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, \
+             user_id, artist_name, album_title, kind, state, created_at, next_check_at) \
+             VALUES ('rg-gone', 'rg-gone', 'fan', 'Band', 'LP', 'missing', 'watching', \
+             1767225600.0, 1767225600.0);",
+            held.display()
+        ))
+        .expect("acquisition rows seeded");
+
+    // The library's own call, as a process stopped right after the
+    // removal's commit leaves it: nothing after the removal runs.
+    let library = rig.app.state().library.clone();
+    let removed = tokio::task::spawn_blocking(move || {
+        Mutations::new(&library).remove_album(&album, true, true, "admin")
+    })
+    .await
+    .expect("removal ran")
+    .expect("album removed");
+    assert_eq!(removed.track_ids, vec![track]);
+    let rig = rig.restart().await;
+
+    let db = rig.scan_store.db().clone();
+    let held_path = held.clone();
+    rig.app
+        .until("the removed album's clean-up", || {
+            let db = db.clone();
+            let held = held_path.clone();
+            async move {
+                let cleaned = db
+                    .query_i64(
+                        "SELECT (SELECT status = 'cancelled' FROM download_tasks \
+                         WHERE id = 'task-old') \
+                         AND (SELECT COUNT(*) FROM held_imports) = 0 \
+                         AND (SELECT state = 'stopped' FROM wanted_watches) \
+                         AND (SELECT COUNT(*) FROM durable_jobs \
+                              WHERE kind = 'library.album_removed' AND state = 'done') = 1",
+                    )
+                    .ok()?;
+                (cleaned == 1 && !held.exists()).then_some(())
+            }
+        })
+        .await;
+    assert_eq!(
+        db.query_i64("SELECT COUNT(*) FROM durable_jobs WHERE kind = 'library.album_removed'")
+            .expect("count"),
+        1,
+        "one clean-up for one removal"
+    );
+    rig.stop().await;
 }
 
 /// An upgrade of three tracks where two new files are held, one because
@@ -4124,7 +4212,9 @@ async fn a_stopped_removal_keeps_each_file_with_its_track() {
                 .recycle_album_files(&album, &tracks, "admin")
                 .map(|_| ())
         } else {
-            mutations.remove_album(&album, true, "admin").map(|_| ())
+            mutations
+                .remove_album(&album, true, true, "admin")
+                .map(|_| ())
         };
         library.arm_publish_crash(None);
         let committed = matches!(
@@ -14882,7 +14972,7 @@ async fn a_retag_that_deleted_a_file_is_left_alone_while_its_folder_stays_held()
     // The scan's advice: remove the old album. The next scan is clean and
     // lets the folder go, and the new album stays the person's.
     Mutations::new(&managed.library)
-        .remove_album(&album, false, "admin")
+        .remove_album(&album, false, true, "admin")
         .expect("removed in the app");
     rescan(&managed.library).await;
     assert!(!managed.latest_scan_held_back());
@@ -14949,7 +15039,7 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
             &format!("p{index}/new"),
         );
         Mutations::new(&managed.library)
-            .remove_album(album, false, "admin")
+            .remove_album(album, false, true, "admin")
             .expect("removed in the app");
         rescan(&managed.library).await;
         let new: Vec<String> = paths
@@ -15121,7 +15211,7 @@ async fn a_best_guess_confirmed_after_its_folder_is_let_go_is_left_alone() {
     assert_eq!(managed.mark(&replacement), None, "nothing to judge on yet");
 
     Mutations::new(&managed.library)
-        .remove_album(&album, false, "admin")
+        .remove_album(&album, false, true, "admin")
         .expect("removed in the app");
     rescan(&managed.library).await;
     assert!(!managed.latest_scan_held_back());
@@ -15206,7 +15296,7 @@ async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look()
             &format!("p{index}/new"),
         );
         Mutations::new(&managed.library)
-            .remove_album(album, false, "admin")
+            .remove_album(album, false, true, "admin")
             .expect("removed in the app");
         rescan(&managed.library).await;
         let new = indexed_at(&managed.library, &paths[0]);

@@ -24,6 +24,7 @@ pub use editions::EditionStore;
 pub use mixes::PersonalMixStore;
 pub use requests::RequestStore;
 pub use wanted::{WantedStore, WatchChange};
+pub(crate) use wanted::{rearm_after_removal, stop_after_removal};
 
 use super::error::RequestsError;
 use droppedneedle_kernel::db::{DbError, map_sqlx_busy};

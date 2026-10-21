@@ -47,7 +47,7 @@ use crate::management::automatic::AutomaticWrites;
 use crate::management::edition_tags::{EditionTagsError, EditionTagsJob};
 use crate::management::models::{FieldMutation, ManagementError, PlannedItem, PreviewHandle};
 use crate::management::service::{ApplyRequest, Management};
-use crate::mutations::Mutations;
+use crate::mutations::{ExtrasError, Mutations};
 use crate::operations::models::{EditionChoice, OperationError};
 use crate::operations::plan::{FileFate, PlanReading};
 use crate::operations::reasons;
@@ -875,27 +875,13 @@ pub async fn remove_extras(
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<RemoveExtrasBody>,
 ) -> Result<Json<RemoveExtrasView>, ApiError> {
-    let refuse = |reason| ApiError::from(OperationError::Invalid(reason));
-    if body.track_ids.is_empty() {
-        return Err(refuse(reasons::NOTHING_PICKED));
-    }
-    let plan = Operations::new(&state)
-        .edition_plan(&album_id, None)
-        .await?;
-    let spare = |id: &String| {
-        plan.files
-            .iter()
-            .any(|file| file.local_track_id == *id && file.fate != FileFate::Keep)
-    };
-    if !body.track_ids.iter().all(spare) {
-        return Err(refuse(reasons::FILE_KEEPS_ITS_PLACE));
-    }
-    let actor = caller.user_id().to_owned();
-    let (action_id, removed_track_ids) = tokio::task::spawn_blocking(move || {
-        Mutations::new(&state).recycle_album_files(&album_id, &body.track_ids, &actor)
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    let (action_id, removed_track_ids) = Mutations::new(&state)
+        .remove_extras(&album_id, body.track_ids, caller.user_id())
+        .await
+        .map_err(|error| match error {
+            ExtrasError::Plan(error) => ApiError::from(error),
+            ExtrasError::Remove(error) => ApiError::from(error),
+        })?;
     Ok(Json(RemoveExtrasView {
         action_id,
         removed_track_ids,

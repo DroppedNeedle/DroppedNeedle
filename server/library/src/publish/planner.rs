@@ -376,6 +376,60 @@ pub struct Removal {
     /// Remove extras' undo record, written in the commit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extras_action: Option<ExtrasAction>,
+    /// The removed album's clean-up outside the library, queued as an
+    /// [`ALBUM_REMOVED`] job in the commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_removed: Option<AlbumRemoved>,
+}
+
+/// The job kind a removed album's clean-up outside the library runs as:
+/// its downloads stop retrying, its held files go and its wanted watch
+/// stops or looks again. Queued in the removal's own commit.
+pub const ALBUM_REMOVED: droppedneedle_kernel::jobs::queue::JobKind =
+    droppedneedle_kernel::jobs::queue::JobKind::new("library.album_removed");
+
+/// What a removed album's clean-up needs, recorded with the removal.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AlbumRemoved {
+    pub release_group_mbid: String,
+    /// Stop the album's wanted watch; otherwise a fulfilled watch looks
+    /// for a replacement again.
+    pub stop_wanted: bool,
+}
+
+/// An [`ALBUM_REMOVED`] job's payload.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AlbumRemovedJob {
+    pub release_group_mbid: String,
+    pub stop_wanted: bool,
+    /// When the removal committed, unix seconds. The clean-up touches only
+    /// rows stamped at or before it, so a request made since is left alone.
+    pub removed_at: f64,
+}
+
+impl AlbumRemovedJob {
+    /// Queue the clean-up of `removed` on the removal's transaction, keyed
+    /// by the removal's own id, so it commits with the removal or not at
+    /// all.
+    pub(crate) fn enqueue(
+        tx: &rusqlite::Transaction<'_>,
+        jobs: &droppedneedle_kernel::jobs::queue::JobQueue,
+        removal_id: &str,
+        removed: &AlbumRemoved,
+    ) -> Result<(), droppedneedle_kernel::jobs::queue::JobError> {
+        let job = Self {
+            release_group_mbid: removed.release_group_mbid.clone(),
+            stop_wanted: removed.stop_wanted,
+            // The acquisition rows this is compared with are stamped from
+            // the system clock in unix seconds, so this is too.
+            removed_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_secs_f64())
+                .unwrap_or(0.0),
+        };
+        jobs.enqueue(tx, ALBUM_REMOVED, removal_id, &job)
+            .map(|_| ())
+    }
 }
 
 /// One track a removal marks missing, and its file when it has one.

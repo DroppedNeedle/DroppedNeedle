@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use droppedneedle_kernel::db::{CancelFlag, Db, Durable, DurableLane, Lane};
+use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
 use rusqlite::{Connection, OptionalExtension};
 
 use super::journal::{
@@ -114,6 +115,29 @@ pub trait Catalog {
     /// Mark a track missing so streaming and search stay accurate when
     /// committed bytes cannot be recovered.
     fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError>;
+}
+
+/// Queue what a committed bundle asks to run after it, on the commit's own
+/// transaction: a removed album's clean-up. A refusal fails the commit, so
+/// the removal and its clean-up land together or not at all.
+pub(super) fn enqueue_after_commit(
+    tx: &rusqlite::Transaction<'_>,
+    jobs: &JobQueue,
+    commit: &BundleCommit,
+) -> Result<(), PublishError> {
+    let Some(removed) = commit
+        .removal
+        .as_ref()
+        .and_then(|removal| removal.album_removed.as_ref())
+    else {
+        return Ok(());
+    };
+    super::planner::AlbumRemovedJob::enqueue(tx, jobs, &commit.bundle_id, removed).map_err(
+        |error| match error {
+            JobError::Db(db) => PublishError::from(db),
+            other => PublishError::Store(other.to_string()),
+        },
+    )
 }
 
 /// Flush a directory entry change where a failure must not undo work
@@ -705,6 +729,8 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     db: Db,
     catalog: C,
     space: P,
+    /// The jobs table a commit queues its follow-up work on.
+    jobs: JobQueue,
     gate: CapabilityGate,
     injector: Option<CrashPoint>,
     place_seams: super::place::Seams,
@@ -779,12 +805,14 @@ fn keep_pictures(
 }
 
 impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
-    /// A publisher over `db`. `clock` reads the time in unix milliseconds.
+    /// A publisher over `db`, queueing a commit's follow-up work on `jobs`.
+    /// `clock` reads the time in unix milliseconds.
     pub fn new(
         sandbox: Sandbox,
         db: Db,
         catalog: C,
         space: P,
+        jobs: JobQueue,
         clock: impl Fn() -> i64 + Send + 'static,
     ) -> Self {
         let now_ms = clock();
@@ -793,6 +821,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             db,
             catalog,
             space,
+            jobs,
             gate: CapabilityGate::production(),
             injector: None,
             place_seams: super::place::Seams::default(),
@@ -1892,6 +1921,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         };
         durable(&self.db, "publish.bundle_commit", |tx| {
             self.catalog.commit_bundle(tx, &commit)?;
+            enqueue_after_commit(tx, &self.jobs, &commit)?;
             let writer = JournalWriter::new(tx);
             for journal in JournalStore::new(tx).bundle(&bundle.id)? {
                 if journal.state != JournalState::Published {

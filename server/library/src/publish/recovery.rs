@@ -48,6 +48,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use droppedneedle_kernel::db::{CancelFlag, Db, Durable};
+use droppedneedle_kernel::jobs::queue::JobQueue;
 
 use super::journal::{FileJournal, JournalKind, JournalState, JournalStore, JournalWriter};
 use super::paths::Sandbox;
@@ -285,8 +286,9 @@ pub fn reconcile<C: Catalog>(
     db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
+    jobs: &JobQueue,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(db, sandbox, catalog, Seams::default())
+    reconcile_with(db, sandbox, catalog, jobs, Seams::default())
 }
 
 /// [`reconcile`] on a filesystem made to lack a placement step. Tests
@@ -296,15 +298,17 @@ pub fn reconcile_with_seams<C: Catalog>(
     db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
+    jobs: &JobQueue,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(db, sandbox, catalog, seams)
+    reconcile_with(db, sandbox, catalog, jobs, seams)
 }
 
 fn reconcile_with<C: Catalog>(
     db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
+    jobs: &JobQueue,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
     gate(db)?;
@@ -322,7 +326,7 @@ fn reconcile_with<C: Catalog>(
                 "bundle {bundle_id} names root {root}, which is not a usable library root"
             ))
         } else {
-            match reconcile_bundle(db, sandbox, catalog, &bundle_id, seams) {
+            match reconcile_bundle(db, sandbox, catalog, jobs, &bundle_id, seams) {
                 Ok(action) => action,
                 Err(error) if error.is_interrupted() => {
                     tracing::warn!(bundle_id, %error, "publish recovery stopped: the database refused it");
@@ -378,6 +382,7 @@ fn reconcile_bundle<C: Catalog>(
     db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
+    jobs: &JobQueue,
     bundle_id: &str,
     seams: Seams,
 ) -> Result<RecoveryAction, PublishError> {
@@ -440,7 +445,7 @@ fn reconcile_bundle<C: Catalog>(
             "publish bundle stopped before every file staged; unwinding it"
         );
     } else if let Some(recorded) = recorded {
-        match resume_precommit(db, sandbox, catalog, &recorded, &journals, seams)? {
+        match resume_precommit(db, sandbox, catalog, jobs, &recorded, &journals, seams)? {
             None => return Ok(RecoveryAction::ResumedCommitted),
             Some(reason) => {
                 tracing::warn!(bundle_id, reason, "publish bundle unwound after its resume");
@@ -864,6 +869,7 @@ fn resume_precommit<C: Catalog>(
     db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
+    jobs: &JobQueue,
     recorded: &super::planner::PlanBundle,
     journals: &[FileJournal],
     seams: Seams,
@@ -962,6 +968,7 @@ fn resume_precommit<C: Catalog>(
         .and_then(|()| {
             durable(db, "publish.recover_commit", |tx| {
                 catalog.commit_bundle(tx, &commit)?;
+                super::publisher::enqueue_after_commit(tx, jobs, &commit)?;
                 let writer = JournalWriter::new(tx);
                 for journal in refreshed.iter() {
                     writer.advance(

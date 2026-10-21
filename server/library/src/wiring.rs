@@ -23,7 +23,6 @@ use super::identify::sqlite::SqliteIdentifyStore;
 use super::manage::{PreviewEntry, PublishCell};
 use super::management::enrich::EnrichmentPort;
 use super::management::settings::service::LibraryManagementService;
-use super::mutations::AlbumRemovalHook;
 use super::scan::coordinator::{
     LibraryScanCoordinator, ResolverSource, ScanEventPublisher, SharedResolver,
 };
@@ -88,8 +87,6 @@ pub type ScanCompleted = Arc<dyn Fn() + Send + Sync>;
 
 /// What the library calls outside itself, given at construction.
 pub struct LibraryPorts {
-    /// Download and wanted cleanup after an album removal.
-    pub removal: Arc<dyn AlbumRemovalHook>,
     /// Genres, lyrics, covers and AcoustID ids Library Management plans
     /// with. `None` only in a test bundle with no outside sources:
     /// planning then asks nothing.
@@ -162,8 +159,9 @@ pub struct LibrarySetup {
     pub watcher_state: Arc<std::sync::Mutex<WatcherState>>,
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
-    /// Download and wanted cleanup after an album removal.
-    pub removal_hook: Arc<dyn AlbumRemovalHook>,
+    /// The jobs table: a removed album's clean-up is queued here in the
+    /// removal's own commit.
+    pub jobs: droppedneedle_kernel::jobs::queue::JobQueue,
     /// The recycle bins removals, upgrades and replaced files go to.
     pub bins: super::publish::bin::BinSource,
     /// The shared outbound HTTP client, for media-server refreshes after a
@@ -282,7 +280,6 @@ impl LibrarySetup {
         let pool = BlockingPool::new(4);
         let wakeups = WorkWakeups::new();
         let LibraryPorts {
-            removal,
             enrichment,
             scan_completed,
             fs,
@@ -324,6 +321,7 @@ impl LibrarySetup {
             })
             .with_preferences(settings.editions.clone()),
         );
+        let jobs = queue.clone();
         let (contrib, contrib_worker) = super::contrib::assemble(
             db,
             queue,
@@ -345,7 +343,7 @@ impl LibrarySetup {
             settings.library.clone(),
             download_trees,
         );
-        let publish = PublishCell::new(db.clone(), bins.clone());
+        let publish = PublishCell::new(db.clone(), bins.clone(), jobs.clone());
         let placement = publish.placement();
         Ok(Self {
             ids: platform.ids.clone(),
@@ -372,7 +370,7 @@ impl LibrarySetup {
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
-            removal_hook: removal,
+            jobs,
             bins,
             http: platform.http.shared().clone(),
             enrichment,

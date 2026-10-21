@@ -3,6 +3,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod acquire_album_removal;
 mod acquire_download_tasks;
 mod acquire_downloads;
 mod acquire_drop_import;

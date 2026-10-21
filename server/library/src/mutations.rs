@@ -25,6 +25,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::jobs::queue::JobError;
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::catalog_revision::bump_catalog;
@@ -224,6 +225,16 @@ impl From<rusqlite::Error> for MutationError {
     }
 }
 
+/// Why a removal of an album's extra files did not happen.
+#[derive(Debug)]
+pub enum ExtrasError {
+    /// Nothing was picked, a picked file keeps its place on the edition,
+    /// or the edition plan could not be read.
+    Plan(super::operations::models::OperationError),
+    /// The removal itself was refused or failed.
+    Remove(MutationError),
+}
+
 /// One album or track removal's result: the track ids that left the
 /// catalog.
 #[derive(Debug, Clone, Default)]
@@ -241,20 +252,7 @@ pub struct Removed {
 /// Files moved into the recycle bin, as (where it was, where it is now).
 pub type Recycled = Vec<(PathBuf, PathBuf)>;
 
-/// What happens outside the library once an album is removed: its
-/// download records and wanted watch are cleaned up. The library is built
-/// with acquisition's; failures are logged there, never surfaced, because
-/// the removal itself already happened.
-pub trait AlbumRemovalHook: Send + Sync {
-    /// The album `release_group_mbid` left the library. `stop_wanted`
-    /// stops its watch; otherwise a fulfilled watch looks for a
-    /// replacement again.
-    fn album_removed<'a>(
-        &'a self,
-        release_group_mbid: &'a str,
-        stop_wanted: bool,
-    ) -> futures_util::future::BoxFuture<'a, ()>;
-}
+pub use super::publish::planner::{ALBUM_REMOVED, AlbumRemoved, AlbumRemovedJob};
 
 /// One track row a removal or rescan works on.
 #[derive(Debug, Clone)]
@@ -278,15 +276,25 @@ impl<'a> Mutations<'a> {
 
     /// Remove an album from the catalog, moving its files into the
     /// recycle bin when `delete_files` is set. `album_id` is a local album
-    /// id or a release-group MBID. Background work: it waits for a write
-    /// in flight instead of answering busy.
+    /// id or a release-group MBID. An identified album's download and
+    /// wanted clean-up is queued in the removal's own commit; `stop_wanted`
+    /// stops its wanted watch, otherwise a fulfilled watch looks again.
+    /// Background work: it waits for a write in flight instead of
+    /// answering busy.
     pub fn remove_album(
         &self,
         album_id: &str,
         delete_files: bool,
+        stop_wanted: bool,
         actor: &str,
     ) -> Result<Removed, MutationError> {
-        self.remove_album_with(album_id, delete_files, actor, RemovalEntry::Wait)
+        self.remove_album_with(
+            album_id,
+            delete_files,
+            stop_wanted,
+            actor,
+            RemovalEntry::Wait,
+        )
     }
 
     /// [`Self::remove_album`] for a person waiting on the answer: a write
@@ -295,15 +303,23 @@ impl<'a> Mutations<'a> {
         &self,
         album_id: &str,
         delete_files: bool,
+        stop_wanted: bool,
         actor: &str,
     ) -> Result<Removed, MutationError> {
-        self.remove_album_with(album_id, delete_files, actor, RemovalEntry::Now)
+        self.remove_album_with(
+            album_id,
+            delete_files,
+            stop_wanted,
+            actor,
+            RemovalEntry::Now,
+        )
     }
 
     fn remove_album_with(
         &self,
         album_id: &str,
         delete_files: bool,
+        stop_wanted: bool,
         actor: &str,
         entry: RemovalEntry,
     ) -> Result<Removed, MutationError> {
@@ -335,6 +351,12 @@ impl<'a> Mutations<'a> {
             entry,
             expect_sha256: None,
             extras: None,
+            album_removed: release_group_mbid
+                .clone()
+                .map(|release_group_mbid| AlbumRemoved {
+                    release_group_mbid,
+                    stop_wanted,
+                }),
         };
         let (track_ids, recycled) = self.remove_tracks(&tracks, delete_files, &removal)?;
         Ok(Removed {
@@ -376,6 +398,7 @@ impl<'a> Mutations<'a> {
             entry,
             expect_sha256: None,
             extras: None,
+            album_removed: None,
         };
         let (track_ids, recycled) = self.remove_tracks(&[track], delete_file, &removal)?;
         Ok(Removed {
@@ -407,6 +430,7 @@ impl<'a> Mutations<'a> {
             entry: RemovalEntry::Now,
             expect_sha256: Some(sha256),
             extras: None,
+            album_removed: None,
         };
         let (track_ids, recycled) = self.remove_tracks(&[track], true, &removal)?;
         Ok(Removed {
@@ -417,12 +441,66 @@ impl<'a> Mutations<'a> {
         })
     }
 
-    /// Move some of one album's files into the recycle bin: the files its
-    /// edition has no place for, which a person picked from the edition
-    /// plan. The undo record is written in the same commit that takes the
-    /// tracks out, so [`Self::restore_recycled`] can put them back. Answers
-    /// that record's id and the track ids that left the catalog.
+    /// Move files the album's edition has no place for, which a person
+    /// picked, into the recycle bin. Refused when nothing is picked, or
+    /// when the album's current edition plan keeps a place for any picked
+    /// file. Answers the undo record's id and the track ids that left the
+    /// catalog.
+    pub async fn remove_extras(
+        &self,
+        album_id: &str,
+        track_ids: Vec<String>,
+        actor: &str,
+    ) -> Result<(String, Vec<String>), ExtrasError> {
+        use super::operations::models::OperationError;
+        use super::operations::plan::FileFate;
+        use super::operations::reasons;
+        if track_ids.is_empty() {
+            return Err(ExtrasError::Plan(OperationError::Invalid(
+                reasons::NOTHING_PICKED,
+            )));
+        }
+        let plan = super::operations::service::Operations::new(self.setup)
+            .edition_plan(album_id, None)
+            .await
+            .map_err(ExtrasError::Plan)?;
+        let spare = |id: &String| {
+            plan.files
+                .iter()
+                .any(|file| file.local_track_id == *id && file.fate != FileFate::Keep)
+        };
+        if !track_ids.iter().all(spare) {
+            return Err(ExtrasError::Plan(OperationError::Invalid(
+                reasons::FILE_KEEPS_ITS_PLACE,
+            )));
+        }
+        let setup = self.setup.clone();
+        let (album_id, actor) = (album_id.to_owned(), actor.to_owned());
+        tokio::task::spawn_blocking(move || {
+            Mutations::new(&setup).recycle_extras(&album_id, &track_ids, &actor)
+        })
+        .await
+        .map_err(|error| ExtrasError::Remove(MutationError::Store(error.to_string())))?
+        .map_err(ExtrasError::Remove)
+    }
+
+    /// [`Self::remove_extras`] without its edition check, for a test that
+    /// works on files no edition plans. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn recycle_album_files(
+        &self,
+        album_id: &str,
+        track_ids: &[String],
+        actor: &str,
+    ) -> Result<(String, Vec<String>), MutationError> {
+        self.recycle_extras(album_id, track_ids, actor)
+    }
+
+    /// Move some of one album's files into the recycle bin. The undo
+    /// record is written in the same commit that takes the tracks out, so
+    /// [`Self::restore_recycled`] can put them back. Answers that record's
+    /// id and the track ids that left the catalog.
+    fn recycle_extras(
         &self,
         album_id: &str,
         track_ids: &[String],
@@ -442,6 +520,7 @@ impl<'a> Mutations<'a> {
                 id: action_id.clone(),
                 album_id: album_id.to_owned(),
             }),
+            album_removed: None,
         };
         let (removed, _) = self.remove_tracks(&tracks, true, &removal)?;
         Ok((action_id, removed))
@@ -469,7 +548,7 @@ impl<'a> Mutations<'a> {
             .ok_or(MutationError::NotFound(TRACK_NOT_FOUND))
     }
 
-    /// Put back the files one [`Self::recycle_album_files`] moved,
+    /// Put back the files one [`Self::remove_extras`] moved,
     /// through the publisher. Their tracks are indexed again in the same
     /// commit. A file whose copy is gone from the recycle bin, or changed
     /// there, stays out;
@@ -649,10 +728,23 @@ impl<'a> Mutations<'a> {
         removal: &Removal<'_>,
     ) -> Result<(Vec<String>, Recycled), MutationError> {
         if !recycle {
+            let jobs = &self.setup.jobs;
             let changed = self.setup.db.write_blocking(
                 Lane::Foreground,
                 "mutations.remove_tracks",
-                |tx| mark_missing(tx, tracks, removal.reason_code, removal.actor),
+                |tx| {
+                    let changed = mark_missing(tx, tracks, removal.reason_code, removal.actor)?;
+                    if let Some(removed) = &removal.album_removed {
+                        let removal_id = uuid::Uuid::new_v4().to_string();
+                        AlbumRemovedJob::enqueue(tx, jobs, &removal_id, removed).map_err(
+                            |error| match error {
+                                JobError::Db(db) => MutationError::from(db),
+                                other => MutationError::Store(other.to_string()),
+                            },
+                        )?;
+                    }
+                    Ok::<_, MutationError>(changed)
+                },
             )?;
             tracing::info!(tracks = changed.len(), "library removal");
             return Ok((changed, Vec::new()));
@@ -682,6 +774,7 @@ impl<'a> Mutations<'a> {
                 removal.reason_code,
                 Some(removal.actor),
                 removal.extras.clone(),
+                removal.album_removed.clone(),
                 removal.entry,
             )
             .map_err(refusal)?;
@@ -828,6 +921,8 @@ struct Removal<'a> {
     expect_sha256: Option<&'a str>,
     /// Remove extras' undo record.
     extras: Option<ExtrasAction>,
+    /// The removed album's clean-up, queued in the removal's commit.
+    album_removed: Option<AlbumRemoved>,
 }
 
 /// A removal's refusal as the page reads it.

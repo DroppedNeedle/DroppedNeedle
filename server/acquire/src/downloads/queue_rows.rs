@@ -67,44 +67,64 @@ pub enum Stopped {
 pub struct AlbumPurge {
     /// Failed or short tasks that will no longer retry.
     pub retries_cancelled: usize,
-    /// Held "couldn't verify" files whose rows were dropped; the caller
-    /// deletes the files.
-    pub held_paths: Vec<String>,
+    /// Held "couldn't verify" rows dropped.
+    pub held_removed: usize,
 }
 
 impl DownloadStore<'_> {
-    /// Download-side cleanup after an album leaves the library (v2
-    /// `purge_album_downloads`): its failed or short tasks stop retrying,
-    /// its held imports and blocklist entries go. Live tasks are left
-    /// alone; they are cancelled per task so their transfers are torn down.
+    /// The held files of an album removed at `removed_at` (unix seconds):
+    /// those of its held imports made at or before then. The clean-up
+    /// deletes them before [`Self::purge_album`] drops their rows, so a
+    /// clean-up that stops between the two finds them again.
+    pub fn held_paths_before(
+        &self,
+        release_group_mbid: &str,
+        removed_at: f64,
+    ) -> Result<Vec<String>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT held_path FROM held_imports WHERE lower(release_group_mbid) = lower(?1) \
+             AND created_at <= ?2",
+        )?;
+        let held_paths = statement
+            .query_map(params![release_group_mbid, removed_at], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(held_paths)
+    }
+
+    /// Download-side cleanup after an album left the library at
+    /// `removed_at` (unix seconds; v2 `purge_album_downloads`): its failed
+    /// or short tasks stop retrying, its held imports and blocklist
+    /// entries go. Only rows made at or before the removal are touched, so
+    /// a request made since keeps its own. Live tasks are left alone; they
+    /// are cancelled per task so their transfers are torn down.
     pub fn purge_album(
         &self,
         release_group_mbid: &str,
+        removed_at: f64,
         now: f64,
     ) -> Result<AlbumPurge, StoreError> {
         let retries_cancelled = self.conn.execute(
             "UPDATE download_tasks SET status = 'cancelled', cancelled_at = ?2, \
                  remote_queued = 0, updated_at = ?2 \
-             WHERE lower(release_group_mbid) = lower(?1) AND status IN ('failed', 'partial')",
-            params![release_group_mbid, now],
+             WHERE lower(release_group_mbid) = lower(?1) AND status IN ('failed', 'partial') \
+             AND created_at <= ?3",
+            params![release_group_mbid, now, removed_at],
         )?;
-        let mut statement = self.conn.prepare(
-            "SELECT held_path FROM held_imports WHERE lower(release_group_mbid) = lower(?1)",
-        )?;
-        let held_paths = statement
-            .query_map(params![release_group_mbid], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        self.conn.execute(
-            "DELETE FROM held_imports WHERE lower(release_group_mbid) = lower(?1)",
-            params![release_group_mbid],
+        let held_removed = self.conn.execute(
+            "DELETE FROM held_imports WHERE lower(release_group_mbid) = lower(?1) \
+             AND created_at <= ?2",
+            params![release_group_mbid, removed_at],
         )?;
         self.conn.execute(
-            "DELETE FROM download_quarantine WHERE lower(release_group_mbid) = lower(?1)",
-            params![release_group_mbid],
+            "DELETE FROM download_quarantine WHERE lower(release_group_mbid) = lower(?1) \
+             AND quarantined_at <= ?2",
+            params![release_group_mbid, removed_at],
         )?;
         Ok(AlbumPurge {
             retries_cancelled,
-            held_paths,
+            held_removed,
         })
     }
 

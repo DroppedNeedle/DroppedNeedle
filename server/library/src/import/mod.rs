@@ -591,6 +591,7 @@ impl LibrarySetup {
                     actor: import.actor.clone(),
                     items: removals,
                     extras_action: None,
+                    album_removed: None,
                 }),
             };
             let token_hash = sha256_hex(bundle.id.as_bytes());

@@ -20,7 +20,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::common::ScratchDir;
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{Db, DurableLane};
+use droppedneedle_kernel::jobs::queue::JobQueue;
 use publish::paths::Root;
 use publish::place::{PlacementMode, Seams};
 use publish::planner::{
@@ -28,7 +30,6 @@ use publish::planner::{
     ReleaseIdentity, SealError, SealRecheck, SealedPreview, SealedRow, SidecarPlan, SpaceProbe,
     TrackMapping,
 };
-use publish::recovery::reconcile_with_seams;
 use publish::remove;
 use publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
 use publish::tags_seam::TagDocument;
@@ -39,7 +40,7 @@ use publish::undo::{
 use publish::{
     ArchiveEntry, ArchivePolicy, AutomaticEligibility, AutomaticHold, Catalog, CrashPoint,
     JournalState, JournalStore, PublishError, PublishOutcome, Publisher, Sandbox, SqliteCatalog,
-    reconcile, validate_archive,
+    validate_archive,
 };
 use rusqlite::Connection;
 
@@ -145,6 +146,30 @@ fn open_db(fix: &Fixture) -> Connection {
 /// publisher that ran before is dropped first, as a stopped server is.
 fn restart(fix: &Fixture) -> Db {
     Db::open_for_tests(&fix.db_path).unwrap()
+}
+
+/// The jobs table a publisher queues a commit's follow-up work on.
+fn jobs(db: &Db) -> JobQueue {
+    JobQueue::new(db.clone(), std::sync::Arc::new(SystemClock))
+}
+
+/// Publish recovery over `db`, queueing on its jobs table.
+fn reconcile<C: Catalog>(
+    db: &Db,
+    sandbox: &Sandbox,
+    catalog: &C,
+) -> Result<Vec<publish::recovery::BundleRecovery>, PublishError> {
+    publish::recovery::reconcile(db, sandbox, catalog, &jobs(db))
+}
+
+/// [`reconcile`] on a filesystem made to lack a placement step.
+fn reconcile_with_seams<C: Catalog>(
+    db: &Db,
+    sandbox: &Sandbox,
+    catalog: &C,
+    seams: Seams,
+) -> Result<Vec<publish::recovery::BundleRecovery>, PublishError> {
+    publish::recovery::reconcile_with_seams(db, sandbox, catalog, &jobs(db), seams)
 }
 
 /// Fixed free-space probe so disk preflight pins exact values.
@@ -327,6 +352,7 @@ fn open_publisher(fix: &Fixture) -> Publisher<SqliteCatalog, FixedSpace> {
         restart(fix),
         SqliteCatalog,
         FixedSpace(u64::MAX),
+        jobs(&restart(fix)),
         || DAY_50_MS,
     )
 }
@@ -966,6 +992,7 @@ fn a_write_counts_as_stuck_after_24_hours() {
         restart(&fix),
         SqliteCatalog,
         FixedSpace(u64::MAX),
+        jobs(&restart(&fix)),
         move || clock.load(Ordering::Relaxed),
     );
     // Day 53, 23:00.
@@ -2301,6 +2328,7 @@ fn bin_entries_never_follow_a_symlink_below_the_bin() {
         restart(&fix),
         SqliteCatalog,
         FixedSpace(u64::MAX),
+        jobs(&restart(&fix)),
         || DAY_50_MS,
     );
     assert_eq!(
@@ -2383,6 +2411,7 @@ fn nothing_goes_to_a_bin_while_the_bins_are_unknown() {
         restart(&fix),
         SqliteCatalog,
         FixedSpace(u64::MAX),
+        jobs(&restart(&fix)),
         || DAY_50_MS,
     );
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
@@ -3041,6 +3070,7 @@ fn a_remove_only_root_takes_removals_only() {
         restart(&fix),
         SqliteCatalog,
         FixedSpace(u64::MAX),
+        jobs(&restart(&fix)),
         || DAY_50_MS,
     );
 

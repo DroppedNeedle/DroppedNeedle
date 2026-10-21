@@ -8,8 +8,6 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle::bootstrap::Port;
-use droppedneedle_acquire::library_removal::AcquireAlbumCleanup;
-use droppedneedle_acquire::wiring::AcquireStores;
 use droppedneedle_kernel::db::writer::Lane;
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::platform::Platform;
@@ -174,7 +172,7 @@ pub fn library_asking(platform: &Platform, identify: Arc<dyn IdentifyProviders>)
 }
 
 /// As [`library_asking`], with Library Management planning through
-/// `enrichment`. Album removals clean up acquisition's rows as in the app.
+/// `enrichment`.
 pub fn library_with(
     platform: &Platform,
     identify: Arc<dyn IdentifyProviders>,
@@ -197,7 +195,6 @@ pub fn library_with(
         ),
         outbound.library(),
         LibraryPorts {
-            removal: Arc::new(AcquireAlbumCleanup::new(&AcquireStores::open(&platform.db))),
             enrichment,
             scan_completed: Arc::new(|| {}),
             fs: FsCoordinator::new(),

@@ -23,6 +23,7 @@ use super::scan::roots::RootRegistry;
 use super::service::ServiceError;
 use super::wiring::{LibrarySetup, RootDirs};
 use droppedneedle_kernel::db::{CancelFlag, Db, DbError};
+use droppedneedle_kernel::jobs::queue::JobQueue;
 
 /// Preview seals live until the next unix day.
 const PREVIEW_TTL_DAYS: i64 = 1;
@@ -93,6 +94,8 @@ impl SessionRoots {
 pub struct PublishCell {
     db: Db,
     bins: BinSource,
+    /// The jobs table a commit queues its follow-up work on.
+    jobs: JobQueue,
     pub(crate) cell: Option<OpenPublish>,
     placement: RootPlacement,
     /// The roots last left out of the session, so each change is logged
@@ -282,11 +285,13 @@ impl LeftoverFiles {
 
 impl PublishCell {
     /// An unopened cell over the application database, taking its
-    /// recycle bins from `bins`.
-    pub(crate) fn new(db: Db, bins: BinSource) -> Self {
+    /// recycle bins from `bins` and queueing a commit's follow-up work on
+    /// `jobs`.
+    pub(crate) fn new(db: Db, bins: BinSource, jobs: JobQueue) -> Self {
         Self {
             db,
             bins,
+            jobs,
             cell: None,
             placement: RootPlacement::default(),
             left_out: std::sync::Mutex::default(),
@@ -338,7 +343,7 @@ impl PublishCell {
         let Some(open) = self.cell.as_ref() else {
             return Ok(Vec::new());
         };
-        super::publish::recovery::reconcile(&self.db, &open.sandbox, &SqliteCatalog)
+        super::publish::recovery::reconcile(&self.db, &open.sandbox, &SqliteCatalog, &self.jobs)
     }
 
     fn root_dirs(registry: &RootRegistry) -> Vec<Root> {
@@ -442,12 +447,14 @@ impl PublishCell {
         // Recovery runs before the new session takes publishes. The
         // journal lives in the application database, so root order never
         // decides where it is.
-        let recoveries = super::publish::recovery::reconcile(&self.db, &sandbox, &SqliteCatalog)?;
+        let recoveries =
+            super::publish::recovery::reconcile(&self.db, &sandbox, &SqliteCatalog, &self.jobs)?;
         let publisher = Publisher::new(
             sandbox.clone(),
             self.db.clone(),
             SqliteCatalog,
             FsSpaceProbe::new(space_roots.clone()),
+            self.jobs.clone(),
             || now_ms() as i64,
         );
         self.placement.follow(Some(sandbox.clone()));
@@ -1508,13 +1515,15 @@ impl LibrarySetup {
     /// or a library folder another write holds answers busy at once; with
     /// [`RemovalEntry::Wait`] the removal waits its turn. A removal whose
     /// commit landed answers what it removed even when a later step failed:
-    /// recovery finishes it. Blocking.
+    /// recovery finishes it. `album_removed` queues the album's clean-up in
+    /// the removal's commit. Blocking.
     pub(crate) fn publish_removal(
         &self,
         targets: &[super::publish::remove::Target],
         reason_code: &str,
         actor: Option<&str>,
         extras: Option<super::publish::planner::ExtrasAction>,
+        album_removed: Option<super::publish::planner::AlbumRemoved>,
         entry: RemovalEntry,
     ) -> Result<RemovalDone, super::publish::remove::Refusal> {
         use super::publish::JournalState;
@@ -1554,7 +1563,7 @@ impl LibrarySetup {
         cell.refresh_to(session, &self.root_dirs)?;
         let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;
         let bundle_id = uuid::Uuid::new_v4().to_string();
-        let removal = remove::plan(
+        let mut removal = remove::plan(
             &self.db,
             &open.sandbox,
             &bundle_id,
@@ -1564,6 +1573,7 @@ impl LibrarySetup {
             extras,
             std::time::SystemTime::now(),
         )?;
+        removal.album_removed = album_removed;
         let track_ids: Vec<String> = removal
             .items
             .iter()

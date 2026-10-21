@@ -189,6 +189,7 @@ pub fn plan(
         actor: actor.map(str::to_owned),
         items,
         extras_action,
+        album_removed: None,
     })
 }
 
