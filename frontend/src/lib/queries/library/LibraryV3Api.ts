@@ -171,6 +171,24 @@ export const LibraryV3Api = {
 	lyrics: (trackId: string) => v3('/api/v3/library/tracks/{id}/lyrics', { path: { id: trackId } }),
 	recentlyAdded: (limit: number) => v3('/api/v3/library/recently-added', { query: { limit } }),
 	stats: () => v3('/api/v3/library/stats'),
+	decades: () => v3('/api/v3/library/decades'),
+	suggestions: (limit: number, decade: number | null) =>
+		v3('/api/v3/library/suggestions', {
+			query: decade === null ? { limit } : { limit, decade }
+		}),
+	// An album's tracks by release-group mbid or local album id.
+	albumMatch: (mbid: string, params: LibraryV3PageParams) =>
+		v3('/api/v3/library/albums/match/{mbid}', {
+			path: { mbid },
+			query: {
+				...(params.limit !== undefined ? { limit: params.limit } : {}),
+				...(params.offset !== undefined ? { offset: params.offset } : {})
+			}
+		}),
+	localSearch: (term: string, limit: number | null) =>
+		v3('/api/v3/local-library/search', {
+			query: limit === null ? { q: term } : { q: term, limit }
+		}),
 	// Identification reviews: list, read, and every way to settle one.
 	reviews: (params: LibraryReviewParams) =>
 		v3('/api/v3/library/reviews', {

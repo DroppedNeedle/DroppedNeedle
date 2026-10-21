@@ -16,7 +16,7 @@ import type { components } from '$lib/api/v3/openapi';
 // shapes the album page, album cards and artist radio read.
 
 const localMatchUrl = (mbid: string) =>
-	v3('/api/v3/local-library/albums/match/{mbid}', { path: { mbid }, query: { limit: 500 } });
+	v3('/api/v3/library/albums/match/{mbid}', { path: { mbid }, query: { limit: 500 } });
 
 function toLocalTrack(track: components['schemas']['TrackView']): LocalTrackInfo {
 	return {

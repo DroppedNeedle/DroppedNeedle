@@ -191,6 +191,35 @@ impl Catalog {
         Ok(details.unwrap_or_default())
     }
 
+    /// MusicBrainz first, the library's copy when MusicBrainz cannot
+    /// answer. A MusicBrainz answer stands, a miss is 404. On a failure the
+    /// outage is recorded, and only when MusicBrainz was unavailable does
+    /// `library` read the library: its copy answers in MusicBrainz's place,
+    /// and without one the failure stands. The library copy never enters
+    /// the provider cache: a failed fetch stores nothing.
+    pub(super) async fn musicbrainz_or_library<M, L, Fut>(
+        &self,
+        musicbrainz: Result<Option<M>, CatalogError>,
+        library: impl FnOnce() -> Fut,
+    ) -> Result<Answer<M, L>, CatalogError>
+    where
+        Fut: Future<Output = Result<Option<L>, CatalogError>>,
+    {
+        match musicbrainz {
+            Ok(Some(found)) => Ok(Answer::MusicBrainz(found)),
+            Ok(None) => Err(CatalogError::NotFound),
+            Err(error) => {
+                record_mb_down(&error);
+                if matches!(error, CatalogError::Unavailable(_))
+                    && let Some(copy) = library().await?
+                {
+                    return Ok(Answer::Library(copy));
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Drop cached entries by exact key, once committed.
     async fn forget(&self, keys: &[CacheKey]) {
         self.upstream().cache().forget(keys).await;
@@ -232,6 +261,15 @@ impl Catalog {
                 HashSet::new()
             })
     }
+}
+
+/// Where a page's answer came from: MusicBrainz, or the library's copy
+/// while MusicBrainz was down.
+pub(super) enum Answer<M, L> {
+    /// MusicBrainz answered.
+    MusicBrainz(M),
+    /// MusicBrainz was unavailable and the library holds a copy.
+    Library(L),
 }
 
 /// Map a failed MusicBrainz lookup onto the catalog error. An id

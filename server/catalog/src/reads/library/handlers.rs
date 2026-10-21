@@ -13,11 +13,11 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::LibraryDeps;
 use super::models::{
-    AlbumCardPage, AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView,
-    BrowseQuery, DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMbids,
-    LibraryMembershipRequest, LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery,
-    ResolveTracksRequest, ResolveTracksResponse, SearchQuery, SearchResults, StatsView,
-    SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
+    AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView, DecadesResponse,
+    GenreList, LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest,
+    LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
+    ResolveTracksResponse, SearchQuery, SearchResults, StatsView, SuggestionsQuery,
+    SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
 };
 use super::services;
 
@@ -367,29 +367,6 @@ pub async fn list_genre_tracks(
         .map_err(ApiError::from)
 }
 
-/// Album-card browse for the local library.
-#[utoipa::path(
-    get,
-    tag = "library",
-    path = "/api/v3/local-library/albums",
-    params(BrowseQuery),
-    responses(
-        (status = 200, description = "Album cards", body = AlbumCardPage),
-        (status = 400, description = "Bad query string"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn browse_albums(
-    State(deps): State<LibraryDeps>,
-    _caller: User,
-    ValidQuery(query): ValidQuery<BrowseQuery>,
-) -> Result<Json<AlbumCardPage>, ApiError> {
-    services::browse_albums(&deps, &query)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Album plus track search.
 #[utoipa::path(
     get,
@@ -413,34 +390,11 @@ pub async fn search_library(
         .map_err(ApiError::from)
 }
 
-/// Newest album cards first, capped.
-#[utoipa::path(
-    get,
-    tag = "library",
-    path = "/api/v3/local-library/recent",
-    params(RecentQuery),
-    responses(
-        (status = 200, description = "Recent albums", body = Vec<super::models::AlbumCard>),
-        (status = 400, description = "Bad query string"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn recent_albums(
-    State(deps): State<LibraryDeps>,
-    _caller: User,
-    ValidQuery(query): ValidQuery<RecentQuery>,
-) -> Result<Json<Vec<super::models::AlbumCard>>, ApiError> {
-    services::recent_albums(&deps, &query)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Decade shelves, oldest first.
 #[utoipa::path(
     get,
     tag = "library",
-    path = "/api/v3/local-library/decades",
+    path = "/api/v3/library/decades",
     responses(
         (status = 200, description = "Decades", body = DecadesResponse),
         (status = 401, description = "Not authenticated"),
@@ -461,7 +415,7 @@ pub async fn list_decades(
 #[utoipa::path(
     get,
     tag = "library",
-    path = "/api/v3/local-library/albums/match/{mbid}",
+    path = "/api/v3/library/albums/match/{mbid}",
     params(
         ("mbid" = String, Path, description = "Release-group mbid or local album id"),
         PageQuery
@@ -489,7 +443,7 @@ pub async fn match_album(
 #[utoipa::path(
     get,
     tag = "library",
-    path = "/api/v3/local-library/suggestions",
+    path = "/api/v3/library/suggestions",
     params(SuggestionsQuery),
     responses(
         (status = 200, description = "Suggestions", body = SuggestionsResponse),

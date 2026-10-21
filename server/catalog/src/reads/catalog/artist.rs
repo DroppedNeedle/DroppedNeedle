@@ -18,7 +18,7 @@ use super::models::{
     PluginDetails, PurchaseLink, ReleaseItem,
 };
 use super::{
-    BIOGRAPHY, Catalog, LASTFM_DETAILS, is_mbid, mb_error, mb_search_error, record_mb_down,
+    Answer, BIOGRAPHY, Catalog, LASTFM_DETAILS, is_mbid, mb_error, mb_search_error, record_mb_down,
 };
 use crate::reads::collections::state::AutoDownloadState;
 use crate::reads::platform::artwork::ArtistImageCandidate;
@@ -314,46 +314,43 @@ impl Catalog {
             self.artist_detail(mbid, priority),
             self.release_groups(mbid, priority)
         );
-        let detail = match detail {
-            Ok(Some(detail)) => detail,
-            Ok(None) => return Err(CatalogError::NotFound),
-            Err(error) => {
-                record_mb_down(&error);
-                if matches!(error, CatalogError::Unavailable(_))
-                    && let Some(local) = self
-                        .local()
-                        .artist(mbid)
-                        .await
-                        .map_err(CatalogError::database)?
-                {
-                    tracing::warn!(artist = %mbid, "musicbrainz unavailable; artist page from the library");
-                    let discography = self.local_discography(mbid).await?.unwrap_or_default();
-                    let (in_library, appears_in_library) = self.artist_relationship(mbid).await;
-                    return Ok(ArtistInfo {
-                        name: local.name,
-                        musicbrainz_id: mbid.to_owned(),
-                        disambiguation: None,
-                        artist_type: None,
-                        country: None,
-                        life_span: None,
-                        tags: Vec::new(),
-                        aliases: Vec::new(),
-                        external_links: Vec::new(),
-                        images: self.cached_artist_images(mbid).await.unwrap_or_default(),
-                        in_library,
-                        appears_in_library,
-                        release_group_count: discography.albums.len() as u64,
-                        albums: discography.albums,
-                        singles: discography.singles,
-                        eps: discography.eps,
-                        followed: false,
-                        auto_download: false,
-                        auto_download_state: AutoDownloadState::None,
-                        source: CatalogSource::Library,
-                        service_status: None,
-                    });
-                }
-                return Err(error);
+        let answer = self
+            .musicbrainz_or_library(detail, || async {
+                self.local()
+                    .artist(mbid)
+                    .await
+                    .map_err(CatalogError::database)
+            })
+            .await?;
+        let detail = match answer {
+            Answer::MusicBrainz(detail) => detail,
+            Answer::Library(local) => {
+                tracing::warn!(artist = %mbid, "musicbrainz unavailable; artist page from the library");
+                let discography = self.local_discography(mbid).await?.unwrap_or_default();
+                let (in_library, appears_in_library) = self.artist_relationship(mbid).await;
+                return Ok(ArtistInfo {
+                    name: local.name,
+                    musicbrainz_id: mbid.to_owned(),
+                    disambiguation: None,
+                    artist_type: None,
+                    country: None,
+                    life_span: None,
+                    tags: Vec::new(),
+                    aliases: Vec::new(),
+                    external_links: Vec::new(),
+                    images: self.cached_artist_images(mbid).await.unwrap_or_default(),
+                    in_library,
+                    appears_in_library,
+                    release_group_count: discography.albums.len() as u64,
+                    albums: discography.albums,
+                    singles: discography.singles,
+                    eps: discography.eps,
+                    followed: false,
+                    auto_download: false,
+                    auto_download_state: AutoDownloadState::None,
+                    source: CatalogSource::Library,
+                    service_status: None,
+                });
             }
         };
         let (in_library, appears_in_library) = self.artist_relationship(&detail.mbid).await;
@@ -774,20 +771,18 @@ impl Catalog {
         offset: u32,
         limit: u32,
     ) -> Result<ArtistReleases, CatalogError> {
-        let list = match self
+        let listed = self
             .release_groups(mbid, RequestPriority::UserInitiated)
             .await
-        {
-            Ok(list) => list,
-            Err(error) => {
-                record_mb_down(&error);
-                if matches!(error, CatalogError::Unavailable(_))
-                    && let Some(local) = self.local_discography(mbid).await?
-                {
-                    tracing::warn!(artist = %mbid, "musicbrainz unavailable; discography from the library");
-                    return Ok(paged(local, offset, limit, true, CatalogSource::Library));
-                }
-                return Err(error);
+            .map(Some);
+        let answer = self
+            .musicbrainz_or_library(listed, || self.local_discography(mbid))
+            .await?;
+        let list = match answer {
+            Answer::MusicBrainz(list) => list,
+            Answer::Library(local) => {
+                tracing::warn!(artist = %mbid, "musicbrainz unavailable; discography from the library");
+                return Ok(paged(local, offset, limit, true, CatalogSource::Library));
             }
         };
         let discography = self.discography(&list).await;

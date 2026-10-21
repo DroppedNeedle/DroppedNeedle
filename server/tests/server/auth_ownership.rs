@@ -585,10 +585,6 @@ const EXEMPT_READS: &[(&str, &str)] = &[
     ("/api/v3/library/scan/runs/", "library scans, shared"),
     ("/api/v3/library/tracks/", "shared library tracks"),
     (
-        "/api/v3/local-library/albums/match/",
-        "shared library albums",
-    ),
-    (
         "/api/v3/plugins/ext/",
         "a plugin's own routes: the plugin checks its caller",
     ),

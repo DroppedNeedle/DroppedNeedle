@@ -3060,6 +3060,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/match/{mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One page of an album's streamable tracks by release-group mbid or
+         *     local album id.
+         */
+        get: operations["match_album"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/merge": {
         parameters: {
             query?: never;
@@ -4087,6 +4107,23 @@ export interface paths {
         put?: never;
         /** Rebuild a stale contribution from the album's current files. */
         post: operations["rebuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/decades": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Decade shelves, oldest first. */
+        get: operations["list_decades"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5533,6 +5570,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reason-tagged track suggestions. */
+        get: operations["list_suggestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/tracks": {
         parameters: {
             query?: never;
@@ -5659,77 +5713,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/local-library/albums": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Album-card browse for the local library. */
-        get: operations["browse_albums"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/local-library/albums/match/{mbid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * One page of an album's streamable tracks by release-group mbid or
-         *     local album id.
-         */
-        get: operations["match_album"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/local-library/decades": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Decade shelves, oldest first. */
-        get: operations["list_decades"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/local-library/recent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Newest album cards first, capped. */
-        get: operations["recent_albums"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/local-library/search": {
         parameters: {
             query?: never;
@@ -5739,23 +5722,6 @@ export interface paths {
         };
         /** Album plus track search. */
         get: operations["search_library"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/local-library/suggestions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Reason-tagged track suggestions. */
-        get: operations["list_suggestions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10044,26 +10010,6 @@ export interface components {
              */
             year?: number | null;
         };
-        /** @description One page of album cards. */
-        AlbumCardPage: {
-            /** @description This page of cards. */
-            items: components["schemas"]["AlbumCard"][];
-            /**
-             * Format: int64
-             * @description Echo of the requested limit.
-             */
-            limit: number;
-            /**
-             * Format: int64
-             * @description Echo of the requested offset.
-             */
-            offset: number;
-            /**
-             * Format: int64
-             * @description Cards matching the filter, all pages.
-             */
-            total: number;
-        };
         /** @description One catalog album with what its own page shows. */
         AlbumDetailView: components["schemas"]["AlbumView"] & {
             management_hold?: null | components["schemas"]["ManagementHoldView"];
@@ -12183,7 +12129,7 @@ export interface components {
         };
         /**
          * @description One decade shelf. Shelves carry counts; fetch the shelf's albums
-         *     through browse with the same `decade` value.
+         *     through the album list with the same `decade` value.
          */
         DecadeShelf: {
             /**
@@ -29424,7 +29370,10 @@ export interface operations {
                 limit?: number;
                 /** @description Page start. Default 0. */
                 offset?: number;
-                /** @description `name`, `date_added`, `year`, or `artist`. Default `name`. */
+                /**
+                 * @description `name`, `date_added`, `year`, `artist`, `random`, or `rediscover`
+                 *     (oldest first). Default `name`.
+                 */
                 sort?: string;
                 /** @description `asc` or `desc`. Default `asc`. */
                 order?: string;
@@ -29466,6 +29415,61 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    match_album: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-1000. Default 200. */
+                limit?: number;
+                /** @description Page start. Default 0. */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Release-group mbid or local album id */
+                mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown mbid or album id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -33180,6 +33184,35 @@ export interface operations {
             };
             /** @description Not stale, or changed since read */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_decades: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Decades */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecadesResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -37963,6 +37996,49 @@ export interface operations {
             };
         };
     };
+    list_suggestions: {
+        parameters: {
+            query?: {
+                /** @description Track cap, 1-40. Default 12. */
+                limit?: number;
+                /** @description Era anchor for the `same_era` pool, e.g. 1990. */
+                decade?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Suggestions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestionsResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     list_tracks: {
         parameters: {
             query?: {
@@ -38414,185 +38490,6 @@ export interface operations {
             };
         };
     };
-    browse_albums: {
-        parameters: {
-            query?: {
-                /** @description Page size, 1-200. Default 50. */
-                limit?: number;
-                /** @description Page start. Default 0. */
-                offset?: number;
-                /**
-                 * @description `name`, `date_added`, `year`, `random`, or `rediscover`
-                 *     (oldest first). Default `name`.
-                 */
-                sort?: string;
-                /** @description `asc` or `desc`. Default `asc`. */
-                order?: string;
-                /** @description Title/artist substring filter, case folded. */
-                q?: string;
-                /** @description Restrict to one decade start year, e.g. 1990. */
-                decade?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Album cards */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AlbumCardPage"];
-                };
-            };
-            /** @description Bad query string */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    match_album: {
-        parameters: {
-            query?: {
-                /** @description Page size, 1-1000. Default 200. */
-                limit?: number;
-                /** @description Page start. Default 0. */
-                offset?: number;
-            };
-            header?: never;
-            path: {
-                /** @description Release-group mbid or local album id */
-                mbid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Track page */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrackPage"];
-                };
-            };
-            /** @description Bad query string */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Unknown mbid or album id */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    list_decades: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Decades */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DecadesResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    recent_albums: {
-        parameters: {
-            query?: {
-                /** @description Card cap, 1-50. Default 20. */
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Recent albums */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AlbumCard"][];
-                };
-            };
-            /** @description Bad query string */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     search_library: {
         parameters: {
             query?: {
@@ -38614,49 +38511,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResults"];
-                };
-            };
-            /** @description Bad query string */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    list_suggestions: {
-        parameters: {
-            query?: {
-                /** @description Track cap, 1-40. Default 12. */
-                limit?: number;
-                /** @description Era anchor for the `same_era` pool, e.g. 1990. */
-                decade?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Suggestions */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuggestionsResponse"];
                 };
             };
             /** @description Bad query string */

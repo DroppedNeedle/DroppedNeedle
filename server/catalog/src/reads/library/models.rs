@@ -139,7 +139,8 @@ pub struct AlbumQuery {
     pub limit: Option<i64>,
     /// Page start. Default 0.
     pub offset: Option<i64>,
-    /// `name`, `date_added`, `year`, or `artist`. Default `name`.
+    /// `name`, `date_added`, `year`, `artist`, `random`, or `rediscover`
+    /// (oldest first). Default `name`.
     pub sort: Option<String>,
     /// `asc` or `desc`. Default `asc`.
     pub order: Option<String>,
@@ -462,38 +463,6 @@ impl From<AlbumRecord> for AlbumCard {
     }
 }
 
-/// One page of album cards.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct AlbumCardPage {
-    /// This page of cards.
-    pub items: Vec<AlbumCard>,
-    /// Cards matching the filter, all pages.
-    pub total: u64,
-    /// Echo of the requested offset.
-    pub offset: u64,
-    /// Echo of the requested limit.
-    pub limit: u64,
-}
-
-/// Local-library browse query.
-#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct BrowseQuery {
-    /// Page size, 1-200. Default 50.
-    pub limit: Option<i64>,
-    /// Page start. Default 0.
-    pub offset: Option<i64>,
-    /// `name`, `date_added`, `year`, `random`, or `rediscover`
-    /// (oldest first). Default `name`.
-    pub sort: Option<String>,
-    /// `asc` or `desc`. Default `asc`.
-    pub order: Option<String>,
-    /// Title/artist substring filter, case folded.
-    pub q: Option<String>,
-    /// Restrict to one decade start year, e.g. 1990.
-    pub decade: Option<i64>,
-}
-
 /// Local-library search query. `q` is required.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -574,7 +543,7 @@ pub struct SuggestionsQuery {
 }
 
 /// One decade shelf. Shelves carry counts; fetch the shelf's albums
-/// through browse with the same `decade` value.
+/// through the album list with the same `decade` value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DecadeShelf {
     /// Decade start year, e.g. 1990.

@@ -114,12 +114,10 @@ const ROUTES: &[&str] = &[
     "/api/v3/library/recently-added",
     "/api/v3/library/genres",
     "/api/v3/library/genres/rock/tracks",
-    "/api/v3/local-library/albums",
-    "/api/v3/local-library/albums/match/rg1",
+    "/api/v3/library/albums/match/rg1",
     "/api/v3/local-library/search?q=light",
-    "/api/v3/local-library/recent",
-    "/api/v3/local-library/decades",
-    "/api/v3/local-library/suggestions",
+    "/api/v3/library/decades",
+    "/api/v3/library/suggestions",
 ];
 
 #[tokio::test]
@@ -139,7 +137,7 @@ async fn bad_input_stays_in_the_envelope() {
         "/api/v3/library/artists?scope=nope",
         "/api/v3/library/artists?sort=nope",
         "/api/v3/library/tracks?sort=nope",
-        "/api/v3/local-library/suggestions?limit=99",
+        "/api/v3/library/suggestions?limit=99",
     ] {
         let (status, json) = get(app.clone(), path).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "for {path}");
@@ -874,7 +872,7 @@ async fn one_album_set_everywhere() {
         .app
         .call(
             "GET",
-            "/api/v3/local-library/albums/match/al-retired",
+            "/api/v3/library/albums/match/al-retired",
             &native,
             None,
         )
@@ -906,12 +904,7 @@ async fn one_album_set_everywhere() {
     // A release group answers with the copy that has files.
     let (status, tracks) = rig
         .app
-        .call(
-            "GET",
-            "/api/v3/local-library/albums/match/rg-pair",
-            &native,
-            None,
-        )
+        .call("GET", "/api/v3/library/albums/match/rg-pair", &native, None)
         .await;
     assert_eq!(status, StatusCode::OK, "{tracks}");
     assert_eq!(sorted_ids(&tracks["items"], "id"), ["tk-pair"]);

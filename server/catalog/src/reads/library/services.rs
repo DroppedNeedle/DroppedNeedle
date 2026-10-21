@@ -6,13 +6,12 @@ use std::collections::HashSet;
 
 use super::LibraryDeps;
 use super::models::{
-    AlbumCard, AlbumCardPage, AlbumDetailView, AlbumPage, AlbumQuery, AlbumView, ArtistPage,
-    ArtistQuery, ArtistView, BrowseQuery, DecadeShelf, DecadesResponse, GenreList, GenreView,
-    LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse,
-    LibraryStatusTrack, LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery,
-    ResolveTracksRequest, ResolveTracksResponse, ResolvedTrack, SearchQuery, SearchResults,
-    StatsView, SuggestionTrack, SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery,
-    TrackTags, TrackView,
+    AlbumCard, AlbumDetailView, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery,
+    ArtistView, DecadeShelf, DecadesResponse, GenreList, GenreView, LibraryAlbumStatus,
+    LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
+    LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery, ResolveTracksRequest,
+    ResolveTracksResponse, ResolvedTrack, SearchQuery, SearchResults, StatsView, SuggestionTrack,
+    SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
 };
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, StoreError,
@@ -599,36 +598,6 @@ pub async fn genre_tracks(
     })
 }
 
-/// Album-card browse for the local library.
-pub async fn browse_albums(
-    deps: &LibraryDeps,
-    query: &BrowseQuery,
-) -> Result<AlbumCardPage, LibraryFailure> {
-    let (limit, offset) = page(query.limit, query.offset, 50, 200)?;
-    let filter = AlbumFilter {
-        q: clean_q(query.q.as_deref()),
-        artist_id: None,
-        decade: check_decade(query.decade)?,
-        format: None,
-    };
-    let (records, total) = deps
-        .catalog
-        .list_albums(
-            &filter,
-            album_sort(query.sort.as_deref())?,
-            descending(query.order.as_deref())?,
-            limit,
-            offset,
-        )
-        .await?;
-    Ok(AlbumCardPage {
-        items: records.into_iter().map(AlbumCard::from).collect(),
-        total,
-        offset,
-        limit,
-    })
-}
-
 /// Album plus track search. `q` is required; each group caps separately.
 pub async fn search_library(
     deps: &LibraryDeps,
@@ -664,16 +633,6 @@ pub async fn search_library(
             .map(|record| SuggestionTrack::from((record, "match")))
             .collect(),
     })
-}
-
-/// Newest album cards first, capped.
-pub async fn recent_albums(
-    deps: &LibraryDeps,
-    query: &RecentQuery,
-) -> Result<Vec<AlbumCard>, LibraryFailure> {
-    let (limit, _) = page(query.limit, None, 20, 50)?;
-    let records = deps.catalog.recently_added(limit).await?;
-    Ok(records.into_iter().map(AlbumCard::from).collect())
 }
 
 /// Decade shelves, oldest first.

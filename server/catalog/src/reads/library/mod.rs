@@ -1,4 +1,4 @@
-//! Library reads: catalog, local-library browse, genres, lyrics.
+//! Library reads: catalog, decades, suggestions, genres, lyrics.
 //!
 //! Clean-slate `/api/v3` read handlers over the
 //! 0001 baseline `local_*` tables plus `library_user_favorites` for the
@@ -83,10 +83,8 @@ pub fn routes() -> Routes<LibraryDeps> {
         .user(routes!(list_recently_added))
         .user(routes!(list_genres))
         .user(routes!(list_genre_tracks))
-        .user(routes!(browse_albums))
         .user(routes!(match_album))
         .user(routes!(search_library))
-        .user(routes!(recent_albums))
         .user(routes!(list_decades))
         .user(routes!(list_suggestions))
 }

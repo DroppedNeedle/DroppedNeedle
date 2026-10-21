@@ -9,6 +9,7 @@ use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderError, RequestP
 
 use super::artist::checked_mbid;
 use super::error::CatalogError;
+use super::library::{LocalAlbum, LocalTrack};
 use super::mapping;
 use super::models::{
     AlbumBasicInfo, AlbumEditionItem, AlbumEditionsResponse, AlbumImages, AlbumInfo, AlbumTrack,
@@ -17,7 +18,7 @@ use super::models::{
 };
 use super::ports::PurchaseQuery;
 use super::{
-    Catalog, LASTFM_DETAILS, PURCHASE, is_mbid, mb_error, mb_search_error, record_mb_down,
+    Answer, Catalog, LASTFM_DETAILS, PURCHASE, is_mbid, mb_error, mb_search_error, record_mb_down,
 };
 
 /// Includes for the release-group lookup: one call serves the header, the
@@ -382,19 +383,13 @@ impl Catalog {
     }
 
     async fn build_basic(&self, id: &str) -> Result<AlbumBasicInfo, CatalogError> {
-        match self.group_detail(id).await {
-            Ok(Some(group)) => Ok(self.basic_from_group(&group).await),
-            Ok(None) => Err(CatalogError::NotFound),
-            Err(error) => {
-                record_mb_down(&error);
-                if matches!(error, CatalogError::Unavailable(_))
-                    && let Some(local) = self.local_basic(id).await?
-                {
-                    return Ok(local);
-                }
-                Err(error)
-            }
-        }
+        let answer = self
+            .musicbrainz_or_library(self.group_detail(id).await, || self.local_album(id))
+            .await?;
+        Ok(match answer {
+            Answer::MusicBrainz(group) => self.basic_from_group(&group).await,
+            Answer::Library(local) => self.basic_from_local(id, &local).await,
+        })
     }
 
     async fn basic_from_group(&self, group: &GroupDetail) -> AlbumBasicInfo {
@@ -422,21 +417,26 @@ impl Catalog {
         }
     }
 
-    async fn local_basic(&self, id: &str) -> Result<Option<AlbumBasicInfo>, CatalogError> {
-        let Some(local) = self
+    /// The library's copy of an album, read once per page while
+    /// MusicBrainz is down.
+    async fn local_album(&self, id: &str) -> Result<Option<LocalAlbum>, CatalogError> {
+        let found = self
             .local()
             .album(id)
             .await
-            .map_err(CatalogError::database)?
-        else {
-            return Ok(None);
-        };
-        tracing::warn!(album = %id, "musicbrainz unavailable; album page from the library");
-        Ok(Some(AlbumBasicInfo {
-            title: local.title,
+            .map_err(CatalogError::database)?;
+        if found.is_some() {
+            tracing::warn!(album = %id, "musicbrainz unavailable; album page from the library");
+        }
+        Ok(found)
+    }
+
+    async fn basic_from_local(&self, id: &str, local: &LocalAlbum) -> AlbumBasicInfo {
+        AlbumBasicInfo {
+            title: local.title.clone(),
             musicbrainz_id: id.to_owned(),
-            artist_name: local.artist_name,
-            artist_id: local.artist_mbid.unwrap_or_default(),
+            artist_name: local.artist_name.clone(),
+            artist_id: local.artist_mbid.clone().unwrap_or_default(),
             release_date: None,
             year: local.year,
             album_type: None,
@@ -450,7 +450,7 @@ impl Catalog {
                 .and_then(|images| images.album_thumb_url),
             source: CatalogSource::Library,
             service_status: None,
-        }))
+        }
     }
 
     /// Pick the edition: the library copy's edition (a person's choice or
@@ -558,55 +558,19 @@ impl Catalog {
         Ok(AlbumTracksInfo::default())
     }
 
-    async fn local_tracks(&self, id: &str) -> Result<Option<AlbumTracksInfo>, CatalogError> {
-        let Some(local) = self
-            .local()
-            .album(id)
-            .await
-            .map_err(CatalogError::database)?
-        else {
-            return Ok(None);
-        };
-        let tracks: Vec<AlbumTrack> = local
-            .tracks
-            .into_iter()
-            .map(|track| AlbumTrack {
-                position: track.track_number,
-                title: track.title,
-                disc_number: track.disc_number,
-                length: track.length_ms,
-                recording_id: track.recording_mbid,
-                release_track_id: None,
-                media_format: None,
-            })
-            .collect();
-        let total: u64 = tracks.iter().filter_map(|track| track.length).sum();
-        Ok(Some(AlbumTracksInfo {
-            total_tracks: u32::try_from(tracks.len()).unwrap_or(u32::MAX),
-            total_length: (total > 0).then_some(total),
-            tracks,
-            ..AlbumTracksInfo::default()
-        }))
-    }
-
     /// `GET /albums/{album_id}/tracks`: the shown edition's tracklist. A
     /// dead MusicBrainz falls back to the library's tracks.
     pub async fn album_tracks(&self, raw_id: &str) -> Result<AlbumTracksInfo, CatalogError> {
         let id = self.album_id(raw_id).await?;
-        match self.group_detail(&id).await {
-            Ok(Some(group)) => {
+        let answer = self
+            .musicbrainz_or_library(self.group_detail(&id).await, || self.local_album(&id))
+            .await?;
+        match answer {
+            Answer::MusicBrainz(group) => {
                 self.tracks_for_group(&group, RequestPriority::UserInitiated)
                     .await
             }
-            Ok(None) => Err(CatalogError::NotFound),
-            Err(error) => {
-                if matches!(error, CatalogError::Unavailable(_))
-                    && let Some(local) = self.local_tracks(&id).await?
-                {
-                    return Ok(local);
-                }
-                Err(error)
-            }
+            Answer::Library(local) => Ok(local_tracks(local.tracks)),
         }
     }
 
@@ -626,23 +590,21 @@ impl Catalog {
         id: &str,
         priority: RequestPriority,
     ) -> Result<AlbumInfo, CatalogError> {
-        let group = match self.group_detail_at(id, priority).await {
-            Ok(Some(group)) => group,
-            Ok(None) => return Err(CatalogError::NotFound),
-            Err(error) => {
-                record_mb_down(&error);
-                if matches!(error, CatalogError::Unavailable(_))
-                    && let Some(basic) = self.local_basic(id).await?
-                {
-                    let tracks = self.local_tracks(id).await?.unwrap_or_default();
-                    let images = self.cached_album_images(id).await.unwrap_or_default();
-                    return Ok(AlbumInfo {
-                        basic,
-                        tracks,
-                        images,
-                    });
-                }
-                return Err(error);
+        let answer = self
+            .musicbrainz_or_library(self.group_detail_at(id, priority).await, || {
+                self.local_album(id)
+            })
+            .await?;
+        let group = match answer {
+            Answer::MusicBrainz(group) => group,
+            Answer::Library(local) => {
+                let basic = self.basic_from_local(id, &local).await;
+                let images = self.cached_album_images(id).await.unwrap_or_default();
+                return Ok(AlbumInfo {
+                    basic,
+                    tracks: local_tracks(local.tracks),
+                    images,
+                });
             }
         };
         let (basic, tracks, images) = tokio::join!(
@@ -1110,6 +1072,29 @@ impl Catalog {
             .await;
         // A failure was recorded where it happened; the page shows nothing.
         Ok(enrichment.ok().flatten().unwrap_or_default())
+    }
+}
+
+/// The library's tracks as a tracklist.
+fn local_tracks(tracks: Vec<LocalTrack>) -> AlbumTracksInfo {
+    let tracks: Vec<AlbumTrack> = tracks
+        .into_iter()
+        .map(|track| AlbumTrack {
+            position: track.track_number,
+            title: track.title,
+            disc_number: track.disc_number,
+            length: track.length_ms,
+            recording_id: track.recording_mbid,
+            release_track_id: None,
+            media_format: None,
+        })
+        .collect();
+    let total: u64 = tracks.iter().filter_map(|track| track.length).sum();
+    AlbumTracksInfo {
+        total_tracks: u32::try_from(tracks.len()).unwrap_or(u32::MAX),
+        total_length: (total > 0).then_some(total),
+        tracks,
+        ..AlbumTracksInfo::default()
     }
 }
 

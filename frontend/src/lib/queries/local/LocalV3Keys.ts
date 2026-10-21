@@ -1,22 +1,20 @@
-export interface LocalV3AlbumsParams {
-	limit: number;
-	offset: number;
-	sort: string;
-	order: 'asc' | 'desc';
-	q?: string;
-	decade?: number;
-}
+import type { LibraryV3AlbumsParams } from '../library/LibraryQueryKeyFactory';
+import { userIdSegment } from '../userKeySegment';
+
+export type LocalV3AlbumsParams = Pick<
+	LibraryV3AlbumsParams,
+	'limit' | 'offset' | 'sort' | 'order' | 'q' | 'decade'
+>;
 
 export interface LocalV3PageParams {
 	limit?: number;
 	offset?: number;
 }
 
-import { userIdSegment } from '../userKeySegment';
-
-// Local-library keys. The card shapes carry no per-caller fields, so these
-// stay shared; all nest under the local root for prefix invalidation. The
-// download-access bit is per viewer, so that key carries the user id.
+// Local-library keys. The listening room's queries keep only the card
+// fields, which carry nothing per caller, so these stay shared; all nest
+// under the local root for prefix invalidation. The download-access bit is
+// per viewer, so that key carries the user id.
 export const LOCAL_KEYS = {
 	root: ['local'] as const,
 	downloadAccess: (userId: string | null | undefined) =>

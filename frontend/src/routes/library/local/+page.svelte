@@ -28,7 +28,7 @@
 		getLocalDecadesV3Query,
 		getLocalStatsV3Query
 	} from '$lib/queries/local/LocalV3Queries.svelte';
-	import { LocalV3Api } from '$lib/queries/local/LocalV3Api';
+	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 	import {
 		albumCardToSummary,
 		albumCoverUrl,
@@ -162,7 +162,7 @@
 	async function playAlbum(album: LocalAlbumSummary, shuffle = false) {
 		try {
 			const match = await api.global.v3.GET(
-				LocalV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
+				LibraryV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
 			);
 			const tracks = [...match.items].sort(
 				(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
@@ -192,7 +192,7 @@
 	async function queueAlbum(album: LocalAlbumSummary) {
 		try {
 			const match = await api.global.v3.GET(
-				LocalV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
+				LibraryV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
 			);
 			const tracks = [...match.items].sort(
 				(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
@@ -209,7 +209,7 @@
 
 	async function fetchBatch(): Promise<QueueItem[]> {
 		try {
-			const res = await api.global.v3.GET(LocalV3Api.suggestions(40, null));
+			const res = await api.global.v3.GET(LibraryV3Api.suggestions(40, null));
 			return res.items.map((s) =>
 				crateToQueueItem(suggestionToCrateTrack(s, albumMbidById.get(s.album_id) ?? null))
 			);

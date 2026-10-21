@@ -8757,7 +8757,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "`name`, `date_added`, `year`, or `artist`. Default `name`.",
+            "description": "`name`, `date_added`, `year`, `artist`, `random`, or `rediscover`\n(oldest first). Default `name`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -8833,6 +8833,95 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/match/{mbid}": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "One page of an album's streamable tracks by release-group mbid or\nlocal album id.",
+        "operationId": "match_album",
+        "parameters": [
+          {
+            "name": "mbid",
+            "in": "path",
+            "description": "Release-group mbid or local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-1000. Default 200.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page start. Default 0.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Track page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown mbid or album id",
             "content": {
               "application/json": {
                 "schema": {
@@ -14073,6 +14162,44 @@
           {
             "session": [
               "curator"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/decades": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Decade shelves, oldest first.",
+        "operationId": "list_decades",
+        "responses": {
+          "200": {
+            "description": "Decades",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecadesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
             ]
           }
         ]
@@ -20835,6 +20962,76 @@
         ]
       }
     },
+    "/api/v3/library/suggestions": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Reason-tagged track suggestions.",
+        "operationId": "list_suggestions",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Track cap, 1-40. Default 12.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "decade",
+            "in": "query",
+            "description": "Era anchor for the `same_era` pool, e.g. 1990.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suggestions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/tracks": {
       "get": {
         "tags": [
@@ -21507,303 +21704,6 @@
         ]
       }
     },
-    "/api/v3/local-library/albums": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "Album-card browse for the local library.",
-        "operationId": "browse_albums",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Page size, 1-200. Default 50.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "Page start. Default 0.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "`name`, `date_added`, `year`, `random`, or `rediscover`\n(oldest first). Default `name`.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "order",
-            "in": "query",
-            "description": "`asc` or `desc`. Default `asc`.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "description": "Title/artist substring filter, case folded.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "decade",
-            "in": "query",
-            "description": "Restrict to one decade start year, e.g. 1990.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Album cards",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AlbumCardPage"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad query string",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/local-library/albums/match/{mbid}": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "One page of an album's streamable tracks by release-group mbid or\nlocal album id.",
-        "operationId": "match_album",
-        "parameters": [
-          {
-            "name": "mbid",
-            "in": "path",
-            "description": "Release-group mbid or local album id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Page size, 1-1000. Default 200.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "Page start. Default 0.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Track page",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TrackPage"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad query string",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown mbid or album id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/local-library/decades": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "Decade shelves, oldest first.",
-        "operationId": "list_decades",
-        "responses": {
-          "200": {
-            "description": "Decades",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DecadesResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/local-library/recent": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "Newest album cards first, capped.",
-        "operationId": "recent_albums",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Card cap, 1-50. Default 20.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Recent albums",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/AlbumCard"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad query string",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/local-library/search": {
       "get": {
         "tags": [
@@ -21839,76 +21739,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SearchResults"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad query string",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/local-library/suggestions": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "Reason-tagged track suggestions.",
-        "operationId": "list_suggestions",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Track cap, 1-40. Default 12.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "decade",
-            "in": "query",
-            "description": "Era anchor for the `same_era` pool, e.g. 1990.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Suggestions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuggestionsResponse"
                 }
               }
             }
@@ -35615,43 +35445,6 @@
           }
         }
       },
-      "AlbumCardPage": {
-        "type": "object",
-        "description": "One page of album cards.",
-        "required": [
-          "items",
-          "total",
-          "offset",
-          "limit"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AlbumCard"
-            },
-            "description": "This page of cards."
-          },
-          "limit": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Echo of the requested limit.",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Echo of the requested offset.",
-            "minimum": 0
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Cards matching the filter, all pages.",
-            "minimum": 0
-          }
-        }
-      },
       "AlbumDetailView": {
         "allOf": [
           {
@@ -40482,7 +40275,7 @@
       },
       "DecadeShelf": {
         "type": "object",
-        "description": "One decade shelf. Shelves carry counts; fetch the shelf's albums\nthrough browse with the same `decade` value.",
+        "description": "One decade shelf. Shelves carry counts; fetch the shelf's albums\nthrough the album list with the same `decade` value.",
         "required": [
           "decade",
           "label",

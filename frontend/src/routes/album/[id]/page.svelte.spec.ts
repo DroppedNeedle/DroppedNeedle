@@ -136,7 +136,7 @@ function routes(): FakeApi {
 			],
 			selected_release_mbid: 'release-1'
 		},
-		'GET /api/v3/local-library/albums/match/{mbid}': ({ params }) => ({
+		'GET /api/v3/library/albums/match/{mbid}': ({ params }) => ({
 			items: params.mbid === albumId ? songs.map((_, i) => localTrack(i, localAlbumId)) : [],
 			total: params.mbid === albumId ? 4 : 0,
 			offset: 0,
@@ -239,7 +239,7 @@ beforeEach(() => {
 
 describe('album detail page track removal', () => {
 	const removeRoute = 'DELETE /api/v3/library/tracks/{id}' as const;
-	const matchRoute = 'GET /api/v3/local-library/albums/match/{mbid}' as const;
+	const matchRoute = 'GET /api/v3/library/albums/match/{mbid}' as const;
 
 	async function openRemoveFileDialog(): Promise<void> {
 		await trackRow('Infinite ❤️ Without Fulfillment').getByLabelText('More actions').click();

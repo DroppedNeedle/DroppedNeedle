@@ -5,7 +5,7 @@ export type LibraryV3UserId = string | null | undefined;
 export interface LibraryV3AlbumsParams {
 	limit: number;
 	offset: number;
-	sort: 'name' | 'date_added' | 'year' | 'artist';
+	sort: 'name' | 'date_added' | 'year' | 'artist' | 'random' | 'rediscover';
 	order: 'asc' | 'desc';
 	q?: string;
 	artistId?: string;
