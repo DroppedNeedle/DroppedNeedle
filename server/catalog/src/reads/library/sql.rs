@@ -277,7 +277,9 @@ droppedneedle_kernel::sql! {
         ")"
     ));
     /// Artists credited on an owned album or on an indexed track of a live
-    /// one, or leading an owned album.
+    /// one, or leading an owned album. The unary plus on `availability`
+    /// keeps the track probe on the artist's credits, not a walk over
+    /// every indexed track.
     pub(crate) fragment CREDITED_PREDICATE = (concat!(
         "(EXISTS (SELECT 1 FROM local_album_artists laa \
          JOIN local_albums lca ON lca.id = laa.local_album_id \
@@ -286,7 +288,7 @@ droppedneedle_kernel::sql! {
         ") OR EXISTS (SELECT 1 FROM local_track_artists lta \
          JOIN local_tracks lct ON lct.id = lta.local_track_id \
          JOIN local_albums lcb ON lcb.id = lct.local_album_id \
-         WHERE lta.local_artist_id = r.id AND lct.availability = 'indexed' AND ",
+         WHERE lta.local_artist_id = r.id AND +lct.availability = 'indexed' AND ",
         live_album!("lcb"),
         ") OR ",
         "EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id AND ",

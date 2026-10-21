@@ -901,6 +901,37 @@ async fn assert_hot_plans(db: &Db) {
         "artist page never scans the catalog: {plan:?}"
     );
 
+    // The credited scope reaches tracks from the artist's credits, one
+    // track by id each, never by walking the indexed tracks per artist.
+    for (name, text, binds) in [
+        (
+            "artist page",
+            sql::artist_page(ArtistScope::All, ArtistSort::Name, false),
+            vec![
+                ExplainBind::Text(None),
+                ExplainBind::Text(None),
+                ExplainBind::Int(50),
+                ExplainBind::Int(0),
+            ],
+        ),
+        (
+            "artist totals",
+            sql::ARTIST_TOTALS.text().to_owned(),
+            vec![ExplainBind::Text(None), ExplainBind::Text(None)],
+        ),
+        ("stats", sql::STATS.text().to_owned(), Vec::new()),
+    ] {
+        let plan = explain(db, &text, &binds).await;
+        let track_probes: Vec<&String> = plan
+            .iter()
+            .filter(|line| line.starts_with("SEARCH lct "))
+            .collect();
+        assert!(
+            !track_probes.is_empty() && track_probes.iter().all(|line| line.contains("(id=?)")),
+            "{name} reaches credited tracks by id: {plan:?}"
+        );
+    }
+
     // Track resolution names every asked album in one statement, each by
     // key: the album, its alias, the album it was retired into.
     let asked: Vec<String> = (0..200).map(|n| format!("al{n}")).collect();
