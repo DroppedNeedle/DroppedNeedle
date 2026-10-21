@@ -12666,6 +12666,13 @@ export interface components {
             state: string;
             success: boolean;
         };
+        /**
+         * @description What started a download. Stored as the task's `origin`; origins decide
+         *     quota exemptions and how a landing treats the files, never routing.
+         *     A request row stores it too, and the Requests page shows it.
+         * @enum {string}
+         */
+        DispatchOrigin: "user" | "approval" | "retry" | "wanted" | "upgrade" | "edition" | "follow";
         /** @description Change display name. */
         DisplayNameUpdate: {
             /** @description New display name, 1-64 chars after trimming. */
@@ -20233,6 +20240,11 @@ export interface components {
             /** @description Album or recording MBID. */
             musicbrainz_id: string;
             /**
+             * @description What made the request: a person's ask (`user`) or a followed
+             *     artist's new release (`follow`).
+             */
+            origin: components["schemas"]["DispatchOrigin"];
+            /**
              * Format: double
              * @description Download progress percent (0-100) from the linked task, when linked.
              */
@@ -20287,12 +20299,7 @@ export interface components {
             track_title?: string | null;
             /** @description Primary owner id. */
             user_id?: string | null;
-            /**
-             * @description Why a dispatched request has not started, as a stable code.
-             *     `no_download_source`: no download source is set up, so the request
-             *     is held and starts by itself once one is.
-             */
-            waiting_reason?: string | null;
+            waiting_reason?: null | components["schemas"]["WaitingReason"];
             /**
              * Format: int32
              * @description Release year.
@@ -22853,6 +22860,11 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        /**
+         * @description Why a live request waits. It starts by itself once the cause clears.
+         * @enum {string}
+         */
+        WaitingReason: "no_download_source" | "request_quota_full" | "storage_full";
         /** @description Wanted mutation outcome. */
         WantedActionResponse: {
             /** @description Watch state after this call. */

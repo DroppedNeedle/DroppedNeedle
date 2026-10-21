@@ -31,13 +31,16 @@ use droppedneedle_acquire::follows::Follows;
 use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord, RequestStatus, WatchState},
-    models::RequestKind,
+    models::{RequestKind, WaitingReason},
     quota::QuotaLedger,
+    service::RequestsService,
     sqlite::{RequestStore, WantedStore},
+    state::RequestsState,
 };
 use droppedneedle_acquire::search_jobs::store::JobStore;
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::wiring::{ClientLives, LiveClients};
+use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::db::{DbRuntime, JobState};
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::events::model::names;
@@ -80,6 +83,7 @@ async fn seed_request(store: &RequestStore, key: &str, status: &str, task: Optio
         duration_seconds: None,
         track_release_group_mbid: None,
         user_id: Some("user-1".to_owned()),
+        origin: DispatchOrigin::User,
         requested_by_name: None,
         requesters: Vec::new(),
         requested_at: NOW as u64,
@@ -464,11 +468,17 @@ async fn follow_poll_baselines_then_emits() {
     let library = Arc::new(LibraryPresence::new());
     library.add(&["rg-owned"]);
     let settings = settings(&db);
+    let downloads = dispatch(&db, &settings);
+    let requests = Arc::new(RequestsService::new(&RequestsState::new(
+        &db,
+        Arc::new(QuotaLedger::new(settings.live(), db.clone())),
+        downloads.clone(),
+    )));
     let deps = FollowDeps {
         follows: follows.clone(),
         poll: Arc::new(poll),
-        downloads: dispatch(&db, &settings),
-        quota: Arc::new(QuotaLedger::new(settings.live(), db.clone())),
+        downloads,
+        requests: requests.clone(),
         library,
         ticks: ticks(&EventHub::new()),
         preferences: settings.live(),
@@ -491,6 +501,20 @@ async fn follow_poll_baselines_then_emits() {
     assert_eq!(queued[0].user_id, "user-1", "only the approved follower");
     assert_eq!(queued[0].release_group_mbid, "rg-new");
     assert_eq!(queued[0].artist_name, "The Band");
+    let row = RequestStore::new(db.clone())
+        .get(RequestKind::Album, "rg-new")
+        .await
+        .unwrap()
+        .expect("the follow download has a request row");
+    assert_eq!(row.user_id.as_deref(), Some("user-1"));
+    assert_eq!(row.task_id.as_deref(), Some(queued[0].id.as_str()));
+    let active = requests
+        .active(&Principal::acting_for("user-1", Role::Admin, None))
+        .await
+        .unwrap();
+    assert_eq!(active.items.len(), 1, "the Requests page lists it");
+    assert_eq!(active.items[0].musicbrainz_id, "rg-new");
+    assert_eq!(active.items[0].origin, DispatchOrigin::Follow);
     let cursor = follows.cursor("artist-1").await.unwrap().unwrap();
     assert_eq!(cursor.pending.len(), 1);
     assert_eq!(cursor.pending[0].rg_mbid, "rg-future");
@@ -818,11 +842,8 @@ async fn upgrade_of_a_downloading_album_answers_active() {
     assert_eq!(tasks(&db).await.len(), 1);
 }
 
-// A plain user's auto-download of a followed artist's new release waits
-// while they are over their request quota.
-#[tokio::test]
-async fn follow_download_waits_while_the_follower_is_over_quota() {
-    let db = AcquireDb::scratch().unwrap();
+/// `user-2`, a plain user, follows `artist-1` with auto-download approved.
+async fn seed_approved_follower(db: &AcquireDb) {
     db.write("seed follows", |tx| {
         tx.execute_batch(
             "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
@@ -838,46 +859,12 @@ async fn follow_download_waits_while_the_follower_is_over_quota() {
     })
     .await
     .unwrap();
-    let settings = settings(&db);
-    settings
-        .save_blocking(DownloadPolicy {
-            default_request_quota_count: 1,
-            default_request_quota_days: 7,
-            ..DownloadPolicy::default()
-        })
-        .expect("download policy saves");
-    // One ask already in the window uses up the quota.
-    let ledger = RequestStore::new(db.clone());
-    let record = RequestRecord {
-        key: "rg-asked".to_owned(),
-        kind: RequestKind::Album,
-        status: RequestStatus::Pending,
-        artist_name: "The Band".to_owned(),
-        album_title: "Asked".to_owned(),
-        artist_mbid: None,
-        year: None,
-        release_mbid: None,
-        track_title: None,
-        duration_seconds: None,
-        track_release_group_mbid: None,
-        user_id: Some("user-2".to_owned()),
-        requested_by_name: None,
-        requesters: Vec::new(),
-        requested_at: NOW as u64,
-        completed_at: None,
-        task_id: None,
-        generation: 0,
-        dispatch_authorized: true,
-        monitor_artist: false,
-        auto_download_artist: false,
-        reviewed_by_name: None,
-        reviewed_at: None,
-    };
-    ledger
-        .begin_batch(vec![record], "user-2", None)
-        .await
-        .unwrap()
-        .unwrap();
+}
+
+/// A follow poll over `db` whose MusicBrainz page lists only `rg-old` on
+/// the first poll and adds `rg-new` (2024-06-01) from the second, with the
+/// request intake it files follow downloads through.
+fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<RequestsService>) {
     const MB: &str = "http://musicbrainz.test/ws/2";
     let wire = Arc::new(ScriptedWire::new());
     let json = [("content-type", "application/json")];
@@ -906,27 +893,210 @@ async fn follow_download_waits_while_the_follower_is_over_quota() {
             },
             RequestPriority::BackgroundSync,
         ));
-    let follows = Follows::new(db.clone());
+    let downloads = dispatch(db, settings);
+    let requests = Arc::new(RequestsService::new(&RequestsState::new(
+        db,
+        Arc::new(QuotaLedger::new(settings.live(), db.clone())),
+        downloads.clone(),
+    )));
     let deps = FollowDeps {
-        follows: follows.clone(),
+        follows: Follows::new(db.clone()),
         poll: Arc::new(poll),
-        downloads: dispatch(&db, &settings),
-        quota: Arc::new(QuotaLedger::new(settings.live(), db.clone())),
+        downloads,
+        requests: requests.clone(),
         library: Arc::new(LibraryPresence::new()),
         ticks: ticks(&EventHub::new()),
         preferences: settings.live(),
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
-    follow_tick(NOW, &deps).await;
-    let polled = follow_tick(NOW + 86_400, &deps).await;
+    (deps, requests)
+}
+
+// A plain user's auto-download of a followed artist's new release, made
+// while their request quota is full, is a request that waits on the
+// Requests page and starts by itself once the window has room. It is never
+// dropped, and a start that cannot reach the download queue leaves it
+// waiting, never failed.
+#[tokio::test]
+async fn follow_download_waits_while_the_follower_is_over_quota() {
+    let db = AcquireDb::scratch().unwrap();
+    seed_approved_follower(&db).await;
+    // The Requests page reads the quota at the real time, so the poll runs
+    // on it too.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let settings = settings(&db);
+    settings
+        .save_blocking(DownloadPolicy {
+            default_request_quota_count: 1,
+            default_request_quota_days: 7,
+            ..DownloadPolicy::default()
+        })
+        .expect("download policy saves");
+    // One ask already in the window uses up the quota.
+    let ledger = RequestStore::new(db.clone());
+    let record = RequestRecord {
+        key: "rg-asked".to_owned(),
+        kind: RequestKind::Album,
+        status: RequestStatus::Pending,
+        artist_name: "The Band".to_owned(),
+        album_title: "Asked".to_owned(),
+        artist_mbid: None,
+        year: None,
+        release_mbid: None,
+        track_title: None,
+        duration_seconds: None,
+        track_release_group_mbid: None,
+        user_id: Some("user-2".to_owned()),
+        origin: DispatchOrigin::User,
+        requested_by_name: None,
+        requesters: Vec::new(),
+        requested_at: now as u64,
+        completed_at: None,
+        task_id: None,
+        generation: 0,
+        dispatch_authorized: true,
+        monitor_artist: false,
+        auto_download_artist: false,
+        reviewed_by_name: None,
+        reviewed_at: None,
+    };
+    ledger
+        .begin_batch(vec![record], "user-2", None)
+        .await
+        .unwrap()
+        .unwrap();
+    let (deps, requests) = follow_rig(&db, &settings);
+    follow_tick(now, &deps).await;
+    let polled = follow_tick(now + 86_400, &deps).await;
     assert_eq!(polled.enqueued, 0);
     assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
-    let cursor = follows.cursor("artist-1").await.unwrap().unwrap();
+    let follower = Principal::acting_for("user-2", Role::User, None);
+    let active = requests.active(&follower).await.unwrap();
+    let waiting = active
+        .items
+        .iter()
+        .find(|item| item.musicbrainz_id == "rg-new")
+        .expect("the follow download is on the Requests page");
+    assert_eq!(waiting.origin, DispatchOrigin::Follow);
     assert_eq!(
-        cursor.pending.len(),
-        1,
-        "the release waits for the next poll"
+        waiting.waiting_reason,
+        Some(WaitingReason::RequestQuotaFull)
     );
+
+    let still = follow_tick(now + 86_400 + 60, &deps).await;
+    assert_eq!(still.enqueued, 0, "the window is still full");
+    assert!(tasks(&db).await.is_empty());
+
+    // The earlier ask leaves the seven-day window, but the download queue
+    // refuses the start: the request goes back to waiting.
+    db.write("refuse downloads", |tx| {
+        tx.execute_batch(
+            "CREATE TRIGGER refuse_downloads BEFORE INSERT ON download_tasks \
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let refused = follow_tick(now + 8 * 86_400, &deps).await;
+    assert_eq!(refused.enqueued, 0);
+    let row = ledger
+        .get(RequestKind::Album, "rg-new")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, RequestStatus::Queued, "never failed");
+    assert_eq!(row.task_id, None);
+    db.write("accept downloads", |tx| {
+        tx.execute_batch("DROP TRIGGER refuse_downloads;")?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let freed = follow_tick(now + 8 * 86_400 + 60, &deps).await;
+    assert_eq!(freed.enqueued, 1, "the waiting request starts by itself");
+    let started = tasks(&db).await;
+    assert_eq!(started.len(), 1);
+    assert_eq!(started[0].release_group_mbid, "rg-new");
+    assert_eq!(started[0].user_id, "user-2");
+    let row = ledger
+        .get(RequestKind::Album, "rg-new")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.task_id.as_deref(), Some(started[0].id.as_str()));
+    assert_eq!(row.status, RequestStatus::Downloading);
+}
+
+// A follow download that meets another user's ask still waiting for an
+// admin keeps the release held; when that ask is rejected, the follower's
+// own download goes ahead.
+#[tokio::test]
+async fn follow_download_outlives_a_rejected_ask_it_met() {
+    let db = AcquireDb::scratch().unwrap();
+    seed_approved_follower(&db).await;
+    db.add_user("user-3", "Asker", "user").await.unwrap();
+    let ledger = RequestStore::new(db.clone());
+    let asked = RequestRecord {
+        key: "rg-new".to_owned(),
+        kind: RequestKind::Album,
+        status: RequestStatus::AwaitingApproval,
+        artist_name: "The Band".to_owned(),
+        album_title: "rg-new".to_owned(),
+        artist_mbid: None,
+        year: None,
+        release_mbid: None,
+        track_title: None,
+        duration_seconds: None,
+        track_release_group_mbid: None,
+        user_id: Some("user-3".to_owned()),
+        origin: DispatchOrigin::User,
+        requested_by_name: None,
+        requesters: Vec::new(),
+        requested_at: NOW as u64,
+        completed_at: None,
+        task_id: None,
+        generation: 0,
+        dispatch_authorized: false,
+        monitor_artist: false,
+        auto_download_artist: false,
+        reviewed_by_name: None,
+        reviewed_at: None,
+    };
+    ledger
+        .begin_batch(vec![asked], "user-3", None)
+        .await
+        .unwrap()
+        .unwrap();
+    let settings = settings(&db);
+    let (deps, _requests) = follow_rig(&db, &settings);
+    follow_tick(NOW, &deps).await;
+    let met = follow_tick(NOW + 86_400, &deps).await;
+    assert_eq!(met.enqueued, 0);
+    assert!(tasks(&db).await.is_empty(), "the ask waits for an admin");
+
+    assert!(
+        ledger
+            .update_status(
+                RequestKind::Album,
+                "rg-new",
+                RequestStatus::Rejected,
+                Some(NOW as u64 + 90_000),
+                None,
+            )
+            .await
+            .unwrap()
+    );
+    let later = follow_tick(NOW + 2 * 86_400, &deps).await;
+    assert_eq!(later.enqueued, 1, "the follower's download goes ahead");
+    let started = tasks(&db).await;
+    assert_eq!(started.len(), 1);
+    assert_eq!(started[0].user_id, "user-2");
+    assert_eq!(started[0].release_group_mbid, "rg-new");
 }
 
 // A failed request the wanted watcher downloads again reads downloading,

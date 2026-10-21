@@ -41862,6 +41862,19 @@
           }
         }
       },
+      "DispatchOrigin": {
+        "type": "string",
+        "description": "What started a download. Stored as the task's `origin`; origins decide\nquota exemptions and how a landing treats the files, never routing.\nA request row stores it too, and the Requests page shows it.",
+        "enum": [
+          "user",
+          "approval",
+          "retry",
+          "wanted",
+          "upgrade",
+          "edition",
+          "follow"
+        ]
+      },
       "DisplayNameUpdate": {
         "type": "object",
         "description": "Change display name.",
@@ -58406,6 +58419,7 @@
           "requested_at",
           "status",
           "request_kind",
+          "origin",
           "requester_count"
         ],
         "properties": {
@@ -58481,6 +58495,10 @@
           "musicbrainz_id": {
             "type": "string",
             "description": "Album or recording MBID."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DispatchOrigin",
+            "description": "What made the request: a person's ask (`user`) or a followed\nartist's new release (`follow`)."
           },
           "progress": {
             "type": [
@@ -58602,11 +58620,15 @@
             "description": "Primary owner id."
           },
           "waiting_reason": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Why a dispatched request has not started, as a stable code.\n`no_download_source`: no download source is set up, so the request\nis held and starts by itself once one is."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WaitingReason",
+                "description": "Why a live request has not started, when it waits."
+              }
+            ]
           },
           "year": {
             "type": [
@@ -64610,6 +64632,15 @@
             "minimum": 0
           }
         }
+      },
+      "WaitingReason": {
+        "type": "string",
+        "description": "Why a live request waits. It starts by itself once the cause clears.",
+        "enum": [
+          "no_download_source",
+          "request_quota_full",
+          "storage_full"
+        ]
       },
       "WantedActionResponse": {
         "type": "object",

@@ -177,6 +177,8 @@ Which edition a request fetches, how single tracks are found, following artists,
 
 Request buttons show whether or not a download source is turned on. A request made while none is on is accepted and held. The Requests page shows it as "Waiting: no download source configured", and it starts by itself once an admin turns a source on. From then on its card shows what the download is doing: searching, awaiting review or downloading.
 
+The Requests page also lists the downloads that auto-download starts for artists you follow, marked "Followed artist". They count toward your quota like any other request. When your request quota is full, the request still appears and waits as "Waiting: request quota full" ("Waiting: storage full" when your storage budget or the library's size cap is reached), then starts by itself once there is room.
+
 ### slskd
 
 DroppedNeedle talks to your own running slskd over its local HTTP API (`X-API-Key`). You bring slskd; DroppedNeedle drives it.

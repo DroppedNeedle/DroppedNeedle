@@ -144,8 +144,17 @@ pub fn can_request_transition(from: RequestStatus, to: RequestStatus) -> bool {
     match from {
         // Live rows follow their task, and their owner may cancel. An
         // approval whose dispatch could not start goes back to waiting.
-        S::Pending => settles || matches!(to, S::Downloading | S::Cancelling | S::AwaitingApproval),
-        S::Queued => settles || matches!(to, S::Downloading | S::Cancelling),
+        // A row started from waiting for quota room whose download could
+        // not be queued goes back to waiting.
+        S::Pending => {
+            settles
+                || matches!(
+                    to,
+                    S::Downloading | S::Cancelling | S::AwaitingApproval | S::Queued
+                )
+        }
+        // A queued row with no task waits for quota room, then starts.
+        S::Queued => settles || matches!(to, S::Pending | S::Downloading | S::Cancelling),
         S::Downloading => settles || to == S::Cancelling,
         // An admin decides; the owner may withdraw; an album the library
         // already holds leaves nothing to approve.
@@ -290,6 +299,8 @@ pub struct RequestRecord {
     pub track_release_group_mbid: Option<String>,
     /// Immutable primary owner; retries keep it (v2 `_dispatch_record`).
     pub user_id: Option<String>,
+    /// What made the request.
+    pub origin: crate::dispatch::DispatchOrigin,
     /// Owner display name.
     pub requested_by_name: Option<String>,
     /// Co-requesters beyond the owner.
@@ -321,6 +332,12 @@ impl RequestRecord {
     pub fn has_requester(&self, user_id: &str) -> bool {
         self.user_id.as_deref() == Some(user_id)
             || self.requesters.iter().any(|r| r.user_id == user_id)
+    }
+
+    /// Whether the row waits for room in its owner's quota: queued with no
+    /// download yet. Only such a row is queued without a task.
+    pub fn waits_for_quota(&self) -> bool {
+        self.status == RequestStatus::Queued && self.task_id.is_none()
     }
 }
 
@@ -561,6 +578,8 @@ mod tests {
             }
         }
         allowed.push((Pending, AwaitingApproval));
+        allowed.push((Queued, Pending));
+        allowed.push((Pending, Queued));
         for to in live_settles.into_iter().chain([Cancelling]) {
             allowed.push((Downloading, to));
         }

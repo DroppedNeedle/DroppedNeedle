@@ -16,7 +16,9 @@ use super::super::settle::{self, Fulfilled};
 use super::super::sql;
 use super::{lane_error, ms_from_secs, read_error, secs_from_ms};
 use crate::db::{AcquireDb, to_i64, to_u64};
+use crate::dispatch::DispatchOrigin;
 use crate::follows::FollowAsk;
+use droppedneedle_auth::Role;
 
 /// Ledger key for one row (v2 `_request_key`).
 fn row_key(kind: RequestKind, key: &str) -> String {
@@ -33,7 +35,7 @@ const RECORD_SELECT: &str = "SELECT rh.musicbrainz_id_lower, rh.request_kind, rh
      rh.track_title, rh.duration_seconds, rh.track_release_group_mbid, rh.user_id, \
      rh.requested_by_name, rh.requested_at, rh.completed_at, rh.download_task_id, \
      rh.generation, rh.dispatch_authorized, rh.monitor_artist, rh.auto_download_artist, \
-     rh.reviewed_by_name, rh.reviewed_at \
+     rh.reviewed_by_name, rh.reviewed_at, rh.origin \
      FROM request_history rh";
 
 /// Per-user filter: with `?1` NULL every row passes; otherwise the row's
@@ -60,7 +62,10 @@ fn record_from_sqlx(row: &SqliteRow) -> Result<RequestRecord, sqlx::Error> {
     let kind = RequestKind::parse(&kind).ok_or_else(|| unknown_value("request_kind", &kind))?;
     let status: String = row.try_get(2)?;
     let status = RequestStatus::parse(&status).ok_or_else(|| unknown_value("status", &status))?;
+    let origin: String = row.try_get(22)?;
+    let origin = DispatchOrigin::parse(&origin).ok_or_else(|| unknown_value("origin", &origin))?;
     Ok(RequestRecord {
+        origin,
         key: bare_key(&stored),
         kind,
         status,
@@ -100,7 +105,16 @@ fn record_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestReco
             format!("request_history.request_kind: unknown value {kind}").into(),
         )
     })?;
+    let origin: String = row.get(22)?;
+    let origin = DispatchOrigin::parse(&origin).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            22,
+            rusqlite::types::Type::Text,
+            format!("request_history.origin: unknown value {origin}").into(),
+        )
+    })?;
     Ok(RequestRecord {
+        origin,
         key: bare_key(&stored),
         kind,
         status: row.get(2)?,
@@ -158,15 +172,33 @@ fn load_record_tx(tx: &Transaction, stored: &str) -> rusqlite::Result<Option<Req
 }
 
 /// Asks one listener made since `since` (v2 `async_count_user_requests_since`).
+/// A row still waiting for quota room has used none yet.
+const COUNT_ASKS: &str = "SELECT COUNT(*) FROM request_history_requesters rr \
+     JOIN request_history rh ON rh.musicbrainz_id_lower = rr.musicbrainz_id_lower \
+     WHERE rr.user_id = ?1 AND rr.requested_at >= ?2 \
+     AND NOT (rh.status = 'queued' AND rh.download_task_id IS NULL)";
+
+/// Asks one listener made since `since`, inside a write transaction.
 fn count_asks_tx(tx: &Transaction, user_id: &str, since: u64) -> rusqlite::Result<u32> {
-    let count: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM request_history_requesters rr \
-         JOIN request_history rh ON rh.musicbrainz_id_lower = rr.musicbrainz_id_lower \
-         WHERE rr.user_id = ?1 AND rr.requested_at >= ?2",
-        params![user_id, ms_from_secs(since)],
-        |row| row.get(0),
-    )?;
+    let count: i64 = tx.query_row(COUNT_ASKS, params![user_id, ms_from_secs(since)], |row| {
+        row.get(0)
+    })?;
     Ok(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
+/// Whether `owner` may make one more ask at `now` under `gate`.
+fn has_room(
+    tx: &Transaction,
+    owner: &str,
+    gate: Option<&QuotaGate>,
+    now: u64,
+) -> rusqlite::Result<bool> {
+    let Some(gate) = gate.filter(|gate| gate.limit > 0) else {
+        return Ok(true);
+    };
+    let since = now.saturating_sub(u64::from(gate.window_days.max(1)) * 86_400);
+    let used = count_asks_tx(tx, owner, since)?;
+    Ok(used.saturating_add(gate.new_requests) <= gate.limit)
 }
 
 /// Whether one user owns or listens to a row, inside a write transaction.
@@ -219,8 +251,9 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
          status, monitor_artist, auto_download_artist, user_id, requested_by_name, \
          reviewed_by_id, reviewed_by_name, reviewed_at, download_task_id, release_mbid, \
          request_kind, track_title, duration_seconds, track_release_group_mbid, \
-         dispatch_authorized, generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, \
-         ?10, ?11, ?12, ?13, NULL, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+         dispatch_authorized, generation, origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, \
+         ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, \
+         ?24)",
         params![
             stored,
             record.key,
@@ -245,6 +278,7 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
             record.track_release_group_mbid,
             record.dispatch_authorized,
             generation,
+            record.origin.as_str(),
         ],
     )?;
     if let Some(owner) = &record.user_id {
@@ -418,6 +452,126 @@ impl RequestStore {
             })
             .await
             .map_err(|error| lane_error("requests.begin", error))
+    }
+
+    /// Claim one row that never refuses for quota: when `hold` is set or
+    /// the gate has no room, the row is stored queued with no task and
+    /// waits for room (see [`Self::admit_waiting`]).
+    pub async fn begin_or_wait(
+        &self,
+        mut record: RequestRecord,
+        owner: &str,
+        gate: Option<QuotaGate>,
+        hold: bool,
+    ) -> Result<BeginOutcome, RequestsError> {
+        let owner = owner.to_owned();
+        self.db
+            .write("requests.begin", move |tx| {
+                if hold || !has_room(tx, &owner, gate.as_ref(), record.requested_at)? {
+                    record.status = RequestStatus::Queued;
+                }
+                Ok(begin_tx(tx, record)?)
+            })
+            .await
+            .map_err(|error| lane_error("requests.begin", error))
+    }
+
+    /// Start one row that waits for quota room when `asker`'s gate has
+    /// room now: it moves to pending, and the asks of `asker` and of the
+    /// row's owner count from `now`. Answers the started row, or `None`
+    /// when it still waits or no longer waits for quota. Runs on the
+    /// background lane: the follow poll calls it for waiting rows.
+    pub async fn admit_waiting(
+        &self,
+        key: &str,
+        asker: &str,
+        gate: Option<QuotaGate>,
+        now: u64,
+    ) -> Result<Option<RequestRecord>, RequestsError> {
+        let stored = row_key(RequestKind::Album, key);
+        let asker = asker.to_owned();
+        self.db
+            .write_background("requests.admit_waiting", move |tx| {
+                if !has_room(tx, &asker, gate.as_ref(), now)? {
+                    return Ok(None);
+                }
+                let moved = tx.execute(
+                    "UPDATE request_history SET status = 'pending', \
+                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
+                     AND status = 'queued' AND download_task_id IS NULL",
+                    params![stored],
+                )?;
+                if moved == 0 {
+                    return Ok(None);
+                }
+                tx.execute(
+                    "UPDATE request_history_requesters SET requested_at = ?3 \
+                     WHERE musicbrainz_id_lower = ?1 AND (user_id = ?2 OR user_id = \
+                     (SELECT user_id FROM request_history WHERE musicbrainz_id_lower = ?1))",
+                    params![stored, asker, ms_from_secs(now)],
+                )?;
+                Ok(load_record_tx(tx, &stored)?)
+            })
+            .await
+            .map_err(|error| lane_error("requests.admit_waiting", error))
+    }
+
+    /// Put a row started from waiting back to waiting when its download
+    /// could not be queued, behind the generation guard. Answers whether
+    /// it moved.
+    pub async fn requeue_waiting(
+        &self,
+        key: &str,
+        expected_generation: u64,
+    ) -> Result<bool, RequestsError> {
+        let stored = row_key(RequestKind::Album, key);
+        let expected = to_i64(expected_generation);
+        self.db
+            .write_background("requests.requeue_waiting", move |tx| {
+                let moved = tx.execute(
+                    "UPDATE request_history SET status = 'queued', \
+                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
+                     AND status = 'pending' AND download_task_id IS NULL \
+                     AND generation = ?2",
+                    params![stored, expected],
+                )?;
+                Ok(moved > 0)
+            })
+            .await
+            .map_err(|error| lane_error("requests.requeue_waiting", error))
+    }
+
+    /// Rows waiting for quota room, oldest first, with their owner's role.
+    /// The role is `None` for a row whose owner no longer exists.
+    pub async fn waiting_for_quota(
+        &self,
+    ) -> Result<Vec<(RequestRecord, Option<Role>)>, RequestsError> {
+        let sql = format!(
+            "{RECORD_SELECT} WHERE rh.status = 'queued' AND rh.download_task_id IS NULL \
+             ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower"
+        );
+        let records = self
+            .fetch_records("requests.waiting_for_quota", sqlx::query(&sql))
+            .await?;
+        let mut out = Vec::with_capacity(records.len());
+        for record in records {
+            let role = match record.user_id.as_deref() {
+                Some(owner) => self.role_of(owner).await?,
+                None => None,
+            };
+            out.push((record, role));
+        }
+        Ok(out)
+    }
+
+    /// One account's role, or `None` when the account does not exist.
+    pub async fn role_of(&self, user_id: &str) -> Result<Option<Role>, RequestsError> {
+        let role: Option<String> = sqlx::query_scalar("SELECT role FROM auth_users WHERE id = ?1")
+            .bind(user_id)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(|error| read_error("requests.role_of", error))?;
+        Ok(role.as_deref().map(Role::from_stored))
     }
 
     /// Attach a listener to a live row (v2 `async_add_requester`). Terminal
@@ -976,16 +1130,12 @@ impl RequestStore {
 
     /// Asks one listener made since `since` (quota usage).
     pub async fn count_asks_since(&self, user_id: &str, since: u64) -> Result<u32, RequestsError> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM request_history_requesters rr \
-             JOIN request_history rh ON rh.musicbrainz_id_lower = rr.musicbrainz_id_lower \
-             WHERE rr.user_id = ?1 AND rr.requested_at >= ?2",
-        )
-        .bind(user_id)
-        .bind(ms_from_secs(since))
-        .fetch_one(self.db.pool())
-        .await
-        .map_err(|error| read_error("requests.count_asks", error))?;
+        let count: i64 = sqlx::query_scalar(COUNT_ASKS)
+            .bind(user_id)
+            .bind(ms_from_secs(since))
+            .fetch_one(self.db.pool())
+            .await
+            .map_err(|error| read_error("requests.count_asks", error))?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 

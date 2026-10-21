@@ -21,6 +21,8 @@ pub struct Follower {
     pub user_id: String,
     /// Account role, for the quota check.
     pub role: Role,
+    /// Display name, shown on the request a new release starts.
+    pub name: Option<String>,
 }
 
 /// One followed artist's poll cursor. Every artist someone follows has
@@ -115,8 +117,8 @@ impl Follows {
     /// id so the owner pick is stable: intent on, and either a role that
     /// approves itself or an approved grant.
     pub async fn auto_followers(&self, artist_mbid: &str) -> Result<Vec<Follower>, StoreFailure> {
-        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT f.user_id, u.role, a.state FROM user_followed_artists f \
+        let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT f.user_id, u.role, a.state, u.display_name FROM user_followed_artists f \
              JOIN auth_users u ON u.id = f.user_id \
              LEFT JOIN auto_download_approvals a \
                ON a.user_id = f.user_id AND a.artist_mbid_lower = f.artist_mbid_lower \
@@ -129,10 +131,14 @@ impl Follows {
         .map_err(|error| read_failure("follows.auto_followers", error))?;
         Ok(rows
             .into_iter()
-            .filter_map(|(user_id, role, verdict)| {
+            .filter_map(|(user_id, role, verdict, name)| {
                 let role = Role::from_stored(&role);
                 let verdict = verdict.as_deref().and_then(ApprovalState::parse);
-                auto_download_live(role, verdict).then_some(Follower { user_id, role })
+                auto_download_live(role, verdict).then_some(Follower {
+                    user_id,
+                    role,
+                    name,
+                })
             })
             .collect())
     }

@@ -1135,7 +1135,7 @@ fn flows_bundle(
         follows: follows.clone(),
         poll: release_poll,
         downloads: dispatch.clone(),
-        quota: requests.quota.clone(),
+        requests: Arc::new(super::requests::service::RequestsService::new(requests)),
         library: library.clone(),
         ticks: ticks.clone(),
         preferences: settings.live(),

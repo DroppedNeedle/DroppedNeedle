@@ -21,8 +21,8 @@ use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, AlbumIntake, BatchCancelResponse,
     BatchIntake, BatchIntakeResponse, ClearHistoryResponse, HistoryQuery, HistoryResponse,
     IntakeResponse, PersonalMixApprovalItem, PersonalMixApprovalsResponse, RefreshResponse,
-    RequestItem, RequestKind, TrackIntake, TrackIntakeResponse, WantedActionResponse, WantedItem,
-    WantedResponse, WantedRetryingItem,
+    RequestItem, RequestKind, TrackIntake, TrackIntakeResponse, WaitingReason,
+    WantedActionResponse, WantedItem, WantedResponse, WantedRetryingItem,
 };
 use super::quota::QuotaLedger;
 use super::sqlite::{EditionStore, PersonalMixStore, RequestStore, WantedStore, WatchChange};
@@ -33,14 +33,12 @@ use crate::dispatch::{
 };
 use crate::downloads::state::TaskStatus;
 use crate::edition::chosen_edition;
+use crate::follows::cursors::Follower;
 use crate::follows::{FollowAsk, Follows};
 use droppedneedle_auth::{Admin, Principal};
 
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
 const BATCH_MAX_ITEMS: usize = 500;
-
-/// Why a queued download has not started: no download source is on.
-const WAITING_NO_SOURCE: &str = "no_download_source";
 
 /// History page-size cap (v2 `page_size` query `le=100`).
 const HISTORY_MAX_PAGE_SIZE: u32 = 100;
@@ -139,6 +137,244 @@ impl RequestsService {
         body: &AlbumIntake,
     ) -> Result<IntakeResponse, RequestsError> {
         self.intake_album(principal, body, true).await
+    }
+
+    /// Ask for a followed artist's new release on the follower's behalf.
+    /// The follower's auto-download approval stands in for a per-request
+    /// one. Quotas apply, but a full one never refuses: the row waits as
+    /// queued and [`Self::start_waiting`] starts it once there is room.
+    pub async fn request_follow(
+        &self,
+        release: &FollowRelease,
+        now: u64,
+    ) -> Result<FollowIntake, RequestsError> {
+        let principal = Principal::acting_for(
+            release.follower.user_id.clone(),
+            release.follower.role,
+            release.follower.name.clone(),
+        );
+        let owner = principal.user_id();
+        let key = release.release_group_mbid.to_lowercase();
+        if let Some(existing) = self.store.get(RequestKind::Album, &key).await?
+            && (existing.status.is_active() || existing.status == RequestStatus::Cancelling)
+        {
+            return self.join_follow(&existing, &principal, now).await;
+        }
+        let gate = self.quota.request_gate(owner, principal.role(), 1)?;
+        let hold = !self.storage_room(&principal).await?;
+        let record = RequestRecord {
+            key: key.clone(),
+            kind: RequestKind::Album,
+            status: RequestStatus::Pending,
+            artist_name: release.artist_name.clone(),
+            album_title: release.title.clone(),
+            artist_mbid: Some(release.artist_mbid.clone()),
+            year: None,
+            release_mbid: self.chosen_release(&key).await,
+            track_title: None,
+            duration_seconds: None,
+            track_release_group_mbid: None,
+            user_id: Some(owner.to_owned()),
+            origin: DispatchOrigin::Follow,
+            requested_by_name: Some(principal.username_display().to_owned()),
+            requesters: Vec::new(),
+            requested_at: now,
+            completed_at: None,
+            task_id: None,
+            generation: 0,
+            dispatch_authorized: true,
+            monitor_artist: false,
+            auto_download_artist: false,
+            reviewed_by_name: None,
+            reviewed_at: None,
+        };
+        match self.store.begin_or_wait(record, owner, gate, hold).await? {
+            BeginOutcome::Existing(_) => Ok(FollowIntake::Joined),
+            BeginOutcome::Won(won) => {
+                self.announce_created(&won);
+                if won.waits_for_quota() {
+                    return Ok(FollowIntake::Waiting);
+                }
+                let started = self
+                    .dispatch_album(&won, DispatchOrigin::Follow, owner)
+                    .await?;
+                Ok(FollowIntake::Started {
+                    task_id: started.task_id.unwrap_or_default(),
+                })
+            }
+        }
+    }
+
+    /// A follow's new release whose album already has a live row. The
+    /// follow settles only on a row that will download: a row waiting for
+    /// an admin or being cancelled may never do so, so the release stays
+    /// held and is asked for again on a later poll. A row waiting for
+    /// another owner's quota starts when the follower has room.
+    async fn join_follow(
+        &self,
+        existing: &RequestRecord,
+        principal: &Principal,
+        now: u64,
+    ) -> Result<FollowIntake, RequestsError> {
+        if matches!(
+            existing.status,
+            RequestStatus::AwaitingApproval | RequestStatus::Cancelling
+        ) {
+            return Ok(FollowIntake::Held);
+        }
+        self.store
+            .attach_requester(
+                RequestKind::Album,
+                &existing.key,
+                principal.user_id(),
+                Some(principal.username_display().to_owned()),
+                now,
+            )
+            .await?;
+        if !existing.waits_for_quota() || existing.user_id.as_deref() == Some(principal.user_id()) {
+            return Ok(FollowIntake::Joined);
+        }
+        Ok(match self.start_one(existing, principal, now).await? {
+            Some(task_id) => FollowIntake::Started { task_id },
+            None => FollowIntake::Held,
+        })
+    }
+
+    /// Start every row waiting for quota room whose owner has room now.
+    /// Answers the rows started with their tasks. A row whose owner no
+    /// longer exists is cancelled. One row's failure is logged and leaves
+    /// the others to run.
+    pub async fn start_waiting(
+        &self,
+        now: u64,
+    ) -> Result<Vec<(RequestRecord, String)>, RequestsError> {
+        let mut started = Vec::new();
+        for (record, role) in self.store.waiting_for_quota().await? {
+            let (Some(owner), Some(role)) = (record.user_id.clone(), role) else {
+                tracing::info!(key = %record.key, "waiting request has no owner; cancelling it");
+                if let Err(error) = self
+                    .store
+                    .update_status(
+                        RequestKind::Album,
+                        &record.key,
+                        RequestStatus::Cancelled,
+                        Some(now),
+                        Some(record.generation),
+                    )
+                    .await
+                {
+                    tracing::warn!(key = %record.key, ?error, "ownerless request cancel failed");
+                }
+                continue;
+            };
+            let principal = Principal::acting_for(owner, role, record.requested_by_name.clone());
+            match self.start_one(&record, &principal, now).await {
+                Ok(Some(task_id)) => started.push((record, task_id)),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(key = %record.key, ?error, "waiting request could not start");
+                }
+            }
+        }
+        Ok(started)
+    }
+
+    /// Start one row waiting for quota room when `principal` has room
+    /// for one more ask: the owner, or a person whose own ask joined it.
+    /// Answers the task, or `None` while it still waits. A download that
+    /// cannot be queued (a busy database included) puts the row back to
+    /// waiting, never failed.
+    async fn start_one(
+        &self,
+        record: &RequestRecord,
+        principal: &Principal,
+        now: u64,
+    ) -> Result<Option<String>, RequestsError> {
+        if self.waiting_reason_for(principal, now).await?.is_some() {
+            return Ok(None);
+        }
+        let gate = self
+            .quota
+            .request_gate(principal.user_id(), principal.role(), 1)?;
+        let Some(admitted) = self
+            .store
+            .admit_waiting(&record.key, principal.user_id(), gate, now)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let owner = admitted.user_id.clone().unwrap_or_default();
+        let request = stored_dispatch(&admitted, admitted.origin, &owner);
+        let outcome = match self.dispatch.dispatch(&request).await {
+            Ok(outcome) => outcome,
+            Err(cause) => {
+                self.store
+                    .requeue_waiting(&admitted.key, admitted.generation)
+                    .await?;
+                return Err(dispatch_fault(cause));
+            }
+        };
+        if !self
+            .store
+            .link_task(
+                RequestKind::Album,
+                &admitted.key,
+                outcome.task_id(),
+                Some(admitted.generation),
+            )
+            .await?
+        {
+            cancel_started(&self.dispatch, &outcome).await;
+            return Err(RequestsError::internal(&format_args!(
+                "waiting request lost its generation for {}",
+                admitted.key
+            )));
+        }
+        Ok(Some(outcome.task_id().to_owned()))
+    }
+
+    /// What keeps `principal` from one more ask now: the request count
+    /// for the window (read first, as it is the cheaper check), then the
+    /// storage budget and library cap. `None` when there is room.
+    async fn waiting_reason_for(
+        &self,
+        principal: &Principal,
+        now: u64,
+    ) -> Result<Option<WaitingReason>, RequestsError> {
+        if let Some(gate) = self
+            .quota
+            .request_gate(principal.user_id(), principal.role(), 1)?
+        {
+            let used = self
+                .quota
+                .count_in_window(principal.user_id(), gate.window_days, now)
+                .await?;
+            if used.saturating_add(gate.new_requests) > gate.limit {
+                return Ok(Some(WaitingReason::RequestQuotaFull));
+            }
+        }
+        if !self.storage_room(principal).await? {
+            return Ok(Some(WaitingReason::StorageFull));
+        }
+        Ok(None)
+    }
+
+    /// Whether `principal`'s storage budget and the library cap leave
+    /// room for one more album.
+    async fn storage_room(&self, principal: &Principal) -> Result<bool, RequestsError> {
+        match self
+            .quota
+            .check_storage_admission(
+                principal.user_id(),
+                principal.role(),
+                DispatchOrigin::Follow,
+            )
+            .await
+        {
+            Ok(()) => Ok(true),
+            Err(RequestsError::StorageFull { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     async fn intake_album(
@@ -304,6 +540,7 @@ impl RequestsService {
             duration_seconds: body.duration_seconds,
             track_release_group_mbid: body.release_group_mbid.clone(),
             user_id: Some(principal.user_id().to_owned()),
+            origin: DispatchOrigin::User,
             requested_by_name: Some(principal.username_display().to_owned()),
             requesters: Vec::new(),
             requested_at: now,
@@ -492,6 +729,7 @@ impl RequestsService {
                 duration_seconds: None,
                 track_release_group_mbid: None,
                 user_id: Some(user_id.to_owned()),
+                origin: DispatchOrigin::User,
                 requested_by_name: Some(name.clone()),
                 requesters: Vec::new(),
                 requested_at: now,
@@ -1463,7 +1701,7 @@ impl RequestsService {
                         task_id
                     }
                     Ok(None) => {
-                        let request = stored_dispatch(&record, DispatchOrigin::User, &owner);
+                        let request = stored_dispatch(&record, record.origin, &owner);
                         match self.dispatch.dispatch(&request).await {
                             Ok(DispatchOutcome::Dispatched { task_id }) => {
                                 report.redispatched += 1;
@@ -1510,6 +1748,20 @@ impl RequestsService {
                 follow,
             )
             .await?;
+        // A row waiting for its owner's quota starts on the ask of someone
+        // who needs no approval and has room of their own.
+        if existing.waits_for_quota()
+            && auto_approves(principal.role())
+            && let Some(task_id) = self.start_one(existing, principal, now_epoch()).await?
+        {
+            return Ok(IntakeResponse {
+                success: true,
+                message: "Request accepted".to_owned(),
+                musicbrainz_id: existing.key.clone(),
+                status: RequestStatus::Pending.as_str().to_owned(),
+                task_id: Some(task_id),
+            });
+        }
         let message = if existing.status == RequestStatus::AwaitingApproval {
             "Request is awaiting admin approval"
         } else if existing.status == RequestStatus::Cancelling {
@@ -1564,6 +1816,7 @@ impl RequestsService {
             duration_seconds: None,
             track_release_group_mbid: None,
             user_id: Some(principal.user_id().to_owned()),
+            origin: DispatchOrigin::User,
             requested_by_name: Some(principal.username_display().to_owned()),
             requesters: Vec::new(),
             requested_at: now,
@@ -1870,8 +2123,29 @@ impl RequestsService {
     /// One row plus its linked task's progress snapshot. Rows without a
     /// task (waiting for approval) read exactly as the record maps; a task
     /// read failure leaves the progress fields empty and logs why.
+    /// Why a row waiting for quota room still waits, read from its
+    /// owner's quota now. A read failure only loses the reason.
+    async fn waiting_reason(&self, record: &RequestRecord) -> Option<WaitingReason> {
+        let owner = record.user_id.as_deref()?;
+        let reason = match self.store.role_of(owner).await {
+            Ok(Some(role)) => {
+                let principal = Principal::acting_for(owner, role, None);
+                self.waiting_reason_for(&principal, now_epoch()).await
+            }
+            Ok(None) => Ok(None),
+            Err(error) => Err(error),
+        };
+        reason.unwrap_or_else(|error| {
+            tracing::warn!(key = %record.key, ?error, "waiting reason unreadable");
+            None
+        })
+    }
+
     async fn to_item(&self, record: &RequestRecord) -> RequestItem {
         let mut item = RequestItem::from(record);
+        if record.waits_for_quota() {
+            item.waiting_reason = self.waiting_reason(record).await;
+        }
         let Some(task_id) = record.task_id.as_deref() else {
             return item;
         };
@@ -1886,7 +2160,7 @@ impl RequestsService {
                     && let Some(readiness) = &self.readiness
                     && !(readiness.sources_ready)()
                 {
-                    item.waiting_reason = Some(WAITING_NO_SOURCE.to_owned());
+                    item.waiting_reason = Some(WaitingReason::NoDownloadSource);
                 }
                 item.error_message = snapshot.error_message;
                 item.quality = snapshot.quality;
@@ -1987,6 +2261,40 @@ fn follow_ask(
         auto_download,
         self_approves: principal.role().is_curator(),
     })
+}
+
+/// A followed artist's new release, asked for on a follower's behalf.
+#[derive(Debug, Clone)]
+pub struct FollowRelease {
+    /// The follower the download is for.
+    pub follower: Follower,
+    /// Followed artist MBID.
+    pub artist_mbid: String,
+    /// Followed artist name.
+    pub artist_name: String,
+    /// The new release group.
+    pub release_group_mbid: String,
+    /// Its title.
+    pub title: String,
+}
+
+/// How a follow's ask ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FollowIntake {
+    /// A download started for the new row.
+    Started {
+        /// The download task.
+        task_id: String,
+    },
+    /// The row waits for room in the follower's quota.
+    Waiting,
+    /// A live row for the album already existed and will download; the
+    /// follower joined it.
+    Joined,
+    /// The album's row may never download (it waits for an admin, is
+    /// being cancelled, or waits on a quota the follower cannot fill):
+    /// keep the release held and ask again later.
+    Held,
 }
 
 /// Initial status for one role's fresh ask.
@@ -2119,6 +2427,7 @@ impl From<&RequestRecord> for RequestItem {
             task_id: record.task_id.clone(),
             can_reimport: None,
             request_kind: record.kind,
+            origin: record.origin,
             track_title: record.track_title.clone(),
             duration_seconds: record.duration_seconds,
             track_release_group_mbid: record.track_release_group_mbid.clone(),

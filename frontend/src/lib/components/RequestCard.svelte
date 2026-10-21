@@ -117,13 +117,24 @@
 		glow?: string;
 	};
 
-	const waitingForSource = $derived(
-		mode === 'active' && item.waiting_reason === 'no_download_source'
-	);
+	const waitingNote = $derived.by((): string | null => {
+		if (mode !== 'active') return null;
+		switch (item.waiting_reason) {
+			case 'no_download_source':
+				return 'Waiting: no download source configured';
+			case 'request_quota_full':
+				return 'Waiting: request quota full';
+			case 'storage_full':
+				return 'Waiting: storage full';
+			default:
+				return null;
+		}
+	});
+	const waiting = $derived(waitingNote !== null);
 	const status = $derived(mode === 'active' && liveStatus ? liveStatus : item.status);
 
 	const statusConfig = $derived.by((): StatusConfig => {
-		if (waitingForSource) {
+		if (waiting) {
 			return { badgeClass: 'badge-warning', label: 'Waiting', icon: Clock };
 		}
 		switch (status) {
@@ -239,7 +250,7 @@
 	const isActive = $derived(mode === 'active');
 	const hasProgress = $derived(
 		isActive &&
-			!waitingForSource &&
+			!waiting &&
 			(status === 'downloading' || status === 'importing' || status === 'paused')
 	);
 	const hasStatusMessages = $derived(
@@ -280,7 +291,7 @@
 				rounded="lg"
 				className="w-full h-full"
 			/>
-			{#if isActive && status === 'pending' && !waitingForSource}
+			{#if isActive && status === 'pending' && !waiting}
 				<div class="absolute inset-0 bg-base-300/60 flex items-center justify-center">
 					<Loader class="h-5 w-5 text-warning animate-spin motion-keep" />
 				</div>
@@ -315,6 +326,10 @@
 				{#if item.year}
 					<span class="text-base-content/20">•</span>
 					<span class="text-xs text-base-content/40">{item.year}</span>
+				{/if}
+				{#if item.origin === 'follow'}
+					<span class="text-base-content/20">•</span>
+					<span class="text-xs text-base-content/40">Followed artist</span>
 				{/if}
 				{#if isActive && item.quality}
 					<span class="text-base-content/20">•</span>
@@ -395,9 +410,9 @@
 						{/if}
 					</div>
 				</div>
-			{:else if waitingForSource}
+			{:else if waitingNote}
 				<span class="text-xs text-base-content/70 max-w-44 text-right">
-					Waiting: no download source configured
+					{waitingNote}
 				</span>
 			{:else if isActive && isFailedState && item.error_message}
 				<span class="text-xs text-error/80 max-w-44 text-right line-clamp-2"

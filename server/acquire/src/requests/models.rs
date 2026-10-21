@@ -259,11 +259,9 @@ pub struct RequestItem {
     /// producer exists (v2 never sent these either).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_messages: Option<Vec<RequestStatusMessage>>,
-    /// Why a dispatched request has not started, as a stable code.
-    /// `no_download_source`: no download source is set up, so the request
-    /// is held and starts by itself once one is.
+    /// Why a live request has not started, when it waits.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub waiting_reason: Option<String>,
+    pub waiting_reason: Option<WaitingReason>,
     /// Last failure text from the linked task, when failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
@@ -299,6 +297,9 @@ pub struct RequestItem {
     pub can_reimport: Option<bool>,
     /// Whole album or one track.
     pub request_kind: RequestKind,
+    /// What made the request: a person's ask (`user`) or a followed
+    /// artist's new release (`follow`).
+    pub origin: crate::dispatch::DispatchOrigin,
     /// Track title for exact-track rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_title: Option<String>,
@@ -310,6 +311,19 @@ pub struct RequestItem {
     pub track_release_group_mbid: Option<String>,
     /// Co-requester count beyond the owner.
     pub requester_count: u32,
+}
+
+/// Why a live request waits. It starts by itself once the cause clears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitingReason {
+    /// No download source is set up.
+    NoDownloadSource,
+    /// The owner's request count for the window is used up (a followed
+    /// artist's new release waits this way).
+    RequestQuotaFull,
+    /// The owner's storage budget or the library's size cap is reached.
+    StorageFull,
 }
 
 /// Active-requests list.

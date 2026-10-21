@@ -33,11 +33,10 @@ use crate::follows::cursors::{FeedRelease, FollowCursor, Follower, PendingReleas
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{RequestStatus, WantedWatch, WatchState};
 use crate::requests::models::RequestKind;
-use crate::requests::quota::QuotaLedger;
+use crate::requests::service::{FollowIntake, FollowRelease, RequestsService};
 use crate::requests::settle::announce_fulfilled;
 use crate::requests::sqlite::{RequestStore, WantedStore};
 use crate::search_jobs::store::JobStore;
-use droppedneedle_auth::Principal;
 use droppedneedle_catalog::reads::catalog::mapping::{should_include_release, type_set};
 use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
 use droppedneedle_kernel::runtime_config::Live;
@@ -462,7 +461,8 @@ pub struct FollowSummary {
     pub baselined: usize,
     /// New releases added to the feed.
     pub new_releases: usize,
-    /// Releases queued for download.
+    /// Downloads started: new releases, and follow requests that waited
+    /// for quota room.
     pub enqueued: usize,
     /// Artists that errored (each isolated).
     pub errors: usize,
@@ -476,8 +476,8 @@ pub struct FollowDeps {
     pub poll: Arc<dyn ReleasePoll>,
     /// Download dispatch.
     pub downloads: Arc<DownloadDispatch>,
-    /// The followers' request and storage quotas.
-    pub quota: Arc<QuotaLedger>,
+    /// Request intake: a follow download is a request of the follower's.
+    pub requests: Arc<RequestsService>,
     /// Library presence: owned albums never enter the feed or download.
     pub library: Arc<LibraryPresence>,
     /// Durable ticks.
@@ -506,6 +506,7 @@ pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
         return summary;
     };
     let types = ReleaseTypes::from_preferences(&preferences);
+    summary.enqueued += start_waiting(deps, now).await;
     let due = match deps
         .follows
         .list_due(now, FOLLOW_MAX_ARTISTS_PER_TICK)
@@ -702,16 +703,18 @@ fn feed_row(row: &ObservedRelease) -> FeedRelease {
 enum Queued {
     /// A download was queued.
     Enqueued,
-    /// Nothing to do any more: owned, already downloading, or no follower
-    /// wants it.
+    /// Nothing to do any more: owned, already downloading, no follower
+    /// wants it, or its request row waits for quota room.
     Settled,
-    /// Dispatch failed; keep it held and try on the next poll.
+    /// The request failed, or the album's row may never download; keep it
+    /// held and try on the next poll.
     Retry,
 }
 
-/// Queue one release for the first auto-download follower (one task per
-/// release, as in v2), unless the library has it or a download for it is
-/// already running.
+/// Ask for one release as a request of the first auto-download follower
+/// (one task per release, as in v2), unless the library has it or a
+/// download for it is already running. The request shows on the Requests
+/// page and settles with its download.
 async fn queue_release(
     deps: &FollowDeps,
     cursor: &FollowCursor,
@@ -735,89 +738,97 @@ async fn queue_release(
             return Queued::Retry;
         }
     }
-    match within_quota(deps, follower, now).await {
-        Ok(true) => {}
-        Ok(false) => {
-            tracing::info!(rg_mbid = %release.rg_mbid, owner,
-                "follower is over quota; holding the download for the next poll");
-            return Queued::Retry;
-        }
-        Err(error) => {
-            tracing::warn!(rg_mbid = %release.rg_mbid, owner, ?error,
-                "follower quota unreadable; retrying next poll");
-            return Queued::Retry;
-        }
-    }
-    let dispatch = album_dispatch(
-        owner,
-        &release.rg_mbid,
-        &cursor.artist_name,
-        &release.title,
-        DispatchOrigin::Follow,
-        Some(format!("follow:{}", release.rg_mbid.to_lowercase())),
-    );
-    match deps.downloads.dispatch(&dispatch).await {
-        Ok(DispatchOutcome::Active { .. }) => Queued::Settled,
-        Ok(DispatchOutcome::Dispatched { task_id }) => {
-            deps.ticks.emit(
-                "follow.enqueued",
-                &format!("follow {} enqueued for {owner}", release.rg_mbid),
+    let release = FollowRelease {
+        follower: follower.clone(),
+        artist_mbid: cursor.artist_mbid.clone(),
+        artist_name: cursor.artist_name.clone(),
+        release_group_mbid: release.rg_mbid.clone(),
+        title: release.title.clone(),
+    };
+    match deps.requests.request_follow(&release, epoch(now)).await {
+        Ok(FollowIntake::Started { task_id }) => {
+            announce_follow_download(
+                deps,
+                owner,
+                &release.artist_mbid,
+                &release.artist_name,
+                &release.release_group_mbid,
+                &release.title,
+                task_id,
                 now,
             );
-            deps.ticks.announce(FlowEvent::Notify {
-                user_id: owner.clone(),
-                notice: UserNotice::AutoDownloadEnqueued(AutoDownloadEnqueued {
-                    artist_mbid: cursor.artist_mbid.clone(),
-                    artist_name: cursor.artist_name.clone(),
-                    release_group_mbid: release.rg_mbid.clone(),
-                    title: release.title.clone(),
-                    task_id,
-                }),
-            });
             Queued::Enqueued
         }
-        Err(cause) => {
-            tracing::warn!(rg_mbid = %release.rg_mbid, owner, %cause,
-                "follow dispatch failed; retrying next poll");
+        // The request row is durable from here: the poll's start pass
+        // takes it up once the follower's quota has room.
+        Ok(FollowIntake::Waiting) => {
+            tracing::info!(rg_mbid = %release.release_group_mbid, owner,
+                "follower's quota is full; the request waits for room");
+            Queued::Settled
+        }
+        Ok(FollowIntake::Joined) => Queued::Settled,
+        Ok(FollowIntake::Held) => Queued::Retry,
+        Err(error) => {
+            tracing::warn!(rg_mbid = %release.release_group_mbid, owner, ?error,
+                "follow request failed; retrying next poll");
             Queued::Retry
         }
     }
 }
 
-/// Whether the follower may start one more download now: inside their
-/// request count for the window and their storage budget, as an ask of
-/// their own would be. Trusted and admin followers skip both.
-async fn within_quota(
-    deps: &FollowDeps,
-    follower: &Follower,
-    now: i64,
-) -> Result<bool, RequestsError> {
-    let principal = Principal::acting_for(&follower.user_id, follower.role, None);
-    if let Some(gate) = deps
-        .quota
-        .request_gate(principal.user_id(), principal.role(), 1)?
-    {
-        let used = deps
-            .quota
-            .count_in_window(principal.user_id(), gate.window_days, epoch(now))
-            .await?;
-        if used.saturating_add(gate.new_requests) > gate.limit {
-            return Ok(false);
+/// Start the follow requests waiting for quota room whose owners have
+/// room now. Answers how many started.
+async fn start_waiting(deps: &FollowDeps, now: i64) -> usize {
+    let started = match deps.requests.start_waiting(epoch(now)).await {
+        Ok(started) => started,
+        Err(error) => {
+            tracing::warn!(?error, "waiting requests unreadable; trying next poll");
+            return 0;
         }
+    };
+    for (record, task_id) in &started {
+        let owner = record.user_id.clone().unwrap_or_default();
+        announce_follow_download(
+            deps,
+            &owner,
+            record.artist_mbid.as_deref().unwrap_or_default(),
+            &record.artist_name,
+            &record.key,
+            &record.album_title,
+            task_id.clone(),
+            now,
+        );
     }
-    match deps
-        .quota
-        .check_storage_admission(
-            principal.user_id(),
-            principal.role(),
-            DispatchOrigin::Follow,
-        )
-        .await
-    {
-        Ok(()) => Ok(true),
-        Err(RequestsError::StorageFull { .. }) => Ok(false),
-        Err(error) => Err(error),
-    }
+    started.len()
+}
+
+/// Tell the follower a new release of an artist they follow is downloading.
+#[allow(clippy::too_many_arguments)]
+fn announce_follow_download(
+    deps: &FollowDeps,
+    owner: &str,
+    artist_mbid: &str,
+    artist_name: &str,
+    release_group_mbid: &str,
+    title: &str,
+    task_id: String,
+    now: i64,
+) {
+    deps.ticks.emit(
+        "follow.enqueued",
+        &format!("follow {release_group_mbid} enqueued for {owner}"),
+        now,
+    );
+    deps.ticks.announce(FlowEvent::Notify {
+        user_id: owner.to_owned(),
+        notice: UserNotice::AutoDownloadEnqueued(AutoDownloadEnqueued {
+            artist_mbid: artist_mbid.to_owned(),
+            artist_name: artist_name.to_owned(),
+            release_group_mbid: release_group_mbid.to_owned(),
+            title: title.to_owned(),
+            task_id,
+        }),
+    });
 }
 
 /// One whole-album download.

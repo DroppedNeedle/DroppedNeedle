@@ -35,7 +35,9 @@ fn now_unix_f64() -> f64 {
 
 /// What started a download. Stored as the task's `origin`; origins decide
 /// quota exemptions and how a landing treats the files, never routing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A request row stores it too, and the Requests page shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum DispatchOrigin {
     /// A fresh ask from intake.
     User,
