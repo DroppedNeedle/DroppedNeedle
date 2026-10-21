@@ -103,6 +103,8 @@ pub struct SpotifyEndpoints {
     pub api: String,
     /// Spotify accounts origin (token exchange).
     pub accounts: String,
+    /// A cover origin allowed beside the Spotify CDN; tests only.
+    pub cover_cdn: Option<String>,
 }
 
 /// Health-probe refresh cadence.
@@ -793,8 +795,13 @@ impl AcquireSetup {
             collections.playlists.clone(),
             db.clone(),
         ));
-        let spotify_client =
-            SpotifyClient::new(http.clone(), no_redirect, &spotify.api, &spotify.accounts);
+        let spotify_client = SpotifyClient::new(
+            http.clone(),
+            no_redirect,
+            &spotify.api,
+            &spotify.accounts,
+            spotify.cover_cdn.as_deref(),
+        );
         let spotify_service = Arc::new(SpotifyImportService::new(
             spotify_client.clone(),
             spotify_settings.clone(),
@@ -951,6 +958,7 @@ impl AcquireSetup {
             factory.no_redirect().clone(),
             SPOTIFY_API_BASE,
             SPOTIFY_ACCOUNTS_BASE,
+            None,
         );
         let spotify_settings = Arc::new(ConfigSpotifySettings::new(Arc::new(settings.clone())));
         let crypto =

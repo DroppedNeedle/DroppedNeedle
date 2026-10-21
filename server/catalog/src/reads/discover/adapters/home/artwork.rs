@@ -22,7 +22,7 @@ use super::library::{ArtCandidate, GenreCandidates, HomeLibrary};
 use crate::reads::discover::adapters::page::library::fold;
 use crate::reads::discover::models::{GenreArtwork, GenreArtworkAlbum};
 use crate::reads::platform::artwork::cache::sha256_hex;
-use crate::reads::platform::artwork::local::{LocalArt, read_local_art};
+use crate::reads::platform::artwork::local::{LocalArt, local_art_stamp, read_local_art};
 
 /// The selection rules' version, part of every artwork version.
 pub const ALGORITHM_VERSION: &str = "v2";
@@ -126,25 +126,20 @@ impl GenreArt {
     }
 }
 
-async fn file_present(candidate: &ArtCandidate) -> bool {
-    tokio::fs::metadata(&candidate.path)
-        .await
-        .is_ok_and(|meta| meta.is_file() && meta.len() > 0)
-}
-
 /// What identifies the image: the hash the scan recorded, else the hash
 /// of the bytes read now. `None` when the art cannot be served.
 async fn image_identity(candidate: &ArtCandidate) -> Option<String> {
-    if let Some(hash) = &candidate.content_hash {
-        return file_present(candidate).await.then(|| hash.clone());
-    }
     let art = LocalArt {
         album_id: candidate.album_id.clone(),
         source: candidate.source.clone(),
         path: candidate.path.clone().into(),
+        root: candidate.root.clone(),
         content_hash: None,
         version: candidate.cover_version,
     };
+    if let Some(hash) = &candidate.content_hash {
+        return local_art_stamp(&art).await.map(|_| hash.clone());
+    }
     read_local_art(&art)
         .await
         .map(|(bytes, _)| sha256_hex(&bytes))

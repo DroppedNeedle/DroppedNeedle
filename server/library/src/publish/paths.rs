@@ -639,16 +639,11 @@ pub(crate) fn below_root<'p>(root: &Path, path: &'p Path) -> Option<&'p Path> {
 /// existing component of `path` below it is a symlink. `root` and what
 /// lies above it are the admin's and are not checked for links. Missing
 /// trailing components are allowed so new destinations can be validated
-/// before they exist.
-pub(crate) fn ensure_no_symlink_below(root: &Path, path: &Path) -> Result<(), PublishError> {
+/// before they exist. Readers outside the publisher use it too, so a file
+/// is never read through a link below a library folder.
+pub fn ensure_no_symlink_below(root: &Path, path: &Path) -> Result<(), PublishError> {
     ensure_library_dir(root)?;
     no_symlink_below(root, path)
-}
-
-/// [`ensure_no_symlink_below`] for the integration tests.
-#[cfg(any(test, feature = "test-support"))]
-pub fn ensure_no_symlink_below_for_tests(root: &Path, path: &Path) -> Result<(), PublishError> {
-    ensure_no_symlink_below(root, path)
 }
 
 /// The walk of [`ensure_no_symlink_below`] alone, for a caller that has

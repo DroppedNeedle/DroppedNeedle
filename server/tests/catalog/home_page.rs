@@ -186,7 +186,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
          INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
          path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
          album_title, album_title_folded, file_format, availability, ingest_source, \
-         imported_at, membership_source) VALUES ('t1', 'al1', 'r1', '/music/t1.flac', 't1.flac', \
+         imported_at, membership_source) VALUES ('t1', 'al1', 'r1', '{track}', 't1.flac', \
          'h1', 1, 1, 's1', 'Opener', 'opener', 'First Light', 'first light', 'flac', 'indexed', \
          'scan', 1, 'automatic'); \
          INSERT INTO local_track_genres (local_track_id, position, name, folded_name, source) \
@@ -196,7 +196,8 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
          INSERT INTO library_play_history (id, user_id, track_name, artist_name, album_name, \
          played_at) VALUES ('p1', 'user-1', 'Opener', 'Aurora', 'First Light', \
          '2026-10-01T10:00:00Z');",
-        cover.display()
+        cover.display(),
+        track = dir.join("t1.flac").display()
     );
     runtime
         .db()

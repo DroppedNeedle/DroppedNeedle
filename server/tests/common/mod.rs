@@ -241,6 +241,7 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
         plex_tv: at("plex"),
         spotify_api: at("spotify"),
         spotify_accounts: at("spotify-accounts"),
+        spotify_cover_cdn: Some(at("spotify-cdn")),
         ticketmaster: at("ticketmaster"),
         skiddle: at("skiddle"),
         geocoding: at("geocoding"),

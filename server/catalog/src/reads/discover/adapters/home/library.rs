@@ -7,10 +7,12 @@
 //! and artists never show.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
 
 use crate::reads::discover::adapters::page::library::fold;
+use crate::reads::platform::artwork::local::{art_tracks_column, library_folder};
 
 /// One library album on a shelf.
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +85,8 @@ pub struct ArtCandidate {
     pub source: String,
     /// The folder image, or the file of the track holding the picture.
     pub path: String,
+    /// The library folder the path was scanned under.
+    pub root: Option<PathBuf>,
 }
 
 /// The collage candidates of one genre.
@@ -341,7 +345,8 @@ impl HomeLibrary {
              candidates AS (SELECT r.genre_folded, a.id AS album_id, a.title AS album_title, \
                a.album_artist_name, a.album_artist_id, COUNT(*) AS match_count, \
                w.version AS cover_version, w.content_hash, w.source, \
-               CASE WHEN w.source = 'embedded' THEN emb.file_path ELSE w.source_locator END AS path \
+               CASE WHEN w.source = 'embedded' THEN emb.file_path ELSE w.source_locator END AS path, \
+               {tracks} AS tracks \
              FROM requested r JOIN local_track_genres g ON g.folded_name = r.genre_folded \
              JOIN local_tracks t ON t.id = g.local_track_id AND t.availability = 'indexed' \
              JOIN local_albums a ON a.id = t.local_album_id AND a.retired_into_album_id IS NULL \
@@ -352,11 +357,12 @@ impl HomeLibrary {
              GROUP BY r.genre_folded, a.id) \
              SELECT r.genre_folded, COALESCE(rev.value, 0), c.album_id, c.album_title, \
                c.album_artist_name, c.album_artist_id, c.match_count, c.cover_version, \
-               c.content_hash, c.source, c.path \
+               c.content_hash, c.source, c.path, c.tracks \
              FROM requested r \
              LEFT JOIN library_genre_artwork_revisions rev ON rev.genre_folded = r.genre_folded \
              LEFT JOIN candidates c ON c.genre_folded = r.genre_folded \
-             ORDER BY r.ordinal, c.match_count DESC, c.album_id"
+             ORDER BY r.ordinal, c.match_count DESC, c.album_id",
+            tracks = art_tracks_column("emb")
         );
         type Row = (
             String,
@@ -367,6 +373,7 @@ impl HomeLibrary {
             Option<String>,
             Option<i64>,
             Option<i64>,
+            Option<String>,
             Option<String>,
             Option<String>,
             Option<String>,
@@ -393,6 +400,7 @@ impl HomeLibrary {
                 hash,
                 source,
                 path,
+                tracks,
             ) = row;
             if out.last().is_none_or(|last| last.folded != genre) {
                 out.push(GenreCandidates {
@@ -412,6 +420,7 @@ impl HomeLibrary {
             else {
                 continue;
             };
+            let root = library_folder(Path::new(&path), tracks.as_deref());
             last.candidates.push(ArtCandidate {
                 album_id,
                 album_title,
@@ -422,6 +431,7 @@ impl HomeLibrary {
                 content_hash: hash,
                 source,
                 path,
+                root,
             });
         }
         Ok(out)

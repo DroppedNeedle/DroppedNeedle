@@ -9,7 +9,7 @@
 //! Only `folder` and `embedded` rows are served from here; other sources
 //! (kept from v2) have no local bytes to read.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use sqlx::{Row as _, SqlitePool};
 
@@ -29,6 +29,9 @@ pub struct LocalArt {
     pub source: String,
     /// Folder image path, or the file of the track holding the picture.
     pub path: PathBuf,
+    /// The library folder the path was scanned under. Nothing is read
+    /// without one.
+    pub root: Option<PathBuf>,
     /// Hash of the bytes when the scan last read them.
     pub content_hash: Option<String>,
     /// Art version, bumped when the hash changes.
@@ -50,9 +53,52 @@ pub struct LocalArtwork {
     pool: SqlitePool,
 }
 
-const ART_COLUMNS: &str = "w.local_album_id AS album_id, w.source AS source, \
-    CASE WHEN w.source = 'embedded' THEN t.file_path ELSE w.source_locator END AS path, \
-    w.content_hash AS content_hash, w.version AS version";
+/// The tracks that can place art row `w` in its library folder, as a JSON
+/// array of `[file_path, relative_path]` pairs: `embedded`, the track
+/// holding the picture, for embedded art, else every indexed track of the
+/// album. Read with [`library_folder`].
+pub(crate) fn art_tracks_column(embedded: &str) -> String {
+    format!(
+        "CASE WHEN w.source = 'embedded' \
+         THEN json_array(json_array({embedded}.file_path, {embedded}.relative_path)) \
+         ELSE (SELECT json_group_array(json_array(art_track.file_path, art_track.relative_path)) \
+         FROM local_tracks art_track WHERE art_track.local_album_id = w.local_album_id \
+         AND art_track.availability = 'indexed') END"
+    )
+}
+
+/// The library folder `path` was scanned under: that of the first track in
+/// `tracks` (from [`art_tracks_column`]) whose folder holds it. A track's
+/// folder is its file less as many components as its relative path has,
+/// as the scan works it out: the two can be spelled in different Unicode
+/// forms, so their lengths say nothing.
+pub(crate) fn library_folder(path: &Path, tracks: Option<&str>) -> Option<PathBuf> {
+    let tracks: Vec<(Option<String>, Option<String>)> =
+        match serde_json::from_str(tracks.unwrap_or("[]")) {
+            Ok(tracks) => tracks,
+            Err(error) => {
+                tracing::warn!(%error, "local art tracks unreadable");
+                return None;
+            }
+        };
+    tracks.into_iter().find_map(|track| {
+        let (Some(file), Some(relative)) = track else {
+            return None;
+        };
+        let depth = Path::new(&relative).components().count();
+        let folder = Path::new(&file).ancestors().nth(depth)?;
+        (depth > 0 && path.starts_with(folder)).then(|| folder.to_path_buf())
+    })
+}
+
+fn art_columns() -> String {
+    format!(
+        "w.local_album_id AS album_id, w.source AS source, \
+         CASE WHEN w.source = 'embedded' THEN t.file_path ELSE w.source_locator END AS path, \
+         {} AS tracks, w.content_hash AS content_hash, w.version AS version",
+        art_tracks_column("t")
+    )
+}
 
 const ART_JOINS: &str = "FROM local_album_artwork w \
     JOIN local_albums a ON a.id = w.local_album_id AND a.retired_into_album_id IS NULL \
@@ -80,7 +126,10 @@ impl LocalArtwork {
         };
         let local = self
             .first(
-                &format!("SELECT {ART_COLUMNS} {ART_JOINS} WHERE w.local_album_id = ?"),
+                &format!(
+                    "SELECT {} {ART_JOINS} WHERE w.local_album_id = ?",
+                    art_columns()
+                ),
                 album_id,
             )
             .await?;
@@ -94,9 +143,10 @@ impl LocalArtwork {
     pub async fn by_release_group(&self, mbid: &str) -> Result<Option<LocalArt>, sqlx::Error> {
         self.first(
             &format!(
-                "SELECT {ART_COLUMNS} {ART_JOINS} \
+                "SELECT {} {ART_JOINS} \
                  JOIN local_album_external_identities ae ON ae.local_album_id = w.local_album_id \
-                 WHERE ae.release_group_mbid = ? ORDER BY w.local_album_id"
+                 WHERE ae.release_group_mbid = ? ORDER BY w.local_album_id",
+                art_columns()
             ),
             mbid,
         )
@@ -107,9 +157,10 @@ impl LocalArtwork {
     pub async fn by_release(&self, mbid: &str) -> Result<Option<LocalArt>, sqlx::Error> {
         self.first(
             &format!(
-                "SELECT {ART_COLUMNS} {ART_JOINS} \
+                "SELECT {} {ART_JOINS} \
                  JOIN local_album_external_identities ae ON ae.local_album_id = w.local_album_id \
-                 WHERE ae.release_mbid = ? ORDER BY w.local_album_id"
+                 WHERE ae.release_mbid = ? ORDER BY w.local_album_id",
+                art_columns()
             ),
             mbid,
         )
@@ -122,13 +173,16 @@ impl LocalArtwork {
         for row in rows {
             let source: String = row.try_get("source")?;
             let path: Option<String> = row.try_get("path")?;
+            let tracks: Option<String> = row.try_get("tracks")?;
             let (true, Some(path)) = (source == "folder" || source == "embedded", path) else {
                 continue;
             };
+            let path = PathBuf::from(path);
             return Ok(Some(LocalArt {
                 album_id: row.try_get("album_id")?,
                 source,
-                path: PathBuf::from(path),
+                root: library_folder(&path, tracks.as_deref()),
+                path,
                 content_hash: row.try_get("content_hash")?,
                 version: row.try_get("version")?,
             }));
@@ -137,12 +191,31 @@ impl LocalArtwork {
     }
 }
 
+/// True when `path` lies below library folder `root` with no link on the
+/// way, the file itself included. Blocking.
+fn link_free(root: Option<&Path>, path: &Path) -> bool {
+    let Some(root) = root else {
+        return false;
+    };
+    match droppedneedle_library::publish::paths::ensure_no_symlink_below(root, path) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::debug!(%error, path = %path.display(), "local art not read");
+            false
+        }
+    }
+}
+
 /// The stat of the file behind a local art row (the folder image, or the
 /// track holding the picture) in the scan's `size:mtime_ns` form, read
-/// without following a symlink. `None` when the path is not a regular file.
+/// without following a link below the library folder. `None` when the
+/// path is not a regular file.
 pub async fn local_art_stamp(art: &LocalArt) -> Option<String> {
-    let path = art.path.clone();
+    let (root, path) = (art.root.clone(), art.path.clone());
     let stamp = tokio::task::spawn_blocking(move || {
+        if !link_free(root.as_deref(), &path) {
+            return None;
+        }
         let meta = std::fs::symlink_metadata(&path).ok()?;
         meta.is_file()
             .then(|| exact_stat_revision(meta.len(), mtime_ns_from_metadata(&meta)))
@@ -158,11 +231,15 @@ pub async fn local_art_stamp(art: &LocalArt) -> Option<String> {
 }
 
 /// Read the image behind a local art row, on a blocking thread. `None`
-/// when the file is gone, too large, or not a raster image.
+/// when the file is gone, too large, not a raster image, or reached through
+/// a link below its library folder.
 pub async fn read_local_art(art: &LocalArt) -> Option<(Vec<u8>, &'static str)> {
-    let path = art.path.clone();
+    let (root, path) = (art.root.clone(), art.path.clone());
     let embedded = art.source == "embedded";
     let read = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+        if !link_free(root.as_deref(), &path) {
+            return None;
+        }
         if embedded {
             match droppedneedle_library::tags::read_cover_art(&path) {
                 Ok(bytes) => bytes.filter(|bytes| bytes.len() as u64 <= MAX_LOCAL_BYTES),

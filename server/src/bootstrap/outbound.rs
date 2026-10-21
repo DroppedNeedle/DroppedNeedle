@@ -95,6 +95,10 @@ pub struct Outbound {
     pub spotify_api: String,
     /// Spotify accounts origin (token exchange).
     pub spotify_accounts: String,
+    /// A playlist cover origin allowed beside the Spotify CDN: the tests'
+    /// mock CDN. `None` in production, where only https to `*.scdn.co`
+    /// is fetched.
+    pub spotify_cover_cdn: Option<String>,
     /// Ticketmaster Discovery root: events and the key check.
     pub ticketmaster: String,
     /// Skiddle API root: events and the key check.
@@ -135,6 +139,7 @@ impl Outbound {
             plex_tv: PLEX_TV_BASE.to_owned(),
             spotify_api: SPOTIFY_API_BASE.to_owned(),
             spotify_accounts: SPOTIFY_ACCOUNTS_BASE.to_owned(),
+            spotify_cover_cdn: None,
             ticketmaster: ticketmaster::TICKETMASTER_API_URL.to_owned(),
             skiddle: skiddle::SKIDDLE_API_URL.to_owned(),
             geocoding: geocoding::GEOCODING_API_URL.to_owned(),
@@ -183,6 +188,7 @@ impl Outbound {
         SpotifyEndpoints {
             api: self.spotify_api.clone(),
             accounts: self.spotify_accounts.clone(),
+            cover_cdn: self.spotify_cover_cdn.clone(),
         }
     }
 

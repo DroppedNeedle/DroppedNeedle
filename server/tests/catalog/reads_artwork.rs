@@ -82,7 +82,16 @@ struct Rig {
     dir: ScratchDir,
 }
 
+/// A catalog with one album, and `seed_track` as its track scanned in the
+/// library folder that holds it.
 async fn rig(seed_track: Option<&Path>) -> Rig {
+    let relative = seed_track.map(|track| track.file_name().unwrap().to_str().unwrap());
+    rig_at(seed_track.zip(relative)).await
+}
+
+/// [`rig`] with the track's path relative to its library folder spelled
+/// out, as the scan records it.
+async fn rig_at(seed_track: Option<(&Path, &str)>) -> Rig {
     let dir = ScratchDir::new("reads-artwork");
     let db_path = dir.join("app.db");
     let runtime = crate::common::scratch_runtime(&db_path).await;
@@ -97,15 +106,16 @@ async fn rig(seed_track: Option<&Path>) -> Rig {
          release_group_mbid, decision_source, selected_at) \
          VALUES ('al1', 'musicbrainz', '{RG}', 'manual', 1);"
     );
-    if let Some(track) = seed_track {
+    if let Some((track, relative)) = seed_track {
         seed.push_str(&format!(
             "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
              path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
              album_title, album_title_folded, file_format, availability, ingest_source, \
-             imported_at, membership_source) VALUES ('t1', 'al1', 'r1', '{}', 't1.flac', 'h1', \
+             imported_at, membership_source) VALUES ('t1', 'al1', 'r1', '{}', '{}', 'h1', \
              1, 1, 's1', 'Opener', 'opener', 'First Light', 'first light', 'flac', 'indexed', \
              'scan', 1, 'automatic');",
-            track.display()
+            track.display(),
+            relative
         ));
     }
     runtime
@@ -321,6 +331,89 @@ async fn art_that_comes_back_gets_a_new_version() {
 
     let stopped = store.refresh_album_artwork(&|| true).unwrap();
     assert!(!stopped.complete, "a stop request ends the sweep early");
+}
+
+/// A folder image is read only when nothing below the library folder on
+/// the way to it is a link: a linked album folder can lead anywhere.
+#[cfg(unix)]
+#[tokio::test]
+async fn folder_art_behind_a_linked_folder_is_not_served() {
+    let files = ScratchDir::new("reads-artwork-links");
+    let music = files.join("music");
+    let outside = files.join("outside");
+    std::fs::create_dir_all(music.join("Real")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let mut private = PNG_BYTES.to_vec();
+    private.extend_from_slice(b"private");
+    std::fs::write(music.join("Real/cover.png"), &private).unwrap();
+    std::fs::write(outside.join("cover.png"), &private).unwrap();
+    std::os::unix::fs::symlink(&outside, music.join("Linked")).unwrap();
+    let rig = rig_at(Some((&music.join("Real/01.flac"), "Real/01.flac"))).await;
+
+    set_folder_art(&rig, &music.join("Real/cover.png"), 1).await;
+    let (status, _, body) = get(rig.app(true), "/api/v3/library/albums/al1/artwork?v=1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, private, "a plain folder image is served");
+
+    set_folder_art(&rig, &music.join("Linked/cover.png"), 2).await;
+    let (_, headers, body) = get(rig.app(true), "/api/v3/library/albums/al1/artwork?v=2").await;
+    assert_ne!(body, private, "nothing is read through the link");
+    assert_ne!(header(&headers, "x-cover-source"), Some("folder"));
+}
+
+/// The scan records a track's path below its library folder in NFC while
+/// the file keeps its name on disk, often NFD on music copied from a Mac.
+/// The library folder is still found, so the art is served, and a link at
+/// the first folder below it is still refused.
+#[cfg(unix)]
+#[tokio::test]
+async fn folder_art_is_found_and_checked_under_decomposed_names() {
+    let files = ScratchDir::new("reads-artwork-nfd");
+    let music = files.join("music");
+    let outside = files.join("outside");
+    let (artist, album) = ("O\u{308}", "Bjo\u{308}rk");
+    let on_disk = music.join(artist).join(album);
+    std::fs::create_dir_all(&on_disk).unwrap();
+    std::fs::create_dir_all(outside.join(album)).unwrap();
+    let mut private = PNG_BYTES.to_vec();
+    private.extend_from_slice(b"private");
+    std::fs::write(on_disk.join("cover.png"), &private).unwrap();
+    std::fs::write(outside.join(album).join("cover.png"), &private).unwrap();
+    let rig = rig_at(Some((
+        &on_disk.join("01.flac"),
+        "\u{d6}/Bj\u{f6}rk/01.flac",
+    )))
+    .await;
+
+    set_folder_art(&rig, &on_disk.join("cover.png"), 1).await;
+    let (status, _, body) = get(rig.app(true), "/api/v3/library/albums/al1/artwork?v=1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, private, "the folder image is served");
+
+    std::fs::remove_dir_all(music.join(artist)).unwrap();
+    std::os::unix::fs::symlink(&outside, music.join(artist)).unwrap();
+    set_folder_art(&rig, &on_disk.join("cover.png"), 2).await;
+    let (_, headers, body) = get(rig.app(true), "/api/v3/library/albums/al1/artwork?v=2").await;
+    assert_ne!(body, private, "nothing is read through the link");
+    assert_ne!(header(&headers, "x-cover-source"), Some("folder"));
+}
+
+/// Point the album's art at the folder image `path`.
+async fn set_folder_art(rig: &Rig, path: &Path, version: i64) {
+    let locator = path.display().to_string();
+    rig.runtime
+        .db()
+        .write(Lane::Foreground, "folder art", move |tx| {
+            tx.execute(
+                "INSERT INTO local_album_artwork (local_album_id, source, source_locator, \
+                 version, updated_at) VALUES ('al1', 'folder', ?1, ?2, 1) \
+                 ON CONFLICT(local_album_id) DO UPDATE SET source_locator = ?1, version = ?2",
+                rusqlite::params![locator, version],
+            )
+            .map_err(DbError::from)
+        })
+        .await
+        .unwrap();
 }
 
 /// The covers on a user's Discover page are fetched in the background once

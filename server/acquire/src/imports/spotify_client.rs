@@ -62,25 +62,19 @@ pub fn best_image_url(images: Option<&[Image]>, min_size: i64) -> Option<String>
         .map(|image| image.url.clone())
 }
 
-/// True for a fetchable Spotify cover URL: https over the CDN allowlist.
-/// The mock CDN host joins the allowlist so tests run on loopback.
-pub fn is_allowed_cover_url(url: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(url) else {
-        return false;
-    };
-    if parsed.scheme() != "https" && !(parsed.scheme() == "http" && is_loopback_host(&parsed)) {
-        return false;
+/// A cover URL from a Spotify answer, parsed, when it may be fetched:
+/// https to a Spotify CDN host (`*.scdn.co`), or any URL on the
+/// `extra_cdn` origin (the tests' mock CDN; production has none).
+pub fn allowed_cover_url(url: &str, extra_cdn: Option<&reqwest::Url>) -> Option<reqwest::Url> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    if extra_cdn.is_some_and(|cdn| cdn.origin() == parsed.origin()) {
+        return Some(parsed);
     }
-    let host = parsed.host_str().unwrap_or("").to_lowercase();
-    host == "i.scdn.co"
-        || host == "mosaic.scdn.co"
-        || host.ends_with(".scdn.co")
-        || is_loopback_host(&parsed)
-}
-
-/// Loopback hosts the tests serve mock covers from.
-fn is_loopback_host(url: &reqwest::Url) -> bool {
-    matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
+    let spotify_cdn = parsed.scheme() == "https"
+        && parsed
+            .host_str()
+            .is_some_and(|host| host.to_lowercase().ends_with(".scdn.co"));
+    spotify_cdn.then_some(parsed)
 }
 
 /// Classified Spotify failure. Wire detail stays out; handlers map to the
@@ -110,22 +104,26 @@ pub struct SpotifyClient {
     direct: reqwest::Client,
     api_base: String,
     accounts_base: String,
+    /// A cover origin allowed beside the Spotify CDN. Only tests set one.
+    extra_cdn: Option<reqwest::Url>,
 }
 
 impl SpotifyClient {
     /// Build over the factory's shared and no-redirect clients with
-    /// explicit bases.
+    /// explicit bases, and the extra cover origin tests serve from.
     pub fn new(
         http: reqwest::Client,
         direct: reqwest::Client,
         api_base: &str,
         accounts_base: &str,
+        extra_cdn: Option<&str>,
     ) -> Self {
         Self {
             http,
             direct,
             api_base: api_base.trim_end_matches('/').to_owned(),
             accounts_base: accounts_base.trim_end_matches('/').to_owned(),
+            extra_cdn: extra_cdn.and_then(|cdn| reqwest::Url::parse(cdn).ok()),
         }
     }
 
@@ -378,9 +376,9 @@ impl SpotifyClient {
     /// Unusable answers return none;
     /// network errors propagate for the caller to degrade.
     pub async fn fetch_cover(&self, url: &str) -> Result<Option<(Vec<u8>, String)>, SpotifyError> {
-        if !is_allowed_cover_url(url) {
+        let Some(url) = allowed_cover_url(url, self.extra_cdn.as_ref()) else {
             return Ok(None);
-        }
+        };
         let response =
             self.direct.get(url).send().await.map_err(|cause| {
                 SpotifyError::Unavailable(format!("cover fetch failed: {cause}"))

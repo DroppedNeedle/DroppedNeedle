@@ -3737,7 +3737,7 @@ fn a_library_folder_may_be_reached_through_a_link() {
     let music = real.join("music");
     for outside in [music.join("../foreign/secret.flac"), real.join("foreign")] {
         assert!(
-            publish::paths::ensure_no_symlink_below_for_tests(&music, &outside).is_err(),
+            publish::paths::ensure_no_symlink_below(&music, &outside).is_err(),
             "{outside:?}"
         );
     }
