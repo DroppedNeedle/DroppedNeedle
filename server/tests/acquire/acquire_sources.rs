@@ -2,8 +2,11 @@
 //! against their loopback mocks, and the example plugin client as a real
 //! subprocess (needs `python3` on PATH). Each is driven the way the worker
 //! drives it: enqueue, poll to the end, the landed files inside the
-//! client's own folder, discard, abort. Plus the gate that keeps a
-//! source's stored text in the one conversion.
+//! client's own folder, discard, abort. Every Usenet indexer through the
+//! one indexer trait: Newznab and Prowlarr against their mocks answering,
+//! refusing the key and limiting with `Retry-After`, and a plugin indexer
+//! as a real subprocess. Plus the gates that keep a source's stored text
+//! in the one conversion and the Usenet backend in the wiring.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,18 +25,21 @@ use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
 };
 use droppedneedle_acquire::sources::{SabnzbdSource, SlskdSource};
+use droppedneedle_acquire::target::SearchTarget;
+use droppedneedle_acquire::usenet::indexer::{Indexer, IndexerQuery, PluginIndexers};
 use droppedneedle_acquire::usenet::newznab::{NewznabClient, NewznabIndexer, NewznabIndexerEntry};
 use droppedneedle_acquire::usenet::policy::UsenetPolicy;
-use droppedneedle_acquire::usenet::prowlarr::ProwlarrIndexer;
+use droppedneedle_acquire::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use droppedneedle_acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
-use droppedneedle_kernel::runtime_config::sections::UsenetBackendSetting;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::process::ProcessLauncher;
 use droppedneedle_plugins::runtime::RuntimeState;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
-use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
+use droppedneedle_testkit::usenet::{
+    NewznabMock, NewznabScenario, ProwlarrMock, ProwlarrScenario, SabnzbdMock, serve_loopback,
+};
 use serde_json::json;
 
 use crate::common::ScratchDir;
@@ -223,20 +229,10 @@ async fn sabnzbd_conforms() {
     let journal = journal_with_task("t-sab", "Portishead", "Dummy").await;
     let source = Arc::new(SabnzbdSource::new(
         Arc::new(queue),
-        Arc::new(newznab),
-        Arc::new(ProwlarrIndexer::new(
-            None,
-            Vec::new(),
-            false,
-            WAIT,
-            WAIT,
-            WAIT,
-        )),
-        UsenetBackendSetting::default(),
+        vec![Arc::new(newznab)],
         policy,
         journal,
         None,
-        WAIT,
     ));
     conforms(source, SourceTag::Usenet, "t-sab", |handle| {
         // SABnzbd finishes the job into its complete folder.
@@ -252,6 +248,143 @@ async fn sabnzbd_conforms() {
         );
     })
     .await;
+}
+
+fn album(artist: &str, title: &str) -> SearchTarget {
+    SearchTarget {
+        artist: artist.to_owned(),
+        album_title: title.to_owned(),
+        year: None,
+        tracklist: Vec::new(),
+        wanted: Vec::new(),
+        track: None,
+    }
+}
+
+/// An indexer that can answer finds releases, every one tagged Usenet and
+/// carrying an NZB link.
+async fn answers(indexer: &dyn Indexer) {
+    let target = album("Radiohead", "In Rainbows");
+    let hits = indexer.search(&IndexerQuery::Album(&target)).await;
+    assert!(!hits.is_empty(), "the indexer answers");
+    for hit in &hits {
+        assert_eq!(hit.source, SourceTag::Usenet);
+        assert!(!hit.usenet.nzb_url.is_empty(), "{:?}", hit.usenet);
+    }
+}
+
+/// A refused key is no releases, never a failure.
+async fn refused(indexer: &dyn Indexer) {
+    let target = album("Radiohead", "In Rainbows");
+    assert!(
+        indexer
+            .search(&IndexerQuery::Album(&target))
+            .await
+            .is_empty()
+    );
+}
+
+/// A 429 is no releases, and the indexer sits out for the `Retry-After`
+/// it was given (each indexer's own backoff is zero here, so only the
+/// header can keep it out).
+async fn limited(indexer: &dyn Indexer, searches: impl Fn() -> usize) {
+    let target = album("Radiohead", "In Rainbows");
+    assert!(
+        indexer
+            .search(&IndexerQuery::Album(&target))
+            .await
+            .is_empty()
+    );
+    let asked = searches();
+    assert!(asked > 0, "the indexer was asked");
+    assert!(
+        indexer
+            .search(&IndexerQuery::Album(&target))
+            .await
+            .is_empty()
+    );
+    assert_eq!(searches(), asked, "Retry-After keeps the indexer out");
+}
+
+/// An indexer, its mock's call log, and the mock's server task.
+type Rig<I, M> = (I, M, tokio::task::JoinHandle<()>);
+
+async fn newznab_on(scenario: NewznabScenario) -> Rig<NewznabIndexer, NewznabMock> {
+    let mock = NewznabMock::new();
+    let (base, server) = serve_loopback(mock.router(scenario))
+        .await
+        .expect("mock serves");
+    let indexer = NewznabIndexer::new(
+        vec![NewznabIndexerEntry {
+            client: NewznabClient::new(
+                reqwest::Client::new(),
+                &format!("{base}/api"),
+                "NZKEY",
+                "nz",
+                "NZ",
+            ),
+            id: "nz".to_owned(),
+            name: "NZ".to_owned(),
+            categories: vec![3040],
+            enabled: true,
+            priority: 1,
+            limit: 100,
+        }],
+        WAIT,
+        WAIT,
+        Duration::ZERO,
+        WAIT,
+    );
+    (indexer, mock, server)
+}
+
+#[tokio::test]
+async fn newznab_indexer_conforms() {
+    let (indexer, _, _server) = newznab_on(NewznabScenario::DrunkenSlug).await;
+    answers(&indexer).await;
+    let (indexer, _, _server) = newznab_on(NewznabScenario::AuthError).await;
+    refused(&indexer).await;
+    let (indexer, mock, _server) = newznab_on(NewznabScenario::Http429).await;
+    limited(&indexer, || mock.calls().len()).await;
+}
+
+async fn prowlarr_on(scenario: ProwlarrScenario) -> Rig<ProwlarrIndexer, ProwlarrMock> {
+    let mock = ProwlarrMock::new();
+    let (base, server) = serve_loopback(mock.router(scenario))
+        .await
+        .expect("mock serves");
+    let indexer = ProwlarrIndexer::new(
+        Some(ProwlarrClient::new(
+            reqwest::Client::new(),
+            &base,
+            "PRKEY",
+            "prowlarr",
+        )),
+        vec![3040],
+        true,
+        WAIT,
+        Duration::ZERO,
+        WAIT,
+    );
+    (indexer, mock, server)
+}
+
+#[tokio::test]
+async fn prowlarr_indexer_conforms() {
+    let (indexer, _, _server) = prowlarr_on(ProwlarrScenario::default()).await;
+    answers(&indexer).await;
+    let (indexer, _, _server) = prowlarr_on(ProwlarrScenario {
+        auth_fail: true,
+        ..ProwlarrScenario::default()
+    })
+    .await;
+    refused(&indexer).await;
+    let (indexer, mock, _server) = prowlarr_on(ProwlarrScenario {
+        search_429: true,
+        ..ProwlarrScenario::default()
+    })
+    .await;
+    limited(&indexer, || mock.calls().len()).await;
 }
 
 fn repo() -> PathBuf {
@@ -271,8 +404,64 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// The example plugin client and its paired indexer, running, with one
-/// file for "Test Artist - Fixtures" in their source folder.
+/// A plugin indexer that feeds Usenet: one release with an NZB link and
+/// one without.
+const USENET_FEED_MANIFEST: &str = r#"[plugin]
+name = "usenet-feed"
+display_name = "Usenet feed"
+version = "1.0.0"
+api_version = 1
+entrypoint = "plugin:UsenetFeed"
+capabilities = ["indexer"]
+description = "Answers one NZB release."
+author = "DroppedNeedle tests"
+
+[[capability]]
+id = "indexer"
+target_source = "usenet"
+"#;
+
+const USENET_FEED_PLUGIN: &str = r#"from droppedneedle_plugin import IndexerResult, PluginSearchResult, ServiceStatus
+
+
+class UsenetFeed:
+    def __init__(self, context):
+        self.ctx = context
+
+    @property
+    def indexer_name(self) -> str:
+        return "plugin:usenet-feed"
+
+    def is_configured(self) -> bool:
+        return True
+
+    async def health_check(self) -> ServiceStatus:
+        return ServiceStatus(status="ok")
+
+    async def search_album(self, artist_name, album_title, year=None, track_count=None, *, timeout=30.0):
+        return [
+            IndexerResult(
+                source="usenet",
+                plugin=PluginSearchResult(
+                    title=f"{artist_name} - {album_title} [FLAC]",
+                    size_bytes=314572800,
+                    payload="feed-1",
+                    nzb_url="http://127.0.0.1:9/nzb/feed-1",
+                ),
+            ),
+            IndexerResult(
+                source="usenet",
+                plugin=PluginSearchResult(title="No link", size_bytes=1, payload="feed-2"),
+            ),
+        ]
+
+    async def search_track(self, artist_name, track_title, album_title=None, duration_seconds=None, *, timeout=30.0):
+        return []
+"#;
+
+/// The example plugin client and its paired indexer, plus a plugin
+/// indexer feeding Usenet, running, with one file for "Test Artist -
+/// Fixtures" in the example's source folder.
 struct PluginRig {
     _dir: ScratchDir,
     host: Arc<PluginHost>,
@@ -296,6 +485,10 @@ async fn plugin_rig(tag: &str) -> PluginRig {
             &dir.join("plugins").join(example),
         );
     }
+    let feed = dir.join("plugins").join("usenet-feed");
+    std::fs::create_dir_all(&feed).expect("plugin folder");
+    std::fs::write(feed.join("plugin.toml"), USENET_FEED_MANIFEST).expect("manifest");
+    std::fs::write(feed.join("plugin.py"), USENET_FEED_PLUGIN).expect("plugin");
     let config = Arc::new(
         ConfigStore::scratch(
             &dir.join("plugin-config"),
@@ -344,6 +537,7 @@ async fn plugin_rig(tag: &str) -> PluginRig {
                 ("downloads_dir", downloads_text),
             ],
         ),
+        ("usenet-feed", Vec::new()),
     ] {
         let settings: HashMap<String, String> = settings
             .into_iter()
@@ -391,7 +585,7 @@ fn plugin_source(rig: &PluginRig, journal: Arc<Journal>) -> PluginDownloadSource
 }
 
 #[tokio::test]
-async fn example_plugin_conforms() {
+async fn plugins_conform() {
     let rig = plugin_rig("conform").await;
     let journal = journal_with_task("t-plugin", "Test Artist", "Fixtures").await;
     let source = Arc::new(plugin_source(&rig, journal));
@@ -407,6 +601,14 @@ async fn example_plugin_conforms() {
             .join("t-plugin/Test Artist - Fixtures.flac")
             .is_file()
     );
+
+    // The plugin indexer feeding Usenet, on the same running host: only
+    // the release SABnzbd can fetch comes back.
+    let indexers = PluginIndexers::new(rig.host.clone());
+    answers(&indexers).await;
+    let target = album("Radiohead", "In Rainbows");
+    let hits = indexers.search(&IndexerQuery::Album(&target)).await;
+    assert_eq!(hits.len(), 1, "a release without an NZB link is dropped");
 }
 
 /// Files under `dir`, recursively.
@@ -421,33 +623,20 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// A source's stored text is written and read only by `SourceTag`: no
-/// other acquire code spells `"soulseek"` or `"usenet"`.
-#[test]
-fn source_text_lives_in_the_tag() {
+/// Each line of code in the acquire crate, as (file relative to the crate's
+/// source folder, line number, trimmed text). Comments and the unit tests
+/// at the end of a file are left out.
+fn acquire_code() -> Vec<(String, usize, String)> {
     let root = repo().join("server/acquire/src");
-    // Allowed, with the reason:
-    let allowed = [
-        // The one conversion.
-        "downloads/source_tag.rs",
-        // The Usenet indexer modules: Prowlarr's `protocol` is Prowlarr's
-        // own wire value, and their results are remodelled with the
-        // indexer seam that replaces them.
-        "usenet/newznab.rs",
-        "usenet/prowlarr.rs",
-    ];
     let mut files = Vec::new();
     rust_files(&root, &mut files);
-    let mut found = Vec::new();
+    let mut lines = Vec::new();
     for file in files {
         let relative = file
             .strip_prefix(&root)
             .expect("under the root")
             .to_string_lossy()
             .replace('\\', "/");
-        if allowed.contains(&relative.as_str()) {
-            continue;
-        }
         let text = std::fs::read_to_string(&file).expect("file reads");
         for (number, line) in text.lines().enumerate() {
             let code = line.trim_start();
@@ -458,14 +647,52 @@ fn source_text_lives_in_the_tag() {
             if code.starts_with("//") {
                 continue;
             }
-            if code.contains("\"soulseek\"") || code.contains("\"usenet\"") {
-                found.push(format!("{relative}:{}: {code}", number + 1));
-            }
+            lines.push((relative.clone(), number + 1, code.to_owned()));
         }
     }
+    lines
+}
+
+/// A source's stored text is written and read only by `SourceTag`: no
+/// other acquire code spells `"soulseek"` or `"usenet"`.
+#[test]
+fn source_text_lives_in_the_tag() {
+    // The one conversion.
+    let tag_file = "downloads/source_tag.rs";
+    // Allowed lines, with the reason: Prowlarr's `protocol` field is
+    // Prowlarr's own wire value, not our stored text.
+    let allowed = [(
+        "usenet/prowlarr.rs",
+        "if !release.protocol.eq_ignore_ascii_case(\"usenet\") {",
+    )];
+    let found: Vec<String> = acquire_code()
+        .into_iter()
+        .filter(|(file, _, code)| {
+            file != tag_file
+                && (code.contains("\"soulseek\"") || code.contains("\"usenet\""))
+                && !allowed.contains(&(file.as_str(), code.as_str()))
+        })
+        .map(|(file, number, code)| format!("{file}:{number}: {code}"))
+        .collect();
     assert!(
         found.is_empty(),
         "source text outside SourceTag:\n{}",
+        found.join("\n")
+    );
+}
+
+/// Only the wiring reads which Usenet backend is chosen, to build the
+/// indexer list; every search goes through the indexer seam.
+#[test]
+fn usenet_backend_is_matched_only_in_the_wiring() {
+    let found: Vec<String> = acquire_code()
+        .into_iter()
+        .filter(|(file, _, code)| file != "wiring.rs" && code.contains("UsenetBackend::"))
+        .map(|(file, number, code)| format!("{file}:{number}: {code}"))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "Usenet backend matched outside the wiring:\n{}",
         found.join("\n")
     );
 }

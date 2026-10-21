@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::future::BoxFuture;
 
@@ -43,11 +43,10 @@ use super::target::reasons::TrackReason;
 use super::target::releases::order_releases;
 use super::target::soulseek::{self, SoulseekMiss};
 use super::target::{SearchTarget, TargetError, Targets};
-use super::usenet::newznab::{IndexerResult, NewznabIndexer, usenet_identity};
+use super::usenet::indexer::{Indexer, IndexerQuery};
+use super::usenet::newznab::{IndexerResult, usenet_identity};
 use super::usenet::policy::UsenetPolicy;
-use super::usenet::prowlarr::ProwlarrIndexer;
 use super::usenet::sabnzbd::{SabnzbdError, SabnzbdQueue};
-use droppedneedle_kernel::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
 
 /// Current unix time as float seconds for retention math.
 fn now_unix_f64() -> f64 {
@@ -447,43 +446,32 @@ fn queue_handle(handle: &SourceHandle) -> super::usenet::sabnzbd::TaskHandle {
     }
 }
 
-/// SABnzbd plus its indexer side behind the fetch seam.
+/// SABnzbd plus the indexers it fetches from, behind the fetch seam.
 pub struct SabnzbdSource {
     queue: Arc<SabnzbdQueue>,
-    newznab: Arc<NewznabIndexer>,
-    prowlarr: Arc<ProwlarrIndexer>,
-    backend: UsenetBackend,
+    indexers: Vec<Arc<dyn Indexer>>,
     policy: UsenetPolicy,
     journal: Arc<Journal>,
     category: Option<String>,
-    timeout: Duration,
-    plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
     targets: Option<Arc<Targets>>,
 }
 
 impl SabnzbdSource {
-    /// Adapter over a configured queue, the indexer sides, and the journal.
-    #[allow(clippy::too_many_arguments)]
+    /// Adapter over a configured queue, the indexers it searches (in
+    /// order: the first copy of a release wins), and the journal.
     pub fn new(
         queue: Arc<SabnzbdQueue>,
-        newznab: Arc<NewznabIndexer>,
-        prowlarr: Arc<ProwlarrIndexer>,
-        backend: UsenetBackendSetting,
+        indexers: Vec<Arc<dyn Indexer>>,
         policy: UsenetPolicy,
         journal: Arc<Journal>,
         category: Option<String>,
-        timeout: Duration,
     ) -> Self {
         Self {
             queue,
-            newznab,
-            prowlarr,
-            backend: backend.0,
+            indexers,
             policy,
             journal,
             category,
-            timeout,
-            plugins: None,
             targets: None,
         }
     }
@@ -495,117 +483,33 @@ impl SabnzbdSource {
         self
     }
 
-    /// Pool releases from plugin indexers that target `usenet`.
-    pub fn with_plugins(
-        mut self,
-        plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
-    ) -> Self {
-        self.plugins = plugins;
-        self
-    }
-
-    /// Releases from plugin indexers that target `usenet`, as NZB hits.
-    /// Results without an NZB URL cannot go to SABnzbd and are skipped.
-    async fn plugin_hits(&self, query: &Query<'_>) -> Vec<IndexerResult> {
-        let Some(host) = &self.plugins else {
-            return Vec::new();
-        };
-        // Plugin indexers name the source they feed by its stored text.
-        let usenet = SourceTag::Usenet.to_string();
-        let found = match query {
-            Query::Track { artist, title } => host.search_track(&usenet, artist, title, None).await,
-            Query::Album(target) => {
-                host.search_album(
-                    &usenet,
-                    &target.artist,
-                    &target.album_title,
-                    target.year.map(i64::from),
-                    i64::try_from(target.tracklist.len())
-                        .ok()
-                        .filter(|count| *count > 0),
-                )
-                .await
-            }
-        };
-        found
-            .into_iter()
-            .filter(|hit| hit.nzb_url.starts_with("https://") || hit.nzb_url.starts_with("http://"))
-            .map(|hit| IndexerResult {
-                source: SourceTag::Usenet.to_string(),
-                usenet: super::usenet::newznab::UsenetRelease {
-                    indexer_id: "plugin".to_owned(),
-                    indexer_name: "plugin".to_owned(),
-                    guid: hit.payload,
-                    title: hit.title,
-                    nzb_url: hit.nzb_url,
-                    size_bytes: hit.size_bytes.max(0) as u64,
-                    category_ids: Vec::new(),
-                    grabs: None,
-                    files: None,
-                    usenet_date: hit.usenet_date,
-                    password: 0,
-                },
-            })
-            .collect()
-    }
-
-    /// Search the active side, then gate: an NZB URL is required, a
+    /// Search every indexer, then gate: an NZB URL is required, a
     /// positive password flag rejects (aggregators use negative for
     /// unknown, which never rejects), and retention plus size caps apply.
     /// Album results are ordered against the target's tracklist.
     /// Usenet quarantine consult waits on release identity riding the
     /// handle (failover records job-name rows for audit until then);
     /// soulseek consults the live set at enqueue.
-    async fn candidates(&self, query: &Query<'_>) -> Vec<IndexerResult> {
-        let hits = match (self.backend, query) {
-            (UsenetBackend::Indexers, Query::Track { artist, title }) => {
-                self.newznab.search_track(artist, title, self.timeout).await
-            }
-            (UsenetBackend::Indexers, Query::Album(target)) => {
-                self.newznab
-                    .search_album(
-                        &target.artist,
-                        &target.album_title,
-                        target.year,
-                        self.timeout,
-                    )
-                    .await
-            }
-            (UsenetBackend::Prowlarr, Query::Track { artist, title }) => {
-                self.prowlarr
-                    .search_track(artist, title, self.timeout)
-                    .await
-            }
-            (UsenetBackend::Prowlarr, Query::Album(target)) => {
-                self.prowlarr
-                    .search_album(&target.artist, &target.album_title, self.timeout)
-                    .await
-            }
-        };
-        // Pool plugin releases after the configured side; the first copy
-        // of a release wins (v2's composite indexer rule).
+    async fn candidates(&self, query: &IndexerQuery<'_>) -> Vec<IndexerResult> {
+        let found = futures_util::future::join_all(
+            self.indexers.iter().map(|indexer| indexer.search(query)),
+        )
+        .await;
+        // The first copy of a release wins (v2's composite indexer rule).
         let mut seen = std::collections::HashSet::new();
-        let hits: Vec<IndexerResult> = hits
-            .into_iter()
-            .chain(self.plugin_hits(query).await)
-            .filter(|hit| {
-                seen.insert(super::usenet::newznab::usenet_identity(
-                    &hit.usenet.title,
-                    hit.usenet.size_bytes,
-                ))
-            })
-            .collect();
         let now = now_unix_f64();
-        let hits = hits
+        let hits = found
             .into_iter()
+            .flatten()
+            .filter(|hit| seen.insert(usenet_identity(&hit.usenet.title, hit.usenet.size_bytes)))
             .filter(|hit| !hit.usenet.nzb_url.is_empty())
             .filter(|hit| hit.usenet.password <= 0)
             .filter(|hit| self.policy.within_retention(hit.usenet.usenet_date, now))
             .filter(|hit| self.policy.within_size_cap(hit.usenet.size_bytes))
             .collect();
         match query {
-            Query::Album(target) => order_releases(hits, target),
-            Query::Track { .. } => hits,
+            IndexerQuery::Album(target) => order_releases(hits, target),
+            IndexerQuery::Track { .. } => hits,
         }
     }
 
@@ -620,7 +524,7 @@ impl SabnzbdSource {
         index: usize,
     ) -> Option<IndexerResult> {
         let albums = if target.has_album() {
-            self.candidates(&Query::Album(target)).await
+            self.candidates(&IndexerQuery::Album(target)).await
         } else {
             Vec::new()
         };
@@ -630,7 +534,7 @@ impl SabnzbdSource {
         }
         let track = target.track.as_ref()?;
         let lone = self
-            .candidates(&Query::Track {
+            .candidates(&IndexerQuery::Track {
                 artist: &track.artist,
                 title: &track.title,
             })
@@ -647,14 +551,6 @@ impl SabnzbdSource {
         }
         Some(lone)
     }
-}
-
-/// What one Usenet search asks for.
-enum Query<'a> {
-    /// The target's album.
-    Album(&'a SearchTarget),
-    /// A single track on its own (the last resort).
-    Track { artist: &'a str, title: &'a str },
 }
 
 impl SabnzbdSource {
@@ -674,14 +570,13 @@ impl SabnzbdSource {
         })
     }
 
-    /// A manual search: the album's releases from the active indexers
-    /// (and usenet-targeting plugin indexers), gated and ordered as the
-    /// automatic path orders them.
+    /// A manual search: the album's releases from every indexer, gated
+    /// and ordered as the automatic path orders them.
     async fn search_album(&self, target: &SearchTarget) -> Vec<Candidate> {
         if !self.queue.is_configured() || !target.has_album() {
             return Vec::new();
         }
-        self.candidates(&Query::Album(target))
+        self.candidates(&IndexerQuery::Album(target))
             .await
             .iter()
             .take(MAX_PER_SOURCE)
@@ -753,7 +648,7 @@ impl SabnzbdSource {
             // The release a person picked, found again by its identity: the
             // NZB link is never stored.
             Some(Pin::Release { identity }) => self
-                .candidates(&Query::Album(&target))
+                .candidates(&IndexerQuery::Album(&target))
                 .await
                 .into_iter()
                 .find(|hit| usenet_identity(&hit.usenet.title, hit.usenet.size_bytes) == identity)

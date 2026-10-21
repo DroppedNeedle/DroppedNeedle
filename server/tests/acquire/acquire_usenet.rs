@@ -1101,7 +1101,6 @@ async fn newznab_fanout() {
     assert_eq!(health.status, "ok");
     assert!(health.message.contains("1/1"));
     assert!(indexer.is_configured());
-    assert_eq!(indexer.indexer_name(), "usenet");
     let empty = newznab_indexer(vec![]);
     assert_eq!(empty.health_check().await.status, "error");
 }
@@ -1521,9 +1520,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
     use droppedneedle_acquire::downloads::sources::{DownloadSource, SourceError};
     use droppedneedle_acquire::downloads::store::NewTask;
     use droppedneedle_acquire::sources::SabnzbdSource;
-    use droppedneedle_kernel::runtime_config::sections::UsenetBackendSetting;
     use std::sync::Arc;
-    use usenet::prowlarr::ProwlarrIndexer;
 
     let task_id = "0123456789abcdef0123456789abcdef";
     let job_name = format!("droppedneedle-{task_id}-0");
@@ -1567,26 +1564,16 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
     ));
     let source = SabnzbdSource::new(
         queue,
-        Arc::new(NewznabIndexer::new(
+        vec![Arc::new(NewznabIndexer::new(
             Vec::new(),
             Duration::from_secs(5),
             Duration::from_secs(5),
             Duration::from_secs(5),
             Duration::from_secs(5),
-        )),
-        Arc::new(ProwlarrIndexer::new(
-            None,
-            Vec::new(),
-            false,
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-        )),
-        UsenetBackendSetting::default(),
+        ))],
         policy,
         journal,
         None,
-        Duration::from_secs(5),
     );
     let handle = source.enqueue(task_id, 0).await.expect("re-attaches");
     assert_eq!(handle.job_name, job_name);

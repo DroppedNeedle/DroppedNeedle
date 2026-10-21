@@ -14,14 +14,17 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use futures_util::future::BoxFuture;
 use reqwest::Client;
 use serde::Deserialize;
 use thiserror::Error;
 
+use super::indexer::{Indexer, IndexerQuery};
 use super::newznab::{
     IndexerHealth, IndexerResult, UsenetRelease, normalize_newznab_query, parse_rfc2822_date,
 };
 use super::{MAX_INDEXER_BODY_BYTES, read_indexer_body};
+use crate::downloads::source_tag::SourceTag;
 use droppedneedle_kernel::http_client::{BodyError, transport_error};
 
 // ---------------------------------------------------------------------------
@@ -486,11 +489,6 @@ impl ProwlarrIndexer {
         }
     }
 
-    /// Indexer name for routing.
-    pub fn indexer_name(&self) -> &'static str {
-        "usenet"
-    }
-
     /// Configured means enabled with a client.
     pub fn is_configured(&self) -> bool {
         self.enabled && self.client.is_some()
@@ -545,7 +543,7 @@ impl ProwlarrIndexer {
             .await
             .into_iter()
             .map(|usenet| IndexerResult {
-                source: "usenet".to_owned(),
+                source: SourceTag::Usenet,
                 usenet,
             })
             .collect()
@@ -563,7 +561,7 @@ impl ProwlarrIndexer {
             .await
             .into_iter()
             .map(|usenet| IndexerResult {
-                source: "usenet".to_owned(),
+                source: SourceTag::Usenet,
                 usenet,
             })
             .collect()
@@ -658,5 +656,21 @@ impl ProwlarrIndexer {
                 (Vec::new(), false)
             }
         }
+    }
+}
+
+impl Indexer for ProwlarrIndexer {
+    fn search<'a>(&'a self, query: &'a IndexerQuery<'a>) -> BoxFuture<'a, Vec<IndexerResult>> {
+        Box::pin(async move {
+            match query {
+                IndexerQuery::Album(target) => {
+                    self.search_album(&target.artist, &target.album_title, self.timeout)
+                        .await
+                }
+                IndexerQuery::Track { artist, title } => {
+                    self.search_track(artist, title, self.timeout).await
+                }
+            }
+        })
     }
 }

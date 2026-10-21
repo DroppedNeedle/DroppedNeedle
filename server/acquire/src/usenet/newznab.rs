@@ -13,12 +13,14 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use futures_util::future::join_all;
+use futures_util::future::{BoxFuture, join_all};
 use reqwest::Client;
 use thiserror::Error;
 
+use super::indexer::{Indexer, IndexerQuery};
 use super::xml::{self, Element};
 use super::{MAX_INDEXER_BODY_BYTES, read_indexer_body};
+use crate::downloads::source_tag::SourceTag;
 use droppedneedle_kernel::http_client::{BodyError, transport_error};
 
 // ---------------------------------------------------------------------------
@@ -72,12 +74,11 @@ impl std::fmt::Debug for UsenetRelease {
     }
 }
 
-/// One tagged search hit. The coordinator's union also spans soulseek and
-/// plugin hits; this module only ever produces `usenet` ones.
+/// One tagged search hit from any [`Indexer`](super::indexer::Indexer).
 #[derive(Debug, Clone)]
 pub struct IndexerResult {
-    /// Always `usenet` here.
-    pub source: String,
+    /// Always [`SourceTag::Usenet`]: every indexer feeds SABnzbd.
+    pub source: SourceTag,
     /// The release.
     pub usenet: UsenetRelease,
 }
@@ -950,11 +951,6 @@ impl NewznabIndexer {
         }
     }
 
-    /// Indexer name for routing.
-    pub fn indexer_name(&self) -> &'static str {
-        "usenet"
-    }
-
     /// Configured means at least one entry is enabled.
     pub fn is_configured(&self) -> bool {
         self.entries.iter().any(|entry| entry.enabled)
@@ -1018,7 +1014,7 @@ impl NewznabIndexer {
             .await
             .into_iter()
             .map(|usenet| IndexerResult {
-                source: "usenet".to_owned(),
+                source: SourceTag::Usenet,
                 usenet,
             })
             .collect()
@@ -1039,7 +1035,7 @@ impl NewznabIndexer {
             .await
             .into_iter()
             .map(|usenet| IndexerResult {
-                source: "usenet".to_owned(),
+                source: SourceTag::Usenet,
                 usenet,
             })
             .collect()
@@ -1297,6 +1293,27 @@ impl NewznabIndexer {
                 NewznabCaps::default()
             }
         }
+    }
+}
+
+impl Indexer for NewznabIndexer {
+    fn search<'a>(&'a self, query: &'a IndexerQuery<'a>) -> BoxFuture<'a, Vec<IndexerResult>> {
+        Box::pin(async move {
+            match query {
+                IndexerQuery::Album(target) => {
+                    self.search_album(
+                        &target.artist,
+                        &target.album_title,
+                        target.year,
+                        self.timeout,
+                    )
+                    .await
+                }
+                IndexerQuery::Track { artist, title } => {
+                    self.search_track(artist, title, self.timeout).await
+                }
+            }
+        })
     }
 }
 

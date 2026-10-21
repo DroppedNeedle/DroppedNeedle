@@ -1007,11 +1007,8 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         ImportFile, ImportOrigin, ImportRequest, LandingLibrary,
     };
     use droppedneedle_acquire::sources::SabnzbdSource;
-    use droppedneedle_acquire::usenet::newznab::NewznabIndexer;
     use droppedneedle_acquire::usenet::policy::UsenetPolicy;
-    use droppedneedle_acquire::usenet::prowlarr::ProwlarrIndexer;
     use droppedneedle_acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
-    use droppedneedle_kernel::runtime_config::sections::UsenetBackendSetting;
     use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
     use std::time::{Duration, SystemTime};
 
@@ -1081,7 +1078,6 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     let mock = SabnzbdMock::new();
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let policy = UsenetPolicy::v2_defaults();
-    let wait = Duration::from_secs(5);
     let source = SabnzbdSource::new(
         Arc::new(SabnzbdQueue::new(
             SabnzbdClient::new(
@@ -1096,20 +1092,10 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
             complete.clone(),
             policy.clone(),
         )),
-        Arc::new(NewznabIndexer::new(Vec::new(), wait, wait, wait, wait)),
-        Arc::new(ProwlarrIndexer::new(
-            None,
-            Vec::new(),
-            false,
-            wait,
-            wait,
-            wait,
-        )),
-        UsenetBackendSetting::default(),
+        Vec::new(),
         policy,
         acquire.journal.clone(),
         None,
-        wait,
     );
     let worker = Arc::new(
         DownloadWorker::fixed(

@@ -1,7 +1,8 @@
 //! Usenet acquisition: SABnzbd + Newznab + Prowlarr.
 //!
 //! The download half of Usenet lives here: [`sabnzbd`] enqueues NZBs and
-//! tracks jobs, [`newznab`] and [`prowlarr`] search indexers for releases.
+//! tracks jobs, [`newznab`] and [`prowlarr`] search indexers for releases,
+//! and [`indexer`] is the one search seam they and plugin indexers share.
 //! [`policy`] carries the Usenet quality tiers, search recipe, timeouts,
 //! and retention gates, ported from v2's `DownloadPolicySettings` and
 //! `quality_tiers`. The testkit crate serves the loopback
@@ -19,6 +20,7 @@
 //! Newznab's XML-only feed with the 202 `t=music` → `t=search` fallback,
 //! and Prowlarr 2.3.5.5327's header auth with the never-logged key.
 
+pub mod indexer;
 pub mod newznab;
 pub mod policy;
 pub mod prowlarr;

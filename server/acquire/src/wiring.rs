@@ -58,6 +58,7 @@ use super::slskd::{DownloadPolicy as SlskdPolicy, ReqwestSlskdHttp, SlskdClient,
 use super::sources::{SabnzbdSource, SlskdSource};
 use super::target::Targets;
 use super::target::lookup::AlbumLookup;
+use super::usenet::indexer::{Indexer, PluginIndexers};
 use super::usenet::newznab::{NewznabClient, NewznabIndexer, NewznabIndexerEntry};
 use super::usenet::policy::{QualityTier, UsenetPolicy};
 use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
@@ -75,7 +76,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     NewznabIndexer as ConfigIndexer, ProwlarrConnection, SlskdConnection, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, MusicBrainzSettings, SourcePriority, UsenetBackendSetting,
+    DownloadPolicy, MusicBrainzSettings, SourcePriority, UsenetBackend, UsenetBackendSetting,
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
 use droppedneedle_library::operations::port::EditionPlans;
@@ -348,15 +349,11 @@ impl LiveClients {
             sources.push(Arc::new(
                 SabnzbdSource::new(
                     queue,
-                    newznab.clone(),
-                    prowlarr.clone(),
-                    settings.backend,
+                    usenet_indexers(settings.backend, &newznab, &prowlarr, self.plugins.as_ref()),
                     usenet_policy,
                     self.journal.clone(),
                     Some(settings.sabnzbd.sabnzbd.category.clone()),
-                    Duration::from_secs(30),
                 )
-                .with_plugins(self.plugins.clone())
                 .with_targets(self.targets.clone()),
             ));
         }
@@ -1209,6 +1206,26 @@ fn sabnzbd_queue(
         PathBuf::from(sab.downloads_mount.clone()),
         policy.clone(),
     )))
+}
+
+/// The indexers Usenet searches: the native list or Prowlarr, as the
+/// backend setting chooses, then the plugin indexers that feed Usenet.
+/// The one place the backend is matched.
+fn usenet_indexers(
+    backend: UsenetBackendSetting,
+    newznab: &Arc<NewznabIndexer>,
+    prowlarr: &Arc<ProwlarrIndexer>,
+    plugins: Option<&Arc<PluginHost>>,
+) -> Vec<Arc<dyn Indexer>> {
+    let primary: Arc<dyn Indexer> = match backend.0 {
+        UsenetBackend::Indexers => newznab.clone(),
+        UsenetBackend::Prowlarr => prowlarr.clone(),
+    };
+    let mut indexers = vec![primary];
+    if let Some(host) = plugins {
+        indexers.push(Arc::new(PluginIndexers::new(host.clone())));
+    }
+    indexers
 }
 
 /// Native indexer fan-out over the configured entries.
