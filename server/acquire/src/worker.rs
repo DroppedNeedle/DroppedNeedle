@@ -90,6 +90,17 @@ fn now_unix_f64() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// A journal step's value, or `None` after logging why it failed.
+fn logged<R>(name: &'static str, result: Result<R, StoreError>) -> Option<R> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::warn!(step = name, %error, "download journal step failed");
+            None
+        }
+    }
+}
+
 /// What startup recovery did, for the boot log and tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecoveryReport {
@@ -110,39 +121,31 @@ pub async fn run_startup_recovery(
     staging_root: &Path,
 ) -> Result<RecoveryReport, String> {
     let tasks = journal
-        .run("downloads.recovery.list", |store| {
-            store.list_active(&[
-                TaskStatus::Queued,
-                TaskStatus::Downloading,
-                TaskStatus::Processing,
-            ])
-        })
-        .await?;
+        .read_tasks_in(&[
+            TaskStatus::Queued,
+            TaskStatus::Downloading,
+            TaskStatus::Processing,
+        ])
+        .await
+        .map_err(|error| error.to_string())?;
     let mut report = RecoveryReport::default();
     for task in tasks {
         let manifest = read_manifest(staging_root, &task.id).await;
-        let manifest_matches_attempt = match manifest.as_ref().and_then(|m| m.attempt_id.clone()) {
-            None => None,
-            Some(linked) => {
-                let task_id = task.id.clone();
-                journal
-                    .run("downloads.recovery.attempts", move |store| {
-                        store.list_attempts(&task_id)
-                    })
-                    .await
-                    .ok()
-                    .map(|attempts| attempts.iter().any(|attempt| attempt.id == linked))
+        let attempts = match journal.read_attempts(&task.id).await {
+            Ok(attempts) => attempts,
+            Err(error) => {
+                // Without its attempts a task is never restarted clean: it
+                // keeps its state and the first pass looks at it again.
+                tracing::warn!(task_id = %task.id, %error, "startup recovery could not read the task's attempts");
+                report.resumed += 1;
+                continue;
             }
         };
+        let manifest_matches_attempt = manifest
+            .as_ref()
+            .and_then(|m| m.attempt_id.as_deref())
+            .map(|linked| attempts.iter().any(|attempt| attempt.id == linked));
         if task.status == TaskStatus::Processing
-            && let Ok(attempts) = {
-                let task_id = task.id.clone();
-                journal
-                    .run("downloads.recovery.landing", move |store| {
-                        store.list_attempts(&task_id)
-                    })
-                    .await
-            }
             && attempts.iter().any(|attempt| {
                 matches!(
                     attempt.state,
@@ -172,7 +175,8 @@ pub async fn run_startup_recovery(
                     .run("downloads.recovery.restart", move |store| {
                         store.transition_task(&task_id, TaskStatus::Queued, now_unix_f64(), None)
                     })
-                    .await?;
+                    .await
+                    .map_err(|error| error.to_string())?;
                 report.restarted += 1;
             }
             StartupAction::Noop => {}
@@ -785,7 +789,7 @@ impl DownloadWorker {
         }
     }
 
-    /// Run one journal step, logging a failure with its name.
+    /// Run one journal write step, logging a failure with its name.
     async fn step<R, F>(&self, name: &'static str, op: F) -> Option<R>
     where
         R: Send + 'static,
@@ -795,19 +799,27 @@ impl DownloadWorker {
             + Send
             + 'static,
     {
-        match self.journal.run(name, op).await {
-            Ok(value) => Some(value),
-            Err(error) => {
-                tracing::warn!(step = name, %error, "download journal step failed");
-                None
-            }
-        }
+        logged(name, self.journal.run(name, op).await)
+    }
+
+    /// Run one journal read on the read pool, logging a failure with its
+    /// name.
+    async fn read_step<R, F>(&self, name: &'static str, op: F) -> Option<R>
+    where
+        R: Send + 'static,
+        F: for<'a, 'b> FnOnce(
+                &'a super::downloads::store::DownloadStore<'b>,
+            ) -> Result<R, StoreError>
+            + Send
+            + 'static,
+    {
+        logged(name, self.journal.read(name, op).await)
     }
 
     /// A task's attempts with their decoded handles, in one read.
     async fn attempts(&self, task_id: &str) -> Option<Vec<Attempt>> {
         let task_id = task_id.to_owned();
-        self.step("downloads.attempts", move |store| {
+        self.read_step("downloads.attempts", move |store| {
             let rows = store.list_attempts(&task_id)?;
             let mut out = Vec::with_capacity(rows.len());
             for row in rows {
@@ -831,7 +843,7 @@ impl DownloadWorker {
             return;
         }
         let Some(live) = self
-            .step("downloads.live", |store| {
+            .read_step("downloads.live", |store| {
                 store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
             })
             .await
@@ -840,7 +852,7 @@ impl DownloadWorker {
             return;
         };
         let Some(queued) = self
-            .step("downloads.queued", |store| {
+            .read_step("downloads.queued", |store| {
                 store.list_active(&[TaskStatus::Queued])
             })
             .await
@@ -1027,31 +1039,27 @@ impl DownloadWorker {
         reason: Option<&str>,
     ) {
         let task_id = task.id.clone();
-        let history = self
-            .step("downloads.landing_history", move |store| {
-                store.landing_history(&task_id)
-            })
-            .await
-            .unwrap_or_default();
-        let (status, error) = if history.files_imported > 0 {
-            (
-                TaskStatus::Partial,
-                "imported what was found; no source had the rest".to_owned(),
-            )
-        } else if let Some(detail) = history.held_detail {
-            (TaskStatus::Failed, format!("Held for review: {detail}"))
-        } else {
-            (
-                TaskStatus::Failed,
-                reason
-                    .unwrap_or("no source could serve this release")
-                    .to_owned(),
-            )
-        };
-        let task_id = task.id.clone();
         let last_attempt = attempts.last().map(|attempt| attempt.row.id.clone());
+        let reason = reason.map(str::to_owned);
+        // The history and the settle share one transaction: a history that
+        // cannot be read settles nothing and the next pass tries again, so
+        // imported tracks never end as a plain failure.
         let settled = self
             .step("downloads.fail_unserved", move |store| {
+                let history = store.landing_history(&task_id)?;
+                let (status, error) = if history.files_imported > 0 {
+                    (
+                        TaskStatus::Partial,
+                        "imported what was found; no source had the rest".to_owned(),
+                    )
+                } else if let Some(detail) = history.held_detail {
+                    (TaskStatus::Failed, format!("Held for review: {detail}"))
+                } else {
+                    (
+                        TaskStatus::Failed,
+                        reason.unwrap_or_else(|| "no source could serve this release".to_owned()),
+                    )
+                };
                 store.finalize_task_and_attempt(
                     &task_id,
                     status,
@@ -1059,9 +1067,13 @@ impl DownloadWorker {
                     Some(&error),
                     last_attempt.as_deref(),
                     true,
-                )
+                )?;
+                Ok(status)
             })
             .await;
+        let Some(status) = settled else {
+            return;
+        };
         let (kind, outcome) = if status == TaskStatus::Partial {
             (
                 droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
@@ -1074,9 +1086,7 @@ impl DownloadWorker {
             )
         };
         super::plugin_events::download_event(&self.plugins, kind, task, &task.source, outcome);
-        if settled.is_some()
-            && let Some(hook) = &self.settled
-        {
+        if let Some(hook) = &self.settled {
             hook(task.clone(), status).await;
         }
     }
@@ -1228,7 +1238,7 @@ impl DownloadWorker {
     /// Poll every live task through the watchdog.
     async fn poll_pass(self: &Arc<Self>, pass: &Pass) {
         let Some(tasks) = self
-            .step("downloads.live", |store| {
+            .read_step("downloads.live", |store| {
                 store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
             })
             .await
@@ -1622,7 +1632,7 @@ impl DownloadWorker {
     /// leaves the entry as it is.
     async fn report_cleanup_health(&self) {
         let Some(count) = self
-            .step("downloads.cleanup_count", |store| {
+            .read_step("downloads.cleanup_count", |store| {
                 store.cleanup_warning_count()
             })
             .await
@@ -1655,7 +1665,7 @@ impl DownloadWorker {
             return;
         }
         let read = async {
-            Ok::<_, String>((
+            Ok::<_, StoreError>((
                 self.journal.read_attempt_handle(&attempt.id).await?,
                 self.journal.read_task(&attempt.task_id).await?,
             ))

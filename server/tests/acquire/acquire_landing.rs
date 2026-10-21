@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::downloads::store::NewTask;
 use droppedneedle_acquire::landing::library::LibraryLanding;
@@ -824,6 +825,51 @@ async fn a_landing_waits_while_the_download_policy_does_not_read() {
         .await
         .expect("quarantine count");
     assert_eq!(quarantined, 0);
+}
+
+/// An attempt that imported its files and then had a landing wait (a busy
+/// database) is still answered as imported when the next landing finds
+/// nothing: the wait never hides the import.
+#[tokio::test]
+async fn a_wait_after_an_import_does_not_hide_it() {
+    let (acquire, dir, _auth) = bare_acquire().await;
+    let mount = dir.join("downloads");
+    std::fs::create_dir_all(&mount).expect("mount");
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t-again", GOOD_GROUP), 1.0)?;
+            for (outcome, at) in [("imported", 2.0), ("deferred", 3.0)] {
+                store.record_import_decision(&ImportDecisionRow {
+                    task_id: "t-again".to_owned(),
+                    attempt_id: Some("t-again-a0".to_owned()),
+                    outcome: outcome.to_owned(),
+                    files_total: 2,
+                    files_imported: if outcome == "imported" { 2 } else { 0 },
+                    checks_json: "[]".to_owned(),
+                    missing_positions: "[]".to_owned(),
+                    decided_at: at,
+                    ..ImportDecisionRow::default()
+                })?;
+            }
+            Ok(())
+        })
+        .await
+        .expect("seed");
+    let task = acquire.journal.read_task("t-again").await.unwrap().unwrap();
+    let landed = Landed {
+        mounts: vec![mount],
+        files: Vec::new(),
+    };
+    let report = acquire
+        .landing
+        .land(&task, Some("t-again-a0"), None, landed, false)
+        .await;
+    assert!(
+        matches!(report.result, LandingResult::Imported { complete: true }),
+        "the earlier import is answered again, got {:?}",
+        report.result
+    );
 }
 
 /// A plugin's finished download is confined to the plugin's own folders

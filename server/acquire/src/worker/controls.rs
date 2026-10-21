@@ -156,7 +156,7 @@ impl DownloadWorker {
                 Ok(Some((row.id, true)))
             })
             .await
-            .map_err(RetryError::Journal)?;
+            .map_err(|error| RetryError::Journal(error.to_string()))?;
         let Some((successor, spawned)) = outcome else {
             return Err(RetryError::Conflict(
                 "This download was already retried. Retry the newer attempt instead.",
@@ -188,7 +188,7 @@ impl DownloadWorker {
             .journal
             .read_task(task_id)
             .await
-            .map_err(NextSourceError::Unavailable)?
+            .map_err(|error| NextSourceError::Unavailable(error.to_string()))?
             .ok_or(NextSourceError::NotFound)?;
         if task.candidate_index != Some(expected_candidate_index) {
             return Err(NextSourceError::Conflict(
@@ -263,7 +263,7 @@ impl DownloadWorker {
         self.journal
             .read_task(&task.id)
             .await
-            .map_err(NextSourceError::Unavailable)?
+            .map_err(|error| NextSourceError::Unavailable(error.to_string()))?
             .ok_or(NextSourceError::NotFound)
     }
 }

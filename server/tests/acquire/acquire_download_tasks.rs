@@ -4,6 +4,7 @@
 //! by the download import journey.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     body::Body,
@@ -21,9 +22,12 @@ use droppedneedle_acquire::landing::LandingService;
 use droppedneedle_acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
 };
-use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
+use droppedneedle_acquire::worker::{
+    DownloadWorker, FixedSource, Source, WorkerConfig, run_startup_recovery,
+};
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::Value;
 use tower::ServiceExt as _;
@@ -454,4 +458,101 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
     let (_, body) = send(&journal, get("/api/v3/downloads/activity-summary", USER)).await;
     assert_eq!(body["failed_count"], 1);
     assert_eq!(body["active_count"], 0);
+}
+
+// A long write on the lane does not hold up the journal's reads: startup
+// recovery lists the live tasks on the read pool while a write is open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn journal_reads_do_not_wait_for_a_held_write() {
+    let journal = journal().await;
+    let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let db = journal.db().db().clone();
+    let held = tokio::spawn(async move {
+        db.write(Lane::Background, "test.hold", move |_tx| {
+            let _ = started_tx.send(());
+            // Held until recovery is done, or for longer than recovery may
+            // take: a read behind this write cannot finish in time.
+            Ok::<_, DbError>(release_rx.recv_timeout(Duration::from_secs(30)).is_ok())
+        })
+        .await
+    });
+    tokio::task::spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(5)))
+        .await
+        .unwrap()
+        .expect("the held write started");
+
+    let staging = staging_for(&journal);
+    let recovery = tokio::time::timeout(
+        Duration::from_secs(20),
+        run_startup_recovery(&journal, &staging),
+    )
+    .await;
+    let _ = release_tx.send(());
+    let released = held.await.unwrap().unwrap();
+    let report = recovery
+        .expect("the live-task read waited for the held write")
+        .unwrap();
+    assert!(released, "the write stayed open while recovery read");
+    assert_eq!(report.redispatched, 1);
+}
+
+// A task no source can serve any more is never settled as a plain failure
+// while its landing history cannot be read: the tracks it already imported
+// would be lost from its outcome. It waits for the next pass instead.
+#[tokio::test]
+async fn unreadable_history_never_fails_a_partly_imported_task() {
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    let journal = Arc::new(Journal::new(db.clone()));
+    journal
+        .run("test.seed", |store| {
+            store.insert_task(&task("t-short"), 1_000.0)?;
+            for index in 0..3 {
+                store.insert_attempt(
+                    &format!("t-short-a{index}"),
+                    "t-short",
+                    "soulseek",
+                    index,
+                    "",
+                    r#"{"source":"soulseek","username":"peer","filenames":["a.flac"],"job_name":""}"#,
+                    AttemptState::Preserved,
+                    1_000.0,
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    db.write("test.history", |tx| {
+        tx.execute_batch(
+            "INSERT INTO download_import_decisions \
+             (task_id, outcome, files_total, files_imported, decided_at) \
+             VALUES ('t-short', 'partial', 2, 1, 1000.0); \
+             ALTER TABLE download_import_decisions RENAME TO download_import_decisions_away;",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let staging = staging_for(&journal);
+    let source = Arc::new(FixedSource::new(staging.join("downloads"), Vec::new()));
+    let worker = Arc::new(DownloadWorker::fixed(
+        journal.clone(),
+        vec![Source::Fixed(source)],
+        WorkerConfig {
+            staging_root: staging,
+            ..WorkerConfig::default()
+        },
+        droppedneedle_kernel::events::EventHub::new(),
+        Default::default(),
+    ));
+
+    worker.run_once(1).await;
+    let row = journal.read_task("t-short").await.unwrap().unwrap();
+    assert_eq!(
+        row.status,
+        TaskStatus::Queued,
+        "an unread history settles nothing"
+    );
 }

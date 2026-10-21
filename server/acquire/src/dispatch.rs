@@ -16,12 +16,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::future::BoxFuture;
-use sqlx::Row;
 
 use super::downloads::journal::Journal;
 use super::downloads::manifest::{DownloadManifest, ManifestCodec, PlannedAlbum, TrackPosition};
 use super::downloads::state::TaskStatus;
-use super::downloads::store::{NewTask, REIMPORTABLE_SQL, TaskDetails};
+use super::downloads::store::{NewTask, TaskDetails, TaskRow};
 use super::downloads::watchdog::RetryPolicy;
 use super::edition::chosen_edition;
 use super::flows::seams as flows;
@@ -44,17 +43,6 @@ pub struct UnifiedDispatch {
     ids: Arc<dyn IdGenerator>,
     staging_root: PathBuf,
     policy: Live<DownloadPolicy>,
-}
-
-/// The task columns the request-path reads need.
-struct TaskSnapshot {
-    status: TaskStatus,
-    progress_percent: i64,
-    total_size_bytes: Option<i64>,
-    downloaded_bytes: i64,
-    error_message: Option<String>,
-    quality_format: Option<String>,
-    source: String,
 }
 
 impl UnifiedDispatch {
@@ -171,7 +159,8 @@ impl UnifiedDispatch {
                 store.set_task_details(&task.id, &details, now)?;
                 Ok((Some(task.id.clone()), true))
             })
-            .await?;
+            .await
+            .map_err(|error| error.to_string())?;
         match inserted {
             (Some(existing), false) => Ok(existing),
             (None, _) => Err("duplicate dispatch; original task unknown".to_owned()),
@@ -248,32 +237,12 @@ impl UnifiedDispatch {
         }
     }
 
-    /// Request-path read of one task's state and progress columns.
-    async fn snapshot(&self, task_id: &str) -> Result<Option<TaskSnapshot>, String> {
-        let row = sqlx::query(
-            "SELECT status, progress_percent, total_size_bytes, downloaded_bytes, \
-             error_message, quality_format, source FROM download_tasks WHERE id = ?1",
-        )
-        .bind(task_id)
-        .fetch_optional(self.journal.db().pool())
-        .await
-        .map_err(|error| error.to_string())?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let decode = |error: sqlx::Error| error.to_string();
-        let status: String = row.try_get(0).map_err(decode)?;
-        let status =
-            TaskStatus::parse(&status).ok_or_else(|| format!("unknown task status {status}"))?;
-        Ok(Some(TaskSnapshot {
-            status,
-            progress_percent: row.try_get(1).map_err(decode)?,
-            total_size_bytes: row.try_get(2).map_err(decode)?,
-            downloaded_bytes: row.try_get(3).map_err(decode)?,
-            error_message: row.try_get(4).map_err(decode)?,
-            quality_format: row.try_get(5).map_err(decode)?,
-            source: row.try_get(6).map_err(decode)?,
-        }))
+    /// Request-path read of one task, on the read pool.
+    async fn snapshot(&self, task_id: &str) -> Result<Option<TaskRow>, String> {
+        self.journal
+            .read_task(task_id)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// Cancel one task: it goes terminal and its live attempts move to
@@ -287,6 +256,7 @@ impl UnifiedDispatch {
                 store.cancel_task(&task_id, now_unix_f64()).map(|_| ())
             })
             .await
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -379,9 +349,8 @@ impl requests::DownloadDispatch for UnifiedDispatch {
         task_id: &'a str,
     ) -> BoxFuture<'a, Result<bool, requests::DispatchError>> {
         Box::pin(async move {
-            sqlx::query_scalar::<_, bool>(REIMPORTABLE_SQL)
-                .bind(task_id)
-                .fetch_one(self.journal.db().pool())
+            self.journal
+                .read_reimportable(task_id)
                 .await
                 .map_err(|error| failed(error.to_string()))
         })
@@ -402,29 +371,18 @@ impl requests::DownloadDispatch for UnifiedDispatch {
             // The newest task for its target is the one the retry sweep
             // acts on; once a successor exists this task is no longer
             // waiting on a retry.
-            let row: Option<(String, i64, Option<f64>, f64)> = sqlx::query_as(
-                "SELECT t.status, t.retry_count, t.completed_at, t.updated_at \
-                 FROM download_tasks t WHERE t.id = ?1 AND t.origin != 'upgrade' \
-                 AND NOT EXISTS (SELECT 1 FROM download_tasks n \
-                   WHERE n.user_id = t.user_id AND n.download_type = t.download_type \
-                     AND (t.download_type = 'track' \
-                          OR n.release_group_mbid = t.release_group_mbid) \
-                     AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
-                     AND n.origin != 'upgrade' \
-                     AND (n.created_at > t.created_at \
-                          OR (n.created_at = t.created_at AND n.rowid > t.rowid)))",
-            )
-            .bind(task_id)
-            .fetch_optional(self.journal.db().pool())
-            .await
-            .map_err(|error| failed(error.to_string()))?;
-            let Some((status, retry_count, completed_at, updated_at)) = row else {
+            let row = self
+                .journal
+                .read_retry_anchor(task_id)
+                .await
+                .map_err(|error| failed(error.to_string()))?;
+            let Some(row) = row else {
                 return Ok(None);
             };
-            let retry_count = u32::try_from(retry_count).unwrap_or(0);
-            let anchor = completed_at.unwrap_or(updated_at);
+            let retry_count = u32::try_from(row.retry_count).unwrap_or(0);
+            let anchor = row.completed_at.unwrap_or(row.updated_at);
             Ok(policy
-                .next_retry_at(retry_count, anchor, &status)
+                .next_retry_at(retry_count, anchor, &row.status)
                 .map(|at| requests::RetrySchedule {
                     retry_count,
                     max_attempts: policy.max_attempts,
@@ -441,37 +399,11 @@ impl requests::DownloadDispatch for UnifiedDispatch {
         since: u64,
     ) -> BoxFuture<'a, Result<Option<String>, requests::DispatchError>> {
         Box::pin(async move {
-            UnifiedDispatch::find_task_since(self, owner, kind, key, since)
+            self.journal
+                .read_task_since(owner, kind, key, since as f64)
                 .await
-                .map_err(failed)
+                .map_err(|error| failed(error.to_string()))
         })
-    }
-}
-
-impl UnifiedDispatch {
-    /// Newest task one owner started for an album or recording since a
-    /// time (epoch seconds).
-    async fn find_task_since(
-        &self,
-        owner: &str,
-        kind: &str,
-        key: &str,
-        since: u64,
-    ) -> Result<Option<String>, String> {
-        sqlx::query_scalar(
-            "SELECT id FROM download_tasks WHERE user_id = ?1 \
-             AND ((?2 = 'track' AND recording_mbid = ?3) \
-                  OR (?2 != 'track' AND download_type = 'album' \
-                      AND release_group_mbid = ?3)) \
-             AND created_at >= ?4 ORDER BY created_at DESC, rowid DESC LIMIT 1",
-        )
-        .bind(owner)
-        .bind(kind)
-        .bind(key)
-        .bind(since as f64)
-        .fetch_optional(self.journal.db().pool())
-        .await
-        .map_err(|error| error.to_string())
     }
 }
 
@@ -529,20 +461,15 @@ impl flows::DownloadDispatch for UnifiedDispatch {
         rg_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<flows::DownloadTaskView>, String>> {
         Box::pin(async move {
-            let row: Option<(String, String, String)> = sqlx::query_as(
-                "SELECT id, status, release_group_mbid FROM download_tasks \
-                 WHERE release_group_mbid = ?1 AND download_type = 'album' \
-                   AND status IN ('queued', 'downloading', 'processing') \
-                 ORDER BY created_at DESC, rowid DESC LIMIT 1",
-            )
-            .bind(rg_mbid)
-            .fetch_optional(self.journal.db().pool())
-            .await
-            .map_err(|error| error.to_string())?;
-            Ok(row.map(|(task_id, status, album)| flows::DownloadTaskView {
-                task_id,
-                status,
-                album_mbid: Some(album),
+            let row = self
+                .journal
+                .read_active_for_album(rg_mbid)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(row.map(|row| flows::DownloadTaskView {
+                task_id: row.id,
+                status: row.status.as_str().to_owned(),
+                album_mbid: Some(row.release_group_mbid),
             }))
         })
     }

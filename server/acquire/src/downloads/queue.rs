@@ -11,7 +11,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::queue_rows::{self, ActivitySummary, ListFilter, QueueTask, Stopped, TaskFacts, Viewer};
+use super::journal::Journal;
+use super::queue_rows::{ActivitySummary, ListFilter, QueueTask, Stopped, TaskFacts, Viewer};
 use super::reasons::{DecisionReason, QueueReason, task_reason};
 use super::sources::SourceHandle;
 use super::state::TaskStatus;
@@ -71,6 +72,7 @@ pub struct TaskFile {
 /// The queue over the download worker and its journal.
 #[derive(Clone)]
 pub struct DownloadQueue {
+    journal: Arc<Journal>,
     worker: Arc<DownloadWorker>,
 }
 
@@ -87,12 +89,9 @@ fn will_auto_retry(policy: &RetryPolicy, task: &TaskRow, held: bool) -> Option<f
 }
 
 impl DownloadQueue {
-    pub fn new(worker: Arc<DownloadWorker>) -> Self {
-        Self { worker }
-    }
-
-    fn pool(&self) -> &sqlx::SqlitePool {
-        self.worker.journal().db().pool()
+    /// The queue over `journal`; `worker` runs the actions that wake it.
+    pub fn new(journal: Arc<Journal>, worker: Arc<DownloadWorker>) -> Self {
+        Self { journal, worker }
     }
 
     /// The viewer's tasks, newest first, with their reasons and schedule.
@@ -101,7 +100,9 @@ impl DownloadQueue {
         viewer: &Viewer,
         filter: &ListFilter,
     ) -> Result<Vec<TaskView>, QueueError> {
-        let rows = queue_rows::list_tasks(self.pool(), viewer, filter)
+        let rows = self
+            .journal
+            .read_queue(viewer, filter)
             .await
             .map_err(unavailable)?;
         self.views(rows).await
@@ -122,7 +123,9 @@ impl DownloadQueue {
         task_id: &str,
     ) -> Result<(QueueTask, Vec<TaskFile>), QueueError> {
         let row = self.owned(viewer, task_id).await?;
-        let handle = queue_rows::newest_handle(self.pool(), task_id)
+        let handle = self
+            .journal
+            .read_newest_handle(task_id)
             .await
             .map_err(unavailable)?
             .and_then(|json| serde_json::from_str::<SourceHandle>(&json).ok());
@@ -161,13 +164,12 @@ impl DownloadQueue {
     async fn stop(&self, task: TaskRow) -> Result<Stopped, QueueError> {
         let task_id = task.id.clone();
         let stopped = self
-            .worker
-            .journal()
+            .journal
             .run_foreground("downloads.stop", move |store| {
                 store.stop_task(&task, now_unix_f64())
             })
             .await
-            .map_err(QueueError::Unavailable)?;
+            .map_err(unavailable)?;
         if stopped != Stopped::AlreadySettled {
             tracing::info!(task_id, ?stopped, "download stopped by hand");
         }
@@ -212,13 +214,12 @@ impl DownloadQueue {
     pub async fn clear(&self, viewer: &Viewer) -> Result<i64, QueueError> {
         let owner = viewer.owner_filter().map(str::to_owned);
         let cleared = self
-            .worker
-            .journal()
+            .journal
             .run_foreground("downloads.clear", move |store| {
                 store.clear_finished(owner.as_deref())
             })
             .await
-            .map_err(QueueError::Unavailable)?;
+            .map_err(unavailable)?;
         if cleared > 0 {
             tracing::info!(user_id = %viewer.user_id, cleared, "finished downloads cleared");
         }
@@ -282,7 +283,8 @@ impl DownloadQueue {
 
     /// The viewer's queue counters.
     pub async fn activity(&self, viewer: &Viewer) -> Result<ActivitySummary, QueueError> {
-        queue_rows::activity_summary(self.pool(), viewer)
+        self.journal
+            .read_activity_summary(viewer)
             .await
             .map_err(unavailable)
     }
@@ -293,7 +295,8 @@ impl DownloadQueue {
         page: i64,
         page_size: i64,
     ) -> Result<Vec<QuarantineRow>, QueueError> {
-        queue_rows::list_quarantine(self.pool(), page, page_size)
+        self.journal
+            .read_quarantine_page(page, page_size)
             .await
             .map_err(unavailable)
     }
@@ -301,13 +304,12 @@ impl DownloadQueue {
     /// Remove one blocklist entry so its release may be tried again.
     pub async fn delete_quarantine(&self, id: i64) -> Result<(), QueueError> {
         let removed = self
-            .worker
-            .journal()
+            .journal
             .run_foreground("downloads.quarantine_delete", move |store| {
                 store.delete_quarantine(id)
             })
             .await
-            .map_err(QueueError::Unavailable)?;
+            .map_err(unavailable)?;
         if removed {
             Ok(())
         } else {
@@ -317,7 +319,9 @@ impl DownloadQueue {
 
     /// One task, refused when the viewer may not touch it.
     async fn owned(&self, viewer: &Viewer, task_id: &str) -> Result<QueueTask, QueueError> {
-        let row = queue_rows::get_task(self.pool(), task_id)
+        let row = self
+            .journal
+            .read_queue_task(task_id)
             .await
             .map_err(unavailable)?
             .ok_or(QueueError::NotFound)?;
@@ -335,11 +339,15 @@ impl DownloadQueue {
         &self,
         viewer: &Viewer,
     ) -> Result<(Vec<TaskRow>, std::collections::HashSet<String>), QueueError> {
-        let tasks = queue_rows::newest_unsettled(self.pool(), viewer)
+        let tasks = self
+            .journal
+            .read_newest_unsettled(viewer)
             .await
             .map_err(unavailable)?;
         let ids: Vec<String> = tasks.iter().map(|task| task.id.clone()).collect();
-        let facts = queue_rows::task_facts(self.pool(), &ids)
+        let facts = self
+            .journal
+            .read_task_facts(&ids)
             .await
             .map_err(unavailable)?;
         let held = facts
@@ -353,7 +361,9 @@ impl DownloadQueue {
     /// Attach facts, schedule and reason to task rows.
     async fn views(&self, rows: Vec<QueueTask>) -> Result<Vec<TaskView>, QueueError> {
         let ids: Vec<String> = rows.iter().map(|row| row.task.id.clone()).collect();
-        let mut facts: HashMap<String, TaskFacts> = queue_rows::task_facts(self.pool(), &ids)
+        let mut facts: HashMap<String, TaskFacts> = self
+            .journal
+            .read_task_facts(&ids)
             .await
             .map_err(unavailable)?;
         // While the download settings do not read, the views leave the

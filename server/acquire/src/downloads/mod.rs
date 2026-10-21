@@ -6,7 +6,10 @@
 //!
 //! - [`state`] task and attempt states, terminal sets, legal transitions.
 //! - [`store`] the journal itself: tasks, attempts, idempotency keys,
-//!   quarantine rows, held-import retry, all on plain SQLite.
+//!   quarantine rows, held-import retry, all on plain SQLite, with its
+//!   statements in `sql.rs`.
+//! - [`journal`] the one way in: reads on the read pool, writes on the
+//!   writer lane.
 //! - [`manifest`] the per-task staging manifest (`manifest.json`).
 //! - [`watchdog`] stall/queued/deadline evaluation plus retry backoff.
 //! - [`recovery`] startup classification and orchestrator failover.
@@ -38,6 +41,7 @@ pub mod queue_rows;
 pub mod reasons;
 pub mod recovery;
 pub mod sources;
+pub(crate) mod sql;
 pub mod state;
 pub mod store;
 pub mod upgrades;

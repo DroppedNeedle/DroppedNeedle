@@ -82,7 +82,7 @@ async fn task_row(journal: &Arc<Journal>, task_id: &str) -> Result<TaskRow, Sour
     journal
         .read_task(&lookup)
         .await
-        .map_err(SourceError::LocalFault)?
+        .map_err(|error| SourceError::LocalFault(error.to_string()))?
         .ok_or_else(|| SourceError::Rejected(format!("unknown download task {owned}")))
 }
 
@@ -190,7 +190,7 @@ impl SlskdSource {
             .journal
             .read_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)
             .await
-            .map_err(SourceError::LocalFault)?;
+            .map_err(|error| SourceError::LocalFault(error.to_string()))?;
         let hits: Vec<_> = self
             .repo
             .search_album(&target.artist, &target.album_title, target.year)
@@ -231,13 +231,13 @@ impl DownloadSource for SlskdSource {
             .journal
             .read_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)
             .await
-            .map_err(SourceError::LocalFault)?;
+            .map_err(|error| SourceError::LocalFault(error.to_string()))?;
         let mut tried = Vec::new();
         for json in self
             .journal
             .read_source_handles(task_id, "soulseek")
             .await
-            .map_err(SourceError::LocalFault)?
+            .map_err(|error| SourceError::LocalFault(error.to_string()))?
         {
             match serde_json::from_str::<SourceHandle>(&json) {
                 Ok(handle) => tried.push(handle.username),
@@ -253,12 +253,12 @@ impl DownloadSource for SlskdSource {
         // gives none.
         let missing = self
             .journal
-            .run("downloads.missing_positions", {
+            .read("downloads.missing_positions", {
                 let task_id = task_id.to_owned();
                 move |store| store.missing_positions(&task_id)
             })
             .await
-            .map_err(SourceError::LocalFault)?;
+            .map_err(|error| SourceError::LocalFault(error.to_string()))?;
         let mut target = target;
         let refill = target.track.is_none() && !missing.is_empty();
         let missing = if refill {
@@ -892,7 +892,7 @@ impl OrphanOwnership for JournalOwnership {
         self.journal
             .read_cleanup_debt(&source, &task_id, &journal_name)
             .await
-            .map_err(SourceError::LocalFault)
+            .map_err(|error| SourceError::LocalFault(error.to_string()))
     }
 
     async fn task_status(&self, task_id: &str) -> Result<Option<String>, SourceError> {
@@ -900,7 +900,7 @@ impl OrphanOwnership for JournalOwnership {
         self.journal
             .read_task(&task_id)
             .await
-            .map_err(SourceError::LocalFault)
+            .map_err(|error| SourceError::LocalFault(error.to_string()))
             .map(|row| row.map(|task| task.status.as_str().to_owned()))
     }
 

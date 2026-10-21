@@ -32,7 +32,7 @@ pub async fn hold(
         // Already held by an earlier candidate or pass: no second copy.
         let probe = item.row.clone();
         let known = journal
-            .run("downloads.held_known", move |store| {
+            .read("downloads.held_known", move |store| {
                 store.held_row_for(&probe)
             })
             .await;

@@ -22,7 +22,7 @@ use crate::downloads::state::{AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, TaskRow};
 use crate::landing::reasons::explain;
 use crate::landing::specs::Disposition;
-use crate::landing::{LandingReport, LandingResult};
+use crate::landing::{JOURNAL_UNREADABLE, LandingReport, LandingResult};
 
 /// Passes a landing may wait on files that are not ready before the task
 /// fails (about five minutes at the 30-second cadence).
@@ -296,6 +296,16 @@ impl DownloadWorker {
                     )
                     .await;
                 }
+                (Disposition::Temporary, Origin::Poll) if rejection.code == JOURNAL_UNREADABLE => {
+                    // A busy database never uses up the landing's waits, so
+                    // it can never fail the task: the next pass lands again.
+                    tracing::info!(task_id = %task.id, detail = %rejection.detail, "landing waits for the database");
+                    let task_id = task.id.clone();
+                    self.step("downloads.touch_poll", move |store| {
+                        store.touch_poll(&task_id, now)
+                    })
+                    .await;
+                }
                 (Disposition::Temporary, Origin::Poll) => {
                     tracing::info!(task_id = %task.id, code = rejection.code, detail = %rejection.detail, "landing deferred");
                     self.wait_or_fail(task, attempt, explain(rejection.code).message, now)
@@ -329,40 +339,40 @@ impl DownloadWorker {
         result: &LandingResult,
         now: f64,
     ) {
-        let task_id = task.id.clone();
-        let history = self
-            .step("downloads.landing_history", move |store| {
-                store.landing_history(&task_id)
-            })
-            .await
-            .unwrap_or_default();
         let held = match result {
             LandingResult::Held { code, .. } => {
                 Some(format!("Held for review: {}", explain(code).message))
             }
             _ => None,
         };
-        if history.files_imported > 0 {
-            self.settle(
-                task,
-                &attempt.id,
-                TaskStatus::Partial,
-                held.as_deref(),
-                false,
-                now,
-            )
+        self.forget_landing(&task.id);
+        let task_id = task.id.clone();
+        let attempt_id = attempt.id.clone();
+        // The history and the settle share one transaction: a history that
+        // cannot be read settles nothing, so imported tracks never end as
+        // a plain failure.
+        let settled = self
+            .step("downloads.settle_short", move |store| {
+                let history = store.landing_history(&task_id)?;
+                let (status, error) = if history.files_imported > 0 {
+                    (TaskStatus::Partial, held)
+                } else {
+                    let error = held.unwrap_or_else(|| explain("no_tracks").message.to_owned());
+                    (TaskStatus::Failed, Some(error))
+                };
+                store.finalize_task_and_attempt(
+                    &task_id,
+                    status,
+                    now,
+                    error.as_deref(),
+                    Some(&attempt_id),
+                    false,
+                )?;
+                Ok(status)
+            })
             .await;
-        } else {
-            let error = held.unwrap_or_else(|| explain("no_tracks").message.to_owned());
-            self.settle(
-                task,
-                &attempt.id,
-                TaskStatus::Failed,
-                Some(&error),
-                false,
-                now,
-            )
-            .await;
+        if let Some(status) = settled {
+            self.announce_settled(task, status).await;
         }
     }
 
@@ -464,9 +474,13 @@ impl DownloadWorker {
                 )
             })
             .await;
-        if settled.is_none() {
-            return;
+        if settled.is_some() {
+            self.announce_settled(task, status).await;
         }
+    }
+
+    /// Announce a settled landing and resolve its requests.
+    async fn announce_settled(&self, task: &TaskRow, status: TaskStatus) {
         let (kind, outcome) = match status {
             TaskStatus::Completed => (
                 droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
@@ -530,7 +544,7 @@ impl DownloadWorker {
             .journal
             .read_task(task_id)
             .await
-            .map_err(ReimportError::Journal)?
+            .map_err(|error| ReimportError::Journal(error.to_string()))?
         else {
             return Ok(None);
         };
@@ -574,7 +588,7 @@ impl DownloadWorker {
                     store.begin_reimport(&task_id, now)
                 })
                 .await
-                .map_err(ReimportError::Journal)?
+                .map_err(|error| ReimportError::Journal(error.to_string()))?
         };
         if !begun {
             return Ok(None);
@@ -583,7 +597,7 @@ impl DownloadWorker {
             .journal
             .read_task(task_id)
             .await
-            .map_err(ReimportError::Journal)?
+            .map_err(|error| ReimportError::Journal(error.to_string()))?
             .unwrap_or(task);
         let row = self
             .attempts(task_id)
@@ -616,7 +630,7 @@ impl DownloadWorker {
         self.journal
             .read_task(task_id)
             .await
-            .map_err(ReimportError::Journal)
+            .map_err(|error| ReimportError::Journal(error.to_string()))
     }
 }
 

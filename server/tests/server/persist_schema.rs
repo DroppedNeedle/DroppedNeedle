@@ -3863,6 +3863,7 @@ type StatementFiles = fn() -> Vec<StatementFile>;
 const REGISTRIES: &[(&str, StatementFiles)] = &[
     ("kernel", droppedneedle_kernel::statement_files),
     ("catalog", droppedneedle_catalog::statement_files),
+    ("acquire", droppedneedle_acquire::statement_files),
     ("library", droppedneedle_library::statement_files),
     ("tool", droppedneedle_tool::statement_files),
 ];

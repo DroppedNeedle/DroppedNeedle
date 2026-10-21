@@ -5,24 +5,35 @@
 //! revision-CAS and leases, idempotency keys, quarantine rows, held-import
 //! retry, the newest-per-target retryable sweep, and the stale-task query.
 //! Table shapes mirror migrations 0001/0002.
+//!
+//! [`DownloadStore`] runs over whatever connection it is given: a writer
+//! transaction for writes, a read-pool connection for reads (see
+//! [`super::journal::Journal`]). Its statements live in [`super::sql`].
 
+use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::db::statement::ListLen;
 use rusqlite::{Connection, OptionalExtension, Row};
 
+use super::sql;
 use super::state::{AttemptState, TaskStatus};
 
-/// Journal failures: SQLite errors plus unknown wire values.
+/// Journal failures: the database's own, or a lifecycle write the journal
+/// refuses. A write closure over the journal fails with this type, so a
+/// refusal rolls the whole transaction back.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    /// The underlying SQLite call failed.
-    #[error("download store failed: {0}")]
-    Sqlite(#[from] rusqlite::Error),
-    /// A status or state string from the database is unknown.
-    #[error("unknown download status value: {0}")]
-    UnknownStatus(String),
-    /// A lifecycle write the journal refuses: out of a terminal status, or
-    /// finalizing into a non-terminal one.
+    /// The database failed, or a stored value did not decode.
+    #[error("download journal: {0}")]
+    Db(#[from] DbError),
+    /// Out of a terminal status, or finalizing into a non-terminal one.
     #[error("invalid download transition: {0}")]
     InvalidTransition(String),
+}
+
+impl From<rusqlite::Error> for StoreError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Db(DbError::from(error))
+    }
 }
 
 /// Task row fields the durable core reads and writes.
@@ -89,109 +100,40 @@ fn unknown_value(column: &str, value: String) -> rusqlite::Error {
     )
 }
 
-/// Reimport guard: a failed or partial task with an attempt whose handle
-/// still names its files and whose cleanup has not run.
-pub(crate) const REIMPORTABLE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM download_tasks t \
-     WHERE t.id = ?1 AND t.status IN ('failed', 'partial') \
-       AND EXISTS (SELECT 1 FROM download_attempts a WHERE a.task_id = t.id \
-         AND a.handle_json != '' \
-         AND a.state IN ('preserved', 'cleanup_pending')))";
-
-/// Retryable tasks: failed or partial, under the retry ceiling, with no
-/// newer task for the same ask (the successor check).
-pub(crate) const RETRYABLE_SQL: &str = "SELECT * FROM download_tasks t \
-             WHERE t.status IN ('failed', 'partial') \
-               AND t.origin != 'upgrade' \
-               AND t.retry_count < ? \
-               AND NOT EXISTS ( \
-                 SELECT 1 FROM download_tasks n \
-                 WHERE n.user_id = t.user_id \
-                   AND n.download_type = t.download_type \
-                   AND (t.download_type = 'track' \
-                        OR n.release_group_mbid = t.release_group_mbid) \
-                   AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
-                   AND n.origin != 'upgrade' \
-                   AND (n.created_at > t.created_at \
-                        OR (n.created_at = t.created_at AND n.rowid > t.rowid))) \
-             ORDER BY t.completed_at ASC NULLS LAST";
-
-/// Live cleanup debt for one client job.
-pub(crate) const CLEANUP_DEBT_SQL: &str = "SELECT COUNT(*) FROM download_attempts \
-     WHERE source = ? AND task_id = ? AND job_name = ? \
-       AND state NOT IN ('complete', 'preserved')";
-
-/// Live quarantine pairs at or after a cutoff.
-pub(crate) const QUARANTINE_SET_SQL: &str =
-    "SELECT source, identity FROM download_quarantine WHERE quarantined_at >= ?";
-
-/// Decode one task row read through the sqlx reader pool.
-pub(crate) fn task_from_sqlx(row: &sqlx::sqlite::SqliteRow) -> Result<TaskRow, sqlx::Error> {
-    use sqlx::Row as _;
-    let status_text: String = row.try_get("status")?;
-    let status = TaskStatus::parse(&status_text).ok_or_else(|| sqlx::Error::ColumnDecode {
-        index: "status".to_owned(),
-        source: format!("unknown status value: {status_text}").into(),
-    })?;
-    Ok(TaskRow {
-        id: row.try_get("id")?,
-        user_id: row.try_get("user_id")?,
-        artist_name: row.try_get("artist_name")?,
-        album_title: row.try_get("album_title")?,
-        status,
-        origin: row.try_get("origin")?,
-        download_type: row.try_get("download_type")?,
-        release_group_mbid: row.try_get("release_group_mbid")?,
-        recording_mbid: row.try_get("recording_mbid")?,
-        retry_count: row.try_get("retry_count")?,
-        candidate_index: row.try_get("candidate_index")?,
-        progress_percent: row.try_get("progress_percent")?,
-        total_size_bytes: row.try_get("total_size_bytes")?,
-        downloaded_bytes: row.try_get("downloaded_bytes")?,
-        quality_format: row.try_get("quality_format")?,
-        source: row.try_get("source")?,
-        download_client: row.try_get("download_client")?,
-        source_username: row.try_get("source_username")?,
-        search_job_id: row.try_get("search_job_id")?,
-        error_message: row.try_get("error_message")?,
-        created_at: row.try_get("created_at")?,
-        started_at: row.try_get("started_at")?,
-        last_polled_at: row.try_get("last_polled_at")?,
-        completed_at: row.try_get("completed_at")?,
-        updated_at: row.try_get("updated_at")?,
-    })
-}
-
-fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
-    let status_text: String = row.get("status")?;
-    let status =
-        TaskStatus::parse(&status_text).ok_or_else(|| unknown_value("status", status_text))?;
-    Ok(TaskRow {
-        id: row.get("id")?,
-        user_id: row.get("user_id")?,
-        artist_name: row.get("artist_name")?,
-        album_title: row.get("album_title")?,
-        status,
-        origin: row.get("origin")?,
-        download_type: row.get("download_type")?,
-        release_group_mbid: row.get("release_group_mbid")?,
-        recording_mbid: row.get("recording_mbid")?,
-        retry_count: row.get("retry_count")?,
-        candidate_index: row.get("candidate_index")?,
-        progress_percent: row.get("progress_percent")?,
-        total_size_bytes: row.get("total_size_bytes")?,
-        downloaded_bytes: row.get("downloaded_bytes")?,
-        quality_format: row.get("quality_format")?,
-        source: row.get("source")?,
-        download_client: row.get("download_client")?,
-        source_username: row.get("source_username")?,
-        search_job_id: row.get("search_job_id")?,
-        error_message: row.get("error_message")?,
-        created_at: row.get("created_at")?,
-        started_at: row.get("started_at")?,
-        last_polled_at: row.get("last_polled_at")?,
-        completed_at: row.get("completed_at")?,
-        updated_at: row.get("updated_at")?,
-    })
+impl TaskRow {
+    /// Decode one `download_tasks` row: the one mapper for the table.
+    pub(crate) fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        let status_text: String = row.get("status")?;
+        let status =
+            TaskStatus::parse(&status_text).ok_or_else(|| unknown_value("status", status_text))?;
+        Ok(Self {
+            id: row.get("id")?,
+            user_id: row.get("user_id")?,
+            artist_name: row.get("artist_name")?,
+            album_title: row.get("album_title")?,
+            status,
+            origin: row.get("origin")?,
+            download_type: row.get("download_type")?,
+            release_group_mbid: row.get("release_group_mbid")?,
+            recording_mbid: row.get("recording_mbid")?,
+            retry_count: row.get("retry_count")?,
+            candidate_index: row.get("candidate_index")?,
+            progress_percent: row.get("progress_percent")?,
+            total_size_bytes: row.get("total_size_bytes")?,
+            downloaded_bytes: row.get("downloaded_bytes")?,
+            quality_format: row.get("quality_format")?,
+            source: row.get("source")?,
+            download_client: row.get("download_client")?,
+            source_username: row.get("source_username")?,
+            search_job_id: row.get("search_job_id")?,
+            error_message: row.get("error_message")?,
+            created_at: row.get("created_at")?,
+            started_at: row.get("started_at")?,
+            last_polled_at: row.get("last_polled_at")?,
+            completed_at: row.get("completed_at")?,
+            updated_at: row.get("updated_at")?,
+        })
+    }
 }
 
 /// Optional task detail columns, stamped after insert.
@@ -281,25 +223,28 @@ pub struct AttemptRow {
     pub row_revision: i64,
 }
 
-fn attempt_from_row(row: &Row<'_>) -> rusqlite::Result<AttemptRow> {
-    let state_text: String = row.get("state")?;
-    let state =
-        AttemptState::parse(&state_text).ok_or_else(|| unknown_value("state", state_text))?;
-    Ok(AttemptRow {
-        id: row.get("id")?,
-        task_id: row.get("task_id")?,
-        source: row.get("source")?,
-        candidate_index: row.get("candidate_index")?,
-        job_name: row.get("job_name")?,
-        state,
-        disposition: row.get("disposition")?,
-        cleanup_failures: row.get("cleanup_failures")?,
-        next_retry_at: row.get("next_retry_at")?,
-        lease_owner: row.get("lease_owner")?,
-        lease_expires_at: row.get("lease_expires_at")?,
-        error_code: row.get("error_code")?,
-        row_revision: row.get("row_revision")?,
-    })
+impl AttemptRow {
+    /// Decode one `download_attempts` row: the one mapper for the table.
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        let state_text: String = row.get("state")?;
+        let state =
+            AttemptState::parse(&state_text).ok_or_else(|| unknown_value("state", state_text))?;
+        Ok(Self {
+            id: row.get("id")?,
+            task_id: row.get("task_id")?,
+            source: row.get("source")?,
+            candidate_index: row.get("candidate_index")?,
+            job_name: row.get("job_name")?,
+            state,
+            disposition: row.get("disposition")?,
+            cleanup_failures: row.get("cleanup_failures")?,
+            next_retry_at: row.get("next_retry_at")?,
+            lease_owner: row.get("lease_owner")?,
+            lease_expires_at: row.get("lease_expires_at")?,
+            error_code: row.get("error_code")?,
+            row_revision: row.get("row_revision")?,
+        })
+    }
 }
 
 /// Quarantine (blocklist) row.
@@ -319,6 +264,33 @@ pub struct QuarantineRow {
     pub quarantined_at: f64,
 }
 
+impl QuarantineRow {
+    /// Decode one `download_quarantine` row: the one mapper for the table.
+    pub(crate) fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            source: row.get("source")?,
+            identity: row.get("identity")?,
+            release_group_mbid: row.get("release_group_mbid")?,
+            reason: row.get("reason")?,
+            quarantined_at: row.get("quarantined_at")?,
+        })
+    }
+}
+
+/// When a failed task's next automatic retry is anchored.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RetryAnchor {
+    /// The task's status wire string.
+    pub status: String,
+    /// Retries the task already is.
+    pub retry_count: i64,
+    /// Terminal time, once terminal.
+    pub completed_at: Option<f64>,
+    /// Last write time.
+    pub updated_at: f64,
+}
+
 /// The download journal over one SQLite connection.
 pub struct DownloadStore<'conn> {
     pub(super) conn: &'conn Connection,
@@ -330,13 +302,22 @@ impl<'conn> DownloadStore<'conn> {
         Self { conn }
     }
 
+    /// Rows of one prepared statement, decoded by `map`.
+    fn rows<T>(
+        &self,
+        text: &str,
+        params: impl rusqlite::Params,
+        map: impl FnMut(&Row<'_>) -> rusqlite::Result<T>,
+    ) -> Result<Vec<T>, StoreError> {
+        let mut stmt = self.conn.prepare_cached(text)?;
+        let rows = stmt.query_map(params, map)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     /// Insert a queued task row.
     pub fn insert_task(&self, task: &NewTask, now: f64) -> Result<(), StoreError> {
         self.conn.execute(
-            "INSERT INTO download_tasks \
-             (id, user_id, artist_name, album_title, release_group_mbid, origin, \
-              retry_count, status, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+            sql::INSERT_TASK.text(),
             rusqlite::params![
                 task.id,
                 task.user_id,
@@ -345,7 +326,6 @@ impl<'conn> DownloadStore<'conn> {
                 task.release_group_mbid,
                 task.origin,
                 task.retry_count,
-                now,
                 now,
             ],
         )?;
@@ -362,10 +342,7 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "INSERT INTO download_tasks \
-             (id, user_id, artist_name, album_title, release_group_mbid, recording_mbid, \
-              download_type, origin, retry_count, status, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, 'track', ?, ?, 'queued', ?, ?)",
+            sql::INSERT_TRACK_TASK.text(),
             rusqlite::params![
                 task.id,
                 task.user_id,
@@ -375,7 +352,6 @@ impl<'conn> DownloadStore<'conn> {
                 recording_mbid,
                 task.origin,
                 task.retry_count,
-                now,
                 now,
             ],
         )?;
@@ -389,17 +365,14 @@ impl<'conn> DownloadStore<'conn> {
         &self,
         release_group_mbid: &str,
     ) -> Result<Option<TaskRow>, StoreError> {
-        self.conn
+        Ok(self
+            .conn
             .query_row(
-                "SELECT * FROM download_tasks \
-                 WHERE release_group_mbid = ? AND download_type = 'album' \
-                   AND status IN ('queued', 'downloading', 'processing') \
-                 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                sql::NEWEST_ACTIVE_FOR_ALBUM.text(),
                 rusqlite::params![release_group_mbid],
-                task_from_row,
+                TaskRow::from_row,
             )
-            .optional()
-            .map_err(StoreError::from)
+            .optional()?)
     }
 
     /// Stamp optional task detail columns after insert (edition pins,
@@ -411,13 +384,7 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE download_tasks \
-             SET release_mbid = COALESCE(?, release_mbid), \
-                 artist_mbid = COALESCE(?, artist_mbid), \
-                 year = COALESCE(?, year), \
-                 track_title = COALESCE(?, track_title), \
-                 updated_at = ? \
-             WHERE id = ?",
+            sql::SET_TASK_DETAILS.text(),
             rusqlite::params![
                 details.release_mbid,
                 details.artist_mbid,
@@ -441,12 +408,7 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE download_tasks \
-             SET release_group_mbid = ?, release_mbid = ?, album_title = ?, \
-                 release_track_mbid = ?, track_number = ?, disc_number = ?, \
-                 track_count = ?, track_duration_seconds = COALESCE(?, track_duration_seconds), \
-                 year = COALESCE(?, year), updated_at = ? \
-             WHERE id = ? AND download_type = 'track'",
+            sql::SET_TRACK_ALBUM.text(),
             rusqlite::params![
                 album.release_group_mbid,
                 album.release_mbid,
@@ -472,8 +434,7 @@ impl<'conn> DownloadStore<'conn> {
         let row: Option<DetailColumns> = self
             .conn
             .query_row(
-                "SELECT release_mbid, artist_mbid, year, track_title \
-                 FROM download_tasks WHERE id = ?",
+                sql::TASK_DETAILS.text(),
                 rusqlite::params![task_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
@@ -490,14 +451,14 @@ impl<'conn> DownloadStore<'conn> {
 
     /// Fetch one task row, if it exists.
     pub fn get_task(&self, task_id: &str) -> Result<Option<TaskRow>, StoreError> {
-        self.conn
+        Ok(self
+            .conn
             .query_row(
-                "SELECT * FROM download_tasks WHERE id = ?",
+                sql::TASK_BY_ID.text(),
                 rusqlite::params![task_id],
-                task_from_row,
+                TaskRow::from_row,
             )
-            .optional()
-            .map_err(StoreError::from)
+            .optional()?)
     }
 
     /// Every task currently in one of the given statuses.
@@ -505,13 +466,9 @@ impl<'conn> DownloadStore<'conn> {
         if statuses.is_empty() {
             return Ok(Vec::new());
         }
-        let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("SELECT * FROM download_tasks WHERE status IN ({placeholders})");
-        let wires: Vec<&str> = statuses.iter().map(|status| status.as_str()).collect();
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(wires), task_from_row)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        let text = sql::tasks_in(ListLen::new(statuses.len()));
+        let wires = statuses.iter().map(|status| status.as_str());
+        self.rows(&text, rusqlite::params_from_iter(wires), TaskRow::from_row)
     }
 
     /// Move a task to a new status, stamping poll and terminal times.
@@ -525,27 +482,11 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
         error: Option<&str>,
     ) -> Result<(), StoreError> {
-        let terminal = status.is_terminal();
         // Terminal rows never move: a retry spawns a successor task while
-        // the original stays settled for audit. The guard lives in the
-        // WHERE clause so a concurrent settle cannot slip between a read
-        // and this write.
+        // the original stays settled for audit.
         let changed = self.conn.execute(
-            "UPDATE download_tasks \
-             SET status = ?, error_message = COALESCE(?, error_message), \
-                 last_polled_at = ?, \
-                 completed_at = CASE WHEN ? THEN ? ELSE completed_at END, \
-                 updated_at = ? \
-             WHERE id = ? AND status NOT IN ('completed', 'partial', 'failed', 'cancelled')",
-            rusqlite::params![
-                status.as_str(),
-                error,
-                now,
-                terminal as i64,
-                now,
-                now,
-                task_id,
-            ],
+            sql::TRANSITION_TASK.text(),
+            rusqlite::params![status.as_str(), error, now, status.is_terminal(), task_id,],
         )?;
         if changed == 0
             && self
@@ -561,10 +502,8 @@ impl<'conn> DownloadStore<'conn> {
 
     /// Record a watchdog poll without changing status.
     pub fn touch_poll(&self, task_id: &str, now: f64) -> Result<(), StoreError> {
-        self.conn.execute(
-            "UPDATE download_tasks SET last_polled_at = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![now, now, task_id],
-        )?;
+        self.conn
+            .execute(sql::TOUCH_POLL.text(), rusqlite::params![now, task_id])?;
         Ok(())
     }
 
@@ -583,8 +522,7 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE download_tasks SET source = ?, source_username = ?, search_job_id = ?, \
-                 candidate_index = ?, updated_at = ? WHERE id = ?",
+            sql::LINK_CANDIDATE.text(),
             rusqlite::params![
                 source,
                 source_username,
@@ -603,12 +541,11 @@ impl<'conn> DownloadStore<'conn> {
     /// `get_reimportable_task_ids`, keyed on the attempt journal instead
     /// of the never-written candidate link.
     pub fn is_reimportable(&self, task_id: &str) -> Result<bool, StoreError> {
-        let found: bool =
-            self.conn
-                .query_row(REIMPORTABLE_SQL, rusqlite::params![task_id], |row| {
-                    row.get(0)
-                })?;
-        Ok(found)
+        Ok(self.conn.query_row(
+            sql::REIMPORTABLE.text(),
+            rusqlite::params![task_id],
+            |row| row.get(0),
+        )?)
     }
 
     /// Start a reimport: a failed or short-landed task goes back to
@@ -618,12 +555,9 @@ impl<'conn> DownloadStore<'conn> {
     /// others. Answers false when the task is missing or not terminal
     /// failed or partial.
     pub fn begin_reimport(&self, task_id: &str, now: f64) -> Result<bool, StoreError> {
-        let changed = self.conn.execute(
-            "UPDATE download_tasks SET status = 'processing', error_message = NULL, \
-                 completed_at = NULL, last_polled_at = ?, updated_at = ? WHERE id = ? \
-             AND status IN ('failed', 'partial')",
-            rusqlite::params![now, now, task_id],
-        )?;
+        let changed = self
+            .conn
+            .execute(sql::BEGIN_REIMPORT.text(), rusqlite::params![now, task_id])?;
         Ok(changed > 0)
     }
 
@@ -637,8 +571,7 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
     ) -> Result<bool, StoreError> {
         let changed = self.conn.execute(
-            "INSERT OR IGNORE INTO download_idempotency_keys \
-             (key, task_id, operation, created_at) VALUES (?, ?, ?, ?)",
+            sql::CLAIM_KEY.text(),
             rusqlite::params![key, task_id, operation, now],
         )?;
         Ok(changed == 1)
@@ -648,24 +581,20 @@ impl<'conn> DownloadStore<'conn> {
     /// Lets a repeat dispatch answer the original task instead of minting
     /// a duplicate.
     pub fn task_id_for_key(&self, key: &str) -> Result<Option<String>, StoreError> {
-        self.conn
-            .query_row(
-                "SELECT task_id FROM download_idempotency_keys WHERE key = ?",
-                rusqlite::params![key],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(StoreError::from)
+        Ok(self
+            .conn
+            .query_row(sql::TASK_FOR_KEY.text(), rusqlite::params![key], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?)
     }
 
     /// Release an idempotency key claimed by a dispatch whose insert then
     /// failed. Without this the key would dangle, pointing a repeat at a
     /// task id that was never written.
     pub fn release_key(&self, key: &str) -> Result<(), StoreError> {
-        self.conn.execute(
-            "DELETE FROM download_idempotency_keys WHERE key = ?",
-            rusqlite::params![key],
-        )?;
+        self.conn
+            .execute(sql::RELEASE_KEY.text(), rusqlite::params![key])?;
         Ok(())
     }
 
@@ -683,10 +612,7 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "INSERT INTO download_attempts \
-             (id, task_id, source, candidate_index, job_name, handle_json, \
-              state, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            sql::INSERT_ATTEMPT.text(),
             rusqlite::params![
                 attempt_id,
                 task_id,
@@ -696,7 +622,6 @@ impl<'conn> DownloadStore<'conn> {
                 handle_json,
                 state.as_str(),
                 now,
-                now,
             ],
         )?;
         Ok(())
@@ -704,40 +629,59 @@ impl<'conn> DownloadStore<'conn> {
 
     /// Fetch one attempt row, if it exists.
     pub fn get_attempt(&self, attempt_id: &str) -> Result<Option<AttemptRow>, StoreError> {
-        self.conn
+        Ok(self
+            .conn
             .query_row(
-                "SELECT * FROM download_attempts WHERE id = ?",
+                sql::ATTEMPT_BY_ID.text(),
                 rusqlite::params![attempt_id],
-                attempt_from_row,
+                AttemptRow::from_row,
             )
-            .optional()
-            .map_err(StoreError::from)
+            .optional()?)
     }
 
     /// The journaled client handle for one attempt, if any. Empty means
     /// the attempt never reached the client (a crash between journaling
     /// and enqueue); the worker re-enqueues rather than polling it.
     pub fn attempt_handle_json(&self, attempt_id: &str) -> Result<Option<String>, StoreError> {
-        self.conn
+        let handle = self
+            .conn
             .query_row(
-                "SELECT handle_json FROM download_attempts WHERE id = ?",
+                sql::ATTEMPT_HANDLE.text(),
                 rusqlite::params![attempt_id],
                 |row| row.get::<_, String>(0),
             )
-            .optional()
-            .map(|value| value.filter(|text| !text.is_empty()))
-            .map_err(StoreError::from)
+            .optional()?;
+        Ok(handle.filter(|text| !text.is_empty()))
+    }
+
+    /// Stored handles of a task's attempts on one source.
+    pub fn source_handles(&self, task_id: &str, source: &str) -> Result<Vec<String>, StoreError> {
+        self.rows(
+            sql::SOURCE_HANDLES.text(),
+            rusqlite::params![task_id, source],
+            |row| row.get(0),
+        )
+    }
+
+    /// The newest client handle a task's attempts recorded, as stored JSON.
+    pub fn newest_handle(&self, task_id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                sql::NEWEST_HANDLE.text(),
+                rusqlite::params![task_id],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     /// Every attempt for a task, oldest first.
     pub fn list_attempts(&self, task_id: &str) -> Result<Vec<AttemptRow>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT * FROM download_attempts WHERE task_id = ? \
-             ORDER BY candidate_index, created_at",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![task_id], attempt_from_row)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        self.rows(
+            sql::ATTEMPTS_FOR_TASK.text(),
+            rusqlite::params![task_id],
+            AttemptRow::from_row,
+        )
     }
 
     /// Transition an attempt guarded by its revision (compare-and-swap).
@@ -757,24 +701,12 @@ impl<'conn> DownloadStore<'conn> {
         clear_lease: bool,
     ) -> Result<Option<AttemptRow>, StoreError> {
         let changed = self.conn.execute(
-            "UPDATE download_attempts \
-             SET state = ?, \
-                 disposition = COALESCE(?, disposition), \
-                 error_code = ?, \
-                 lease_owner = CASE WHEN ? THEN NULL ELSE lease_owner END, \
-                 lease_expires_at = CASE WHEN ? THEN NULL ELSE lease_expires_at END, \
-                 completed_at = CASE WHEN ? IN ('complete', 'preserved', 'needs_attention') \
-                                     THEN ? ELSE completed_at END, \
-                 updated_at = ?, row_revision = row_revision + 1 \
-             WHERE id = ? AND row_revision = ?",
+            sql::TRANSITION_ATTEMPT.text(),
             rusqlite::params![
                 state.as_str(),
                 disposition,
                 error_code,
-                clear_lease as i64,
-                clear_lease as i64,
-                state.as_str(),
-                now,
+                clear_lease,
                 now,
                 attempt_id,
                 expected_revision,
@@ -801,30 +733,16 @@ impl<'conn> DownloadStore<'conn> {
         limit: i64,
         lease_seconds: f64,
     ) -> Result<Vec<AttemptRow>, StoreError> {
+        let expires = now + lease_seconds;
         self.conn.execute(
-            "UPDATE download_attempts \
-             SET lease_owner = ?, lease_expires_at = ?, updated_at = ?, \
-                 row_revision = row_revision + 1 \
-             WHERE id IN ( \
-               SELECT id FROM download_attempts \
-               WHERE state IN ('cleanup_pending', 'workspace_removed', 'needs_attention') \
-                 AND next_retry_at <= ? \
-                 AND (lease_owner IS NULL OR lease_expires_at IS NULL \
-                      OR lease_expires_at <= ?) \
-               ORDER BY next_retry_at, created_at, id LIMIT ?)",
-            rusqlite::params![worker_id, now + lease_seconds, now, now, now, limit],
+            sql::CLAIM_CLEANUP.text(),
+            rusqlite::params![worker_id, expires, now, limit],
         )?;
-        let mut stmt = self.conn.prepare(
-            "SELECT * FROM download_attempts \
-             WHERE lease_owner = ? AND lease_expires_at = ? \
-             ORDER BY next_retry_at, created_at, id",
-        )?;
-        let rows = stmt.query_map(
-            rusqlite::params![worker_id, now + lease_seconds],
-            attempt_from_row,
-        )?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        self.rows(
+            sql::CLAIMED_ATTEMPTS.text(),
+            rusqlite::params![worker_id, expires],
+            AttemptRow::from_row,
+        )
     }
 
     /// Record a deferred cleanup: bump failures, stamp the error, and push
@@ -845,11 +763,7 @@ impl<'conn> DownloadStore<'conn> {
         }
         let backoff = 300.0 * 2_f64.powi(row.cleanup_failures.min(6) as i32);
         let changed = self.conn.execute(
-            "UPDATE download_attempts \
-             SET cleanup_failures = cleanup_failures + 1, error_code = ?, \
-                 next_retry_at = ?, lease_owner = NULL, lease_expires_at = NULL, \
-                 updated_at = ?, row_revision = row_revision + 1 \
-             WHERE id = ? AND row_revision = ?",
+            sql::RECORD_CLEANUP_FAILURE.text(),
             rusqlite::params![
                 error_code,
                 now + backoff,
@@ -868,14 +782,9 @@ impl<'conn> DownloadStore<'conn> {
     /// row needing attention or a retried cleanup that failed three times.
     /// Fewer failures are a blip the next retry usually clears.
     pub fn cleanup_warning_count(&self) -> Result<u64, StoreError> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT task_id) FROM download_attempts \
-             WHERE state = 'needs_attention' \
-                OR (state IN ('cleanup_pending', 'workspace_removed') \
-                    AND cleanup_failures >= 3)",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 = self
+            .conn
+            .query_row(sql::CLEANUP_WARNING_COUNT.text(), [], |row| row.get(0))?;
         Ok(u64::try_from(count).unwrap_or(0))
     }
 
@@ -889,7 +798,7 @@ impl<'conn> DownloadStore<'conn> {
         job_name: &str,
     ) -> Result<bool, StoreError> {
         let count: i64 = self.conn.query_row(
-            CLEANUP_DEBT_SQL,
+            sql::CLEANUP_DEBT.text(),
             rusqlite::params![source, task_id, job_name],
             |row| row.get(0),
         )?;
@@ -957,24 +866,14 @@ impl<'conn> DownloadStore<'conn> {
     /// drops its records. Answers false when the task is missing or already
     /// terminal (nothing to stop).
     pub fn cancel_task(&self, task_id: &str, now: f64) -> Result<bool, StoreError> {
-        let changed = self.conn.execute(
-            "UPDATE download_tasks \
-             SET status = 'cancelled', last_polled_at = ?, completed_at = ?, \
-                 cancelled_at = ?, updated_at = ? \
-             WHERE id = ? AND status NOT IN ('completed', 'partial', 'failed', 'cancelled')",
-            rusqlite::params![now, now, now, now, task_id],
-        )?;
+        let changed = self
+            .conn
+            .execute(sql::CANCEL_TASK.text(), rusqlite::params![now, task_id])?;
         if changed == 0 {
             return Ok(false);
         }
-        self.conn.execute(
-            "UPDATE download_attempts \
-             SET state = 'cleanup_pending', disposition = 'discard', \
-                 lease_owner = NULL, lease_expires_at = NULL, next_retry_at = ?, \
-                 updated_at = ?, row_revision = row_revision + 1 \
-             WHERE task_id = ? AND state IN ('acquiring', 'in_use')",
-            rusqlite::params![now, now, task_id],
-        )?;
+        self.conn
+            .execute(sql::CANCEL_ATTEMPTS.text(), rusqlite::params![now, task_id])?;
         Ok(true)
     }
 
@@ -992,13 +891,11 @@ impl<'conn> DownloadStore<'conn> {
         ttl_seconds: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "DELETE FROM download_quarantine WHERE quarantined_at < ?",
+            sql::PRUNE_QUARANTINE.text(),
             rusqlite::params![now - ttl_seconds],
         )?;
         self.conn.execute(
-            "INSERT OR IGNORE INTO download_quarantine \
-             (source, identity, release_group_mbid, reason, quarantined_at) \
-             VALUES (?, ?, ?, ?, ?)",
+            sql::INSERT_QUARANTINE.text(),
             rusqlite::params![source, identity, release_group_mbid, reason, now],
         )?;
         Ok(())
@@ -1010,32 +907,30 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
         ttl_seconds: f64,
     ) -> Result<Vec<(String, String)>, StoreError> {
-        let mut stmt = self.conn.prepare(QUARANTINE_SET_SQL)?;
-        let rows = stmt.query_map(rusqlite::params![now - ttl_seconds], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        self.rows(
+            sql::QUARANTINE_SET.text(),
+            rusqlite::params![now - ttl_seconds],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
     }
 
     /// Every quarantine row, newest first (for the review surface).
     pub fn list_quarantine(&self) -> Result<Vec<QuarantineRow>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, source, identity, release_group_mbid, reason, quarantined_at \
-             FROM download_quarantine ORDER BY quarantined_at DESC",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(QuarantineRow {
-                id: row.get(0)?,
-                source: row.get(1)?,
-                identity: row.get(2)?,
-                release_group_mbid: row.get(3)?,
-                reason: row.get(4)?,
-                quarantined_at: row.get(5)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        self.rows(sql::QUARANTINE_ALL.text(), [], QuarantineRow::from_row)
+    }
+
+    /// One page of quarantine entries, newest first.
+    pub fn quarantine_page(
+        &self,
+        page: i64,
+        page_size: i64,
+    ) -> Result<Vec<QuarantineRow>, StoreError> {
+        let offset = (page.max(1) - 1) * page_size;
+        self.rows(
+            sql::QUARANTINE_PAGE.text(),
+            rusqlite::params![page_size, offset],
+            QuarantineRow::from_row,
+        )
     }
 
     /// Clear an album's blocklist on manual retry: an explicit "try again"
@@ -1044,7 +939,7 @@ impl<'conn> DownloadStore<'conn> {
     /// auto-retry never clears it.
     pub fn delete_quarantine_for_album(&self, release_group_mbid: &str) -> Result<i64, StoreError> {
         let removed = self.conn.execute(
-            "DELETE FROM download_quarantine WHERE release_group_mbid = ?",
+            sql::DELETE_QUARANTINE_FOR_ALBUM.text(),
             rusqlite::params![release_group_mbid],
         )?;
         Ok(removed as i64)
@@ -1062,10 +957,7 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
     ) -> Result<i64, StoreError> {
         self.conn.execute(
-            "INSERT INTO held_imports \
-             (user_id, held_path, reason, source_task_id, release_group_mbid, \
-              status, created_at) \
-             VALUES (?, ?, ?, ?, ?, 'held', ?)",
+            sql::INSERT_HELD.text(),
             rusqlite::params![
                 user_id,
                 held_path,
@@ -1083,8 +975,7 @@ impl<'conn> DownloadStore<'conn> {
     /// discarding the held track clears the gate.
     pub fn has_unresolved_held_for_task(&self, source_task_id: &str) -> Result<bool, StoreError> {
         let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM held_imports \
-             WHERE source_task_id = ? AND status = 'held'",
+            sql::UNRESOLVED_HELD_FOR_TASK.text(),
             rusqlite::params![source_task_id],
             |row| row.get(0),
         )?;
@@ -1099,20 +990,11 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
         limit: i64,
     ) -> Result<Vec<(String, String)>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT source_task_id, user_id FROM held_imports \
-             WHERE status = 'held' AND source_task_id IS NOT NULL \
-               AND reason LIKE 'management:%' \
-               AND management_next_retry_at IS NOT NULL \
-               AND management_next_retry_at <= ? \
-             GROUP BY source_task_id, user_id \
-             ORDER BY MIN(management_next_retry_at), MIN(id) LIMIT ?",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![now, limit], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        self.rows(
+            sql::DUE_HELD_UNITS.text(),
+            rusqlite::params![now, limit],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
     }
 
     /// Schedule the next management retry for held rows. Only `held`
@@ -1126,17 +1008,12 @@ impl<'conn> DownloadStore<'conn> {
         if held_ids.is_empty() {
             return Ok(());
         }
-        let placeholders = held_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "UPDATE held_imports SET management_retry_count = ?, \
-             management_next_retry_at = ? WHERE id IN ({placeholders}) \
-             AND status = 'held' AND reason LIKE 'management:%'"
-        );
+        let text = sql::schedule_held_retry(ListLen::new(held_ids.len()));
         let mut params: Vec<rusqlite::types::Value> =
             vec![retry_count.into(), next_retry_at.into()];
         params.extend(held_ids.iter().map(|id| (*id).into()));
         self.conn
-            .execute(&sql, rusqlite::params_from_iter(params))?;
+            .execute(&text, rusqlite::params_from_iter(params))?;
         Ok(())
     }
 
@@ -1147,13 +1024,51 @@ impl<'conn> DownloadStore<'conn> {
     /// exclusion on both sides: a failed upgrade never auto-retries, and
     /// a newer upgrade cannot suppress a user task's legitimate retry.
     pub fn list_retryable(&self, max_retry_count: i64) -> Result<Vec<TaskRow>, StoreError> {
-        let mut stmt = self.conn.prepare(RETRYABLE_SQL)?;
-        let rows = stmt.query_map(rusqlite::params![max_retry_count], task_from_row)?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
+        self.rows(
+            sql::RETRYABLE.text(),
+            rusqlite::params![max_retry_count],
+            TaskRow::from_row,
+        )
+    }
+
+    /// The retry anchor of one task while it is still the newest task for
+    /// its target, so the wanted view can show when its retry is due.
+    /// `None` once a successor exists or for an upgrade.
+    pub fn retry_anchor(&self, task_id: &str) -> Result<Option<RetryAnchor>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                sql::RETRY_ANCHOR.text(),
+                rusqlite::params![task_id],
+                |row| {
+                    Ok(RetryAnchor {
+                        status: row.get(0)?,
+                        retry_count: row.get(1)?,
+                        completed_at: row.get(2)?,
+                        updated_at: row.get(3)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Newest task one owner started for an album or recording since a
+    /// time (epoch seconds).
+    pub fn task_since(
+        &self,
+        owner: &str,
+        kind: &str,
+        key: &str,
+        since: f64,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                sql::TASK_SINCE.text(),
+                rusqlite::params![owner, kind, key, since],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     /// Active (`downloading`/`processing`) tasks no poller has touched
@@ -1164,13 +1079,10 @@ impl<'conn> DownloadStore<'conn> {
         now: f64,
         threshold_seconds: f64,
     ) -> Result<Vec<TaskRow>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT * FROM download_tasks \
-             WHERE status IN ('downloading', 'processing') \
-               AND COALESCE(last_polled_at, started_at, created_at, 0) < ?",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![now - threshold_seconds], task_from_row)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        self.rows(
+            sql::UNPOLLED_ACTIVE.text(),
+            rusqlite::params![now - threshold_seconds],
+            TaskRow::from_row,
+        )
     }
 }

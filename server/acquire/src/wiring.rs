@@ -1065,6 +1065,7 @@ impl AcquireSetup {
     /// ([`super::downloads::routes`]).
     pub fn downloads_routes(&self) -> super::downloads::DownloadsRoutes {
         super::downloads::DownloadsRoutes::new(
+            self.journal.clone(),
             self.worker.clone(),
             super::downloads::upgrades::Upgrades::new(
                 self.flows.worklist.clone(),

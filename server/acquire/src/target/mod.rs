@@ -112,11 +112,11 @@ impl Targets {
         let details = {
             let task_id = task.id.clone();
             self.journal
-                .run("downloads.target.details", move |store| {
+                .read("downloads.target.details", move |store| {
                     store.task_details(&task_id)
                 })
                 .await
-                .map_err(TargetError::LocalFault)?
+                .map_err(|error| TargetError::LocalFault(error.to_string()))?
         };
         let manifest = self.read_manifest(&task.id).await;
         if task.download_type == "track" {
@@ -402,7 +402,7 @@ impl Targets {
                     store.set_track_album(&task_id, &columns, now_unix_f64())
                 })
                 .await
-                .map_err(TargetError::LocalFault)?;
+                .map_err(|error| TargetError::LocalFault(error.to_string()))?;
         }
         let tracklist = expected_tracks(release);
         let mut manifest = self.manifest_or_new(task).await;

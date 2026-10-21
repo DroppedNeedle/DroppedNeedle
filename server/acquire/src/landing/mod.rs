@@ -52,7 +52,7 @@ use self::specs::{Check, Disposition, QualityPolicy, Rejection, Target, Verdict}
 use super::downloads::journal::Journal;
 use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
 use super::downloads::manifest::DownloadManifest;
-use super::downloads::store::{TaskDetails, TaskRow};
+use super::downloads::store::{StoreError, TaskDetails, TaskRow};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_library::import::ImportJoin;
@@ -79,6 +79,21 @@ pub const LIBRARY_CHANGED: &str = "library_changed";
 /// Rejection code for a landing whose download settings cannot be read:
 /// it waits for them to be saved again, and the source is not blamed.
 pub const SETTINGS_UNREADABLE: &str = "settings_unreadable";
+
+/// Rejection code for a landing whose task records cannot be read right
+/// now (the database is busy): it waits for the next pass, the files stay
+/// and the source is not blamed.
+pub const JOURNAL_UNREADABLE: &str = "journal_unreadable";
+
+/// The rejection a landing answers when its task records cannot be read.
+fn journal_unreadable() -> Rejection {
+    Rejection {
+        code: JOURNAL_UNREADABLE,
+        disposition: Disposition::Temporary,
+        quarantine: None,
+        detail: "the download's records cannot be read".to_owned(),
+    }
+}
 
 /// Rejection code for a landing the import naming script gave no usable
 /// path: the files wait for the script to be fixed, and the source is not
@@ -282,17 +297,16 @@ impl LandingService {
                 return self.reject_unprobed(task, attempt_id, rejection).await;
             }
         };
-        let details = {
-            let task_id = task.id.clone();
-            self.journal
-                .run("downloads.landing.details", move |store| {
-                    store.task_details(&task_id)
-                })
-                .await
-                .unwrap_or_else(|error| {
-                    tracing::warn!(task_id = %task.id, %error, "task details unreadable");
-                    TaskDetails::default()
-                })
+        // Details that do not read are never taken as empty: that would
+        // drop the task's edition pin. The landing waits instead.
+        let details = match self.journal.read_task_details(&task.id).await {
+            Ok(details) => details,
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "task details unreadable");
+                return self
+                    .reject_unprobed(task, attempt_id, journal_unreadable())
+                    .await;
+            }
         };
         let mut target = target_for(task, &details, manifest);
         target.wait_for_files = patient;
@@ -341,10 +355,17 @@ impl LandingService {
                 return self.reject_unprobed(task, attempt_id, rejection).await;
             }
         };
-        if landing.nothing_found()
-            && let Some(report) = self.already_landed(task, attempt_id).await
-        {
-            return report;
+        if landing.nothing_found() {
+            match self.already_landed(task, attempt_id).await {
+                Ok(Some(report)) => return report,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(task_id = %task.id, %error, "last landing unreadable");
+                    return self
+                        .reject_unprobed(task, attempt_id, journal_unreadable())
+                        .await;
+                }
+            }
         }
         let mut policy = QualityPolicy {
             quality_min: settings.quality_min.clone(),
@@ -454,32 +475,31 @@ impl LandingService {
         &self,
         task: &TaskRow,
         attempt_id: Option<&str>,
-    ) -> Option<LandingReport> {
+    ) -> Result<Option<LandingReport>, StoreError> {
         let task_id = task.id.clone();
+        let attempt = attempt_id.map(str::to_owned);
         let last = self
             .journal
-            .run("downloads.landing.last", move |store| {
-                store.latest_import_decision(&task_id)
+            .read("downloads.landing.last", move |store| {
+                store.last_landing_of_attempt(&task_id, attempt.as_deref())
             })
-            .await
-            .ok()
-            .flatten()?;
-        if last.attempt_id.as_deref() != attempt_id {
-            return None;
-        }
+            .await?;
+        let Some(last) = last else {
+            return Ok(None);
+        };
         let complete = match last.outcome.as_str() {
             "imported" => true,
             "partial" => false,
-            _ => return None,
+            _ => return Ok(None),
         };
         tracing::info!(task_id = %task.id, "landing already imported this attempt");
-        Some(LandingReport {
+        Ok(Some(LandingReport {
             result: LandingResult::Imported { complete },
             files_imported: usize::try_from(last.files_imported).unwrap_or(0),
             files_held: usize::try_from(last.files_held).unwrap_or(0),
             // Short with nothing left to ask a source for: local holds.
             local_only: !complete && last.missing_positions.trim() == "[]",
-        })
+        }))
     }
 
     /// Carry out an import plan: fingerprint, publish, hold what must be

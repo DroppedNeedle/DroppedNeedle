@@ -17,7 +17,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use super::held_rows::{self, HeldRow};
+use super::held_rows::HeldRow;
+use super::journal::Journal;
 use super::queue_rows::Viewer;
 use super::state::TaskStatus;
 use crate::landing::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary};
@@ -90,6 +91,7 @@ pub enum BulkSkip {
 /// The held-import review over the download worker.
 #[derive(Clone)]
 pub struct HeldImports {
+    journal: Arc<Journal>,
     worker: Arc<DownloadWorker>,
     /// Held ids an action runs on right now; a second action on the same
     /// file is refused instead of importing it twice.
@@ -118,15 +120,13 @@ fn now_unix_f64() -> f64 {
 }
 
 impl HeldImports {
-    pub fn new(worker: Arc<DownloadWorker>) -> Self {
+    /// The review over `journal`; `worker` lands the files and wakes.
+    pub fn new(journal: Arc<Journal>, worker: Arc<DownloadWorker>) -> Self {
         Self {
+            journal,
             worker,
             busy: Arc::new(Mutex::new(HashSet::new())),
         }
-    }
-
-    fn pool(&self) -> &sqlx::SqlitePool {
-        self.worker.journal().db().pool()
     }
 
     /// Held files the viewer may see, newest first.
@@ -135,7 +135,8 @@ impl HeldImports {
         viewer: &Viewer,
         release_group_mbid: Option<&str>,
     ) -> Result<Vec<HeldRow>, HeldError> {
-        held_rows::list_held(self.pool(), viewer, release_group_mbid, None)
+        self.journal
+            .read_held(viewer, release_group_mbid, None)
             .await
             .map_err(unavailable)
     }
@@ -143,7 +144,9 @@ impl HeldImports {
     /// One held file the viewer may see. Someone else's file answers
     /// not found, as in v2.
     pub async fn get(&self, viewer: &Viewer, id: i64) -> Result<HeldRow, HeldError> {
-        let row = held_rows::get_held(self.pool(), id)
+        let row = self
+            .journal
+            .read_held_row(id)
             .await
             .map_err(unavailable)?
             .filter(|row| viewer.may_touch(&row.user_id))
@@ -224,7 +227,9 @@ impl HeldImports {
         ids: Option<Vec<i64>>,
         actor: &str,
     ) -> Result<Vec<BulkItem>, HeldError> {
-        let rows = held_rows::list_held(self.pool(), viewer, None, None)
+        let rows = self
+            .journal
+            .read_held(viewer, None, None)
             .await
             .map_err(unavailable)?;
         let candidates: Vec<HeldRow> = match ids {
@@ -311,13 +316,12 @@ impl HeldImports {
         let count = rows.len();
         self.discard_rows(rows).await?;
         let task = task_id.to_owned();
-        self.worker
-            .journal()
+        self.journal
             .run_foreground("downloads.held_verdict_clear", move |store| {
                 store.clear_wrong_product_verdict(&task)
             })
             .await
-            .map_err(HeldError::Unavailable)?;
+            .map_err(unavailable)?;
         self.worker.wake();
         Ok(count)
     }
@@ -330,7 +334,9 @@ impl HeldImports {
         task_id: &str,
         local: bool,
     ) -> Result<Vec<HeldRow>, HeldError> {
-        let rows: Vec<HeldRow> = held_rows::list_held(self.pool(), viewer, None, Some(task_id))
+        let rows: Vec<HeldRow> = self
+            .journal
+            .read_held(viewer, None, Some(task_id))
             .await
             .map_err(unavailable)?
             .into_iter()
@@ -374,13 +380,12 @@ impl HeldImports {
         }
         let id = row.id;
         let now = now_unix_f64();
-        self.worker
-            .journal()
+        self.journal
             .run_foreground("downloads.held_vanished", move |store| {
                 store.resolve_held(&[id], "discarded", now)
             })
             .await
-            .map_err(HeldError::Unavailable)?;
+            .map_err(unavailable)?;
         Err(HeldError::Refused(
             "The held file is no longer on disk. Download the album again.".to_owned(),
         ))
@@ -557,26 +562,24 @@ impl HeldImports {
     async fn finish(&self, row: &HeldRow, status: &'static str) -> Result<(), HeldError> {
         let id = row.id;
         let now = now_unix_f64();
-        self.worker
-            .journal()
+        self.journal
             .run_foreground("downloads.held_resolve", move |store| {
                 store.resolve_held(&[id], status, now)
             })
             .await
-            .map_err(HeldError::Unavailable)?;
+            .map_err(unavailable)?;
         Ok(())
     }
 
     async fn discard_rows(&self, rows: Vec<HeldRow>) -> Result<(), HeldError> {
         let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
         let now = now_unix_f64();
-        self.worker
-            .journal()
+        self.journal
             .run_foreground("downloads.held_discard", move |store| {
                 store.resolve_held(&ids, "discarded", now)
             })
             .await
-            .map_err(HeldError::Unavailable)?;
+            .map_err(unavailable)?;
         for row in rows {
             remove_held_copy(Path::new(&row.held_path)).await;
         }
@@ -595,7 +598,7 @@ impl HeldImports {
         let Some(task_id) = row.source_task_id.clone() else {
             return;
         };
-        let task = match self.worker.journal().read_task(&task_id).await {
+        let task = match self.journal.read_task(&task_id).await {
             Ok(Some(task)) => task,
             Ok(None) => return,
             Err(error) => {
@@ -610,7 +613,7 @@ impl HeldImports {
             user_id: task.user_id.clone(),
             admin: true,
         };
-        match held_rows::list_held(self.pool(), &viewer, None, Some(&task_id)).await {
+        match self.journal.read_held(&viewer, None, Some(&task_id)).await {
             Ok(rows) if rows.is_empty() => {}
             Ok(_) => return,
             Err(error) => {
@@ -635,8 +638,7 @@ impl HeldImports {
         let now = now_unix_f64();
         let id = task_id.clone();
         match self
-            .worker
-            .journal()
+            .journal
             .run("downloads.held_settle", move |store| {
                 store.complete_after_manual_import(&id, now)
             })

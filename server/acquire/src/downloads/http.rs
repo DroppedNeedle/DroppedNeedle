@@ -23,6 +23,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::held::HeldImports;
 use super::held_http::{self, ReviewState};
+use super::journal::Journal;
 use super::queue::{DownloadQueue, QueueError, TaskFile, TaskView};
 use super::queue_rows::{ListFilter, Viewer};
 use super::state::TaskStatus;
@@ -771,15 +772,15 @@ pub struct DownloadsRoutes {
 }
 
 impl DownloadsRoutes {
-    /// The queue over `worker`, upgrades through `upgrades`.
-    pub fn new(worker: Arc<DownloadWorker>, upgrades: Upgrades) -> Self {
+    /// The queue over `journal` and `worker`, upgrades through `upgrades`.
+    pub fn new(journal: Arc<Journal>, worker: Arc<DownloadWorker>, upgrades: Upgrades) -> Self {
         Self {
             review: ReviewState {
-                held: HeldImports::new(worker.clone()),
+                held: HeldImports::new(journal.clone(), worker.clone()),
                 upgrades,
             },
             queue: DownloadsState {
-                queue: DownloadQueue::new(worker.clone()),
+                queue: DownloadQueue::new(journal, worker.clone()),
                 worker,
             },
         }
@@ -854,7 +855,11 @@ pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<axum::Router, Str
         Arc::new(dispatch),
     );
     Ok(routes()
-        .with_state(DownloadsRoutes::new(worker, upgrades))
+        .with_state(DownloadsRoutes::new(
+            worker.journal().clone(),
+            worker,
+            upgrades,
+        ))
         .into_router())
 }
 

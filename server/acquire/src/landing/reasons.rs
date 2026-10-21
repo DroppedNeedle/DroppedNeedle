@@ -168,6 +168,11 @@ pub const CATALOG: &[Reason] = &[
         "Save Settings, Downloads again. The import then goes ahead by itself.",
     ),
     reason(
+        "journal_unreadable",
+        "The download's records could not be read just now, so the files wait where they are.",
+        "Nothing to do: DroppedNeedle tries again by itself.",
+    ),
+    reason(
         "naming_script_failed",
         "The import naming script gave no usable path for these files, so they wait where they are.",
         "Fix the import naming script in Settings, Library, then retry import.",

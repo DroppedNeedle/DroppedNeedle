@@ -122,7 +122,7 @@ impl DownloadWorker {
             let task_id = task.id.clone();
             match self
                 .journal
-                .run("downloads.review.details", move |store| {
+                .read("downloads.review.details", move |store| {
                     store.task_details(&task_id)
                 })
                 .await

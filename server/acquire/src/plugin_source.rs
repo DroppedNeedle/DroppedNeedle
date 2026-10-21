@@ -210,7 +210,7 @@ impl PluginDownloadSource {
             .journal
             .read_quarantine_set(now, QUARANTINE_TTL_SECONDS)
             .await
-            .map_err(SourceError::LocalFault)?
+            .map_err(|error| SourceError::LocalFault(error.to_string()))?
             .into_iter()
             .filter(|(source, _)| *source == self.key)
             .map(|(_, identity)| identity)
@@ -314,7 +314,7 @@ impl DownloadSource for PluginDownloadSource {
             .journal
             .read_task(task_id)
             .await
-            .map_err(SourceError::LocalFault)?
+            .map_err(|error| SourceError::LocalFault(error.to_string()))?
             .ok_or_else(|| SourceError::Rejected(format!("unknown download task {task_id}")))?;
         let target = super::sources::resolve_target(self.targets.as_ref(), &task).await?;
         let quarantined = self.quarantined().await?;

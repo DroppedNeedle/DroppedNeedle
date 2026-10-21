@@ -2,10 +2,10 @@
 //! may see, resolving them, and settling a task once a person imported
 //! what it held.
 
-use rusqlite::params;
-use sqlx::{Row as _, SqlitePool, sqlite::SqliteRow};
+use rusqlite::{OptionalExtension as _, Row, params};
 
 use super::queue_rows::Viewer;
+use super::sql;
 use super::store::{DownloadStore, StoreError};
 
 /// One held file as the review shows it.
@@ -43,77 +43,68 @@ pub struct HeldRow {
     pub created_at: f64,
 }
 
-const HELD_COLUMNS: &str = "id, user_id, release_group_mbid, release_mbid, release_track_mbid, \
-     recording_mbid, track_number, disc_number, track_title, artist_name, album_title, year, \
-     held_path, original_filename, file_format, duration_seconds, expected_duration_seconds, \
-     reason, reason_text, reason_action, reason_detail, evidence_title, evidence_artist, \
-     evidence_score, source, source_task_id, origin, management_retry_count, \
-     management_next_retry_at, created_at";
-
-fn held_from_row(row: &SqliteRow) -> Result<HeldRow, sqlx::Error> {
-    Ok(HeldRow {
-        id: row.try_get("id")?,
-        user_id: row.try_get("user_id")?,
-        release_group_mbid: row.try_get("release_group_mbid")?,
-        release_mbid: row.try_get("release_mbid")?,
-        release_track_mbid: row.try_get("release_track_mbid")?,
-        recording_mbid: row.try_get("recording_mbid")?,
-        track_number: row.try_get("track_number")?,
-        disc_number: row.try_get("disc_number")?,
-        track_title: row.try_get("track_title")?,
-        artist_name: row.try_get("artist_name")?,
-        album_title: row.try_get("album_title")?,
-        year: row.try_get("year")?,
-        held_path: row.try_get("held_path")?,
-        original_filename: row.try_get("original_filename")?,
-        file_format: row.try_get("file_format")?,
-        duration_seconds: row.try_get("duration_seconds")?,
-        expected_duration_seconds: row.try_get("expected_duration_seconds")?,
-        reason: row.try_get("reason")?,
-        reason_text: row.try_get("reason_text")?,
-        reason_action: row.try_get("reason_action")?,
-        reason_detail: row.try_get("reason_detail")?,
-        evidence_title: row.try_get("evidence_title")?,
-        evidence_artist: row.try_get("evidence_artist")?,
-        evidence_score: row.try_get("evidence_score")?,
-        source: row.try_get("source")?,
-        source_task_id: row.try_get("source_task_id")?,
-        origin: row.try_get("origin")?,
-        management_retry_count: row.try_get("management_retry_count")?,
-        management_next_retry_at: row.try_get("management_next_retry_at")?,
-        created_at: row.try_get("created_at")?,
-    })
+impl HeldRow {
+    /// Decode one `held_imports` row as the review reads it.
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            user_id: row.get("user_id")?,
+            release_group_mbid: row.get("release_group_mbid")?,
+            release_mbid: row.get("release_mbid")?,
+            release_track_mbid: row.get("release_track_mbid")?,
+            recording_mbid: row.get("recording_mbid")?,
+            track_number: row.get("track_number")?,
+            disc_number: row.get("disc_number")?,
+            track_title: row.get("track_title")?,
+            artist_name: row.get("artist_name")?,
+            album_title: row.get("album_title")?,
+            year: row.get("year")?,
+            held_path: row.get("held_path")?,
+            original_filename: row.get("original_filename")?,
+            file_format: row.get("file_format")?,
+            duration_seconds: row.get("duration_seconds")?,
+            expected_duration_seconds: row.get("expected_duration_seconds")?,
+            reason: row.get("reason")?,
+            reason_text: row.get("reason_text")?,
+            reason_action: row.get("reason_action")?,
+            reason_detail: row.get("reason_detail")?,
+            evidence_title: row.get("evidence_title")?,
+            evidence_artist: row.get("evidence_artist")?,
+            evidence_score: row.get("evidence_score")?,
+            source: row.get("source")?,
+            source_task_id: row.get("source_task_id")?,
+            origin: row.get("origin")?,
+            management_retry_count: row.get("management_retry_count")?,
+            management_next_retry_at: row.get("management_next_retry_at")?,
+            created_at: row.get("created_at")?,
+        })
+    }
 }
 
-/// Held files the viewer may see (admins see everyone's), newest first,
-/// optionally for one album or one download.
-pub async fn list_held(
-    pool: &SqlitePool,
-    viewer: &Viewer,
-    release_group_mbid: Option<&str>,
-    source_task_id: Option<&str>,
-) -> Result<Vec<HeldRow>, sqlx::Error> {
-    let sql = format!(
-        "SELECT {HELD_COLUMNS} FROM held_imports WHERE status = 'held' \
-           AND (?1 IS NULL OR user_id = ?1) \
-           AND (?2 IS NULL OR lower(release_group_mbid) = lower(?2)) \
-           AND (?3 IS NULL OR source_task_id = ?3) \
-         ORDER BY created_at DESC, id DESC"
-    );
-    let rows = sqlx::query(&sql)
-        .bind(viewer.owner_filter())
-        .bind(release_group_mbid)
-        .bind(source_task_id)
-        .fetch_all(pool)
-        .await?;
-    rows.iter().map(held_from_row).collect()
-}
+impl DownloadStore<'_> {
+    /// Held files the viewer may see (admins see everyone's), newest first,
+    /// optionally for one album or one download.
+    pub fn list_held(
+        &self,
+        viewer: &Viewer,
+        release_group_mbid: Option<&str>,
+        source_task_id: Option<&str>,
+    ) -> Result<Vec<HeldRow>, StoreError> {
+        let mut stmt = self.conn.prepare_cached(sql::HELD_LIST.text())?;
+        let rows = stmt.query_map(
+            params![viewer.owner_filter(), release_group_mbid, source_task_id],
+            HeldRow::from_row,
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
 
-/// One held file still waiting for a decision.
-pub async fn get_held(pool: &SqlitePool, id: i64) -> Result<Option<HeldRow>, sqlx::Error> {
-    let sql = format!("SELECT {HELD_COLUMNS} FROM held_imports WHERE id = ?1 AND status = 'held'");
-    let row = sqlx::query(&sql).bind(id).fetch_optional(pool).await?;
-    row.as_ref().map(held_from_row).transpose()
+    /// One held file still waiting for a decision.
+    pub fn get_held(&self, id: i64) -> Result<Option<HeldRow>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(sql::HELD_BY_ID.text(), params![id], HeldRow::from_row)
+            .optional()?)
+    }
 }
 
 impl DownloadStore<'_> {

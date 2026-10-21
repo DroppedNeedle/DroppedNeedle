@@ -52,3 +52,9 @@ pub mod wiring;
 pub mod worker;
 
 pub use wiring::AcquireSetup;
+
+/// Every `sql.rs` of this crate, one line each, for the schema test.
+#[cfg(any(test, feature = "test-support"))]
+pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
+    vec![downloads::sql::registered()]
+}

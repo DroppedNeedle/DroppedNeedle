@@ -8,6 +8,7 @@
 
 use rusqlite::{OptionalExtension, params};
 
+use super::sql;
 use super::store::{DownloadStore, StoreError};
 
 /// One held file, as `held_imports` stores it.
@@ -183,12 +184,11 @@ impl DownloadStore<'_> {
 
     /// What the task's landings imported and held so far.
     pub fn landing_history(&self, task_id: &str) -> Result<LandingHistory, StoreError> {
-        let files_imported: i64 = self.conn.query_row(
-            "SELECT COALESCE(SUM(files_imported), 0) FROM download_import_decisions \
-             WHERE task_id = ?",
-            params![task_id],
-            |row| row.get(0),
-        )?;
+        let files_imported: i64 =
+            self.conn
+                .query_row(sql::FILES_IMPORTED.text(), params![task_id], |row| {
+                    row.get(0)
+                })?;
         let held_detail = self
             .latest_import_decision(task_id)?
             .filter(|row| row.outcome == "held")
@@ -232,35 +232,55 @@ impl DownloadStore<'_> {
         &self,
         task_id: &str,
     ) -> Result<Option<ImportDecisionRow>, StoreError> {
-        self.conn
+        Ok(self
+            .conn
             .query_row(
-                "SELECT task_id, attempt_id, outcome, reason_code, detail, release_mbid, \
-                 distance, files_total, files_imported, files_held, checks_json, \
-                 missing_positions, decided_at, reason_text, reason_action \
-                 FROM download_import_decisions WHERE task_id = ? \
-                 ORDER BY decided_at DESC, id DESC LIMIT 1",
+                sql::LATEST_DECISION.text(),
                 params![task_id],
-                |row| {
-                    Ok(ImportDecisionRow {
-                        task_id: row.get(0)?,
-                        attempt_id: row.get(1)?,
-                        outcome: row.get(2)?,
-                        reason_code: row.get(3)?,
-                        detail: row.get(4)?,
-                        release_mbid: row.get(5)?,
-                        distance: row.get(6)?,
-                        files_total: row.get(7)?,
-                        files_imported: row.get(8)?,
-                        files_held: row.get(9)?,
-                        checks_json: row.get(10)?,
-                        missing_positions: row.get(11)?,
-                        decided_at: row.get(12)?,
-                        reason_text: row.get(13)?,
-                        reason_action: row.get(14)?,
-                    })
-                },
+                ImportDecisionRow::from_row,
             )
-            .optional()
-            .map_err(StoreError::from)
+            .optional()?)
+    }
+
+    /// The newest decision one attempt (`None` for a landing with no
+    /// attempt) reached on a task, deferrals aside: a landing that waited
+    /// never hides what an earlier landing of the attempt imported.
+    pub fn last_landing_of_attempt(
+        &self,
+        task_id: &str,
+        attempt_id: Option<&str>,
+    ) -> Result<Option<ImportDecisionRow>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                sql::LAST_LANDING_OF_ATTEMPT.text(),
+                params![task_id, attempt_id],
+                ImportDecisionRow::from_row,
+            )
+            .optional()?)
+    }
+}
+
+impl ImportDecisionRow {
+    /// Decode one `download_import_decisions` row in the column order of
+    /// the statements that read it.
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            task_id: row.get(0)?,
+            attempt_id: row.get(1)?,
+            outcome: row.get(2)?,
+            reason_code: row.get(3)?,
+            detail: row.get(4)?,
+            release_mbid: row.get(5)?,
+            distance: row.get(6)?,
+            files_total: row.get(7)?,
+            files_imported: row.get(8)?,
+            files_held: row.get(9)?,
+            checks_json: row.get(10)?,
+            missing_positions: row.get(11)?,
+            decided_at: row.get(12)?,
+            reason_text: row.get(13)?,
+            reason_action: row.get(14)?,
+        })
     }
 }

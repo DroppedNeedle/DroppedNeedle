@@ -134,6 +134,17 @@ const RULES: &[Rule] = &[
         allowed: &[DB_RESERVED, TOOL],
     },
     Rule {
+        what: "keeps a SQLite connection, where a store or service holds the `Db` instead",
+        patterns: &[
+            // A named field, bare or inside any wrapper (`Arc<Mutex<..>>`,
+            // `Option<..>`, `RefCell<..>`).
+            r"^\s*(?:pub(?:\([^)]*\))?\s+)?\w+\s*:\s*(?:[\w:]+<\s*)*(?:rusqlite::)?Connection\s*[>,]",
+            // A tuple struct holding one.
+            r"\bstruct\s+\w+[^{;]*?\([^;]*?\bConnection\b",
+        ],
+        allowed: &[DB],
+    },
+    Rule {
         what: "leaks a value, which can pin the WAL with a read left open",
         patterns: &[r"\bmem::forget\(", r"\bBox::leak\("],
         allowed: &[DB_RESERVED],
