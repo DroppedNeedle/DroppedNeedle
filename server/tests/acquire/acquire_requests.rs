@@ -739,14 +739,14 @@ const MIX_REC_B: &str = "aaaa0000-0000-4000-8000-000000000002";
 impl MixSources for FakeMix {
     fn identity<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<ListenBrainzCredentials>> {
         Box::pin(async move {
-            (user_id == "u-ada").then(|| ListenBrainzCredentials {
+            matches!(user_id, "u-ada" | "u-tris").then(|| ListenBrainzCredentials {
                 username: Some("ada".to_owned()),
                 user_token: Some("token".to_owned()),
             })
         })
     }
     fn linked_users(&self) -> BoxFuture<'_, Result<Vec<String>, String>> {
-        Box::pin(async { Ok(vec!["u-ada".to_owned()]) })
+        Box::pin(async { Ok(vec!["u-ada".to_owned(), "u-tris".to_owned()]) })
     }
     fn recommendation_playlists<'a>(
         &'a self,
@@ -867,6 +867,35 @@ async fn personal_mix_grant_build_and_refresh() {
     );
     let again = builder.build_for_user("u-ada", false).await.unwrap();
     assert_eq!(again.skipped, Some(SkipReason::Fresh));
+
+    // A trusted user holds the grant by role, so the toggle files no approval
+    // row and the build requests straight away. Demoted to user, the grant is
+    // gone and the build requests nothing.
+    let toggle = PrefsPatch {
+        auto_request_personal_mix: Some(true),
+        ..PrefsPatch::default()
+    };
+    prefs.update_prefs("u-tris", &toggle).await;
+    hooks.on_toggle("u-tris", Role::Trusted, true).await;
+    assert_eq!(hooks.state("u-tris", Role::Trusted, true).await, "approved");
+    let trusted = builder.build_for_user("u-tris", false).await.unwrap();
+    assert_eq!(
+        trusted.requested_albums, 2,
+        "trusted asks need no approval row"
+    );
+
+    db.write("test.demote_tris", |tx| {
+        tx.execute(
+            "UPDATE auth_users SET role = 'user' WHERE id = 'u-tris'",
+            rusqlite::params![],
+        )?;
+        Ok(())
+    })
+    .await
+    .expect("demotion");
+    assert_eq!(hooks.state("u-tris", Role::User, true).await, "none");
+    let demoted = builder.build_for_user("u-tris", true).await.unwrap();
+    assert_eq!(demoted.requested_albums, 0, "a demotion drops the grant");
 
     let revoke = "/api/v3/requests/personal-mix-approvals/u-ada/revoke";
     assert_eq!(

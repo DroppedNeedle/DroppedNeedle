@@ -49,7 +49,7 @@ A playlist can suggest albums to add: albums by artists similar to the ones on i
 
 ## Weekly Mix
 
-Your Weekly Mix is a playlist built for each user with a linked ListenBrainz account. It takes your ListenBrainz weekly-jams and weekly-exploration playlists and tops them up to 100 tracks with songs from artists similar to the ones in them. Songs you already own play from your library. The server rebuilds every mix once a day if it is more than six days old, and you can rebuild yours any time with Refresh under Profile > Scrobbling & Discovery. If you switch on "auto-request" there, each build also requests up to five albums from the mix you don't have yet. Admins get this straight away; other users wait for an admin to approve it on the Requests page. An admin can reject or later revoke it, which also switches the toggle off.
+Your Weekly Mix is a playlist built for each user with a linked ListenBrainz account. It takes your ListenBrainz weekly-jams and weekly-exploration playlists and tops them up to 100 tracks with songs from artists similar to the ones in them. Songs you already own play from your library. The server rebuilds every mix once a day if it is more than six days old, and you can rebuild yours any time with Refresh under Profile > Scrobbling & Discovery. If you switch on "auto-request" there, each build also requests up to five albums from the mix you don't have yet. Admins and trusted users get this straight away; other users wait for an admin to approve it on the Requests page. An admin can reject or later revoke it, which also switches the toggle off.
 
 ## Covers and artist pictures
 

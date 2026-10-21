@@ -5,8 +5,8 @@
 //! with the top recording of artists similar to the first eight artists in
 //! it. Tracks the library holds point at the local file, so they play
 //! straight away. When the user has asked for it and holds the standing
-//! grant (admins always do; everyone else needs an admin's approval), up
-//! to five missing albums per build are requested.
+//! grant (admins and trusted users always do; everyone else needs an
+//! admin's approval), up to five missing albums per build are requested.
 //!
 //! A build is skipped, with a stable reason, when the user has no
 //! ListenBrainz link, the mix is less than six days old (ListenBrainz
@@ -254,10 +254,10 @@ impl PersonalMixBuilder {
     }
 
     /// Display state of the user's standing grant
-    /// (`none|pending|approved|rejected|revoked`), with the admin override.
-    /// An enabled toggle with no row reads `none` (v2).
+    /// (`none|pending|approved|rejected|revoked`), with the override for
+    /// admins and trusted users. An enabled toggle with no row reads `none` (v2).
     pub async fn auto_request_state(&self, user_id: &str, role: Role, toggle_on: bool) -> String {
-        if toggle_on && role == Role::Admin {
+        if toggle_on && role.is_curator() {
             return "approved".to_owned();
         }
         let state = match self.requests.mixes.state(user_id).await {
@@ -275,11 +275,11 @@ impl PersonalMixBuilder {
         }
     }
 
-    /// Grant bookkeeping after the toggle changed: a non-admin turning it on
-    /// joins the approval queue again, even over an earlier grant. Turning
-    /// it off keeps the row.
+    /// Grant bookkeeping after the toggle changed: turning it on queues an
+    /// approval for a user who is neither an admin nor trusted, even over an
+    /// earlier grant. Turning it off keeps the row.
     pub async fn on_toggle(&self, user_id: &str, role: Role, enabled: bool) {
-        if !enabled || role == Role::Admin {
+        if !enabled || role.is_curator() {
             return;
         }
         if let Err(error) = self.requests.mixes.file_pending(user_id, now_epoch()).await {
@@ -687,10 +687,10 @@ impl PersonalMixBuilder {
         }
     }
 
-    /// Admins hold the grant by role (so a demotion drops it); everyone
-    /// else needs an approved row.
+    /// Admins and trusted users hold the grant by role (so a demotion drops
+    /// it); everyone else needs an approved row.
     async fn granted(&self, user_id: &str, role: Role) -> Result<bool, RequestsError> {
-        if role == Role::Admin {
+        if role.is_curator() {
             return Ok(true);
         }
         Ok(self.requests.mixes.state(user_id).await?.as_deref() == Some("approved"))
@@ -842,7 +842,7 @@ impl droppedneedle_media::playback::listening_routes::MixGrants for MixGrantHook
         Box::pin(async move {
             match &self.mixer {
                 Some(builder) => builder.auto_request_state(user_id, role, toggle_on).await,
-                None if toggle_on && role == Role::Admin => "approved".to_owned(),
+                None if toggle_on && role.is_curator() => "approved".to_owned(),
                 None => "none".to_owned(),
             }
         })
