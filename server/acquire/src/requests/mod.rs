@@ -59,6 +59,7 @@ pub fn routes() -> Routes<RequestsState> {
         .user(routes!(active_count_handler))
         .user(routes!(cancel_one_handler))
         .user(routes!(retry_one_handler))
+        .user(routes!(from_album_handler))
         .user(routes!(history_handler))
         .user(routes!(clear_history_handler))
         .user(routes!(wanted_handler))

@@ -28954,6 +28954,75 @@
         ]
       }
     },
+    "/api/v3/requests/tracks/{musicbrainz_id}/from-album": {
+      "post": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "Take a single from its album.\n`POST /api/v3/requests/tracks/{musicbrainz_id}/from-album`. For a failed\ntrack request whose download found only the album's version of the\nsong: it is fetched again, and the album's track imports as the song\nwhen it is the right track. A requester or an admin.",
+        "operationId": "from_album_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Recording MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Another user's request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No track request for this recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No album version to take, or the request needs approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/requests/wanted": {
       "get": {
         "tags": [
@@ -59072,6 +59141,13 @@
           "album_title": {
             "type": "string",
             "description": "Album title."
+          },
+          "album_version_only": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "A failed track request whose download found only the album's\nversion of the song: it can be taken from the album instead. None\nwhen not applicable."
           },
           "artist_mbid": {
             "type": [

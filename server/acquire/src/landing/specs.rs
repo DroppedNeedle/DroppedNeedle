@@ -23,7 +23,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use super::matching::{FoundRelease, MatchState, MatchSummary, is_various};
+use super::ALBUM_VERSION_ONLY;
+use super::matching::{FoundRelease, MatchState, MatchSummary, file_name_parts, is_various};
 use super::probe::Landing;
 use crate::downloads::quarantine::QuarantineReason;
 use droppedneedle_library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
@@ -125,6 +126,10 @@ pub struct Target {
     pub origin: String,
     /// The last-resort re-pull: hold a wrong track instead of failing over.
     pub hold_on_wrong_track: bool,
+    /// For a track download: the person chose to take the song from its
+    /// album, so the album's track stands for the requested recording
+    /// when it is the right track.
+    pub album_version: bool,
     /// For a track download: the album release acquisition resolved the
     /// track to and the track's (disc, track) position on it.
     pub album_positions: Option<(String, Vec<crate::downloads::TrackPosition>)>,
@@ -757,7 +762,9 @@ impl ImportSpec for IdsAgree {
 }
 
 /// Lidarr's `CloseAlbumMatch`: the album as a whole must be close, and
-/// its title and artist must agree with the release.
+/// its title and artist must agree with the release. A single found only
+/// as its album's track is held with its own reason, and passes only once
+/// the person chose to take it from the album.
 struct CloseAlbumMatch;
 
 impl ImportSpec for CloseAlbumMatch {
@@ -773,20 +780,78 @@ impl ImportSpec for CloseAlbumMatch {
             return Verdict::hold("weak_match", "no file pairs with a track of the release");
         }
         let distance = found.scored.library_distance();
-        if !found.scored.names_agree {
+        let weak = if !found.scored.names_agree {
+            "the album title or artist does not agree with the release".to_owned()
+        } else if distance > ACCEPT_ALBUM {
+            format!("album distance {distance:.2} is above {ACCEPT_ALBUM:.2}")
+        } else {
+            return Verdict::accept();
+        };
+        // A single whose only copy is its album's track waits for the
+        // person, who can choose to take it from the album.
+        if let Some(album) = album_version(subject.target, subject.landing, found) {
+            if subject.target.album_version {
+                return Verdict::note(format!("the track from '{album}', taken as this song"));
+            }
             return Verdict::hold(
-                "weak_match",
-                "the album title or artist does not agree with the release",
+                ALBUM_VERSION_ONLY,
+                format!("the only copy found is the track on '{album}'"),
             );
         }
-        if distance > ACCEPT_ALBUM {
-            return Verdict::hold(
-                "weak_match",
-                format!("album distance {distance:.2} is above {ACCEPT_ALBUM:.2}"),
-            );
-        }
-        Verdict::accept()
+        Verdict::hold("weak_match", weak)
     }
+}
+
+/// For a track download whose files miss the release only because they
+/// come from another one: the requested track is there, close to its
+/// track, named as it (the title tag, else the file name, within the name
+/// gate once edition words are set aside, so "Love Me Do" for "Love Me"
+/// does not pass) and at its length ([`wrong_track`] finds nothing; a
+/// track with no known length leaves the title as the guard), the files'
+/// artist is the release's, and their album tag names a different
+/// release. Answers that album's name.
+fn album_version(target: &Target, landing: &Landing, found: &FoundRelease) -> Option<String> {
+    if !target.is_track {
+        return None;
+    }
+    let pair = found.requested_pair(target)?;
+    if pair.distance > ACCEPT_TRACK || wrong_track(found, pair, landing).is_some() {
+        return None;
+    }
+    let file = landing.audio.get(pair.local)?;
+    let track = found.release.tracks.get(pair.track)?;
+    let title = match file.tag.title.trim() {
+        "" => file_name_parts(file).2,
+        tagged => tagged.to_owned(),
+    };
+    if string_dist(
+        &strip_edition_words(&title),
+        &strip_edition_words(&track.title),
+    ) > NAME_GATE
+    {
+        return None;
+    }
+    let tag = &file.tag;
+    let album = tag.album.trim();
+    if album.is_empty()
+        || string_dist(
+            &strip_edition_words(album),
+            &strip_edition_words(&found.release.title),
+        ) <= NAME_GATE
+    {
+        return None;
+    }
+    let artist = tag
+        .album_artist
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(tag.artist.trim());
+    let release_artist = found.release.artist_text();
+    let same_artist = !artist.is_empty()
+        && (string_dist(artist, &release_artist) <= NAME_GATE
+            || artist_subset(artist, &release_artist));
+    same_artist.then(|| album.to_owned())
 }
 
 /// A pair at most this far is a close fit for [`ArtistProof::Tracklist`].
@@ -1274,18 +1339,24 @@ impl ImportSpec for RightTrack {
         let Some(pair) = found.requested_pair(target) else {
             return wrong("no landed file is the requested track".to_owned());
         };
-        let track = &found.release.tracks[pair.track];
-        let file = &subject.landing.audio[pair.local];
-        if let (Some(length_ms), Some(seconds)) = (track.length_ms, file.header.duration_seconds) {
-            let expected = length_ms as f64 / 1000.0;
-            if (seconds - expected).abs() > (0.10 * expected).max(15.0) {
-                return wrong(format!(
-                    "the file is {seconds:.0}s, the requested track {expected:.0}s"
-                ));
-            }
+        match wrong_track(found, pair, subject.landing) {
+            Some(detail) => wrong(detail),
+            None => Verdict::accept(),
         }
-        Verdict::accept()
     }
+}
+
+/// Why the file of `pair` is not the requested track: its length is off
+/// by more than `max(15 s, 10%)`.
+fn wrong_track(found: &FoundRelease, pair: &TrackPair, landing: &Landing) -> Option<String> {
+    let track = found.release.tracks.get(pair.track)?;
+    let file = landing.audio.get(pair.local)?;
+    let (Some(length_ms), Some(seconds)) = (track.length_ms, file.header.duration_seconds) else {
+        return None;
+    };
+    let expected = length_ms as f64 / 1000.0;
+    ((seconds - expected).abs() > (0.10 * expected).max(15.0))
+        .then(|| format!("the file is {seconds:.0}s, the requested track {expected:.0}s"))
 }
 
 /// Tracks the library already holds are not imported twice (v2's

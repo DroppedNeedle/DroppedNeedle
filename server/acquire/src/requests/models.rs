@@ -295,6 +295,11 @@ pub struct RequestItem {
     /// candidate still linked). None when not applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_reimport: Option<bool>,
+    /// A failed track request whose download found only the album's
+    /// version of the song: it can be taken from the album instead. None
+    /// when not applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub album_version_only: Option<bool>,
     /// Whole album or one track.
     pub request_kind: RequestKind,
     /// What made the request: a person's ask (`user`) or a followed

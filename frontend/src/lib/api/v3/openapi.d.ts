@@ -7792,6 +7792,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/requests/tracks/{musicbrainz_id}/from-album": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take a single from its album.
+         *     `POST /api/v3/requests/tracks/{musicbrainz_id}/from-album`. For a failed
+         *     track request whose download found only the album's version of the
+         *     song: it is fetched again, and the album's track imports as the song
+         *     when it is the right track. A requester or an admin.
+         */
+        post: operations["from_album_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/requests/wanted": {
         parameters: {
             query?: never;
@@ -20469,6 +20492,12 @@ export interface components {
         RequestItem: {
             /** @description Album title. */
             album_title: string;
+            /**
+             * @description A failed track request whose download found only the album's
+             *     version of the song: it can be taken from the album instead. None
+             *     when not applicable.
+             */
+            album_version_only?: boolean | null;
             /** @description Artist MBID. */
             artist_mbid?: string | null;
             /** @description Artist name. */
@@ -43512,6 +43541,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrackIntakeResponse"];
+                };
+            };
+        };
+    };
+    from_album_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Recording MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+            /** @description Another user's request */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No track request for this recording */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No album version to take, or the request needs approval */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

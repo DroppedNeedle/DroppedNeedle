@@ -244,6 +244,18 @@ impl Journal {
         .await
     }
 
+    /// The reason the task's newest landing held its files, when it held.
+    pub async fn read_hold_code(&self, task_id: &str) -> Result<Option<String>, StoreError> {
+        let task_id = task_id.to_owned();
+        self.read("downloads.hold_code", move |store| {
+            Ok(store
+                .latest_import_decision(&task_id)?
+                .filter(|row| row.outcome == "held")
+                .and_then(|row| row.reason_code))
+        })
+        .await
+    }
+
     /// The retry anchor of one task while it is the newest for its target.
     pub async fn read_retry_anchor(
         &self,

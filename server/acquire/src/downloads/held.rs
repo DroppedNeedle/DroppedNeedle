@@ -659,7 +659,7 @@ async fn held_tier(path: &Path) -> Option<&'static str> {
 
 /// Remove a held copy. A copy already gone is fine; any other failure
 /// is logged and leaves a stray file in the held folder, nothing worse.
-async fn remove_held_copy(path: &Path) {
+pub(crate) async fn remove_held_copy(path: &Path) {
     if let Err(error) = tokio::fs::remove_file(path).await
         && error.kind() != std::io::ErrorKind::NotFound
     {

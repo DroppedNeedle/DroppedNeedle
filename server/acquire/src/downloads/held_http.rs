@@ -657,6 +657,7 @@ pub async fn upgrade_track_handler(
             user_id: curator.user_id().to_owned(),
             target: DispatchTarget::Track {
                 recording_mbid: required(&body.recording_mbid, "recording_mbid")?,
+                album_version: false,
             },
             artist: body.artist_name,
             title: body.track_title,

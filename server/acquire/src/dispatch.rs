@@ -98,6 +98,9 @@ pub enum DispatchTarget {
     Track {
         /// Recording MBID.
         recording_mbid: String,
+        /// The person chose to take the song from its album: the album's
+        /// track imports as this recording when it is the right track.
+        album_version: bool,
     },
 }
 
@@ -282,7 +285,7 @@ impl DownloadDispatch {
     ) -> Result<DispatchOutcome, DispatchError> {
         let (is_track, key) = match &request.target {
             DispatchTarget::Album { release_group_mbid } => (false, release_group_mbid.as_str()),
-            DispatchTarget::Track { recording_mbid } => (true, recording_mbid.as_str()),
+            DispatchTarget::Track { recording_mbid, .. } => (true, recording_mbid.as_str()),
         };
         let release_mbid = request.release_mbid.as_deref();
         // Wanted positions and the copy fetched for belong to the caller's
@@ -422,6 +425,13 @@ impl DownloadDispatch {
             year: None,
             is_track,
             hold_on_wrong_track: false,
+            album_version: matches!(
+                request.target,
+                DispatchTarget::Track {
+                    album_version: true,
+                    ..
+                }
+            ),
             origin: request.origin.as_str().to_owned(),
             requested_by_user_id: None,
             attempt_id: None,
@@ -483,6 +493,13 @@ impl DownloadDispatch {
     /// its candidate still linked).
     pub async fn reimportable(&self, task_id: &str) -> Result<bool, DispatchError> {
         Ok(self.journal.read_reimportable(task_id).await?)
+    }
+
+    /// Whether the task's newest landing held a single because only its
+    /// album's track was found.
+    pub async fn album_version_only(&self, task_id: &str) -> Result<bool, DispatchError> {
+        let code = self.journal.read_hold_code(task_id).await?;
+        Ok(code.as_deref() == Some(crate::landing::ALBUM_VERSION_ONLY))
     }
 
     /// The pending auto-retry for one failed task, or `None` when no retry

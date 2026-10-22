@@ -6,6 +6,7 @@
 	import type { RequestItem } from '$lib/queries/requests/types';
 	import type { RequestKind } from '$lib/constants';
 	import { reimportDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createFromAlbumMutation } from '$lib/queries/requests/RequestMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -21,6 +22,7 @@
 		FileDown,
 		Loader,
 		CircleCheckBig,
+		Disc3,
 		CircleX,
 		TriangleAlert,
 		Ban,
@@ -67,6 +69,7 @@
 	}: Props = $props();
 
 	const reimport = reimportDownload();
+	const fromAlbum = createFromAlbumMutation();
 
 	let confirmingCancel = $state(false);
 	let showDeleteModal = $state(false);
@@ -418,6 +421,10 @@
 				<span class="text-xs text-error/80 max-w-44 text-right line-clamp-2"
 					>{item.error_message}</span
 				>
+			{:else if !isActive && item.album_version_only}
+				<span class="text-xs text-base-content/70 max-w-44 text-right">
+					Only the album version was found
+				</span>
 			{:else if !isActive && item.completed_at}
 				<span class="text-xs text-base-content/40">{formatDate(item.completed_at)}</span>
 			{/if}
@@ -452,6 +459,20 @@
 						/>
 					{/if}
 				{:else}
+					{#if item.album_version_only && onretry}
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={Disc3}
+							onclick={(e: MouseEvent) => {
+								e.stopPropagation();
+								fromAlbum.mutate(item.musicbrainz_id);
+							}}
+							disabled={fromAlbum.isPending}
+						>
+							Get it from the album
+						</Button>
+					{/if}
 					{#if item.status === 'failed' || item.status === 'cancelled' || item.status === 'incomplete'}
 						<Button
 							variant="ghost"

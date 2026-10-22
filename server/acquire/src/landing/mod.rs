@@ -100,6 +100,11 @@ fn journal_unreadable() -> Rejection {
 /// blamed.
 pub const NAMING_SCRIPT_FAILED: &str = "naming_script_failed";
 
+/// Hold code for a single whose only copy found is its album's track. The
+/// task stops at the first such landing; the request offers to take the
+/// song from the album.
+pub const ALBUM_VERSION_ONLY: &str = "album_version_only";
+
 /// Hold code for this edition's version of a track that came in lower
 /// quality than the person's own version, which stays.
 pub const VERSION_LOWER_QUALITY: &str = "version_lower_quality";
@@ -431,7 +436,42 @@ impl LandingService {
                 }
             }
         };
-        self.finish(task, attempt_id, acted, &landing).await
+        let report = self.finish(task, attempt_id, acted, &landing).await;
+        if target.album_version && matches!(report.result, LandingResult::Imported { .. }) {
+            self.discard_album_version_holds(task).await;
+        }
+        report
+    }
+
+    /// The song came in from its album: the copies earlier downloads held
+    /// as "only the album version" have nothing left to decide, so they
+    /// are discarded. Best effort: a failure leaves them held.
+    async fn discard_album_version_holds(&self, task: &TaskRow) {
+        let Some(recording) = task.recording_mbid.clone() else {
+            return;
+        };
+        let (user_id, task_id) = (task.user_id.clone(), task.id.clone());
+        let now = self.journal.db().now_unix_f64();
+        let discarded = self
+            .journal
+            .run("downloads.album_version_discard", move |store| {
+                let rows =
+                    store.held_for_recording(ALBUM_VERSION_ONLY, &user_id, &recording, &task_id)?;
+                let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+                store.resolve_held(&ids, "discarded", now)?;
+                Ok(rows)
+            })
+            .await;
+        match discarded {
+            Ok(rows) => {
+                for row in rows {
+                    super::downloads::held::remove_held_copy(Path::new(&row.held_path)).await;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "album version holds not discarded");
+            }
+        }
     }
 
     /// Record a rejection made before anything on disk was read.
@@ -1212,6 +1252,8 @@ pub fn target_for(
         track_title: details.track_title.clone(),
         origin: task.origin.clone(),
         hold_on_wrong_track: manifest.is_some_and(|manifest| manifest.hold_on_wrong_track),
+        album_version: task.download_type == "track"
+            && manifest.is_some_and(|manifest| manifest.album_version),
         album_positions: manifest
             .and_then(|manifest| manifest.track_album.as_ref())
             .map(|album| {

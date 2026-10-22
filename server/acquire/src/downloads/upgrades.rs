@@ -112,7 +112,7 @@ impl Upgrades {
                     .album_meets_cutoff(release_group_mbid, &policy.cutoff)
                     .await
             }
-            DispatchTarget::Track { recording_mbid } => {
+            DispatchTarget::Track { recording_mbid, .. } => {
                 self.worklist
                     .recording_meets_cutoff(recording_mbid, &policy.cutoff)
                     .await

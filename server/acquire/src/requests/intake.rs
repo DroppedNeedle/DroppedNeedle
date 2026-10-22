@@ -167,6 +167,34 @@ pub async fn retry_one_handler(
     Ok(Json(response))
 }
 
+/// Take a single from its album.
+/// `POST /api/v3/requests/tracks/{musicbrainz_id}/from-album`. For a failed
+/// track request whose download found only the album's version of the
+/// song: it is fetched again, and the album's track imports as the song
+/// when it is the right track. A requester or an admin.
+#[utoipa::path(
+    post,
+    tag = "requests",
+    path = "/api/v3/requests/tracks/{musicbrainz_id}/from-album",
+    params(("musicbrainz_id" = String, Path, description = "Recording MBID")),
+    responses(
+        (status = 200, body = ActionResponse),
+        (status = 403, description = "Another user's request"),
+        (status = 404, description = "No track request for this recording"),
+        (status = 409, description = "No album version to take, or the request needs approval"),
+    )
+)]
+pub async fn from_album_handler(
+    State(state): State<RequestsState>,
+    User(principal): User,
+    Path(musicbrainz_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let response = RequestsService::new(&state)
+        .take_album_version(&principal, &musicbrainz_id)
+        .await?;
+    Ok(Json(response))
+}
+
 /// Clear one history row. `DELETE /api/v3/requests/history/{musicbrainz_id}`.
 /// Admins delete the row; users dismiss it from their own view.
 #[utoipa::path(

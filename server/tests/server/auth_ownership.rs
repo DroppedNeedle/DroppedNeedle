@@ -102,6 +102,8 @@ enum Owned {
     TagWrite,
     /// A request still waiting, which a cancel can reach.
     LiveRequest,
+    /// A failed track request.
+    TrackRequest,
     /// A held file of its own, which a download's verdict discard clears.
     HeldVerdict,
 }
@@ -350,6 +352,13 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         Owned::Request,
         "DELETE",
         "/api/v3/requests/history/{musicbrainz_id}",
+        403,
+        ADMITTED,
+    ),
+    (
+        Owned::TrackRequest,
+        "POST",
+        "/api/v3/requests/tracks/{musicbrainz_id}/from-album",
         403,
         ADMITTED,
     ),
@@ -1092,6 +1101,38 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
             assert!(failed);
             ids.insert("musicbrainz_id", mbid);
         }
+        Owned::TrackRequest => {
+            let mbid = format!("00000000-0000-0000-0004-{n:012}");
+            let (status, asked) = call(
+                app,
+                owner,
+                "POST",
+                "/api/v3/requests/tracks",
+                Some(json!({
+                    "recording_mbid": mbid,
+                    "artist_name": "Someone",
+                    "track_title": "Something",
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::ACCEPTED, "{asked}");
+            let failed = app
+                .state()
+                .acquire
+                .flows
+                .ledger
+                .update_status(
+                    RequestKind::Track,
+                    &mbid,
+                    RequestStatus::Failed,
+                    Some(1_700_000_000),
+                    None,
+                )
+                .await
+                .expect("request fails");
+            assert!(failed);
+            ids.insert("musicbrainz_id", mbid);
+        }
         Owned::Wanted => {
             let mbid = format!("00000000-0000-0000-0003-{n:012}");
             let enrolled = app
@@ -1365,7 +1406,7 @@ async fn look(app: &TestApp, kind: Owned, owner: &Who, ids: &Ids) -> Value {
             )
         }
         Owned::Avatar => read("/api/v3/me".to_owned()).await["avatar_url"].clone(),
-        Owned::Request | Owned::LiveRequest => json!([
+        Owned::Request | Owned::LiveRequest | Owned::TrackRequest => json!([
             read("/api/v3/requests/active".to_owned()).await,
             read("/api/v3/requests/history".to_owned()).await,
         ]),
@@ -1422,6 +1463,7 @@ async fn another_users_resources_stay_out_of_reach() {
         Owned::Avatar,
         Owned::Request,
         Owned::LiveRequest,
+        Owned::TrackRequest,
         Owned::Wanted,
         Owned::Task,
         Owned::Held,

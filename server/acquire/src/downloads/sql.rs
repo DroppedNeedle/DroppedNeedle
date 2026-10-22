@@ -304,6 +304,12 @@ droppedneedle_kernel::sql! {
              ORDER BY created_at DESC, id DESC";
     /// One held file (`?1`) still waiting for a decision.
     pub(super) HELD_BY_ID = HELD_ROW + " WHERE id = ?1 AND status = 'held'";
+    /// Files still held for reason `?1` by owner `?2`'s other track
+    /// downloads (not `?4`) of recording `?3`.
+    pub(super) HELD_FOR_RECORDING = HELD_ROW + " WHERE status = 'held' AND reason = ?1 \
+             AND source_task_id IN (SELECT id FROM download_tasks \
+               WHERE user_id = ?2 AND download_type = 'track' \
+                 AND recording_mbid = ?3 AND id != ?4)";
 }
 
 /// `?, ?, ...` for a list of `len` values.

@@ -11,7 +11,8 @@
 //! complete import completes it; held files, or tracks still missing,
 //! blocklist this source and fail over to the next candidate (which is
 //! asked only for the missing tracks); held or partial is the final word
-//! only once the candidates run out.
+//! only once the candidates run out. A single found only as its album's
+//! track is held at once.
 
 use std::sync::{Arc, Mutex};
 
@@ -22,7 +23,7 @@ use crate::downloads::state::{AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, TaskRow};
 use crate::landing::reasons::explain;
 use crate::landing::specs::Disposition;
-use crate::landing::{JOURNAL_UNREADABLE, LandingReport, LandingResult};
+use crate::landing::{ALBUM_VERSION_ONLY, JOURNAL_UNREADABLE, LandingReport, LandingResult};
 
 /// Passes a landing may wait on files that are not ready before the task
 /// fails (about five minutes at the 30-second cadence).
@@ -260,6 +261,12 @@ impl DownloadWorker {
                 // taken, an upgrade waiting): the source did its job, so it
                 // is neither blocklisted nor replaced (v2's local faults).
                 // A task that imported anything before stays partial.
+                self.settle_short(task, attempt, &report.result, now).await;
+            }
+            LandingResult::Held { ref code, .. } if code == ALBUM_VERSION_ONLY => {
+                // Only the album's track was found for a single: other
+                // sources would offer the same, so the task stops here and
+                // the person decides. The source is not blamed.
                 self.settle_short(task, attempt, &report.result, now).await;
             }
             LandingResult::Imported { complete: false } | LandingResult::Held { .. } => {

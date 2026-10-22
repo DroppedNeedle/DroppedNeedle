@@ -164,6 +164,11 @@ pub struct DownloadManifest {
     /// discard) on a repeat gate failure.
     #[serde(default)]
     pub hold_on_wrong_track: bool,
+    /// Single-track download the person chose to take from its album: the
+    /// album's track imports as the requested song when it is the right
+    /// track.
+    #[serde(default)]
+    pub album_version: bool,
     /// Owning task's origin (a `DispatchOrigin` as stored text).
     #[serde(default = "default_origin")]
     pub origin: String,

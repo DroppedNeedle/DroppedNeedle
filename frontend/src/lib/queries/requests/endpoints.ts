@@ -38,6 +38,10 @@ export const REQUESTS_ENDPOINTS = {
 			path: { musicbrainz_id: musicbrainzId },
 			query: { kind }
 		}),
+	fromAlbum: (recordingMbid: string) =>
+		v3('/api/v3/requests/tracks/{musicbrainz_id}/from-album', {
+			path: { musicbrainz_id: recordingMbid }
+		}),
 	clearHistory: (musicbrainzId: string, kind: RequestKind = 'album') =>
 		v3('/api/v3/requests/history/{musicbrainz_id}', {
 			path: { musicbrainz_id: musicbrainzId },

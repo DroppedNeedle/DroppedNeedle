@@ -138,6 +138,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
             user_id: "u1".to_owned(),
             target: DispatchTarget::Track {
                 recording_mbid: RECORDING.to_owned(),
+                album_version: false,
             },
             artist_name: "Massive Attack".to_owned(),
             title: "One Love".to_owned(),

@@ -128,6 +128,11 @@ pub const CATALOG: &[Reason] = &[
         "Review the held file, or let DroppedNeedle try another source.",
     ),
     reason(
+        "album_version_only",
+        "Only the album version was found.",
+        "Choose Get it from the album on the request to take the album's track as this song.",
+    ),
+    reason(
         "fingerprint_mismatch",
         "The audio itself sounds like a different recording than the track it is named after.",
         "Listen to the held file: import it if it is right, otherwise discard it.",

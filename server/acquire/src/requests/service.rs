@@ -1156,6 +1156,67 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<ActionResponse, RequestsError> {
         let mbid = validate_mbid(mbid)?;
+        self.retry_with(principal, &mbid, kind, false).await
+    }
+
+    /// Take a single from its album: a failed track request whose download
+    /// found only the album's version of the song is retried, and this
+    /// time the album's track imports as the song when it is the right
+    /// track. The person's click is the choice; the retry keeps the
+    /// request's approval, like any retry.
+    pub async fn take_album_version(
+        &self,
+        principal: &Principal,
+        mbid: &str,
+    ) -> Result<ActionResponse, RequestsError> {
+        let mbid = validate_mbid(mbid)?;
+        let kind = RequestKind::Track;
+        let Some(record) = self.store.get(kind, &mbid).await? else {
+            return Err(RequestsError::NotFound);
+        };
+        if !principal.is_admin()
+            && !self
+                .store
+                .is_requester(kind, &mbid, principal.user_id())
+                .await?
+        {
+            return Err(RequestsError::Forbidden {
+                message: "Cannot change another user's request".to_owned(),
+            });
+        }
+        let offered = match record.task_id.as_deref() {
+            Some(task_id) if record.status == RequestStatus::Failed => self
+                .dispatch
+                .album_version_only(task_id)
+                .await
+                .map_err(dispatch_fault)?,
+            _ => false,
+        };
+        if !offered {
+            return Err(RequestsError::Conflict {
+                message: "This request has no album version to take".to_owned(),
+            });
+        }
+        // Waiting for approval would drop the choice: the retry would be
+        // dispatched later as a plain one.
+        if !record.dispatch_authorized && !auto_approves(principal.role()) {
+            return Err(RequestsError::Conflict {
+                message: "This request needs approval first".to_owned(),
+            });
+        }
+        self.retry_with(principal, &mbid, kind, true).await
+    }
+
+    /// Retry one terminal ask; `album_version` takes a single from its
+    /// album (see [`Self::take_album_version`]).
+    async fn retry_with(
+        &self,
+        principal: &Principal,
+        mbid: &str,
+        kind: RequestKind,
+        album_version: bool,
+    ) -> Result<ActionResponse, RequestsError> {
+        let mbid = mbid.to_owned();
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
             return Ok(ActionResponse {
@@ -1225,7 +1286,14 @@ impl RequestsService {
             .user_id
             .clone()
             .unwrap_or_else(|| principal.user_id().to_owned());
-        let request = stored_dispatch(&record, DispatchOrigin::Retry, &owner);
+        let mut request = stored_dispatch(&record, DispatchOrigin::Retry, &owner);
+        if let DispatchTarget::Track {
+            album_version: from_album,
+            ..
+        } = &mut request.target
+        {
+            *from_album = album_version;
+        }
         match self.dispatch.dispatch(&request).await {
             Err(DispatchError::Busy { operation }) => {
                 self.store
@@ -2181,6 +2249,12 @@ impl RequestsService {
                 Ok(reimportable) => item.can_reimport = Some(reimportable),
                 Err(error) => tracing::warn!(task_id, ?error, "reimport check failed"),
             }
+            if record.kind == RequestKind::Track {
+                match self.dispatch.album_version_only(task_id).await {
+                    Ok(found) => item.album_version_only = Some(found),
+                    Err(error) => tracing::warn!(task_id, ?error, "hold reason read failed"),
+                }
+            }
         }
         item
     }
@@ -2363,6 +2437,7 @@ fn stored_dispatch(
         },
         RequestKind::Track => DispatchTarget::Track {
             recording_mbid: record.key.clone(),
+            album_version: false,
         },
     };
     DispatchRequest {
@@ -2431,6 +2506,7 @@ impl From<&RequestRecord> for RequestItem {
             in_library: None,
             task_id: record.task_id.clone(),
             can_reimport: None,
+            album_version_only: None,
             request_kind: record.kind,
             origin: record.origin,
             track_title: record.track_title.clone(),

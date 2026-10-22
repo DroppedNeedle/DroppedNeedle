@@ -507,7 +507,7 @@ pub fn plan_holding(
 
 /// "03 - Title.flac" -> (None, 3, "Title"); "203 Title.flac" -> disc 2,
 /// track 3; a name without a number keeps its whole stem as the title.
-fn file_name_parts(file: &LandedFile) -> (Option<u32>, Option<u32>, String) {
+pub(super) fn file_name_parts(file: &LandedFile) -> (Option<u32>, Option<u32>, String) {
     let stem = file
         .path
         .file_stem()

@@ -99,6 +99,23 @@ impl DownloadStore<'_> {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Files still held for `reason` by the owner's other downloads of
+    /// one recording than `task_id`.
+    pub fn held_for_recording(
+        &self,
+        reason: &str,
+        user_id: &str,
+        recording_mbid: &str,
+        task_id: &str,
+    ) -> Result<Vec<HeldRow>, StoreError> {
+        let mut stmt = self.conn.prepare_cached(sql::HELD_FOR_RECORDING.text())?;
+        let rows = stmt.query_map(
+            params![reason, user_id, recording_mbid, task_id],
+            HeldRow::from_row,
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     /// One held file still waiting for a decision.
     pub fn get_held(&self, id: i64) -> Result<Option<HeldRow>, StoreError> {
         Ok(self

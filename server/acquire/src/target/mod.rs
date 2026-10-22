@@ -474,6 +474,7 @@ impl Targets {
                 year: None,
                 is_track: task.download_type == "track",
                 hold_on_wrong_track: false,
+                album_version: false,
                 origin: task.origin.clone(),
                 requested_by_user_id: None,
                 attempt_id: None,

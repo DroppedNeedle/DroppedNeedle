@@ -3765,3 +3765,351 @@ async fn a_failed_request_follows_its_retry_to_imported() {
     assert_eq!((summary.settled, summary.imported), (0, 0));
     assert_eq!(recorded.keys().len(), 1, "nothing is announced twice");
 }
+
+/// A single requested as one track, landed as a file tagged `title` from
+/// the album "Dummy", at the single's length: the landing's decisions.
+async fn land_single(task_id: &'static str, title: &str) -> Vec<(String, Option<String>)> {
+    const SINGLE_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000031";
+    const SINGLE_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000032";
+    const RECORDING: &str = "6d0b7a1e-0000-4000-8000-000000000038";
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let downloads = dir.join("downloads");
+    let file = land_file(
+        &downloads.join("Dummy"),
+        &format!("04 - {title}.flac"),
+        "flac_full_01.flac",
+        title,
+        4,
+    );
+    let mut single = release(
+        SINGLE_RELEASE,
+        SINGLE_GROUP,
+        &["Love Me"],
+        &[length_ms(&file)],
+    );
+    single.title = "Love Me".to_owned();
+    assert_eq!(single.tracks[0].recording_id, RECORDING);
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library,
+            Arc::new(Releases(vec![single])),
+            db.pool().clone(),
+        ))),
+    );
+    let task = NewTask {
+        album_title: "Love Me".to_owned(),
+        ..new_task(task_id, SINGLE_GROUP)
+    };
+    acquire
+        .journal
+        .run("test.seed", move |store| {
+            store.insert_track_task(&task, RECORDING, 1.0)
+        })
+        .await
+        .expect("task");
+    let row = acquire.journal.read_task(task_id).await.unwrap().unwrap();
+    let landed = Landed {
+        mounts: vec![downloads.into()],
+        files: vec![Reported::path(file)],
+    };
+    acquire.landing.land(&row, None, None, landed, false).await;
+    decisions(&acquire, task_id).await
+}
+
+/// The album's version is offered only for the same song: "Love Me Do"
+/// by the same artist at the single's length is another song, held as a
+/// weak match, while the album's "Love Me" is held as the album version.
+#[tokio::test]
+async fn only_the_same_song_counts_as_the_album_version() {
+    assert_eq!(
+        land_single("t-love-me", "Love Me").await,
+        vec![("held".to_owned(), Some("album_version_only".to_owned()))]
+    );
+    assert_eq!(
+        land_single("t-love-me-do", "Love Me Do").await,
+        vec![("held".to_owned(), Some("weak_match".to_owned()))]
+    );
+}
+
+/// A single requested by a person, which Soulseek offers only inside its
+/// album's folder: the first landing holds it as "only the album version"
+/// and the task stops there, with no other source tried. "Get it from the
+/// album" then fetches the same track, and it imports as the requested
+/// song. Runs the request service, the slskd source against the loopback
+/// mock, the worker and the landing.
+#[tokio::test]
+async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
+    use droppedneedle_acquire::requests::models::{HistoryQuery, TrackIntake};
+    use droppedneedle_acquire::requests::service::RequestsService;
+    use droppedneedle_acquire::slskd::{
+        DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
+    };
+    use droppedneedle_acquire::sources::SlskdSource;
+    use droppedneedle_acquire::target::Targets;
+    use droppedneedle_acquire::target::lookup::{
+        AlbumRelease, AlbumTrack, FixedAlbums, ReleaseCandidate,
+    };
+    use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
+    use std::time::Duration;
+
+    const SINGLE_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000021";
+    const SINGLE_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000022";
+    // The single's one track, as `release` numbers it.
+    const RECORDING: &str = "6d0b7a1e-0000-4000-8000-000000000028";
+    const REMOTE: &str = "@@music\\Portishead\\Dummy\\04 - Glory Box.flac";
+
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "trusted").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+
+    // The album's track, as the peer's folder holds it.
+    let downloads = dir.join("slskd");
+    let place = || {
+        land_file(
+            &downloads.join("Dummy"),
+            "04 - Glory Box.flac",
+            "flac_full_01.flac",
+            "Glory Box",
+            4,
+        )
+    };
+    let landed = place();
+    let size = std::fs::metadata(&landed).expect("file").len();
+    let length = length_ms(&landed);
+    let seconds = length.map(|ms| ms as f64 / 1000.0);
+
+    let mut single = release(SINGLE_RELEASE, SINGLE_GROUP, &["Glory Box"], &[length]);
+    single.title = "Glory Box".to_owned();
+    assert_eq!(single.tracks[0].recording_id, RECORDING);
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![single]));
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            releases,
+            db.pool().clone(),
+        ))),
+    );
+
+    let mut albums = FixedAlbums::default();
+    albums.recordings.insert(
+        RECORDING.to_owned(),
+        vec![ReleaseCandidate {
+            id: SINGLE_RELEASE.to_owned(),
+            status: Some("Official".to_owned()),
+            date: Some("1995-02-27".to_owned()),
+            release_group_mbid: SINGLE_GROUP.to_owned(),
+            primary_type: Some("Single".to_owned()),
+            secondary_types: Vec::new(),
+        }],
+    );
+    albums.releases.insert(
+        SINGLE_RELEASE.to_owned(),
+        AlbumRelease {
+            id: SINGLE_RELEASE.to_owned(),
+            title: "Glory Box".to_owned(),
+            release_group_mbid: SINGLE_GROUP.to_owned(),
+            artist: "Portishead".to_owned(),
+            various_artists: false,
+            year: Some(1995),
+            tracks: vec![AlbumTrack {
+                disc: 1,
+                position: 1,
+                title: "Glory Box".to_owned(),
+                duration_seconds: seconds,
+                recording_mbid: RECORDING.to_owned(),
+                release_track_mbid: RECORDING.to_owned(),
+            }],
+        },
+    );
+
+    let mock = MockSlskd::start().await.expect("mock starts");
+    // Three peers, each with the album's folder.
+    let peer = |username: &str| {
+        serde_json::json!({
+            "username": username, "hasFreeUploadSlot": true, "uploadSpeed": 1_000_000,
+            "queueLength": 0, "fileCount": 1, "lockedFileCount": 0, "lockedFiles": [],
+            "token": 1,
+            "files": [{"filename": REMOTE, "size": size, "extension": "flac",
+                       "bitDepth": 16, "sampleRate": 44100, "length": seconds}],
+        })
+    };
+    mock.script_responses(vec![peer("collector"), peer("second"), peer("third")]);
+    let repo = SlskdRepository::new(
+        SlskdClient::new(ReqwestSlskdHttp::new(
+            reqwest::Client::new(),
+            &mock.base_url(),
+            MOCK_API_KEY,
+        )),
+        &mock.base_url(),
+        MOCK_API_KEY,
+        downloads.clone(),
+        DownloadPolicy {
+            search_timeout: Duration::from_secs(2),
+            completion_grace: Duration::from_secs(2),
+            poll_interval: Duration::from_millis(10),
+            ..DownloadPolicy::default()
+        },
+    );
+    let targets = Arc::new(Targets::new(
+        acquire.journal.clone(),
+        acquire.staging_root.clone(),
+        Some(Arc::new(albums)),
+    ));
+    let source = SlskdSource::new(Arc::new(repo), acquire.journal.clone()).with_targets(targets);
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(Arc::new(source))],
+            WorkerConfig {
+                staging_root: acquire.staging_root.clone(),
+                ..WorkerConfig::default()
+            },
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    let settle = |task_id: String| {
+        let worker = worker.clone();
+        let journal = acquire.journal.clone();
+        async move {
+            for pass in 1..12 {
+                worker.run_once(pass).await;
+                worker.wait_for_landings().await;
+                let task = journal.read_task(&task_id).await.unwrap().unwrap();
+                if task.status.is_terminal() {
+                    return task;
+                }
+            }
+            panic!("task {task_id} never settled");
+        }
+    };
+
+    let ada = test_principal("u-ada", Role::Trusted, "s-ada", SessionKind::Standard);
+    let requests = RequestsService::new(&acquire.requests);
+    let intake: TrackIntake = serde_json::from_value(serde_json::json!({
+        "recording_mbid": RECORDING,
+        "artist_name": "Portishead",
+        "track_title": "Glory Box",
+        "release_group_mbid": SINGLE_GROUP,
+    }))
+    .expect("intake");
+    let asked = requests.request_track(&ada, &intake).await.expect("asked");
+    let first = asked.task_id.expect("dispatched");
+
+    // Held after one landing, with the reason, and no other source tried.
+    let task = settle(first.clone()).await;
+    let attempts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM download_attempts WHERE task_id = ?1")
+            .bind(&first)
+            .fetch_one(acquire.db.pool())
+            .await
+            .expect("attempts");
+    assert_eq!(attempts, 1, "no other source was tried");
+    assert_eq!(task.status, TaskStatus::Failed);
+    assert_eq!(
+        task.error_message.as_deref(),
+        Some("Held for review: Only the album version was found.")
+    );
+    assert_eq!(
+        decisions(&acquire, &first).await,
+        vec![("held".to_owned(), Some("album_version_only".to_owned()))]
+    );
+    assert!(files_under(&music, "flac").is_empty(), "nothing imported");
+    let history = requests
+        .history(
+            &ada,
+            &serde_json::from_value::<HistoryQuery>(serde_json::json!({"kind": "track"}))
+                .expect("query"),
+        )
+        .await
+        .expect("history");
+    assert_eq!(history.items.len(), 1);
+    assert_eq!(history.items[0].status, "failed");
+    assert_eq!(history.items[0].album_version_only, Some(true));
+
+    // "Get it from the album": the same track, now imported as the song.
+    if !downloads.join("Dummy/04 - Glory Box.flac").is_file() {
+        place();
+    }
+    let taken = requests
+        .take_album_version(&ada, RECORDING)
+        .await
+        .expect("taken");
+    assert!(taken.success, "{}", taken.message);
+    let request_key = format!("track:{RECORDING}");
+    let second: String = sqlx::query_scalar(
+        "SELECT download_task_id FROM request_history WHERE musicbrainz_id_lower = ?1",
+    )
+    .bind(&request_key)
+    .fetch_one(acquire.db.pool())
+    .await
+    .expect("request row");
+    assert_ne!(second, first);
+    let task = settle(second).await;
+    assert_eq!(
+        task.status,
+        TaskStatus::Completed,
+        "{:?}",
+        task.error_message
+    );
+    assert_eq!(files_under(&music, "flac").len(), 1);
+    let recording: String = sqlx::query_scalar(
+        "SELECT i.recording_mbid FROM local_track_external_identities i \
+         JOIN local_tracks t ON t.id = i.local_track_id WHERE t.availability = 'indexed'",
+    )
+    .fetch_one(acquire.db.pool())
+    .await
+    .expect("identity");
+    assert_eq!(recording, RECORDING, "imported as the requested song");
+    let held: Vec<(String, String)> =
+        sqlx::query_as("SELECT status, held_path FROM held_imports WHERE source_task_id = ?1")
+            .bind(&first)
+            .fetch_all(acquire.db.pool())
+            .await
+            .expect("held rows");
+    assert!(!held.is_empty(), "the first download held its file");
+    assert!(
+        held.iter()
+            .all(|(status, path)| status == "discarded" && !Path::new(path).exists()),
+        "the album version hold is resolved: {held:?}"
+    );
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1")
+            .bind(&request_key)
+            .fetch_one(acquire.db.pool())
+            .await
+            .expect("request row");
+    assert_eq!(status, "imported");
+}
