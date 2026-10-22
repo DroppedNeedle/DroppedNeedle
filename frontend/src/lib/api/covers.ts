@@ -60,6 +60,17 @@ export function albumArtworkPath(albumId: string, coverVersion?: number, size?: 
 	});
 }
 
+/**
+ * Root-relative path to a library artist's picture taken from one of their
+ * own albums' art, by local artist id. For artists with no MusicBrainz link.
+ */
+export function artistArtworkPath(artistId: string, size?: CoverSize): string {
+	return v3('/api/v3/library/artists/{id}/artwork', {
+		path: { id: artistId },
+		query: { size: size === undefined ? undefined : String(size) }
+	});
+}
+
 /** Absolute cover URL (base path and PUBLIC_API_URL applied) for an `<img>` src. */
 export function coverSrc(kind: CoverKind, id: string, size = 500): string {
 	return getApiUrl(coverEndpoint(kind, id, size));

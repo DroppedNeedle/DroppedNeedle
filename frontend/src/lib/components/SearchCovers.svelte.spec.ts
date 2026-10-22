@@ -67,7 +67,12 @@ describe('search covers', () => {
 
 		await renderWithQuery(SearchArtistCard, { artist: toV1Artist(unlinkedArtist) });
 		await expect.element(page.getByRole('heading', { name: 'Home Band' })).toBeInTheDocument();
-		await expect.element(page.getByRole('img', { name: 'Home Band' })).not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('img', { name: 'Home Band' }))
+			.toHaveAttribute(
+				'data-src',
+				expect.stringContaining(`/library/artists/${unlinkedArtist.id}/artwork`)
+			);
 
 		await renderWithQuery(SearchArtistCard, { artist: toV1Artist(linkedArtist) });
 		await expect

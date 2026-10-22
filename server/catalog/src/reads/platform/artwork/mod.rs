@@ -1194,4 +1194,21 @@ impl CoverArt for ArtworkService {
             }
         })
     }
+
+    fn local_artist_art<'a>(
+        &'a self,
+        artist_id: &'a str,
+        size: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<CoverBytes>> {
+        Box::pin(async move {
+            match self.local.by_artist(artist_id).await {
+                Ok(Some(art)) => self.serve_local(&art, size).await,
+                Ok(None) => None,
+                Err(error) => {
+                    tracing::warn!(%error, "artist art lookup failed");
+                    None
+                }
+            }
+        })
+    }
 }

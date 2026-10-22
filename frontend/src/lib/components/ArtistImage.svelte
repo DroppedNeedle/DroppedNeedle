@@ -1,5 +1,7 @@
 <script lang="ts">
 	import BaseImage from './BaseImage.svelte';
+	import { artistArtworkPath } from '$lib/api/covers';
+	import { isValidMbid } from '$lib/utils/formatting';
 
 	interface Props {
 		mbid: string;
@@ -17,6 +19,11 @@
 		source?: 'provider' | 'local';
 		available?: boolean;
 		testId?: string;
+		/**
+		 * The artist's library id. An artist with no MusicBrainz link then
+		 * shows the art of one of their own albums.
+		 */
+		localId?: string | null;
 	}
 
 	let {
@@ -34,8 +41,15 @@
 		onload = undefined,
 		source = 'provider',
 		available = true,
-		testId = undefined
+		testId = undefined,
+		localId = null
 	}: Props = $props();
+
+	let localArtUrl = $derived(
+		!isValidMbid(mbid) && localId
+			? artistArtworkPath(localId, requestSize ?? (size === 'xs' || size === 'sm' ? 250 : 500))
+			: null
+	);
 </script>
 
 <BaseImage
@@ -43,7 +57,7 @@
 	{alt}
 	{size}
 	{requestSize}
-	{responsiveSizes}
+	responsiveSizes={localArtUrl ? undefined : responsiveSizes}
 	{lazy}
 	{priority}
 	{showPlaceholder}
@@ -51,8 +65,10 @@
 	{rounded}
 	{remoteUrl}
 	{onload}
-	{source}
-	{available}
+	customUrl={localArtUrl}
+	source={localArtUrl ? 'local' : source}
+	available={localArtUrl ? true : available}
+	retryOnError={!localArtUrl}
 	{testId}
 	imageType="artist"
 />

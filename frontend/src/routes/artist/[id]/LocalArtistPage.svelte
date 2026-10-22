@@ -76,6 +76,7 @@
 		<header class="flex flex-col gap-5 sm:flex-row sm:items-end">
 			<ArtistImage
 				mbid={artist.musicbrainz_artist_id ?? ''}
+				localId={artist.id}
 				alt={artist.name}
 				size="xl"
 				requestSize={250}

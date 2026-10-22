@@ -235,6 +235,7 @@
 					<figure class="relative aspect-square overflow-hidden p-3">
 						<ArtistImage
 							mbid={artist.musicbrainz_artist_id ?? ''}
+							localId={artist.id}
 							alt={artist.name}
 							size="full"
 							requestSize={250}

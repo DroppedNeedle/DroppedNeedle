@@ -182,7 +182,13 @@
 							class="w-full {artistHref ? '' : 'cursor-default opacity-80'}"
 						>
 							<figure class="flex justify-center pt-4 relative">
-								<ArtistImage mbid={item.mbid ?? ''} alt={item.name} size="md" lazy={lazyAt(i)} />
+								<ArtistImage
+									mbid={item.mbid ?? ''}
+									localId={item.local_id}
+									alt={item.name}
+									size="md"
+									lazy={lazyAt(i)}
+								/>
 								{#if !item.mbid}
 									<div
 										class="absolute top-2 left-2 badge badge-ghost badge-sm"

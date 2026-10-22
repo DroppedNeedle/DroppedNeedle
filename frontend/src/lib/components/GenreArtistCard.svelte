@@ -39,7 +39,13 @@
 		<ArtistCardDownloadButton artistName={artist.name} artistMbid={artist.mbid} />
 	{/if}
 	<figure class="flex justify-center pt-4 relative">
-		<ArtistImage mbid={artist.mbid || ''} alt={artist.name} size="md" lazy={true} />
+		<ArtistImage
+			mbid={artist.mbid || ''}
+			localId={artist.local_id}
+			alt={artist.name}
+			size="md"
+			lazy={true}
+		/>
 		{#if showLibraryBadge || artist.in_library}
 			<div class="absolute top-2 right-2 badge badge-success badge-sm gap-1 opacity-90">
 				<Check class="w-3 h-3" />

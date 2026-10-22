@@ -139,7 +139,9 @@
 	let hasSource = $derived(
 		available &&
 			((useRemoteUrl && resolvedRemoteUrl) ||
-				(imageType === 'album' ? canonicalAlbumCoverUrl || resolvedCustomUrl || mbid : validMbid))
+				(imageType === 'album'
+					? canonicalAlbumCoverUrl || resolvedCustomUrl || mbid
+					: validMbid || resolvedCustomUrl))
 	);
 	let apiEndpoint: CoverKind = $derived(imageType === 'album' ? 'release-group' : 'artist');
 	let fallbackCoverUrl = $derived(coverSrc(apiEndpoint, mbid, requestedPixels));
@@ -149,7 +151,7 @@
 	let coverUrl = $derived(
 		imageType === 'album'
 			? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? fallbackCoverUrl)
-			: fallbackCoverUrl
+			: (resolvedCustomUrl ?? fallbackCoverUrl)
 	);
 	let displayCoverUrl = $derived(warmResolvedUrl ?? coverUrl);
 	let displayCoverSrcset = $derived.by(() => {
@@ -198,7 +200,9 @@
 
 	$effect(() => {
 		const source =
-			imageType === 'album' ? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? mbid) : mbid;
+			imageType === 'album'
+				? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? mbid)
+				: (resolvedCustomUrl ?? mbid);
 		if (source && imgElement && source !== currentSource) {
 			currentSource = source;
 			imgError = false;

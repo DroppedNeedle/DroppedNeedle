@@ -13060,6 +13060,81 @@
         ]
       }
     },
+    "/api/v3/library/artists/{id}/artwork": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "A library artist's picture, taken from the art of one of their own\nalbums.",
+        "description": "For artists the library holds with no MusicBrainz link, which have no\npicture of their own. Never reaches out to the network. The album\nunder the artist's name with the newest release is chosen, studio\nalbums before compilations.",
+        "operationId": "library_artist_artwork",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local artist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "250, 500, 1200, or original (the default) for full size",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes"
+          },
+          "304": {
+            "description": "Image unchanged"
+          },
+          "400": {
+            "description": "Bad query string or unsupported size",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "None of the artist's albums has art",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/contributions/musicbrainz/callback": {
       "get": {
         "tags": [

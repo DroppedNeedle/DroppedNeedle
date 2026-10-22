@@ -41,6 +41,7 @@
 			remoteUrl={artist.thumb_url ?? null}
 			source={artist.local_id ? 'local' : 'provider'}
 			available={!isLocalOnlyRow(artist)}
+			localId={isLocalOnlyRow(artist) ? artist.local_id : null}
 		/>
 	</figure>
 

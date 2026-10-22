@@ -353,6 +353,25 @@ async fn a_compat_cover_joins_a_running_fetch() {
     assert_eq!(status, StatusCode::OK);
 }
 
+/// A library artist with no MusicBrainz link shows the art of one of their
+/// own albums; an artist none of whose albums has art answers 404.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_library_artist_shows_the_art_of_their_own_album() {
+    let files = ScratchDir::new("reads-artwork-artist");
+    let rig = rig(Some(&files.join("01.flac"))).await;
+    std::fs::write(files.join("cover.png"), PNG_BYTES).unwrap();
+    set_folder_art(&rig, &files.join("cover.png"), 1).await;
+
+    let (status, headers, body) = get(rig.app(true), "/api/v3/library/artists/a1/artwork").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, PNG_BYTES);
+    assert_eq!(header(&headers, "x-cover-source"), Some("folder"));
+
+    let (status, _, _) = get(rig.app(true), "/api/v3/library/artists/nobody/artwork").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
     let files = ScratchDir::new("reads-artwork-files");

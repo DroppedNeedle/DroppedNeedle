@@ -3905,6 +3905,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/artists/{id}/artwork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A library artist's picture, taken from the art of one of their own
+         *     albums.
+         * @description For artists the library holds with no MusicBrainz link, which have no
+         *     picture of their own. Never reaches out to the network. The album
+         *     under the artist's name with the newest release is chosen, studio
+         *     albums before compilations.
+         */
+        get: operations["library_artist_artwork"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/contributions/musicbrainz/callback": {
         parameters: {
             query?: never;
@@ -32744,6 +32768,64 @@ export interface operations {
                 };
             };
             /** @description Unknown artist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    library_artist_artwork: {
+        parameters: {
+            query?: {
+                /** @description 250, 500, 1200, or original (the default) for full size */
+                size?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Local artist id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Image unchanged */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad query string or unsupported size */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description None of the artist's albums has art */
             404: {
                 headers: {
                     [name: string]: unknown;

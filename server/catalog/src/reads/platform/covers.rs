@@ -130,6 +130,14 @@ pub trait CoverArt: Send + Sync + 'static {
         album_id: &'a str,
         size: Option<&'a str>,
     ) -> BoxFuture<'a, Option<CoverBytes>>;
+    /// A library artist's picture from their own albums' art (see
+    /// [`LocalArtwork::by_artist`](super::artwork::local::LocalArtwork::by_artist))
+    /// at `size`.
+    fn local_artist_art<'a>(
+        &'a self,
+        artist_id: &'a str,
+        size: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<CoverBytes>>;
 }
 
 /// Scripted art source for tests. Entries are keyed exactly as the
@@ -246,6 +254,14 @@ impl CoverArt for FakeCoverArt {
         let found = self.albums.get(album_id).cloned();
         Box::pin(async move { found })
     }
+
+    fn local_artist_art<'a>(
+        &'a self,
+        _artist_id: &'a str,
+        _size: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<CoverBytes>> {
+        Box::pin(async { None })
+    }
 }
 
 /// Handler state: the art port behind an `Arc` so handlers stay non-generic
@@ -271,6 +287,7 @@ pub fn routes() -> Routes<CoversState> {
         .user(routes!(artist_cover))
         .user(routes!(artist_cover_credit))
         .user(routes!(album_artwork))
+        .user(routes!(library_artist_artwork))
 }
 
 /// Who made an artist's picture and under which licence. Plain text.
@@ -318,6 +335,14 @@ pub struct ArtistSizeQuery {
 pub struct AlbumArtQuery {
     /// Art version the caller holds (`cover_version`).
     pub v: Option<i64>,
+    /// 250, 500, 1200, or absent / `original` for full size.
+    #[serde(default)]
+    pub size: String,
+}
+
+/// Query for the library artist artwork route.
+#[derive(Debug, Deserialize)]
+pub struct ArtistArtQuery {
     /// 250, 500, 1200, or absent / `original` for full size.
     #[serde(default)]
     pub size: String,
@@ -596,6 +621,49 @@ pub async fn album_artwork(
         (None, _) => PRIVATE_SHORT_CACHE,
     };
     art_response(art, &headers, cache)
+}
+
+/// A library artist's picture, taken from the art of one of their own
+/// albums.
+///
+/// For artists the library holds with no MusicBrainz link, which have no
+/// picture of their own. Never reaches out to the network. The album
+/// under the artist's name with the newest release is chosen, studio
+/// albums before compilations.
+#[utoipa::path(
+    get,
+    tag = "platform",
+    path = "/api/v3/library/artists/{id}/artwork",
+    params(
+        ("id" = String, Path, description = "Local artist id"),
+        ("size" = Option<String>, Query, description = "250, 500, 1200, or original (the default) for full size"),
+    ),
+    responses(
+        (status = 200, description = "Image bytes"),
+        (status = 304, description = "Image unchanged"),
+        (status = 400, description = "Bad query string or unsupported size"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "None of the artist's albums has art"),
+    )
+)]
+pub async fn library_artist_artwork(
+    State(state): State<CoversState>,
+    Path(artist_id): Path<String>,
+    headers: HeaderMap,
+    ValidQuery(query): ValidQuery<ArtistArtQuery>,
+) -> Response {
+    let size = match normalize_size(&query.size) {
+        Ok(size) => size,
+        Err(message) => return ApiError::invalid_input(message).into_response(),
+    };
+    match state
+        .covers
+        .local_artist_art(&artist_id, size.as_deref())
+        .await
+    {
+        Some(art) => art_response(art, &headers, PRIVATE_SHORT_CACHE),
+        None => missing_response(),
+    }
 }
 
 #[cfg(test)]

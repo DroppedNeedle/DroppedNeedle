@@ -211,6 +211,7 @@
 								<div class="h-10 w-10 shrink-0 overflow-hidden rounded-full">
 									<ArtistImage
 										mbid={artist.musicbrainz_artist_id ?? ''}
+										localId={artist.id}
 										alt={artist.name}
 										size="xs"
 										className="h-full w-full object-cover"
