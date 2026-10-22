@@ -25,8 +25,7 @@
 
 use std::collections::BTreeSet;
 
-use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{DroppedEdition, EditionChange, EditionChangeKind, IdentityChoice};
 use super::reasons;
@@ -255,7 +254,7 @@ pub(super) fn settle(tx: &Transaction<'_>, s: &Settle<'_>) -> rusqlite::Result<S
                 drop_edition(tx, s.dest)?;
                 replaced = true;
             }
-            move_edition(tx, &from.album_id, s.dest)?;
+            identity::move_edition(tx, &from.album_id, s.dest)?;
             changes.push(change(
                 EditionChangeKind::Moved,
                 Some(&from.album_id),
@@ -291,22 +290,9 @@ pub(super) fn settle(tx: &Transaction<'_>, s: &Settle<'_>) -> rusqlite::Result<S
     }
     let release = kept
         .as_ref()
-        .and_then(|identity| identity.release_mbid.clone());
-    let marks = placeholders(checked.len());
-    let mut values = vec![
-        Value::Text(PROVIDER.to_owned()),
-        release.map_or(Value::Null, Value::Text),
-    ];
-    values.extend(checked.iter().cloned().map(Value::Text));
+        .and_then(|identity| identity.release_mbid.as_deref());
     // Without an edition, no track keeps a release placement.
-    tx.execute(
-        &format!(
-            "DELETE FROM local_track_external_identities WHERE provider = ?1 \
-             AND release_mbid IS NOT NULL AND (?2 IS NULL OR lower(release_mbid) <> lower(?2)) \
-             AND local_track_id IN ({marks})"
-        ),
-        params_from_iter(values),
-    )?;
+    identity::settle_tracks(tx, release, &checked)?;
     if let Some(release) = kept.and_then(|identity| identity.release_mbid)
         && queue_placement(tx, s.dest, s.now)?
     {
@@ -347,25 +333,6 @@ pub(super) fn drop_scattered(
         reason: reasons::EDITION_ALBUM_GONE,
         dropped,
     }))
-}
-
-/// Move `from`'s edition, with its match state and pending remap, onto
-/// `to` (which has none). Undo rows `to` kept from an earlier edition go
-/// first: they name revisions the moved row could reach.
-fn move_edition(tx: &Transaction<'_>, from: &str, to: &str) -> rusqlite::Result<()> {
-    identity::delete_album_row(tx, to, identity::Rows::Any)?;
-    tx.execute(
-        "UPDATE local_album_external_identities SET local_album_id = ?2, \
-         row_revision = row_revision + 1 WHERE local_album_id = ?1 AND provider = ?3",
-        params![from, to, PROVIDER],
-    )?;
-    for table in ["library_album_match_state", "library_edition_remap_queue"] {
-        tx.execute(
-            &format!("UPDATE OR REPLACE {table} SET local_album_id = ?2 WHERE local_album_id = ?1"),
-            params![from, to],
-        )?;
-    }
-    Ok(())
 }
 
 /// Remove an album's edition and everything that hangs off it, with no

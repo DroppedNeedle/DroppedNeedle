@@ -13,7 +13,6 @@
 //! decisions a person makes on an album live in [`super::decisions`].
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
-use sha2::{Digest as _, Sha256};
 
 use super::control::{ControlPlan, Requeue, plan};
 use super::models::{
@@ -22,7 +21,7 @@ use super::models::{
 use super::reasons;
 use crate::identify::queue::album_input_revision;
 use crate::identity::DecisionSource;
-use crate::identity::reads::album_identity_row;
+use crate::identity::reads::{album_identity_row, identity_hash};
 use crate::jobs::{self, ControlChange, NewJob, NewWork, Tally, WorkState};
 use crate::management::profile::root_assignment;
 use droppedneedle_kernel::runtime_config::Live;
@@ -150,60 +149,9 @@ pub fn album_revisions(
     Ok(Some(AlbumRevisions {
         album_revision,
         input_revision: album_input_revision(conn, album_id)?,
-        identity_revision: identity_revision(conn, album_id)?,
+        identity_revision: identity_hash(conn, album_id)?,
         policies,
     }))
-}
-
-/// A hash over the album's identity row and its indexed tracks' identity
-/// rows: any seal, retraction, or curator decision moves it.
-fn identity_revision(conn: &Connection, album_id: &str) -> rusqlite::Result<String> {
-    let mut hasher = Sha256::new();
-    let album: Option<(String, Option<String>, String, i64)> = conn
-        .query_row(
-            "SELECT release_group_mbid, release_mbid, decision_source, row_revision \
-             FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
-            params![album_id, PROVIDER],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .optional()?;
-    if let Some((group, release, source, revision)) = album {
-        hasher.update(
-            format!(
-                "album\0{group}\0{}\0{source}\0{revision}\n",
-                release.unwrap_or_default()
-            )
-            .as_bytes(),
-        );
-    }
-    let mut stmt = conn.prepare(
-        "SELECT t.id, i.recording_mbid, i.release_mbid, i.release_track_mbid, \
-         i.medium_position, i.release_track_position, i.decision_source, i.row_revision \
-         FROM local_tracks t JOIN local_track_external_identities i \
-         ON i.local_track_id = t.id AND i.provider = ?2 \
-         WHERE t.local_album_id = ?1 AND t.availability = 'indexed' ORDER BY t.id",
-    )?;
-    let mut rows = stmt.query(params![album_id, PROVIDER])?;
-    while let Some(row) = rows.next()? {
-        let line = format!(
-            "track\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\n",
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            row.get::<_, Option<i64>>(4)?.unwrap_or_default(),
-            row.get::<_, Option<i64>>(5)?.unwrap_or_default(),
-            row.get::<_, String>(6)?,
-            row.get::<_, i64>(7)?,
-        );
-        hasher.update(line.as_bytes());
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .take(16)
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
 }
 
 // ---------------------------------------------------------------------------

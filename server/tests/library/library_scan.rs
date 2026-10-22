@@ -1550,6 +1550,148 @@ async fn cleanup_leaves_a_half_retagged_album_alone_mid_scan() {
     );
 }
 
+/// Catalog cleanup folds the stray half of an album a v2 import split in
+/// two into the album its files' tags name, dropping the v2 choice. The
+/// fold keeps that choice, so undoing it brings the album, its files,
+/// their v2 matches, its "leave unmanaged" and its takeover mark back. An
+/// undo never replaces a match a person made since on a moved file, the
+/// cleanup never folds the album again, and an undo runs once.
+#[test]
+fn a_folded_v2_split_comes_back_on_undo() {
+    use droppedneedle_library::identity::{FOLD_REASON, FoldUndo, undo_fold};
+
+    const SPLIT_GROUP: &str = "1d1b2a6e-8e1a-4c4f-9b7e-0f4f8c3b2a10";
+    const TAGGED_GROUP: &str = "2e2c3b7f-9f2b-4d5a-8c8f-1a5a9d4c3b21";
+    let dir = ScratchDir::new("fold-undo");
+    let path = dir.join("app.db");
+    migrated_db(&path);
+    let mut conn = droppedneedle_kernel::db::open_connection(&path).expect("connection opens");
+    let mut seed = String::from(
+        "INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+         VALUES ('cleanup', 'repair', 'running', 0, 0); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('artist', 'artist', 'artist', 'person', 0, 0); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at) VALUES ('split', 'root-1', 'split', 'album', 'album', \
+         'artist', 'artist', 'artist', 'legacy_import', 0, 0), ('kept', 'root-1', 'kept', \
+         'album', 'album', 'artist', 'artist', 'artist', 'automatic', 0, 0);",
+    );
+    for (track, album, number) in [("s1", "split", 3), ("s2", "split", 4), ("k1", "kept", 1)] {
+        seed.push_str(&format!(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, tag_revision, title, \
+             title_folded, artist_name, album_title, album_title_folded, tag_album_title, \
+             tag_album_artist_name, embedded_release_group_mbid, disc_number, track_number, \
+             file_format, ingest_source, imported_at, membership_source) \
+             VALUES ('{track}', '{album}', 'root-1', '/music/a/{track}.flac', \
+             'a/{track}.flac', '{track}', 1, 1, 'stat', 'tag', '{track}', '{track}', \
+             'artist', 'album', 'album', 'album', 'artist', '{TAGGED_GROUP}', 1, {number}, \
+             'flac', 'scan', 0, 'automatic');"
+        ));
+    }
+    seed.push_str(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('split', 'musicbrainz', '{SPLIT_GROUP}', 'release-split', 'legacy_import', \
+         5, 1), ('kept', 'musicbrainz', '{TAGGED_GROUP}', 'release-kept', 'automatic', 5, 1); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at, \
+         row_revision) VALUES \
+         ('s1', 'musicbrainz', 'rec-1', 'release-split', 'rt-1', 'legacy_import', 5, 1), \
+         ('s2', 'musicbrainz', 'rec-2', 'release-split', NULL, 'legacy_import', 5, 1); \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+         INSERT INTO library_management_exclusions (local_album_id, reason, \
+         excluded_by_user_id, excluded_at) VALUES ('split', 'administrator_choice', \
+         'curator', 3); \
+         INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES ('split', 'files_changed', 4);"
+    ));
+    conn.execute_batch(&seed).expect("the split album seeds");
+    let rows = |conn: &rusqlite::Connection| -> Vec<String> {
+        let mut statement = conn
+            .prepare(
+                "SELECT 'album ' || a.id || ' ' || COALESCE(a.retired_into_album_id, '-') \
+                 || ' ' || COALESCE(i.release_group_mbid, '-') || ' ' \
+                 || COALESCE(i.release_mbid, '-') || ' ' || COALESCE(i.decision_source, '-') \
+                 FROM local_albums a LEFT JOIN local_album_external_identities i \
+                 ON i.local_album_id = a.id \
+                 UNION ALL SELECT 'track ' || t.id || ' ' || t.local_album_id || ' ' \
+                 || COALESCE(i.release_mbid, '-') || ' ' || COALESCE(i.release_track_mbid, '-') \
+                 || ' ' || COALESCE(i.decision_source, '-') FROM local_tracks t \
+                 LEFT JOIN local_track_external_identities i ON i.local_track_id = t.id \
+                 UNION ALL SELECT 'alias ' || alias || ' ' || local_album_id \
+                 FROM local_album_aliases \
+                 UNION ALL SELECT 'exclusion ' || reason || ' ' || excluded_by_user_id \
+                 FROM library_management_exclusions WHERE local_album_id = 'split' \
+                 UNION ALL SELECT 'takeover ' || cause FROM library_album_takeovers \
+                 WHERE local_album_id = 'split' ORDER BY 1",
+            )
+            .expect("query prepares");
+        statement
+            .query_map([], |row| row.get(0))
+            .expect("query runs")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows read")
+    };
+    let before = rows(&conn);
+
+    let tx = conn.transaction().expect("transaction");
+    let changed = hygiene::clean_album(&tx, "split", "cleanup", 10.0).expect("cleanup runs");
+    tx.commit().expect("commit");
+    assert!(changed.is_some(), "the split half is folded");
+    let folded = rows(&conn);
+    assert!(
+        folded.contains(&"album split kept - - -".to_owned()),
+        "{folded:?}"
+    );
+    let action: String = conn
+        .query_row(
+            "SELECT id FROM library_catalog_actions WHERE reason_code = ?1",
+            [FOLD_REASON],
+            |row| row.get(0),
+        )
+        .expect("the fold is in the album's history");
+
+    let undo = |conn: &mut rusqlite::Connection| {
+        let tx = conn.transaction().expect("transaction");
+        let outcome = undo_fold(&tx, &action, Some("curator"), 20.0).expect("undo runs");
+        tx.commit().expect("commit");
+        outcome
+    };
+
+    let persons = "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('s1', 'musicbrainz', 'rec-1', 'release-kept', 'rt-k3', 'manual', 15)";
+    conn.execute(persons, [])
+        .expect("a person places s1 on the kept album");
+    let chosen = rows(&conn);
+    assert_eq!(
+        undo(&mut conn),
+        FoldUndo::Stale,
+        "a person's later match stays"
+    );
+    assert_eq!(rows(&conn), chosen, "a refused undo changes nothing");
+    conn.execute(
+        "DELETE FROM local_track_external_identities WHERE local_track_id = 's1'",
+        [],
+    )
+    .expect("the person's match goes");
+
+    assert_eq!(undo(&mut conn), FoldUndo::Restored);
+    assert_eq!(
+        rows(&conn),
+        before,
+        "the album, its v2 matches, its exclusion and its takeover mark are back"
+    );
+    let tx = conn.transaction().expect("transaction");
+    let again = hygiene::clean_album(&tx, "split", "cleanup", 30.0).expect("cleanup runs");
+    tx.commit().expect("commit");
+    assert_eq!(again, None, "an undone fold stays undone");
+    assert_eq!(undo(&mut conn), FoldUndo::Stale, "an undo runs once");
+}
+
 /// The first file of the second window of a 300-file album.
 const SECOND_WINDOW: &str = "t256.flac";
 

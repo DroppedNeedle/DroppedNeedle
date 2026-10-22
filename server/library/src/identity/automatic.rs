@@ -9,7 +9,7 @@
 
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
-use super::reads::{album_identity_row, identity_revision, track_identity_rows};
+use super::reads::{album_identity_row, identity_hash, identity_revision, track_identity_rows};
 use super::sql;
 use super::undo::{carry_undo, keep_choice_undo, snapshot};
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
@@ -162,7 +162,35 @@ pub struct Accepted<'a> {
     pub extra: &'a [String],
     pub job_id: Option<&'a str>,
     pub reason_code: &'a str,
+    /// The album as the recheck found it. When set, the edition is
+    /// accepted only while the album still looks that way.
+    pub expected: Option<&'a Expected>,
     pub now: f64,
+}
+
+/// The album as a check saw it: its row revision, its files' input
+/// revision and the hash of its identity ([`identity_hash`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Expected {
+    pub album_revision: i64,
+    pub input_revision: String,
+    pub identity_revision: String,
+}
+
+/// Whether the album, live and holding an indexed file, still looks the
+/// way `expected` says.
+fn still_as_checked(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    expected: &Expected,
+) -> rusqlite::Result<bool> {
+    let revision: Option<i64> = tx
+        .prepare_cached(sql::LIVE_ALBUM_REVISION.text())?
+        .query_row(params![album_id], |row| row.get(0))
+        .optional()?;
+    Ok(revision == Some(expected.album_revision)
+        && album_input_revision(tx, album_id)? == expected.input_revision
+        && identity_hash(tx, album_id)? == expected.identity_revision)
 }
 
 /// Accept an exact edition a recheck found, as confirmed: the album row
@@ -171,12 +199,19 @@ pub struct Accepted<'a> {
 /// flag go. The rows it replaced are kept as both undos (the album page's
 /// edition undo and the automatic-edition undo), and either puts the
 /// earlier match state back. A person's choice, made now or carried over
-/// from v2, is never replaced: `None` then. Returns the audit row id.
+/// from v2, is never replaced, and an album that moved since the check
+/// ([`Accepted::expected`]) is left as it is: `None` then. Returns the
+/// audit row id.
 pub fn accept_automatic(
     tx: &Transaction<'_>,
     album_id: &str,
     accepted: &Accepted<'_>,
 ) -> rusqlite::Result<Option<String>> {
+    if let Some(expected) = accepted.expected
+        && !still_as_checked(tx, album_id, expected)?
+    {
+        return Ok(None);
+    }
     if album_source(tx, album_id)?.is_some_and(DecisionSource::is_persons_choice) {
         return Ok(None);
     }

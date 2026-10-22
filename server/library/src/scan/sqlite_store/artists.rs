@@ -24,6 +24,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::commit::{TRACK_GONE, UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::identify::merged_ids;
+use crate::identity::sql::PERSONS;
 use crate::matching::model::VARIOUS_ARTISTS_MBID;
 use crate::scan::naming::{VARIOUS_ARTISTS_ID, artist_key, artist_mbid_key};
 use crate::tags::AudioArtistCredit;
@@ -194,13 +195,13 @@ pub(crate) struct Proven {
 pub(crate) fn proven_rows(tx: &Connection, mbid: &str) -> rusqlite::Result<Vec<Proven>> {
     let mut out: Vec<Proven> = tx
         .prepare_cached(&format!(
-            "SELECT a.id, i.decision_source IN ('manual', 'legacy_import') AS chosen \
+            "SELECT a.id, i.decision_source IN {PERSONS} AS chosen \
              FROM local_artist_external_identities i \
              JOIN local_artists a ON a.id = i.local_artist_id \
              WHERE lower(i.provider_artist_id) = ?2 AND i.provider = 'musicbrainz' \
              AND a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
              AND a.id NOT IN (?5, ?6) \
-             AND (i.decision_source IN ('manual', 'legacy_import') OR NOT {}) \
+             AND (i.decision_source IN {PERSONS} OR NOT {}) \
              ORDER BY chosen DESC, a.created_at, a.id",
             holds_other_id("a.id")
         ))?

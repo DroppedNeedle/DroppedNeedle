@@ -26,6 +26,8 @@ use super::models::*;
 use super::rules::album_input_revisions;
 use super::seams::*;
 use super::worker::{Completion, VERIFY};
+use crate::identity;
+use crate::identity::sql::PERSONS;
 
 const PROVIDER: &str = "musicbrainz";
 /// Attempt trigger v2 stamped on contribution verification attempts.
@@ -472,23 +474,22 @@ fn artist_identity(conn: &Connection, artist_id: &str) -> rusqlite::Result<Optio
 /// The artist's MusicBrainz link when a person or v2 made it. The app's
 /// own links are revisable, so a contribution may replace them.
 fn chosen_artist_identity(conn: &Connection, artist_id: &str) -> rusqlite::Result<Option<String>> {
-    conn.prepare_cached(
+    conn.prepare_cached(&format!(
         "SELECT provider_artist_id FROM local_artist_external_identities \
-         WHERE local_artist_id = ?1 AND provider = ?2 \
-         AND decision_source IN ('manual', 'legacy_import')",
-    )?
+         WHERE local_artist_id = ?1 AND provider = ?2 AND decision_source IN {PERSONS}"
+    ))?
     .query_row(params![artist_id, PROVIDER], |row| row.get(0))
     .optional()
 }
 
 /// The row linked to `artist_mbid`, and whether the app made the link.
 fn artist_owner(conn: &Connection, artist_mbid: &str) -> rusqlite::Result<Option<(String, bool)>> {
-    conn.prepare_cached(
-        "SELECT local_artist_id, decision_source NOT IN ('manual', 'legacy_import') \
+    conn.prepare_cached(&format!(
+        "SELECT local_artist_id, decision_source NOT IN {PERSONS} \
          FROM local_artist_external_identities \
          WHERE provider = ?1 AND lower(provider_artist_id) = lower(?2) \
-         ORDER BY local_artist_id LIMIT 1",
-    )?
+         ORDER BY local_artist_id LIMIT 1"
+    ))?
     .query_row(params![PROVIDER, artist_mbid], |row| {
         Ok((row.get(0)?, row.get(1)?))
     })
@@ -550,9 +551,14 @@ struct LinkIdentity<'a> {
 /// Commit the album identity (and the artist identity when free) as manual
 /// decisions; returns the album's new row revision. Callers have already
 /// ruled out conflicting album and artist identities.
-fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i64, ContribError> {
+fn commit_link(
+    conn: &Transaction<'_>,
+    link: &LinkIdentity<'_>,
+    now: f64,
+) -> Result<i64, ContribError> {
     let mut album_revision = link.album_revision;
-    if album_identity(conn, link.album_id)?.is_none() {
+    let album_unlinked = album_identity(conn, link.album_id)?.is_none();
+    if album_unlinked {
         album_revision = conn
             .prepare_cached(
                 "UPDATE local_albums SET updated_at = ?3, row_revision = row_revision + 1 \
@@ -565,21 +571,6 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
             .ok_or_else(|| {
                 ContribError::stale("The album changed before the release could be linked.")
             })?;
-        conn.prepare_cached(
-            "INSERT INTO local_album_external_identities (local_album_id, provider, \
-             release_group_mbid, release_mbid, decision_source, matcher_version, attempt_id, \
-             selected_by_user_id, selected_at) VALUES (?1, ?2, ?3, ?4, 'manual', ?5, ?6, ?7, ?8)",
-        )?
-        .execute(params![
-            link.album_id,
-            PROVIDER,
-            link.release_group_mbid,
-            link.release_mbid,
-            link.attempt.matcher_version,
-            link.attempt.id,
-            link.selected_by,
-            now,
-        ])?;
     }
     if let Some(wanted) = link.artist_mbid {
         let owner = artist_owner(conn, wanted)?;
@@ -588,10 +579,10 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
         if let Some((other, true)) = &owner
             && other != link.artist_id
         {
-            conn.prepare_cached(
+            conn.prepare_cached(&format!(
                 "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1 \
-                 AND provider = ?2 AND decision_source NOT IN ('manual', 'legacy_import')",
-            )?
+                 AND provider = ?2 AND decision_source NOT IN {PERSONS}"
+            ))?
             .execute(params![other, PROVIDER])?;
             conn.prepare_cached(
                 "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 \
@@ -650,39 +641,35 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
             _ => {}
         }
     }
-    // Each paired file takes its track identity on the release, as v2 wrote
-    // it: recording, release track and position, a manual decision. Only
-    // files of this album are touched.
-    for track in link.tracks {
-        let positive = |value: Option<i64>| value.filter(|position| *position > 0);
-        conn.prepare_cached(
-            "INSERT INTO local_track_external_identities (local_track_id, provider, \
-             recording_mbid, release_mbid, release_track_mbid, medium_position, \
-             release_track_position, decision_source, attempt_id, selected_at) \
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'manual', ?8, ?9 \
-             WHERE EXISTS (SELECT 1 FROM local_tracks WHERE id = ?1 AND local_album_id = ?10) \
-             ON CONFLICT (local_track_id, provider) DO UPDATE SET \
-             recording_mbid = excluded.recording_mbid, release_mbid = excluded.release_mbid, \
-             release_track_mbid = excluded.release_track_mbid, \
-             medium_position = excluded.medium_position, \
-             release_track_position = excluded.release_track_position, \
-             decision_source = excluded.decision_source, attempt_id = excluded.attempt_id, \
-             selected_at = excluded.selected_at, \
-             row_revision = local_track_external_identities.row_revision + 1",
-        )?
-        .execute(params![
-            track.local_track_id,
-            PROVIDER,
-            track.recording_mbid,
-            link.release_mbid,
-            track.release_track_mbid,
-            positive(track.medium_position),
-            positive(track.track_position),
-            link.attempt.id,
-            now,
-            link.album_id,
-        ])?;
-    }
+    // The album's match when it had none, and each paired file's track
+    // identity on the release, as v2 wrote it: recording, release track and
+    // position, a manual decision. Only files of this album are touched.
+    let positive = |value: Option<i64>| value.filter(|position| *position > 0);
+    let tracks: Vec<identity::LinkedTrack<'_>> = link
+        .tracks
+        .iter()
+        .map(|track| identity::LinkedTrack {
+            local_track_id: &track.local_track_id,
+            recording_mbid: &track.recording_mbid,
+            release_track_mbid: track.release_track_mbid.as_deref(),
+            disc: positive(track.medium_position),
+            position: positive(track.track_position),
+        })
+        .collect();
+    identity::link(
+        conn,
+        &identity::Link {
+            album_id: link.album_id,
+            release_group_mbid: link.release_group_mbid,
+            release_mbid: link.release_mbid,
+            matcher_version: &link.attempt.matcher_version,
+            attempt_id: &link.attempt.id,
+            selected_by: link.selected_by,
+        },
+        album_unlinked,
+        &tracks,
+        now,
+    )?;
     // An identify review left open for this album is settled by the link.
     conn.prepare_cached(
         "UPDATE library_identify_reviews SET state = 'approved', resolved_by_user_id = ?2, \

@@ -13,7 +13,11 @@
 //! whose ids the files' tags carried, stays revisable: a later automatic
 //! pass may replace it, and new evidence that contradicts it takes it
 //! away. A person's choice, and one carried over from v2, is never touched
-//! by automatic work.
+//! by automatic work, with one exception that can be undone: the catalog
+//! repair that folds the stray half of an album a v2 import split in two
+//! ([`fold_legacy`], [`undo_fold`]).
+//!
+//! Only this module writes these tables; a source gate holds it.
 //!
 //! Beside the five tables the module also writes what only means something
 //! with a match: the queued placement of an album's files
@@ -22,7 +26,10 @@
 
 mod automatic;
 mod custom;
+mod fold;
+pub(crate) mod follow;
 mod import;
+mod moves;
 mod person;
 pub mod reads;
 pub mod remap;
@@ -35,11 +42,17 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use automatic::write_match_flag;
 pub use automatic::{
-    Accepted, AutomaticOutcome, Inputs, Placed, accept_automatic, retract, seal_automatic,
+    Accepted, AutomaticOutcome, Expected, Inputs, Placed, accept_automatic, retract, seal_automatic,
 };
 pub use custom::{Custom, custom_edition};
+pub(crate) use fold::fold_legacy;
+pub use fold::{FOLD_REASON, FOLD_UNDONE, FoldUndo, Folded, TakeoverMark, fold_undone, undo_fold};
 pub use import::{ImportedFile, adopt_import, import_album};
 pub(crate) use import::{save_album, save_track};
+pub(crate) use moves::{
+    Link, LinkedTrack, Spot, clear_chosen_flag, link, move_edition, place_mapping, place_scanned,
+    release_track, settle_tracks,
+};
 pub use person::{
     Approved, Chosen, Matched, Offer, Removal, approve, choose, confirm, hand_back, hand_match,
     leave_unmanaged, place, remove, unmatch,

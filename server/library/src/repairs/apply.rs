@@ -9,13 +9,13 @@
 //! - `exact_release_suggested` chooses the suggested edition, as a person
 //!   choosing it on the album page would (with the same undo).
 
-use rusqlite::{OptionalExtension as _, Transaction, params};
+use rusqlite::Transaction;
 
 use super::store::{self, OpenFinding};
 use crate::catalog_revision::bump_catalog;
 use crate::identify::queue::queue_retry;
 use crate::operations::choice;
-use crate::operations::decisions::{CatalogAction, TrackRow, record_action, upsert_track_identity};
+use crate::operations::decisions::{CatalogAction, record_action};
 use crate::operations::models::OperationError;
 
 /// Reason an album's match state carries after a recheck detached it.
@@ -123,31 +123,19 @@ fn place(
     else {
         return Ok(None);
     };
-    let source: Option<String> = tx
-        .query_row(
-            "SELECT decision_source FROM local_album_external_identities \
-             WHERE local_album_id = ?1 AND provider = 'musicbrainz' AND release_mbid = ?2",
-            params![album_id, release],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(source) = source else {
+    let spots: Vec<crate::identity::Spot<'_>> = payload
+        .mapping
+        .iter()
+        .map(|placed| crate::identity::Spot {
+            local_track_id: &placed.local_track_id,
+            recording_mbid: &placed.recording_mbid,
+            release_track_mbid: &placed.release_track_mbid,
+            disc: Some(placed.medium_position),
+            position: Some(placed.release_track_position),
+        })
+        .collect();
+    if !crate::identity::place_mapping(tx, album_id, release, &spots, now)? {
         return Ok(None);
-    };
-    for placed in &payload.mapping {
-        upsert_track_identity(
-            tx,
-            &TrackRow {
-                local_track_id: &placed.local_track_id,
-                recording_mbid: &placed.recording_mbid,
-                release_mbid: Some(release),
-                release_track_mbid: Some(&placed.release_track_mbid),
-                medium_position: Some(placed.medium_position),
-                release_track_position: Some(placed.release_track_position),
-                decision_source: &source,
-            },
-            now,
-        )?;
     }
     record_action(
         tx,

@@ -2412,8 +2412,8 @@ fn accept_automatic_keeps_a_v2_choice_and_seals_an_automatic_match() {
             "test.accept",
             |tx| {
                 Ok::<_, droppedneedle_library::operations::models::OperationError>((
-                    accept_automatic(tx, "album-1", &candidate("t1", "t2"), "R", None, 1.0)?,
-                    accept_automatic(tx, "album-2", &candidate("t3", "t4"), "R", None, 1.0)?,
+                    accept_automatic(tx, "album-1", &candidate("t1", "t2"), "R", None, None, 1.0)?,
+                    accept_automatic(tx, "album-2", &candidate("t3", "t4"), "R", None, None, 1.0)?,
                 ))
             },
         )

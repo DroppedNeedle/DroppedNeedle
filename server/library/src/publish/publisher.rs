@@ -560,11 +560,7 @@ fn adopt_track(
                     )));
                 }
                 // It described the file this one replaced.
-                conn.execute(
-                    "DELETE FROM local_track_external_identities \
-                     WHERE local_track_id = ?1 AND provider = 'musicbrainz'",
-                    rusqlite::params![id],
-                )?;
+                crate::identity::release_track(conn, &id)?;
             }
             Some(_) => give_up_destination(conn, track)?,
             None => {}

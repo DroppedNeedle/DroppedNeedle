@@ -239,6 +239,220 @@ fn the_library_waits_through_the_database_runtime() {
     );
 }
 
+/// The tables the identity module (`library/src/identity/`) owns: an
+/// album's match and its files' matches, its match state and its two undo
+/// rows, and what only means something with a match: the queued placement
+/// of its files, the active custom edition and its manifests, and the
+/// records of files matched by hand.
+const IDENTITY_TABLES: &[&str] = &[
+    "local_album_external_identities",
+    "local_track_external_identities",
+    "library_album_match_state",
+    "library_automatic_edition_undo",
+    "library_edition_choice_undo",
+    "library_edition_remap_queue",
+    "library_custom_edition_active",
+    "library_custom_edition_manifests",
+    "library_custom_edition_tracks",
+    "library_track_hand_matches",
+];
+
+const IDENTITY: Place = place(
+    "library/src/identity/",
+    "the identity module, which owns the tables",
+);
+const IDENTITY_TOOL: Place = place(
+    "tool/src/",
+    "the offline tool carries v2's matches and exports and imports whole tables, with the server stopped",
+);
+
+const IDENTITY_RULES: &[Rule] = &[
+    Rule {
+        what: "writes an identity table",
+        patterns: &[],
+        allowed: &[
+            IDENTITY,
+            IDENTITY_TOOL,
+            place(
+                "catalog/src/reads/library/perf_tests.rs",
+                "the read benchmarks seed their own database",
+            ),
+        ],
+    },
+    Rule {
+        what: "names an identity table alone, as a table loop does",
+        patterns: &[],
+        allowed: &[
+            Place {
+                reserved: true,
+                ..IDENTITY
+            },
+            IDENTITY_TOOL,
+            place(
+                "auth/src/sqlite/users.rs",
+                "reads the manifests' sealer to refuse deleting an account history names",
+            ),
+        ],
+    },
+];
+
+/// Album and track identities, match state, their undo rows and their
+/// satellites are written only through `library/src/identity/`. Shipping
+/// code outside it never names one of the tables right after `INSERT
+/// INTO`, `UPDATE`, `DELETE FROM` or `REPLACE INTO`, nor as a string of its
+/// own (the table loop a `format!` statement runs over). Migrations are
+/// SQL files and not read here.
+#[test]
+fn only_the_identity_module_writes_identity_rows() {
+    let tables = IDENTITY_TABLES.join("|");
+    let patterns = [
+        Regex::new(&format!(
+            r#"(?s)\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM|REPLACE\s+INTO)[\s\\]+(?:main\.)?(?:{tables})\b"#
+        ))
+        .unwrap(),
+        Regex::new(&format!(r#""(?:{tables})""#)).unwrap(),
+    ];
+    let sources = workspace_sources();
+    let mut wrong = Vec::new();
+    for (rule, pattern) in IDENTITY_RULES.iter().zip(&patterns) {
+        let mut used = vec![false; rule.allowed.len()];
+        for source in &sources {
+            let code = source.shipping_code();
+            for found in pattern.find_iter(&code) {
+                match rule
+                    .allowed
+                    .iter()
+                    .position(|place| source.path.starts_with(place.path))
+                {
+                    Some(at) => used[at] = true,
+                    None => {
+                        let line = code[..found.start()].matches('\n').count() + 1;
+                        wrong.push(format!(
+                            "{}:{line}: {} ({})",
+                            source.path,
+                            rule.what,
+                            found
+                                .as_str()
+                                .split_whitespace()
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        ));
+                    }
+                }
+            }
+        }
+        for (place, used) in rule.allowed.iter().zip(used) {
+            if !used && !place.reserved {
+                wrong.push(format!(
+                    "{}: allowed where code {}, but none there does; remove the entry ({})",
+                    place.path, rule.what, place.why
+                ));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "write identity rows through library/src/identity/:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// What the identity module may use from the rest of the library crate,
+/// each with its reason. Anything else it needs moves into the module, so
+/// the commands never reach back into the areas that call them.
+const IDENTITY_USES: &[(&str, &str)] = &[
+    ("catalog_revision", "moves the catalog revision"),
+    (
+        "corrections::continuation",
+        "carries a file's history onto the files a match placed; reads identity rows, writes none",
+    ),
+    (
+        "corrections::release_join",
+        "joins a replaced file to the one that took its place; reads identity rows, writes none",
+    ),
+    (
+        "management::automatic::queue",
+        "queues the album for automatic management, one statement",
+    ),
+    (
+        "identify::queue",
+        "offers the album to identification and reads its input revision",
+    ),
+    ("identify::models", "the identity rows' data types"),
+    (
+        "operations::decisions::CatalogAction",
+        "the audit row, until the audit writer has a module of its own",
+    ),
+    (
+        "operations::decisions::record_action",
+        "the audit row, until the audit writer has a module of its own",
+    ),
+    (
+        "operations::decisions::settle_reviews",
+        "review writes, until reviews have a service of their own",
+    ),
+    ("matching::Release", "the stored release document's type"),
+    (
+        "publish::planner::ReleaseIdentity",
+        "an import's journaled match, a data type",
+    ),
+];
+
+/// The identity module uses only what [`IDENTITY_USES`] lists from the
+/// rest of the crate, and every listed use is still made.
+#[test]
+fn the_identity_module_uses_only_what_it_lists() {
+    let path = Regex::new(r"\bcrate::((?:\w+::)*)(\{[^}]*\}|\w+)").unwrap();
+    let mut used = vec![false; IDENTITY_USES.len()];
+    let mut wrong = Vec::new();
+    for source in workspace_sources() {
+        if !source.path.starts_with(IDENTITY.path) {
+            continue;
+        }
+        let code = source.shipping_code();
+        for found in path.captures_iter(&code) {
+            let prefix = &found[1];
+            let items: Vec<String> = match found[2].strip_prefix('{') {
+                Some(group) => group
+                    .trim_end_matches('}')
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty() && *item != "self")
+                    .map(|item| format!("{prefix}{item}"))
+                    .collect(),
+                None => vec![format!("{prefix}{}", &found[2])],
+            };
+            for item in items {
+                if item == "identity" || item.starts_with("identity::") {
+                    continue;
+                }
+                let allowed = IDENTITY_USES.iter().position(|(listed, _)| {
+                    item == *listed || item.starts_with(&format!("{listed}::"))
+                });
+                match allowed {
+                    Some(at) => used[at] = true,
+                    None => {
+                        let line = code[..found.get(0).unwrap().start()].matches('\n').count() + 1;
+                        wrong.push(format!("{}:{line}: uses crate::{item}", source.path));
+                    }
+                }
+            }
+        }
+    }
+    for ((listed, why), used) in IDENTITY_USES.iter().zip(used) {
+        if !used {
+            wrong.push(format!(
+                "crate::{listed}: listed, but the identity module no longer uses it; remove the entry ({why})"
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "the identity module reaches outside what it lists:\n{}",
+        wrong.join("\n")
+    );
+}
+
 /// Where long-lived tasks start: the loop supervisor (`kernel/src/jobs/`)
 /// and the database's own threads (`kernel/src/db/`), which stop with
 /// `DbRuntime::shutdown`, and the provider cache's writer, which stops with

@@ -30,6 +30,7 @@ use super::models::{
 use super::reasons;
 use super::retag_merge::{JoinCause, MergeOutcome, merge_retagged};
 use crate::identify::sqlite::chosen_matches_differ;
+use crate::identity::DecisionSource;
 use crate::operations::reasons::Reason;
 use crate::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
 
@@ -125,7 +126,8 @@ fn side(conn: &Connection, album_id: &str) -> Result<PairSide, CorrectionError> 
         track_count,
         identity_revision: identity.as_ref().map_or(0, |found| found.row_revision),
         edition: identity.map(|found| PairEdition {
-            chosen: matches!(found.decision_source.as_str(), "manual" | "legacy_import"),
+            chosen: DecisionSource::parse(&found.decision_source)
+                .is_some_and(DecisionSource::is_persons_choice),
             custom: found.custom,
             release_group_mbid: found.release_group_mbid,
             release_mbid: found.release_mbid,

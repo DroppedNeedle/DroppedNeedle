@@ -260,14 +260,15 @@ pub fn detach_by_person(
 
 /// Accept an edition for an album without a person
 /// ([`identity::accept_automatic`]). `None` when the album holds a
-/// person's choice, the candidate names no release, or the edition fits no
-/// file.
+/// person's choice, the candidate names no release, the edition fits no
+/// file, or the album no longer looks as `expected` says.
 pub fn accept_automatic(
     tx: &Transaction<'_>,
     album_id: &str,
     candidate: &ReidentificationCandidate,
     reason_code: &str,
     job_id: Option<&str>,
+    expected: Option<&identity::Expected>,
     now: f64,
 ) -> Result<Option<String>, OperationError> {
     let Some(release) = candidate.evidence.release_mbid.clone() else {
@@ -288,6 +289,7 @@ pub fn accept_automatic(
             extra: &extra,
             job_id,
             reason_code,
+            expected,
             now,
         },
     )?)
@@ -381,11 +383,7 @@ pub(crate) fn place_imported(
         placed += 1;
     }
     if placed > 0 {
-        tx.execute(
-            "DELETE FROM library_album_match_state WHERE local_album_id = ?1 \
-             AND reason_code LIKE 'CHOSEN\\_EDITION\\_%' ESCAPE '\\'",
-            params![album_id],
-        )?;
+        identity::clear_chosen_flag(tx, album_id)?;
     }
     if chosen.is_none() && replaced.is_empty() {
         return Ok((0, left));

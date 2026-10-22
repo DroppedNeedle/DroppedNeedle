@@ -130,6 +130,50 @@ pub fn identity_revision(conn: &Connection, album_id: &str) -> rusqlite::Result<
         .unwrap_or(0))
 }
 
+/// A hash over the album's match and its indexed files' matches, every
+/// column of each: any seal, retraction or person's decision moves it. A
+/// repair keeps it as the identity it checked.
+pub fn identity_hash(conn: &Connection, album_id: &str) -> rusqlite::Result<String> {
+    let mut hasher = Sha256::new();
+    let album: Option<(String, Option<String>, String, i64)> = conn
+        .prepare_cached(sql::ALBUM_HASH_ROW.text())?
+        .query_row(params![album_id, PROVIDER], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .optional()?;
+    if let Some((group, release, source, revision)) = album {
+        hasher.update(
+            format!(
+                "album\0{group}\0{}\0{source}\0{revision}\n",
+                release.unwrap_or_default()
+            )
+            .as_bytes(),
+        );
+    }
+    let mut stmt = conn.prepare_cached(sql::TRACK_HASH_ROWS.text())?;
+    let mut rows = stmt.query(params![album_id, PROVIDER])?;
+    while let Some(row) = rows.next()? {
+        let line = format!(
+            "track\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\n",
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            row.get::<_, Option<i64>>(4)?.unwrap_or_default(),
+            row.get::<_, Option<i64>>(5)?.unwrap_or_default(),
+            row.get::<_, String>(6)?,
+            row.get::<_, i64>(7)?,
+        );
+        hasher.update(line.as_bytes());
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 /// The album's indexed files, by id.
 pub(crate) fn indexed_track_ids(
     conn: &Connection,

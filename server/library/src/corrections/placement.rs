@@ -45,9 +45,9 @@ use super::continuation::Pair;
 use super::release_join::{Verdict, judge};
 use crate::catalog_revision::bump_catalog;
 use crate::identify::sqlite::{release_chosen, stored_release};
+use crate::identity;
 use crate::management::{automatic, takeover};
 use crate::matching::Release;
-use crate::operations::decisions::{TrackRow, upsert_track_identity};
 use crate::publish::record::record_sql;
 use droppedneedle_kernel::db::savepoint;
 
@@ -220,14 +220,12 @@ fn place_album(
     candidates: &[Candidate],
     now: f64,
 ) -> rusqlite::Result<bool> {
-    let (release, source, chosen_at): (String, String, f64) = tx
+    let (release, chosen_at): (String, f64) = tx
         .prepare_cached(
-            "SELECT release_mbid, decision_source, selected_at FROM local_album_external_identities \
+            "SELECT release_mbid, selected_at FROM local_album_external_identities \
              WHERE local_album_id = ?1 AND provider = 'musicbrainz'",
         )?
-        .query_row(params![album], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
+        .query_row(params![album], |row| Ok((row.get(0)?, row.get(1)?)))?;
     let edition = edition(tx, album, &release)?;
     let held = held_tracks(tx, album)?;
 
@@ -255,7 +253,6 @@ fn place_album(
         return Ok(false);
     }
 
-    let by_person = matches!(source.as_str(), "manual" | "legacy_import");
     let mut mark = false;
     if release_chosen(tx, album)? && !missing_rows_have_record(tx, album)? {
         for (track, row) in &placements {
@@ -270,26 +267,17 @@ fn place_album(
     if mark {
         takeover::mark(tx, album, takeover::Cause::RetagFollowed, &[], None, now)?;
     }
-    for (track, row) in &placements {
-        upsert_track_identity(
-            tx,
-            &TrackRow {
-                local_track_id: &row.id,
-                recording_mbid: &track.recording,
-                release_mbid: Some(&release),
-                release_track_mbid: Some(&track.id),
-                medium_position: track.disc,
-                release_track_position: track.position,
-                decision_source: if by_person { "manual" } else { "automatic" },
-            },
-            now,
-        )?;
-    }
-    tx.execute(
-        "DELETE FROM library_album_match_state WHERE local_album_id = ?1 \
-         AND reason_code = 'CHOSEN_EDITION_FITS_NO_FILE'",
-        params![album],
-    )?;
+    let spots: Vec<identity::Spot<'_>> = placements
+        .iter()
+        .map(|(track, row)| identity::Spot {
+            local_track_id: &row.id,
+            recording_mbid: &track.recording,
+            release_track_mbid: &track.id,
+            disc: track.disc,
+            position: track.position,
+        })
+        .collect();
+    identity::place_scanned(tx, album, &release, &spots, now)?;
     if !mark {
         automatic::queue(tx, album, now)?;
     }

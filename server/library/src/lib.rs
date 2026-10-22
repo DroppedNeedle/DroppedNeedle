@@ -18,6 +18,8 @@
 //! the publish journal (with its snapshots and baselines) all live in the
 //! application database. Contribution state runs on an in-memory store.
 
+// The identity module's one `sql!` block expands one level per statement.
+#![recursion_limit = "256"]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 

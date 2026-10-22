@@ -14,7 +14,6 @@ use crate::identity::{self, AutomaticUndo, AutomaticUndone, Custom};
 
 pub(crate) use crate::identity::reads::indexed_track_ids;
 pub use crate::identity::reads::live_automatic_edition_undo;
-pub(crate) use crate::identity::{TrackRow, upsert_track_identity};
 
 /// What a person saw of the album before asking for a custom edition: its
 /// identity revision (0 with none), and its row and input revisions read

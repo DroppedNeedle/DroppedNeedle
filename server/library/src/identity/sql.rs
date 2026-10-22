@@ -625,4 +625,162 @@ droppedneedle_kernel::sql! {
              ON i.local_track_id = t.id AND i.provider = ?2 \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
              AND lower(i.release_mbid) = lower(?3) AND i.release_track_mbid IS NOT NULL";
+
+    // -----------------------------------------------------------------
+    // Two rows of one album: a scan's follow and a merge.
+    // -----------------------------------------------------------------
+
+    /// The album's (`?1`, provider `?2`) match as settling two rows reads
+    /// it: group and release folded, and who decided it.
+    pub(super) MATCH_OF = "SELECT lower(release_group_mbid), \
+             lower(NULLIF(trim(release_mbid), '')), decision_source \
+             FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2";
+    pub(super) MANAGEMENT_QUEUED = "SELECT EXISTS(SELECT 1 \
+             FROM library_management_automatic_queue WHERE local_album_id = ?1)";
+    /// Move the reviews a person closed on `?1` to `?2`.
+    pub(super) MOVE_CLOSED_REVIEWS = "UPDATE library_identify_reviews SET local_album_id = ?2 \
+             WHERE local_album_id = ?1 AND state <> 'pending'";
+    pub(super) DROP_REVIEWS = "DELETE FROM library_identify_reviews WHERE local_album_id = ?1";
+    pub(super) DROP_PENDING_REVIEWS = "DELETE FROM library_identify_reviews \
+             WHERE local_album_id = ?1 AND state = 'pending'";
+    /// Close the album's (`?1`) waiting reviews as dismissed by nobody, at
+    /// `?2` ms.
+    pub(super) DISMISS_PENDING_REVIEWS = "UPDATE library_identify_reviews \
+             SET state = 'dismissed', resolved_by_user_id = NULL, updated_ms = ?2 \
+             WHERE local_album_id = ?1 AND state = 'pending'";
+    pub(super) REMAP_TO_CARRY = "SELECT release_mbid, chosen_by_user_id, origin \
+             FROM library_edition_remap_queue WHERE local_album_id = ?1";
+    /// A match revision neither album (`?1`, `?2`) has had.
+    pub(super) NEXT_SHARED_REVISION = "SELECT MAX(row_revision) + 1 \
+             FROM local_album_external_identities WHERE local_album_id IN (?1, ?2)";
+    /// Delete the album's (`?1`) match rows of every provider.
+    pub(super) DELETE_ALBUM_ROWS = "DELETE FROM local_album_external_identities \
+             WHERE local_album_id = ?1";
+    /// Put the match of `?1` on `?2` at revision `?3`.
+    pub(super) CARRY_ALBUM_ROW = "UPDATE local_album_external_identities \
+             SET local_album_id = ?2, row_revision = ?3 WHERE local_album_id = ?1";
+    pub(super) MOVE_MATCH_STATE = "UPDATE library_album_match_state SET local_album_id = ?2 \
+             WHERE local_album_id = ?1";
+    pub(super) SET_REMAP_ORIGIN = "UPDATE library_edition_remap_queue SET origin = ?2 \
+             WHERE local_album_id = ?1";
+
+    // -----------------------------------------------------------------
+    // Corrections, repairs and imports.
+    // -----------------------------------------------------------------
+
+    /// Move the edition of `?1` (provider `?3`) onto `?2`, at its next
+    /// revision.
+    pub(super) MOVE_EDITION_ROW = "UPDATE local_album_external_identities \
+             SET local_album_id = ?2, row_revision = row_revision + 1 \
+             WHERE local_album_id = ?1 AND provider = ?3";
+    /// Drop the match state of `?2` when `?1` has one to move onto it.
+    pub(super) MAKE_ROOM_FOR_MATCH_STATE = "DELETE FROM library_album_match_state \
+             WHERE local_album_id = ?2 AND EXISTS (SELECT 1 FROM library_album_match_state \
+             WHERE local_album_id = ?1)";
+    /// Drop the queued placement of `?2` when `?1` has one to move onto it.
+    pub(super) MAKE_ROOM_FOR_REMAP = "DELETE FROM library_edition_remap_queue \
+             WHERE local_album_id = ?2 AND EXISTS (SELECT 1 FROM library_edition_remap_queue \
+             WHERE local_album_id = ?1)";
+    pub(super) MOVE_REMAP = "UPDATE library_edition_remap_queue SET local_album_id = ?2 \
+             WHERE local_album_id = ?1";
+    /// Take file `?3` off a release track unless that track is on release
+    /// `?2` (none: off any release; provider `?1`).
+    pub(super) SETTLE_TRACK = "DELETE FROM local_track_external_identities \
+             WHERE provider = ?1 AND release_mbid IS NOT NULL \
+             AND (?2 IS NULL OR lower(release_mbid) <> lower(?2)) AND local_track_id = ?3";
+    /// Who decided the album's (`?1`, provider `?3`) match when it names
+    /// release `?2`.
+    pub(super) SOURCE_NAMING_RELEASE = "SELECT decision_source \
+             FROM local_album_external_identities \
+             WHERE local_album_id = ?1 AND provider = ?3 AND release_mbid = ?2";
+    /// A person's link of the album (`?1`, provider `?2`, group `?3`,
+    /// release `?4`, matcher `?5`, attempt `?6`, by `?7`, at `?8`).
+    pub(super) LINK_ALBUM = "INSERT INTO local_album_external_identities (local_album_id, \
+             provider, release_group_mbid, release_mbid, decision_source, matcher_version, \
+             attempt_id, selected_by_user_id, selected_at) \
+             VALUES (?1, ?2, ?3, ?4, 'manual', ?5, ?6, ?7, ?8)";
+    /// A person's link of file `?1` of album `?10` on its release track
+    /// (provider `?2`, recording `?3`, release `?4`, release track `?5`,
+    /// disc `?6`, position `?7`, attempt `?8`, at `?9`).
+    pub(super) LINK_TRACK = "INSERT INTO local_track_external_identities (local_track_id, \
+             provider, recording_mbid, release_mbid, release_track_mbid, medium_position, \
+             release_track_position, decision_source, attempt_id, selected_at) \
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'manual', ?8, ?9 \
+             WHERE EXISTS (SELECT 1 FROM local_tracks WHERE id = ?1 AND local_album_id = ?10) \
+             ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+             recording_mbid = excluded.recording_mbid, release_mbid = excluded.release_mbid, \
+             release_track_mbid = excluded.release_track_mbid, \
+             medium_position = excluded.medium_position, \
+             release_track_position = excluded.release_track_position, \
+             decision_source = excluded.decision_source, attempt_id = excluded.attempt_id, \
+             selected_at = excluded.selected_at, \
+             row_revision = local_track_external_identities.row_revision + 1";
+
+    // -----------------------------------------------------------------
+    // Folding a split v2 album, and its undo.
+    // -----------------------------------------------------------------
+
+    /// Delete file `?1`'s v2 choice (provider `?2`).
+    pub(super) DROP_LEGACY_TRACK_ROW = "DELETE FROM local_track_external_identities \
+             WHERE local_track_id = ?1 AND provider = ?2 AND decision_source = 'legacy_import'";
+    pub(super) GROUPING_LOCKED = "SELECT grouping_locked FROM local_albums WHERE id = ?1";
+    /// The audit row `?1` of a fold (reason `?2`) and the album it kept.
+    pub(super) FOLD_ACTION = "SELECT before_json, local_album_id FROM library_catalog_actions \
+             WHERE id = ?1 AND reason_code = ?2";
+    /// Whether album `?1` is retired into `?2`.
+    pub(super) RETIRED_INTO = "SELECT EXISTS(SELECT 1 FROM local_albums \
+             WHERE id = ?1 AND retired_into_album_id = ?2)";
+    /// Whether file `?1` is still an indexed file of album `?2`.
+    pub(super) INDEXED_ON = "SELECT EXISTS(SELECT 1 FROM local_tracks \
+             WHERE id = ?1 AND local_album_id = ?2 AND availability = 'indexed')";
+    /// Bring the album `?1` back from retirement (grouping lock `?2`, at
+    /// `?3`).
+    pub(super) UNRETIRE_ALBUM = "UPDATE local_albums SET retired_into_album_id = NULL, \
+             grouping_locked = ?2, updated_at = ?3, row_revision = row_revision + 1 \
+             WHERE id = ?1";
+    /// Move file `?2` back onto album `?1`.
+    pub(super) MOVE_TRACK_TO = "UPDATE local_tracks SET local_album_id = ?1, \
+             row_revision = row_revision + 1 WHERE id = ?2";
+    pub(super) TOUCH_ALBUM = "UPDATE local_albums SET updated_at = ?2, \
+             row_revision = row_revision + 1 WHERE id = ?1";
+    /// The album's (`?1`) takeover mark.
+    pub(super) TAKEOVER_ROW = "SELECT cause, noticed_at, handed_back_at \
+             FROM library_album_takeovers WHERE local_album_id = ?1";
+    /// Put a takeover mark back on the album (`?1`, cause `?2`, noticed at
+    /// `?3`, handed back at `?4`), unless it has one.
+    pub(super) RESTORE_TAKEOVER = "INSERT INTO library_album_takeovers (local_album_id, \
+             cause, noticed_at, handed_back_at) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT (local_album_id) DO NOTHING";
+    /// Whether file `?1` holds a person's match (provider `?2`), or was
+    /// matched by hand.
+    pub(super) PERSONS_TRACK = "SELECT EXISTS(SELECT 1 FROM local_track_external_identities \
+             WHERE local_track_id = ?1 AND provider = ?2 AND decision_source IN " + PERSONS
+             + ") OR EXISTS(SELECT 1 FROM library_track_hand_matches WHERE local_track_id = ?1)";
+    /// Whether a fold of album `?1` was undone (audit kind `?2`).
+    pub(super) FOLD_UNDONE = "SELECT EXISTS(SELECT 1 FROM library_catalog_actions \
+             WHERE local_album_id = ?1 AND action_kind = ?2)";
+    /// Forget that album `?1` was merged into `?2`.
+    pub(super) DROP_MERGED_ALIAS = "DELETE FROM local_album_aliases \
+             WHERE alias = ?1 AND local_album_id = ?2 AND kind = 'merged_album'";
+
+    // -----------------------------------------------------------------
+    // The checks a repair made, read again inside its command.
+    // -----------------------------------------------------------------
+
+    /// The live album's (`?1`) row revision, while it has an indexed file.
+    pub(super) LIVE_ALBUM_REVISION = "SELECT row_revision FROM local_albums \
+             WHERE id = ?1 AND retired_into_album_id IS NULL AND EXISTS \
+             (SELECT 1 FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed')";
+    /// The album's (`?1`, provider `?2`) match, for the identity hash.
+    pub(super) ALBUM_HASH_ROW = "SELECT release_group_mbid, release_mbid, decision_source, \
+             row_revision FROM local_album_external_identities \
+             WHERE local_album_id = ?1 AND provider = ?2";
+    /// The album's (`?1`) indexed files' matches (provider `?2`), for the
+    /// identity hash.
+    pub(super) TRACK_HASH_ROWS = "SELECT t.id, i.recording_mbid, i.release_mbid, \
+             i.release_track_mbid, i.medium_position, i.release_track_position, \
+             i.decision_source, i.row_revision FROM local_tracks t \
+             JOIN local_track_external_identities i \
+             ON i.local_track_id = t.id AND i.provider = ?2 \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed' ORDER BY t.id";
 }

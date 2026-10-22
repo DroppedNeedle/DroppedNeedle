@@ -830,7 +830,8 @@ pub fn save_finding(
 }
 
 /// Apply a suggestion that passed the automatic acceptance gate, if the
-/// album still looks the way it was checked. The finding becomes
+/// album still looks the way it was checked (the identity command checks
+/// that inside its write). The finding becomes
 /// `exact_release_auto_accepted`; otherwise it stays a suggestion.
 pub fn auto_accept(
     tx: &Transaction<'_>,
@@ -839,18 +840,27 @@ pub fn auto_accept(
     verdict: &Verdict,
     now: f64,
 ) -> Result<bool, OperationError> {
-    let Some(candidate) = verdict.payload.candidate.as_ref() else {
+    let (Some(candidate), Some(guard)) = (
+        verdict.payload.candidate.as_ref(),
+        verdict.payload.guard.as_ref(),
+    ) else {
         return Ok(false);
     };
-    if !verdict.payload.auto_accept || !guard_holds(tx, album_id, verdict.payload.guard.as_ref())? {
+    if !verdict.payload.auto_accept {
         return Ok(false);
     }
+    let expected = crate::identity::Expected {
+        album_revision: guard.album_revision,
+        input_revision: guard.input_revision.clone(),
+        identity_revision: guard.identity_revision.clone(),
+    };
     let accepted = crate::operations::choice::accept_automatic(
         tx,
         album_id,
         candidate,
         "EDITION_AUTO_ACCEPTED",
         Some(job_id),
+        Some(&expected),
         now,
     )?;
     if accepted.is_none() {

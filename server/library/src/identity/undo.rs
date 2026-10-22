@@ -36,7 +36,7 @@ pub(crate) struct MatchStateRow {
 
 /// An album's "leave unmanaged" row, as the undo keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ExclusionRow {
+pub struct ExclusionRow {
     reason: String,
     excluded_by_user_id: String,
     excluded_at: f64,
@@ -95,9 +95,12 @@ struct HoldChange {
     carried: bool,
 }
 
-fn hold(conn: &Connection, album_id: &str) -> rusqlite::Result<Hold> {
-    let exclusion = conn
-        .prepare_cached(sql::EXCLUSION_ROW.text())?
+/// The album's "leave unmanaged" row, if it has one.
+pub(crate) fn exclusion_row(
+    conn: &Connection,
+    album_id: &str,
+) -> rusqlite::Result<Option<ExclusionRow>> {
+    conn.prepare_cached(sql::EXCLUSION_ROW.text())?
         .query_row(params![album_id], |row| {
             Ok(ExclusionRow {
                 reason: row.get(0)?,
@@ -106,7 +109,30 @@ fn hold(conn: &Connection, album_id: &str) -> rusqlite::Result<Hold> {
                 row_revision: row.get(3)?,
             })
         })
-        .optional()?;
+        .optional()
+}
+
+/// Put a kept "leave unmanaged" row back on the album. When the person who
+/// set it has been removed since, `actor` stands in for them.
+pub(crate) fn restore_exclusion(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    row: &ExclusionRow,
+    actor: Option<&str>,
+) -> rusqlite::Result<()> {
+    tx.prepare_cached(sql::RESTORE_EXCLUSION.text())?
+        .execute(params![
+            album_id,
+            row.reason,
+            row.excluded_by_user_id,
+            row.excluded_at,
+            actor
+        ])?;
+    Ok(())
+}
+
+fn hold(conn: &Connection, album_id: &str) -> rusqlite::Result<Hold> {
+    let exclusion = exclusion_row(conn, album_id)?;
     let custom_manifest_id = conn
         .prepare_cached(sql::CUSTOM_ACTIVE.text())?
         .query_row(params![album_id], |row| row.get(0))
@@ -274,18 +300,7 @@ fn restore_hold(
                 tx.prepare_cached(sql::DELETE_EXCLUSION.text())?
                     .execute(params![album_id])?;
             }
-            Some(row) => {
-                // The person who left it unmanaged may have been removed
-                // since; the one undoing stands in for them.
-                tx.prepare_cached(sql::RESTORE_EXCLUSION.text())?
-                    .execute(params![
-                        album_id,
-                        row.reason,
-                        row.excluded_by_user_id,
-                        row.excluded_at,
-                        actor
-                    ])?;
-            }
+            Some(row) => restore_exclusion(tx, album_id, row, Some(actor))?,
         }
     }
     if before.custom_manifest_id != after.custom_manifest_id
@@ -393,6 +408,29 @@ pub(crate) fn restore_track_row(
     Ok(())
 }
 
+/// Write a snapshot album row back; an existing row takes the next
+/// revision, and a pruned attempt or a deleted account restores as none.
+pub(crate) fn restore_album_row(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    prior: &PriorAlbumIdentity,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.prepare_cached(sql::RESTORE_ALBUM_ROW.text())?
+        .execute(params![
+            album_id,
+            prior.release_group_mbid,
+            prior.release_mbid,
+            prior.decision_source.as_deref().unwrap_or("automatic"),
+            prior.matcher_version,
+            prior.attempt_id,
+            prior.selected_by_user_id,
+            prior.selected_at.unwrap_or(now),
+            PROVIDER,
+        ])?;
+    Ok(())
+}
+
 /// One kept choice undo, as stored.
 struct UndoRow {
     id: String,
@@ -446,20 +484,7 @@ pub fn undo(
     let held: Option<HoldChange> = kept.hold.as_deref().map(from_json).transpose()?;
 
     match prior.filter(|prior| prior.release_group_mbid.is_some()) {
-        Some(prior) => {
-            tx.prepare_cached(sql::RESTORE_ALBUM_ROW.text())?
-                .execute(params![
-                    album_id,
-                    prior.release_group_mbid,
-                    prior.release_mbid,
-                    prior.decision_source.as_deref().unwrap_or("automatic"),
-                    prior.matcher_version,
-                    prior.attempt_id,
-                    prior.selected_by_user_id,
-                    prior.selected_at.unwrap_or(now),
-                    PROVIDER,
-                ])?;
-        }
+        Some(prior) => restore_album_row(tx, album_id, &prior, now)?,
         None => {
             delete_album_row(tx, album_id, Rows::Any)?;
         }

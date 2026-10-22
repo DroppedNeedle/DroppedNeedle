@@ -11,7 +11,9 @@
 //!   one live album in the same folder that carries that group.
 //!
 //! A person's edition choice is never lost: an album holding a chosen
-//! edition is only retired into an album with the same choice.
+//! edition, made now or in v2, is only retired into an album with the same
+//! choice. The fold drops the split half's v2 choice; its audit row keeps
+//! it, so the fold can be undone ([`crate::identity::undo_fold`]).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -21,6 +23,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_f
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::membership::retire;
 use crate::identify::sqlite::offer_album;
+use crate::identity::{self, DecisionSource, Rows};
 use crate::operations::decisions::{CatalogAction, record_action};
 use crate::scan::sqlite_store::awaits_retag;
 use droppedneedle_kernel::db::fold::fold_text;
@@ -78,7 +81,7 @@ fn album(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Album>> {
 }
 
 /// `(release_group, release, decision_source)` of an album's identity.
-type Identity = (String, Option<String>, String);
+type Identity = (String, Option<String>, DecisionSource);
 
 fn identity(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Identity>> {
     conn.query_row(
@@ -196,16 +199,14 @@ fn retire_empty_shell(
         };
         let same_group = *group == target_group;
         let same_release = release.is_none() || *release == target_release;
-        // A chosen edition only goes into an album with that very choice.
-        let choice_kept =
-            decision != "manual" || (target_decision == "manual" && *release == target_release);
+        // A chosen edition, made now or in v2, only goes into an album
+        // with that very choice.
+        let choice_kept = !decision.is_persons_choice()
+            || (target_decision.is_persons_choice() && *release == target_release);
         if !(same_group && same_release && choice_kept) {
             return Ok(None);
         }
-        tx.execute(
-            "DELETE FROM local_album_external_identities WHERE local_album_id = ?1",
-            params![album.id],
-        )?;
+        identity::delete_album_row(tx, &album.id, Rows::Any)?;
     }
     retire(tx, &album.id, target, now)?;
     let after = serde_json::json!({
@@ -288,7 +289,11 @@ fn fold_split_legacy_album(
     let Some((group, Some(release), decision)) = identity(tx, &album.id)? else {
         return Ok(None);
     };
-    if decision != "legacy_import" || album.grouping_source != "legacy_import" {
+    // A fold a person undid stays undone.
+    if decision != DecisionSource::LegacyImport
+        || album.grouping_source != "legacy_import"
+        || identity::fold_undone(tx, &album.id)?
+    {
         return Ok(None);
     }
     let source = tracks(tx, &album.id)?;
@@ -368,18 +373,8 @@ fn fold_split_legacy_album(
     }
     let moved: Vec<String> = source.iter().map(|track| track.id.clone()).collect();
     let marks = vec!["?"; moved.len()].join(",");
-    tx.execute(
-        &format!(
-            "DELETE FROM local_track_external_identities WHERE local_track_id IN ({marks}) \
-             AND decision_source = 'legacy_import'"
-        ),
-        params_from_iter(&moved),
-    )?;
-    tx.execute(
-        "DELETE FROM local_album_external_identities WHERE local_album_id = ?1 \
-         AND decision_source = 'legacy_import'",
-        params![album.id],
-    )?;
+    // The v2 choice is kept in the audit row, so the fold can be undone.
+    let folded = identity::fold_legacy(tx, &album.id, &moved)?;
     tx.execute(
         &format!(
             "UPDATE local_tracks SET local_album_id = ?, row_revision = row_revision + 1 \
@@ -406,13 +401,10 @@ fn fold_split_legacy_album(
         tx,
         target,
         job_id,
-        serde_json::json!({
-            "source_album_id": album.id,
-            "release_group_mbid": group,
-            "release_mbid": release,
-        }),
+        serde_json::to_value(&folded)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
         &after,
-        "AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR",
+        identity::FOLD_REASON,
         now,
     )?;
     Ok(Some(after))
