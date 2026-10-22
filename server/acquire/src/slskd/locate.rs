@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 
 use unicode_normalization::UnicodeNormalization;
 
+use crate::landing::DownloadsFolder;
+
 /// Shared cap for all normalized fallback directory entries (v2
 /// `_MAX_WALK_ENTRIES`).
 const MAX_WALK_ENTRIES: usize = 10_000;
@@ -22,15 +24,15 @@ const MAX_WALK_ENTRIES: usize = 10_000;
 /// repository offloads every call off the async runtime (v2).
 #[derive(Debug, Clone)]
 pub struct Locator {
-    downloads_mount: PathBuf,
+    downloads: DownloadsFolder,
     incomplete_mount: Option<PathBuf>,
 }
 
 impl Locator {
     #[must_use]
-    pub fn new(downloads_mount: PathBuf, incomplete_mount: Option<PathBuf>) -> Self {
+    pub fn new(downloads: impl Into<DownloadsFolder>, incomplete_mount: Option<PathBuf>) -> Self {
         Self {
-            downloads_mount,
+            downloads: downloads.into(),
             incomplete_mount,
         }
     }
@@ -61,7 +63,8 @@ impl Locator {
         if parts.is_empty() || parts.contains(&"..") {
             return None;
         }
-        let mount = self.downloads_mount.canonicalize().ok()?;
+        // The admin's root may be a link; the downloads subfolder may not.
+        let mount = self.downloads.resolve().ok()?;
         let basename = parts[parts.len() - 1];
         let normalised_basename = normalised_filename(basename);
         let expected_size = size.filter(|size| *size > 0);

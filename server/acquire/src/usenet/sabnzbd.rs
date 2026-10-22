@@ -1160,7 +1160,9 @@ impl SabnzbdQueue {
         if slot.storage.is_empty() {
             return Ok(Vec::new());
         }
-        let local = self.local_storage(&slot.storage).await;
+        let Some(local) = self.local_storage(&slot.storage).await else {
+            return Ok(Vec::new());
+        };
         let mount = self.mount.clone();
         Ok(
             tokio::task::spawn_blocking(move || enumerate_audio(&mount, &local))
@@ -1247,7 +1249,9 @@ impl SabnzbdQueue {
         let mut resolvable = 0;
         let sample: Vec<&&HistorySlot> = completed.iter().take(DIAGNOSIS_SAMPLE).collect();
         for slot in &sample {
-            let local = self.local_storage(&slot.storage).await;
+            let Some(local) = self.local_storage(&slot.storage).await else {
+                continue;
+            };
             if tokio::task::spawn_blocking(move || dir_has_file(&local))
                 .await
                 .unwrap_or(false)
@@ -1359,14 +1363,17 @@ impl SabnzbdQueue {
     /// when the prefix doesn't match. Repairs two deterministic breakages
     /// first (v2 #245): backslash paths from a Windows-native SAB, and a
     /// mount pointed at a category subfolder via a bounded suffix walk.
-    async fn local_storage(&self, storage: &str) -> PathBuf {
+    /// A storage that names no folder below `complete_dir` (the complete
+    /// folder itself, or nothing at all) maps to nothing: the whole
+    /// downloads folder is never one job's output.
+    async fn local_storage(&self, storage: &str) -> Option<PathBuf> {
         let complete_dir = self.complete_dir().await;
         let remote = posix_parts(storage);
         if !complete_dir.is_empty() {
             let complete = posix_parts(&complete_dir);
             if let Some(relative) = strip_prefix(&remote, &complete) {
                 if relative.is_empty() {
-                    return self.mount.clone();
+                    return None;
                 }
                 let direct: PathBuf = self.mount.join(relative.join("/"));
                 if tokio::fs::metadata(&direct)
@@ -1374,15 +1381,15 @@ impl SabnzbdQueue {
                     .map(|meta| meta.is_dir())
                     .unwrap_or(false)
                 {
-                    return direct;
+                    return Some(direct);
                 }
                 let mount = self.mount.clone();
                 let owned: Vec<String> = relative.to_vec();
                 let walked = tokio::task::spawn_blocking(move || suffix_walk(&mount, &owned))
                     .await
                     .unwrap_or(None);
-                if let Some(found) = walked {
-                    return found;
+                if walked.is_some() {
+                    return walked;
                 }
             }
             tracing::warn!(
@@ -1393,14 +1400,12 @@ impl SabnzbdQueue {
                 "sabnzbd storage remap failed; falling back to basename"
             );
         }
-        match remote.last() {
-            Some(name) => self.mount.join(name),
-            None => self.mount.clone(),
-        }
+        remote.last().map(|name| self.mount.join(name))
     }
 
     /// Cleanup-evidence mapping only when SAB's complete root is known
-    /// exactly (v2 `_exact_local_storage`).
+    /// exactly (v2 `_exact_local_storage`). The complete folder itself is
+    /// never one job's storage, so an empty remainder maps to nothing.
     async fn exact_local_storage(&self, storage: &str) -> Option<PathBuf> {
         let complete_dir = self.complete_dir().await;
         if complete_dir.is_empty() {
@@ -1408,7 +1413,7 @@ impl SabnzbdQueue {
         }
         let remote = posix_parts(storage);
         let complete = posix_parts(&complete_dir);
-        let relative = strip_prefix(&remote, &complete)?;
+        let relative = strip_prefix(&remote, &complete).filter(|rest| !rest.is_empty())?;
         Some(self.mount.join(relative.join("/")))
     }
 }

@@ -726,7 +726,7 @@ async fn a_download_outside_its_clients_folder_is_refused() {
     ];
     for (task_id, path) in cases {
         let landed = Landed {
-            mounts: vec![mount.clone()],
+            mounts: vec![mount.clone().into()],
             files: vec![Reported::path(path)],
         };
         assert_eq!(
@@ -741,7 +741,7 @@ async fn a_download_outside_its_clients_folder_is_refused() {
     // path: the files read as missing and the landing waits.
     let unmounted = dir.join("not-mounted");
     let landed = Landed {
-        mounts: vec![unmounted.clone()],
+        mounts: vec![unmounted.clone().into()],
         files: vec![Reported::path(unmounted.join("job"))],
     };
     let waiting = rejection(&acquire, "t-unmounted", landed, true)
@@ -762,7 +762,7 @@ async fn a_download_outside_its_clients_folder_is_refused() {
         1,
     );
     let landed = Landed {
-        mounts: vec![mount.clone()],
+        mounts: vec![mount.clone().into()],
         files: vec![Reported::path(inside)],
     };
     assert_eq!(
@@ -806,7 +806,7 @@ async fn a_landing_waits_while_the_download_policy_does_not_read() {
         .unwrap()
         .unwrap();
     let landed = Landed {
-        mounts: vec![mount],
+        mounts: vec![mount.into()],
         files: vec![Reported::path(file.clone())],
     };
     let LandingResult::Rejected(rejection) =
@@ -857,7 +857,7 @@ async fn a_wait_after_an_import_does_not_hide_it() {
         .expect("seed");
     let task = acquire.journal.read_task("t-again").await.unwrap().unwrap();
     let landed = Landed {
-        mounts: vec![mount],
+        mounts: vec![mount.into()],
         files: Vec::new(),
     };
     let report = acquire
@@ -2118,7 +2118,7 @@ async fn an_import_stopped_around_its_commit_keeps_its_match() {
                         path: landed,
                         size: None,
                     }],
-                    mounts: vec![rig.downloads.clone()],
+                    mounts: vec![rig.downloads.clone().into()],
                 },
                 false,
             )
@@ -2247,7 +2247,7 @@ async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
                         path: landed,
                         size: None,
                     }],
-                    mounts: vec![rig.downloads.clone()],
+                    mounts: vec![rig.downloads.clone().into()],
                 },
                 false,
             )
@@ -2568,7 +2568,7 @@ async fn a_joined_import_recovers_joined() {
                 .into_iter()
                 .map(|path| Reported { path, size: None })
                 .collect(),
-            mounts: vec![rig.downloads.clone()],
+            mounts: vec![rig.downloads.clone().into()],
         };
         rig.acquire
             .landing
@@ -2770,7 +2770,7 @@ impl VersionCase {
                 Some(&manifest),
                 Landed {
                     files: vec![Reported::path(file)],
-                    mounts: vec![self.rig.downloads.clone()],
+                    mounts: vec![self.rig.downloads.clone().into()],
                 },
                 false,
             )

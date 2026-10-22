@@ -1267,7 +1267,10 @@ fn slskd_repository(
     }
     let transport = ReqwestSlskdHttp::new(http.clone(), &section.url, section.api_key.expose());
     let client = SlskdClient::new(transport);
-    let mount = super::imports::mount::effective_path(downloads, &section.downloads_subpath);
+    let mount = crate::landing::DownloadsFolder::with_subpath(
+        downloads.to_path_buf(),
+        &section.downloads_subpath,
+    );
     let mut repo = SlskdRepository::new(
         client,
         &section.url,

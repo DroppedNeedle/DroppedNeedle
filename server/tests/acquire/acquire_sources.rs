@@ -96,7 +96,7 @@ async fn conforms(
             landed
                 .mounts
                 .iter()
-                .any(|mount| file.path.starts_with(mount)),
+                .any(|mount| file.path.starts_with(mount.path())),
             "{tag}: {} lies inside the client's folders {:?}",
             file.path.display(),
             landed.mounts

@@ -183,13 +183,7 @@ fn move_boundary(source: &Path, destination: &Path, mounts: &[(i64, PathBuf)]) -
 
 /// The folder DroppedNeedle reads: the mount plus the confined subfolder.
 pub fn effective_path(mount: &Path, subpath: &str) -> PathBuf {
-    let mut path = mount.to_path_buf();
-    for part in subpath.split(['/', '\\']).map(str::trim) {
-        if !part.is_empty() && part != "." && part != ".." {
-            path.push(part);
-        }
-    }
-    path
+    crate::landing::DownloadsFolder::with_subpath(mount.to_path_buf(), subpath).path()
 }
 
 /// The advisory for a mount that passes the basic checks but cannot see

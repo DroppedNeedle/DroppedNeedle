@@ -19,6 +19,7 @@ use super::models::{SlskdEnqueueResponse, SlskdTransfer, SlskdUserSearchResponse
 use super::policy::DownloadPolicy;
 use super::query::{album_query_ladder, track_query_ladder};
 use crate::client_error::{ClientError, Service};
+use crate::landing::DownloadsFolder;
 
 /// How many finished transfers the mount diagnosis tries to locate under
 /// the mount (v2 `_DIAGNOSIS_SAMPLE`). Small: it is a settings-page check
@@ -120,7 +121,7 @@ pub struct SlskdRepository<T: SlskdHttp> {
     // The key itself lives only in the HTTP layer; the repository keeps
     // just the configured bit for `is_configured`.
     configured: bool,
-    downloads_mount: PathBuf,
+    downloads: DownloadsFolder,
     incomplete_mount: Option<PathBuf>,
     search_permits: Arc<Semaphore>,
     enqueue_permits: Arc<Semaphore>,
@@ -133,13 +134,13 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         client: SlskdClient<T>,
         url: &str,
         api_key: &str,
-        downloads_mount: PathBuf,
+        downloads: impl Into<DownloadsFolder>,
         policy: DownloadPolicy,
     ) -> Self {
         Self {
             client,
             configured: !url.is_empty() && !api_key.is_empty(),
-            downloads_mount,
+            downloads: downloads.into(),
             incomplete_mount: None,
             // slskd permits only one concurrent search and one concurrent
             // enqueue.
@@ -163,10 +164,11 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         self.configured
     }
 
-    /// DroppedNeedle's mount of slskd's finished downloads.
+    /// DroppedNeedle's mount of slskd's finished downloads, with the
+    /// downloads subfolder from settings.
     #[must_use]
-    pub fn downloads_mount(&self) -> &std::path::Path {
-        &self.downloads_mount
+    pub fn downloads_folder(&self) -> &DownloadsFolder {
+        &self.downloads
     }
 
     #[must_use]
@@ -380,10 +382,16 @@ impl<T: SlskdHttp> SlskdRepository<T> {
                 resolvable += 1;
             }
         }
-        let mount = self.downloads_mount.clone();
-        let has_files = tokio::task::spawn_blocking(move || mount_has_any_file(&mount))
-            .await
-            .unwrap_or(false);
+        let folder = self.downloads.clone();
+        // Probed only through the link-checked folder: a linked subfolder
+        // shows as empty rather than describing wherever the link leads.
+        let has_files = tokio::task::spawn_blocking(move || {
+            folder
+                .resolve()
+                .is_ok_and(|mount| mount_has_any_file(&mount))
+        })
+        .await
+        .unwrap_or(false);
         MountDiagnosis {
             supported: true,
             completed_downloads: completed.len(),
@@ -415,10 +423,8 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         remote_filename: &str,
         size: Option<i64>,
     ) -> Result<Option<PathBuf>, ClientError> {
-        let locator = super::locate::Locator::new(
-            self.downloads_mount.clone(),
-            self.incomplete_mount.clone(),
-        );
+        let locator =
+            super::locate::Locator::new(self.downloads.clone(), self.incomplete_mount.clone());
         let username = handle.username.clone();
         let remote = remote_filename.to_owned();
         tokio::task::spawn_blocking(move || locator.locate_file(&username, &remote, size))
@@ -436,10 +442,8 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         remote_filename: &str,
         size: Option<i64>,
     ) -> Result<Option<PathBuf>, ClientError> {
-        let locator = super::locate::Locator::new(
-            self.downloads_mount.clone(),
-            self.incomplete_mount.clone(),
-        );
+        let locator =
+            super::locate::Locator::new(self.downloads.clone(), self.incomplete_mount.clone());
         let username = handle.username.clone();
         let remote = remote_filename.to_owned();
         tokio::task::spawn_blocking(move || locator.locate_partial(&username, &remote, size))

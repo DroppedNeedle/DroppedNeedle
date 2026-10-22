@@ -734,6 +734,65 @@ fn locator_resolves_leaf_flat_and_username_layouts() {
     }
 }
 
+/// The downloads subfolder from settings sits in the volume slskd writes,
+/// so slskd's host could swap it for a link to any folder the server can
+/// read. Only the admin's root may be a link: a linked subfolder finds
+/// nothing and confines nothing, whether a path names it or its target.
+#[cfg(unix)]
+#[test]
+fn a_downloads_subfolder_that_is_a_link_is_refused() {
+    use droppedneedle_acquire::landing::DownloadsFolder;
+    use droppedneedle_acquire::landing::confine::{Place, place};
+
+    let scratch = temp_mount("subpath-link");
+    let real_root = scratch.join("volume");
+    let elsewhere = scratch.join("elsewhere");
+    std::fs::create_dir_all(real_root.join("complete").join("Album")).expect("subfolder");
+    std::fs::create_dir_all(elsewhere.join("Album")).expect("outside folder");
+    std::fs::write(real_root.join("complete/Album/01.flac"), b"ours").expect("file");
+    std::fs::write(elsewhere.join("Album/01.flac"), b"secret").expect("file");
+    // The admin's root may itself be a link.
+    let root = scratch.join("root-link");
+    std::os::unix::fs::symlink(&real_root, &root).expect("root link");
+    let folder = DownloadsFolder::with_subpath(root.clone(), "complete");
+
+    let found = Locator::new(folder.clone(), None)
+        .locate_file("alice", "@@music\\Album\\01.flac", None)
+        .expect("a real subfolder under a linked root is read");
+    assert_eq!(std::fs::read(&found).expect("read"), b"ours");
+    assert!(matches!(
+        place(
+            &root.join("complete/Album/01.flac"),
+            std::slice::from_ref(&folder)
+        ),
+        Place::Inside(_)
+    ));
+
+    std::fs::rename(real_root.join("complete"), scratch.join("moved")).expect("move aside");
+    std::os::unix::fs::symlink(&elsewhere, real_root.join("complete")).expect("subfolder link");
+
+    assert_eq!(
+        Locator::new(folder.clone(), None).locate_file("alice", "@@music\\Album\\01.flac", None),
+        None
+    );
+    for path in [
+        root.join("complete/Album/01.flac"),
+        real_root.join("complete/Album/01.flac"),
+        elsewhere.join("Album/01.flac"),
+    ] {
+        assert_eq!(
+            place(&path, std::slice::from_ref(&folder)),
+            Place::Outside,
+            "{}",
+            path.display()
+        );
+    }
+    assert_eq!(
+        std::fs::read(elsewhere.join("Album/01.flac")).expect("kept"),
+        b"secret"
+    );
+}
+
 #[test]
 fn locator_refuses_size_mismatched_exact_hits_but_keeps_aliases() {
     let mount = temp_mount("sizes");

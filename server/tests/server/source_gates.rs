@@ -505,7 +505,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/landing/library.rs", 2, AWAITED),
     ("acquire/src/landing/mod.rs", 3, AWAITED),
     ("acquire/src/library_removal.rs", 1, AWAITED),
-    ("acquire/src/probes.rs", 1, AWAITED),
+    ("acquire/src/probes.rs", 2, AWAITED),
     ("acquire/src/requests/discovery.rs", 1, AWAITED),
     ("acquire/src/requests/mix.rs", 1, MIX_REFRESH),
     ("acquire/src/requests/service/edition.rs", 1, AWAITED),

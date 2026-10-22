@@ -171,7 +171,7 @@ impl SlskdSource {
         handle: &SourceHandle,
     ) -> Result<crate::landing::Landed, SourceError> {
         Ok(crate::landing::Landed {
-            mounts: vec![self.repo.downloads_mount().to_path_buf()],
+            mounts: vec![self.repo.downloads_folder().clone()],
             files: self.locate_files(handle).await?,
         })
     }
@@ -588,7 +588,7 @@ impl SabnzbdSource {
     ) -> Result<crate::landing::Landed, SourceError> {
         let seen = self.inspect(handle).await?;
         Ok(crate::landing::Landed {
-            mounts: vec![self.queue.downloads_mount().to_path_buf()],
+            mounts: vec![self.queue.downloads_mount().to_path_buf().into()],
             files: seen
                 .paths
                 .into_iter()

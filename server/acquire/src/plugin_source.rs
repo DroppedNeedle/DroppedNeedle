@@ -484,7 +484,11 @@ impl PluginDownloadSource {
             );
         }
         Ok(Landed {
-            mounts: self.download_folders(),
+            mounts: self
+                .download_folders()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             files,
         })
     }

@@ -633,6 +633,43 @@ async fn sab_remap_and_completed_files() {
     std::fs::remove_dir_all(&mount).ok();
 }
 
+/// A job whose storage is SABnzbd's complete folder itself names no job
+/// folder: nothing in the downloads folder is read as that job's output,
+/// though other jobs' files sit there.
+#[tokio::test]
+async fn sab_storage_at_the_complete_folder_lands_nothing() {
+    let mount = temp_dir("complete-root");
+    write_file(&mount.join("other-job/track.flac"), b"FLAC");
+    write_file(&mount.join("loose.flac"), b"FLAC");
+    let mock = SabnzbdMock::new();
+    mock.history_job(
+        "nzo-root",
+        "job-root",
+        "Completed",
+        "/data/Downloads/complete",
+        4,
+        "",
+    );
+    mock.history_job("nzo-slash", "job-slash", "Completed", "/", 4, "");
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
+
+    for job in [
+        handle("job-root", "nzo-root"),
+        handle("job-slash", "nzo-slash"),
+    ] {
+        let material = queue.inspect_materialization(&job).await.expect("done");
+        assert_eq!(material.state, "completed");
+        assert_eq!(material.workspace_path, "", "{}", material.remote_storage);
+        let files = queue.list_completed_files(&job).await.expect("files");
+        assert!(files.is_empty(), "{}: {files:?}", material.remote_storage);
+    }
+    assert_eq!(
+        queue.diagnose_downloads_mount().await.resolvable_downloads,
+        0
+    );
+}
+
 /// Materialization evidence and the mount-health split: a missing mount
 /// root is an environment fault; an empty per-job folder is not.
 #[tokio::test]

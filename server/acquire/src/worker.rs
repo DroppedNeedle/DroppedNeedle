@@ -330,7 +330,7 @@ impl DownloadSource for FixedSource {
     ) -> BoxFuture<'a, Result<crate::landing::Landed, SourceError>> {
         Box::pin(async move {
             Ok(crate::landing::Landed {
-                mounts: vec![self.mount.clone()],
+                mounts: vec![self.mount.clone().into()],
                 files: self
                     .paths
                     .iter()

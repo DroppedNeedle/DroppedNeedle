@@ -41,7 +41,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use self::confine::Landed;
+pub use self::confine::{DownloadsFolder, Landed};
 use self::confine::{Place, place};
 use self::decision::{Decision, Outcome, check_files, decide};
 use self::hold::HoldItem;

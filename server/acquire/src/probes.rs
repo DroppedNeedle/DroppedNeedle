@@ -20,6 +20,7 @@ use super::imports::health::{
 };
 use super::imports::lidarr::{LidarrClient, LidarrError};
 use super::imports::mount::{self, SlskdMountReport};
+use super::landing::confine::FolderFault;
 use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
 use super::usenet::newznab::NewznabIndexer;
 use super::usenet::prowlarr::ProwlarrIndexer;
@@ -298,6 +299,12 @@ async fn refresh_slskd(inputs: &ProbeInputs) -> ClientProbe {
     }
 }
 
+/// Shown when the downloads subfolder is a link: nothing is read through
+/// it, so the subfolder hint the other advisories give would mislead.
+const SUBFOLDER_LINK_ADVISORY: &str = "The downloads subfolder is a link, and DroppedNeedle \
+     never reads through one. Point the mount at slskd's folder and clear the subfolder, or \
+     make the subfolder a real folder.";
+
 /// Check the downloads mount and, when it looks usable and slskd is set
 /// up, whether slskd's finished downloads can be found in it.
 async fn refresh_slskd_mount(inputs: &ProbeInputs) -> SlskdMountReport {
@@ -324,11 +331,25 @@ async fn refresh_slskd_mount(inputs: &ProbeInputs) -> SlskdMountReport {
         .to_string();
     let (advisory, client_downloads_dir) = match &inputs.slskd {
         Some(repo) if repo.is_configured() && check.ok => {
+            let folder = repo.downloads_folder().clone();
+            let linked = match tokio::task::spawn_blocking(move || {
+                matches!(folder.resolve(), Err(FolderFault::Link))
+            })
+            .await
+            {
+                Ok(linked) => linked,
+                Err(error) => {
+                    tracing::warn!(%error, "downloads subfolder check did not finish");
+                    false
+                }
+            };
             let diagnosis = repo.diagnose_downloads_mount().await;
-            (
-                mount::advisory(&check, &diagnosis, &inputs.slskd_subpath, &effective),
-                diagnosis.client_downloads_dir,
-            )
+            let advisory = if linked {
+                Some(SUBFOLDER_LINK_ADVISORY.to_owned())
+            } else {
+                mount::advisory(&check, &diagnosis, &inputs.slskd_subpath, &effective)
+            };
+            (advisory, diagnosis.client_downloads_dir)
         }
         _ => (None, None),
     };
