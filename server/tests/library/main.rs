@@ -9,6 +9,7 @@ mod library_identify;
 mod library_identify_shutdown;
 mod library_journey;
 mod library_matching;
+mod library_matching_corpus;
 mod library_publish;
 mod library_scan;
 mod library_scan_throughput;
