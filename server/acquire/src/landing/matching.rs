@@ -124,6 +124,8 @@ impl FoundRelease {
 /// The files as the matching engine sees them. Untagged files fall back
 /// to the file name ("03 - Title.flac") and the disc folder ("CD2"), and
 /// an untagged album takes the requested names, as v2's folder import did.
+/// Those names prove nothing: a download's untagged files import only with
+/// other evidence of their artist (`specs::artist_proof`).
 pub fn local_album(files: &[LandedFile], target: &Target) -> LocalAlbum {
     let tracks = files
         .iter()
@@ -434,6 +436,17 @@ pub struct FilePlan {
 
 /// Plan the files against the chosen release.
 pub fn plan(summary: &MatchSummary, target: &Target, files: usize) -> FilePlan {
+    plan_holding(summary, target, files, &HashSet::new())
+}
+
+/// [`plan`], holding the paired files in `hold` as well, wherever they
+/// would have gone.
+pub fn plan_holding(
+    summary: &MatchSummary,
+    target: &Target,
+    files: usize,
+    hold: &HashSet<usize>,
+) -> FilePlan {
     let Some(found) = summary.best() else {
         return FilePlan {
             extra: (0..files).collect(),
@@ -457,7 +470,7 @@ pub fn plan(summary: &MatchSummary, target: &Target, files: usize) -> FilePlan {
         // A file too far from its track is held even when the library
         // owns that track: it may be another song, and an upgrade must
         // never replace the owned copy with it.
-        if pair.distance > ACCEPT_TRACK {
+        if pair.distance > ACCEPT_TRACK || hold.contains(&pair.local) {
             out.held.push((pair.local, pair.track));
         } else if summary.owns(track) {
             out.owned.push(pair.local);
@@ -588,7 +601,7 @@ fn most_common<'a>(values: impl Iterator<Item = &'a str>) -> Option<String> {
         .map(|(value, _)| value.to_owned())
 }
 
-fn is_various(name: &str) -> bool {
+pub(crate) fn is_various(name: &str) -> bool {
     matches!(fold(name).as_str(), "variousartists" | "various" | "va")
 }
 

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
+use droppedneedle_acquire::downloads::manifest::DownloadManifest;
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::downloads::store::NewTask;
 use droppedneedle_acquire::landing::library::LibraryLanding;
@@ -591,6 +592,314 @@ async fn a_download_with_a_junk_recording_id_is_held() {
         decisions,
         vec![("held".to_owned(), Some("tag_mismatch".to_owned()))]
     );
+}
+
+/// Remove a landed file's names and numbers, as a rip that was never
+/// tagged comes: only the file name and its folders say what it is.
+fn untag(path: &Path) {
+    let edits: Vec<TagEdit> = [
+        TagField::Title,
+        TagField::Artist,
+        TagField::AlbumArtist,
+        TagField::Album,
+        TagField::TrackNumber,
+        TagField::DiscNumber,
+    ]
+    .into_iter()
+    .map(|field| TagEdit::new(field, Vec::new()))
+    .collect();
+    save_tags(path, &edits).expect("tags clear");
+}
+
+/// Land `files` for `task`, matched against the release `release` builds
+/// from the files' lengths, in one worker pass. Answers the bundle, the
+/// music folder and the platform it runs on.
+async fn land_for(
+    task: NewTask,
+    downloads: impl FnOnce(&Path) -> Vec<PathBuf>,
+    release: impl FnOnce(&[Option<u64>]) -> Release,
+) -> (
+    droppedneedle_acquire::AcquireSetup,
+    PathBuf,
+    droppedneedle_kernel::platform::Platform,
+) {
+    land_reported(task, &[], downloads, release).await
+}
+
+/// [`land_for`], where the client reported the files under the remote
+/// names `remote` (as Soulseek does). With names, the landing runs once
+/// directly, with the manifest that records them.
+async fn land_reported(
+    task: NewTask,
+    remote: &[&str],
+    downloads: impl FnOnce(&Path) -> Vec<PathBuf>,
+    release: impl FnOnce(&[Option<u64>]) -> Release,
+) -> (
+    droppedneedle_acquire::AcquireSetup,
+    PathBuf,
+    droppedneedle_kernel::platform::Platform,
+) {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let downloads_dir = dir.join("downloads");
+    let files = downloads(&downloads_dir);
+    let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release(&lengths)]));
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            releases,
+            pool,
+        ))),
+    );
+    let task_id = task.id.clone();
+    acquire
+        .journal
+        .run("test.seed", move |store| store.insert_task(&task, 1.0))
+        .await
+        .expect("task");
+    if !remote.is_empty() {
+        let manifest: DownloadManifest = serde_json::from_value(serde_json::json!({
+            "task_id": task_id,
+            "handle": {"source": "soulseek", "username": "peer", "filenames": remote},
+        }))
+        .expect("manifest");
+        let row = acquire.journal.read_task(&task_id).await.unwrap().unwrap();
+        let landed = Landed {
+            mounts: vec![downloads_dir.clone().into()],
+            files: files.into_iter().map(Reported::path).collect(),
+        };
+        acquire
+            .landing
+            .land(&row, None, Some(&manifest), landed, false)
+            .await;
+        return (acquire, music, platform);
+    }
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(Arc::new(FixedSource::new(
+                downloads_dir,
+                files,
+            )))],
+            WorkerConfig {
+                staging_root: acquire.staging_root.clone(),
+                ..WorkerConfig::default()
+            },
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    worker.run_once(1).await;
+    worker.wait_for_landings().await;
+    (acquire, music, platform)
+}
+
+/// The landing decisions recorded for `task_id`: outcome and reason.
+async fn decisions(
+    acquire: &droppedneedle_acquire::AcquireSetup,
+    task_id: &str,
+) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT outcome, reason_code FROM download_import_decisions WHERE task_id = ?1 \
+         ORDER BY decided_at",
+    )
+    .bind(task_id)
+    .fetch_all(acquire.db.pool())
+    .await
+    .expect("decisions")
+}
+
+/// The July wrong single, untagged: a file named like the requested
+/// single, as long as it, from a folder that names another artist. With
+/// no artist tag, no artist in its path, no fingerprint and one file, the
+/// request's own names are all that agree, so it is held.
+#[tokio::test]
+async fn an_untagged_file_without_artist_evidence_is_held() {
+    let task = NewTask {
+        artist_name: "Yan Qing".to_owned(),
+        album_title: "The Arrival".to_owned(),
+        ..new_task("t-untagged-wrong", GOOD_GROUP)
+    };
+    let (acquire, music, _platform) = land_for(
+        task,
+        |downloads| {
+            let path = land_file(
+                &downloads.join("Dan Romer - Original Score"),
+                "01 - The Arrival.flac",
+                "flac_full_01.flac",
+                "The Arrival",
+                1,
+            );
+            untag(&path);
+            vec![path]
+        },
+        |lengths| {
+            let mut single = release(GOOD_RELEASE, GOOD_GROUP, &["The Arrival"], lengths);
+            single.title = "The Arrival".to_owned();
+            single.artists[0].name = "Yan Qing".to_owned();
+            single
+        },
+    )
+    .await;
+    assert_eq!(
+        decisions(&acquire, "t-untagged-wrong").await,
+        vec![("held".to_owned(), Some("no_artist_evidence".to_owned()))]
+    );
+    assert!(files_under(&music, "flac").is_empty(), "nothing imported");
+}
+
+/// An untagged album in the usual "Artist - Album" folder: the folder
+/// names the artist, so it imports.
+#[tokio::test]
+async fn an_untagged_album_in_its_artists_folder_imports() {
+    let (acquire, music, _platform) = land_for(
+        new_task("t-untagged-right", GOOD_GROUP),
+        |downloads| {
+            let folder = downloads.join("Portishead - Dummy (1994) [FLAC]");
+            let files = vec![
+                land_file(
+                    &folder,
+                    "01 - Mysterons.flac",
+                    "flac_full_01.flac",
+                    "Mysterons",
+                    1,
+                ),
+                land_file(
+                    &folder,
+                    "02 - Sour Times.flac",
+                    "flac_full_02.flac",
+                    "Sour Times",
+                    2,
+                ),
+            ];
+            files.iter().for_each(|path| untag(path));
+            files
+        },
+        |lengths| {
+            release(
+                GOOD_RELEASE,
+                GOOD_GROUP,
+                &["Mysterons", "Sour Times"],
+                lengths,
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        decisions(&acquire, "t-untagged-right").await,
+        vec![("imported".to_owned(), None)]
+    );
+    assert!(
+        music
+            .join("Portishead/Dummy/0102 Sour Times.flac")
+            .is_file()
+    );
+}
+
+/// Soulseek keeps only the last folder of a share: `Music\Portishead\Singles`
+/// lands as `downloads/Singles`. The remote name the client reported still
+/// names the artist, so an untagged single from there imports.
+#[tokio::test]
+async fn an_untagged_single_whose_remote_folder_names_the_artist_imports() {
+    let (acquire, music, _platform) = land_reported(
+        new_task("t-untagged-remote", GOOD_GROUP),
+        &[r"@@x\Music\Portishead\Singles\01 - Glory Box.flac"],
+        |downloads| {
+            let path = land_file(
+                &downloads.join("Singles"),
+                "01 - Glory Box.flac",
+                "flac_full_01.flac",
+                "Glory Box",
+                1,
+            );
+            untag(&path);
+            vec![path]
+        },
+        |lengths| release(GOOD_RELEASE, GOOD_GROUP, &["Glory Box"], lengths),
+    )
+    .await;
+    assert_eq!(
+        decisions(&acquire, "t-untagged-remote").await,
+        vec![("imported".to_owned(), None)]
+    );
+    assert!(music.join("Portishead/Dummy/0101 Glory Box.flac").is_file());
+}
+
+/// A file whose own artist tag names someone else, and whose length is
+/// not the track's, is another song (v2's tag conflict): it is held with
+/// that reason and the rest of the album imports.
+#[tokio::test]
+async fn a_file_whose_artist_tag_names_someone_else_is_held() {
+    let (acquire, music, _platform) = land_for(
+        new_task("t-other-artist", GOOD_GROUP),
+        |downloads| {
+            let folder = downloads.join("dummy");
+            let files = vec![
+                land_file(
+                    &folder,
+                    "01 - Mysterons.flac",
+                    "flac_full_01.flac",
+                    "Mysterons",
+                    1,
+                ),
+                land_file(
+                    &folder,
+                    "02 - Sour Times.flac",
+                    "flac_full_02.flac",
+                    "Sour Times",
+                    2,
+                ),
+            ];
+            let other = TagEdit::new(TagField::Artist, vec!["Dan Romer".to_owned()]);
+            save_tags(&files[1], &[other]).expect("artist saves");
+            files
+        },
+        |lengths| {
+            let mut lengths = lengths.to_vec();
+            lengths[1] = lengths[1].map(|ms| ms + 25_000);
+            release(
+                GOOD_RELEASE,
+                GOOD_GROUP,
+                &["Mysterons", "Sour Times"],
+                &lengths,
+            )
+        },
+    )
+    .await;
+    assert!(music.join("Portishead/Dummy/0101 Mysterons.flac").is_file());
+    assert!(!music.join("Portishead/Dummy/0102 Sour Times.flac").exists());
+    let held: Vec<(String, String)> = sqlx::query_as(
+        "SELECT reason, reason_detail FROM held_imports WHERE source_task_id = 't-other-artist'",
+    )
+    .fetch_all(acquire.db.pool())
+    .await
+    .expect("held rows");
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert_eq!(held[0].0, "tag_mismatch");
+    assert!(held[0].1.contains("Dan Romer"), "{held:?}");
 }
 
 /// POST or GET one held-import route as `principal`.

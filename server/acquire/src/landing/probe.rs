@@ -57,6 +57,36 @@ pub struct Landing {
     pub other: Vec<PathBuf>,
     /// The walk stopped at [`MAX_FILES`].
     pub truncated: bool,
+    /// The client's downloads folders, resolved. The part of a file's path
+    /// below one of them is the only part read as evidence of what the
+    /// files are.
+    pub downloads_folders: Vec<PathBuf>,
+    /// The file names the download client reported, as it named them
+    /// (a Soulseek share path such as `@@music\Artist\Album\01.flac`).
+    /// Text only: what they say about the files, never where to read.
+    pub remote_names: Vec<String>,
+}
+
+impl LandedFile {
+    /// The folders below the downloads folder the file sits in, as text:
+    /// `["Artist - Album", "CD1"]` for
+    /// `<downloads>/Artist - Album/CD1/01 - Title.flac`. Empty when the
+    /// file is in none of them, or directly in one.
+    pub fn folders_below(&self, folders: &[PathBuf]) -> Vec<String> {
+        let Some(below) = folders
+            .iter()
+            .filter_map(|folder| self.path.strip_prefix(folder).ok())
+            .min_by_key(|below| below.components().count())
+        else {
+            return Vec::new();
+        };
+        below
+            .parent()
+            .into_iter()
+            .flat_map(Path::components)
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect()
+    }
 }
 
 impl Landing {
@@ -193,6 +223,27 @@ fn file_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_path_below_the_downloads_folder_is_read() {
+        let file = |path: &str| LandedFile {
+            path: PathBuf::from(path),
+            format: AudioFormat::Flac,
+            tag: AudioTag::default(),
+            header: HeaderInfo::default(),
+            size_bytes: 0,
+        };
+        let folders = [PathBuf::from("/srv/Portishead/downloads")];
+        assert_eq!(
+            file("/srv/Portishead/downloads/rips/CD1/01 - Intro.flac").folders_below(&folders),
+            vec!["rips", "CD1"]
+        );
+        assert!(
+            file("/srv/Portishead/other/01.flac")
+                .folders_below(&folders)
+                .is_empty()
+        );
+    }
 
     #[test]
     fn samples_are_whole_words() {

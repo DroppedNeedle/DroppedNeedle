@@ -11,22 +11,27 @@
 //!   present, a walk that finished, samples, wrong edition, wrong album,
 //!   quality range, upgrade floor;
 //! - match checks run on the closest release the matching engine found:
-//!   a release found, ids that agree, a close album match, files the
-//!   release accounts for, the right track for a track download.
+//!   a release found, ids that agree, a close album match, evidence of
+//!   the artist for untagged files, files whose own artist agrees, files
+//!   the release accounts for, the right track for a track download.
 //!
 //! Every check is recorded (accept, hold, or reject with its reason), so
 //! the views can say why a download was held or failed over.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::Serialize;
 
-use super::matching::{MatchState, MatchSummary};
+use super::matching::{FoundRelease, MatchState, MatchSummary, is_various};
 use super::probe::Landing;
 use crate::downloads::quarantine::QuarantineReason;
 use droppedneedle_library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
-use droppedneedle_library::matching::strings::{fold, strip_edition_words};
+use droppedneedle_library::matching::model::credit_text;
+use droppedneedle_library::matching::score::{NAME_GATE, Support, TrackPair};
+use droppedneedle_library::matching::strings::{
+    artist_subset, fold, string_dist, strip_edition_words,
+};
 
 /// What a rejection means for retry and failover (v2 `Disposition`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -172,6 +177,9 @@ pub struct Subject<'a> {
     pub landing: &'a Landing,
     pub policy: &'a QualityPolicy,
     pub matched: Option<&'a MatchSummary>,
+    /// AcoustID recordings heard in each paired file, by file index, when
+    /// AcoustID was asked.
+    pub heard: Option<&'a HashMap<String, Vec<String>>>,
 }
 
 /// One named specification.
@@ -202,6 +210,8 @@ pub fn match_specs() -> Vec<Box<dyn ImportSpec>> {
         Box::new(PinnedEdition),
         Box::new(IdsAgree),
         Box::new(CloseAlbumMatch),
+        Box::new(ArtistEvidence),
+        Box::new(OwnArtist),
         Box::new(CloseTrackMatch),
         Box::new(FilesAccountedFor),
         Box::new(RightTrack),
@@ -779,6 +789,406 @@ impl ImportSpec for CloseAlbumMatch {
     }
 }
 
+/// A pair at most this far is a close fit for [`ArtistProof::Tracklist`].
+const CLOSE_PAIR: f64 = 0.10;
+/// Files and share of the release's tracks a close tracklist needs.
+const CLOSE_FILES: usize = 3;
+const CLOSE_SHARE: f64 = 0.8;
+
+/// What shows that a download's files are by the requested artist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtistProof {
+    /// A file carries an artist tag, which the album gate compared.
+    Tags,
+    /// Every file pairs by its own MusicBrainz ids.
+    Ids,
+    /// The folders or file names below the downloads folder name the
+    /// artist (the usual "Artist - Album" folder).
+    Path,
+    /// At least [`CLOSE_FILES`] files, and [`CLOSE_SHARE`] of the
+    /// release's tracks paired at [`CLOSE_PAIR`] or closer.
+    Tracklist,
+    /// AcoustID heard the paired recording in most files it knew.
+    Audio,
+}
+
+impl ArtistProof {
+    fn note(self) -> &'static str {
+        match self {
+            ArtistProof::Tags => "the files' artist tags were compared",
+            ArtistProof::Ids => "untagged, but every file carries its MusicBrainz ids",
+            ArtistProof::Path => "untagged, but the folder names the artist",
+            ArtistProof::Tracklist => "untagged, but the tracklist fits closely",
+            ArtistProof::Audio => "untagged, but AcoustID heard the release's recordings",
+        }
+    }
+}
+
+/// The evidence that `found`'s files are by the requested artist, if any.
+/// Untagged files take the requested names (`matching::local_album`), so
+/// the album gate alone proves nothing for them. Only the paired files
+/// count: a tagged extra the release does not list proves nothing about
+/// the rest. `heard` is AcoustID's answer by file index, when it was asked.
+pub fn artist_proof(
+    target: &Target,
+    landing: &Landing,
+    found: &FoundRelease,
+    heard: Option<&HashMap<String, Vec<String>>>,
+) -> Option<ArtistProof> {
+    let pairs = &found.scored.pairs;
+    if pairs.is_empty() {
+        return None;
+    }
+    let tagged = pairs.iter().any(|pair| {
+        let tag = &landing.audio[pair.local].tag;
+        !tag.artist.trim().is_empty()
+            || tag
+                .album_artist
+                .as_deref()
+                .is_some_and(|name| !name.trim().is_empty())
+    });
+    if tagged {
+        return Some(ArtistProof::Tags);
+    }
+    if pairs.iter().all(|pair| pair.support == Support::EmbeddedId) {
+        return Some(ArtistProof::Ids);
+    }
+    if path_names_artist(target, found, landing) {
+        return Some(ArtistProof::Path);
+    }
+    let close = pairs
+        .iter()
+        .filter(|pair| pair.distance <= CLOSE_PAIR)
+        .count();
+    if landing.audio.len() >= CLOSE_FILES
+        && close >= CLOSE_FILES
+        && close as f64 >= CLOSE_SHARE * found.release.tracks.len() as f64
+    {
+        return Some(ArtistProof::Tracklist);
+    }
+    let heard = heard?;
+    let (answered, agreed) = pairs.iter().fold((0, 0), |(answered, agreed), pair| {
+        match heard.get(&pair.local.to_string()) {
+            Some(recordings) if !recordings.is_empty() => {
+                let wanted = &found.release.tracks[pair.track].recording_id;
+                let same = recordings
+                    .iter()
+                    .any(|recording| recording.eq_ignore_ascii_case(wanted));
+                (answered + 1, agreed + usize::from(same))
+            }
+            _ => (answered, agreed),
+        }
+    });
+    (agreed > 0 && agreed * 2 >= answered).then_some(ArtistProof::Audio)
+}
+
+/// Whether at least half the paired files' paths name the requested
+/// artist (or the album, for a various-artists release), as v2's
+/// `artist_evidence` read a Soulseek path. A file's path is read as text
+/// only, never from disk: its folders below the client's downloads folder,
+/// the folders of the remote name the client reported for it (a Soulseek
+/// share's `Music\Artist\Album`, of which only `Album` is kept on disk),
+/// and its file name without the paired track's title words, so a
+/// self-titled song does not name itself.
+fn path_names_artist(target: &Target, found: &FoundRelease, landing: &Landing) -> bool {
+    let release = &found.release;
+    let various = is_various(&target.artist_name) || is_various(&release.artist_text());
+    let names: Vec<String> = if various {
+        vec![target.album_title.clone(), release.title.clone()]
+    } else {
+        vec![target.artist_name.clone(), release.artist_text()]
+    };
+    let pairs = &found.scored.pairs;
+    let named = pairs
+        .iter()
+        .filter(|pair| {
+            let file = &landing.audio[pair.local];
+            let mut folders: Vec<Vec<String>> = file
+                .folders_below(&landing.downloads_folders)
+                .iter()
+                .chain(&remote_folders(&landing.remote_names, &file.file_name()))
+                .flat_map(|part| segments(part))
+                .collect();
+            folders.dedup();
+            let title: HashSet<String> = folded_words(&release.tracks[pair.track].title)
+                .into_iter()
+                .collect();
+            let stem: Vec<Vec<String>> = file
+                .path
+                .file_stem()
+                .map(|stem| segments(&stem.to_string_lossy()))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|segment| {
+                    segment
+                        .into_iter()
+                        .filter(|word| !title.contains(word))
+                        .collect::<Vec<_>>()
+                })
+                .filter(|segment| !segment.is_empty())
+                .collect();
+            names
+                .iter()
+                .any(|name| segments_name(&folders, &stem, name))
+        })
+        .count();
+    named > 0 && named * 2 >= pairs.len()
+}
+
+/// The folders of each reported remote name whose file name is `file`
+/// (compared folded, as the client may normalise it), without the
+/// Soulseek share root (`@@music`). A name that is a path on this server
+/// is left out: its folders below the downloads folder are read already,
+/// and nothing above it is.
+fn remote_folders(remote_names: &[String], file: &str) -> Vec<String> {
+    let file = fold(file);
+    remote_names
+        .iter()
+        .filter(|name| !std::path::Path::new(name.as_str()).has_root())
+        .flat_map(|name| {
+            let parts: Vec<&str> = name
+                .split(['/', '\\'])
+                .filter(|part| !part.is_empty())
+                .collect();
+            match parts.split_last() {
+                Some((last, folders)) if fold(last) == file => folders
+                    .iter()
+                    .filter(|part| !part.starts_with("@@"))
+                    .map(|part| (*part).to_owned())
+                    .collect(),
+                _ => Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// Lowercase, folded words.
+fn folded_words(text: &str) -> Vec<String> {
+    words(text)
+        .iter()
+        .map(|word| fold(word))
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// The pieces of one folder or file name that can each be a name, as
+/// folded words: split at brackets and at " - " (and, separately, at every
+/// hyphen and dot, for `Artist-Album-WEB-FLAC` scene names). A piece led
+/// by a number ("01 Title", "1994 Album") is also kept without it.
+fn segments(part: &str) -> Vec<Vec<String>> {
+    let text = part
+        .replace('_', " ")
+        .replace(['\u{2013}', '\u{2014}'], "-");
+    let mut out: Vec<Vec<String>> = Vec::new();
+    for chunk in text.split(['[', ']', '(', ')', '{', '}']) {
+        for piece in chunk.split(" - ").chain(chunk.split(['-', '.'])) {
+            let words = folded_words(piece);
+            let unnumbered: Vec<String> = words
+                .iter()
+                .skip_while(|word| word.chars().all(|ch| ch.is_ascii_digit()))
+                .cloned()
+                .collect();
+            for segment in [words, unnumbered] {
+                if !segment.is_empty() && !out.contains(&segment) {
+                    out.push(segment);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Words that never identify an artist on their own.
+const NAME_STOP_WORDS: &[&str] = &["the", "a", "an", "and", "of", "feat", "ft"];
+
+/// Whether one piece of the folder names (or, unless the name is only a
+/// number, of the file name) is `name`. A name of up to two distinctive
+/// words must be a whole piece, or its start ("Daft Punk feat. Pharrell"),
+/// with or without a leading "The"; "Punk Goes Pop" is not Daft Punk and
+/// "Air Supply" is not Air. A longer name needs most of its distinctive
+/// words in one piece ("Tom Petty" for Tom Petty and the Heartbreakers).
+fn segments_name(folders: &[Vec<String>], stem: &[Vec<String>], name: &str) -> bool {
+    let all = folded_words(name);
+    if all.is_empty() {
+        return false;
+    }
+    let number = all
+        .iter()
+        .all(|word| word.chars().all(|ch| ch.is_ascii_digit()));
+    let pieces: Vec<&Vec<String>> = if number {
+        folders.iter().collect()
+    } else {
+        folders.iter().chain(stem).collect()
+    };
+    let distinctive: Vec<&String> = all
+        .iter()
+        .filter(|word| word.chars().count() >= 2 && !NAME_STOP_WORDS.contains(&word.as_str()))
+        .collect();
+    if distinctive.len() >= 3 {
+        return pieces.iter().any(|piece| {
+            let present = distinctive
+                .iter()
+                .filter(|word| piece.contains(word))
+                .count();
+            present * 2 > distinctive.len()
+        });
+    }
+    let mut phrases = vec![all.as_slice()];
+    if all.len() > 1 && ["the", "a", "an"].contains(&all[0].as_str()) {
+        phrases.push(&all[1..]);
+    }
+    pieces.iter().any(|piece| {
+        phrases.iter().any(|phrase| {
+            piece.as_slice() == *phrase || (phrase.len() >= 2 && piece.starts_with(phrase))
+        })
+    })
+}
+
+/// Untagged files import only with evidence of their artist
+/// ([`artist_proof`]): without it a file named "01 - The Arrival.flac" by
+/// anyone would pass for the requested single.
+struct ArtistEvidence;
+
+impl ImportSpec for ArtistEvidence {
+    fn name(&self) -> &'static str {
+        "artist_evidence"
+    }
+
+    fn check(&self, subject: &Subject<'_>) -> Verdict {
+        let Some(found) = subject.matched.and_then(MatchSummary::best) else {
+            return Verdict::accept();
+        };
+        if found.scored.pairs.is_empty() {
+            return Verdict::accept();
+        }
+        match artist_proof(subject.target, subject.landing, found, subject.heard) {
+            Some(ArtistProof::Tags) => Verdict::accept(),
+            Some(proof) => Verdict::note(proof.note().to_owned()),
+            None => Verdict::hold(
+                "no_artist_evidence",
+                format!(
+                    "no artist tags, no '{}' in the folder names, no AcoustID match, \
+                     and too few tracks fit closely",
+                    subject.target.artist_name
+                ),
+            ),
+        }
+    }
+}
+
+/// v2's `_tag_conflict_reason`: a file whose own artist tag names someone
+/// other than the release's artist, while its title does not name the
+/// track or its length does not fit, is another song. Held on its own.
+/// An artist conflict alone holds nothing: classical files often credit
+/// the composer where the release credits the performer.
+struct OwnArtist;
+
+impl ImportSpec for OwnArtist {
+    fn name(&self) -> &'static str {
+        "own_artist"
+    }
+
+    fn check(&self, subject: &Subject<'_>) -> Verdict {
+        let Some(found) = subject.matched.and_then(MatchSummary::best) else {
+            return Verdict::accept();
+        };
+        let conflicting = artist_conflicts(subject.target, subject.landing, found).len();
+        if conflicting == 0 {
+            return Verdict::accept();
+        }
+        if conflicting == found.scored.pairs.len() {
+            return Verdict::hold("tag_mismatch", "every file's artist tag names someone else");
+        }
+        Verdict::note(format!(
+            "{conflicting} file(s) held: their artist tag names someone else"
+        ))
+    }
+}
+
+/// The paired files [`artist_conflict`] holds, by landed file index.
+pub fn artist_conflicts(
+    target: &Target,
+    landing: &Landing,
+    found: &FoundRelease,
+) -> HashSet<usize> {
+    found
+        .scored
+        .pairs
+        .iter()
+        .filter(|pair| artist_conflict(target, landing, found, pair).is_some())
+        .map(|pair| pair.local)
+        .collect()
+}
+
+/// Why the file of `pair` is another song by someone else: its artist tag
+/// shares no words with the requested artist, the release's artist or the
+/// track's own credit (one side's words must hold the other's, so
+/// "Beethoven" agrees with "Ludwig van Beethoven"), and its title tag is
+/// further than the name gate from the track's or its length is off by
+/// more than `max(15 s, 10%)`. Untagged fields never conflict, and a file
+/// that pairs by its own MusicBrainz ids is never judged by its text.
+pub fn artist_conflict(
+    target: &Target,
+    landing: &Landing,
+    found: &FoundRelease,
+    pair: &TrackPair,
+) -> Option<String> {
+    if pair.support == Support::EmbeddedId {
+        return None;
+    }
+    let file = landing.audio.get(pair.local)?;
+    let release = &found.release;
+    let track = release.tracks.get(pair.track)?;
+    let tagged = file.tag.artist.trim();
+    if tagged.is_empty() {
+        return None;
+    }
+    let credits = [
+        target.artist_name.clone(),
+        release.artist_text(),
+        credit_text(&track.artists),
+    ];
+    let known: Vec<&String> = credits
+        .iter()
+        .filter(|name| !name.trim().is_empty() && !is_various(name))
+        .collect();
+    let agrees = known.iter().any(|name| {
+        string_dist(tagged, name) <= NAME_GATE
+            || artist_subset(tagged, name)
+            || words_within(tagged, name)
+    });
+    if known.is_empty() || agrees {
+        return None;
+    }
+    let title = file.tag.title.trim();
+    let title_weak = !title.is_empty()
+        && string_dist(
+            &strip_edition_words(title),
+            &strip_edition_words(&track.title),
+        ) > NAME_GATE;
+    let length_off = match (file.header.duration_seconds, track.length_ms) {
+        (Some(seconds), Some(ms)) => {
+            let expected = ms as f64 / 1000.0;
+            (seconds - expected).abs() > (0.10 * expected).max(15.0)
+        }
+        _ => false,
+    };
+    (title_weak || length_off)
+        .then(|| format!("the file's artist tag names {tagged}, not {}", known[0]))
+}
+
+/// Whether one name's distinctive words all appear in the other's.
+fn words_within(left: &str, right: &str) -> bool {
+    let distinctive = |name: &str| -> HashSet<String> {
+        folded_words(name)
+            .into_iter()
+            .filter(|word| !NAME_STOP_WORDS.contains(&word.as_str()))
+            .collect()
+    };
+    let (left, right) = (distinctive(left), distinctive(right));
+    !left.is_empty() && !right.is_empty() && (left.is_subset(&right) || right.is_subset(&left))
+}
+
 /// Lidarr's `CloseTrackMatch`, per file: a file whose pair is too far
 /// (its tags name another song) is held on its own, as v2 held a
 /// tag-mismatched file and imported the rest.
@@ -998,6 +1408,108 @@ mod tests {
         ));
         assert!(!fingerprint_disagrees(&["A".to_owned()], "a", None, None));
         assert!(!fingerprint_disagrees(&[], "a", Some(1.0), Some(260.0)));
+    }
+
+    /// Whether a file at `folder/stem`, paired with a track titled
+    /// `title`, is named as by `name`.
+    fn named(name: &str, folder: &str, stem: &str, title: &str) -> bool {
+        let title = folded_words(title);
+        let stem: Vec<Vec<String>> = segments(stem)
+            .into_iter()
+            .map(|segment| segment.into_iter().filter(|w| !title.contains(w)).collect())
+            .filter(|segment: &Vec<String>| !segment.is_empty())
+            .collect();
+        segments_name(&segments(folder), &stem, name)
+    }
+
+    #[test]
+    fn a_path_names_the_artist_only_as_a_whole_piece() {
+        let rows = [
+            ("Daft Punk", "Punk Goes Pop Vol. 6", "05 - Get Lucky", false),
+            (
+                "Daft Punk",
+                "Daft Punk - Discovery",
+                "01 - One More Time",
+                true,
+            ),
+            (
+                "Daft Punk",
+                "singles",
+                "Daft Punk feat. Pharrell - Get Lucky",
+                true,
+            ),
+            ("Pink Floyd", "Pink - Funhouse", "01 - So What", false),
+            ("La Roux", "La Boheme", "01 - Aria", false),
+            ("Air", "Air Supply - Greatest", "01 - Lost in Love", false),
+            (
+                "Air",
+                "Air - Moon Safari (1998) [FLAC]",
+                "01 - La Femme",
+                true,
+            ),
+            ("Yes", "1971 Yes - Fragile", "01 - Roundabout", true),
+            (
+                "Tom Petty and the Heartbreakers",
+                "Tom Petty - Damn the Torpedoes",
+                "01 - Refugee",
+                true,
+            ),
+            ("311", "311 - Grassroots", "01 - Lucky", true),
+            ("311", "rips", "311 Lucky", false),
+            (
+                "Blink-182",
+                "blink-182 - Enema of the State",
+                "01 - Dumpweed",
+                true,
+            ),
+            ("Sum 41", "Sum_41_-_Chuck", "01 - No Reason", true),
+            (
+                "The The",
+                "The The - Soul Mining",
+                "01 - I've Been Waitin'",
+                true,
+            ),
+            (
+                "Portishead",
+                "Portishead-Dummy-WEB-FLAC-1994",
+                "01-mysterons",
+                true,
+            ),
+            ("Black Sabbath", "rips", "01 - Black Sabbath", false),
+            (
+                "Yan Qing",
+                "Dan Romer - Original Score",
+                "01 - The Arrival",
+                false,
+            ),
+        ];
+        for (name, folder, stem, expected) in rows {
+            let title = stem.split(" - ").last().unwrap_or(stem);
+            assert_eq!(
+                named(name, folder, stem, title),
+                expected,
+                "{name} in {folder}/{stem}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_folders_skip_the_share_root_and_local_paths() {
+        let names = vec![
+            r"@@x\Music\Portishead\Singles\01 - Glory Box.flac".to_owned(),
+            "/srv/Portishead/downloads/Singles/01 - Glory Box.flac".to_owned(),
+        ];
+        assert_eq!(
+            remote_folders(&names, "01 - Glory Box.flac"),
+            vec!["Music", "Portishead", "Singles"]
+        );
+        assert!(remote_folders(&names, "02 - Roads.flac").is_empty());
+    }
+
+    #[test]
+    fn an_artist_tag_agrees_word_for_word() {
+        assert!(words_within("Beethoven", "Ludwig van Beethoven"));
+        assert!(!words_within("Dan Romer", "Yan Qing"));
     }
 
     #[test]

@@ -113,6 +113,11 @@ pub const CATALOG: &[Reason] = &[
         "Review the held files: import them if they are right, or discard them.",
     ),
     reason(
+        "no_artist_evidence",
+        "The files have no artist tags, and nothing shows they are by this artist.",
+        "Listen to the held files and import the right ones. With an AcoustID key (Settings > Library), untagged files are checked by their sound.",
+    ),
+    reason(
         "mostly_unmatched",
         "Most files do not belong to any track of the album.",
         "Review the held files: import the ones that are right, discard the rest.",

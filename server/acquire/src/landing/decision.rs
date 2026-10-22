@@ -5,10 +5,13 @@
 //! and when nothing objects the file plan says what imports. Pure: the
 //! caller runs the lookup and acts on the decision.
 
-use super::matching::{FilePlan, MatchSummary, plan};
+use std::collections::HashMap;
+
+use super::matching::{FilePlan, MatchSummary, plan_holding};
 use super::probe::Landing;
 use super::specs::{
-    Check, QualityPolicy, Rejection, Subject, Target, Verdict, file_specs, match_specs, run, worst,
+    Check, QualityPolicy, Rejection, Subject, Target, Verdict, artist_conflicts, file_specs,
+    match_specs, run, worst,
 };
 
 /// What to do with a landing.
@@ -43,18 +46,22 @@ pub fn check_files(
         landing,
         policy,
         matched: None,
+        heard: None,
     };
     let checks = run(&file_specs(), &subject);
     let outcome = worst(&checks).map(outcome_of);
     (checks, outcome)
 }
 
-/// The full decision once matching ran.
+/// The full decision once matching ran. `heard` is AcoustID's answer for
+/// the paired files, when it was asked. A file whose own artist tag names
+/// someone else is held on its own.
 pub fn decide(
     target: &Target,
     landing: &Landing,
     policy: &QualityPolicy,
     matched: &MatchSummary,
+    heard: Option<&HashMap<String, Vec<String>>>,
     mut checks: Vec<Check>,
 ) -> Decision {
     let subject = Subject {
@@ -62,11 +69,23 @@ pub fn decide(
         landing,
         policy,
         matched: Some(matched),
+        heard,
     };
     checks.extend(run(&match_specs(), &subject));
     let outcome = match worst(&checks).map(outcome_of) {
         Some(outcome) => outcome,
-        None => Outcome::Import(plan(matched, target, landing.audio.len())),
+        None => {
+            let conflicting = matched
+                .best()
+                .map(|found| artist_conflicts(target, landing, found))
+                .unwrap_or_default();
+            Outcome::Import(plan_holding(
+                matched,
+                target,
+                landing.audio.len(),
+                &conflicting,
+            ))
+        }
     };
     Decision {
         checks,

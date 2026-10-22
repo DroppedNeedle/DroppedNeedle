@@ -283,13 +283,18 @@ impl LandingService {
             .unwrap_or_default();
         let confined = tokio::task::spawn_blocking(move || {
             let libraries = canonical_dirs(&library_dirs);
+            let folders: Vec<PathBuf> = landed
+                .mounts
+                .iter()
+                .filter_map(|mount| mount.resolve().ok())
+                .collect();
             let confined = confine(landed, &libraries);
-            (confined, libraries)
+            (confined, libraries, folders)
         })
         .await;
-        let (reported, libraries) = match confined {
-            Ok((Ok(reported), libraries)) => (reported, libraries),
-            Ok((Err(rejection), _)) => {
+        let (reported, libraries, folders) = match confined {
+            Ok((Ok(reported), libraries, folders)) => (reported, libraries, folders),
+            Ok((Err(rejection), _, _)) => {
                 return self.reject_unprobed(task, attempt_id, rejection).await;
             }
             Err(error) => {
@@ -349,7 +354,11 @@ impl LandingService {
         let paths: Vec<PathBuf> = reported.into_iter().map(|file| file.path).collect();
         let probed = tokio::task::spawn_blocking(move || probe::probe(&paths, &libraries)).await;
         let landing = match probed {
-            Ok(landing) => landing,
+            Ok(landing) => Landing {
+                downloads_folders: folders,
+                remote_names: remote_names(manifest),
+                ..landing
+            },
             Err(error) => {
                 let rejection = local_fault(format!("probe failed: {error}"));
                 return self.reject_unprobed(task, attempt_id, rejection).await;
@@ -405,12 +414,15 @@ impl LandingService {
             ),
             (None, Some(library)) => {
                 let matched = find(library.as_ref(), &target, &landing).await;
-                let decision = decide(&target, &landing, &policy, &matched, checks);
+                let heard = hear_untagged(&target, &landing, &matched, library.as_ref()).await;
+                let decision = decide(&target, &landing, &policy, &matched, heard.as_ref(), checks);
                 match &decision.outcome {
                     Outcome::Import(plan) => {
                         let plan = plan.clone();
-                        self.act(task, &target, &landing, &matched, decision, plan, library)
-                            .await
+                        self.act(
+                            task, &target, &landing, &matched, heard, decision, plan, library,
+                        )
+                        .await
                     }
                     _ => {
                         let held = self.hold_decided(task, &target, &landing, &decision).await;
@@ -503,7 +515,8 @@ impl LandingService {
     }
 
     /// Carry out an import plan: fingerprint, publish, hold what must be
-    /// held, and work out what is still missing.
+    /// held, and work out what is still missing. `heard` is what AcoustID
+    /// already said about the paired files, when it was asked.
     #[allow(clippy::too_many_arguments)]
     async fn act(
         &self,
@@ -511,6 +524,7 @@ impl LandingService {
         target: &Target,
         landing: &Landing,
         matched: &MatchSummary,
+        heard: Option<HashMap<String, Vec<String>>>,
         mut decision: Decision,
         mut plan: FilePlan,
         library: &Arc<dyn LandingLibrary>,
@@ -520,12 +534,18 @@ impl LandingService {
         };
         let mut held: Vec<Held<'_>> = Vec::new();
         for (file, track) in &plan.held {
+            let detail = found
+                .scored
+                .pair_for(*file)
+                .and_then(|pair| specs::artist_conflict(target, landing, found, pair))
+                .unwrap_or_else(|| {
+                    "the file's tags name a different track than the release has here".to_owned()
+                });
             held.push(Held {
                 file: &landing.audio[*file],
                 track: Some(*track),
                 code: "tag_mismatch",
-                detail: "the file's tags name a different track than the release has here"
-                    .to_owned(),
+                detail,
             });
         }
         let mut replaces: HashMap<usize, Vec<String>> = HashMap::new();
@@ -600,7 +620,7 @@ impl LandingService {
             _ => None,
         };
         let heard_check = self
-            .fingerprint_check(landing, found, &mut plan, &mut held, library)
+            .fingerprint_check(landing, found, heard, &mut plan, &mut held, library)
             .await;
         decision.checks.extend(heard_check);
 
@@ -865,11 +885,13 @@ impl LandingService {
     /// AcoustID check on the files about to import (v2
     /// `_fingerprint_disagrees`): a file whose audio AcoustID confidently
     /// names other recordings, and whose length does not vouch for the
-    /// track, is held on its own. Off without an AcoustID key.
+    /// track, is held on its own. Off without an AcoustID key. `known` is
+    /// an answer already looked up for every paired file.
     async fn fingerprint_check<'a>(
         &self,
         landing: &'a Landing,
         found: &FoundRelease,
+        known: Option<HashMap<String, Vec<String>>>,
         plan: &mut FilePlan,
         held: &mut Vec<Held<'a>>,
         library: &Arc<dyn LandingLibrary>,
@@ -877,12 +899,17 @@ impl LandingService {
         if plan.import.is_empty() {
             return None;
         }
-        let files: Vec<(String, PathBuf)> = plan
-            .import
-            .iter()
-            .map(|(file, _)| (file.to_string(), landing.audio[*file].path.clone()))
-            .collect();
-        let heard = library.fingerprints(files).await;
+        let heard = match known {
+            Some(heard) => heard,
+            None => {
+                let files: Vec<(String, PathBuf)> = plan
+                    .import
+                    .iter()
+                    .map(|(file, _)| (file.to_string(), landing.audio[*file].path.clone()))
+                    .collect();
+                library.fingerprints(files).await
+            }
+        };
         if heard.is_empty() {
             return None;
         }
@@ -1273,6 +1300,55 @@ fn confine(landed: Landed, libraries: &[PathBuf]) -> Result<Vec<Reported>, Rejec
         });
     }
     Ok(kept)
+}
+
+/// The file names the client reported for this attempt, as it named them.
+fn remote_names(manifest: Option<&DownloadManifest>) -> Vec<String> {
+    let Some(manifest) = manifest else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = manifest
+        .target_files
+        .iter()
+        .map(|file| file.filename.clone())
+        .chain(
+            manifest
+                .handle
+                .iter()
+                .flat_map(|handle| handle.filenames.iter().cloned()),
+        )
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// AcoustID's answer for every paired file, asked only when the files are
+/// untagged and nothing else shows who they are by: then a fingerprint is
+/// the last evidence that can let them import. `None` when not asked.
+async fn hear_untagged(
+    target: &Target,
+    landing: &Landing,
+    matched: &MatchSummary,
+    library: &dyn LandingLibrary,
+) -> Option<HashMap<String, Vec<String>>> {
+    let found = matched.best()?;
+    if found.scored.pairs.is_empty() || specs::artist_proof(target, landing, found, None).is_some()
+    {
+        return None;
+    }
+    let files = found
+        .scored
+        .pairs
+        .iter()
+        .map(|pair| {
+            (
+                pair.local.to_string(),
+                landing.audio[pair.local].path.clone(),
+            )
+        })
+        .collect();
+    Some(library.fingerprints(files).await)
 }
 
 /// Library folders as the filesystem resolves them.
