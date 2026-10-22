@@ -179,6 +179,13 @@ impl LandingLibrary for LibraryLanding {
         self.releases.release(mbid)
     }
 
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        self.releases.canonical_recording(mbid)
+    }
+
     fn chosen_edition<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>> {
         Box::pin(async move {
             match crate::edition::chosen_edition(&self.library.db, release_group_mbid).await {

@@ -3,7 +3,7 @@
     "key": "the-yes-album",
     "why": "5 of 6 recording ids merged since tagging",
     "truth": {"release_group": "0fa03925-736c-3537-b0c6-201091543177", "release": "0570348c-2ec5-46c9-a71d-3bfff2413e3c"},
-    "tagged": {"verdict": "unmatched", "release": null, "known_miss": "MusicBrainz merged most of the files' recording ids; only the first few are looked up, so the rest veto every candidate"},
+    "tagged": {"verdict": "exact", "release": "0570348c-2ec5-46c9-a71d-3bfff2413e3c"},
     "stripped": {"verdict": "group", "release": "0fd838c4-6d48-4a39-8ef9-282d94c2de4c", "known_miss": "without ids, editions with the same tracklist cannot be told apart"},
     "facts": {
       "local_album_id": "the-yes-album",
@@ -26,7 +26,7 @@
     "key": "ethiopiques-21",
     "why": "12 of 16 recording ids merged since tagging",
     "truth": {"release_group": "aec58f04-64f5-3a08-a794-e0192788e481", "release": "fd107d3a-50d6-4def-8b21-cbe624a81b42"},
-    "tagged": {"verdict": "unmatched", "release": null, "known_miss": "MusicBrainz merged most of the files' recording ids; only the first few are looked up, so the rest veto every candidate"},
+    "tagged": {"verdict": "exact", "release": "fd107d3a-50d6-4def-8b21-cbe624a81b42"},
     "stripped": {"verdict": "review", "release": "fd107d3a-50d6-4def-8b21-cbe624a81b42", "known_miss": "a compilation without track ids is always edition-uncertain"},
     "facts": {
       "local_album_id": "ethiopiques-21",

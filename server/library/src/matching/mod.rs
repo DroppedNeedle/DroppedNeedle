@@ -24,4 +24,4 @@ pub use model::{
     CreditedArtist, EditionHints, Genre, LocalAlbum, LocalTrack, Release, ReleaseMedium,
     ReleaseTrack,
 };
-pub use score::{ReleaseMatch, Support, match_release};
+pub use score::{ReleaseMatch, Support, match_release, unknown_recordings};

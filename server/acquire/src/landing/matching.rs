@@ -4,10 +4,11 @@
 //! the way Lidarr's import does for a grabbed album: candidates restricted
 //! to the requested release group (the pinned edition first, then the
 //! release the files' tags name, then the group's editions from a
-//! search), and the closest conflict-free edition wins. Then it plans the
-//! files: what imports, what is already in the library, what is held
-//! because its tags name another track, and what the release does not
-//! account for at all.
+//! search), and the closest conflict-free edition wins. Recording ids on
+//! the files that no candidate carries are looked up first, in case
+//! MusicBrainz merged them. Then it plans the files: what imports, what is
+//! already in the library, what is held because its tags name another
+//! track, and what the release does not account for at all.
 
 use std::collections::{HashMap, HashSet};
 
@@ -16,12 +17,12 @@ use super::probe::{LandedFile, Landing};
 use super::specs::Target;
 use droppedneedle_library::identify::sources::ReleaseHit;
 use droppedneedle_library::matching::decide::{ACCEPT_TRACK, EDITION_COHORT};
-use droppedneedle_library::matching::match_release;
 use droppedneedle_library::matching::score::TrackPair;
 use droppedneedle_library::matching::strings::{fold, string_dist};
 use droppedneedle_library::matching::{
     LocalAlbum, LocalTrack, Release, ReleaseMatch, ReleaseTrack,
 };
+use droppedneedle_library::matching::{match_release, unknown_recordings};
 
 /// Editions of the requested group fetched after a search.
 const PER_GROUP: usize = 3;
@@ -191,8 +192,13 @@ pub async fn find(
             .owned(&target.release_group_mbid, target.planned_album_id())
             .await
     };
-    let releases = match recall(library, target, &local).await {
-        Ok(releases) => releases,
+    let recalled = async {
+        let releases = recall(library, target, &local).await?;
+        let aliases = merged_recordings(library, &local, &releases).await?;
+        Ok::<_, String>((releases, aliases))
+    };
+    let (releases, aliases) = match recalled.await {
+        Ok(recalled) => recalled,
         Err(detail) => {
             return MatchSummary {
                 state: MatchState::Unavailable(detail),
@@ -202,9 +208,31 @@ pub async fn find(
             };
         }
     };
-    let mut summary = choose(&local, releases, target);
+    let mut summary = choose(&local, releases, &aliases, target);
     summary.owned = owned;
     summary
+}
+
+/// The ids MusicBrainz merged the files' recording MBIDs into, for every
+/// one no candidate carries: a single retired id left unresolved vetoes
+/// the release the files are.
+pub async fn merged_recordings(
+    library: &dyn LandingLibrary,
+    local: &LocalAlbum,
+    releases: &[Release],
+) -> Result<HashMap<String, String>, String> {
+    let mut aliases = HashMap::new();
+    for mbid in unknown_recordings(local, releases) {
+        if let Some(canonical) = library
+            .canonical_recording(&mbid)
+            .await
+            .map_err(|error| error.0)?
+            && canonical != mbid
+        {
+            aliases.insert(mbid, canonical);
+        }
+    }
+    Ok(aliases)
 }
 
 /// Candidate releases of the requested group. A pinned edition is the
@@ -302,7 +330,14 @@ fn pick_hits(
 /// release by library distance, and among editions within
 /// [`EDITION_COHORT`] of it the pinned one, then the one the tags name,
 /// then the closest full tracklist (the matching engine's edition rule).
-pub fn choose(local: &LocalAlbum, releases: Vec<Release>, target: &Target) -> MatchSummary {
+/// `aliases` maps retired recording MBIDs to the ones they were merged
+/// into.
+pub fn choose(
+    local: &LocalAlbum,
+    releases: Vec<Release>,
+    aliases: &HashMap<String, String>,
+    target: &Target,
+) -> MatchSummary {
     if releases.is_empty() {
         return MatchSummary {
             state: MatchState::NoCandidate,
@@ -311,10 +346,9 @@ pub fn choose(local: &LocalAlbum, releases: Vec<Release>, target: &Target) -> Ma
             owned: OwnedTracks::default(),
         };
     }
-    let aliases = HashMap::new();
     let scored: Vec<ReleaseMatch> = releases
         .iter()
-        .map(|release| match_release(local, release, &aliases))
+        .map(|release| match_release(local, release, aliases))
         .collect();
     let considered = releases
         .iter()

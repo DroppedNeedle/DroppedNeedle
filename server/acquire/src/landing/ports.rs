@@ -150,6 +150,13 @@ pub trait LandingLibrary: Send + Sync {
     /// One release with its tracklist.
     fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>>;
 
+    /// The id a recording MBID resolves to after merges; `None` when
+    /// MusicBrainz has no such recording.
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>>;
+
     /// The edition chosen for the library's copy of a release group, if
     /// any: a manual identity, else the edition pin, else the best fit
     /// ([`crate::edition::chosen_edition`], the same answer

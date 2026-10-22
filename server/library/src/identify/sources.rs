@@ -32,10 +32,13 @@ use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::acoustid::{AcoustIdClient, BatchQuery};
 use droppedneedle_providers::musicbrainz::models::Relation;
 use droppedneedle_providers::musicbrainz::{
-    ArtistCreditName, Criticality, MbRelease, MusicBrainzView, ReleaseSearchHit,
-    build_release_match_query, hit_score, is_valid_mbid,
+    ArtistCreditName, Criticality, LiveSource, MbRelease, MusicBrainzClient, MusicBrainzView,
+    ReleaseSearchHit, build_release_match_query, hit_score, is_valid_mbid,
 };
-use droppedneedle_providers::{PayloadKind, ProviderError};
+use droppedneedle_providers::{
+    CacheKey, Fetched, PayloadKind, Policy, ProviderCacheStore, ProviderError,
+    Source as CacheSource,
+};
 
 /// The provider could not answer; the job waits and retries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -422,6 +425,105 @@ impl ReleaseSource for MusicBrainzView {
                     .collect(),
             })
         })
+    }
+}
+
+/// MusicBrainz for identification and imports: the live source at one
+/// priority, with the id each retired recording id was merged into kept
+/// in the provider cache. An album's files can carry one retired id per
+/// track, and every pass over the album asks the same ones again.
+#[derive(Clone)]
+pub struct CachedMusicBrainz {
+    view: MusicBrainzView,
+    source: LiveSource,
+    cache: ProviderCacheStore,
+    priority: RequestPriority,
+}
+
+impl CachedMusicBrainz {
+    /// Reads against the source the settings name, every request at
+    /// `priority`, merges kept in `cache`.
+    pub fn new(
+        client: &MusicBrainzClient,
+        source: LiveSource,
+        cache: ProviderCacheStore,
+        priority: RequestPriority,
+    ) -> Self {
+        Self {
+            view: client.live(source.clone(), priority),
+            source,
+            cache,
+            priority,
+        }
+    }
+}
+
+impl ReleaseSource for CachedMusicBrainz {
+    fn search<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        ReleaseSource::search(&self.view, title, artist)
+    }
+
+    fn search_album<'a>(
+        &'a self,
+        query: AlbumQuery<'a>,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.view.search_album(query)
+    }
+
+    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        ReleaseSource::release(&self.view, mbid)
+    }
+
+    /// The key carries the source, its generation and the asked id, so a
+    /// source switch asks again. A lookup that failed stores nothing; "no
+    /// such recording" is kept briefly.
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        Box::pin(async move {
+            let asked = mbid.trim().to_ascii_lowercase();
+            let namespace = self.source.cache_namespace();
+            let Some(namespace) = namespace.filter(|_| is_valid_mbid(&asked)) else {
+                return self.view.canonical_recording(&asked).await;
+            };
+            let key = CacheKey::new(
+                CacheSource::MusicBrainz,
+                &[&namespace, "recording_merge", &asked],
+            );
+            let view = self.view.clone();
+            self.cache
+                .get_or_fetch(
+                    &key,
+                    Policy::MERGED_ID,
+                    self.priority,
+                    move |_| async move {
+                        Ok(match view.canonical_recording(&asked).await? {
+                            Some(canonical) => Fetched::Found(canonical),
+                            None => Fetched::Missing,
+                        })
+                    },
+                )
+                .await
+        })
+    }
+
+    fn search_editions<'a>(
+        &'a self,
+        query: &'a EditionQuery,
+    ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
+        ReleaseSource::search_editions(&self.view, query)
+    }
+
+    fn canonical_artist<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<ArtistAnswer, Unanswered>> {
+        self.view.canonical_artist(mbid)
     }
 }
 

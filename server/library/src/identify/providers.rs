@@ -16,7 +16,7 @@
 //!    tags' barcode, disc count, track count and media first, at most
 //!    [`GROUP_FETCH`]. Search alone often misses the edition that fits.
 //! 5. Resolve file recording MBIDs no candidate carries, in case
-//!    MusicBrainz merged them (a few lookups at most).
+//!    MusicBrainz merged them: every one, up to one per file.
 //! 6. When the tags are weak, fingerprint the files and add the releases
 //!    most of the prints point at.
 //!
@@ -35,7 +35,7 @@ use super::sqlite::SqliteIdentifyStore;
 use super::stores::fresh_release;
 use crate::matching::decide::STRONG;
 use crate::matching::strings::fold;
-use crate::matching::{LocalAlbum, Release, match_release, should_fingerprint};
+use crate::matching::{LocalAlbum, Release, match_release, should_fingerprint, unknown_recordings};
 use droppedneedle_providers::musicbrainz::Criticality;
 
 /// Tracklists fetched per album after a search.
@@ -44,8 +44,6 @@ pub const FETCH_LIMIT: usize = 5;
 pub const PER_GROUP: usize = 3;
 /// Further editions of the best release group fetched per album.
 pub const GROUP_FETCH: usize = 6;
-/// Merged-recording lookups per album.
-const ALIAS_LOOKUPS: usize = 4;
 /// Releases nominated by fingerprints fetched per album.
 const FINGERPRINT_RELEASES: usize = 2;
 /// Share of printed tracks that must point at a release to nominate it
@@ -289,31 +287,16 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
     }
 
     /// Map file recording MBIDs that no candidate carries to the ids
-    /// MusicBrainz merged them into, when it did.
+    /// MusicBrainz merged them into, when it did. Every such id is looked
+    /// up (at most [`MERGE_LOOKUPS`](crate::matching::score::MERGE_LOOKUPS)):
+    /// one left out would veto the release the files are.
     async fn resolve_aliases(
         &self,
         local: &LocalAlbum,
         releases: &[Release],
     ) -> Result<HashMap<String, String>, SourceError> {
         let mut aliases = HashMap::new();
-        if releases.is_empty() {
-            return Ok(aliases);
-        }
-        let unknown: Vec<String> = local
-            .tracks
-            .iter()
-            .filter_map(|track| track.recording_mbid.as_deref())
-            .map(str::to_ascii_lowercase)
-            .filter(|mbid| {
-                !releases.iter().any(|release| {
-                    release
-                        .tracks
-                        .iter()
-                        .any(|track| track.recording_id.eq_ignore_ascii_case(mbid))
-                })
-            })
-            .collect();
-        for mbid in unknown.into_iter().take(ALIAS_LOOKUPS) {
+        for mbid in unknown_recordings(local, releases) {
             if let Some(canonical) = self.releases.canonical_recording(&mbid).await?
                 && canonical != mbid
             {

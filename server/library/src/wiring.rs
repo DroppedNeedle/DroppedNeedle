@@ -301,11 +301,20 @@ impl LibrarySetup {
         // outage during a background lookup shows on the health dot too.
         let mb_client =
             |priority: RequestPriority| providers.musicbrainz.live(mb_source.clone(), priority);
-        let musicbrainz = mb_client(RequestPriority::BackgroundSync);
+        // Identification and imports keep what MusicBrainz says about
+        // merged recording ids in the provider cache.
+        let cached = || {
+            super::identify::sources::CachedMusicBrainz::new(
+                &providers.musicbrainz,
+                mb_source.clone(),
+                providers.cache.clone(),
+                RequestPriority::BackgroundSync,
+            )
+        };
+        let musicbrainz = cached();
         // Downloads being imported look releases up through their own
         // client on the same limiter and source setting.
-        let imports: Arc<dyn super::identify::sources::ReleaseSource> =
-            Arc::new(mb_client(RequestPriority::BackgroundSync));
+        let imports: Arc<dyn super::identify::sources::ReleaseSource> = Arc::new(cached());
         // Contributions read MusicBrainz on both lanes (the curator's page
         // and the verification worker) and Discogs through the one Discogs
         // client.

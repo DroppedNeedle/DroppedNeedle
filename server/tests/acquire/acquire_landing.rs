@@ -30,6 +30,7 @@ use droppedneedle_library::scan::EffectivePolicy;
 use droppedneedle_library::tags::TagField;
 use droppedneedle_library::tags::save::{TagEdit, save_tags};
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use futures_util::future::BoxFuture;
 
 use crate::common::TestPlatform;
@@ -401,6 +402,194 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     .expect("reason text");
     assert_eq!(unexplained, 0);
     assert!(!acquire.flows.library.contains(BAD_GROUP).await);
+}
+
+/// MusicBrainz as [`Releases`], where one retired recording id was merged
+/// into another. Like the live client, it refuses an id that is not a
+/// MusicBrainz id.
+struct Merged {
+    releases: Releases,
+    retired: &'static str,
+    kept: String,
+}
+
+impl ReleaseSource for Merged {
+    fn search<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.releases.search(title, artist)
+    }
+
+    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        self.releases.release(mbid)
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        let answer = if !is_valid_mbid(mbid) {
+            Err(SourceError("not a MusicBrainz id".to_owned()))
+        } else if mbid == self.retired {
+            Ok(Some(self.kept.clone()))
+        } else {
+            Ok(Some(mbid.to_owned()))
+        };
+        Box::pin(async move { answer })
+    }
+}
+
+/// A recording id MusicBrainz merged into the second track's recording.
+const RETIRED: &str = "6d0b7a1e-0000-4000-8000-0000000000ff";
+
+/// Land a two-file download of Dummy whose first file carries the
+/// release's own recording id and whose second carries `second`, one
+/// worker pass. Answers the bundle, the music folder and the platform it
+/// runs on.
+async fn land_with_recording(
+    task_id: &'static str,
+    second: &str,
+) -> (
+    droppedneedle_acquire::AcquireSetup,
+    PathBuf,
+    droppedneedle_kernel::platform::Platform,
+) {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+
+    let downloads = dir.join("downloads");
+    let files = vec![
+        land_file(
+            &downloads.join("dummy"),
+            "01 - Mysterons.flac",
+            "flac_full_01.flac",
+            "Mysterons",
+            1,
+        ),
+        land_file(
+            &downloads.join("dummy"),
+            "02 - Sour Times.flac",
+            "flac_full_02.flac",
+            "Sour Times",
+            2,
+        ),
+    ];
+    let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
+    let good = release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons", "Sour Times"],
+        &lengths,
+    );
+    let tagged = [good.tracks[0].recording_id.as_str(), second];
+    for (path, recording) in files.iter().zip(tagged) {
+        let edit = TagEdit::new(TagField::MusicBrainzRecordingId, vec![recording.to_owned()]);
+        save_tags(path, &[edit]).expect("recording id saves");
+    }
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Merged {
+        kept: good.tracks[1].recording_id.clone(),
+        releases: Releases(vec![good]),
+        retired: RETIRED,
+    });
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            releases,
+            pool,
+        ))),
+    );
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task(task_id, GOOD_GROUP), 1.0)
+        })
+        .await
+        .expect("task");
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(Arc::new(FixedSource::new(
+                downloads.clone(),
+                files.clone(),
+            )))],
+            WorkerConfig {
+                staging_root: acquire.staging_root.clone(),
+                ..WorkerConfig::default()
+            },
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    worker.run_once(1).await;
+    worker.wait_for_landings().await;
+    (acquire, music, platform)
+}
+
+/// A download tagged long ago carries a recording id MusicBrainz has since
+/// merged into the release's recording. The landing follows the merge and
+/// imports; an unresolved id would veto the release and hold the files.
+#[tokio::test]
+async fn a_download_with_a_merged_recording_id_imports() {
+    let (acquire, music, _platform) = land_with_recording("t-merged", RETIRED).await;
+    let task = acquire
+        .journal
+        .read_task("t-merged")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        task.status,
+        TaskStatus::Completed,
+        "{:?}",
+        task.error_message
+    );
+    assert!(
+        music
+            .join("Portishead/Dummy/0102 Sour Times.flac")
+            .is_file()
+    );
+}
+
+/// A recording id tag that is not a MusicBrainz id is never looked up: it
+/// contradicts the release, so the download is held as a tag mismatch
+/// and fails over, instead of waiting on MusicBrainz for ever.
+#[tokio::test]
+async fn a_download_with_a_junk_recording_id_is_held() {
+    let (acquire, _music, _platform) = land_with_recording("t-junk", "not-an-id").await;
+    let decisions: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT outcome, reason_code FROM download_import_decisions WHERE task_id = 't-junk'",
+    )
+    .fetch_all(acquire.db.pool())
+    .await
+    .expect("decisions");
+    assert_eq!(
+        decisions,
+        vec![("held".to_owned(), Some("tag_mismatch".to_owned()))]
+    );
 }
 
 /// POST or GET one held-import route as `principal`.

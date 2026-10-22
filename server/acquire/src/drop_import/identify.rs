@@ -20,7 +20,9 @@ use std::collections::HashMap;
 
 use super::extract::LOOSE_UNIT_NAME;
 use super::reasons::{self, Reason};
-use crate::landing::matching::{FoundRelease, MatchState, MatchSummary, choose, find, local_album};
+use crate::landing::matching::{
+    FoundRelease, MatchState, MatchSummary, choose, find, local_album, merged_recordings,
+};
 use crate::landing::ports::LandingLibrary;
 use crate::landing::probe::Landing;
 use crate::landing::specs::Target;
@@ -204,7 +206,11 @@ pub async fn assigned(
             }
         }
     }
-    let mut summary = choose(&local, releases, &target);
+    let aliases = match merged_recordings(library, &local, &releases).await {
+        Ok(aliases) => aliases,
+        Err(detail) => return Outcome::Unavailable(detail),
+    };
+    let mut summary = choose(&local, releases, &aliases, &target);
     if summary.best().is_none() {
         return review(reasons::ALBUM_NOT_FOUND);
     }
@@ -243,7 +249,8 @@ async fn by_fingerprint(
         }
     }
     let local = local_album(&landing.audio, target);
-    let summary = choose(&local, releases, target);
+    let aliases = merged_recordings(library, &local, &releases).await?;
+    let summary = choose(&local, releases, &aliases, target);
     Ok(summary.best().is_some_and(close).then_some(summary))
 }
 

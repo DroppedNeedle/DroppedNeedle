@@ -169,6 +169,15 @@ impl LiveSource {
                 MbSource::from_settings(&settings, &self.official, &self.brainzmash)
             })
     }
+
+    /// What the cache key of an answer from this source carries: the
+    /// saved source and its generation. `None` while the settings do not
+    /// read.
+    pub fn cache_namespace(&self) -> Option<String> {
+        self.settings
+            .read()
+            .map(|settings| format!("{}:g{}", settings.source_id, settings.generation))
+    }
 }
 
 /// Operation class from the degradation matrix. A dead MusicBrainz fails

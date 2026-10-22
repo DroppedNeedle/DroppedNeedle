@@ -26,6 +26,7 @@ use super::assign::assign;
 use super::distance::Distance;
 use super::model::{LocalAlbum, LocalTrack, Release, ReleaseTrack, credit_text};
 use super::strings::{artist_subset, string_dist, strip_edition_words};
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// A pair worse than this is better left unmatched (v2's dummy cost).
 pub const UNMATCHED_PAIR_COST: f64 = 0.65;
@@ -310,6 +311,39 @@ fn names_agree(local: &LocalAlbum, release: &Release, various: bool, pairs: &[Tr
         || string_dist(&local.artist, &release_artist) <= NAME_GATE
         || (proven && artist_subset(&local.artist, &release_artist));
     title_ok && artist_ok
+}
+
+/// Most recording MBIDs looked up for merges per album: one per file of
+/// the largest albums.
+pub const MERGE_LOOKUPS: usize = 100;
+
+/// The files' recording MBIDs that no candidate in `releases` carries,
+/// lowercased, each once, in file order, at most [`MERGE_LOOKUPS`].
+/// MusicBrainz may have merged them into a recording a candidate does
+/// carry; until that is looked up each one vetoes every candidate. A tag
+/// that is not a MusicBrainz id is left out: MusicBrainz would refuse it,
+/// and it stays a plain conflict.
+pub fn unknown_recordings(local: &LocalAlbum, releases: &[Release]) -> Vec<String> {
+    if releases.is_empty() {
+        return Vec::new();
+    }
+    let mut unknown: Vec<String> = Vec::new();
+    for track in &local.tracks {
+        let Some(mbid) = canonical_recording(track, &HashMap::new()) else {
+            continue;
+        };
+        let carried = releases.iter().any(|release| {
+            release
+                .tracks
+                .iter()
+                .any(|candidate| candidate.recording_id.eq_ignore_ascii_case(&mbid))
+        });
+        if !carried && is_valid_mbid(&mbid) && !unknown.contains(&mbid) {
+            unknown.push(mbid);
+        }
+    }
+    unknown.truncate(MERGE_LOOKUPS);
+    unknown
 }
 
 fn canonical_recording(track: &LocalTrack, aliases: &HashMap<String, String>) -> Option<String> {
