@@ -4043,6 +4043,108 @@ fn every_registered_statement_prepares() {
     assert!(wrong.is_empty(), "declared SQL:\n{}", wrong.join("\n"));
 }
 
+/// The registered statements that read every indexed track on purpose:
+/// the library-wide track list and its total, the newest and oldest
+/// imports, a random pick, the genres and one genre's tracks and total,
+/// and the playable totals across every folder.
+const TRACK_WALKS: &[&str] = &[
+    "droppedneedle_catalog::reads::library::sql::TRACK_PAGE_LIKE",
+    "droppedneedle_catalog::reads::library::sql::TRACK_PAGE_WORDS",
+    "droppedneedle_catalog::reads::library::sql::TRACK_COUNT_LIKE",
+    "droppedneedle_catalog::reads::library::sql::TRACK_COUNT_WORDS",
+    "droppedneedle_catalog::reads::library::sql::NEWEST_TRACKS",
+    "droppedneedle_catalog::reads::library::sql::OLDEST_TRACKS",
+    "droppedneedle_catalog::reads::library::sql::RANDOM_TRACK_IDS",
+    "droppedneedle_catalog::reads::library::sql::GENRES",
+    "droppedneedle_catalog::reads::library::sql::GENRE_TRACKS",
+    "droppedneedle_catalog::reads::library::sql::GENRE_TRACK_COUNT",
+    "droppedneedle_catalog::reads::library::sql::PLAYABLE_COUNTS",
+];
+
+/// Before the first ANALYZE (a fresh install) the planner has no
+/// statistics, and an index led by `availability` can look as good as a
+/// key: a read of one album's tracks then walks every indexed track. Every
+/// registered statement outside [`TRACK_WALKS`] reaches the track table by
+/// a key, never by a walk of it or of an index led by `availability`.
+#[test]
+fn registered_statements_reach_tracks_by_key() {
+    let dir = crate::common::ScratchDir::new("track-plans");
+    let path = dir.join("app.db");
+    crate::common::migrated_db(&path);
+    let app = rusqlite::Connection::open(&path).expect("template copy opens");
+    let has_stats: bool = app
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("schema reads");
+    assert!(!has_stats, "the template holds no planner statistics");
+
+    let alias = Regex::new(r"(?i)\blocal_tracks(?:\s+AS)?\s+([a-z_][a-z0-9_]*)").unwrap();
+    let keyword = Regex::new(
+        r"(?i)^(where|join|left|inner|cross|on|set|indexed|group|order|limit|union|using|values|returning|natural|not|and|or)$",
+    )
+    .unwrap();
+    let walk = Regex::new(concat!(
+        r"^(?:SCAN (\S+)|",
+        r"SEARCH \S+ USING (?:COVERING )?INDEX idx_local_tracks_\w+ \(availability=\?\)$)"
+    ))
+    .unwrap();
+    let mut checked = 0;
+    let mut wrong = Vec::new();
+    for (_, list) in REGISTRIES {
+        for file in list() {
+            if !matches!(file.schema, Schema::App) {
+                continue;
+            }
+            for declared in file.declared {
+                let (name, texts) = match declared {
+                    Declared::Statement(one) => (one.name(), vec![one.text().to_owned()]),
+                    Declared::Family(family) => (family.name(), family.texts().unwrap_or_default()),
+                    Declared::Fragment(_) => continue,
+                };
+                if TRACK_WALKS.contains(&name) {
+                    continue;
+                }
+                for text in texts {
+                    let mut tables = vec!["local_tracks".to_owned()];
+                    tables.extend(
+                        alias
+                            .captures_iter(&text)
+                            .map(|found| found[1].to_owned())
+                            .filter(|found| !keyword.is_match(found)),
+                    );
+                    let mut statement = app
+                        .prepare(&format!("EXPLAIN QUERY PLAN {text}"))
+                        .expect("registered statement prepares");
+                    let mut rows = statement.raw_query();
+                    while let Some(row) = rows.next().expect("plan row reads") {
+                        let detail: String = row.get(3).expect("plan detail reads");
+                        let Some(found) = walk.captures(&detail) else {
+                            continue;
+                        };
+                        let walks_tracks = match found.get(1) {
+                            Some(table) => tables.iter().any(|one| one == table.as_str()),
+                            None => true,
+                        };
+                        if walks_tracks {
+                            wrong.push(format!("{name}: {detail}"));
+                        }
+                    }
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 0, "no statement checked");
+    assert!(
+        wrong.is_empty(),
+        "statements that walk the track table with no statistics:\n{}",
+        wrong.join("\n")
+    );
+}
+
 /// The code of a file with every string literal emptied, and each literal's
 /// line and value. Comments are skipped, and `\` line continuations are
 /// joined as the compiler joins them. It reads text and does not parse

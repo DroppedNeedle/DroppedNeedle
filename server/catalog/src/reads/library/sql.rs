@@ -432,11 +432,14 @@ droppedneedle_kernel::sql! {
     /// Owned artists among a list of lowercase MBIDs.
     family OWNED_ARTISTS_IN = owned_artists_in;
     /// Whether an artist (lowercase MBID) only appears on the library's
-    /// tracks, with no album credit of their own on that album.
+    /// tracks, with no album credit of their own on that album. Tracks are
+    /// reached from the artist's credits by key: with no planner statistics
+    /// a walk of every indexed track looks as good.
     pub(crate) ARTIST_APPEARS = "SELECT 1 FROM local_artist_external_identities e \
         JOIN local_artists a ON a.id = e.local_artist_id \
         JOIN local_track_artists credit ON credit.local_artist_id = e.local_artist_id \
-        JOIN local_tracks t ON t.id = credit.local_track_id \
+        JOIN local_tracks t INDEXED BY sqlite_autoindex_local_tracks_1 \
+        ON t.id = credit.local_track_id \
         JOIN local_albums b ON b.id = t.local_album_id \
         WHERE lower(e.provider_artist_id) = ? AND " + (musicbrainz!("e"))
         + " AND a.retired_into_artist_id IS NULL AND " + (live_album!("b"))

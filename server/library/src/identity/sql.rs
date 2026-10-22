@@ -10,6 +10,11 @@ droppedneedle_kernel::sql! {
     /// over from v2. Checked against
     /// [`DecisionSource::is_persons_choice`](super::DecisionSource::is_persons_choice).
     pub(crate) fragment PERSONS = "('manual','legacy_import')";
+    /// The track table, read through its album index. With no planner
+    /// statistics (before the first ANALYZE) the list-order index led by
+    /// `availability` looks as good, and would walk every indexed track.
+    pub(super) fragment ALBUM_TRACKS = "local_tracks t \
+             INDEXED BY idx_local_tracks_album_availability";
 
     /// Who decided the album's match (`?1`, provider `?2`).
     pub(super) ALBUM_SOURCE = "SELECT decision_source FROM local_album_external_identities \
@@ -112,8 +117,8 @@ droppedneedle_kernel::sql! {
              release_track_mbid = NULL, medium_position = NULL, \
              release_track_position = NULL, selected_at = ?2, \
              row_revision = row_revision + 1 WHERE local_track_id = ?1 AND provider = ?3 \
-             AND local_track_id IN (SELECT id FROM local_tracks \
-             WHERE local_album_id = ?4 AND availability = 'indexed')";
+             AND local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?4 AND t.availability = 'indexed')";
     pub(super) DROP_REMAP =
         "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1";
 
@@ -195,7 +200,7 @@ droppedneedle_kernel::sql! {
              i.release_track_mbid, i.medium_position, i.release_track_position, \
              i.decision_source, i.attempt_id, i.selected_at \
              FROM local_track_external_identities i \
-             JOIN local_tracks t ON t.id = i.local_track_id \
+             JOIN " + ALBUM_TRACKS + " ON t.id = i.local_track_id \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' AND i.provider = ?2 \
              ORDER BY i.local_track_id";
     /// One file's row (`?1`, provider `?2`).
@@ -207,11 +212,11 @@ droppedneedle_kernel::sql! {
     pub(super) IDENTITY_REVISION = "SELECT row_revision FROM local_album_external_identities \
              WHERE local_album_id = ?1 AND provider = ?2";
     /// The album's (`?1`) indexed files.
-    pub(super) INDEXED_TRACKS = "SELECT id FROM local_tracks \
-             WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id";
+    pub(super) INDEXED_TRACKS = "SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed' ORDER BY t.id";
     /// The album's (`?1`) indexed files placed on a track of release `?2`
     /// (provider `?3`).
-    pub(super) MAPPED_TRACKS = "SELECT t.id FROM local_tracks t \
+    pub(super) MAPPED_TRACKS = "SELECT t.id FROM " + ALBUM_TRACKS + " \
              JOIN local_track_external_identities i \
              ON i.local_track_id = t.id AND i.provider = ?3 \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
@@ -222,7 +227,7 @@ droppedneedle_kernel::sql! {
     /// wrote is `manual`, so only such a row stands for it.
     pub(super) HAND_MATCHES_STANDING = "SELECT h.local_track_id, i.release_track_mbid \
              FROM library_track_hand_matches h \
-             JOIN local_tracks t ON t.id = h.local_track_id \
+             JOIN " + ALBUM_TRACKS + " ON t.id = h.local_track_id \
              JOIN local_track_external_identities i \
              ON i.local_track_id = h.local_track_id AND i.provider = ?2 \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
@@ -425,15 +430,16 @@ droppedneedle_kernel::sql! {
              SET release_mbid = NULL, release_track_mbid = NULL, medium_position = NULL, \
              release_track_position = NULL, decision_source = 'manual', selected_at = ?2, \
              row_revision = row_revision + 1 WHERE local_track_id = ?1 AND provider = ?3 \
-             AND local_track_id IN (SELECT id FROM local_tracks \
-             WHERE local_album_id = ?4 AND availability = 'indexed')";
+             AND local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?4 AND t.availability = 'indexed')";
     /// Take every indexed file of the album (`?1`) off its release track
     /// as the person's, at `?2` (provider `?3`).
     pub(super) UNPLACE_ALBUM_TRACKS = "UPDATE local_track_external_identities \
              SET release_mbid = NULL, release_track_mbid = NULL, medium_position = NULL, \
              release_track_position = NULL, decision_source = 'manual', selected_at = ?2, \
              row_revision = row_revision + 1 WHERE provider = ?3 AND local_track_id IN \
-             (SELECT id FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed')";
+             (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed')";
     /// Make the album's (`?1`) revisable match the person's (`?2`), at
     /// `?3` (provider `?4`); a v2 choice already is one and stays as it is.
     pub(super) CONFIRM_ALBUM = "UPDATE local_album_external_identities \
@@ -446,8 +452,8 @@ droppedneedle_kernel::sql! {
     pub(super) CONFIRM_TRACKS = "UPDATE local_track_external_identities \
              SET decision_source = 'manual', selected_at = ?2, row_revision = row_revision + 1 \
              WHERE provider = ?3 AND decision_source IN " + REVISABLE + " \
-             AND local_track_id IN (SELECT id FROM local_tracks \
-             WHERE local_album_id = ?1 AND availability = 'indexed')";
+             AND local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed')";
     /// Hand the album's (`?1`) match back to automatic choice, at `?2`
     /// (provider `?3`).
     pub(super) HAND_BACK_ALBUM = "UPDATE local_album_external_identities \
@@ -459,8 +465,8 @@ droppedneedle_kernel::sql! {
     pub(super) HAND_BACK_TRACKS = "UPDATE local_track_external_identities \
              SET decision_source = 'automatic', selected_at = ?2, row_revision = row_revision + 1 \
              WHERE provider = ?3 AND decision_source IN " + PERSONS + " \
-             AND local_track_id IN (SELECT id FROM local_tracks \
-             WHERE local_album_id = ?1 AND availability = 'indexed')";
+             AND local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed')";
     /// The album (`?1`) keeps its release group as the person's (`?2`),
     /// at `?3`, and loses its exact release (provider `?4`).
     pub(super) LEAVE_ALBUM_UNMANAGED = "UPDATE local_album_external_identities \
@@ -477,7 +483,8 @@ droppedneedle_kernel::sql! {
     /// Delete the rows of the album's (`?1`) indexed files (provider `?2`).
     pub(super) DELETE_ALBUM_TRACK_ROWS = "DELETE FROM local_track_external_identities \
              WHERE provider = ?2 AND local_track_id IN \
-             (SELECT id FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed')";
+             (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed')";
     /// Mark the album (`?1`) unmatched with reason `?2`, at `?3`.
     pub(super) MARK_UNMATCHED = "INSERT INTO library_album_match_state (local_album_id, state, \
              reason_code, release_mbid, candidates_json, updated_at) \
@@ -608,7 +615,7 @@ droppedneedle_kernel::sql! {
              WHERE c.local_album_id = ?1)";
     /// Whether an indexed file of the album (`?1`) is not placed on release
     /// `?3` (provider `?2`).
-    pub(super) HAS_UNPLACED_FILE = "SELECT EXISTS(SELECT 1 FROM local_tracks t \
+    pub(super) HAS_UNPLACED_FILE = "SELECT EXISTS(SELECT 1 FROM " + ALBUM_TRACKS + " \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' AND NOT EXISTS \
              (SELECT 1 FROM local_track_external_identities i WHERE i.local_track_id = t.id \
              AND i.provider = ?2 AND lower(i.release_mbid) = ?3 \
@@ -620,7 +627,7 @@ droppedneedle_kernel::sql! {
              WHERE local_album_id = ?1 AND provider = ?2";
     /// The album's (`?1`) indexed files already on release `?3` (provider
     /// `?2`), with the release track each holds.
-    pub(super) HELD_ON_RELEASE = "SELECT t.id, i.release_track_mbid FROM local_tracks t \
+    pub(super) HELD_ON_RELEASE = "SELECT t.id, i.release_track_mbid FROM " + ALBUM_TRACKS + " \
              JOIN local_track_external_identities i \
              ON i.local_track_id = t.id AND i.provider = ?2 \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
@@ -779,7 +786,7 @@ droppedneedle_kernel::sql! {
     /// identity hash.
     pub(super) TRACK_HASH_ROWS = "SELECT t.id, i.recording_mbid, i.release_mbid, \
              i.release_track_mbid, i.medium_position, i.release_track_position, \
-             i.decision_source, i.row_revision FROM local_tracks t \
+             i.decision_source, i.row_revision FROM " + ALBUM_TRACKS + " \
              JOIN local_track_external_identities i \
              ON i.local_track_id = t.id AND i.provider = ?2 \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' ORDER BY t.id";
