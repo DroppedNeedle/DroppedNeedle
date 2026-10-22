@@ -4914,6 +4914,122 @@ async fn artist_counts_arrive_worked_out_from_the_catalog() {
     assert_eq!((pairs, counts), worked(&pool).await);
 }
 
+/// Migration 0081 pins the genre artwork triggers' track lookup to the
+/// album's index. On a database at 0080 with no planner statistics, each
+/// trigger's lookup reads by album, not every indexed track, and the
+/// triggers still bump the revisions of the album's indexed genres only.
+#[tokio::test]
+async fn genre_artwork_triggers_read_the_album_tracks_index() {
+    let pool = scratch_pool().await;
+    migrator_through(80).run(&pool).await.unwrap();
+    let track = |id: &str, availability: &str| {
+        format!(
+            "('{id}', 'al1', 'r1', '/m/{id}.flac', '{id}.flac', 'h-{id}', 1, 0, 's', 'T', \
+             't', 'T', 't', 'flac', '{availability}', 'scan', 0, 'automatic')"
+        )
+    };
+    sqlx::raw_sql(&format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, availability, ingest_source, \
+         imported_at, membership_source) VALUES {}, {}; \
+         INSERT INTO local_track_genres (local_track_id, position, name, folded_name, source) \
+         VALUES ('t1', 0, 'Rock', 'rock', 'local'), ('t2', 0, 'Jazz', 'jazz', 'local');",
+        track("t1", "indexed"),
+        track("t2", "missing"),
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+    let statistics: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_stat1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(statistics, 0);
+
+    let triggers: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' \
+         AND name LIKE 'trg_genre_artwork_%' AND sql LIKE '%FROM local_tracks t%' ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let names: Vec<&str> = triggers.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "trg_genre_artwork_album_update",
+            "trg_genre_artwork_artwork_delete",
+            "trg_genre_artwork_artwork_insert",
+            "trg_genre_artwork_artwork_update",
+        ]
+    );
+    // The lookup each trigger runs, with its row's album id filled in.
+    let row_value = Regex::new(r"\b(?:NEW|OLD)\.\w+").unwrap();
+    for (name, sql) in &triggers {
+        let start = sql.find("SELECT DISTINCT").unwrap();
+        let end = sql.find("ON CONFLICT").unwrap();
+        let lookup = row_value.replace_all(&sql[start..end], "'al1'");
+        let plan: Vec<(i64, i64, i64, String)> =
+            sqlx::query_as(&format!("EXPLAIN QUERY PLAN {lookup}"))
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(
+            plan.iter().any(|step| step.3.contains(
+                "SEARCH t USING INDEX idx_local_tracks_album_availability (local_album_id=? AND availability=?)"
+            )),
+            "{name}: {plan:?}"
+        );
+    }
+
+    async fn revisions(pool: &SqlitePool) -> Vec<(String, i64)> {
+        sqlx::query_as("SELECT genre_folded, value FROM library_genre_artwork_revisions ORDER BY 1")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+    let before = revisions(&pool).await;
+    assert_eq!(before, [("jazz".to_owned(), 1), ("rock".to_owned(), 1)]);
+    for (write, rock) in [
+        ("UPDATE local_albums SET title = 'U' WHERE id = 'al1'", 2),
+        (
+            "INSERT INTO local_album_artwork (local_album_id, source, version, updated_at) \
+             VALUES ('al1', 'folder', 1, 1)",
+            3,
+        ),
+        (
+            "UPDATE local_album_artwork SET version = 2 WHERE local_album_id = 'al1'",
+            4,
+        ),
+        (
+            "DELETE FROM local_album_artwork WHERE local_album_id = 'al1'",
+            5,
+        ),
+    ] {
+        sqlx::raw_sql(write).execute(&pool).await.unwrap();
+        assert_eq!(
+            revisions(&pool).await,
+            [("jazz".to_owned(), 1), ("rock".to_owned(), rock)],
+            "{write}"
+        );
+    }
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(version >= 81, "user_version {version}");
+}
+
 /// Migration 0076 rebuilds the request, watch and approval tables as
 /// STRICT tables with checked states and millisecond times. A database
 /// before it, with a row in every state and times in every stored form,
