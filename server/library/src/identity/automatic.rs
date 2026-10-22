@@ -11,7 +11,7 @@ use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use super::reads::{album_identity_row, identity_hash, identity_revision, track_identity_rows};
 use super::sql;
-use super::undo::{carry_undo, keep_choice_undo, snapshot};
+use super::undo::{Snapshot, carry_undo, keep_choice_undo, snapshot};
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::{Scope, continue_tracks};
@@ -114,7 +114,8 @@ pub fn seal_automatic(
 
 /// Settle an album identification found no match for. When the new
 /// evidence `contradicted` the album's revisable match, that match goes
-/// (its track rows stay). An album left with no match is flagged
+/// (its track rows stay) and is kept as the album's edition undo, in the
+/// audit as withdrawn. An album left with no match is flagged
 /// unmatched with `flag`. A person's match is never removed.
 pub fn retract(
     tx: &Transaction<'_>,
@@ -128,7 +129,10 @@ pub fn retract(
     }
     let before = tx.total_changes();
     if contradicted {
-        delete_album_row(tx, album_id, Rows::Revisable)?;
+        let replaced = snapshot(tx, album_id)?;
+        if delete_album_row(tx, album_id, Rows::Revisable)? {
+            withdrawn(tx, album_id, &replaced, flag, inputs.now)?;
+        }
     }
     let matched: bool = tx
         .prepare_cached(sql::HAS_ALBUM_ROW.text())?
@@ -138,6 +142,41 @@ pub fn retract(
     }
     bump_if_changed(tx, before)?;
     Ok(AutomaticOutcome::Done)
+}
+
+/// Record a withdrawn automatic match in the audit and keep it as the
+/// album's edition undo, keyed to the album having no match. A person's
+/// undo carried through this identification stays instead: it goes back
+/// further.
+fn withdrawn(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    replaced: &Snapshot,
+    flag: &MatchFlag,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let action = record_action(
+        tx,
+        CatalogAction {
+            actor: "system",
+            kind: "automatic_match_withdrawn",
+            album_id,
+            job_id: None,
+            before: serde_json::to_value(&replaced.identity).unwrap_or_default(),
+            after: serde_json::Value::Null,
+            reason: &flag.reason_code,
+        },
+        now,
+    )?;
+    let carried = tx
+        .prepare_cached(sql::CHOICE_UNDO.text())?
+        .query_row(params![album_id], |_| Ok(()))
+        .optional()?
+        .is_some();
+    if !carried {
+        keep_choice_undo(tx, album_id, replaced, &action, false, now)?;
+    }
+    Ok(())
 }
 
 /// One file placed on a track of the accepted release.

@@ -4,21 +4,31 @@
 //!
 //! 1. When most files name one release MBID, fetch that release first. If
 //!    it matches closely ([`STRONG`]) recall stops there: one request.
-//! 2. Otherwise search by album title and album artist (no artist for
+//!    When the files also name a release group (see
+//!    [`named_group`](super::evidence::named_group)) and the release now
+//!    sits in another group, the release's group is the one they name.
+//! 2. When the files name a release group and step 1 found no release
+//!    they name, list the group's editions and fetch those that could
+//!    hold the files, as in step 5. A group id MusicBrainz merged lists
+//!    nothing: it is looked up, and the group it was kept under is listed
+//!    instead. One MusicBrainz no longer has, or will not list, is set
+//!    aside.
+//! 3. Search by album title and album artist (no artist for
 //!    compilations), looser each time nothing comes back: without edition
 //!    and disc words, then the title's words, then the first track as a
 //!    recording.
-//! 3. Fetch the tracklists of the best few hits, skipping releases too
+//! 4. Fetch the tracklists of the best few hits, skipping releases too
 //!    small to hold the files, at most [`PER_GROUP`] editions of one
 //!    release group and [`FETCH_LIMIT`] in all. Fetched releases are
 //!    kept in the release store and reused for a week.
-//! 4. List every edition of the release group the files fit best and
+//! 5. List every edition of the release group the files fit best (unless
+//!    step 2 listed it) and
 //!    fetch the ones that could hold the files, best agreeing with the
 //!    tags' barcode, disc count, track count and media first, at most
 //!    [`GROUP_FETCH`]. Search alone often misses the edition that fits.
-//! 5. Resolve file recording MBIDs no candidate carries, in case
+//! 6. Resolve file recording MBIDs no candidate carries, in case
 //!    MusicBrainz merged them: every one, up to one per file.
-//! 6. When the tags are weak, fingerprint the files and add the releases
+//! 7. When the tags are weak, fingerprint the files and add the releases
 //!    most of the prints point at.
 //!
 //! Every MusicBrainz call is identity-critical: an outage defers the job.
@@ -29,7 +39,7 @@ use std::sync::Arc;
 use super::evidence::local_album;
 use super::models::{LocalAlbumFacts, RecallResult};
 use super::sources::{
-    AlbumQuery, ArtistAnswer, EditionPage, EditionQuery, FingerprintSource, ReleaseAnswer,
+    AlbumQuery, ArtistAnswer, Edition, EditionPage, EditionQuery, FingerprintSource, ReleaseAnswer,
     ReleaseHit, ReleaseSource, SourceError, Unanswered, group_editions,
 };
 use super::sqlite::SqliteIdentifyStore;
@@ -55,10 +65,12 @@ const COMMON_RELEASE_SHARE: f64 = 0.6;
 /// What the identify service needs from providers. The live adapter owns
 /// provider clients; the fake answers from scripts. No live network in tests.
 pub trait IdentifyProviders: Send + Sync {
-    /// Recall candidate releases for the album facts.
+    /// Recall candidate releases for the album facts. `named_group` is
+    /// the release group the files name, weighed first.
     fn recall_candidates(
         &self,
         facts: &LocalAlbumFacts,
+        named_group: Option<&str>,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>>;
 
     /// Recall the one release an administrator named for the album. The
@@ -126,21 +138,43 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
         }
     }
 
-    async fn recall(&self, facts: &LocalAlbumFacts) -> Result<RecallResult, SourceError> {
+    async fn recall(
+        &self,
+        facts: &LocalAlbumFacts,
+        named: Option<&str>,
+    ) -> Result<RecallResult, SourceError> {
         let local = local_album(facts, &HashMap::new());
+        let mut named = named.map(|group| group.trim().to_ascii_lowercase());
         let mut releases: Vec<Release> = Vec::new();
         if let Some(tagged) = local.tagged_release()
             && let Some(release) = self.release(&tagged).await?
         {
+            // A release MusicBrainz moved leaves a stale group tag behind.
+            if let Some(group) = named.as_mut()
+                && !release.release_group_id.eq_ignore_ascii_case(group)
+            {
+                *group = release.release_group_id.to_ascii_lowercase();
+            }
             let matched = match_release(&local, &release, &HashMap::new());
             let strong = matched.conflicts.is_empty() && matched.library_distance() <= STRONG;
             releases.push(release);
             if strong {
                 return Ok(RecallResult {
                     releases,
+                    named_group: named,
                     ..RecallResult::default()
                 });
             }
+        }
+
+        // A release the files name outranks the group they name: its
+        // group is weighed through the usual recall.
+        let mut listed = None;
+        if releases.is_empty()
+            && let Some(group) = named.take()
+        {
+            named = self.named_editions(&local, &mut releases, group).await?;
+            listed.clone_from(&named);
         }
 
         let hits = self.search(facts, local.tracks.len()).await?;
@@ -150,7 +184,13 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
             }
         }
 
-        self.recall_group_editions(&local, &mut releases).await?;
+        if let Some(group) = best_group(&local, &releases)
+            && listed.as_deref() != Some(group.as_str())
+        {
+            let editions = group_editions(&self.releases, &group).await?;
+            self.fetch_editions(&local, &mut releases, &group, &editions)
+                .await?;
+        }
         let recording_aliases = self.resolve_aliases(&local, &releases).await?;
         let matches: Vec<_> = releases
             .iter()
@@ -173,8 +213,55 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
             releases,
             fingerprint_support,
             recording_aliases,
+            named_group: named,
             ..RecallResult::default()
         })
+    }
+
+    /// Fetch the editions of the group the files name, and say which group
+    /// that is now. A group whose listing is empty is looked up: one
+    /// MusicBrainz merged is followed to the group it was kept under, one
+    /// it no longer has, or will not list, is set aside (`None`). When
+    /// every edition fetched reports one other group, the search index lags
+    /// a merge, and that group is the one named.
+    async fn named_editions(
+        &self,
+        local: &LocalAlbum,
+        releases: &mut Vec<Release>,
+        mut group: String,
+    ) -> Result<Option<String>, SourceError> {
+        let Some(mut editions) = self.releases.named_group_editions(&group).await? else {
+            return Ok(None);
+        };
+        if editions.is_empty() {
+            match self.releases.canonical_release_group(&group).await? {
+                Some(kept) if kept != group => {
+                    let Some(listed) = self.releases.named_group_editions(&kept).await? else {
+                        return Ok(None);
+                    };
+                    editions = listed;
+                    group = kept;
+                }
+                Some(_) => {}
+                None => {
+                    tracing::debug!(
+                        release_group = group,
+                        "MusicBrainz has no release group the files name; it is set aside"
+                    );
+                    return Ok(None);
+                }
+            }
+        }
+        let fetched = self
+            .fetch_editions(local, releases, &group, &editions)
+            .await?;
+        if let Some(first) = fetched.first()
+            && *first != group
+            && fetched.iter().all(|other| other == first)
+        {
+            group = first.clone();
+        }
+        Ok(Some(group))
     }
 
     /// Search hits for the album, each tier asked only when the ones
@@ -253,32 +340,25 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
         self.releases.search_recording(&recording, artist).await
     }
 
-    /// Once the release group is clear, weigh its other editions too:
-    /// search recall only fetches a few per group, and the edition that
-    /// fits the files is often not among them. Every edition of the group
-    /// is listed from the release index; those big enough to hold the files
-    /// are fetched, the ones whose barcode, disc count, track count and
-    /// format agree with the files first, at most [`GROUP_FETCH`].
-    async fn recall_group_editions(
+    /// Weigh more editions of `group` than search recall fetches (a few
+    /// per group): the edition that fits the files is often not among
+    /// them. Of `editions`, the group's editions as the release index
+    /// lists them, those big enough to hold the files are fetched, the
+    /// ones whose barcode, disc count, track count and format agree with
+    /// the files first, at most [`GROUP_FETCH`]. Returns the group each
+    /// fetched release reports, lowercase.
+    async fn fetch_editions(
         &self,
         local: &LocalAlbum,
         releases: &mut Vec<Release>,
-    ) -> Result<(), SourceError> {
-        let group = releases
-            .iter()
-            .map(|release| (release, match_release(local, release, &HashMap::new())))
-            .filter(|(_, matched)| matched.conflicts.is_empty() && matched.names_agree)
-            .min_by(|a, b| a.1.library_distance().total_cmp(&b.1.library_distance()))
-            .map(|(release, _)| release.release_group_id.clone());
-        let Some(group) = group else {
-            return Ok(());
-        };
-        let editions = group_editions(&self.releases, &group).await?;
+        group: &str,
+        editions: &[Edition],
+    ) -> Result<Vec<String>, SourceError> {
         let files = local.tracks.len();
         let hints = &local.hints;
         let mut wanted: Vec<_> = editions
             .iter()
-            .filter(|edition| edition.release_group_mbid.eq_ignore_ascii_case(&group))
+            .filter(|edition| edition.release_group_mbid.eq_ignore_ascii_case(group))
             .filter(|edition| {
                 !releases
                     .iter()
@@ -312,12 +392,14 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
                 edition.release_mbid.clone(),
             )
         });
+        let mut groups = Vec::new();
         for edition in wanted.into_iter().take(GROUP_FETCH) {
             if let Some(release) = self.release(&edition.release_mbid).await? {
+                groups.push(release.release_group_id.to_ascii_lowercase());
                 push_new(releases, release);
             }
         }
-        Ok(())
+        Ok(groups)
     }
 
     /// Recall for an exact release: that release alone, plus the merged
@@ -379,10 +461,12 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
     fn recall_candidates(
         &self,
         facts: &LocalAlbumFacts,
+        named_group: Option<&str>,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         let facts = facts.clone();
+        let named_group = named_group.map(str::to_owned);
         Box::pin(async move {
-            let result = match self.recall(&facts).await {
+            let result = match self.recall(&facts, named_group.as_deref()).await {
                 Ok(result) => result,
                 Err(SourceError(error)) => {
                     tracing::info!(album = facts.local_album_id, %error, "identify recall deferred");
@@ -450,6 +534,17 @@ fn deferred() -> RecallResult {
         failure_code: Some("musicbrainz_unavailable".to_owned()),
         ..RecallResult::default()
     }
+}
+
+/// The release group the files fit best: the closest release that
+/// nothing vetoes and whose names agree.
+fn best_group(local: &LocalAlbum, releases: &[Release]) -> Option<String> {
+    releases
+        .iter()
+        .map(|release| (release, match_release(local, release, &HashMap::new())))
+        .filter(|(_, matched)| matched.conflicts.is_empty() && matched.names_agree)
+        .min_by(|a, b| a.1.library_distance().total_cmp(&b.1.library_distance()))
+        .map(|(release, _)| release.release_group_id.to_ascii_lowercase())
 }
 
 fn push_new(releases: &mut Vec<Release>, release: Release) {
@@ -618,11 +713,17 @@ impl FakeProviders {
 }
 
 impl IdentifyProviders for FakeProviders {
+    /// The scripted recall, naming `named_group` unless the script names
+    /// one.
     fn recall_candidates(
         &self,
         _facts: &LocalAlbumFacts,
+        named_group: Option<&str>,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
-        let result = self.scripted();
+        let mut result = self.scripted();
+        if result.named_group.is_none() {
+            result.named_group = named_group.map(str::to_ascii_lowercase);
+        }
         Box::pin(async move {
             RecallOutcome {
                 result,

@@ -13,7 +13,7 @@ use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use tokio::time::Instant;
 
-use super::evidence::{candidate_evidence, local_album};
+use super::evidence::{candidate_evidence, local_album, named_group};
 use super::models::{
     AlbumIdentity, AutomaticSeal, CandidateEvidence, DecisionSource, EvidenceClass,
     IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief, JobState, LocalAlbumFacts,
@@ -28,8 +28,10 @@ use super::sqlite::SqliteIdentifyStore;
 use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
 use crate::edition_prefs::{LivePreferences, Preferences};
 use crate::identity::AutomaticOutcome;
-use crate::matching::decide::{EDITION_COHORT, candidate_order, eligible};
-use crate::matching::{EditionPrefs, LocalAlbum, ReleaseMatch, Verdict, decide, match_release};
+use crate::matching::decide::{EDITION_COHORT, candidate_order, eligible, named_in_tie};
+use crate::matching::{
+    EditionPrefs, LocalAlbum, ReleaseMatch, ReviewReason, Verdict, decide, match_release,
+};
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
@@ -212,9 +214,14 @@ impl IdentifyService {
             self.deps.store.land(&job)?;
             return Ok(None);
         };
+        let named = named_group(&facts, current.as_ref());
         let RecallOutcome {
             result: mut recall, ..
-        } = self.deps.providers.recall_candidates(&facts).await;
+        } = self
+            .deps
+            .providers
+            .recall_candidates(&facts, named.as_deref())
+            .await;
         // The edition the album already has is always weighed, so a recall
         // that missed it cannot flip it.
         let held = current
@@ -248,7 +255,26 @@ impl IdentifyService {
         // Every candidate's document stays on file: the identity's release
         // for tagging, the others because a curator may approve them.
         keep_releases(&self.deps.store, recall.releases.clone(), Lane::Background).await?;
-        let (ranking, decision) = self.ranked(&facts, &recall, held.as_deref(), &preferences);
+        // A guess sealed because the files named another group stays a
+        // guess while nothing names a group.
+        let doubted = match current.as_ref() {
+            Some(row) if row.decision_source == DecisionSource::Automatic => self
+                .deps
+                .store
+                .match_flag(&facts.local_album_id)?
+                .filter(|flag| flag.reason_code == NAMED_GROUP_DIFFERS)
+                .and(row.release_group_mbid.clone()),
+            _ => None,
+        };
+        let (ranking, decision) = self.ranked(
+            &facts,
+            &recall,
+            Held {
+                release: held.as_deref(),
+                doubted_group: doubted.as_deref(),
+            },
+            &preferences,
+        );
         self.apply_decision(job, &facts, &ranking, decision, now_ms)
     }
 
@@ -283,7 +309,14 @@ impl IdentifyService {
     ) -> Result<RecallResult, StoreError> {
         let outcome = match exact_release {
             Some(mbid) => self.deps.providers.recall_release(facts, mbid).await,
-            None => self.deps.providers.recall_candidates(facts).await,
+            None => {
+                let current = self.deps.store.album_identity(&facts.local_album_id)?;
+                let named = named_group(facts, current.as_ref());
+                self.deps
+                    .providers
+                    .recall_candidates(facts, named.as_deref())
+                    .await
+            }
         };
         if !outcome.result.provider_deferred {
             keep_releases(&self.deps.store, outcome.result.releases.clone(), lane).await?;
@@ -406,7 +439,7 @@ impl IdentifyService {
     /// preferences do not read.
     pub fn rank(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> Option<Ranking> {
         let preferences = self.preferences()?;
-        let (ranking, _) = self.ranked(facts, recall, None, &preferences);
+        let (ranking, _) = self.ranked(facts, recall, Held::default(), &preferences);
         Some(ranking)
     }
 
@@ -422,14 +455,14 @@ impl IdentifyService {
     /// Score every recalled release and decide. Candidates come back
     /// chosen edition first, then by distance and edition order (see
     /// `candidate_order`), so of two equally close guesses the one the
-    /// files complete comes first. `held` is the edition the album already
-    /// has: it stays unless another edition of its group fits the files
-    /// better by more than the edition cohort.
+    /// files complete comes first. `held.release` is the edition the album
+    /// already has: it stays unless another edition of its group fits the
+    /// files better by more than the edition cohort.
     fn ranked(
         &self,
         facts: &LocalAlbumFacts,
         recall: &RecallResult,
-        held: Option<&str>,
+        held: Held<'_>,
         preferences: &Preferences,
     ) -> (Ranking, Decision) {
         let local = local_album(facts, &recall.fingerprint_support);
@@ -439,13 +472,20 @@ impl IdentifyService {
             .map(|release| match_release(&local, release, &recall.recording_aliases))
             .collect();
         let tagged = local.tagged_release();
+        let named = recall.named_group.as_deref();
         let prefs = EditionPrefs {
             tagged: tagged.as_deref(),
             preferences: Some(preferences),
+            named_group: named,
+        };
+        let in_group = |index: usize, group: &str| {
+            recall.releases[index]
+                .release_group_id
+                .eq_ignore_ascii_case(group)
         };
         let verdict = decide(&local, &recall.releases, &matches, prefs);
         let keep = |index: usize| -> usize {
-            let Some(held) = held else {
+            let Some(held) = held.release else {
                 return index;
             };
             let chosen = &recall.releases[index];
@@ -469,10 +509,13 @@ impl IdentifyService {
         let verdict = match verdict {
             Verdict::Identified(index) => Verdict::Identified(keep(index)),
             Verdict::EditionUncertain(index) => Verdict::EditionUncertain(keep(index)),
+            Verdict::OutsideNamedGroup(index) => Verdict::OutsideNamedGroup(keep(index)),
             other => other,
         };
         let lead = match verdict {
-            Verdict::Identified(index) | Verdict::EditionUncertain(index) => Some(index),
+            Verdict::Identified(index)
+            | Verdict::EditionUncertain(index)
+            | Verdict::OutsideNamedGroup(index) => Some(index),
             _ => None,
         };
         let mut order: Vec<usize> = (0..recall.releases.len()).collect();
@@ -487,17 +530,33 @@ impl IdentifyService {
             .collect();
         // The best guess: the lead, else the closest candidate nothing
         // rules out (no vetoed file, names agree, within the review
-        // ceiling). Without one the album matches nothing.
-        let guess = order.iter().position(|index| {
-            Some(*index) == lead || {
-                let matched = &matches[*index];
-                eligible(matched) && matched.names_agree && !matched.pairs.is_empty()
-            }
+        // ceiling). A weak match where the group the files name won its
+        // tie guesses within that group. Without one the album matches
+        // nothing.
+        let plausible = |index: usize| {
+            let matched = &matches[index];
+            eligible(matched) && matched.names_agree && !matched.pairs.is_empty()
+        };
+        let named_weak = named.filter(|named| {
+            verdict == Verdict::Review(ReviewReason::WeakMatch)
+                && named_in_tie(&matches, &recall.releases, named)
         });
+        let guess = named_weak
+            .and_then(|named| {
+                order
+                    .iter()
+                    .position(|index| in_group(*index, named) && plausible(*index))
+            })
+            .or_else(|| {
+                order
+                    .iter()
+                    .position(|index| Some(*index) == lead || plausible(*index))
+            });
         let decision = match verdict {
             Verdict::Identified(_) => Decision::Identified(0),
             Verdict::EditionUncertain(_) => Decision::EditionUncertain,
             Verdict::Review(reason) => Decision::Ambiguous(reason.code().to_owned()),
+            Verdict::OutsideNamedGroup(_) => Decision::Ambiguous(NAMED_GROUP_DIFFERS.to_owned()),
             Verdict::Contradictory => Decision::Contradictory,
             Verdict::Insufficient => Decision::Terminal(
                 IdentificationOutcome::InsufficientEvidence,
@@ -508,6 +567,20 @@ impl IdentifyService {
                 "NO_CANDIDATE".to_owned(),
             ),
         };
+        // A pick in the group of a guess sealed because the files named
+        // another group stays that guess, whatever else this pass found,
+        // while nothing names a group.
+        let doubted = named.is_none()
+            && held.doubted_group.is_some_and(|group| {
+                guess
+                    .and_then(|index| order.get(index))
+                    .is_some_and(|index| in_group(*index, group))
+            });
+        let decision = if doubted {
+            Decision::Ambiguous(NAMED_GROUP_DIFFERS.to_owned())
+        } else {
+            decision
+        };
         let ranking = Ranking {
             local,
             order,
@@ -517,6 +590,7 @@ impl IdentifyService {
             reason_code: decision.reason_code(),
             lead_identified: matches!(decision, Decision::Identified(_)),
             guess,
+            named_group: recall.named_group.clone(),
         };
         (ranking, decision)
     }
@@ -573,10 +647,16 @@ impl IdentifyService {
             return Ok(report(landed, "SUPPORTED"));
         }
         // A confirmed automatic edition stays unless the new evidence rules
-        // it out: a weaker pass never demotes or replaces it.
+        // it out: a weaker pass never demotes or replaces it. One outside
+        // the group the files name is ruled out as a confirmed match.
         let confirmed_exact = match current.as_ref() {
             Some(row)
                 if row.decision_source.is_revisable()
+                    && ranking.named_group.as_deref().is_none_or(|named| {
+                        row.release_group_mbid
+                            .as_deref()
+                            .is_some_and(|group| group.eq_ignore_ascii_case(named))
+                    })
                     && self.deps.store.match_flag(album)?.is_none() =>
             {
                 row.release_mbid.clone()
@@ -807,7 +887,23 @@ pub struct Ranking {
     pub lead_identified: bool,
     /// Index into `candidates` of the best guess, when one is not ruled out.
     pub guess: Option<usize>,
+    /// The release group the files name, as recall resolved it.
+    pub named_group: Option<String>,
 }
+
+/// What the album already holds that this pass weighs.
+#[derive(Debug, Clone, Copy, Default)]
+struct Held<'a> {
+    /// The album's edition, kept unless another fits clearly better.
+    release: Option<&'a str>,
+    /// The group of an automatic guess sealed because the files named
+    /// another group: a pick in it stays that guess while nothing names a
+    /// group.
+    doubted_group: Option<&'a str>,
+}
+
+/// The reason a release outside the group the files name is only a guess.
+pub const NAMED_GROUP_DIFFERS: &str = "NAMED_GROUP_DIFFERS";
 
 /// True when the new evidence rules `release` out: it was scored and a
 /// file's own id contradicts it, or its album title or artist do not

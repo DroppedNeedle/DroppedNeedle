@@ -354,4 +354,7 @@ pub struct RecallResult {
     pub recording_aliases: HashMap<String, String>,
     pub provider_deferred: bool,
     pub failure_code: Option<String>,
+    /// The release group the files name, as recall resolved it: current
+    /// and lowercase. `None` when they name none.
+    pub named_group: Option<String>,
 }

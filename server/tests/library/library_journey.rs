@@ -14225,24 +14225,28 @@ async fn album_at_rest(
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let (scratch, library, music) = bare_library(tag).await;
-    plant(&music, "album/01.flac", "flac_full_01.flac");
-    plant(&music, "album/02.flac", "flac_full_02.flac");
-    for number in 3..=count {
-        let file = plant(
-            &music,
-            &format!("album/{number:02}.flac"),
-            "flac_full_02.flac",
-        );
-        save_tags(
-            &file,
-            &[
+    // Every file's release group id is cleared: the fixtures' would name
+    // another album than the one the tests script.
+    for number in 1..=count {
+        let fixture = if number == 1 {
+            "flac_full_01.flac"
+        } else {
+            "flac_full_02.flac"
+        };
+        let file = plant(&music, &format!("album/{number:02}.flac"), fixture);
+        let mut edits = vec![TagEdit::verbatim(
+            TagField::MusicBrainzReleaseGroupId,
+            Vec::new(),
+        )];
+        if number > 2 {
+            edits.extend([
                 TagEdit::verbatim(TagField::Title, vec![format!("Track {number}")]),
                 TagEdit::verbatim(TagField::TrackNumber, vec![number.to_string()]),
                 TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
                 TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
-            ],
-        )
-        .expect("track tagged");
+            ]);
+        }
+        save_tags(&file, &edits).expect("track tagged");
     }
     add_music_root(&library, &music).await;
     let tracks: Vec<String> = (1..=count)
@@ -18894,6 +18898,8 @@ fn chosen_ids(n: usize) -> Vec<droppedneedle_library::tags::TagEdit> {
         TagEdit::verbatim(TagField::DiscNumber, vec!["1".to_owned()]),
         TagEdit::verbatim(TagField::Album, vec!["Chosen".to_owned()]),
         TagEdit::verbatim(TagField::MusicBrainzReleaseId, vec![CHOSEN_REL.to_owned()]),
+        // The fixture's release group id would name another album.
+        TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
         TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, vec![format!("rt-{n}")]),
         TagEdit::verbatim(TagField::MusicBrainzRecordingId, vec![format!("rec-{n}")]),
     ]

@@ -182,7 +182,7 @@
     "key": "charm",
     "why": "files carry only a release group id",
     "truth": {"release_group": "6fb46378-9cb7-4693-b76d-a62f2cc09214", "release": null},
-    "tagged": {"verdict": "group", "release": "aad443c7-a041-4fc5-9874-2c258673eca6"},
+    "tagged": {"verdict": "group", "release": "0227a4b4-4068-4af9-ac31-335bbb3ab9c4"},
     "stripped": {"verdict": "group", "release": "aad443c7-a041-4fc5-9874-2c258673eca6"},
     "facts": {
       "local_album_id": "charm",
@@ -264,7 +264,7 @@
     "key": "three-cheers",
     "why": "files carry only a release group id",
     "truth": {"release_group": "1d563513-87dc-308f-8bac-418fab4054cf", "release": null},
-    "tagged": {"verdict": "group", "release": "9108adbb-b065-408b-9f59-c1af1f4a241a"},
+    "tagged": {"verdict": "group", "release": "54b11289-71b4-3ce1-b878-033c46da7cfd"},
     "stripped": {"verdict": "group", "release": "9108adbb-b065-408b-9f59-c1af1f4a241a"},
     "facts": {
       "local_album_id": "three-cheers",
@@ -363,6 +363,24 @@
       "locked_track_ids": [],
       "tracks": [
         {"local_track_id": "t01", "title": "End of You", "artist_name": "Poppy", "track_number": 1, "disc_number": 1, "duration_secs": 192, "duration_exact": 192.8, "release_group_mbid": "f90affa5-1f23-40f5-9fda-0a7fe825e967"}
+      ]
+    }
+  },
+  {
+    "key": "bewitched-title-track",
+    "why": "the title track of an album that was also a single, alone, with its release and recording ids taken off so it carries only the album's release group id",
+    "truth": {"release_group": "82c93285-46d7-4f44-ba7c-2c420cfc7665", "release": null},
+    "tagged": {"verdict": "group", "release": "a37e10c0-e751-45bb-9f9e-6d9ffc3c719d"},
+    "stripped": {"verdict": "review", "release": "a668489e-cc98-4aac-ad57-897aaf5aae20", "known_miss": "without the group id, the album, the single of the song and a remix single fit one file about equally"},
+    "facts": {
+      "local_album_id": "bewitched-title-track",
+      "title": "Bewitched",
+      "album_artist_name": "Laufey",
+      "year": 2023,
+      "is_compilation": false,
+      "locked_track_ids": [],
+      "tracks": [
+        {"local_track_id": "t01", "title": "Bewitched", "artist_name": "Laufey", "track_number": 14, "disc_number": 1, "duration_secs": 246, "duration_exact": 246.69333333333333, "release_group_mbid": "82c93285-46d7-4f44-ba7c-2c420cfc7665"}
       ]
     }
   },

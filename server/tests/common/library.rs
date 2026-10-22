@@ -113,6 +113,7 @@ impl IdentifyProviders for ScriptedIdentify {
     fn recall_candidates(
         &self,
         facts: &LocalAlbumFacts,
+        _named_group: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         outcome(self.recall(facts))
     }

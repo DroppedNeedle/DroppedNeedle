@@ -105,11 +105,11 @@ impl Rig {
                      relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
                      tag_revision, title, title_folded, artist_name, album_title, \
                      album_title_folded, disc_number, track_number, duration_seconds, \
-                     embedded_recording_mbid, file_format, ingest_source, imported_at, \
-                     membership_source) \
+                     embedded_recording_mbid, embedded_release_group_mbid, file_format, \
+                     ingest_source, imported_at, membership_source) \
                      VALUES (?1, ?2, 'root-1', '/music/' || ?1 || '.flac', ?1 || '.flac', ?1, 1, \
                      1, 'stat-1', 'tag-1', ?3, lower(?3), ?4, ?5, lower(?5), ?6, ?7, ?8, ?9, \
-                     'flac', 'scan', 0, 'automatic')",
+                     ?10, 'flac', 'scan', 0, 'automatic')",
                     params![
                         track.local_track_id,
                         album,
@@ -120,6 +120,7 @@ impl Rig {
                         track.track_number,
                         track.duration_secs.map(|seconds| seconds as f64),
                         track.recording_mbid,
+                        track.release_group_mbid,
                     ],
                 )
                 .expect("track seeds");
@@ -2371,6 +2372,7 @@ impl identify::providers::IdentifyProviders for DuringRecall {
     fn recall_candidates(
         &self,
         _facts: &LocalAlbumFacts,
+        _named_group: Option<&str>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = identify::providers::RecallOutcome> + Send + '_>,
     > {
@@ -2447,11 +2449,13 @@ async fn seal_automatic_replaces_an_embedded_match() {
 
 /// New evidence contradicts a match v2 took from the files' tags: the
 /// match goes like an automatic one, the album is flagged unmatched, both
-/// undo rows go with the match (an undo kept for it could otherwise match
-/// the album's next match and put this one back), the files' rows stay,
-/// and the catalog revision moves.
+/// undo rows kept for it go (one could otherwise match the album's next
+/// match and put an older one back), the files' rows stay, and the
+/// catalog revision moves. The withdrawn match is kept as the album's
+/// edition undo, keyed to the album having no match, and undo puts it
+/// back.
 #[tokio::test]
-async fn retract_takes_an_embedded_match_and_both_its_undos() {
+async fn a_withdrawn_match_keeps_one_undo() {
     let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_2])]));
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.carried("album-1", RELEASE_A1, "embedded", 2);
@@ -2473,12 +2477,289 @@ async fn retract_takes_an_embedded_match_and_both_its_undos() {
         vec![
             format!("track t1 {RECORDING_1} {RELEASE_A1} - -/- embedded 1"),
             "flag unmatched CONFLICTING_TRACK_EVIDENCE".to_owned(),
+            "choice undo 0".to_owned(),
         ]
+    );
+    assert_eq!(
+        rig.texts(
+            "SELECT action_kind || ' ' || reason_code FROM library_catalog_actions \
+             WHERE local_album_id = ?1",
+            "album-1",
+        ),
+        vec!["automatic_match_withdrawn CONFLICTING_TRACK_EVIDENCE".to_owned()]
     );
     assert!(
         rig.catalog_revision() > before,
         "the retraction moves the catalog revision"
     );
+
+    rig.run(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator-1', 'Curator', 'admin', '2026-01-01T00:00:00Z');",
+    );
+    let undone = rig.change(|tx| {
+        droppedneedle_library::operations::choice::undo(tx, "album-1", "curator-1", 2.0)
+    });
+    assert_eq!(undone, Ok(()));
+    assert_eq!(
+        rig.identity_tables("album-1")[..2],
+        [
+            format!("album {GROUP_A} {RELEASE_A1} embedded 1"),
+            format!("track t1 {RECORDING_1} {RELEASE_A1} - -/- embedded 2"),
+        ]
+    );
+}
+
+/// Album A's ten-track release, its first track `first_ms` long, and B's
+/// one-track single of that song: one file of the album fits both.
+fn album_and_single(first_ms: u64) -> Vec<Release> {
+    let recordings: Vec<String> = (0..10).map(|index| format!("rec-{index}")).collect();
+    let recordings: Vec<&str> = recordings.iter().map(String::as_str).collect();
+    let mut album = release(GROUP_A, RELEASE_A1, &recordings);
+    album.tracks[0].length_ms = Some(first_ms);
+    vec![album, release(GROUP_B, RELEASE_B1, &recordings[..1])]
+}
+
+fn group_only(rig: &Rig, album: &str, group: &str) {
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: album.to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(group.to_owned()),
+            release_mbid: None,
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
+}
+
+/// One file of album A, matched to A's group without an edition, fits A
+/// and B's single equally: the tie goes to A, the group its match names.
+#[tokio::test]
+async fn a_group_only_match_wins_its_tie() {
+    let rig = rig_with_recall(recall(album_and_single(200_000)));
+    rig.seed_album(&album_facts("album-1", &[("t1", None)]));
+    group_only(&rig, "album-1", GROUP_A);
+
+    let report = rig.attempt(&rig.service, "job-1", "album-1").await;
+
+    assert_eq!(
+        report.map(|report| report.outcome),
+        Some(IdentificationOutcome::Identified)
+    );
+    assert_eq!(
+        rig.identity_tables("album-1")[0],
+        format!("album {GROUP_A} {RELEASE_A1} automatic 2")
+    );
+}
+
+/// When B's single fits clearly better than the album the match named, it
+/// is sealed as a guess, and stays one on later passes, when no group is
+/// named any more: through a pass that finds it only a loose fit, and one
+/// that finds it exact again.
+#[tokio::test]
+async fn a_guess_outside_the_named_group_stays_a_guess() {
+    let rig = rig_with_recall(recall(album_and_single(290_000)));
+    rig.seed_album(&album_facts("album-1", &[("t1", None)]));
+    group_only(&rig, "album-1", GROUP_A);
+    let mut loose = album_and_single(290_000);
+    loose[1] = live(loose[1].clone());
+    loose[1].tracks[0].length_ms = Some(205_000);
+
+    for (job, recalled) in [
+        ("job-1", None),
+        ("job-2", Some(loose)),
+        ("job-3", Some(album_and_single(290_000))),
+    ] {
+        if let Some(recalled) = recalled {
+            rig.providers.set_recall(recall(recalled));
+        }
+        let report = rig.attempt(&rig.service, job, "album-1").await;
+        assert_eq!(
+            report.map(|report| report.reason_code),
+            Some("NAMED_GROUP_DIFFERS".to_owned()),
+            "{job}"
+        );
+        let tables = rig.identity_tables("album-1");
+        assert!(
+            tables[0].starts_with(&format!("album {GROUP_B} {RELEASE_B1} automatic")),
+            "{job}: {tables:?}"
+        );
+        assert!(
+            tables.contains(&"flag unconfirmed NAMED_GROUP_DIFFERS".to_owned()),
+            "{job}: {tables:?}"
+        );
+    }
+}
+
+/// An album confirmed on B's single whose files are all tagged with A's
+/// group, which fits clearly worse: the confirmation is not kept quietly,
+/// the single stays as a guess.
+#[tokio::test]
+async fn a_confirmed_match_outside_the_tagged_group_becomes_a_guess() {
+    let rig = rig_with_recall(recall(album_and_single(290_000)));
+    let mut facts = album_facts("album-1", &[("t1", None)]);
+    facts.tracks[0].release_group_mbid = Some(GROUP_A.to_owned());
+    rig.seed_album(&facts);
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: "album-1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(GROUP_B.to_owned()),
+            release_mbid: Some(RELEASE_B1.to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
+
+    let report = rig.attempt(&rig.service, "job-1", "album-1").await;
+
+    assert_eq!(
+        report.map(|report| report.reason_code),
+        Some("NAMED_GROUP_DIFFERS".to_owned())
+    );
+    let tables = rig.identity_tables("album-1");
+    assert!(
+        tables[0].starts_with(&format!("album {GROUP_B} {RELEASE_B1} automatic")),
+        "{tables:?}"
+    );
+    assert!(
+        tables.contains(&"flag unconfirmed NAMED_GROUP_DIFFERS".to_owned()),
+        "{tables:?}"
+    );
+}
+
+/// MusicBrainz as recall sees it for one group-tagged album: the old group
+/// id lists nothing and was merged into `GROUP_B`, which lists `RELEASE_B1`;
+/// a group it no longer has is not found.
+struct MergedGroups;
+
+const MERGED_GROUP: &str = "0e1d2c3b-4a59-4687-9a1b-2c3d4e5f6a7b";
+const GONE_GROUP: &str = "9f8e7d6c-5b4a-4392-8a1b-0c9d8e7f6a5b";
+
+impl identify::sources::ReleaseSource for MergedGroups {
+    fn search<'a>(
+        &'a self,
+        _title: &'a str,
+        _artist: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Vec<identify::sources::ReleaseHit>, identify::sources::SourceError>,
+    > {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn release<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<Release>, identify::sources::SourceError>>
+    {
+        Box::pin(async move {
+            Ok((mbid == RELEASE_B1).then(|| release(GROUP_B, RELEASE_B1, &[RECORDING_1])))
+        })
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<String>, identify::sources::SourceError>>
+    {
+        Box::pin(async move { Ok(Some(mbid.to_owned())) })
+    }
+
+    fn search_editions<'a>(
+        &'a self,
+        query: &'a identify::sources::EditionQuery,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<identify::sources::EditionPage, identify::sources::SourceError>,
+    > {
+        Box::pin(async move {
+            let items = if query.release_group_mbid.as_deref() == Some(GROUP_B) {
+                vec![identify::sources::Edition {
+                    release_mbid: RELEASE_B1.to_owned(),
+                    release_group_mbid: GROUP_B.to_owned(),
+                    track_count: 1,
+                    ..identify::sources::Edition::default()
+                }]
+            } else {
+                Vec::new()
+            };
+            Ok(identify::sources::EditionPage {
+                total: items.len() as u64,
+                offset: 0,
+                items,
+            })
+        })
+    }
+
+    fn canonical_release_group<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<String>, identify::sources::SourceError>>
+    {
+        Box::pin(async move { Ok((mbid == MERGED_GROUP).then(|| GROUP_B.to_owned())) })
+    }
+}
+
+/// A group id MusicBrainz merged is followed to the group it was kept
+/// under, whose editions are recalled; one it no longer has names nothing.
+#[tokio::test]
+async fn a_merged_group_is_followed() {
+    use identify::providers::IdentifyProviders as _;
+
+    let rig = rig_with_recall(RecallResult::default());
+    let providers = identify::providers::LiveProviders::new(
+        MergedGroups,
+        rig.store.clone(),
+        identify::sources::NoFingerprints,
+    );
+    let facts = album_facts("album-1", &[("t1", None)]);
+
+    let merged = providers
+        .recall_candidates(&facts, Some(MERGED_GROUP))
+        .await
+        .result;
+    assert_eq!(merged.named_group.as_deref(), Some(GROUP_B));
+    assert!(merged.releases.iter().any(|found| found.id == RELEASE_B1));
+
+    let gone = providers
+        .recall_candidates(&facts, Some(GONE_GROUP))
+        .await
+        .result;
+    assert_eq!(gone.named_group, None);
+    assert!(!gone.provider_deferred);
+}
+
+/// Files whose release id names a release MusicBrainz now files under
+/// group B, while their group tag still says A: the release's group is
+/// the one they name, and the release confirms.
+#[tokio::test]
+async fn a_moved_release_names_its_own_group() {
+    use identify::providers::IdentifyProviders as _;
+
+    let rig = rig_with_recall(RecallResult::default());
+    let providers = Arc::new(identify::providers::LiveProviders::new(
+        MergedGroups,
+        rig.store.clone(),
+        identify::sources::NoFingerprints,
+    ));
+    let mut facts = album_facts("album-1", &[("t1", Some(RECORDING_1))]);
+    facts.tracks[0].release_mbid = Some(RELEASE_B1.to_owned());
+    facts.tracks[0].release_group_mbid = Some(GROUP_A.to_owned());
+
+    let named = identify::evidence::named_group(&facts, None);
+    let recall = providers
+        .recall_candidates(&facts, named.as_deref())
+        .await
+        .result;
+    assert_eq!(recall.named_group.as_deref(), Some(GROUP_B));
+    let service = IdentifyService::new(IdentifyDeps {
+        store: rig.store.clone(),
+        providers,
+    });
+    let ranking = service.rank(&facts, &recall).expect("default preferences");
+    assert!(ranking.lead_identified, "{}", ranking.reason_code);
 }
 
 /// A recheck's automatic acceptance never replaces an edition carried over

@@ -183,6 +183,25 @@ pub trait ReleaseSource: Send + Sync {
         Box::pin(async { Ok(EditionPage::default()) })
     }
 
+    /// [`group_editions`] for the group the files name; `None` when
+    /// MusicBrainz will not list this id. Only an outage is an error.
+    fn named_group_editions<'a>(
+        &'a self,
+        group: &'a str,
+    ) -> BoxFuture<'a, Result<Option<Vec<Edition>>, SourceError>> {
+        Box::pin(async move { group_editions(self, group).await.map(Some) })
+    }
+
+    /// The release group id `mbid` is kept under after merges; `None`
+    /// when MusicBrainz has no such group or will not answer for this id.
+    /// Only an outage is an error. The default knows no merges.
+    fn canonical_release_group<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        Box::pin(async move { Ok(Some(mbid.trim().to_ascii_lowercase())) })
+    }
+
     /// What MusicBrainz says about artist id `mbid`: current, merged into
     /// another id, missing, or refused. The default cannot tell.
     fn canonical_artist<'a>(
@@ -236,18 +255,31 @@ pub async fn group_editions(
     source: &(impl ReleaseSource + ?Sized),
     group: &str,
 ) -> Result<Vec<Edition>, SourceError> {
-    let mut editions = Vec::new();
-    let mut total = 0;
-    for page in 0..GROUP_PAGES {
-        let found = source
+    list_pages(group, |offset| async move {
+        source
             .search_editions(&EditionQuery {
                 title: String::new(),
                 artist: String::new(),
                 release_group_mbid: Some(group.to_owned()),
                 limit: GROUP_PAGE,
-                offset: page * GROUP_PAGE,
+                offset,
             })
-            .await?;
+            .await
+    })
+    .await
+}
+
+/// [`group_editions`]'s paging over `page`, which answers the page at an
+/// offset.
+async fn list_pages<E, F, Fut>(group: &str, mut page: F) -> Result<Vec<Edition>, E>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: Future<Output = Result<EditionPage, E>>,
+{
+    let mut editions = Vec::new();
+    let mut total = 0;
+    for number in 0..GROUP_PAGES {
+        let found = page(number * GROUP_PAGE).await?;
         total = found.total;
         let got = found.items.len();
         editions.extend(found.items);
@@ -454,6 +486,75 @@ impl ReleaseSource for MusicBrainzView {
         })
     }
 
+    fn named_group_editions<'a>(
+        &'a self,
+        group: &'a str,
+    ) -> BoxFuture<'a, Result<Option<Vec<Edition>>, SourceError>> {
+        Box::pin(async move {
+            let listed = list_pages(group, |offset| async move {
+                let page = self
+                    .search_release_group_editions(
+                        group,
+                        GROUP_PAGE,
+                        offset,
+                        Criticality::IdentityCritical,
+                    )
+                    .await?;
+                Ok::<_, ProviderError>(EditionPage {
+                    total: page.count,
+                    offset: page.offset,
+                    items: page
+                        .items
+                        .into_iter()
+                        .filter_map(edition_from_hit)
+                        .collect(),
+                })
+            })
+            .await;
+            match listed {
+                Ok(editions) => Ok(Some(editions)),
+                Err(error) if error.is_retriable() => Err(SourceError(error.to_string())),
+                Err(error) => {
+                    tracing::info!(
+                        release_group = group,
+                        %error,
+                        "MusicBrainz refused to list a release group; the files' group is set aside"
+                    );
+                    Ok(None)
+                }
+            }
+        })
+    }
+
+    /// Not probed for release groups: no merged release group id was at
+    /// hand on 2026-10-22. The lookup follows redirects the same way as
+    /// the artist one verified below, which this assumes.
+    fn canonical_release_group<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        Box::pin(async move {
+            let asked = mbid.trim().to_ascii_lowercase();
+            match self
+                .lookup_release_group(&asked, &[], Criticality::IdentityCritical)
+                .await
+            {
+                Ok(found) => Ok(found
+                    .map(|lookup| lookup.entity.id.trim().to_ascii_lowercase())
+                    .filter(|id| is_valid_mbid(id))),
+                Err(error) if error.is_retriable() => Err(SourceError(error.to_string())),
+                Err(error) => {
+                    tracing::info!(
+                        release_group = asked,
+                        %error,
+                        "MusicBrainz refused a release group lookup; the files' group is set aside"
+                    );
+                    Ok(None)
+                }
+            }
+        })
+    }
+
     /// Verified 2026-10-17 against BrainzMash (`api.brainzmash.cc/ws/2`):
     /// a merged artist id answers 301 with an absolute same-origin
     /// `Location` ending `?fmt=json`, whose 200 names the kept id; an
@@ -646,6 +747,20 @@ impl ReleaseSource for CachedMusicBrainz {
         query: &'a EditionQuery,
     ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
         ReleaseSource::search_editions(&self.view, query)
+    }
+
+    fn named_group_editions<'a>(
+        &'a self,
+        group: &'a str,
+    ) -> BoxFuture<'a, Result<Option<Vec<Edition>>, SourceError>> {
+        self.view.named_group_editions(group)
+    }
+
+    fn canonical_release_group<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        self.view.canonical_release_group(mbid)
     }
 
     fn canonical_artist<'a>(

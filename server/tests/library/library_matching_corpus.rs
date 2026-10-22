@@ -19,6 +19,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use droppedneedle_library::identify::evidence::named_group;
 use droppedneedle_library::identify::models::LocalAlbumFacts;
 use droppedneedle_library::identify::providers::{IdentifyProviders, LiveProviders};
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService, Ranking};
@@ -310,7 +311,11 @@ async fn recall_groups(
     change(&mut facts);
     let replay = Arc::new(Replay::load());
     let (_dir, _store, providers) = live_providers(&replay);
-    let recall = providers.recall_candidates(&facts).await.result;
+    let named = named_group(&facts, None);
+    let recall = providers
+        .recall_candidates(&facts, named.as_deref())
+        .await
+        .result;
     let unrecorded = replay.unrecorded.lock().expect("unrecorded list").clone();
     for url in &unrecorded {
         println!("UNRECORDED {url}");
@@ -386,7 +391,11 @@ async fn recorded_albums_match_as_recorded() {
             ("stripped", stripped(&album.facts), &album.stripped),
         ];
         for (slot, (copy, facts, expected)) in copies.into_iter().enumerate() {
-            let recall = providers.recall_candidates(&facts).await.result;
+            let named = named_group(&facts, None);
+            let recall = providers
+                .recall_candidates(&facts, named.as_deref())
+                .await
+                .result;
             if recall.provider_deferred {
                 failures.push(format!("{} ({copy}): recall deferred", album.key));
                 continue;

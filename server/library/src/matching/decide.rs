@@ -57,6 +57,13 @@
 //!   at least one file it pairs must have a known length more than 3 s
 //!   off its track there, or the edition stays unconfirmed.
 //!
+//! - When the files name a release group (see `identify::evidence`), a
+//!   tie within the margin goes to that group when it has a candidate
+//!   in the tie, before the rules above are asked. The tie still counts
+//!   as contested, so it never confirms a live release or compilation by
+//!   itself. A release outside that group is only ever a guess: it comes
+//!   back as [`Verdict::OutsideNamedGroup`], never identified.
+//!
 //! "Library distance" leaves missing tracks out, as Lidarr does for files
 //! already on disk: holding part of an album is normal.
 
@@ -114,6 +121,9 @@ pub enum Verdict {
     Contradictory,
     /// Nothing plausible.
     Insufficient,
+    /// The best release is outside the release group the files name: a
+    /// guess to confirm, never confirmed by itself.
+    OutsideNamedGroup(usize),
 }
 
 /// Edition hints: the release the tags name, and the saved edition
@@ -124,6 +134,8 @@ pub struct EditionPrefs<'a> {
     pub tagged: Option<&'a str>,
     /// `None` falls back to v2's order: Official, earliest, worldwide.
     pub preferences: Option<&'a Preferences>,
+    /// The release group the files name, lowercase.
+    pub named_group: Option<&'a str>,
 }
 
 pub fn eligible(matched: &ReleaseMatch) -> bool {
@@ -131,6 +143,38 @@ pub fn eligible(matched: &ReleaseMatch) -> bool {
 }
 
 pub fn decide(
+    local: &LocalAlbum,
+    releases: &[Release],
+    matches: &[ReleaseMatch],
+    prefs: EditionPrefs<'_>,
+) -> Verdict {
+    let verdict = decide_group(local, releases, matches, prefs);
+    match (verdict, prefs.named_group) {
+        (Verdict::Identified(index) | Verdict::EditionUncertain(index), Some(named))
+            if !same_group(&releases[index], named) =>
+        {
+            Verdict::OutsideNamedGroup(index)
+        }
+        _ => verdict,
+    }
+}
+
+/// True when `named` has an eligible release inside the tie band: within
+/// the margin of the closest eligible release.
+pub fn named_in_tie(matches: &[ReleaseMatch], releases: &[Release], named: &str) -> bool {
+    let best = matches
+        .iter()
+        .filter(|matched| eligible(matched))
+        .map(ReleaseMatch::library_distance)
+        .fold(f64::INFINITY, f64::min);
+    releases.iter().zip(matches).any(|(release, matched)| {
+        eligible(matched)
+            && same_group(release, named)
+            && matched.library_distance() < best + GROUP_MARGIN
+    })
+}
+
+fn decide_group(
     local: &LocalAlbum,
     releases: &[Release],
     matches: &[ReleaseMatch],
@@ -163,7 +207,14 @@ pub fn decide(
         .fold(f64::INFINITY, f64::min);
     let contested = rival - best_distance < GROUP_MARGIN;
     if contested {
-        match completed_group(&candidates, best_distance, local, releases, matches, prefs) {
+        let named = prefs
+            .named_group
+            .filter(|named| named_in_tie(matches, releases, named));
+        let decided = match named {
+            Some(named) => Some(named),
+            None => completed_group(&candidates, best_distance, local, releases, matches, prefs),
+        };
+        match decided {
             Some(completed) => group = completed,
             None => return Verdict::Review(ReviewReason::Ambiguous),
         }
@@ -1146,6 +1197,87 @@ mod tests {
             .into_iter()
             .filter_map(|(name, local, releases, expected)| {
                 let got = verdict(&local, &releases);
+                (got != expected).then(|| format!("{name}: expected {expected:?}, got {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    fn named_verdict(local: &LocalAlbum, releases: &[Release], named: &str) -> Verdict {
+        let matches: Vec<_> = releases
+            .iter()
+            .map(|release| match_release(local, release, &HashMap::new()))
+            .collect();
+        let prefs = EditionPrefs {
+            named_group: Some(named),
+            ..EditionPrefs::default()
+        };
+        decide(local, releases, &matches, prefs)
+    }
+
+    /// The files' tags name album G. A tie goes to G; a release of
+    /// another group is only ever a guess; a live release of G won in a
+    /// tie stays unconfirmed.
+    #[test]
+    fn the_group_the_files_name() {
+        let album = |first_ms: u64| {
+            let mut album = release("album", "Night Shift", 1);
+            album.tracks = (0..10)
+                .map(|index| ReleaseTrack {
+                    id: format!("album-track-{index}"),
+                    recording_id: format!("album-recording-{index}"),
+                    title: if index == 0 {
+                        "Night Shift".to_owned()
+                    } else {
+                        format!("Album Track {index}")
+                    },
+                    position: index + 1,
+                    absolute_position: index + 1,
+                    length_ms: Some(if index == 0 { first_ms } else { 200_000 }),
+                    ..album.tracks[0].clone()
+                })
+                .collect();
+            album
+        };
+        let single = one_track("single", "Night Shift", "Night Shift", Some("Official"));
+        let file = one_file("Night Shift", "Night Shift");
+        let mut live = edition("g", "night-1", "Night Shift");
+        live.secondary_types = vec!["Live".to_owned()];
+        let studio = edition("s", "studio", "Night Shift");
+        let cases: Vec<(&str, LocalAlbum, Vec<Release>, &str, Verdict)> = vec![
+            (
+                "a tie goes to the named group",
+                file.clone(),
+                vec![album(200_000), single.clone()],
+                "album",
+                Verdict::Identified(0),
+            ),
+            (
+                "a clearly better release of another group is a guess",
+                file.clone(),
+                vec![album(290_000), single.clone()],
+                "album",
+                Verdict::OutsideNamedGroup(1),
+            ),
+            (
+                "so is a lone release of another group",
+                file,
+                vec![single],
+                "album",
+                Verdict::OutsideNamedGroup(0),
+            ),
+            (
+                "a live release won in a tie stays unconfirmed",
+                local(4, 0, false),
+                vec![live, studio],
+                "g",
+                Verdict::EditionUncertain(0),
+            ),
+        ];
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(name, local, releases, named, expected)| {
+                let got = named_verdict(&local, &releases, named);
                 (got != expected).then(|| format!("{name}: expected {expected:?}, got {got:?}"))
             })
             .collect();
