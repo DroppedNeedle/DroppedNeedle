@@ -1,25 +1,16 @@
 import { page } from 'vitest/browser';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { AlbumHistoryEntry } from '$lib/queries/library/LibraryAlbumHistoryQueries.svelte';
-
-const h = vi.hoisted(() => ({
-	query: {
-		data: undefined as unknown,
-		isPending: false,
-		isError: false,
-		error: null as unknown,
-		refetch: () => undefined
-	}
-}));
-
-vi.mock('$lib/queries/library/LibraryAlbumHistoryQueries.svelte', () => ({
-	getAlbumHistoryQuery: () => h.query
-}));
+import { toAuthUser } from '$lib/queries/auth/types';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { apiError, fakeApi } from '$lib/test/api';
+import { renderWithQuery } from '$lib/test/render';
 
 import AlbumHistory from './AlbumHistory.svelte';
 
 const AT = Date.UTC(2026, 9, 12, 9, 30);
+const HISTORY = 'GET /api/v3/library/albums/{album_id}/history';
+const UNDO = 'POST /api/v3/library/folds/{fold_id}/undo';
 
 function entry(overrides: Partial<AlbumHistoryEntry>): AlbumHistoryEntry {
 	return {
@@ -29,24 +20,40 @@ function entry(overrides: Partial<AlbumHistoryEntry>): AlbumHistoryEntry {
 		track_count: 0,
 		track_titles: [],
 		other_album_title: null,
+		undo_id: null,
 		...overrides
 	};
 }
 
-function show(...items: AlbumHistoryEntry[]) {
-	h.query = { ...h.query, data: { items } };
-	render(AlbumHistory, { albumId: 'album-1' });
+function signIn(role: 'admin' | 'trusted' | 'user') {
+	authStore.setUser(
+		toAuthUser({
+			id: `${role}-1`,
+			display_name: role,
+			role,
+			email: null,
+			avatar_url: null,
+			username: role,
+			username_display: role
+		})
+	);
+}
+
+async function show(...items: AlbumHistoryEntry[]) {
+	fakeApi({ [HISTORY]: { items } });
+	await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
 }
 
 const FIVE_OF_SIX = ['One', 'Two', 'Three', 'Four', 'Five'];
 
 beforeEach(() => {
-	h.query = { data: undefined, isPending: false, isError: false, error: null, refetch: () => {} };
+	localStorage.clear();
+	signIn('user');
 });
 
 describe('AlbumHistory', () => {
 	it('tells each kind of entry in one line', async () => {
-		show(
+		await show(
 			entry({ kind: 'tracks_continued', track_count: 1, track_titles: ['Airbag'] }),
 			entry({ kind: 'tracks_continued', track_count: 6, track_titles: FIVE_OF_SIX }),
 			entry({ kind: 'tracks_replaced', track_count: 1, track_titles: ['Lucky'] }),
@@ -92,7 +99,7 @@ describe('AlbumHistory', () => {
 	});
 
 	it('leaves the titles out when none are sent', async () => {
-		show(entry({ kind: 'tracks_continued', track_count: 3 }));
+		await show(entry({ kind: 'tracks_continued', track_count: 3 }));
 		await expect
 			.element(
 				page.getByText(
@@ -104,7 +111,7 @@ describe('AlbumHistory', () => {
 	});
 
 	it('renders titles as text', async () => {
-		show(entry({ kind: 'retag_joined', other_album_title: '<b>Bold</b>' }));
+		await show(entry({ kind: 'retag_joined', other_album_title: '<b>Bold</b>' }));
 		await expect
 			.element(
 				page.getByText(
@@ -116,15 +123,65 @@ describe('AlbumHistory', () => {
 	});
 
 	it('dates each line with a machine-readable time', async () => {
-		show(entry({ kind: 'leftover_joined', other_album_title: 'Old Name' }));
+		await show(entry({ kind: 'leftover_joined', other_album_title: 'Old Name' }));
 		const time = page.getByTitle(new Date(AT).toLocaleString());
 		await expect.element(time).toHaveAttribute('datetime', new Date(AT).toISOString());
 	});
 
 	it('shows nothing, not even the heading, when there is nothing to tell', async () => {
-		show();
+		await show();
 		await expect
 			.element(page.getByRole('heading', { name: 'Album history' }))
 			.not.toBeInTheDocument();
+	});
+});
+
+describe('undoing a fold', () => {
+	const folded = entry({
+		kind: 'leftover_joined',
+		other_album_title: 'Old Name',
+		undo_id: 'fold-1'
+	});
+
+	it('undoes the fold after a curator confirms', async () => {
+		signIn('trusted');
+		const api = fakeApi({ [HISTORY]: { items: [folded] }, [UNDO]: undefined });
+		await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
+
+		await page.getByRole('button', { name: 'Undo' }).click();
+		const dialog = page.getByRole('dialog');
+		await expect
+			.element(dialog.getByText('Plays, favorites and playlist entries stay on this album.'))
+			.toBeVisible();
+		await dialog.getByRole('button', { name: 'Undo' }).click();
+
+		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+		expect(api.calls(UNDO).map((call) => call.params)).toEqual([{ fold_id: 'fold-1' }]);
+	});
+
+	it('says why a stale fold cannot be undone', async () => {
+		signIn('admin');
+		fakeApi({
+			[HISTORY]: { items: [folded] },
+			[UNDO]: apiError(
+				409,
+				'STALE_REVISION',
+				"The albums changed after the join, so it can't be undone."
+			)
+		});
+		await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
+
+		await page.getByRole('button', { name: 'Undo' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Undo' }).click();
+
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent("The albums changed after the join, so it can't be undone.");
+	});
+
+	it('offers no Undo to a listener', async () => {
+		await show(folded);
+		await expect.element(page.getByText(/was folded into this album/)).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
 	});
 });

@@ -1,8 +1,9 @@
-import { createQuery } from '@tanstack/svelte-query';
+import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
+import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 
@@ -25,3 +26,13 @@ export const getAlbumHistoryQuery = (
 				api.global.v3.GET(LibraryV3Api.albumHistory(album ?? ''), { signal })
 		};
 	});
+
+// Undo the fold of a leftover album, by its history entry's undo_id. The
+// album comes back as its own, so every catalog view refreshes; a refusal
+// refreshes too, as the history it was offered from is stale.
+export function undoAlbumFold() {
+	return createMutation(() => ({
+		mutationFn: (undoId: string) => api.global.v3.POST(LibraryV3Api.undoAlbumFold(undoId)),
+		onSettled: () => invalidateLibraryCatalog()
+	}));
+}

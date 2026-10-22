@@ -725,6 +725,22 @@ impl Operations {
         })
     }
 
+    /// Undo the fold of a leftover album recorded as `fold_id`, for
+    /// `actor`: the album and its v2 match come back. Blocking.
+    pub fn undo_fold(&self, fold_id: &str, actor: &str) -> Result<(), OperationError> {
+        use crate::identity::{FoldUndo, undo_fold};
+
+        self.db.write_blocking(
+            Lane::Foreground,
+            "operations.undo_fold",
+            |tx| match undo_fold(tx, fold_id, Some(actor), now_unix())? {
+                FoldUndo::Restored => Ok(()),
+                FoldUndo::Stale => Err(OperationError::Conflict(reasons::FOLD_STALE)),
+                FoldUndo::Unknown => Err(OperationError::NotFound(reasons::FOLD_NOT_FOUND)),
+            },
+        )
+    }
+
     /// "Looks right": confirm the album's unconfirmed match. Blocking.
     pub fn confirm_match(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
         self.db

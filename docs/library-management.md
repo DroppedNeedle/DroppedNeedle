@@ -120,6 +120,10 @@ An album you sealed as a custom edition (its files as they are, under a release 
 
 An edition picked automatically can be undone by an admin. The album and its tracks go back to exactly what they were before. Tracks you matched by hand are left alone. Once anything else changes the album, the undo is no longer offered.
 
+### Undoing a split-album fold
+
+When v2 split an album in two and every file of one half is tagged with the other half's release, the catalog cleanup folds that half into the other album and drops the match v2 gave it (see [Library](library.md)). The album page lists the fold under "Album history", and a curator can undo it there with Undo. The folded album comes back with its files, its v2 match, its "leave unmanaged" and its takeover mark, and the cleanup never folds it again. Plays, favorites, ratings, playlist entries and field overrides that moved to the album that kept the files stay there. Undo is not offered for a fold made before this version, or once a moved file was matched by a person, left the album or went missing.
+
 ### Edition preferences
 
 Edition preferences (Settings > Editions) decide between editions that fit your files equally well, and which edition is fetched for an album you don't have yet: release types to avoid (live and compilations by default), status (official first), format (digital, then CD, then vinyl), country (your store region, then worldwide), earliest or latest date, and standard or deluxe. Your own pick always wins, then the fit to your files, then these.

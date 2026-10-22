@@ -72,6 +72,8 @@ export const LibraryV3Api = {
 	resolveTracks: () => v3('/api/v3/library/resolve-tracks'),
 	albumHistory: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/history', { path: { album_id: albumId } }),
+	undoAlbumFold: (undoId: string) =>
+		v3('/api/v3/library/folds/{fold_id}/undo', { path: { fold_id: undoId } }),
 	// The album's edition: read, choose, hand back, confirm, undo.
 	edition: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition', { path: { album_id: albumId } }),

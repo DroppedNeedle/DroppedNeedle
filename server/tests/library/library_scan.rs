@@ -1555,16 +1555,23 @@ async fn cleanup_leaves_a_half_retagged_album_alone_mid_scan() {
 /// fold keeps that choice, so undoing it brings the album, its files,
 /// their v2 matches, its "leave unmanaged" and its takeover mark back. An
 /// undo never replaces a match a person made since on a moved file, the
-/// cleanup never folds the album again, and an undo runs once.
-#[test]
-fn a_folded_v2_split_comes_back_on_undo() {
-    use droppedneedle_library::identity::{FOLD_REASON, FoldUndo, undo_fold};
+/// cleanup never folds the album again, and an undo runs once. The fold's
+/// history entry offers Undo only while the undo would apply, and a
+/// curator's undo answers why it cannot.
+#[tokio::test]
+async fn a_folded_v2_split_comes_back_on_undo() {
+    use droppedneedle_library::http::history::album_history_view;
+    use droppedneedle_library::identity::FOLD_REASON;
+    use droppedneedle_library::operations::models::OperationError;
+    use droppedneedle_library::operations::service::Operations;
 
     const SPLIT_GROUP: &str = "1d1b2a6e-8e1a-4c4f-9b7e-0f4f8c3b2a10";
     const TAGGED_GROUP: &str = "2e2c3b7f-9f2b-4d5a-8c8f-1a5a9d4c3b21";
     let dir = ScratchDir::new("fold-undo");
+    std::fs::create_dir_all(dir.join("music")).expect("music folder");
+    let library = bundle(&dir).await;
+    let ops = Operations::new(&library);
     let path = dir.join("app.db");
-    migrated_db(&path);
     let mut conn = droppedneedle_kernel::db::open_connection(&path).expect("connection opens");
     let mut seed = String::from(
         "INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
@@ -1637,8 +1644,20 @@ fn a_folded_v2_split_comes_back_on_undo() {
     };
     let before = rows(&conn);
 
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs_f64();
+    let undo_ids = || -> Vec<Option<String>> {
+        let history = album_history_view(&ops, "kept", "curator").expect("history reads");
+        history
+            .items
+            .into_iter()
+            .map(|entry| entry.undo_id)
+            .collect()
+    };
     let tx = conn.transaction().expect("transaction");
-    let changed = hygiene::clean_album(&tx, "split", "cleanup", 10.0).expect("cleanup runs");
+    let changed = hygiene::clean_album(&tx, "split", "cleanup", now).expect("cleanup runs");
     tx.commit().expect("commit");
     assert!(changed.is_some(), "the split half is folded");
     let folded = rows(&conn);
@@ -1652,14 +1671,16 @@ fn a_folded_v2_split_comes_back_on_undo() {
             [FOLD_REASON],
             |row| row.get(0),
         )
-        .expect("the fold is in the album's history");
-
-    let undo = |conn: &mut rusqlite::Connection| {
-        let tx = conn.transaction().expect("transaction");
-        let outcome = undo_fold(&tx, &action, Some("curator"), 20.0).expect("undo runs");
-        tx.commit().expect("commit");
-        outcome
+        .expect("the fold is recorded");
+    assert_eq!(undo_ids(), [Some(action.clone())], "the entry offers Undo");
+    let undo = |fold: &str| match ops.undo_fold(fold, "curator") {
+        Ok(()) => "restored".to_owned(),
+        Err(OperationError::NotFound(reason) | OperationError::Conflict(reason)) => {
+            reason.code.to_owned()
+        }
+        Err(other) => panic!("undo failed: {other}"),
     };
+    assert_eq!(undo("no-such-fold"), "FOLD_NOT_FOUND");
 
     let persons = "INSERT INTO local_track_external_identities (local_track_id, provider, \
          recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
@@ -1667,9 +1688,10 @@ fn a_folded_v2_split_comes_back_on_undo() {
     conn.execute(persons, [])
         .expect("a person places s1 on the kept album");
     let chosen = rows(&conn);
+    assert_eq!(undo_ids(), [None], "no Undo while it would not apply");
     assert_eq!(
-        undo(&mut conn),
-        FoldUndo::Stale,
+        undo(&action),
+        "STALE_REVISION",
         "a person's later match stays"
     );
     assert_eq!(rows(&conn), chosen, "a refused undo changes nothing");
@@ -1679,17 +1701,18 @@ fn a_folded_v2_split_comes_back_on_undo() {
     )
     .expect("the person's match goes");
 
-    assert_eq!(undo(&mut conn), FoldUndo::Restored);
+    assert_eq!(undo(&action), "restored");
     assert_eq!(
         rows(&conn),
         before,
         "the album, its v2 matches, its exclusion and its takeover mark are back"
     );
     let tx = conn.transaction().expect("transaction");
-    let again = hygiene::clean_album(&tx, "split", "cleanup", 30.0).expect("cleanup runs");
+    let again = hygiene::clean_album(&tx, "split", "cleanup", now).expect("cleanup runs");
     tx.commit().expect("commit");
     assert_eq!(again, None, "an undone fold stays undone");
-    assert_eq!(undo(&mut conn), FoldUndo::Stale, "an undo runs once");
+    assert_eq!(undo_ids(), [None], "the entry stays, without Undo");
+    assert_eq!(undo(&action), "STALE_REVISION", "an undo runs once");
 }
 
 /// The first file of the second window of a 300-file album.

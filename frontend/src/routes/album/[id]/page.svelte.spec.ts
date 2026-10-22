@@ -446,7 +446,8 @@ describe('the page agrees with the edition', () => {
 					by: null,
 					track_count: 1,
 					track_titles: ['Ambrosia'],
-					other_album_title: null
+					other_album_title: null,
+					undo_id: null
 				}
 			]
 		};

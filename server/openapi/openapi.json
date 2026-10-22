@@ -14201,6 +14201,78 @@
         ]
       }
     },
+    "/api/v3/library/folds/{fold_id}/undo": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Undo the fold of a leftover album: the album, its files and its earlier\nmatch come back. Plays, favorites and playlist entries moved to the\nalbum that kept the files stay there.",
+        "operationId": "undo_album_fold",
+        "parameters": [
+          {
+            "name": "fold_id",
+            "in": "path",
+            "description": "The history entry's undo_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The album is back"
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No fold that can be undone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The albums changed since the fold",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/genres": {
       "get": {
         "tags": [
@@ -36003,6 +36075,13 @@
               "type": "string"
             },
             "description": "The first five of those tracks' titles, in album order."
+          },
+          "undo_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a `leftover_joined` entry that can be undone now, the id to\nundo it by; null otherwise."
           }
         }
       },

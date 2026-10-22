@@ -4,12 +4,15 @@
 //!
 //! Read from `library_catalog_actions`. The audit JSON keeps every row a
 //! move touched, other people's included, so only the typed fields below
-//! leave this module: no ids, no reason codes, no counts of what moved.
+//! leave this module: no album or track ids, no reason codes, no counts of
+//! what moved. The one id is a fold's own audit row, as its undo handle.
 
 use std::collections::BTreeSet;
 
 use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use serde::Deserialize;
+
+use crate::identity;
 
 /// How far back the history reaches.
 const MAX_AGE_SECS: f64 = 180.0 * 86_400.0;
@@ -60,6 +63,8 @@ pub struct HistoryEntry {
     pub track_titles: Vec<String>,
     /// The other album's title, when its row is still there.
     pub other_album_title: Option<String>,
+    /// For a fold that can be undone now: the id to undo it by.
+    pub undo_id: Option<String>,
 }
 
 /// One pair of a `continue_tracks` row.
@@ -191,6 +196,7 @@ pub fn album_history(
                     track_count: tracks.len(),
                     track_titles: titles(conn, &tracks)?,
                     other_album_title: None,
+                    undo_id: None,
                 });
             }
             continue;
@@ -218,6 +224,7 @@ pub fn album_history(
                 track_count: tracks.len(),
                 track_titles: titles(conn, &tracks)?,
                 other_album_title: None,
+                undo_id: None,
             });
             continue;
         }
@@ -244,6 +251,7 @@ pub fn album_history(
                 track_count: tracks.len(),
                 track_titles: titles(conn, &tracks)?,
                 other_album_title: None,
+                undo_id: None,
             });
             continue;
         }
@@ -291,6 +299,10 @@ pub fn album_history(
             (HistoryKind::RetagJoined, Some(_)) => Some(HistoryActor::Person),
             _ => None,
         };
+        let undo_id = match row.reason.as_deref() {
+            Some(identity::FOLD_REASON) if identity::fold_undoable(conn, &row.id)? => Some(row.id),
+            _ => None,
+        };
         entries.push(HistoryEntry {
             kind,
             at,
@@ -298,6 +310,7 @@ pub fn album_history(
             track_count: 0,
             track_titles: Vec::new(),
             other_album_title,
+            undo_id,
         });
     }
     entries.truncate(MAX_ENTRIES);

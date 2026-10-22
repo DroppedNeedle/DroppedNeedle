@@ -1,12 +1,15 @@
-//! Album history route.
+//! Album history routes.
 //!
 //! - `GET /library/albums/{id}/history`: what the app did by itself to the
 //!   album's tracks and to the albums it is made of, newest first. Open to
 //!   every signed-in user, as the album is catalog data.
+//! - `POST /library/folds/{fold_id}/undo`: undo the fold of a leftover
+//!   album, by the `undo_id` its history entry carries. For curators.
 
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
 };
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -18,11 +21,13 @@ use crate::operations::history::{HistoryActor, HistoryEntry, HistoryKind};
 use crate::operations::models::OperationError;
 use crate::operations::service::Operations;
 use crate::wiring::LibrarySetup;
-use droppedneedle_auth::User;
+use droppedneedle_auth::{Curator, User};
 
 /// Album history routes.
 pub fn routes() -> Routes<LibrarySetup> {
-    Routes::new().user(routes!(get_album_history))
+    Routes::new()
+        .user(routes!(get_album_history))
+        .curator(routes!(undo_album_fold))
 }
 
 /// What one history entry tells.
@@ -71,6 +76,9 @@ pub struct AlbumHistoryEntryView {
     pub track_titles: Vec<String>,
     /// The other album's title, null when its row is gone.
     pub other_album_title: Option<String>,
+    /// For a `leftover_joined` entry that can be undone now, the id to
+    /// undo it by; null otherwise.
+    pub undo_id: Option<String>,
 }
 
 /// An album's history, newest first: at most ten entries, none older than
@@ -100,6 +108,7 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
             track_count: entry.track_count,
             track_titles: entry.track_titles,
             other_album_title: entry.other_album_title,
+            undo_id: entry.undo_id,
         }
     }
 }
@@ -140,4 +149,31 @@ pub async fn get_album_history(
     let ops = Operations::new(&state);
     let view = blocking(move || album_history_view(&ops, &album_id, caller.user_id())).await?;
     Ok(Json(view))
+}
+
+/// Undo the fold of a leftover album: the album, its files and its earlier
+/// match come back. Plays, favorites and playlist entries moved to the
+/// album that kept the files stay there.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/folds/{fold_id}/undo",
+    params(("fold_id" = String, Path, description = "The history entry's undo_id")),
+    responses(
+        (status = 204, description = "The album is back"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "No fold that can be undone"),
+        (status = 409, description = "The albums changed since the fold"),
+    )
+)]
+pub async fn undo_album_fold(
+    State(state): State<LibrarySetup>,
+    caller: Curator,
+    Path(fold_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let ops = Operations::new(&state);
+    let user = caller.user_id().to_owned();
+    blocking(move || ops.undo_fold(&fold_id, &user)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -14649,7 +14649,8 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     assert_eq!(
         history["items"][0],
         json!({"kind": "tracks_continued", "at": history["items"][0]["at"], "by": null,
-               "track_count": 2, "track_titles": titles, "other_album_title": null}),
+               "track_count": 2, "track_titles": titles, "other_album_title": null,
+               "undo_id": null}),
         "{history}"
     );
     assert_eq!(
@@ -16831,7 +16832,8 @@ async fn retag_pairs_list_join_and_dismiss() {
         assert_eq!(
             body["items"],
             json!([{"kind": "retag_joined", "at": body["items"][0]["at"], "by": by,
-                    "track_count": 0, "track_titles": [], "other_album_title": old_title}]),
+                    "track_count": 0, "track_titles": [], "other_album_title": old_title,
+                    "undo_id": null}]),
             "{body}"
         );
     }

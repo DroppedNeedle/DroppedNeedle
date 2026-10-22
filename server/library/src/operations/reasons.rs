@@ -205,6 +205,18 @@ pub const HAND_MATCH_WRITTEN: Reason = reason(
     "Undo that write in History first.",
 );
 
+// Undoing a fold of a leftover album.
+pub const FOLD_NOT_FOUND: Reason = reason(
+    "FOLD_NOT_FOUND",
+    "This join is not one DroppedNeedle can undo.",
+    "Reload the album.",
+);
+pub const FOLD_STALE: Reason = reason(
+    STALE,
+    "The albums changed after the join, so it can't be undone.",
+    "Reload the album.",
+);
+
 // Notes on one planned file.
 pub const TRACK_ID_CORRECTED: Reason = reason(
     "TRACK_ID_CORRECTED",

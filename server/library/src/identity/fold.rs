@@ -145,36 +145,11 @@ pub fn undo_fold(
     actor: Option<&str>,
     now: f64,
 ) -> rusqlite::Result<FoldUndo> {
-    let action: Option<(String, String)> = tx
-        .prepare_cached(sql::FOLD_ACTION.text())?
-        .query_row(params![action_id, FOLD_REASON], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .optional()?;
-    let Some((before, target)) = action else {
-        return Ok(FoldUndo::Unknown);
-    };
-    let Ok(folded) = serde_json::from_str::<Folded>(&before) else {
-        return Ok(FoldUndo::Unknown);
+    let (folded, target) = match standing(tx, action_id)? {
+        Ok(fold) => fold,
+        Err(outcome) => return Ok(outcome),
     };
     let source = folded.source_album_id.as_str();
-    let retired: bool = tx
-        .prepare_cached(sql::RETIRED_INTO.text())?
-        .query_row(params![source, target], |row| row.get(0))?;
-    if !retired {
-        return Ok(FoldUndo::Stale);
-    }
-    for track_id in &folded.moved_track_ids {
-        let there: bool = tx
-            .prepare_cached(sql::INDEXED_ON.text())?
-            .query_row(params![track_id, target], |row| row.get(0))?;
-        let persons: bool = tx
-            .prepare_cached(sql::PERSONS_TRACK.text())?
-            .query_row(params![track_id, PROVIDER], |row| row.get(0))?;
-        if !there || persons {
-            return Ok(FoldUndo::Stale);
-        }
-    }
     tx.prepare_cached(sql::UNRETIRE_ALBUM.text())?
         .execute(params![source, folded.grouping_locked, now])?;
     for track_id in &folded.moved_track_ids {
@@ -224,4 +199,48 @@ pub fn undo_fold(
     )?;
     bump_catalog(tx)?;
     Ok(FoldUndo::Restored)
+}
+
+/// Whether [`undo_fold`] would bring back the fold recorded as audit row
+/// `action_id` now. Reads only.
+pub fn fold_undoable(conn: &Connection, action_id: &str) -> rusqlite::Result<bool> {
+    Ok(standing(conn, action_id)?.is_ok())
+}
+
+/// The fold recorded as `action_id` and the album that kept its files, or
+/// why [`undo_fold`] would refuse it.
+fn standing(
+    conn: &Connection,
+    action_id: &str,
+) -> rusqlite::Result<Result<(Folded, String), FoldUndo>> {
+    let action: Option<(String, String)> = conn
+        .prepare_cached(sql::FOLD_ACTION.text())?
+        .query_row(params![action_id, FOLD_REASON], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()?;
+    let Some((before, target)) = action else {
+        return Ok(Err(FoldUndo::Unknown));
+    };
+    let Ok(folded) = serde_json::from_str::<Folded>(&before) else {
+        return Ok(Err(FoldUndo::Unknown));
+    };
+    let retired: bool = conn
+        .prepare_cached(sql::RETIRED_INTO.text())?
+        .query_row(params![folded.source_album_id, target], |row| row.get(0))?;
+    if !retired {
+        return Ok(Err(FoldUndo::Stale));
+    }
+    for track_id in &folded.moved_track_ids {
+        let there: bool = conn
+            .prepare_cached(sql::INDEXED_ON.text())?
+            .query_row(params![track_id, target], |row| row.get(0))?;
+        let persons: bool = conn
+            .prepare_cached(sql::PERSONS_TRACK.text())?
+            .query_row(params![track_id, PROVIDER], |row| row.get(0))?;
+        if !there || persons {
+            return Ok(Err(FoldUndo::Stale));
+        }
+    }
+    Ok(Ok((folded, target)))
 }

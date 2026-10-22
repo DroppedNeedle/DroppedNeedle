@@ -1,17 +1,22 @@
 <!--
 	What DroppedNeedle did by itself to a library album: history moved to new
 	files, tracks whose paths other music took, tracks replaced by new copies
-	of the same recordings, and albums joined into this one. Nothing shows
-	while it loads or when there is nothing to tell.
+	of the same recordings, and albums joined into this one. A curator can
+	undo the fold of a leftover album. Nothing shows while it loads or when
+	there is nothing to tell.
 -->
 <script lang="ts">
-	import { History } from 'lucide-svelte';
+	import { History, Undo2 } from 'lucide-svelte';
 
 	import {
 		getAlbumHistoryQuery,
+		undoAlbumFold,
 		type AlbumHistoryEntry
 	} from '$lib/queries/library/LibraryAlbumHistoryQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { formatRelativeTime } from '$lib/utils/formatting';
 
@@ -26,6 +31,21 @@
 		() => authStore.user?.id,
 		() => albumId
 	);
+
+	const undoFold = undoAlbumFold();
+	let undoId = $state<string | null>(null);
+	let confirming = $state(false);
+
+	function askUndo(id: string): void {
+		undoId = id;
+		confirming = true;
+	}
+
+	async function runUndo(): Promise<void> {
+		if (!undoId) return;
+		await undoFold.mutateAsync(undoId);
+		toastStore.show({ message: 'Join undone.', type: 'success' });
+	}
 
 	const MOVED = 'plays, favorites and playlist entries';
 
@@ -92,14 +112,31 @@
 						class="flex flex-col gap-1 rounded-box bg-base-200/50 px-4 py-3 text-sm sm:flex-row sm:items-baseline sm:justify-between sm:gap-4"
 					>
 						<span class="min-w-0 break-words">{line(entry)}</span>
-						<time
-							class="shrink-0 text-xs text-base-content/60"
-							datetime={at.toISOString()}
-							title={at.toLocaleString()}>{formatRelativeTime(at)}</time
-						>
+						<span class="flex shrink-0 items-center gap-3">
+							<time
+								class="text-xs text-base-content/60"
+								datetime={at.toISOString()}
+								title={at.toLocaleString()}>{formatRelativeTime(at)}</time
+							>
+							{#if entry.undo_id && authStore.isTrusted}
+								{@const id = entry.undo_id}
+								<Button variant="outline" size="xs" icon={Undo2} onclick={() => askUndo(id)}
+									>Undo</Button
+								>
+							{/if}
+						</span>
 					</li>
 				{/each}
 			</ul>
 		</section>
 	{/snippet}
 </QueryBoundary>
+
+<ConfirmDialog
+	bind:open={confirming}
+	title="Undo this join?"
+	message="Plays, favorites and playlist entries stay on this album."
+	confirmLabel="Undo"
+	pending={undoFold.isPending}
+	onconfirm={runUndo}
+/>

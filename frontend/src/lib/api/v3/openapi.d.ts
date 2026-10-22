@@ -4130,6 +4130,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/folds/{fold_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo the fold of a leftover album: the album, its files and its earlier
+         *     match come back. Plays, favorites and playlist entries moved to the
+         *     album that kept the files stay there.
+         */
+        post: operations["undo_album_fold"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/genres": {
         parameters: {
             query?: never;
@@ -10199,6 +10220,11 @@ export interface components {
             track_count: number;
             /** @description The first five of those tracks' titles, in album order. */
             track_titles: string[];
+            /**
+             * @description For a `leftover_joined` entry that can be undone now, the id to
+             *     undo it by; null otherwise.
+             */
+            undo_id?: string | null;
         };
         /**
          * @description What one history entry tells.
@@ -33485,6 +33511,63 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    undo_album_fold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The history entry's undo_id */
+                fold_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album is back */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No fold that can be undone */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The albums changed since the fold */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

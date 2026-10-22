@@ -46,7 +46,9 @@ pub use automatic::{
 };
 pub use custom::{Custom, custom_edition};
 pub(crate) use fold::fold_legacy;
-pub use fold::{FOLD_REASON, FOLD_UNDONE, FoldUndo, Folded, TakeoverMark, fold_undone, undo_fold};
+pub use fold::{
+    FOLD_REASON, FOLD_UNDONE, FoldUndo, Folded, TakeoverMark, fold_undoable, fold_undone, undo_fold,
+};
 pub use import::{ImportedFile, adopt_import, import_album};
 pub(crate) use import::{save_album, save_track};
 pub(crate) use moves::{
