@@ -69,7 +69,24 @@ pub struct IndexWindow {
     /// back as refused rows are.
     pub refused: Vec<(String, String, String)>,
     pub counters: Vec<RowCounter>,
+    /// Unchanged files whose edition hints were never stored (files
+    /// carried over from v2): only those rows are written for them.
+    pub edition_fills: Vec<EditionFill>,
     pub now: f64,
+}
+
+/// The edition hints read from an unchanged file's tags, for a catalog
+/// row that holds none.
+#[derive(Debug, Clone)]
+pub struct EditionFill {
+    pub root_id: String,
+    pub relative_path: String,
+    pub track_id: String,
+    /// The file's stat revision when it was read: a row that has moved on
+    /// since is left to the scan that reads it in full.
+    pub stat_revision: String,
+    pub edition: crate::tags::read::EditionTags,
+    pub effective_policy: EffectivePolicy,
 }
 
 /// One counter delta and the inventory row (root, path) it counts.

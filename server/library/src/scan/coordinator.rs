@@ -27,10 +27,10 @@ use super::models::{
 };
 use super::pool::BlockingPool;
 use super::roots::{PolicyResolver, RootRegistry};
-use super::seams::{Checkpoint, TagReadError, TagReader};
+use super::seams::{Checkpoint, ScannedTags, TagReadError, TagReader};
 use super::sqlite_store::SqliteScanStore;
 use super::stop::RunStop;
-use super::store::{CommitIndexedItem, IndexWindow, ScanStoreError};
+use super::store::{CommitIndexedItem, EditionFill, IndexWindow, ScanStoreError};
 use super::walk::InventoryScanner;
 use super::watcher::WorkWakeups;
 
@@ -1187,6 +1187,24 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 break;
             }
             let short_page = page.len() < INDEX_PAGE_SIZE;
+            // Unchanged files whose edition hints no scan stored (files
+            // carried over from v2) are read for those hints alone.
+            let unchanged: Vec<String> = if run.kind == ScanKind::Incremental {
+                page.iter()
+                    .filter(|item| {
+                        item.comparison_result == Verdict::Unchanged
+                            && item.effective_policy != super::models::EffectivePolicy::Excluded
+                    })
+                    .filter_map(|item| item.local_track_id.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let unread = self
+                .on_store(stop, move |store, stop| {
+                    store.without_edition_tags(stop, &unchanged)
+                })
+                .await?;
             for rows in page.chunks(INDEX_FLUSH_EVERY) {
                 let Some(window) = self
                     .read_window(
@@ -1194,6 +1212,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                         rows,
                         after.clone(),
                         frozen_policy_revision,
+                        &unread,
                         &mut counts,
                     )
                     .await
@@ -1229,14 +1248,36 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         Ok(counts)
     }
 
+    /// Read the tags of a few files at once; the pool caps the reads at
+    /// its worker count.
+    async fn read_files(
+        &self,
+        items: &[&ScanInventoryItem],
+    ) -> Vec<Result<ScannedTags, TagReadError>> {
+        let reads = items.iter().map(|item| {
+            let tags = Arc::clone(&self.tags);
+            let path = PathBuf::from(&item.absolute_path);
+            let pool = self.pool.clone();
+            async move {
+                pool.run(move || tags.read_tags(&path))
+                    .await
+                    .unwrap_or(Err(TagReadError::Fatal))
+            }
+        });
+        futures_util::future::join_all(reads).await
+    }
+
     /// Classify one window of inventory rows and read the tags the
-    /// catalog needs. `None` when the checkpoint says stop.
+    /// catalog needs: in full for new and changed files, and the edition
+    /// hints alone for unchanged tracks in `unread`. `None` when the
+    /// checkpoint says stop.
     async fn read_window(
         &self,
         run: &ScanRun,
         rows: &[ScanInventoryItem],
         after: Option<(String, String)>,
         frozen_policy_revision: &str,
+        unread: &HashSet<String>,
         counts: &mut IndexCounts,
     ) -> Option<IndexWindow> {
         let last = rows.last()?;
@@ -1249,6 +1290,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         };
         let force = run.kind == ScanKind::RescanFiles;
         let mut to_read: Vec<&ScanInventoryItem> = Vec::new();
+        let mut to_fill: Vec<&ScanInventoryItem> = Vec::new();
         for item in rows {
             let row = (item.root_id.clone(), item.relative_path.clone());
             window
@@ -1265,6 +1307,13 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 // Reconcile-only runs refresh inventory, never tags.
                 window.counters.push((row, counter_names::UNCHANGED, 1));
                 counts.unchanged += 1;
+                if item
+                    .local_track_id
+                    .as_ref()
+                    .is_some_and(|id| unread.contains(id))
+                {
+                    to_fill.push(item);
+                }
             } else if item.comparison_result != Verdict::CandidateMissing {
                 to_read.push(item);
             }
@@ -1273,18 +1322,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             if !self.check(&run.id, frozen_policy_revision) {
                 return None;
             }
-            // Reads run concurrently; the pool caps them at its worker count.
-            let reads = chunk.iter().map(|item| {
-                let tags = Arc::clone(&self.tags);
-                let path = PathBuf::from(&item.absolute_path);
-                let pool = self.pool.clone();
-                async move {
-                    pool.run(move || tags.read_tags(&path))
-                        .await
-                        .unwrap_or(Err(TagReadError::Fatal))
-                }
-            });
-            let outcomes = futures_util::future::join_all(reads).await;
+            let outcomes = self.read_files(chunk).await;
             for (item, outcome) in chunk.iter().zip(outcomes) {
                 let row = (item.root_id.clone(), item.relative_path.clone());
                 match outcome {
@@ -1339,6 +1377,45 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                         });
                     }
                 }
+            }
+        }
+        for chunk in to_fill.chunks(INDEX_CHECKPOINT_EVERY) {
+            if !self.check(&run.id, frozen_policy_revision) {
+                return None;
+            }
+            let outcomes = self.read_files(chunk).await;
+            for (item, outcome) in chunk.iter().zip(outcomes) {
+                let Some(track_id) = item.local_track_id.clone() else {
+                    continue;
+                };
+                // A file that cannot be read gets an empty row, so it is not
+                // tried on every scan; changing it brings a full read. A busy
+                // file is tried again next scan.
+                let edition = match outcome {
+                    Ok(tags) => tags.tag.edition,
+                    Err(TagReadError::Fatal) => {
+                        tracing::warn!(
+                            path = item.relative_path,
+                            "could not read an unchanged file's edition tags"
+                        );
+                        Default::default()
+                    }
+                    Err(TagReadError::Deferred) => {
+                        tracing::debug!(
+                            path = item.relative_path,
+                            "edition tags of an unchanged file wait for the next scan"
+                        );
+                        continue;
+                    }
+                };
+                window.edition_fills.push(EditionFill {
+                    root_id: item.root_id.clone(),
+                    relative_path: item.relative_path.clone(),
+                    track_id,
+                    stat_revision: item.stat_revision.clone(),
+                    edition,
+                    effective_policy: item.effective_policy,
+                });
             }
         }
         Some(window)

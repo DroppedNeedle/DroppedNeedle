@@ -42,17 +42,19 @@ use crate::corrections::placement::place_scanned;
 use crate::corrections::release_join::join_replaced;
 use crate::corrections::retag_merge::{JoinCause, MergeOutcome, album_has_record, merge_retagged};
 use crate::identify::artist_links::mark_stale;
+use crate::identify::queue::offer_again;
 use crate::identify::sqlite::{
     chosen_matches_differ, match_chosen, offer_album, release_chosen, retarget_references,
     settle_followed_match,
 };
 use crate::management::{automatic, takeover};
+use crate::matching::model::EditionHints;
 use crate::operations::decisions::{CatalogAction, record_action};
 use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
-use crate::scan::store::{IndexWindow, WindowOutcome};
+use crate::scan::store::{EditionFill, IndexWindow, WindowOutcome};
 use droppedneedle_kernel::db::savepoint;
 
 pub(super) use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID, stable_id};
@@ -2769,6 +2771,12 @@ fn write_window(
             outcome.enqueued += 1;
         }
     }
+    let (filled, relook) = fill_edition_tags(tx, &window.edition_fills)?;
+    for album_id in &relook {
+        if !held_back(tx, &window.run_id, album_id)? && offer_again(tx, album_id, now_ms)? {
+            outcome.enqueued += 1;
+        }
+    }
     adjust.push((
         counter_names::IDENTIFICATION_ENQUEUED,
         outcome.enqueued as i64,
@@ -2795,7 +2803,7 @@ fn write_window(
     }
     // New music shows as the scan goes: a window that wrote a catalog row
     // moves the revision with it.
-    if outcome.committed > 0 {
+    if outcome.committed > 0 || filled > 0 {
         bump_catalog(tx)?;
     }
     mark_window(tx, window, &indexed, &failed, &adjust)?;
@@ -2828,6 +2836,75 @@ pub(super) fn commit_window(
         }
         other => other,
     }
+}
+
+/// Store the edition hints read from unchanged files whose rows held none.
+/// Only those rows are written: the rest of a carried row stays as it is.
+/// Returns how many rows were stored, and the albums without a settled
+/// match that gained a hint, which identification looks at again.
+fn fill_edition_tags(
+    tx: &Connection,
+    fills: &[EditionFill],
+) -> rusqlite::Result<(usize, Vec<String>)> {
+    let blank = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let mut filled = 0;
+    let mut relook: Vec<String> = Vec::new();
+    for fill in fills {
+        let edition = &fill.edition;
+        let (media, barcode, catalog_number, release_country) = (
+            blank(&edition.media),
+            blank(&edition.barcode),
+            blank(&edition.catalog_number),
+            blank(&edition.release_country),
+        );
+        let stored = tx
+            .prepare_cached(crate::scan::sql::FILL_EDITION_TAGS.text())?
+            .execute(params![
+                fill.track_id,
+                fill.stat_revision,
+                media,
+                barcode,
+                catalog_number,
+                release_country,
+                edition.total_discs,
+                edition.release_date,
+            ])?;
+        filled += stored;
+        // Only what edition matching reads counts: it takes no release
+        // date, and a disc total only when there is more than one disc.
+        let hinted = media.is_some()
+            || barcode
+                .as_deref()
+                .and_then(EditionHints::barcode_key)
+                .is_some()
+            || catalog_number
+                .as_deref()
+                .and_then(EditionHints::catalog_key)
+                .is_some()
+            || release_country
+                .as_deref()
+                .is_some_and(|code| code.len() == 2)
+            || edition.total_discs.is_some_and(|total| total >= 2);
+        if stored == 0 || !hinted || fill.effective_policy != EffectivePolicy::Automatic {
+            continue;
+        }
+        if let Some(album_id) = tx
+            .prepare_cached(crate::scan::sql::UNSETTLED_ALBUM_OF_TRACK.text())?
+            .query_row(params![fill.track_id], |row| row.get::<_, String>(0))
+            .optional()?
+        {
+            relook.push(album_id);
+        }
+    }
+    relook.sort();
+    relook.dedup();
+    Ok((filled, relook))
 }
 
 /// The two halves of a window, split by path: each carries only its own
@@ -2876,6 +2953,12 @@ pub(super) fn split_window(window: &IndexWindow) -> Option<(IndexWindow, IndexWi
             .counters
             .iter()
             .filter(|((root, path), _, _)| first_half(root, path) == first)
+            .cloned()
+            .collect(),
+        edition_fills: window
+            .edition_fills
+            .iter()
+            .filter(|fill| first_half(&fill.root_id, &fill.relative_path) == first)
             .cloned()
             .collect(),
         now: window.now,

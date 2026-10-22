@@ -30,9 +30,11 @@ musicbrainz.org).
     row has a `verdict`, the `release`
     sealed or guessed, and a `known_miss` saying why it falls short of the
     truth.
-- No album carries edition tags (media, barcode, catalog number,
-  country, disc total), so the edition sort by barcode and format is not
-  exercised here.
+- Four albums carry the edition tags their files hold (media, barcode,
+  catalog number, country, disc total): `fallen-20th`, `the-wall`,
+  `from-me-to-u` and `violence-against-nature`. Stripped copies keep
+  them, so the edition sort by barcode and format is exercised there.
+  The other albums carry none.
 - `musicbrainz.jsonl`: every MusicBrainz answer recall asks for, one per
   line, keyed by the exact request URL on the BrainzMash mirror, trimmed to
   what matching reads. MusicBrainz data is CC0. Release search pages

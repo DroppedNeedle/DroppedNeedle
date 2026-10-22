@@ -71,4 +71,31 @@ droppedneedle_kernel::sql! {
              AND s.root_id = library_scan_inventory.root_id \
              AND s.relative_path = library_scan_inventory.scope_relative_path \
              AND s.discovery_generation = library_scan_inventory.discovery_generation)";
+    /// Whether track `?1` has its edition hints stored.
+    pub(super) HAS_EDITION_TAGS = "SELECT EXISTS(SELECT 1 FROM local_track_edition_tags \
+             WHERE local_track_id = ?1)";
+    /// Store the edition hints of track `?1` read at stat revision `?2`, unless
+    /// the row moved on since or already holds them.
+    pub(super) FILL_EDITION_TAGS = "INSERT INTO local_track_edition_tags (local_track_id, media, \
+             barcode, catalog_number, release_country, total_discs, release_date) \
+             SELECT id, ?3, ?4, ?5, ?6, ?7, ?8 FROM local_tracks \
+             WHERE id = ?1 AND stat_revision = ?2 \
+             ON CONFLICT (local_track_id) DO NOTHING";
+    /// The album of track `?1` when its MusicBrainz match is not settled:
+    /// none, or an automatic one without an edition or still unconfirmed.
+    /// Only `automatic`: a match v2 took from the files' own ids already
+    /// rests on stronger evidence than edition hints. Albums a person
+    /// detached, or whose review they turned down, are left alone.
+    pub(super) UNSETTLED_ALBUM_OF_TRACK = "SELECT t.local_album_id FROM local_tracks t \
+             WHERE t.id = ?1 AND NOT EXISTS (SELECT 1 FROM local_album_external_identities i \
+               WHERE i.local_album_id = t.local_album_id AND i.provider = 'musicbrainz' \
+               AND (i.decision_source != 'automatic' OR (i.release_mbid IS NOT NULL \
+                 AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
+                   WHERE s.local_album_id = t.local_album_id)))) \
+             AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
+               WHERE s.local_album_id = t.local_album_id \
+               AND s.reason_code = 'DETACHED_BY_PERSON') \
+             AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+               WHERE r.local_album_id = t.local_album_id \
+               AND r.state IN ('rejected','dismissed','excluded'))";
 }

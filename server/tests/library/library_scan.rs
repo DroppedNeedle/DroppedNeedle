@@ -219,6 +219,141 @@ async fn unchanged_tags_keep_their_revision() {
     );
 }
 
+/// One file scanned, then its row put back the way an upgrade carries it:
+/// no edition hints, its own title, its album unmatched and no
+/// identification waiting.
+async fn carried_file(name: &str, fixture_name: &str) -> (ScratchDir, LibrarySetup) {
+    let scratch = ScratchDir::new(name);
+    plant(&scratch.join("music"), "Album/01.flac", fixture_name);
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "DELETE FROM local_track_edition_tags; DELETE FROM library_identify_jobs; \
+             UPDATE local_tracks SET title = 'Carried', membership_source = 'legacy_import'; \
+             INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             updated_at) SELECT local_album_id, 'unmatched', 'NO_CANDIDATES', 0 \
+             FROM local_tracks",
+        )
+        .expect("carried row");
+    (scratch, library)
+}
+
+/// Tags that carry a release date and a disc total of one, and no other
+/// edition hint.
+struct DateOnlyReader;
+
+impl TagReader for DateOnlyReader {
+    fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
+        let mut read = ScannedTags::default();
+        read.tag.title = "Song".to_owned();
+        read.tag.artist = "Artist".to_owned();
+        read.tag.album_artist = Some("Artist".to_owned());
+        read.tag.album = "Album".to_owned();
+        read.tag.track_number = 1;
+        read.tag.edition.release_date = Some("1997-03-01".to_owned());
+        read.tag.edition.total_discs = Some(1);
+        Ok(read)
+    }
+}
+
+/// A release date or a single-disc total is stored, but edition matching
+/// reads neither, so the album is not identified again for it.
+#[tokio::test]
+async fn hints_matching_cannot_use_do_not_look_an_album_up_again() {
+    let scratch = ScratchDir::new("scan-edition-date");
+    let music = scratch.join("music");
+    plant(&music, "Album/01.flac", "flac_full_01.flac");
+    let (coordinator, paths) = coordinator(&music, Arc::new(DateOnlyReader));
+    let scan = || async {
+        coordinator
+            .request_run(&request(&music))
+            .expect("requested");
+        coordinator.run_once(&paths).await.expect("scan runs")
+    };
+    scan().await;
+    let db = coordinator.store().db();
+    db.run_sql(
+        "DELETE FROM local_track_edition_tags; DELETE FROM library_identify_jobs; \
+         INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         updated_at) SELECT local_album_id, 'unmatched', 'NO_CANDIDATES', 0 FROM local_tracks",
+    )
+    .expect("carried row");
+
+    scan().await;
+    let count = |sql: &str| db.query_i64(sql).expect("counts");
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM local_track_edition_tags \
+             WHERE release_date = '1997-03-01' AND total_discs = 1"
+        ),
+        1,
+        "the row is filled"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_identify_jobs"),
+        0,
+        "a date alone is no reason to look the album up again"
+    );
+}
+
+/// A file carried over from v2 stays unchanged, so the scan never read
+/// the edition hints in its tags (barcode, catalog number, media). A scan
+/// stores them from the file's tags and changes nothing else: the carried
+/// row keeps what it holds, the file counts as unchanged and is never
+/// written, and an album without a confirmed match is offered to
+/// identification again so the hints can steer its edition.
+#[tokio::test]
+async fn a_carried_file_gets_its_edition_hints_from_its_tags() {
+    let (scratch, library) = carried_file("scan-edition-fill", "management_full.flac").await;
+    let music = scratch.join("music");
+    let before = snapshot(&music);
+    let db = library.scan_store.db();
+
+    let run = scan(&library).await;
+    assert_eq!(run.state, ScanState::Completed);
+    assert_eq!(count(&run, counter_names::UNCHANGED), 1);
+    assert_eq!(count(&run, counter_names::CHANGED), 0);
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_track_edition_tags WHERE barcode = '1234567890123' \
+             AND catalog_number = 'CAT-42' AND media = 'Digital Media' \
+             AND release_country = 'GB'",
+        ),
+        1,
+        "the edition hints come from the file's tags"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE title = 'Carried'"
+        ),
+        1,
+        "nothing else in the carried row changes"
+    );
+    assert_eq!(
+        query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
+        1,
+        "the unmatched album is looked up again"
+    );
+    assert_eq!(snapshot(&music), before, "scans never write music files");
+
+    db.run_sql("UPDATE local_track_edition_tags SET barcode = 'kept'")
+        .expect("marked");
+    scan(&library).await;
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_track_edition_tags WHERE barcode = 'kept'"
+        ),
+        1,
+        "a filled file is not read again"
+    );
+}
+
 /// A vanished file is marked missing, never deleted. A scope that loses
 /// most of its files at once (an unmounted share) is held back instead.
 #[tokio::test]

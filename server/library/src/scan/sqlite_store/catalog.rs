@@ -97,6 +97,28 @@ impl SqliteScanStore {
         }
     }
 
+    /// Of these catalog tracks, the ones whose edition hints were never
+    /// stored: files carried over from v2 that no scan has read since.
+    pub fn without_edition_tags(
+        &self,
+        stop: &RunStop,
+        track_ids: &[String],
+    ) -> Result<HashSet<String>, ScanStoreError> {
+        if track_ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        self.read_long(stop, "scan_edition_tags_missing", |conn| {
+            let mut stored = conn.prepare_cached(crate::scan::sql::HAS_EDITION_TAGS.text())?;
+            let mut missing = HashSet::new();
+            for id in track_ids {
+                if !stored.query_row(params![id], |row| row.get::<_, bool>(0))? {
+                    missing.insert(id.clone());
+                }
+            }
+            Ok(missing)
+        })
+    }
+
     pub fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool) {
         let mut guard = self.lock();
         let key = (root_id.to_owned(), relative_path.to_owned());
