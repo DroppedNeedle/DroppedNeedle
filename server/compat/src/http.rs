@@ -40,6 +40,7 @@ use crate::subsonic::{
 use droppedneedle_auth::compat_auth::jellyfin::extract_token;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::session::client_ip::ClientIp;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::mount::CompatRoutes;
 
@@ -436,10 +437,13 @@ pub struct SubsonicState<V, S, B> {
     pub started: Arc<Instant>,
     /// How apps reach this server, for the address in picture links.
     pub listener: ListenerConfig,
+    /// Wall time, stamped on each request.
+    pub clock: Arc<dyn Clock>,
 }
 
 impl<V, S, B> SubsonicState<V, S, B> {
-    /// Wrap the seams, buckets, clock origin and listener.
+    /// Wrap the seams, buckets, clock origin, listener and wall clock.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         verifier: V,
         store: S,
@@ -448,6 +452,7 @@ impl<V, S, B> SubsonicState<V, S, B> {
         limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
         started: Arc<Instant>,
         listener: ListenerConfig,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             verifier,
@@ -457,6 +462,7 @@ impl<V, S, B> SubsonicState<V, S, B> {
             limits,
             started,
             listener,
+            clock,
         }
     }
 
@@ -750,7 +756,7 @@ where
         headers,
         body: body_bytes.to_vec(),
         content_type: Some(content_type.to_owned()).filter(|mime| !mime.is_empty()),
-        now_unix: None,
+        now_unix: state.clock.now_ms() as f64 / 1000.0,
         picture_base,
     };
     let rendered = dispatch_with(

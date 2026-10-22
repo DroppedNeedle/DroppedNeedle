@@ -22,8 +22,6 @@
 //! the user-admin routes. v2 answered 200-with-zeros on GET and
 //! blew up on the FK on PUT; neither helps an admin editor.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use super::models::{QuotaOverrideView, QuotaResponse};
 use super::{AdminDb, error::AdminError, models::QuotaOverrideBody};
 use droppedneedle_acquire::requests::quota::{QuotaLedger, QuotaOverride};
@@ -54,7 +52,11 @@ pub async fn get_quota(
         AdminError::internal(&format_args!("effective quota failed: {error:?}"))
     })?;
     let in_window = ledger
-        .count_in_window(user_id, effective.request_days, now_epoch())
+        .count_in_window(
+            user_id,
+            effective.request_days,
+            u64::try_from(users.clock.now_unix()).unwrap_or(0),
+        )
         .await
         .map_err(|error| {
             AdminError::internal(&format_args!("quota window count failed: {error:?}"))
@@ -274,12 +276,4 @@ fn check_bounds(body: &QuotaOverrideBody) -> Result<(), AdminError> {
         }
     }
     Ok(())
-}
-
-/// Wall-clock now as unix seconds for the trailing-window math.
-fn now_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs())
-        .unwrap_or(0)
 }

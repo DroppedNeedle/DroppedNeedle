@@ -19,7 +19,7 @@ use droppedneedle_auth::prod::{Argon2idHasher, OWASP_M_COST_KIB, OWASP_P_COST, O
 use droppedneedle_auth::session::login::{
     LoginContext, LoginError, LoginRequest, LoginService, PasswordVerifier, TransportParam,
 };
-use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _, now_unix};
+use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
 use droppedneedle_auth::users::models::{
@@ -167,7 +167,7 @@ async fn v2_bcrypt_rows_log_in_and_rehash_to_argon2id() {
             },
             LoginContext {
                 user_agent: None,
-                now_unix: now_unix(),
+                now_unix: TEST_NOW,
             },
         )
         .await

@@ -461,7 +461,10 @@ impl Rig {
             auth.deps.clone(),
             crate::common::reads_inputs(&dir),
             &library,
-            CollectionsState::new(CollectionsDb::new(runtime.db().clone())),
+            CollectionsState::new(CollectionsDb::new(
+                runtime.db().clone(),
+                platform.clock.clone(),
+            )),
             None,
         );
         Self {

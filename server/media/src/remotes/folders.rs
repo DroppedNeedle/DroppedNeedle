@@ -72,12 +72,16 @@ pub trait FolderStore: Send + Sync {
 #[derive(Clone)]
 pub struct SqliteFolderStore {
     db: droppedneedle_kernel::db::Db,
+    clock: std::sync::Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl SqliteFolderStore {
-    /// Bind the store to a migrated database.
-    pub fn new(db: droppedneedle_kernel::db::Db) -> Self {
-        Self { db }
+    /// Bind the store to a migrated database, its rows dated by `clock`.
+    pub fn new(
+        db: droppedneedle_kernel::db::Db,
+        clock: std::sync::Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
+        Self { db, clock }
     }
 }
 
@@ -113,6 +117,7 @@ impl FolderStore for SqliteFolderStore {
         preference: FolderPreference,
     ) -> BoxFuture<'a, Result<(), String>> {
         let user_id = user_id.to_owned();
+        let now = self.clock.now_ms() as f64 / 1000.0;
         Box::pin(async move {
             let selected = serde_json::to_string(&preference.selected_folder_ids)
                 .map_err(|error| error.to_string())?;
@@ -121,10 +126,6 @@ impl FolderStore for SqliteFolderStore {
                     droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.folders.set",
                     move |tx| {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|elapsed| elapsed.as_secs_f64())
-                            .unwrap_or(0.0);
                         tx.execute(
                             "INSERT INTO user_navidrome_folder_preferences \
                              (user_id, mode, selected_ids_json, server_identity, updated_at) \

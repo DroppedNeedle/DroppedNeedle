@@ -3473,10 +3473,13 @@ async fn perf_100k_player_pages_hold_p95() {
     seed_100k_marks(&fixture).await;
     // Production statistics: the maintenance ANALYZE, then the hot plans
     // must still walk their indexes.
-    droppedneedle_kernel::db::AnalyzeService::new(fixture.runtime.db().clone())
-        .run()
-        .await
-        .expect("analyze runs");
+    droppedneedle_kernel::db::AnalyzeService::new(
+        fixture.runtime.db().clone(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .run()
+    .await
+    .expect("analyze runs");
     assert_hot_plans(fixture.db()).await;
     assert_history_plans(fixture.db(), "100k with statistics").await;
     let player = SqlitePlayerCatalog::new(&fixture.player_db());

@@ -54,15 +54,6 @@ pub struct RatingStore {
     db: CollectionsDb,
 }
 
-/// Current time as epoch milliseconds. A broken clock reads as zero
-/// rather than failing the request.
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| i64::try_from(span.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
-
 impl RatingStore {
     /// Store over one database.
     pub fn new(db: CollectionsDb) -> Self {
@@ -80,6 +71,7 @@ impl RatingStore {
     ) -> Result<(), StoreError> {
         let user_id = user_id.to_owned();
         let item_id = item_id.to_owned();
+        let now_ms = self.db.now_ms();
         self.db
             .write("ratings.set", move |tx| {
                 if rating == 0 {
@@ -95,7 +87,7 @@ impl RatingStore {
                          VALUES (?1, ?2, ?3, ?4, ?5) \
                          ON CONFLICT (user_id, item_kind, item_id) DO UPDATE SET \
                          rating = excluded.rating, rated_at = excluded.rated_at",
-                        params![user_id, kind.as_str(), item_id, rating, now_millis()],
+                        params![user_id, kind.as_str(), item_id, rating, now_ms],
                     )?;
                 }
                 Ok(())

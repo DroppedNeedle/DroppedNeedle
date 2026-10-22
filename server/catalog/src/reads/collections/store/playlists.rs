@@ -11,7 +11,7 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 use sqlx::Row as _;
 
-use super::super::db::{CollectionsDb, StoreError, now_epoch, placeholders};
+use super::super::db::{CollectionsDb, StoreError, placeholders};
 use super::super::models::PlaylistTrack;
 
 /// How many track covers a summary carries.
@@ -444,6 +444,7 @@ impl PlaylistStore {
             source_ref.map(str::to_owned),
         );
         let new_id = id.clone();
+        let now = self.db.now_epoch() as i64;
         self.db
             .write("playlists.create", move |tx| {
                 if let Some(source_ref) = &source_ref {
@@ -458,7 +459,6 @@ impl PlaylistStore {
                         return Ok(None);
                     }
                 }
-                let now = now_epoch() as i64;
                 tx.execute(
                     "INSERT INTO playlists (id, name, cover_image_path, created_at, updated_at, \
                      source_ref, user_id, is_public) VALUES (?1, ?2, NULL, \
@@ -474,6 +474,7 @@ impl PlaylistStore {
     /// Rename a playlist.
     pub async fn rename(&self, playlist_id: &str, name: &str) -> Result<Written<()>, StoreError> {
         let (playlist_id, name) = (playlist_id.to_owned(), name.to_owned());
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.rename", move |tx| {
                 let changed = tx.execute(
@@ -483,7 +484,7 @@ impl PlaylistStore {
                 if changed == 0 {
                     return Ok(Written::Missing);
                 }
-                touch(tx, &playlist_id, now_epoch())?;
+                touch(tx, &playlist_id, now)?;
                 Ok(Written::Done(()))
             })
             .await
@@ -496,6 +497,7 @@ impl PlaylistStore {
         public: bool,
     ) -> Result<Written<()>, StoreError> {
         let playlist_id = playlist_id.to_owned();
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.set_public", move |tx| {
                 let changed = tx.execute(
@@ -505,7 +507,7 @@ impl PlaylistStore {
                 if changed == 0 {
                     return Ok(Written::Missing);
                 }
-                touch(tx, &playlist_id, now_epoch())?;
+                touch(tx, &playlist_id, now)?;
                 Ok(Written::Done(()))
             })
             .await
@@ -536,9 +538,9 @@ impl PlaylistStore {
         entries: Vec<NewEntry>,
     ) -> Result<Written<Vec<String>>, StoreError> {
         let playlist_id = playlist_id.to_owned();
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.insert", move |tx| {
-                let now = now_epoch();
                 if !touch(tx, &playlist_id, now)? {
                     return Ok(Written::Missing);
                 }
@@ -556,9 +558,9 @@ impl PlaylistStore {
         entries: Vec<NewEntry>,
     ) -> Result<Written<()>, StoreError> {
         let playlist_id = playlist_id.to_owned();
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.replace_entries", move |tx| {
-                let now = now_epoch();
                 if !touch(tx, &playlist_id, now)? {
                     return Ok(Written::Missing);
                 }
@@ -580,9 +582,9 @@ impl PlaylistStore {
     ) -> Result<Written<usize>, StoreError> {
         let playlist_id = playlist_id.to_owned();
         let entry_ids = entry_ids.to_vec();
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.remove", move |tx| {
-                let now = now_epoch();
                 if !touch(tx, &playlist_id, now)? {
                     return Ok(Written::Missing);
                 }
@@ -611,6 +613,7 @@ impl PlaylistStore {
         position: usize,
     ) -> Result<Written<usize>, StoreError> {
         let (playlist_id, entry_id) = (playlist_id.to_owned(), entry_id.to_owned());
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.move", move |tx| {
                 let mut order = entry_order(tx, &playlist_id)?;
@@ -621,7 +624,7 @@ impl PlaylistStore {
                 let at = position.min(order.len());
                 order.insert(at, id);
                 write_order(tx, &order)?;
-                touch(tx, &playlist_id, now_epoch())?;
+                touch(tx, &playlist_id, now)?;
                 Ok(Written::Done(at))
             })
             .await
@@ -636,6 +639,7 @@ impl PlaylistStore {
         available_sources: Option<Vec<String>>,
     ) -> Result<Written<()>, StoreError> {
         let (playlist_id, entry_id) = (playlist_id.to_owned(), entry_id.to_owned());
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.update_sources", move |tx| {
                 let exists: Option<i64> = tx
@@ -660,7 +664,7 @@ impl PlaylistStore {
                         params![encode_sources(Some(sources)), entry_id],
                     )?;
                 }
-                touch(tx, &playlist_id, now_epoch())?;
+                touch(tx, &playlist_id, now)?;
                 Ok(Written::Done(()))
             })
             .await
@@ -673,9 +677,9 @@ impl PlaylistStore {
         cover: CoverImage,
     ) -> Result<Written<()>, StoreError> {
         let playlist_id = playlist_id.to_owned();
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.set_cover", move |tx| {
-                let now = now_epoch();
                 if !touch(tx, &playlist_id, now)? {
                     return Ok(Written::Missing);
                 }
@@ -694,6 +698,7 @@ impl PlaylistStore {
     /// Delete the uploaded cover. `Missing` when there was none.
     pub async fn remove_cover(&self, playlist_id: &str) -> Result<Written<()>, StoreError> {
         let playlist_id = playlist_id.to_owned();
+        let now = self.db.now_epoch();
         self.db
             .write("playlists.remove_cover", move |tx| {
                 let changed = tx.execute(
@@ -703,7 +708,7 @@ impl PlaylistStore {
                 if changed == 0 {
                     return Ok(Written::Missing);
                 }
-                touch(tx, &playlist_id, now_epoch())?;
+                touch(tx, &playlist_id, now)?;
                 Ok(Written::Done(()))
             })
             .await

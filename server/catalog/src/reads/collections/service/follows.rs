@@ -95,9 +95,8 @@ fn release_items(rows: Vec<ReleaseRow>, total: usize) -> NewReleaseListResponse 
     NewReleaseListResponse { items, total }
 }
 
-/// `YYYY-MM-DD` of the day `days` before now, UTC.
-fn date_days_ago(days: i64) -> String {
-    let now = crate::reads::collections::db::now_epoch() as i64;
+/// `YYYY-MM-DD` of the day `days` before `now` (unix seconds), UTC.
+fn date_days_ago(now: i64, days: i64) -> String {
     let day = (now - days * 86_400).div_euclid(86_400);
     let (year, month, date) = civil_from_days(day);
     format!("{year:04}-{month:02}-{date:02}")
@@ -192,9 +191,10 @@ impl CollectionsService<'_> {
             )));
         }
         let days = i64::from(days);
-        let cutoff_ts = crate::reads::collections::db::now_real() - (days * 86_400) as f64;
+        let now = self.state.stores.follows.now_real();
+        let cutoff_ts = now - (days * 86_400) as f64;
         let filter = ReleaseFilter {
-            since: Some((date_days_ago(days), cutoff_ts)),
+            since: Some((date_days_ago(now as i64, days), cutoff_ts)),
             owned_too: query.include_owned.unwrap_or(true),
             limit: page_size(query.limit, RECENT_LIMIT_DEFAULT, RECENT_LIMIT_MAX)?,
             offset: 0,

@@ -11,7 +11,7 @@ use axum::{
 };
 use droppedneedle_catalog::reads::platform::artwork::{
     ArtworkService, MISS_TTL_SECS, UNUSABLE_TTL_SECS,
-    cache::{ArtworkCache, KeyEntry, unix_now},
+    cache::{ArtworkCache, KeyEntry},
     local::LocalArtwork,
 };
 use droppedneedle_catalog::reads::platform::covers::{self, CoversState};
@@ -153,7 +153,11 @@ impl Rig {
             })
             .expect("art preference saves");
         let service = ArtworkService::new(
-            ArtworkCache::new(self.dir.join("covers"), 1024 * 1024),
+            ArtworkCache::new(
+                self.dir.join("covers"),
+                1024 * 1024,
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ),
             LocalArtwork::new(self.runtime.db().sqlx().clone()),
             Some(Arc::new(self.archive.providers.coverart.clone())),
             config.live(),
@@ -253,7 +257,11 @@ async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
                 "{name}: no cover to serve, got {status}"
             );
         }
-        let cache = ArtworkCache::new(rig.dir.join("covers"), 1024 * 1024);
+        let cache = ArtworkCache::new(
+            rig.dir.join("covers"),
+            1024 * 1024,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        );
         let key = format!("caa:release-group:{mbid}:500");
         // The route answers after a bounded wait while the fetch carries on
         // in the background, so the marker can land after the answer.
@@ -309,7 +317,11 @@ async fn a_cover_the_archive_cannot_give_yet_is_warming_until_it_can() {
     }
 
     // The wait before asking again runs out.
-    let cache = ArtworkCache::new(rig.dir.join("covers"), 1024 * 1024);
+    let cache = ArtworkCache::new(
+        rig.dir.join("covers"),
+        1024 * 1024,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     cache
         .put_miss(&format!("caa:release-group:{mbid}:500"), 0)
         .await;
@@ -803,4 +815,10 @@ async fn a_built_discover_page_warms_its_covers_onto_disk() {
     );
     app.stop().await;
     server.abort();
+}
+
+/// Now, by the system clock the cache under test runs on.
+fn unix_now() -> u64 {
+    use droppedneedle_kernel::clock::Clock as _;
+    u64::try_from(droppedneedle_kernel::clock::SystemClock.now_unix()).unwrap_or(0)
 }

@@ -8,6 +8,8 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use droppedneedle_kernel::clock::Clock;
+
 use super::adapter::{
     AdapterError, AlbumBrowse, ArtistBrowse, ImportSink, RemoteHandle, TrackBrowse, album_page,
     artist_page, track_page,
@@ -131,22 +133,26 @@ pub struct RemotesService {
     resolver: Arc<ConnectionResolver>,
     folders: Arc<dyn FolderStore>,
     imports: Arc<dyn ImportSink>,
+    clock: Arc<dyn Clock>,
 }
 
 impl RemotesService {
     /// Build the service over the shared HTTP client, the connection
-    /// resolver, the folder preferences, and the playlist import target.
+    /// resolver, the folder preferences, the playlist import target and
+    /// the clock listening analytics count back from.
     pub fn new(
         http: reqwest::Client,
         resolver: Arc<ConnectionResolver>,
         folders: Arc<dyn FolderStore>,
         imports: Arc<dyn ImportSink>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             http,
             resolver,
             folders,
             imports,
+            clock,
         }
     }
 
@@ -743,10 +749,7 @@ impl RemotesService {
         user_id: &str,
         source: SourceName,
     ) -> RemotesResult<AnalyticsView> {
-        let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or(0);
+        let now_unix = self.clock.now_unix();
         Self::only(source, SourceName::Plex, "listening analytics")?;
         let plex = self.plex(user_id).await?;
         let mut entries = Vec::new();

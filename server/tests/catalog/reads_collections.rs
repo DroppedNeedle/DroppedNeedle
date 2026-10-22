@@ -78,7 +78,10 @@ impl Rig {
     }
 
     fn state(&self) -> CollectionsState {
-        CollectionsState::new(CollectionsDb::new(self.runtime.db().clone()))
+        CollectionsState::new(CollectionsDb::new(
+            self.runtime.db().clone(),
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ))
     }
 
     /// The collections routes beside the follows' routes, as the app

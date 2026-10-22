@@ -40,12 +40,15 @@ mod recovery;
 mod sessions;
 mod users;
 
+use std::sync::Arc;
+
 use rusqlite::OptionalExtension as _;
 use sqlx::SqlitePool;
 
 use super::federated::FederatedError;
 use super::federated::password_import::HashScheme;
 use super::users::stores::StoreError;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 
 pub use app_passwords::SqliteAppPasswordStore;
@@ -89,17 +92,29 @@ pub fn forget_sealed(conn: &rusqlite::Connection) -> rusqlite::Result<ForgottenA
     })
 }
 
-/// Shared SQLite handle for every auth adapter. `Clone` is cheap; clones
-/// share the database.
-#[derive(Clone, Debug)]
+/// Shared SQLite handle for every auth adapter, with the clock its rows
+/// are stamped by. `Clone` is cheap; clones share the database.
+#[derive(Clone)]
 pub struct AuthDb {
     db: Db,
+    clock: Arc<dyn Clock>,
+}
+
+impl std::fmt::Debug for AuthDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthDb")
+            .field("db", &self.db)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AuthDb {
-    /// Handle over the runtime's database.
-    pub fn new(db: &Db) -> Self {
-        Self { db: db.clone() }
+    /// Handle over the runtime's database and clock.
+    pub fn new(db: &Db, clock: Arc<dyn Clock>) -> Self {
+        Self {
+            db: db.clone(),
+            clock,
+        }
     }
 
     /// The sqlx reader pool.
@@ -112,9 +127,9 @@ impl AuthDb {
         AuthLane(&self.db)
     }
 
-    /// Current unix time in whole seconds.
-    fn now_unix() -> i64 {
-        super::session::store::now_unix()
+    /// Now, as whole unix seconds.
+    fn now_unix(&self) -> i64 {
+        self.clock.now_unix()
     }
 }
 

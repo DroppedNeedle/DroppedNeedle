@@ -1366,14 +1366,14 @@ async fn seed_streamable_tracks(runtime: &DbRuntime, tracks: i64) {
 #[tokio::test]
 async fn planner_statistics_wait_for_a_real_catalog() {
     let (runtime, _dir) = open_scratch("analyze-min-tracks").await;
-    let empty = AnalyzeService::new(runtime.db().clone());
+    let empty = AnalyzeService::new(runtime.db().clone(), Arc::new(crate::clock::SystemClock));
     assert!(
         !empty.run_if_due().await.unwrap(),
         "no tracks, no statistics"
     );
 
     seed_streamable_tracks(&runtime, 100).await;
-    let next_check = AnalyzeService::new(runtime.db().clone());
+    let next_check = AnalyzeService::new(runtime.db().clone(), Arc::new(crate::clock::SystemClock));
     assert!(
         next_check.run_if_due().await.unwrap(),
         "a real catalog is analyzed"

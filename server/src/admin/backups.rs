@@ -116,7 +116,11 @@ pub async fn ensure_pre_upgrade_backup(
         expected,
         "schema upgrade pending; taking a pre-upgrade backup"
     );
-    let service = BackupService::new(db_path, backup_dir);
+    let service = BackupService::new(
+        db_path,
+        backup_dir,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let cancel = droppedneedle_kernel::db::writer::CancelFlag::never();
     let report = service.backup(None, &cancel).await?;
     tracing::info!(

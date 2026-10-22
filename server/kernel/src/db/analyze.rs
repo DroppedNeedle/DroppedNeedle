@@ -24,6 +24,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::clock::Clock;
+
 use super::error::DbError;
 use super::handle::Db;
 use super::sql;
@@ -45,10 +47,19 @@ const MIN_TRACKS: i64 = 100;
 const CHURN_MIN_TRACKS: i64 = 100;
 
 /// Runs `ANALYZE` on the writer lane when the statistics are stale.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AnalyzeService {
     db: Db,
+    clock: Arc<dyn Clock>,
     last_check: Arc<Mutex<Option<Instant>>>,
+}
+
+impl std::fmt::Debug for AnalyzeService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnalyzeService")
+            .field("db", &self.db)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What the last run recorded.
@@ -56,14 +67,6 @@ pub struct AnalyzeService {
 struct LastRun {
     at_unix: i64,
     indexed_tracks: i64,
-}
-
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
-        })
 }
 
 /// Whether statistics recorded at `last` are stale now.
@@ -86,10 +89,12 @@ fn stale(last: Option<LastRun>, stats_present: bool, indexed_tracks: i64, now_un
 
 impl AnalyzeService {
     /// Wire the service over the database: the sqlx reader pool for the
-    /// staleness checks, the writer lane for the `ANALYZE` steps.
-    pub fn new(db: Db) -> Self {
+    /// staleness checks, the writer lane for the `ANALYZE` steps; `clock`
+    /// dates each run.
+    pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self {
             db,
+            clock,
             last_check: Arc::new(Mutex::new(None)),
         }
     }
@@ -136,7 +141,7 @@ impl AnalyzeService {
             }),
             stats_present,
             indexed_tracks,
-            now_unix(),
+            self.clock.now_unix(),
         ))
     }
 
@@ -167,7 +172,7 @@ impl AnalyzeService {
                 .await?;
         }
         let indexed_tracks = self.indexed_tracks().await?;
-        let at = now_unix();
+        let at = self.clock.now_unix();
         self.db
             .write(Lane::Background, "db.analyze.record", move |tx| {
                 tx.execute(

@@ -229,7 +229,7 @@ where
         client,
         device_name,
         device_id,
-        signed_in_at: builders::iso_o(Some(unix_now())),
+        signed_in_at: builders::iso_o(Some(unix_now(&state))),
         application_version,
         remote_end_point,
     };
@@ -240,11 +240,9 @@ where
     )
 }
 
-fn unix_now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_secs_f64())
-        .unwrap_or(0.0)
+/// Now, as unix seconds, by the platform clock.
+fn unix_now<L, E, P, I>(state: &JellyfinState<L, E, P, I>) -> f64 {
+    state.passwords.clock().now_ms() as f64 / 1000.0
 }
 
 pub(super) async fn users_me<L, E, P, I>(
@@ -267,7 +265,7 @@ where
             StatusCode::OK,
             &authed.principal.user_dto(
                 &server_id(),
-                unix_now(),
+                unix_now(&state),
                 state
                     .settings
                     .jellyfin()

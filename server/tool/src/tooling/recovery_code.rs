@@ -15,12 +15,12 @@ use thiserror::Error;
 
 use droppedneedle::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
 use droppedneedle_auth::prod::{AuthDb, SqliteRecoveryStore, SqliteUserStore};
-use droppedneedle_auth::session::store::now_unix;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_auth::users::services::{
     IssuedRecoveryCode, RecoveryIssueError, RecoveryReach, issue_recovery_code,
 };
 use droppedneedle_auth::users::stores::UserStore as _;
+use droppedneedle_kernel::clock::{Clock as _, SystemClock};
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError};
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
 
@@ -108,7 +108,7 @@ async fn issue_in(
     username: &str,
 ) -> Result<IssuedRecoveryCode, RecoveryCodeError> {
     let unknown = || RecoveryCodeError::UnknownUser(username.to_owned());
-    let db = AuthDb::new(runtime.db());
+    let db = AuthDb::new(runtime.db(), std::sync::Arc::new(SystemClock));
     let users = SqliteUserStore::new(&db);
     let user = users
         .get_by_username(&username.trim().to_lowercase())
@@ -120,7 +120,7 @@ async fn issue_in(
         &SqliteRecoveryStore::new(&db),
         &user.id,
         RecoveryReach::AnyAccount,
-        now_unix(),
+        SystemClock.now_unix(),
     )
     .await
     .map_err(|error| match error {
@@ -130,7 +130,7 @@ async fn issue_in(
 }
 
 async fn admins_in(runtime: &DbRuntime) -> Result<Vec<String>, RecoveryCodeError> {
-    let db = AuthDb::new(runtime.db());
+    let db = AuthDb::new(runtime.db(), std::sync::Arc::new(SystemClock));
     let users = SqliteUserStore::new(&db);
     let mut names = Vec::new();
     let mut offset = 0;

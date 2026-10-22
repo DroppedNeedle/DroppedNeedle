@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::jobs::CancellationToken;
 
 use crate::remotes::adapter::AdapterError;
@@ -131,14 +132,20 @@ pub async fn run_report_worker(
     mut rx: tokio::sync::mpsc::Receiver<QueuedReport>,
     http: reqwest::Client,
     resolver: Arc<ConnectionResolver>,
+    clock: Arc<dyn Clock>,
     stop: CancellationToken,
 ) {
     while let Some(queued) = next_queued(&mut rx, &stop).await {
-        deliver(&queued, &http, resolver.as_ref()).await;
+        deliver(&queued, &http, resolver.as_ref(), clock.as_ref()).await;
     }
 }
 
-async fn deliver(queued: &QueuedReport, http: &reqwest::Client, resolver: &ConnectionResolver) {
+async fn deliver(
+    queued: &QueuedReport,
+    http: &reqwest::Client,
+    resolver: &ConnectionResolver,
+    clock: &dyn Clock,
+) {
     let Some(source) = SourceName::parse(&queued.source) else {
         return;
     };
@@ -184,7 +191,7 @@ async fn deliver(queued: &QueuedReport, http: &reqwest::Client, resolver: &Conne
                 resolved.username,
                 resolved.credential,
             );
-            deliver_navidrome(&adapter, queued.op, &queued.report).await
+            deliver_navidrome(&adapter, queued.op, &queued.report, clock.now_ms()).await
         }
         SourceName::Plex => {
             let adapter = PlexAdapter::new(
@@ -246,11 +253,12 @@ async fn deliver_navidrome(
     adapter: &NavidromeAdapter,
     op: ReportOp,
     report: &RemoteReport,
+    now_ms: i64,
 ) -> Result<(), AdapterError> {
     match op {
         ReportOp::Start | ReportOp::Progress => adapter.report_now_playing(&report.item_id).await,
         ReportOp::Stop => Ok(()),
-        ReportOp::Scrobble => adapter.scrobble(&report.item_id, now_millis()).await,
+        ReportOp::Scrobble => adapter.scrobble(&report.item_id, now_ms).await,
     }
 }
 
@@ -274,12 +282,4 @@ async fn deliver_plex(
         ReportOp::Stop => adapter.timeline(&report.item_id, "stopped").await,
         ReportOp::Scrobble => adapter.scrobble(&report.item_id).await,
     }
-}
-
-/// Current unix time in millis, for Navidrome scrobble timestamps.
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
 }

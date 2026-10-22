@@ -89,7 +89,7 @@ impl ProdAuth {
     /// seals federated tokens, its clock drives management-side expiry, and
     /// avatar files live under its cache folder.
     pub fn new(platform: &droppedneedle_kernel::platform::Platform) -> Self {
-        let db = AuthDb::new(&platform.db);
+        let db = AuthDb::new(&platform.db, platform.clock.clone());
         let (crypto, ids, clock) = (
             platform.crypto.clone(),
             platform.ids.clone(),

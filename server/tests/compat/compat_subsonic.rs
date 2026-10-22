@@ -53,7 +53,7 @@ fn request(endpoint: &str, pairs: &[(&str, &str)], authed: bool) -> Request {
         headers: HashMap::new(),
         body: Vec::new(),
         content_type: None,
-        now_unix: Some(NOW_UNIX),
+        now_unix: NOW_UNIX,
         picture_base: None,
     }
 }

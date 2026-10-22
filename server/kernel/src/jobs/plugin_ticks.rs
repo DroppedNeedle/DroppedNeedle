@@ -24,6 +24,7 @@ use std::time::Duration;
 use super::BoxFuture;
 use super::schedule::Schedule;
 use super::supervisor::{AlreadyRunning, FnTick, Next, Supervisor, TickCtx, TickError};
+use crate::clock::Clock;
 use crate::db::{Db, DbError, writer::Lane};
 
 /// Name prefix for tick loops: `plugin-tick:{name}`.
@@ -294,17 +295,28 @@ impl TickStore for MemoryTickStore {
 /// plugin through `sync_ticks` before any loop reads, so only the key bytes
 /// need the disk. Unknown plugins still error like the memory store, and
 /// uninstalls leave rows behind, so a reinstall reads its old state back.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SqliteTickStore {
     db: Db,
+    clock: Arc<dyn Clock>,
     plugins: Arc<Mutex<HashSet<String>>>,
 }
 
+impl fmt::Debug for SqliteTickStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SqliteTickStore")
+            .field("db", &self.db)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SqliteTickStore {
-    /// Bind the store over the database.
-    pub fn new(db: Db) -> Self {
+    /// Bind the store over the database; `clock` stamps each write.
+    pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self {
             db,
+            clock,
             plugins: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -386,6 +398,7 @@ impl TickStore for SqliteTickStore {
                 return Err(TickStoreError::UnknownPlugin(plugin));
             }
             let refused_plugin = plugin.clone();
+            let now = store.clock.now_ms() as f64 / 1000.0;
             let stored = store
                 .db
                 .write(Lane::Background, "tick-state-write", move |tx| {
@@ -408,7 +421,7 @@ impl TickStore for SqliteTickStore {
                      ON CONFLICT (plugin, key) DO UPDATE SET
                          value = excluded.value,
                          updated_at = excluded.updated_at",
-                        rusqlite::params![plugin, key, bytes, now_unix()],
+                        rusqlite::params![plugin, key, bytes, now],
                     )?;
                     Ok(true)
                 })
@@ -424,14 +437,6 @@ impl TickStore for SqliteTickStore {
             Ok(())
         })
     }
-}
-
-/// Wall-clock now as unix seconds for the `updated_at` stamp.
-fn now_unix() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 /// Live tick intervals, the half `sync_ticks` compares against. Lives next to

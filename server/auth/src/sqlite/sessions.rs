@@ -567,7 +567,7 @@ impl SessionIssuer for SqliteSessionIssuer {
     ) -> Result<String, FederatedError> {
         let raw =
             crate::session::tokens::mint_token().map_err(|_| FederatedError::RngUnavailable)?;
-        let now = AuthDb::now_unix();
+        let now = self.db.now_unix();
         self.sessions
             .insert(SessionRecord {
                 id: self.ids.new_id(),

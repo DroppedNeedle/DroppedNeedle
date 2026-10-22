@@ -14,6 +14,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +22,7 @@ use super::host::PluginHost;
 use super::manifest::{PluginManifest, load_manifest};
 use super::models::PluginRefKind;
 use super::runtime::BoxFuture;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Largest install archive (32 MiB).
@@ -86,12 +88,13 @@ pub trait ArchiveFetcher: Send + Sync {
 /// Production fetcher over the shared HTTP client.
 pub struct ReqwestFetcher {
     http: reqwest::Client,
+    clock: Arc<dyn Clock>,
 }
 
 impl ReqwestFetcher {
-    /// Wrap a shared HTTP client.
-    pub fn new(http: reqwest::Client) -> Self {
-        Self { http }
+    /// Wrap a shared HTTP client; `clock` dates GitHub's rate-limit reset.
+    pub fn new(http: reqwest::Client, clock: Arc<dyn Clock>) -> Self {
+        Self { http, clock }
     }
 }
 
@@ -145,10 +148,7 @@ impl ArchiveFetcher for ReqwestFetcher {
                 .send()
                 .await
                 .map_err(transport)?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_secs())
-                .unwrap_or(0);
+            let now = u64::try_from(self.clock.now_unix()).unwrap_or(0);
             if let Some(answer) = refusal(response.status(), response.headers(), now) {
                 return Ok(answer);
             }
@@ -678,8 +678,13 @@ fn manifest_from_entries(
 impl PluginHost {
     /// Write a staged plugin into the plugins directory, replacing any
     /// older copy in one swap, and reload. Settings live in config and the
-    /// data folder stays put, so an update keeps both.
-    pub fn install_staged(&self, staged: &StagedPlugin) -> Result<String, InstallError> {
+    /// data folder stays put, so an update keeps both. The install record
+    /// says it was installed at `installed_at` (unix seconds).
+    pub fn install_staged(
+        &self,
+        staged: &StagedPlugin,
+        installed_at: i64,
+    ) -> Result<String, InstallError> {
         let name = staged.manifest.name.clone();
         let staging = self.dir().join(format!(".installing-{name}"));
         let _ = std::fs::remove_dir_all(&staging);
@@ -693,10 +698,7 @@ impl PluginHost {
                 ref_kind: staged.resolved.ref_kind,
                 reference: staged.resolved.reference.clone(),
                 commit: staged.resolved.commit.clone(),
-                installed_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|elapsed| elapsed.as_secs() as i64)
-                    .unwrap_or(0),
+                installed_at,
             };
             let json = serde_json::to_vec_pretty(&record)
                 .map_err(|error| InstallError::Io(error.to_string()))?;

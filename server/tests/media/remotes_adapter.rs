@@ -59,6 +59,7 @@ fn deps_for(servers: FixedServers) -> RemotesDeps {
             resolver,
             Arc::new(MemoryFolderStore::new()),
             Arc::new(MemoryImportSink::new()),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
     }
 }
@@ -604,7 +605,10 @@ async fn linked_connections_survive_a_restart() {
             })
             .await
             .expect("user seeds");
-        let rows = SqliteConnectionStore::new(runtime.db().clone());
+        let rows = SqliteConnectionStore::new(
+            runtime.db().clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        );
         let resolver = ConnectionResolver::new(Arc::new(rows), coder(), Arc::new(servers()));
         resolver
             .save_link(
@@ -616,17 +620,20 @@ async fn linked_connections_survive_a_restart() {
             )
             .await
             .expect("link saves");
-        SqliteFolderStore::new(runtime.db().clone())
-            .set(
-                "user-ada",
-                FolderPreference {
-                    mode: "selected".to_owned(),
-                    selected_folder_ids: vec!["folder-1".to_owned()],
-                    server_identity: Some("server-a".to_owned()),
-                },
-            )
-            .await
-            .expect("preference saves");
+        SqliteFolderStore::new(
+            runtime.db().clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )
+        .set(
+            "user-ada",
+            FolderPreference {
+                mode: "selected".to_owned(),
+                selected_folder_ids: vec!["folder-1".to_owned()],
+                server_identity: Some("server-a".to_owned()),
+            },
+        )
+        .await
+        .expect("preference saves");
         let stored: String = sqlx::query_scalar(
             "SELECT connection_data FROM user_connections WHERE user_id = 'user-ada'",
         )
@@ -637,7 +644,10 @@ async fn linked_connections_survive_a_restart() {
         runtime.shutdown().await;
     }
     let runtime = open_runtime(&DbConfig::new(&db)).await.expect("db reopens");
-    let rows = SqliteConnectionStore::new(runtime.db().clone());
+    let rows = SqliteConnectionStore::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let resolver = ConnectionResolver::new(Arc::new(rows), coder(), Arc::new(servers()));
     let resolved = resolver
         .resolve("user-ada", SourceName::Navidrome)
@@ -645,10 +655,13 @@ async fn linked_connections_survive_a_restart() {
         .expect("link resolves after restart");
     assert_eq!(resolved.account_mode, "linked");
     assert_eq!(resolved.credential, "s3cret");
-    let preference = SqliteFolderStore::new(runtime.db().clone())
-        .get("user-ada")
-        .await
-        .expect("preference reads");
+    let preference = SqliteFolderStore::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .get("user-ada")
+    .await
+    .expect("preference reads");
     assert_eq!(preference.selected_folder_ids, vec!["folder-1".to_owned()]);
     runtime.shutdown().await;
 }

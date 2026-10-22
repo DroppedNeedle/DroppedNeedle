@@ -29,8 +29,8 @@ impl OidcStateStore for SqliteOidcStateStore {
     async fn store_state(&self, state: &str, code_verifier: &str) -> Result<(), FederatedError> {
         let lane = self.db.lane();
         let (state, code_verifier) = (state.to_owned(), code_verifier.to_owned());
+        let now = self.db.now_unix();
         lane.write(Lane::Foreground, "auth.oidc.store", move |tx| {
-            let now = AuthDb::now_unix();
             // Abandoned logins leave states behind; sweep the expired ones
             // in the same transaction so the table stays small.
             tx.execute(
@@ -58,6 +58,7 @@ impl OidcStateStore for SqliteOidcStateStore {
     async fn consume_state(&self, state: &str) -> Result<Option<String>, FederatedError> {
         let lane = self.db.lane();
         let state = state.to_owned();
+        let now = self.db.now_unix();
         lane.write(Lane::Foreground, "auth.oidc.consume", move |tx| {
             let found: Option<(Option<String>, String)> = tx
                 .query_row(
@@ -75,7 +76,7 @@ impl OidcStateStore for SqliteOidcStateStore {
             let Some((verifier, expires_raw)) = found else {
                 return Ok(None);
             };
-            if parse_iso(&expires_raw).is_none_or(|at| at <= AuthDb::now_unix()) {
+            if parse_iso(&expires_raw).is_none_or(|at| at <= now) {
                 return Ok(None);
             }
             Ok(verifier)

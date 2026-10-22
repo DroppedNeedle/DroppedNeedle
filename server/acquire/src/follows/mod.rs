@@ -33,13 +33,13 @@ use self::models::{
     ApprovalBatchItem, ApprovalBatchListResponse, AutoDownloadApprovalItem,
     AutoDownloadApprovalListResponse,
 };
-use crate::db::{AcquireDb, epoch_secs};
+use crate::db::{AcquireDb, epoch_secs, unix_secs_f64};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{ApprovalState, validate_mbid};
 use crate::requests::models::ActionResponse;
 use crate::requests::sqlite::{lane_error, ms_from_secs, read_error};
 use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::collections::db::{CollectionsDb, now_real, placeholders};
+use droppedneedle_catalog::reads::collections::db::{CollectionsDb, placeholders};
 use droppedneedle_catalog::reads::collections::error::CollectionsError;
 use droppedneedle_catalog::reads::collections::models::FollowStatusResponse;
 use droppedneedle_catalog::reads::collections::service::follow_status;
@@ -117,6 +117,7 @@ impl FollowAsk {
             &self.artist_mbid,
             true,
             self.artist_name.as_deref(),
+            real_secs(now_ms),
         )?;
         if self.auto_download {
             set_auto_download_tx(
@@ -143,7 +144,7 @@ pub struct Follows {
 impl Follows {
     /// Follows over the application database.
     pub fn new(db: AcquireDb) -> Self {
-        let reads = FollowStore::new(CollectionsDb::new(db.db().clone()));
+        let reads = FollowStore::new(CollectionsDb::new(db.db().clone(), db.clock().clone()));
         Self { db, reads }
     }
 
@@ -172,9 +173,17 @@ impl Follows {
     ) -> Result<FollowStatusResponse, RequestsError> {
         let (user, mbid) = (user_id.to_owned(), artist_mbid.to_owned());
         let name = artist_name.filter(|name| !name.trim().is_empty());
+        let now = self.db.now_unix_f64();
         self.db
             .write("follows.set_follow", move |tx| {
-                Ok(set_follow_tx(tx, &user, &mbid, followed, name.as_deref())?)
+                Ok(set_follow_tx(
+                    tx,
+                    &user,
+                    &mbid,
+                    followed,
+                    name.as_deref(),
+                    now,
+                )?)
             })
             .await
             .map_err(|error| lane_error("follows.set_follow", error))?;
@@ -254,7 +263,13 @@ impl Follows {
                 else {
                     return Ok(false);
                 };
-                apply_verdict(tx, &user, (&row.artist_mbid, &row.artist_name), verdict)?;
+                apply_verdict(
+                    tx,
+                    &user,
+                    (&row.artist_mbid, &row.artist_name),
+                    verdict,
+                    unix_secs_f64(clock.as_ref()),
+                )?;
                 Ok(true)
             })
             .await
@@ -293,7 +308,13 @@ impl Follows {
                     now_ms(clock.as_ref()),
                 )?;
                 for (user, mbid, name) in &rows {
-                    apply_verdict(tx, user, (mbid, name), verdict)?;
+                    apply_verdict(
+                        tx,
+                        user,
+                        (mbid, name),
+                        verdict,
+                        unix_secs_f64(clock.as_ref()),
+                    )?;
                 }
                 Ok(rows.len())
             })
@@ -405,7 +426,7 @@ impl Follows {
         let clock = self.db.clock().clone();
         self.db
             .write("follows.import", move |tx| {
-                let (now, now_ms) = (now_real(), now_ms(clock.as_ref()));
+                let (now, now_ms) = (unix_secs_f64(clock.as_ref()), now_ms(clock.as_ref()));
                 let mut already_following = 0;
                 let mut armed = Vec::new();
                 for artist in &artists {
@@ -458,6 +479,11 @@ pub(crate) fn now_ms(clock: &dyn Clock) -> i64 {
     ms_from_secs(epoch_secs(clock))
 }
 
+/// Float unix seconds, for the REAL follow columns, from unix milliseconds.
+fn real_secs(now_ms: i64) -> f64 {
+    now_ms.max(0) as f64 / 1000.0
+}
+
 /// The reviewer stamp: acting id plus display name.
 fn reviewer(admin: &Admin) -> Reviewer {
     (
@@ -475,9 +501,10 @@ pub(crate) fn set_follow_tx(
     artist_mbid: &str,
     followed: bool,
     artist_name: Option<&str>,
+    now: f64,
 ) -> rusqlite::Result<()> {
     if followed {
-        upsert_follow(tx, user_id, artist_mbid, artist_name, now_real())
+        upsert_follow(tx, user_id, artist_mbid, artist_name, now)
     } else {
         tx.execute(
             "DELETE FROM user_followed_artists \
@@ -512,7 +539,7 @@ pub(crate) fn set_auto_download_tx(
     let Some((mbid, name)) = name else {
         return Ok(false);
     };
-    set_intent(tx, user_id, &lower, enabled, now_real())?;
+    set_intent(tx, user_id, &lower, enabled, real_secs(now_ms))?;
     if !enabled {
         approvals::withdraw_pending(tx, user_id, &lower)?;
     } else if !self_approves {
@@ -573,8 +600,8 @@ fn apply_verdict(
     user_id: &str,
     (artist_mbid, artist_name): (&str, &str),
     verdict: ApprovalState,
+    now: f64,
 ) -> rusqlite::Result<()> {
-    let now = now_real();
     if verdict == ApprovalState::Approved {
         tx.execute(
             "INSERT INTO user_followed_artists (user_id, artist_mbid, \

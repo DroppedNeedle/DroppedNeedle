@@ -926,7 +926,7 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
     use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
     use droppedneedle_catalog::reads::platform::artwork::{
         ArtworkService, OUTAGE_TTL_SECS,
-        cache::{ArtworkCache, KeyEntry, unix_now},
+        cache::{ArtworkCache, KeyEntry},
         local::LocalArtwork,
     };
 
@@ -956,7 +956,11 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
     );
     let config = crate::common::config_store(&dir.join("settings"));
     let artwork = ArtworkService::new(
-        ArtworkCache::new(dir.join("covers"), 1024 * 1024),
+        ArtworkCache::new(
+            dir.join("covers"),
+            1024 * 1024,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
         LocalArtwork::new(pool),
         None,
         config.live(),
@@ -973,7 +977,11 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
         fixtures.hits("/commons/w/api.php") > 0,
         "the portrait was asked for"
     );
-    let cache = ArtworkCache::new(dir.join("covers"), 1024 * 1024);
+    let cache = ArtworkCache::new(
+        dir.join("covers"),
+        1024 * 1024,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let Some(KeyEntry::Unreachable { until }) = cache.key(&format!("artist:{ARTIST}")).await else {
         panic!("the outage is remembered");
     };
@@ -1053,7 +1061,11 @@ async fn an_audiodb_picture_named_over_http_is_fetched_over_https() {
     );
     let config = crate::common::config_store(&dir.join("settings"));
     let artwork = ArtworkService::new(
-        ArtworkCache::new(dir.join("covers"), 1024 * 1024),
+        ArtworkCache::new(
+            dir.join("covers"),
+            1024 * 1024,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
         LocalArtwork::new(pool),
         None,
         config.live(),
@@ -1240,7 +1252,11 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
     );
     let config = crate::common::config_store(&dir.join("settings"));
     let artwork = ArtworkService::new(
-        ArtworkCache::new(dir.join("covers"), 1024 * 1024),
+        ArtworkCache::new(
+            dir.join("covers"),
+            1024 * 1024,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
         LocalArtwork::new(pool),
         None,
         config.live(),
@@ -1482,4 +1498,10 @@ async fn provider_answers_survive_a_restart() {
     assert_eq!(body["title"], "OK Computer");
     assert_eq!(*hits.lock().unwrap(), 1, "answered from the cache file");
     app.stop().await;
+}
+
+/// Now, by the system clock the cache under test runs on.
+fn unix_now() -> u64 {
+    use droppedneedle_kernel::clock::Clock as _;
+    u64::try_from(droppedneedle_kernel::clock::SystemClock.now_unix()).unwrap_or(0)
 }

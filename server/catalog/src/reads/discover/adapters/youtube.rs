@@ -8,6 +8,9 @@ use crate::reads::discover::{
     models::YouTubeQuotaResponse,
     ports::{BoxFuture, ProviderFailure, YouTubeSource},
 };
+use std::sync::Arc;
+
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::{Live, secret_sections::YouTubeConnection};
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
@@ -16,12 +19,22 @@ use droppedneedle_providers::youtube::{SearchKind, YouTubeClient, YouTubeSetting
 pub struct LiveYouTube {
     client: YouTubeClient,
     settings: Live<YouTubeConnection>,
+    clock: Arc<dyn Clock>,
 }
 
 impl LiveYouTube {
-    /// Search through `client`, configured from `settings` on every call.
-    pub fn new(client: YouTubeClient, settings: Live<YouTubeConnection>) -> Self {
-        Self { client, settings }
+    /// Search through `client`, configured from `settings` on every call;
+    /// `clock` dates the quota reset.
+    pub fn new(
+        client: YouTubeClient,
+        settings: Live<YouTubeConnection>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            client,
+            settings,
+            clock,
+        }
     }
 
     /// Push the current settings into the client. An unreadable or invalid
@@ -72,12 +85,10 @@ impl LiveYouTube {
     }
 }
 
-/// Unix second of the next UTC midnight, when the daily quota resets.
-fn next_utc_midnight() -> i64 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64);
-    (now / 86_400 + 1) * 86_400
+/// Unix second of the next UTC midnight after `now`, when the daily quota
+/// resets.
+fn next_utc_midnight(now: i64) -> i64 {
+    (now.div_euclid(86_400) + 1) * 86_400
 }
 
 impl YouTubeSource for LiveYouTube {
@@ -133,7 +144,7 @@ impl YouTubeSource for LiveYouTube {
             Some(YouTubeQuotaResponse {
                 used: i64::from(status.used),
                 limit: i64::from(status.limit),
-                resets_at: next_utc_midnight(),
+                resets_at: next_utc_midnight(self.clock.now_unix()),
             })
         })
     }

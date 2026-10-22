@@ -28,6 +28,7 @@ use super::models::EventSource;
 use super::sources::Sources;
 use super::store::{ConcertsStore, StoreError};
 use super::{ActiveSources, now_unix, today};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::jobs::events_watcher::{EventsWatcher, SweepEnd};
 use droppedneedle_kernel::jobs::{BoxFuture, CancellationToken};
 use droppedneedle_kernel::runtime_config::Live;
@@ -88,22 +89,25 @@ pub struct ConcertsSweep {
     settings: Live<EventsSettings>,
     sources: Arc<Sources>,
     events: Arc<dyn ConcertsEvents>,
+    clock: Arc<dyn Clock>,
     inter_artist_delay: Duration,
 }
 
 impl ConcertsSweep {
-    /// Sweep over the shared store, settings, sources and event sink.
+    /// Sweep over the shared store, settings, sources, event sink and clock.
     pub fn new(
         store: ConcertsStore,
         settings: Live<EventsSettings>,
         sources: Arc<Sources>,
         events: Arc<dyn ConcertsEvents>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             store,
             settings,
             sources,
             events,
+            clock,
             inter_artist_delay: INTER_ARTIST_DELAY,
         }
     }
@@ -126,7 +130,7 @@ impl ConcertsSweep {
             tracing::debug!("events sweep skipped: no enabled source with a key");
             return Ok((SweepEnd::Finished, SweepSummary::default()));
         };
-        let today = today();
+        let today = today(self.clock.as_ref());
         let cutoff = today
             .checked_sub(time::Duration::days(PRUNE_GRACE_DAYS))
             .unwrap_or(today);
@@ -155,7 +159,7 @@ impl ConcertsSweep {
                     tracing::warn!(artist = %artist.mbid_lower, %cause, "events source unavailable");
                     if let Err(error) = self
                         .store
-                        .record_failure(&artist.mbid_lower, cause, now_unix())
+                        .record_failure(&artist.mbid_lower, cause, now_unix(self.clock.as_ref()))
                         .await
                     {
                         tracing::error!(artist = %artist.mbid_lower, %error, "events cursor write failed");
@@ -202,7 +206,7 @@ impl ConcertsSweep {
         let mut artists: Vec<SweepArtist> = by_mbid.into_values().collect();
         artists.sort_by(|a, b| age(a).total_cmp(&age(b)));
         if let Some(hours) = skip_recent_hours {
-            let fresh_after = now_unix() - hours * 3600.0;
+            let fresh_after = now_unix(self.clock.as_ref()) - hours * 3600.0;
             artists.retain(|artist| age(artist) < fresh_after);
         }
         if artists.len() > MAX_ARTISTS_PER_SWEEP {
@@ -245,7 +249,12 @@ impl ConcertsSweep {
             .collect();
         let new_events = current.difference(&existing).count();
         self.store
-            .apply_sweep(&artist.mbid_lower, collected, deletes, now_unix())
+            .apply_sweep(
+                &artist.mbid_lower,
+                collected,
+                deletes,
+                now_unix(self.clock.as_ref()),
+            )
             .await?;
         if new_events > 0 {
             self.notify_followers(artist, new_events).await;
@@ -260,7 +269,9 @@ impl ConcertsSweep {
     ) -> Result<Vec<EventRow>, ArtistError> {
         let cached = self.store.tm_resolution(&artist.mbid_lower).await?;
         let (attraction_id, basis) = match cached {
-            Some(found) if now_unix() - found.resolved_at <= RESOLUTION_TTL_SECS => {
+            Some(found)
+                if now_unix(self.clock.as_ref()) - found.resolved_at <= RESOLUTION_TTL_SECS =>
+            {
                 (found.attraction_id, found.basis)
             }
             _ => {
@@ -271,7 +282,12 @@ impl ConcertsSweep {
                 let (id, basis) =
                     pick_tm_attraction(&attractions, &artist.name, &artist.mbid_lower);
                 self.store
-                    .set_tm_resolution(&artist.mbid_lower, id.clone(), basis, now_unix())
+                    .set_tm_resolution(
+                        &artist.mbid_lower,
+                        id.clone(),
+                        basis,
+                        now_unix(self.clock.as_ref()),
+                    )
                     .await?;
                 (id, basis)
             }
@@ -301,7 +317,9 @@ impl ConcertsSweep {
     ) -> Result<Vec<EventRow>, ArtistError> {
         let cached = self.store.skiddle_resolution(&artist.mbid_lower).await?;
         let ids = match cached {
-            Some(found) if now_unix() - found.resolved_at <= RESOLUTION_TTL_SECS => {
+            Some(found)
+                if now_unix(self.clock.as_ref()) - found.resolved_at <= RESOLUTION_TTL_SECS =>
+            {
                 found.artist_ids
             }
             _ => {
@@ -311,7 +329,11 @@ impl ConcertsSweep {
                     .await?;
                 let ids = pick_skiddle_ids(&candidates, &artist.name);
                 self.store
-                    .set_skiddle_resolution(&artist.mbid_lower, ids.clone(), now_unix())
+                    .set_skiddle_resolution(
+                        &artist.mbid_lower,
+                        ids.clone(),
+                        now_unix(self.clock.as_ref()),
+                    )
                     .await?;
                 ids
             }

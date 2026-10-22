@@ -149,10 +149,11 @@ impl UserStore for SqliteUserStore {
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
             let lane = self.db.lane();
+            let created_at = self.db.now_unix();
             let outcome = lane
                 .write(Lane::Foreground, "auth.users.create", move |tx| {
                     insert_user_row(tx, &user)?;
-                    insert_local_row(tx, &credential)
+                    insert_local_row(tx, &credential, created_at)
                 })
                 .await;
             conflict_or_internal(outcome)
@@ -166,6 +167,7 @@ impl UserStore for SqliteUserStore {
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
             let lane = self.db.lane();
+            let created_at = self.db.now_unix();
             let outcome = lane
                 .write(Lane::Foreground, "auth.users.create_first", move |tx| {
                     let any: Option<i64> = tx
@@ -176,7 +178,7 @@ impl UserStore for SqliteUserStore {
                         return Ok(false);
                     }
                     insert_user_row(tx, &user)?;
-                    insert_local_row(tx, &credential)?;
+                    insert_local_row(tx, &credential, created_at)?;
                     Ok(true)
                 })
                 .await;
@@ -459,9 +461,10 @@ impl UserStore for SqliteUserStore {
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
             let lane = self.db.lane();
+            let created_at = self.db.now_unix();
             let outcome = lane
                 .write(Lane::Foreground, "auth.users.credential", move |tx| {
-                    insert_local_row(tx, &credential)
+                    insert_local_row(tx, &credential, created_at)
                 })
                 .await;
             conflict_or_internal(outcome)
@@ -547,6 +550,7 @@ impl UserStore for SqliteUserStore {
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
             let lane = self.db.lane();
+            let created_at = self.db.now_unix();
             let code_hash = code_hash.to_owned();
             lane.write(
                 Lane::Foreground,
@@ -579,7 +583,7 @@ impl UserStore for SqliteUserStore {
                     if consumed == 0 {
                         return Ok(false);
                     }
-                    insert_local_row(tx, &credential)?;
+                    insert_local_row(tx, &credential, created_at)?;
                     tx.execute(
                         "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ?",
                         rusqlite::params![id],
@@ -624,6 +628,7 @@ impl UserStore for SqliteUserStore {
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
             let lane = self.db.lane();
+            let created_at = self.db.now_unix();
             let outcome: Result<(), super::WriteError> = lane
                 .write(Lane::Foreground, "auth.users.bind", move |tx| {
                     tx.execute(
@@ -634,7 +639,7 @@ impl UserStore for SqliteUserStore {
                             binding.user_id,
                             binding.provider,
                             binding.provider_uid,
-                            to_iso(AuthDb::now_unix()),
+                            to_iso(created_at),
                         ],
                     )
                     .map_err(op_error)?;
@@ -705,6 +710,7 @@ fn insert_user_row(tx: &rusqlite::Transaction, user: &UserRecord) -> Result<(), 
 fn insert_local_row(
     tx: &rusqlite::Transaction,
     credential: &UsersLocalCredential,
+    created_at: i64,
 ) -> Result<(), super::WriteError> {
     let username: Option<String> = tx
         .query_row(
@@ -729,7 +735,7 @@ fn insert_local_row(
             credential.user_id,
             username,
             render_local_data(&credential.scheme, &credential.hash),
-            to_iso(AuthDb::now_unix()),
+            to_iso(created_at),
         ],
     )
     .map_err(op_error)?;

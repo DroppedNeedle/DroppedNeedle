@@ -61,6 +61,7 @@ impl Rig {
             .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &backup_dir,
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
             ))
             .with_checkpoint(runtime.checkpoint().clone());
         Self {

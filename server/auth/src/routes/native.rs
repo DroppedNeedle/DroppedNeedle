@@ -11,7 +11,7 @@ use crate::session::login::{
 };
 use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
-use crate::session::store::{SessionKind, SessionRecord, SessionStore, now_unix};
+use crate::session::store::{SessionKind, SessionRecord, SessionStore};
 use crate::session::tokens;
 use crate::users::UsersDeps;
 use crate::users::models::UserResponse;
@@ -151,7 +151,7 @@ pub async fn login_handler(
     }
     let ctx = LoginContext {
         user_agent: user_agent_of(&headers),
-        now_unix: now_unix(),
+        now_unix: clock_now(&state.users),
     };
     let request = LoginRequest {
         username: body.username,

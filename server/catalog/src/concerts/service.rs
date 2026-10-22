@@ -17,6 +17,7 @@ use super::models::{
 use super::sources::Sources;
 use super::store::{ConcertsStore, StoreError};
 use super::{ActiveSources, now_unix, today};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
 use droppedneedle_providers::RequestPriority;
@@ -63,19 +64,22 @@ pub struct ConcertsService {
     store: ConcertsStore,
     settings: Live<EventsSettings>,
     sources: Arc<Sources>,
+    clock: Arc<dyn Clock>,
 }
 
 impl ConcertsService {
-    /// Service over the shared store, settings and sources.
+    /// Service over the shared store, settings, sources and clock.
     pub fn new(
         store: ConcertsStore,
         settings: Live<EventsSettings>,
         sources: Arc<Sources>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             store,
             settings,
             sources,
+            clock,
         }
     }
 
@@ -91,7 +95,7 @@ impl ConcertsService {
         user_id: &str,
         discovered_after: Option<f64>,
     ) -> Result<Vec<super::matching::StoredConcert>, ConcertsError> {
-        let min_date = today().to_string();
+        let min_date = today(self.clock.as_ref()).to_string();
         let library_scope = ActiveSources::scope(&self.settings) == EventsSweepScope::Library;
         let user = (!library_scope).then_some(user_id);
         Ok(self
@@ -132,7 +136,10 @@ impl ConcertsService {
 
     /// Stamp the user's seen marker.
     pub async fn mark_seen(&self, user_id: &str) -> Result<(), ConcertsError> {
-        Ok(self.store.mark_seen(user_id, now_unix()).await?)
+        Ok(self
+            .store
+            .mark_seen(user_id, now_unix(self.clock.as_ref()))
+            .await?)
     }
 
     /// The user's cities in picker order.

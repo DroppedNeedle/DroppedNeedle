@@ -136,7 +136,7 @@ impl FederatedUserStore for SqliteFederatedStore {
             .crypto
             .encrypt(&user.token_json)
             .map_err(|error| store_unavailable(format!("cannot seal provider tokens: {error}")))?;
-        let created = to_iso(AuthDb::now_unix());
+        let created = to_iso(self.db.now_unix());
         let row = user.clone();
         let row_id = id.clone();
         let outcome = lane
@@ -214,7 +214,7 @@ impl FederatedUserStore for SqliteFederatedStore {
             provider.to_owned(),
             provider_uid.to_owned(),
         );
-        let created = to_iso(AuthDb::now_unix());
+        let created = to_iso(self.db.now_unix());
         let (bid, buser, bprovider, buid) = (
             id.clone(),
             user_id.clone(),

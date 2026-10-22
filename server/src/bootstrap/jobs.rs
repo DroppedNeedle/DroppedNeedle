@@ -348,7 +348,7 @@ impl JobsSetup {
             watcher,
             mixer: Arc::new(UnwiredMixer),
             demand: Arc::new(NoDemand),
-            cache_sync: CacheSyncStatus::new(platform.events.clone()),
+            cache_sync: CacheSyncStatus::new(platform.events.clone(), platform.clock.clone()),
             precache_sources: None,
             scans,
             queues: None,

@@ -983,7 +983,10 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
         droppedneedle_kernel::db::open_runtime(&droppedneedle_kernel::db::DbConfig::new(&db_path))
             .await
             .expect("database opens");
-    let auth_db = AuthDb::new(runtime.db());
+    let auth_db = AuthDb::new(
+        runtime.db(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let hasher = Argon2idHasher::new();
     // The rig's settings live apart from the imported ones, which are
     // sealed with the server's own key.
@@ -1028,12 +1031,15 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
             },
             LoginContext {
                 user_agent: None,
-                now_unix: droppedneedle_auth::session::store::now_unix(),
+                now_unix: droppedneedle_kernel::clock::Clock::now_unix(
+                    &droppedneedle_kernel::clock::SystemClock,
+                ),
             },
         )
     };
     assert!(sign_in().await.is_err(), "no password before the reset");
-    let now = droppedneedle_auth::session::store::now_unix();
+    let now =
+        droppedneedle_kernel::clock::Clock::now_unix(&droppedneedle_kernel::clock::SystemClock);
     SqliteSessionStore::new(&auth_db)
         .insert(SessionRecord {
             id: "sess-alice".to_owned(),
@@ -1501,7 +1507,11 @@ async fn restore_round_trips_and_refuses() {
     pool.close().await;
 
     let backup_dir = root.join("backups");
-    let service = BackupService::new(&live, &backup_dir);
+    let service = BackupService::new(
+        &live,
+        &backup_dir,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let taken = service
         .backup(None, &CancelFlag::never())
         .await

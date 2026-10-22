@@ -26,8 +26,10 @@
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+use crate::clock::Clock;
 
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -205,10 +207,11 @@ impl Default for BackpressurePolicy {
 
 /// Checkpoint runner. Cloneable handle over shared state; blocking passes
 /// run through `spawn_blocking` so the runtime never stalls.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CheckpointService {
     db_path: PathBuf,
     pool: SqlitePool,
+    clock: Arc<dyn Clock>,
     lane_idle: Arc<LaneIdle>,
     policy: Arc<Mutex<BackpressurePolicy>>,
     latest: Arc<RwLock<Option<CheckpointOutcome>>>,
@@ -220,19 +223,30 @@ pub struct CheckpointService {
     analyze: Option<super::analyze::AnalyzeService>,
 }
 
+impl std::fmt::Debug for CheckpointService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckpointService")
+            .field("db_path", &self.db_path)
+            .finish_non_exhaustive()
+    }
+}
+
 impl CheckpointService {
     /// Wire the service. The pool is read for reader-idle checks only; the
     /// lane handle feeds the writer-idle half of the `TRUNCATE` gate, and
     /// `hold` is the lane's hold on bulk writes, which every pass sets.
+    /// `clock` dates each pass.
     pub fn new(
         db_path: &Path,
         pool: SqlitePool,
         lane_idle: Arc<LaneIdle>,
         hold: Arc<WalHold>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             db_path: db_path.to_owned(),
             pool,
+            clock,
             lane_idle,
             policy: Arc::new(Mutex::new(BackpressurePolicy::new())),
             latest: Arc::new(RwLock::new(None)),
@@ -364,7 +378,8 @@ impl CheckpointService {
     /// that leaves the hold on is logged at debug.
     fn run_pass(&self, mode: CheckpointMode, relief: bool) -> CheckpointOutcome {
         let started = Instant::now();
-        let at = SystemTime::now();
+        let at =
+            UNIX_EPOCH + Duration::from_millis(u64::try_from(self.clock.now_ms()).unwrap_or(0));
         let pragma = match mode {
             CheckpointMode::Passive => "PRAGMA wal_checkpoint(PASSIVE)",
             CheckpointMode::Truncate => "PRAGMA wal_checkpoint(TRUNCATE)",

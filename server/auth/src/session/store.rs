@@ -97,11 +97,3 @@ pub trait SessionStore: Clone + Send + Sync + 'static {
         now_unix: i64,
     ) -> impl Future<Output = Result<Option<ValidSession>, SessionStoreError>> + Send;
 }
-
-/// Current unix time in whole seconds.
-pub fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}

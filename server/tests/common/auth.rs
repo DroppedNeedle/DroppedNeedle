@@ -17,7 +17,7 @@ use axum::{
 use droppedneedle_auth::federated::password_import::PasswordHasher as _;
 use droppedneedle_auth::prod::{Argon2idHasher, ProdAuth};
 use droppedneedle_auth::session::middleware::SessionAuth;
-use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _, now_unix};
+use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::sqlite::SqliteSessionStore;
 use droppedneedle_auth::users::UsersDeps;
@@ -196,9 +196,9 @@ impl AuthRig {
     }
 
     /// Sign `user_id` in with the raw `token`: one standard session issued
-    /// now by the wall clock, which the session gate reads, not the rig's.
+    /// now by the platform clock, which the session gate reads.
     pub async fn sign_in(&self, user_id: &str, token: &str) {
-        let now = now_unix();
+        let now = self.gate.clock.now_unix();
         let token_hash = tokens::hash_token(token);
         self.auth
             .sessions

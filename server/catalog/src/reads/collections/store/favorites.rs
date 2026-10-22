@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use rusqlite::params;
 use sqlx::Row as _;
 
-use super::super::db::{CollectionsDb, StoreError, now_real, placeholders};
+use super::super::db::{CollectionsDb, StoreError, placeholders};
 
 /// Kinds the table accepts (its CHECK constraint).
 pub const KINDS: [&str; 3] = ["album", "artist", "track"];
@@ -149,9 +149,9 @@ impl FavoriteStore {
         }
         let user_id = user_id.to_owned();
         let targets = targets.to_vec();
+        let now = self.db.now_real();
         self.db
             .write("favorites.apply", move |tx| {
-                let now = now_real();
                 if add {
                     let mut favorite = tx.prepare(
                         "INSERT INTO library_user_favorites \

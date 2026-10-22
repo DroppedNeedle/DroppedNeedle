@@ -86,6 +86,7 @@ impl Rig {
             .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &dir.join("backups"),
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
             ))
             .with_checkpoint(runtime.checkpoint().clone())
             .with_precache(jobs.precache_trigger());
@@ -231,6 +232,7 @@ async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
         rig.runtime.db().sqlx().clone(),
         Arc::default(),
         Arc::default(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
     assert!(failing.run_once().error.is_some());
     rig.admin = rig.admin.clone().with_checkpoint(failing);

@@ -781,7 +781,10 @@ async fn login_rehashes(
     .expect("provider row reads");
     assert!(before.contains("$2b$"), "bcrypt carried verbatim: {before}");
 
-    let auth_db = AuthDb::new(db);
+    let auth_db = AuthDb::new(
+        db,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let hasher = droppedneedle_auth::passwords::Argon2idHasher::new();
     let mut sessions = SqliteSessionStore::new(&auth_db);
     sessions.set_rehash_queue(hasher.rehash_queue().clone());
@@ -869,7 +872,10 @@ async fn assert_compat_reauth(
     use droppedneedle_auth::sqlite::{AuthDb, SqliteAppPasswordStore};
     use droppedneedle_auth::users::stores::AppPasswordStore;
 
-    let auth_db = AuthDb::new(db);
+    let auth_db = AuthDb::new(
+        db,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let store = SqliteAppPasswordStore::new(&auth_db);
     let crypto = Crypto::load(&v3_root.join("config")).expect("v3 key loads");
 

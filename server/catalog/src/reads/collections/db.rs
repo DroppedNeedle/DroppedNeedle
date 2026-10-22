@@ -8,9 +8,12 @@
 //! the conversion in the statements (`strftime`), so the stores trade in
 //! epoch seconds and never parse dates themselves.
 
+use std::sync::Arc;
+
 use rusqlite::Transaction;
 use sqlx::SqlitePool;
 
+use droppedneedle_kernel::clock::{Clock, SystemClock};
 use droppedneedle_kernel::db::{Db, DbError, Lane, map_sqlx_busy};
 
 /// Every way a store call can fail. The text goes to the log only.
@@ -39,22 +42,53 @@ impl StoreError {
 }
 
 /// The application database, or none in bundles that never serve
-/// collections.
-#[derive(Clone, Debug, Default)]
+/// collections, and the clock rows are stamped by.
+#[derive(Clone)]
 pub struct CollectionsDb {
     live: Option<Db>,
+    clock: Arc<dyn Clock>,
+}
+
+impl std::fmt::Debug for CollectionsDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CollectionsDb")
+            .field("live", &self.live)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CollectionsDb {
-    /// Handle over the serving runtime's database.
-    pub fn new(db: Db) -> Self {
-        Self { live: Some(db) }
+    /// Handle over the serving runtime's database and clock.
+    pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
+        Self {
+            live: Some(db),
+            clock,
+        }
     }
 
     /// A handle with no database: every call fails closed with a logged
     /// 5xx. Only bundles that never serve collections build this.
     pub fn unwired() -> Self {
-        Self::default()
+        Self {
+            live: None,
+            clock: Arc::new(SystemClock),
+        }
+    }
+
+    /// Now, as epoch milliseconds.
+    pub fn now_ms(&self) -> i64 {
+        self.clock.now_ms()
+    }
+
+    /// Now, as epoch seconds. A clock before the epoch reads as zero.
+    pub fn now_epoch(&self) -> u64 {
+        u64::try_from(self.clock.now_unix()).unwrap_or(0)
+    }
+
+    /// Now, as fractional epoch seconds to the millisecond, for the REAL
+    /// columns.
+    pub fn now_real(&self) -> f64 {
+        self.clock.now_ms().max(0) as f64 / 1000.0
     }
 
     /// Reader pool, or the unwired failure.
@@ -77,23 +111,6 @@ impl CollectionsDb {
 
 fn unwired() -> StoreError {
     StoreError::Internal("collections database is not wired".to_owned())
-}
-
-/// Current time as epoch seconds. A broken clock reads as zero rather than
-/// failing the request.
-pub fn now_epoch() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs())
-        .unwrap_or(0)
-}
-
-/// Current time as fractional epoch seconds, for the REAL columns.
-pub fn now_real() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 /// Epoch seconds from a REAL column. Negative or broken values read as zero.

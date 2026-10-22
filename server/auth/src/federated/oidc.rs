@@ -18,6 +18,9 @@ use base64::{
 };
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
+
+use droppedneedle_kernel::clock::Clock;
 
 use super::jwt::{IdTokenError, IdTokenRules, verify_id_token};
 use super::oidc_models::Jwk;
@@ -214,24 +217,39 @@ pub trait OidcExchangeStore: Clone + Send + Sync + 'static {
 }
 
 /// OIDC login service. Generic over stores so tests inject fakes.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OidcLogin<S, I, T, E, N> {
     users: S,
     idp: I,
     states: T,
     exchanges: E,
     sessions: N,
+    clock: Arc<dyn Clock>,
+}
+
+impl<S, I, T, E, N> std::fmt::Debug for OidcLogin<S, I, T, E, N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcLogin").finish_non_exhaustive()
+    }
 }
 
 impl<S, I, T, E, N> OidcLogin<S, I, T, E, N> {
-    /// Wire the service from its ports.
-    pub fn new(users: S, idp: I, states: T, exchanges: E, sessions: N) -> Self {
+    /// Wire the service from its ports; `clock` dates the id token checks.
+    pub fn new(
+        users: S,
+        idp: I,
+        states: T,
+        exchanges: E,
+        sessions: N,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             users,
             idp,
             states,
             exchanges,
             sessions,
+            clock,
         }
     }
 }
@@ -343,7 +361,7 @@ where
             client_id: &config.client_id,
             client_secret: config.client_secret.as_deref(),
             nonce,
-            now_unix: unix_now(),
+            now_unix: self.clock.now_unix(),
             allowed_algs: &doc.id_token_algs,
         };
         let keys = self.idp.signing_keys(&doc.jwks_uri, false).await?;
@@ -442,13 +460,6 @@ pub fn nonce_for(verifier: &str) -> String {
     digest.update(b"droppedneedle-oidc-nonce:");
     digest.update(verifier.as_bytes());
     URL_SAFE_NO_PAD.encode(digest.finalize())
-}
-
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 /// Percent-encode one form value (Python `quote_plus` parity: alnum plus

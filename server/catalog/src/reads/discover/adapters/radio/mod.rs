@@ -54,6 +54,7 @@ use crate::reads::discover::models::{
     RadioPlanTrack, RadioRequest, RadioSeedItem, SectionItem,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, RadioFailure, RadioPlanner};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
@@ -87,6 +88,8 @@ pub struct RadioInputs {
     pub catalog: Catalog,
     /// Keyless previews (Deezer, then iTunes).
     pub previews: PreviewClient,
+    /// Wall time, which picks the day's shuffle.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// Radio over the live providers and the library.
@@ -99,6 +102,7 @@ pub struct LiveRadio {
     catalog: Catalog,
     previews: PreviewClient,
     lookups: LookupCache,
+    clock: Arc<dyn Clock>,
 }
 
 /// Recent provider answers for plans (top tracks, album samples), so a
@@ -178,8 +182,11 @@ fn title_case(text: &str) -> String {
     out
 }
 
-fn today() -> String {
-    time::OffsetDateTime::now_utc().date().to_string()
+fn today(clock: &dyn Clock) -> String {
+    time::OffsetDateTime::from_unix_timestamp(clock.now_unix())
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+        .date()
+        .to_string()
 }
 
 fn seed(mbid: &str, name: &str) -> ArtistRow {
@@ -226,6 +233,7 @@ impl LiveRadio {
             catalog: inputs.catalog,
             previews: inputs.previews,
             lookups: LookupCache::default(),
+            clock: inputs.clock,
         }
     }
 
@@ -320,7 +328,7 @@ impl LiveRadio {
                 Vec::new()
             }
         };
-        daily_shuffler(&today(), parts).shuffle(&mut artists);
+        daily_shuffler(&today(self.clock.as_ref()), parts).shuffle(&mut artists);
         artists.truncate(want);
         artists
     }

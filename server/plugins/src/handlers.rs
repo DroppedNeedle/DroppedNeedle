@@ -57,6 +57,8 @@ pub struct PluginsDeps {
     pub tick_sync: Arc<dyn TickLoopSync>,
     /// `/ext/` rate limiter.
     pub ext_limiter: Arc<ExtRateLimiter>,
+    /// Wall time, stamped on install records.
+    pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 fn map_install(error: InstallError) -> PluginError {
@@ -206,7 +208,8 @@ async fn stage_request(
 /// Write a staged plugin to disk off the async workers, then re-sync ticks.
 async fn install_staged(deps: &PluginsDeps, staged: StagedPlugin) -> Result<String, PluginError> {
     let host = Arc::clone(&deps.host);
-    let name = tokio::task::spawn_blocking(move || host.install_staged(&staged))
+    let installed_at = deps.clock.now_unix();
+    let name = tokio::task::spawn_blocking(move || host.install_staged(&staged, installed_at))
         .await
         .map_err(|error| PluginError::internal(&error))?
         .map_err(map_install)?;

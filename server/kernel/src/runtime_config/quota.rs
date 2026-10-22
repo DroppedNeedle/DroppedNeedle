@@ -96,11 +96,6 @@ impl std::fmt::Debug for QuotaStore {
 }
 
 impl QuotaStore {
-    /// Open the store at `path`, using the system clock for UTC dates.
-    pub fn open(path: &Path) -> Result<Self, QuotaError> {
-        Self::open_with_clock(path, Arc::new(|| utc_today_string(SystemTime::now())))
-    }
-
     /// Open the store with an injected UTC-date clock (rollover tests).
     pub fn open_with_clock(
         path: &Path,

@@ -123,7 +123,10 @@ fn rig_with(
     let http = http_client();
     let platform = &auth.platform;
     let db = AcquireDb::new(platform.db.clone(), platform.clock.clone());
-    let playlists = PlaylistStore::new(CollectionsDb::new(platform.db.clone()));
+    let playlists = PlaylistStore::new(CollectionsDb::new(
+        platform.db.clone(),
+        platform.clock.clone(),
+    ));
     let lidarr_settings = Arc::new(ConfigLidarrSettings::new(platform.settings.clone()));
     let follows = Follows::new(db.clone());
     let spotify_settings = Arc::new(ConfigSpotifySettings::new(platform.settings.clone()));
@@ -1401,8 +1404,10 @@ async fn spotify_sqlite_stores_persist_and_expire() {
     );
     assert_eq!(links.get("u1").await.expect("store reads"), None);
 
-    let collections =
-        droppedneedle_catalog::reads::collections::db::CollectionsDb::new(db.db().clone());
+    let collections = droppedneedle_catalog::reads::collections::db::CollectionsDb::new(
+        db.db().clone(),
+        db.clock().clone(),
+    );
     let bridge = CollectionsPlaylistBridge::new(
         droppedneedle_catalog::reads::collections::store::PlaylistStore::new(collections),
         db.clone(),

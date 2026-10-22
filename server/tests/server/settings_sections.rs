@@ -63,7 +63,13 @@ fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
     tokio::spawn(runner.run(droppedneedle_kernel::jobs::CancellationToken::new()));
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
     (
-        SettingsService::new(store, settled, ids, Arc::new(FakeProbes::passing())),
+        SettingsService::new(
+            store,
+            settled,
+            ids,
+            Arc::new(FakeProbes::passing()),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
         effects,
         dir,
     )

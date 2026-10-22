@@ -97,8 +97,8 @@ impl LastFmStore for SqliteLastFmStore {
         Box::pin(async move {
             let lane = self.db.lane();
             let user_id = user_id.to_owned();
+            let now = to_iso(self.db.now_unix());
             lane.write(Lane::Foreground, "auth.lastfm.upsert", move |tx| {
-                let now = to_iso(AuthDb::now_unix());
                 tx.execute(
                     "INSERT INTO user_connections (user_id, service, connection_data, enabled, \
                      created_at, updated_at) VALUES (?, 'lastfm', ?, 1, ?, ?) \

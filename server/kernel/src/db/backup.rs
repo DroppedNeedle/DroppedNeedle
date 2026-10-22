@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::{error::DbError, fs::same_filesystem, sql, writer::CancelFlag};
+use crate::clock::Clock;
 
 /// Pages copied per backup step. The v2 `pages=256` value, unchanged.
 pub const BACKUP_STEP_PAGES: i32 = 256;
@@ -81,23 +82,39 @@ pub struct RestoredBackup {
 }
 
 /// Backup and restore against one live database file.
-#[derive(Debug)]
 pub struct BackupService {
     db_path: PathBuf,
     backup_dir: PathBuf,
+    clock: Arc<dyn Clock>,
     staging_seq: AtomicU64,
     live: Mutex<HashSet<PathBuf>>,
 }
 
+impl std::fmt::Debug for BackupService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackupService")
+            .field("db_path", &self.db_path)
+            .field("backup_dir", &self.backup_dir)
+            .finish_non_exhaustive()
+    }
+}
+
 impl BackupService {
-    /// Wire the service. The directory is created on the first backup.
-    pub fn new(db_path: &Path, backup_dir: &Path) -> Self {
+    /// Wire the service; `clock` dates and names each backup. The
+    /// directory is created on the first backup.
+    pub fn new(db_path: &Path, backup_dir: &Path, clock: Arc<dyn Clock>) -> Self {
         Self {
             db_path: db_path.to_owned(),
             backup_dir: backup_dir.to_owned(),
+            clock,
             staging_seq: AtomicU64::new(0),
             live: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Now, as wall-clock milliseconds, by the service's clock.
+    fn now_millis(&self) -> u64 {
+        u64::try_from(self.clock.now_ms()).unwrap_or(0)
     }
 
     /// Backups directory this service rotates within.
@@ -143,7 +160,8 @@ impl BackupService {
         cancel: &CancelFlag,
     ) -> Result<BackupReport, DbError> {
         let source_path = self.db_path.clone();
-        let final_name = backup_file_name(SystemTime::now(), seq);
+        let created_at = UNIX_EPOCH + Duration::from_millis(self.now_millis());
+        let final_name = backup_file_name(created_at, seq);
         let final_path = self.backup_dir.join(&final_name);
         let started = Instant::now();
         let staging_for_copy = staging.to_owned();
@@ -168,7 +186,7 @@ impl BackupService {
         let backup_dir = self.backup_dir.clone();
         let (path, manifest) = tokio::task::spawn_blocking(move || {
             fold_staging(&staging)?;
-            let manifest = verify_staging(&staging)?;
+            let manifest = verify_staging(&staging, created_at)?;
             remove_staging_sidecars(&staging);
             std::fs::rename(&staging, &final_path)?;
             let sidecar = manifest_path(&final_path);
@@ -224,10 +242,12 @@ impl BackupService {
 
         std::fs::create_dir_all(target_dir)?;
         let target = target_dir.join("library.db");
+        let seq = self.staging_seq.fetch_add(1, Ordering::Relaxed);
         let temp = target_dir.join(format!(
-            ".restore-{}-{}.tmp",
+            ".restore-{}-{}-{}.tmp",
             std::process::id(),
-            now_millis()
+            self.now_millis(),
+            seq
         ));
         let bytes = std::fs::copy(backup_db, &temp)?;
         std::fs::rename(&temp, &target)?;
@@ -249,7 +269,7 @@ impl BackupService {
         let path = self.backup_dir.join(format!(
             ".staging-{}-{}-{}.db",
             std::process::id(),
-            now_millis(),
+            self.now_millis(),
             seq
         ));
         (path, seq)
@@ -375,7 +395,7 @@ fn remove_staging_sidecars(staging: &Path) {
 }
 
 /// Verify a staging copy: integrity plus foreign keys, then identity.
-fn verify_staging(staging: &Path) -> Result<BackupManifest, DbError> {
+fn verify_staging(staging: &Path, created_at: SystemTime) -> Result<BackupManifest, DbError> {
     let connection = Connection::open_with_flags(staging, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     if check_clean(&connection).is_err() {
         drop(connection);
@@ -390,7 +410,7 @@ fn verify_staging(staging: &Path) -> Result<BackupManifest, DbError> {
         sha256,
         size_bytes,
         user_version,
-        created_at: SystemTime::now(),
+        created_at,
     })
 }
 
@@ -463,14 +483,6 @@ fn backup_file_name(now: SystemTime, seq: u64) -> String {
         .map(|span| span.as_millis())
         .unwrap_or(0);
     format!("library-{millis}-{seq}.db")
-}
-
-/// Wall-clock milliseconds for unique temp names.
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// Lowercase hex of a SHA-256 digest.

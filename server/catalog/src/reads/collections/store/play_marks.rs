@@ -28,15 +28,6 @@ pub struct PlayMarkStore {
     db: CollectionsDb,
 }
 
-/// Current time as epoch milliseconds. A broken clock reads as zero
-/// rather than failing the request.
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| i64::try_from(span.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
-
 impl PlayMarkStore {
     /// Store over one database.
     pub fn new(db: CollectionsDb) -> Self {
@@ -81,9 +72,10 @@ impl PlayMarkStore {
              ON CONFLICT (user_id, local_track_id) DO UPDATE SET {update}"
         );
         let id = id.to_owned();
+        let now_ms = self.db.now_ms();
         self.db
             .write("play_marks.mark", move |tx| {
-                tx.execute(&sql, params![user_id, now_millis(), id])?;
+                tx.execute(&sql, params![user_id, now_ms, id])?;
                 Ok(())
             })
             .await

@@ -28,8 +28,8 @@ pub mod store;
 pub mod sweep;
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
@@ -53,17 +53,19 @@ struct Live {
     settings: LiveSettings<EventsSettings>,
     sources: Arc<sources::Sources>,
     events: Arc<dyn ConcertsEvents>,
+    clock: Arc<dyn Clock>,
 }
 
 impl ConcertsSetup {
-    /// Production wiring over the platform's database, events settings and
-    /// event hub, with the providers' events clients.
+    /// Production wiring over the platform's database, events settings,
+    /// event hub and clock, with the providers' events clients.
     pub fn from_platform(platform: &Platform, providers: &Providers) -> Self {
         Self::new(
             platform.db.clone(),
             platform.settings.live(),
             providers,
             Arc::new(platform.events.clone()),
+            platform.clock.clone(),
         )
     }
 
@@ -74,6 +76,7 @@ impl ConcertsSetup {
         settings: LiveSettings<EventsSettings>,
         providers: &Providers,
         events: Arc<dyn ConcertsEvents>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             live: Some(Live {
@@ -81,6 +84,7 @@ impl ConcertsSetup {
                 settings,
                 sources: Arc::new(sources::Sources::new(providers)),
                 events,
+                clock,
             }),
         }
     }
@@ -94,6 +98,7 @@ impl ConcertsSetup {
                 live.settings.clone(),
                 Arc::clone(&live.sources),
                 Arc::clone(&live.events),
+                Arc::clone(&live.clock),
             )
         })
     }
@@ -105,6 +110,7 @@ impl ConcertsSetup {
                 live.store.clone(),
                 live.settings.clone(),
                 Arc::clone(&live.sources),
+                Arc::clone(&live.clock),
             )
         })
     }
@@ -156,15 +162,14 @@ fn read_settings(settings: &LiveSettings<EventsSettings>) -> Option<Arc<Plain<Ev
         .ok()
 }
 
-/// Wall clock as unix seconds, the feed's timestamp unit.
-pub(crate) fn now_unix() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
+/// `clock`'s time as unix seconds, the feed's timestamp unit.
+pub(crate) fn now_unix(clock: &dyn Clock) -> f64 {
+    clock.now_ms() as f64 / 1000.0
 }
 
-/// Today's UTC date.
-pub(crate) fn today() -> time::Date {
-    time::OffsetDateTime::now_utc().date()
+/// `clock`'s UTC date.
+pub(crate) fn today(clock: &dyn Clock) -> time::Date {
+    time::OffsetDateTime::from_unix_timestamp(clock.now_unix())
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+        .date()
 }

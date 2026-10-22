@@ -24,7 +24,7 @@ use droppedneedle_auth::federated::plex::plex_auth_url;
 use droppedneedle_auth::federated::users::{
     FederatedProfile, derive_username, find_or_create_federated_user, username_base,
 };
-use droppedneedle_auth::session::store::{SessionStore as _, now_unix};
+use droppedneedle_auth::session::store::SessionStore as _;
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_auth::users::stores::SessionManager as _;
@@ -1181,9 +1181,10 @@ async fn old_sessions_die_on_import_while_new_logins_work() {
     let user = rig.seed_user("imma", Role::User).await;
     let is_live = |token: String| {
         let sessions = rig.auth.sessions.clone();
+        let now_unix = rig.platform.clock.now_unix();
         async move {
             sessions
-                .lookup_valid(&tokens::hash_token(&token), now_unix())
+                .lookup_valid(&tokens::hash_token(&token), now_unix)
                 .await
                 .expect("session lookup")
                 .is_some()

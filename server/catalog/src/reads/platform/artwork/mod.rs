@@ -73,7 +73,7 @@ use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use droppedneedle_providers::wikidata::CommonsImage;
 use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority, Singleflight};
 
-use self::cache::{ArtworkCache, CreditSource, ImageCredit, KeyEntry, sha256_hex, unix_now};
+use self::cache::{ArtworkCache, CreditSource, ImageCredit, KeyEntry, sha256_hex};
 use self::local::{LocalArt, LocalArtwork, local_art_stamp, read_local_art};
 use self::remote::{ImageFetch, RemoteCovers, RemoteImages};
 use droppedneedle_kernel::runtime_config::Live;
@@ -448,7 +448,9 @@ impl ArtworkService {
     async fn settled(&self, key: &str) -> bool {
         match self.cache.key(key).await {
             Some(KeyEntry::Hit { hash, .. }) => self.cache.has_blob(&hash).await,
-            Some(KeyEntry::Miss { until } | KeyEntry::Unreachable { until }) => until > unix_now(),
+            Some(KeyEntry::Miss { until } | KeyEntry::Unreachable { until }) => {
+                until > self.cache.unix_now()
+            }
             None => false,
         }
     }
@@ -500,8 +502,10 @@ impl ArtworkService {
                     return CoverLookup::Found(image);
                 }
             }
-            Some(KeyEntry::Miss { until }) if until > unix_now() => return CoverLookup::Missing,
-            Some(KeyEntry::Unreachable { until }) if until > unix_now() => {
+            Some(KeyEntry::Miss { until }) if until > self.cache.unix_now() => {
+                return CoverLookup::Missing;
+            }
+            Some(KeyEntry::Unreachable { until }) if until > self.cache.unix_now() => {
                 return CoverLookup::Warming;
             }
             _ => {}
@@ -702,7 +706,7 @@ impl ArtworkService {
                     return Some(cover);
                 }
             }
-            Some(KeyEntry::Miss { until }) if until > unix_now() => {
+            Some(KeyEntry::Miss { until }) if until > self.cache.unix_now() => {
                 return self.serve_local(arts.first()?, size).await;
             }
             _ => {}
@@ -843,8 +847,10 @@ impl ArtworkService {
                     });
                 }
             }
-            Some(KeyEntry::Miss { until }) if until > unix_now() => return CoverLookup::Missing,
-            Some(KeyEntry::Unreachable { until }) if until > unix_now() => {
+            Some(KeyEntry::Miss { until }) if until > self.cache.unix_now() => {
+                return CoverLookup::Missing;
+            }
+            Some(KeyEntry::Unreachable { until }) if until > self.cache.unix_now() => {
                 return CoverLookup::Warming;
             }
             _ => {}

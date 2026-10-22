@@ -88,12 +88,16 @@ pub trait ConnectionStore: Send + Sync {
 #[derive(Clone)]
 pub struct SqliteConnectionStore {
     db: droppedneedle_kernel::db::Db,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl SqliteConnectionStore {
-    /// Bind the store to a migrated database.
-    pub fn new(db: droppedneedle_kernel::db::Db) -> Self {
-        Self { db }
+    /// Bind the store to a migrated database, its rows dated by `clock`.
+    pub fn new(
+        db: droppedneedle_kernel::db::Db,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
+        Self { db, clock }
     }
 }
 
@@ -131,13 +135,13 @@ impl ConnectionStore for SqliteConnectionStore {
     ) -> BoxFuture<'a, Result<(), String>> {
         let user_id = user_id.to_owned();
         let service = service.to_owned();
+        let now = droppedneedle_auth::times::to_iso(self.clock.now_unix());
         Box::pin(async move {
             self.db
                 .write(
                     droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.connection.upsert",
                     move |tx| {
-                        let now = droppedneedle_auth::times::to_iso(unix_now());
                         tx.execute(
                             "INSERT INTO user_connections \
                              (user_id, service, connection_data, enabled, created_at, updated_at) \
@@ -1118,13 +1122,6 @@ impl droppedneedle_auth::federated::MediaLinkStore for SignInLinks {
             },
         ))
     }
-}
-
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

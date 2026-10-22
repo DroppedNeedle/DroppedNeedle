@@ -17,6 +17,7 @@ use super::wrapped::{
     WrappedGenre, WrappedLeaderboardEntry, WrappedTrack, WrappedUserSummary,
 };
 use droppedneedle_auth::users::stores::UserStore;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_media::playback::listening::ListenBrainzLinkStore;
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::{ProviderError, RequestPriority};
@@ -39,19 +40,22 @@ pub struct ListenBrainzWrapped {
     users: Arc<dyn UserStore>,
     links: Arc<dyn ListenBrainzLinkStore>,
     client: ListenBrainzClient,
+    clock: Arc<dyn Clock>,
 }
 
 impl ListenBrainzWrapped {
-    /// Wire the data source.
+    /// Wire the data source; `clock` says which year is current.
     pub fn new(
         users: Arc<dyn UserStore>,
         links: Arc<dyn ListenBrainzLinkStore>,
         client: ListenBrainzClient,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             users,
             links,
             client,
+            clock,
         }
     }
 
@@ -172,7 +176,9 @@ fn leg<T>(result: Result<Vec<T>, ProviderError>, label: &str, user_id: &str) -> 
 
 impl WrappedData for ListenBrainzWrapped {
     fn current_year(&self) -> i32 {
-        time::OffsetDateTime::now_utc().year()
+        time::OffsetDateTime::from_unix_timestamp(self.clock.now_unix())
+            .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+            .year()
     }
 
     fn list_users(&self) -> BoxFuture<'_, Vec<WrappedUserSummary>> {

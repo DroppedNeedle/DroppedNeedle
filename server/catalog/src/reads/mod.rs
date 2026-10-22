@@ -75,7 +75,11 @@ pub fn artwork(
     use platform::artwork::{ArtworkService, cache::ArtworkCache, local::LocalArtwork};
 
     ArtworkService::new(
-        ArtworkCache::new(inputs.covers_dir.clone(), inputs.cover_cache_max_bytes),
+        ArtworkCache::new(
+            inputs.covers_dir.clone(),
+            inputs.cover_cache_max_bytes,
+            Arc::clone(&platform.clock),
+        ),
         LocalArtwork::new(platform.db.sqlx().clone()),
         Some(Arc::new(inputs.providers.coverart.clone())),
         platform.settings.live(),
@@ -238,6 +242,7 @@ fn platform_state(
         users.users.clone(),
         inputs.listenbrainz_links,
         inputs.providers.listenbrainz.clone(),
+        Arc::clone(&users.clock),
     ));
     platform::PlatformState::new(
         CoversState::new(Arc::new(artwork.clone())),

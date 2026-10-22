@@ -73,10 +73,11 @@ use super::{
     origin::{OriginDecision, check_origin, is_unsafe_method, named_origin},
     rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited},
     stated::StatedAddresses,
-    store::{SessionStore, SessionStoreError, now_unix},
+    store::{SessionStore, SessionStoreError},
     tokens::hash_token,
 };
 use crate::users::roles::Principal;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::runtime_config::origin::Origin;
@@ -94,10 +95,12 @@ impl WarnOnce {
 }
 
 /// Shared middleware state: the session store plus deployment facts.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionAuth<S> {
     /// Token store.
     pub store: S,
+    /// Wall time a token's expiry is checked against.
+    pub clock: Arc<dyn Clock>,
     /// Deployment base path (`""` at the domain root). The router strips
     /// it before this layer runs.
     pub base_path: String,
@@ -118,12 +121,23 @@ pub struct SessionAuth<S> {
     unlisted_proxy_warned: WarnOnce,
 }
 
+impl<S: std::fmt::Debug> std::fmt::Debug for SessionAuth<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionAuth")
+            .field("store", &self.store)
+            .field("base_path", &self.base_path)
+            .field("trusted_proxies", &self.trusted_proxies)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<S> SessionAuth<S> {
     /// Build the shared state. Trusted proxies default to loopback; use
     /// [`SessionAuth::with_trusted_proxies`] when a proxy fronts the app.
-    pub fn new(store: S, base_path: &str) -> Self {
+    pub fn new(store: S, clock: Arc<dyn Clock>, base_path: &str) -> Self {
         Self {
             store,
+            clock,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             limits: Arc::new(RateLimiter::new()),
@@ -170,7 +184,7 @@ where
     };
     let record = match auth
         .store
-        .lookup_valid(&hash_token(&raw_token), now_unix())
+        .lookup_valid(&hash_token(&raw_token), auth.clock.now_unix())
         .await
     {
         Ok(record) => record,

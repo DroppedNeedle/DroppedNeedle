@@ -252,6 +252,7 @@ impl E2e {
         .with_backups(droppedneedle_kernel::db::BackupService::new(
             &self.db_path,
             &backup_dir,
+            p.clock.clone(),
         ))
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());

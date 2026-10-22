@@ -12,7 +12,9 @@
 //! cached, so there is nothing a durable resume record would save.
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+
+use crate::clock::Clock;
 
 use crate::events::{CacheSyncProgress, Event, EventHub};
 
@@ -28,6 +30,7 @@ pub struct CacheSyncStatus {
 struct Inner {
     state: Mutex<State>,
     events: EventHub,
+    clock: Arc<dyn Clock>,
 }
 
 #[derive(Default)]
@@ -46,12 +49,14 @@ impl std::fmt::Debug for CacheSyncStatus {
 }
 
 impl CacheSyncStatus {
-    /// An idle status that publishes its frames on `events`.
-    pub fn new(events: EventHub) -> Self {
+    /// An idle status that publishes its frames on `events` and dates its
+    /// runs by `clock`.
+    pub fn new(events: EventHub, clock: Arc<dyn Clock>) -> Self {
         Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(State::default()),
                 events,
+                clock,
             }),
         }
     }
@@ -64,9 +69,7 @@ impl CacheSyncStatus {
     /// Begin a run in its first phase. Returns the run's generation, which
     /// every later update for this run carries.
     pub fn start(&self, phase: &str, total_artists: u64, total_albums: u64) -> u64 {
-        let started_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+        let started_at = self.inner.clock.now_ms() as f64 / 1000.0;
         let frame = {
             let mut state = self.lock();
             state.generation += 1;

@@ -40,6 +40,11 @@ impl ProdCompatPasswords {
         }
     }
 
+    /// The platform clock the users deps carry.
+    pub fn clock(&self) -> &Arc<dyn droppedneedle_kernel::clock::Clock> {
+        &self.users.clock
+    }
+
     async fn user_row(&self, username_lower: &str) -> Result<Option<UserRecord>, StoreError> {
         self.users.users.get_by_username(username_lower).await
     }

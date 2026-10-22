@@ -25,10 +25,10 @@ impl RecoveryStore for SqliteRecoveryStore {
     fn store<'a>(&'a self, code: RecoveryCode) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
             let lane = self.db.lane();
+            let now = to_iso(self.db.now_unix());
             lane.write(Lane::Foreground, "auth.recovery.store", move |tx| {
                 // Cheap sweep in the same tx (v2 parity): expired rows never
                 // accumulate, and no background loop owns this table.
-                let now = to_iso(AuthDb::now_unix());
                 tx.execute(
                     "DELETE FROM auth_password_recovery_codes WHERE expires_at <= ?",
                     rusqlite::params![now],

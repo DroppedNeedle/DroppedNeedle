@@ -15,6 +15,8 @@
 
 use std::sync::Arc;
 
+use droppedneedle_kernel::clock::Clock;
+
 use crate::bootstrap::Outbound;
 use crate::settings::effects::Effects;
 use crate::settings::library_policy_service::LibraryPolicyService;
@@ -89,12 +91,14 @@ impl SettingsSetup {
             platform.config.timezone.clone(),
             outbound.clone(),
             management,
+            platform.clock.clone(),
         );
         setup.scans = Some(scans);
         setup.bins = Some(bins);
         setup
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn assemble(
         store: Arc<ConfigStore>,
         effects: Effects,
@@ -103,9 +107,10 @@ impl SettingsSetup {
         timezone: Option<String>,
         outbound: Outbound,
         management: Arc<LibraryManagementService>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         let service = Arc::new(
-            SettingsService::new(store.clone(), effects.clone(), ids, probes)
+            SettingsService::new(store.clone(), effects.clone(), ids, probes, clock)
                 .with_timezone(timezone),
         );
         Self {
@@ -201,6 +206,7 @@ impl SettingsSetup {
             None,
             Outbound::live(),
             management,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
         );
         setup.prefs = Some(Arc::new(SectionPrefsDeps {
             store: Arc::new(MemorySectionPrefsStore::new()),

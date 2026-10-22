@@ -241,6 +241,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
         config.live(),
         &providers,
         recorder.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
     let app = with_test_principal(
         droppedneedle_catalog::concerts::handlers::routes()

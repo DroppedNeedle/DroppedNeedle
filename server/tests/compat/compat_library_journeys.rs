@@ -1663,6 +1663,7 @@ async fn plant_artist_picture(rig: &CompatApp, mbid: &str) {
     droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache::new(
         rig.app.config.cache_dir.join("covers"),
         64 * 1024 * 1024,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     )
     .put(Some(&format!("artist:{mbid}")), png, "image/png")
     .await;

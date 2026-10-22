@@ -69,8 +69,13 @@ pub async fn open_platform(config: AppConfig) -> Result<Opened, BootError> {
     }
     let (crypto, key_origin) = Crypto::load_or_generate(&config_dir)?;
     let crypto = Arc::new(crypto);
+    // The one clock: the database's backups, checkpoints and statistics,
+    // the supervisor's rows and every area take time from it.
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let runtime = open_runtime(
-        &DbConfig::new(&config.library_db_path).with_shutdown_grace(config.shutdown_grace),
+        &DbConfig::new(&config.library_db_path)
+            .with_shutdown_grace(config.shutdown_grace)
+            .with_clock(Arc::clone(&clock)),
     )
     .await?;
     let db = runtime.db().clone();
@@ -78,9 +83,6 @@ pub async fn open_platform(config: AppConfig) -> Result<Opened, BootError> {
     // folder never gains a new file. It takes a lock of its own: the
     // database may live elsewhere.
     let cache_db = CacheDb::open(&config.cache_dir, &config.library_db_path).await;
-    // The one clock: the supervisor stamps its rows with it, and the
-    // platform hands it to every area.
-    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     // The one supervisor every background loop runs on, and its token the
     // one stop. Starting it clears the last start's loop rows, so it comes
     // before anything writes one.

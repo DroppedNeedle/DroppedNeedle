@@ -115,6 +115,7 @@ fn deps_for(rig: &Rig, fetcher: Arc<FakeFetcher>, unpacker: Arc<FakeUnpacker>) -
         unpacker,
         tick_sync: Arc::new(NoopTickSync),
         ext_limiter: Arc::new(ExtRateLimiter::new()),
+        clock: Arc::new(droppedneedle_kernel::clock::SystemClock),
     }
 }
 

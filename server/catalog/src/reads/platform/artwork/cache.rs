@@ -27,6 +27,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use droppedneedle_kernel::clock::Clock;
+
 /// Least time between two full passes over the key records.
 const FULL_CLEAN_EVERY: Duration = Duration::from_secs(3600);
 /// Key records, by key hash.
@@ -120,11 +122,21 @@ impl Index {
 }
 
 /// The bounded disk cache. Cheap to clone.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ArtworkCache {
     root: PathBuf,
     max_bytes: u64,
     index: Arc<Mutex<Option<Index>>>,
+    clock: Arc<dyn Clock>,
+}
+
+impl std::fmt::Debug for ArtworkCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArtworkCache")
+            .field("root", &self.root)
+            .field("max_bytes", &self.max_bytes)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Hex SHA-256 of some bytes.
@@ -138,22 +150,22 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Seconds since the epoch.
-pub fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
 impl ArtworkCache {
     /// A cache rooted at `root` (normally `<cache_dir>/covers`), holding at
-    /// most `max_bytes` of images. Nothing touches the disk until first use.
-    pub fn new(root: PathBuf, max_bytes: u64) -> Self {
+    /// most `max_bytes` of images, its markers dated by `clock`. Nothing
+    /// touches the disk until first use.
+    pub fn new(root: PathBuf, max_bytes: u64, clock: Arc<dyn Clock>) -> Self {
         Self {
             root,
             max_bytes,
             index: Arc::new(Mutex::new(None)),
+            clock,
         }
+    }
+
+    /// Seconds since the epoch, by the cache's clock.
+    pub fn unix_now(&self) -> u64 {
+        u64::try_from(self.clock.now_unix()).unwrap_or(0)
     }
 
     /// Read a key record.
@@ -321,7 +333,7 @@ impl ArtworkCache {
             return;
         }
         let path = self.key_path(key);
-        let text = format!("{kind}\n{}\n", unix_now() + ttl_secs);
+        let text = format!("{kind}\n{}\n", self.unix_now() + ttl_secs);
         if let Some(Err(error)) = blocking(move || write_atomic(&path, text.as_bytes())).await {
             tracing::warn!(%error, "cover cache miss marker not written");
         }
@@ -415,11 +427,12 @@ impl ArtworkCache {
             index.blobs.keys().cloned().collect()
         };
         let root = self.root.clone();
+        let now = self.unix_now();
         let Some((removed, kept)) = blocking(move || {
             let mut removed = 0;
             let mut kept = Vec::new();
             for dir in [KEYS_DIR, AUDIODB_KEYS_DIR] {
-                let (gone, held) = clean_key_files(&root.join(dir), &live, unix_now());
+                let (gone, held) = clean_key_files(&root.join(dir), &live, now);
                 removed += gone;
                 kept.extend(held);
             }
@@ -700,9 +713,13 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "dn-artwork-cache-{}-{}",
             std::process::id(),
-            unix_now()
+            droppedneedle_kernel::clock::SystemClock.now_ms()
         ));
-        let cache = ArtworkCache::new(root.clone(), 1024 * 1024);
+        let cache = ArtworkCache::new(
+            root.clone(),
+            1024 * 1024,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        );
         let key = "caa:release-group:aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b:500";
         let hash = cache.put(Some(key), b"cover".to_vec(), "image/jpeg").await;
 

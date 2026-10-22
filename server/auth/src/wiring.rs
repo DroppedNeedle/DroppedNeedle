@@ -10,7 +10,6 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
 
 use super::federated::jellyfin_http::JellyfinHttp;
 use super::federated::oidc::{EXCHANGE_TTL_SECS, OidcExchangeStore, OidcLogin};
@@ -33,6 +32,7 @@ use super::users::stores::{
     HibpPolicy, LastFmKeys, LastFmState, LastFmSwitch, LastFmUnreadable, SecurityPolicy,
 };
 use axum::extract::FromRef;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
@@ -40,8 +40,9 @@ use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
-/// One stored exchange code: owning user, sealed token, expiry.
-type StoredExchange = (String, String, SystemTime);
+/// One stored exchange code: owning user, sealed token, expiry in unix
+/// milliseconds.
+type StoredExchange = (String, String, i64);
 
 /// Process-local single-use OIDC exchange codes. There is no baseline table
 /// for these 60-second bridge codes: a restart drops in-flight logins and
@@ -49,9 +50,27 @@ type StoredExchange = (String, String, SystemTime);
 ///
 /// Inserts past [`EXCHANGE_PURGE_THRESHOLD`] entries sweep expired codes so
 /// abandoned logins cannot grow the map without bound.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct MemoryOidcExchangeStore {
     codes: Arc<Mutex<HashMap<String, StoredExchange>>>,
+    clock: Arc<dyn Clock>,
+}
+
+impl std::fmt::Debug for MemoryOidcExchangeStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryOidcExchangeStore")
+            .finish_non_exhaustive()
+    }
+}
+
+impl MemoryOidcExchangeStore {
+    /// An empty store whose codes expire by `clock`.
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            codes: Arc::default(),
+            clock,
+        }
+    }
 }
 
 /// Insert count past which storing a code also sweeps expired ones.
@@ -64,7 +83,9 @@ impl OidcExchangeStore for MemoryOidcExchangeStore {
         user_id: &str,
         raw_token: &str,
     ) -> Result<(), FederatedError> {
-        let expires = SystemTime::now() + Duration::from_secs(EXCHANGE_TTL_SECS);
+        let now = self.clock.now_ms();
+        let expires =
+            now.saturating_add(i64::try_from(EXCHANGE_TTL_SECS * 1000).unwrap_or(i64::MAX));
         let mut codes = self
             .codes
             .lock()
@@ -74,7 +95,6 @@ impl OidcExchangeStore for MemoryOidcExchangeStore {
             (user_id.to_owned(), raw_token.to_owned(), expires),
         );
         if codes.len() > EXCHANGE_PURGE_THRESHOLD {
-            let now = SystemTime::now();
             codes.retain(|_, (_, _, expires)| *expires > now);
         }
         Ok(())
@@ -88,7 +108,7 @@ impl OidcExchangeStore for MemoryOidcExchangeStore {
         let Some((user_id, raw_token, expires)) = codes.remove(code) else {
             return Ok(None);
         };
-        if SystemTime::now() > expires {
+        if self.clock.now_ms() > expires {
             return Ok(None);
         }
         Ok(Some((user_id, raw_token)))
@@ -317,8 +337,9 @@ impl AuthSetup {
                 auth.federated.clone(),
                 OidcHttp::new(no_redirect),
                 auth.oidc_states.clone(),
-                MemoryOidcExchangeStore::default(),
+                MemoryOidcExchangeStore::new(clock.clone()),
                 auth.issuer.clone(),
+                clock.clone(),
             ),
             sign_in.clone(),
             base_path,
@@ -343,7 +364,7 @@ impl AuthSetup {
         .with_stated_addresses(stated.clone());
         Self {
             users,
-            session_auth: SessionAuth::new(auth.sessions.clone(), base_path)
+            session_auth: SessionAuth::new(auth.sessions.clone(), clock.clone(), base_path)
                 .with_limits(limits.clone())
                 .with_stated_addresses(stated),
             limits,
@@ -468,7 +489,8 @@ mod tests {
 
     #[tokio::test]
     async fn exchange_inserts_past_threshold_keep_every_code() {
-        let store = MemoryOidcExchangeStore::default();
+        let store =
+            MemoryOidcExchangeStore::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
         for n in 0..EXCHANGE_PURGE_THRESHOLD + 50 {
             store
                 .store_exchange(&format!("code-{n}"), "user-1", "raw")

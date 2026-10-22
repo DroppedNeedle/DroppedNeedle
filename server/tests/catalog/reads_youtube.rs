@@ -47,7 +47,10 @@ async fn youtube_links_journey() {
     let dir = ScratchDir::new("youtube");
     let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     let links = YouTubeLinks::new(
-        LinkStore::new(CollectionsDb::new(runtime.db().clone())),
+        LinkStore::new(CollectionsDb::new(
+            runtime.db().clone(),
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )),
         Arc::new(FakeYouTube::configured()),
         Arc::new(FixedIdGenerator::new(
             "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",

@@ -26,12 +26,9 @@ use axum::{
 use futures_util::future::BoxFuture;
 use tokio::time::Instant;
 
-use super::{
-    extract::extract,
-    store::{SessionStore, now_unix},
-    tokens::hash_token,
-};
+use super::{extract::extract, store::SessionStore, tokens::hash_token};
 use crate::users::roles::User;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::events::{EventHub, StreamEvent, Subscription};
 use droppedneedle_kernel::mount::{Routes, routes};
 
@@ -58,12 +55,13 @@ pub enum SessionStatus {
 /// Looks a session up by its token hash.
 pub type SessionCheck = Arc<dyn Fn(String) -> BoxFuture<'static, SessionStatus> + Send + Sync>;
 
-/// A session check over the session store the gate uses.
-pub fn session_check<S: SessionStore>(store: S) -> SessionCheck {
+/// A session check over the session store and clock the gate uses.
+pub fn session_check<S: SessionStore>(store: S, clock: Arc<dyn Clock>) -> SessionCheck {
     Arc::new(move |token_hash: String| {
         let store = store.clone();
+        let now_unix = clock.now_unix();
         Box::pin(async move {
-            match store.lookup_valid(&token_hash, now_unix()).await {
+            match store.lookup_valid(&token_hash, now_unix).await {
                 Ok(Some(_)) => SessionStatus::Valid,
                 Ok(None) => SessionStatus::Gone,
                 Err(error) => {

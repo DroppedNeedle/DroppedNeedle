@@ -94,6 +94,7 @@ pub struct MediaWorkers {
     reports: tokio::sync::mpsc::Receiver<crate::playback::reports::QueuedReport>,
     http: reqwest::Client,
     resolver: Arc<ConnectionResolver>,
+    clock: Arc<dyn Clock>,
     now_playing: NowPlayingWorker,
 }
 
@@ -101,7 +102,13 @@ impl MediaWorkers {
     /// Drain both until `stop` is cancelled.
     pub async fn run(self, stop: CancellationToken) {
         tokio::join!(
-            run_report_worker(self.reports, self.http, self.resolver, stop.clone()),
+            run_report_worker(
+                self.reports,
+                self.http,
+                self.resolver,
+                self.clock,
+                stop.clone(),
+            ),
             self.now_playing.run(stop),
         );
     }
@@ -152,7 +159,10 @@ impl MediaSetup {
         let download = DownloadState::new(Some(library.clone()), config.live());
         let resolver = Arc::new(
             ConnectionResolver::new(
-                Arc::new(SqliteConnectionStore::new(db.clone())),
+                Arc::new(SqliteConnectionStore::new(
+                    db.clone(),
+                    platform.clock.clone(),
+                )),
                 Arc::new(CredentialCoder::new(crypto.clone())),
                 Arc::new(ConfigServers::new(config)),
             )
@@ -164,8 +174,9 @@ impl MediaSetup {
         let service = RemotesService::new(
             http.clone(),
             resolver.clone(),
-            Arc::new(SqliteFolderStore::new(db.clone())),
+            Arc::new(SqliteFolderStore::new(db.clone(), platform.clock.clone())),
             imports,
+            platform.clock.clone(),
         );
         let remotes = RemotesDeps { service };
         let reader = RemotesRemoteReader::with_resolver(
@@ -230,6 +241,7 @@ impl MediaSetup {
             reports: rx,
             http,
             resolver,
+            clock: platform.clock.clone(),
             now_playing: NowPlayingWorker::new(slots, courier.clone()),
         };
         Ok((

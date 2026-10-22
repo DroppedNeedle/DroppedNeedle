@@ -911,7 +911,7 @@ impl AcquireSetup {
             Arc::new(Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?);
         let spotify_links = Arc::new(SqliteSpotifyLinks::new(db.clone(), crypto));
         let spotify_playlists = Arc::new(CollectionsPlaylistBridge::new(
-            PlaylistStore::new(CollectionsDb::new(db.db().clone())),
+            PlaylistStore::new(CollectionsDb::new(db.db().clone(), db.clock().clone())),
             db.clone(),
         ));
         // No outside address is open here: every album stays unresolved.

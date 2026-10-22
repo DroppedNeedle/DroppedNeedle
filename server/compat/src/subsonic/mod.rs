@@ -241,9 +241,8 @@ pub struct Request {
     pub body: Vec<u8>,
     /// Request content type.
     pub content_type: Option<String>,
-    /// Clock override, unix seconds. `None` reads the system clock;
-    /// tests stamp the fixture clock for deterministic time fields.
-    pub now_unix: Option<f64>,
+    /// When the request arrived, unix seconds.
+    pub now_unix: f64,
     /// The address the app reached this server at, for picture links.
     /// `None` leaves the link keys out.
     pub picture_base: Option<String>,
@@ -568,7 +567,7 @@ pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
             range: request.header("Range").map(str::to_owned),
             content_type: request.content_type.clone(),
             body: request.body.clone(),
-            now_unix: request.now_unix.unwrap_or_else(live_now_unix),
+            now_unix: request.now_unix,
             picture_base: request.picture_base.clone(),
         };
         run_handler(&ctx).await
@@ -619,14 +618,6 @@ pub fn render_outcome(
             stream: Some(body),
         },
     }
-}
-
-/// System clock, unix seconds (0 when the clock reads before the epoch).
-pub fn live_now_unix() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 /// True when the normalized name has a handler.

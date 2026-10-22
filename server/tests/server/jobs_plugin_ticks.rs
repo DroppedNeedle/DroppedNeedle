@@ -136,7 +136,10 @@ async fn sqlite_tick_state_survives_a_full_restart() {
 
     // First boot: register, write, shut everything down.
     let runtime = crate::common::scratch_runtime(&db_path).await;
-    let store = SqliteTickStore::new(runtime.db().clone());
+    let store = SqliteTickStore::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     store.add_plugin("tick-toy");
     store
         .write("tick-toy", "cache/seen", b"tick-1".to_vec())
@@ -158,7 +161,10 @@ async fn sqlite_tick_state_survives_a_full_restart() {
     let runtime = open_runtime(&DbConfig::new(&db_path))
         .await
         .expect("runtime reopens");
-    let store = SqliteTickStore::new(runtime.db().clone());
+    let store = SqliteTickStore::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     assert!(matches!(
         store.read("tick-toy", "cache/seen").await,
         Err(TickStoreError::UnknownPlugin(_))

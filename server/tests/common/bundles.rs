@@ -187,7 +187,7 @@ pub struct Collections {
 
 /// The collections over the platform's database.
 pub fn collections_at(platform: &Platform) -> Collections {
-    let db = CollectionsDb::new(platform.db.clone());
+    let db = CollectionsDb::new(platform.db.clone(), platform.clock.clone());
     let stores = Stores::new(&db);
     Collections { db, stores }
 }

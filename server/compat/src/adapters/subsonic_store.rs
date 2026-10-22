@@ -220,8 +220,13 @@ impl SubsonicStore {
         }
     }
 
-    fn now() -> f64 {
-        droppedneedle_catalog::reads::collections::db::now_real()
+    /// The platform clock the users deps carry.
+    pub fn clock(&self) -> &Arc<dyn droppedneedle_kernel::clock::Clock> {
+        &self.users.clock
+    }
+
+    fn now(&self) -> f64 {
+        self.users.clock.now_ms() as f64 / 1000.0
     }
 
     async fn tracks_for_caller(
@@ -969,7 +974,7 @@ impl Store for SubsonicStore {
                 current_index,
                 position_ms,
                 changed_by_client,
-                Self::now(),
+                self.now(),
             )
             .await?)
     }
@@ -987,7 +992,7 @@ impl Store for SubsonicStore {
     ) -> Result<(), CompatError> {
         Ok(self
             .queues
-            .upsert_bookmark(user_id, file_id, position_ms, comment, Self::now())
+            .upsert_bookmark(user_id, file_id, position_ms, comment, self.now())
             .await?)
     }
 
@@ -1105,7 +1110,7 @@ impl Store for SubsonicStore {
                 user_id,
                 &track.file_id,
                 grant,
-                Self::now() as i64,
+                self.now() as i64,
             )
         });
         Ok(answer)
@@ -1119,7 +1124,7 @@ impl Store for SubsonicStore {
     ) -> Result<(bool, Option<String>, Option<i64>), CompatError> {
         // Forged, expired or foreign parameters grant nothing.
         Ok(
-            advanced::open(&self.crypto, params, user_id, file_id, Self::now() as i64)
+            advanced::open(&self.crypto, params, user_id, file_id, self.now() as i64)
                 .unwrap_or((false, None, None)),
         )
     }

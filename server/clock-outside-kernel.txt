@@ -6,35 +6,12 @@
 # the file is still listed. Inline #[cfg(test)] modules are skipped; a test
 # file of its own is checked like any other. Instant::now() is never listed.
 
-auth/src/federated/oidc.rs  to move: take time from the kernel clock
-auth/src/session/store.rs  to move: take time from the kernel clock
-auth/src/wiring.rs  to move: take time from the kernel clock
-
-catalog/src/concerts/mod.rs  to move: take time from the kernel clock
-catalog/src/reads/collections/db.rs  to move: take time from the kernel clock
-catalog/src/reads/collections/store/play_marks.rs  to move: take time from the kernel clock
-catalog/src/reads/collections/store/ratings.rs  to move: take time from the kernel clock
-catalog/src/reads/discover/adapters/batches.rs  to move: take time from the kernel clock
 catalog/src/reads/discover/adapters/home/mod.rs  to move: take time from the kernel clock, with the discover cache rework
 catalog/src/reads/discover/adapters/page/mod.rs  to move: take time from the kernel clock, with the discover cache rework
 catalog/src/reads/discover/adapters/queue/mod.rs  to move: take time from the kernel clock, with the discover cache rework
-catalog/src/reads/discover/adapters/radio/mod.rs  to move: take time from the kernel clock
-catalog/src/reads/discover/adapters/youtube.rs  to move: take time from the kernel clock
-catalog/src/reads/platform/artwork/cache.rs  to move: take time from the kernel clock
-catalog/src/reads/platform/listenbrainz_wrapped.rs  to move: take time from the kernel clock
-catalog/src/reads/platform/wrapped.rs  to move: take time from the kernel clock
 
-compat/src/jellyfin/system.rs  to move: take time from the kernel clock
-compat/src/subsonic/mod.rs  to move: take time from the kernel clock
-
-kernel/src/db/analyze.rs  to move: take time from the kernel clock
-kernel/src/db/backup.rs  to move: take time from the kernel clock
-kernel/src/db/checkpoint.rs  to move: take time from the kernel clock
 kernel/src/db/scratch.rs  unique temp folder name from the system time, not app time
-kernel/src/jobs/cache_sync.rs  to move: take time from the kernel clock
-kernel/src/jobs/plugin_ticks.rs  to move: take time from the kernel clock
 kernel/src/jobs/schedule.rs  seed for timer jitter, not a time anyone reads
-kernel/src/runtime_config/quota.rs  to move: take time from the kernel clock
 
 library/src/adapters.rs  to move: take time from the kernel clock
 library/src/clock.rs  to move: take time from the kernel clock
@@ -50,16 +27,6 @@ library/src/scan/sqlite_store/artwork.rs  to move: take time from the kernel clo
 library/src/scan/sqlite_store/lyrics.rs  to move: take time from the kernel clock
 library/src/scan/walk.rs  to move: take time from the kernel clock
 library/src/tags/save/mod.rs  to move: take time from the kernel clock
-
-media/src/playback/reports.rs  to move: take time from the kernel clock
-media/src/remotes/connections.rs  to move: take time from the kernel clock
-media/src/remotes/folders.rs  to move: take time from the kernel clock
-media/src/remotes/service.rs  to move: take time from the kernel clock
-
-plugins/src/install.rs  to move: take time from the kernel clock
-
-src/admin/quota.rs  to move: take time from the kernel clock
-src/settings/services.rs  to move: take time from the kernel clock
 
 tool/src/export/exporter.rs  offline tool, not a server area
 tool/src/export/fernet.rs  offline tool, not a server area

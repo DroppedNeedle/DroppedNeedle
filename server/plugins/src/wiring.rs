@@ -60,7 +60,10 @@ pub fn write_python_sdk(plugins_dir: &Path) {
 /// The tick and plugin state store over the platform's database. The host
 /// and the tick loops share this one value: a plugin is known to both.
 pub fn tick_store(platform: &Platform) -> TickStoreKind {
-    TickStoreKind::Sqlite(SqliteTickStore::new(platform.db.clone()))
+    TickStoreKind::Sqlite(SqliteTickStore::new(
+        platform.db.clone(),
+        platform.clock.clone(),
+    ))
 }
 
 /// The production host: subprocess plugins over the deployment's plugins
@@ -198,15 +201,17 @@ impl PluginsSetup {
         ticks: TickStoreKind,
     ) -> Self {
         host.load_all();
+        let clock = Arc::clone(supervisor.clock());
         let ticks = Arc::new(PluginTickLoops::new(supervisor, ticks, TICK_CANCEL_GRACE));
         let plugins = PluginsDeps {
             host: Arc::clone(&host),
             config: Arc::clone(host.config()),
             github,
-            fetcher: Arc::new(ReqwestFetcher::new(http.clone())),
+            fetcher: Arc::new(ReqwestFetcher::new(http.clone(), Arc::clone(&clock))),
             unpacker: Arc::new(ZipUnpacker),
             tick_sync: Arc::clone(&ticks) as Arc<dyn TickLoopSync>,
             ext_limiter: Arc::new(ExtRateLimiter::new()),
+            clock,
         };
         Self {
             host,

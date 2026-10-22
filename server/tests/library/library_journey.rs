@@ -14672,6 +14672,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     let path = scratch.join("app.db");
     PlayMarkStore::new(CollectionsDb::new(
         droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens"),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     ))
     .mark("listener", MarkScope::Album(&joined), false)
     .await

@@ -10,7 +10,7 @@
 use rusqlite::params;
 use sqlx::Row as _;
 
-use super::super::db::{CollectionsDb, StoreError, epoch_from_real, now_real};
+use super::super::db::{CollectionsDb, StoreError, epoch_from_real};
 use crate::reads::library::definitions::owned_release_groups;
 
 /// Release groups the library owns, lowercased.
@@ -78,6 +78,13 @@ pub struct ReleaseFilter {
 #[derive(Clone, Debug)]
 pub struct FollowStore {
     db: CollectionsDb,
+}
+
+impl FollowStore {
+    /// Now, as fractional epoch seconds, by the store's clock.
+    pub fn now_real(&self) -> f64 {
+        self.db.now_real()
+    }
 }
 
 const FOLLOW_SELECT: &str = "SELECT f.user_id AS user_id, \
@@ -240,12 +247,13 @@ impl FollowStore {
     /// Move the user's seen marker to now.
     pub async fn mark_seen(&self, user_id: &str) -> Result<(), StoreError> {
         let user_id = user_id.to_owned();
+        let now = self.db.now_real();
         self.db
             .write("follows.mark_seen", move |tx| {
                 tx.execute(
                     "INSERT INTO user_new_release_seen (user_id, seen_at) VALUES (?1, ?2) \
                      ON CONFLICT (user_id) DO UPDATE SET seen_at = excluded.seen_at",
-                    params![user_id, now_real()],
+                    params![user_id, now],
                 )?;
                 Ok(())
             })

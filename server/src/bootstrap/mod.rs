@@ -181,7 +181,10 @@ where
 pub fn sign_in_links(platform: &Platform) -> MediaLinks {
     MediaLinks::new(Arc::new(SignInLinks::new(Arc::new(
         ConnectionResolver::new(
-            Arc::new(SqliteConnectionStore::new(platform.db.clone())),
+            Arc::new(SqliteConnectionStore::new(
+                platform.db.clone(),
+                platform.clock.clone(),
+            )),
             Arc::new(CredentialCoder::new(platform.crypto.clone())),
             Arc::new(ConfigServers::new(&platform.settings)),
         ),
@@ -296,7 +299,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_details(Arc::new(PluginDetailsSource(plugin_host.clone())))
     .with_cover_warm(cover_warm.clone());
     let artwork = droppedneedle_catalog::reads::artwork(p, &reads_inputs, catalog.clone());
-    let collections_db = CollectionsDb::new(db.clone());
+    let collections_db = CollectionsDb::new(db.clone(), p.clock.clone());
     let collections = Stores::new(&collections_db);
     // Flow outcomes (fulfilled requests among them) go to plugins and the
     // event stream.
@@ -416,6 +419,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_backups(BackupService::new(
         &config.library_db_path,
         runtime.backups().backup_dir(),
+        platform.clock.clone(),
     ))
     .with_checkpoint(runtime.checkpoint().clone());
     // Durable quota overrides back into the live ledger. A failure warns

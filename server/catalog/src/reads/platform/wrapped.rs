@@ -176,38 +176,6 @@ pub trait WrappedData: Send + Sync + 'static {
     fn server_wrapped(&self) -> BoxFuture<'_, ServerWrappedResponse>;
 }
 
-/// Wrapped without a data source: no users and empty summaries.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoWrappedData;
-
-impl WrappedData for NoWrappedData {
-    fn current_year(&self) -> i32 {
-        time::OffsetDateTime::now_utc().year()
-    }
-
-    fn list_users(&self) -> BoxFuture<'_, Vec<WrappedUserSummary>> {
-        Box::pin(async { Vec::new() })
-    }
-
-    fn user_wrapped(&self, _user_id: &str) -> BoxFuture<'_, Option<UserWrappedResponse>> {
-        Box::pin(async { None })
-    }
-
-    fn server_wrapped(&self) -> BoxFuture<'_, ServerWrappedResponse> {
-        let year = self.current_year();
-        Box::pin(async move {
-            ServerWrappedResponse {
-                year,
-                total_users_tracked: 0,
-                total_listens_estimated: 0,
-                leaderboard: Vec::new(),
-                top_artist_sitewide: None,
-                top_album_sitewide: None,
-            }
-        })
-    }
-}
-
 /// Scripted wrapped data for tests.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]

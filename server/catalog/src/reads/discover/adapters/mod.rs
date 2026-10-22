@@ -29,7 +29,6 @@ use crate::reads::discover::{
     services::ReadsDeps,
 };
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, secret_sections::AdvancedSettings};
 use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
@@ -94,7 +93,11 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         Arc::clone(&inputs.clock),
         inputs.providers.cache.clone(),
     ) {
-        Ok(client) => Arc::new(youtube::LiveYouTube::new(client, config.live())),
+        Ok(client) => Arc::new(youtube::LiveYouTube::new(
+            client,
+            config.live(),
+            Arc::clone(&inputs.clock),
+        )),
         Err(error) => {
             tracing::error!(%error, "youtube quota file unreadable; youtube search is off");
             Arc::new(unbuilt::UnavailableYouTube)
@@ -111,8 +114,13 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         pool: inputs.db.sqlx().clone(),
         catalog: Catalog::new(upstream, LocalCatalog::new(inputs.db.clone())),
         previews: inputs.providers.previews.clone(),
+        clock: Arc::clone(&inputs.clock),
     });
-    let batches = batches::LiveBatches::new(inputs.db.clone(), Some(inputs.batch_requests.clone()));
+    let batches = batches::LiveBatches::new(
+        inputs.db.clone(),
+        Arc::clone(&inputs.clock),
+        Some(inputs.batch_requests.clone()),
+    );
     let (home, page, genre_art, charts) = home::wire(home::HomeWiring {
         pool: inputs.db.sqlx().clone(),
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
@@ -150,7 +158,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         youtube,
         radio: Arc::new(radio),
         now_playing: Arc::new(unbuilt::NoPresence),
-        clock: Arc::new(SystemClock),
+        clock: Arc::clone(&inputs.clock),
     }
 }
 
@@ -170,7 +178,10 @@ fn live_sources(
     upstream: Upstream,
 ) -> queue::live_sources::LiveSources {
     let jellyfin = Arc::new(ConnectionResolver::new(
-        Arc::new(SqliteConnectionStore::new(inputs.db.clone())),
+        Arc::new(SqliteConnectionStore::new(
+            inputs.db.clone(),
+            Arc::clone(&inputs.clock),
+        )),
         Arc::new(CredentialCoder::new(inputs.users.crypto.clone())),
         Arc::new(ConfigServers::new(config)),
     ));

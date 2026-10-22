@@ -37,6 +37,8 @@ use sqlx::{
     },
 };
 
+use crate::clock::{Clock, SystemClock};
+
 use super::{
     analyze::AnalyzeService,
     backup::BackupService,
@@ -78,11 +80,15 @@ pub const CACHE_SIZE_KIB: i64 = -2048;
 /// Frames between automatic checkpoints during bulk writes.
 pub const WAL_AUTOCHECKPOINT: i64 = 1000;
 
-/// What [`open_runtime`] needs: the database file and its tuning.
-#[derive(Debug, Clone)]
+/// What [`open_runtime`] needs: the database file, its tuning and the
+/// clock its services date their work by.
+#[derive(Clone)]
 pub struct DbConfig {
     /// Live database file, created with its parent directory when missing.
     pub path: PathBuf,
+    /// Wall time for backups, checkpoints and planner statistics. Defaults
+    /// to the system clock; the server passes the platform's.
+    clock: Arc<dyn Clock>,
     /// Reader connections in the sqlx pool and request connections in the
     /// read pool. Defaults to [`MAX_READERS`].
     pub readers: u32,
@@ -107,6 +113,7 @@ impl DbConfig {
     pub fn new(path: &Path) -> Self {
         Self {
             path: path.to_owned(),
+            clock: Arc::new(SystemClock),
             readers: MAX_READERS,
             busy_timeout: BUSY_TIMEOUT,
             shutdown_grace: crate::config::DEFAULT_SHUTDOWN_GRACE,
@@ -114,6 +121,12 @@ impl DbConfig {
             wal_water: (ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES),
             read_wait: ACQUIRE_TIMEOUT,
         }
+    }
+
+    /// Date backups, checkpoints and planner statistics by `clock`.
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// Bound shutdown's wait for queued writes by the deployment's grace.
@@ -179,7 +192,7 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         .parent()
         .map(|parent| parent.join("backups"))
         .unwrap_or_else(|| PathBuf::from("backups"));
-    let backups = BackupService::new(&path, &backup_dir);
+    let backups = BackupService::new(&path, &backup_dir, Arc::clone(&config.clock));
     backup_before_upgrade(&path, &backups).await?;
 
     // Migrations run on a writable pool of their own, closed before the
@@ -216,10 +229,15 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     let db = Db::new(lane, Arc::clone(&pools), pool.clone());
     let lane = db.lane();
     let (high_water, low_water) = config.wal_water;
-    let checkpoint =
-        CheckpointService::new(&path, pool.clone(), lane.idle_state(), lane.wal_hold())
-            .with_water(high_water, low_water)
-            .with_pooled_reads(reads.clone());
+    let checkpoint = CheckpointService::new(
+        &path,
+        pool.clone(),
+        lane.idle_state(),
+        lane.wal_hold(),
+        Arc::clone(&config.clock),
+    )
+    .with_water(high_water, low_water)
+    .with_pooled_reads(reads.clone());
     // Cloned before the statistics service is attached: the relief thread
     // shares the policy, the hold and the latest record, and owns nothing
     // that keeps the lane or the read pools alive. A `Db` there would keep
@@ -227,7 +245,8 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     // without shutdown would leak the watch's threads.
     let relief = checkpoint.clone();
     let oldest = reads.clone();
-    let checkpoint = checkpoint.with_analyze(AnalyzeService::new(db.clone()));
+    let checkpoint =
+        checkpoint.with_analyze(AnalyzeService::new(db.clone(), Arc::clone(&config.clock)));
     let mut watch = lane.watch(move || ReliefPass {
         error: relief.run_relief().error,
         oldest_read: oldest.oldest(),

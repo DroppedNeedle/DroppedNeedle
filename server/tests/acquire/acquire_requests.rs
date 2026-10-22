@@ -853,7 +853,7 @@ async fn personal_mix_grant_build_and_refresh() {
         Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
-    let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone()));
+    let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone(), db.clock().clone()));
     let builder = Arc::new(PersonalMixBuilder::new(
         Arc::new(FakeMix),
         prefs.clone(),

@@ -191,7 +191,10 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(event_stream::routes(), |state| {
             event_stream::StreamRoute::new(
                 state.events.clone(),
-                event_stream::session_check(state.auth.session_auth.store.clone()),
+                event_stream::session_check(
+                    state.auth.session_auth.store.clone(),
+                    state.auth.session_auth.clock.clone(),
+                ),
             )
         })
         .area(droppedneedle_media::routes(), |state| state.media.clone())

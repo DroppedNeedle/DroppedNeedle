@@ -86,7 +86,11 @@ pub fn restore_backup(
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let service = BackupService::new(backup_db, parent);
+    let service = BackupService::new(
+        backup_db,
+        parent,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let restored = service
         .restore(backup_db, target_dir, allow_downgrade)
         .map_err(|error| map_db_error(&error, target_dir))?;

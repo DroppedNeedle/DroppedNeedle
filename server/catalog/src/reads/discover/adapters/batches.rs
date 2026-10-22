@@ -25,6 +25,7 @@ use crate::reads::discover::models::{
 };
 use crate::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture, ProviderFailure};
 use droppedneedle_auth::{Admin, Principal};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
@@ -104,6 +105,7 @@ struct BatchItem {
 /// Batches over the catalog database.
 pub struct LiveBatches {
     db: Db,
+    clock: Arc<dyn Clock>,
     /// The acquisition side; `None` where no download system runs.
     requests: Option<Arc<dyn BatchRequests>>,
     /// Idempotency keys of creates in progress, so a retried "Download
@@ -129,8 +131,9 @@ fn failed(cause: String) -> BatchFailure {
     BatchFailure::Provider(ProviderFailure::failed(cause))
 }
 
-fn now_rfc3339() -> String {
-    time::OffsetDateTime::now_utc()
+fn rfc3339_at(clock: &dyn Clock) -> String {
+    time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(clock.now_ms()) * 1_000_000)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default()
 }
@@ -140,10 +143,12 @@ fn placeholders(count: usize) -> String {
 }
 
 impl LiveBatches {
-    /// Batches over this database, filing through `requests`.
-    pub fn new(db: Db, requests: Option<Arc<dyn BatchRequests>>) -> Self {
+    /// Batches over this database, dated by `clock`, filing through
+    /// `requests`.
+    pub fn new(db: Db, clock: Arc<dyn Clock>, requests: Option<Arc<dyn BatchRequests>>) -> Self {
         Self {
             db,
+            clock,
             requests,
             creating: Mutex::new(HashSet::new()),
         }
@@ -572,7 +577,7 @@ impl LiveBatches {
                 name.to_owned()
             },
             source_section: body.source_section.clone(),
-            created_at: now_rfc3339(),
+            created_at: rfc3339_at(self.clock.as_ref()),
         };
         self.record(&head, rows).await.map_err(failed)?;
         self.detail_of(head).await

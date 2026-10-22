@@ -242,6 +242,7 @@ impl CompatSetup {
             limits.limits.clone(),
             limits.started.clone(),
             listener.clone(),
+            store.clock().clone(),
         ))
         .into_parts();
         let (jellyfin, jellyfin_templates) = jellyfin_routes(jellyfin.clone()).into_parts();
