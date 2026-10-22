@@ -27,7 +27,7 @@
     "why": "12 of 16 recording ids merged since tagging",
     "truth": {"release_group": "aec58f04-64f5-3a08-a794-e0192788e481", "release": "fd107d3a-50d6-4def-8b21-cbe624a81b42"},
     "tagged": {"verdict": "exact", "release": "fd107d3a-50d6-4def-8b21-cbe624a81b42"},
-    "stripped": {"verdict": "review", "release": "fd107d3a-50d6-4def-8b21-cbe624a81b42", "known_miss": "a compilation without track ids is always edition-uncertain"},
+    "stripped": {"verdict": "exact", "release": "fd107d3a-50d6-4def-8b21-cbe624a81b42"},
     "facts": {
       "local_album_id": "ethiopiques-21",
       "title": "Éthiopiques 21: Ethiopia Song",
@@ -916,7 +916,7 @@
     "why": "live soundtrack",
     "truth": {"release_group": "ce0cca72-d865-30b9-9667-47241049fd18", "release": "960fa173-972e-45ee-b42a-96b0dacb5366"},
     "tagged": {"verdict": "exact", "release": "960fa173-972e-45ee-b42a-96b0dacb5366"},
-    "stripped": {"verdict": "review", "release": "960fa173-972e-45ee-b42a-96b0dacb5366", "known_miss": "a live album without track ids is always edition-uncertain"},
+    "stripped": {"verdict": "exact", "release": "960fa173-972e-45ee-b42a-96b0dacb5366"},
     "facts": {
       "local_album_id": "song-remains-the-same",
       "title": "The Soundtrack From the Film The Song Remains the Same",
@@ -982,7 +982,7 @@
     "why": "greatest hits compilation",
     "truth": {"release_group": "a92606d1-2b98-4633-adfd-119b8b01f16f", "release": "56200307-8737-4f9b-b1f1-9dfd024051d0"},
     "tagged": {"verdict": "exact", "release": "56200307-8737-4f9b-b1f1-9dfd024051d0"},
-    "stripped": {"verdict": "review", "release": "56200307-8737-4f9b-b1f1-9dfd024051d0", "known_miss": "a compilation without track ids is always edition-uncertain"},
+    "stripped": {"verdict": "exact", "release": "56200307-8737-4f9b-b1f1-9dfd024051d0"},
     "facts": {
       "local_album_id": "may-death-never-stop-you",
       "title": "May Death Never Stop You: The Greatest Hits 2001–2013",
@@ -1046,7 +1046,7 @@
     "why": "29-track compilation",
     "truth": {"release_group": "8006a36d-7009-4add-9883-b7009326b545", "release": "2d017f53-496e-4a09-97a8-f24d531aa1b3"},
     "tagged": {"verdict": "exact", "release": "2d017f53-496e-4a09-97a8-f24d531aa1b3"},
-    "stripped": {"verdict": "review", "release": "2d017f53-496e-4a09-97a8-f24d531aa1b3", "known_miss": "a compilation without track ids is always edition-uncertain"},
+    "stripped": {"verdict": "review", "release": "2d017f53-496e-4a09-97a8-f24d531aa1b3", "known_miss": "a compilation without track ids confirms only on a nearly exact fit, and one track is 9 s off its release"},
     "facts": {
       "local_album_id": "originals",
       "title": "originals",

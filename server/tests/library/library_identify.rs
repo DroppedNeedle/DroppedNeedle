@@ -722,8 +722,9 @@ fn review_reject_keeps_tagged() {
     assert!(rig.service.pending_reviews("album-1").unwrap().is_empty());
 }
 
-/// A live release needs confirmation: without release-track ids on the
-/// files the best guess is still kept (flagged unconfirmed), never left
+/// A live release needs confirmation: when the files carry no
+/// release-track ids and fit it less than very closely (one length 15 s
+/// off), the best guess is still kept (flagged unconfirmed), never left
 /// undecided.
 #[tokio::test]
 async fn edition_uncertain_keeps_the_best_guess() {
@@ -731,7 +732,9 @@ async fn edition_uncertain_keeps_the_best_guess() {
         live(release(GROUP_A, RELEASE_A1, &[RECORDING_1, RECORDING_2])),
         live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
     ]));
-    rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
+    let mut facts = album_facts("album-1", &[("t1", None), ("t2", None)]);
+    facts.tracks[1].duration_secs = Some(215);
+    rig.seed_album(&facts);
     rig.service
         .enqueue_album(
             "job-1",
@@ -767,7 +770,9 @@ async fn held_exact_survives_weaker_tier() {
         live(release(GROUP_A, RELEASE_A1, &[RECORDING_1, RECORDING_2])),
         live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
     ]));
-    rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
+    let mut facts = album_facts("album-1", &[("t1", None), ("t2", None)]);
+    facts.tracks[1].duration_secs = Some(215);
+    rig.seed_album(&facts);
     rig.store
         .save_album_identity(AlbumIdentity {
             local_album_id: "album-1".to_owned(),
@@ -790,12 +795,14 @@ async fn held_exact_survives_weaker_tier() {
         )
         .unwrap();
     rig.store.claim(0, 60_000).unwrap();
-    rig.service
+    let report = rig
+        .service
         .run_claimed_job("job-1", 0)
         .await
         .unwrap()
         .expect("report");
     // Same-group weaker evidence must not demote the sealed exact.
+    assert_eq!(report.reason_code, "QUIET_RECONFIRM");
     let identity = rig
         .store
         .album_identity("album-1")

@@ -45,7 +45,17 @@
 //! - Live releases, and compilations the tags do not call compilations,
 //!   need confirmation (v2): unless every file carries its release-track
 //!   id, only the release group is pinned. A track id set aside as
-//!   another edition's (see `score`) does not name its track.
+//!   another edition's (see `score`) does not name its track. Untagged
+//!   files still confirm one when the group won clearly (no rival group
+//!   within the margin) and the fit is very close: a complete close fit
+//!   (above), a full distance within [`CONFIRM_ALBUM`] (0.05), and every
+//!   file's length known and within [`CONFIRM_LENGTH_SECS`] (3 s) of its
+//!   track. Length is the real guard here: 0.05 still lets a different
+//!   year through on an album of six tracks or more. Two releases of one
+//!   live group can be different nights of the same songs, so when
+//!   another release of the group pairs any file with another recording,
+//!   at least one file it pairs must have a known length more than 3 s
+//!   off its track there, or the edition stays unconfirmed.
 //!
 //! "Library distance" leaves missing tracks out, as Lidarr does for files
 //! already on disk: holding part of an album is normal.
@@ -53,7 +63,7 @@
 use std::cmp::Ordering;
 
 use super::model::{EditionHints, LocalAlbum, Release};
-use super::score::ReleaseMatch;
+use super::score::{ReleaseMatch, TrackPair};
 use super::strings::basic_dist;
 use crate::edition_prefs::{EditionFacts, Preferences};
 
@@ -64,6 +74,11 @@ pub const GROUP_MARGIN: f64 = 0.05;
 pub const EDITION_COHORT: f64 = 0.10;
 /// Every pair of a complete close fit is at most this far off.
 pub const COMPLETE_TRACK: f64 = 0.10;
+/// The full distance under which untagged files confirm a live release or
+/// an unflagged compilation.
+pub const CONFIRM_ALBUM: f64 = 0.05;
+/// How far each file's length may be off its track for that confirmation.
+pub const CONFIRM_LENGTH_SECS: f64 = 3.0;
 /// A tagged release this close needs no search (beets' "strong" match).
 pub const STRONG: f64 = 0.04;
 /// Weak tags past this distance call for fingerprints (Lidarr).
@@ -146,7 +161,8 @@ pub fn decide(
         .filter(|index| !in_group(**index, group))
         .map(|index| matches[*index].library_distance())
         .fold(f64::INFINITY, f64::min);
-    if rival - best_distance < GROUP_MARGIN {
+    let contested = rival - best_distance < GROUP_MARGIN;
+    if contested {
         match completed_group(&candidates, best_distance, local, releases, matches, prefs) {
             Some(completed) => group = completed,
             None => return Verdict::Review(ReviewReason::Ambiguous),
@@ -183,6 +199,7 @@ pub fn decide(
     }
     if needs_type_confirmation(local, &releases[chosen])
         && !every_file_names_its_track(local, &releases[chosen], matched)
+        && (contested || !very_close_fit(local, releases, matches, &candidates, chosen))
     {
         return Verdict::EditionUncertain(chosen);
     }
@@ -249,6 +266,62 @@ fn complete_fit(local: &LocalAlbum, release: &Release, matched: &ReleaseMatch) -
                     })
                 })
         })
+}
+
+/// The files fit the chosen release almost exactly (see the module
+/// notes), and every other release of its group that hears a file as
+/// another recording is ruled out by a track length.
+fn very_close_fit(
+    local: &LocalAlbum,
+    releases: &[Release],
+    matches: &[ReleaseMatch],
+    candidates: &[usize],
+    chosen: usize,
+) -> bool {
+    let (release, matched) = (&releases[chosen], &matches[chosen]);
+    let lengths_close = matched
+        .pairs
+        .iter()
+        .all(|pair| length_off(local, release, pair).is_some_and(|gap| gap <= CONFIRM_LENGTH_SECS));
+    if !lengths_close
+        || matched.album_distance() > CONFIRM_ALBUM
+        || !complete_fit(local, release, matched)
+    {
+        return false;
+    }
+    let recording = |release: &Release, matched: &ReleaseMatch, file: usize| {
+        matched
+            .pair_for(file)
+            .and_then(|pair| release.tracks.get(pair.track))
+            .map(|track| track.recording_id.to_ascii_lowercase())
+    };
+    candidates
+        .iter()
+        .copied()
+        .filter(|index| {
+            *index != chosen && same_group(&releases[*index], &release.release_group_id)
+        })
+        .filter(|index| {
+            let (other, other_match) = (&releases[*index], &matches[*index]);
+            other_match.pairs.iter().any(|pair| {
+                recording(other, other_match, pair.local) != recording(release, matched, pair.local)
+            })
+        })
+        .all(|index| {
+            matches[index]
+                .pairs
+                .iter()
+                .filter_map(|pair| length_off(local, &releases[index], pair))
+                .any(|gap| gap > CONFIRM_LENGTH_SECS)
+        })
+}
+
+/// How many seconds a paired file is off its track; `None` when either
+/// length is unknown.
+fn length_off(local: &LocalAlbum, release: &Release, pair: &TrackPair) -> Option<f64> {
+    let file = local.tracks.get(pair.local)?.duration_secs?;
+    let track = release.tracks.get(pair.track)?.length_ms?;
+    Some((file - track as f64 / 1000.0).abs())
 }
 
 /// For release groups tied within the margin: the group of the release
@@ -881,6 +954,9 @@ mod tests {
         names_r2.tracks[1].release_mbid = Some("r2".to_owned());
         let mut live = r();
         live.secondary_types = vec!["Live".to_owned()];
+        // A fit too loose to confirm the live release by itself.
+        let mut loose_length = stray(named("r"));
+        loose_length.tracks[0].duration_secs = Some(215.0);
         let mut retitled = r();
         retitled.title = "Night Shift Sessions".to_owned();
         let mut merged = r();
@@ -914,8 +990,8 @@ mod tests {
                 Verdict::Identified(0),
             ),
             (
-                "a live release still needs every track named",
-                stray(named("r")),
+                "a loosely fitting live release still needs every track named",
+                loose_length,
                 vec![live],
                 Verdict::EditionUncertain(0),
             ),
@@ -989,6 +1065,91 @@ mod tests {
         late.tracks[1].track_number = 1;
         let (_, matches) = scored(&late, &[two_discs]);
         assert_eq!(matches[0].pair_for(1).map(|pair| pair.track), Some(2));
+    }
+
+    /// Untagged files confirm a live release or an unflagged compilation
+    /// only when they fit it almost exactly, and never when another
+    /// edition of the group could be another recording of the same songs.
+    #[test]
+    fn a_live_album_or_compilation_confirms_on_a_very_close_fit() {
+        let typed = |kind: &str, id: &str| {
+            let mut release = edition("g", id, "Night Shift");
+            release.secondary_types = vec![kind.to_owned()];
+            release
+        };
+        let other_night = |offset_ms: Option<i64>| {
+            let mut release = typed("Live", "night-2");
+            for (index, track) in release.tracks.iter_mut().enumerate() {
+                track.recording_id = format!("night-2-recording-{index}");
+                track.length_ms = offset_ms
+                    .and_then(|offset| track.length_ms.map(|ms| (ms as i64 + offset) as u64));
+            }
+            release
+        };
+        let mut five_seconds_off = local(4, 0, false);
+        five_seconds_off.tracks[2].duration_secs = Some(205.0);
+        let mut live_titles = local(4, 0, false);
+        for track in &mut live_titles.tracks {
+            track.title = format!("{} (Live)", track.title);
+        }
+        let cases: Vec<(&str, LocalAlbum, Vec<Release>, Verdict)> = vec![
+            (
+                "a live album fits closely",
+                local(4, 0, false),
+                vec![typed("Live", "night-1")],
+                Verdict::Identified(0),
+            ),
+            (
+                "an unflagged compilation fits closely",
+                local(4, 0, false),
+                vec![typed("Compilation", "best-of")],
+                Verdict::Identified(0),
+            ),
+            (
+                "titles that differ by (Live) are not nearly exact",
+                live_titles,
+                vec![typed("Live", "night-1")],
+                Verdict::EditionUncertain(0),
+            ),
+            (
+                "another night at the same lengths",
+                local(4, 0, false),
+                vec![typed("Live", "night-1"), other_night(Some(0))],
+                Verdict::EditionUncertain(0),
+            ),
+            (
+                "another night one second off",
+                local(4, 0, false),
+                vec![typed("Live", "night-1"), other_night(Some(1_000))],
+                Verdict::EditionUncertain(0),
+            ),
+            (
+                "another night with no lengths",
+                local(4, 0, false),
+                vec![typed("Live", "night-1"), other_night(None)],
+                Verdict::EditionUncertain(0),
+            ),
+            (
+                "a track five seconds off is not nearly exact",
+                five_seconds_off,
+                vec![typed("Live", "night-1")],
+                Verdict::EditionUncertain(0),
+            ),
+            (
+                "another night five seconds off",
+                local(4, 0, false),
+                vec![typed("Live", "night-1"), other_night(Some(5_000))],
+                Verdict::Identified(0),
+            ),
+        ];
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(name, local, releases, expected)| {
+                let got = verdict(&local, &releases);
+                (got != expected).then(|| format!("{name}: expected {expected:?}, got {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     /// Files naming single S that carry album A's track ids: the release
