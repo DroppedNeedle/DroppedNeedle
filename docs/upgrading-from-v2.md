@@ -162,6 +162,12 @@ Upgrading an existing v3 install does the same with any pins it holds.
 Albums that were waiting on a review question in v2 go back on v3's
 identify queue, so v3 asks again with its own candidates.
 
+Two passes run in the background after an upgrade: an album v2 matched only
+to a release group is identified once more to find its edition, unless a
+person chose that group, and the artist MusicBrainz links v2 made stay in
+place until each album's release details arrive and are checked. See
+[Your library](library.md#album-organization).
+
 A song that points at something v2 itself no longer had (say a queued song
 you deleted in v2) keeps its title and is left as it is.
 
