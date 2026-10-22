@@ -966,6 +966,73 @@ fn asked(id: &str) -> String {
     format!("/artist/{id}")
 }
 
+/// Two albums carried with a match and no release document. MusicBrainz
+/// refuses the first in line for good (a 400), so that album stops asking
+/// and the pass goes on: the second release is fetched and proves its
+/// album's artist. A later pass asks nothing again.
+#[tokio::test]
+async fn a_refused_release_document_does_not_hold_up_the_rest() {
+    const REFUSED: &str = "c0ffee00-0000-4000-8000-0000000000bd";
+    const LANTERNS: &str = "c0ffee00-0000-4000-8000-00000000a001";
+    let rig = rig_with(
+        with(
+            routes(),
+            vec![(
+                format!("/release/{REFUSED}"),
+                RawResponse::new(400, Vec::new(), b"{\"error\":\"Invalid mbid.\"}".to_vec()),
+            )],
+        ),
+        false,
+    );
+    rig.artist("ar-l", "The Lanterns", 1.0);
+    for (album, release) in [("al-refused", REFUSED), ("al-good", STANDARD)] {
+        rig.db
+            .execute_batch(&format!(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                 album_artist_name, album_artist_id, grouping_source, created_at, updated_at) \
+                 VALUES ('{album}', 'root-1', '{album}', 'Album', 'album', 'The Lanterns', \
+                 'ar-l', 'automatic', 0, 0); \
+                 INSERT INTO local_album_artists (local_album_id, position, local_artist_id, \
+                 role, credited_name, join_phrase) \
+                 VALUES ('{album}', 0, 'ar-l', 'main', 'The Lanterns', ''); \
+                 INSERT INTO local_album_external_identities (local_album_id, provider, \
+                 release_group_mbid, release_mbid, decision_source, selected_at) \
+                 VALUES ('{album}', 'musicbrainz', 'c0ffee00-0000-4000-8000-00000000b001', \
+                 '{release}', 'automatic', 1);"
+            ))
+            .expect("carried album seeds");
+    }
+    rig.store.sweep_artist_links().unwrap();
+    rig.db
+        .execute(
+            "UPDATE library_artist_reconciliation_state SET updated_at = 0 \
+             WHERE local_album_id = 'al-refused'",
+            [],
+        )
+        .expect("first in line");
+
+    let pass = rig.service.fetch_waiting_documents(20).await.unwrap();
+    assert_eq!(pass.fetched, 1);
+    rig.store.sweep_artist_links().unwrap();
+    assert_eq!(rig.link_of("ar-l"), [format!("{LANTERNS} automatic")]);
+    assert_eq!(
+        rig.texts(
+            "SELECT local_album_id || ' ' || reason_code FROM library_artist_reconciliation_state \
+             ORDER BY local_album_id"
+        ),
+        [
+            "al-good CREDITS_LINE_UP".to_owned(),
+            "al-refused RELEASE_DOCUMENT_REFUSED".to_owned(),
+        ]
+    );
+    rig.service.fetch_waiting_documents(20).await.unwrap();
+    let refused = format!("/release/{REFUSED}");
+    assert_eq!(
+        rig.seen().iter().filter(|path| **path == refused).count(),
+        1
+    );
+}
+
 /// Files holding the retired id, and a matched album proving the current
 /// one: the pass records both ids and links nothing. MusicBrainz's answer
 /// rewrites the files' evidence to the current id and links the row; a

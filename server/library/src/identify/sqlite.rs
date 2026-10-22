@@ -811,6 +811,63 @@ impl SqliteIdentifyStore {
         Ok(())
     }
 
+    /// Up to `limit` releases whose document an album with an accepted
+    /// match waits for, the longest wait first.
+    pub fn releases_waiting_for_documents(&self, limit: usize) -> Result<Vec<String>, StoreError> {
+        self.db.read_blocking("identify.releases_waiting", |conn| {
+            Ok(artist_links::releases_waiting(
+                conn,
+                &release_input_hash(),
+                limit,
+            )?)
+        })
+    }
+
+    /// Record that MusicBrainz has no release `release_mbid`: the albums
+    /// waiting for its document stop asking for it and are offered for
+    /// identification again, so a new match can end the wait. Returns how
+    /// many albums.
+    pub fn release_not_found(&self, release_mbid: &str) -> Result<usize, StoreError> {
+        let release = release_mbid.trim().to_ascii_lowercase();
+        self.db
+            .write_blocking(Lane::Background, "identify.release_not_found", |tx| {
+                changing(tx, |tx| {
+                    let now = now_ms();
+                    let albums = artist_links::release_settled(
+                        tx,
+                        &release,
+                        artist_links::RELEASE_NOT_FOUND,
+                        now,
+                    )?;
+                    for album in &albums {
+                        offer_album(tx, album, now)?;
+                    }
+                    Ok(albums.len())
+                })
+            })
+            .map(|written| self.landed(written))
+    }
+
+    /// Record that MusicBrainz refused release `release_mbid`'s document in
+    /// a way asking again will not change, so the albums waiting for it
+    /// stop asking for it. Returns how many albums.
+    pub fn release_refused(&self, release_mbid: &str) -> Result<usize, StoreError> {
+        let release = release_mbid.trim().to_ascii_lowercase();
+        self.db
+            .write_blocking(Lane::Background, "identify.release_refused", |tx| {
+                changing(tx, |tx| {
+                    Ok(artist_links::release_settled(
+                        tx,
+                        &release,
+                        artist_links::RELEASE_DOCUMENT_REFUSED,
+                        now_ms(),
+                    )?
+                    .len())
+                })
+            })
+            .map(|written| self.landed(written))
+    }
+
     /// Up to `limit` artist ids waiting for MusicBrainz's answer, newest
     /// first.
     pub fn pending_artist_ids(&self, limit: usize) -> Result<Vec<String>, StoreError> {
@@ -992,6 +1049,8 @@ fn store_release(
                 now + RELEASE_FRESH_SECS as f64,
             ],
         )?;
+        // An album matched to it may have been waiting for it.
+        artist_links::mark_release_stale(tx, entity)?;
     }
     // Expired documents stay while an identity names them or a pending
     // review offers them to a curator. Merged-id rows share their
@@ -1150,6 +1209,9 @@ fn rewrite_document(
                 expires_at,
             ],
         )?;
+        // An album matched to it may have been waiting for it, or its
+        // proofs may read what changed.
+        artist_links::mark_release_stale(tx, &entity)?;
     }
     Ok(Some(release))
 }

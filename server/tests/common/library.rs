@@ -16,7 +16,7 @@ use droppedneedle_library::contrib::scripted::{ScriptedDiscogs, ScriptedMusicBra
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
 use droppedneedle_library::identify::providers::{FakeProviders, IdentifyProviders, RecallOutcome};
 use droppedneedle_library::identify::sources::{
-    ArtistAnswer, EditionPage, EditionQuery, SourceError, Unanswered,
+    ArtistAnswer, EditionPage, EditionQuery, ReleaseAnswer, SourceError, Unanswered,
 };
 use droppedneedle_library::management::enrich::EnrichmentPort;
 use droppedneedle_library::wiring::{LibraryCore, LibraryPorts, LibrarySetup};
@@ -33,6 +33,9 @@ pub struct ScriptedIdentify {
     /// What each artist id answers, and every id asked about.
     artists: Mutex<HashMap<String, ArtistAnswer>>,
     artists_asked: Mutex<Vec<String>>,
+    /// What each release document lookup answers, and every id asked about.
+    documents: Mutex<HashMap<String, ReleaseAnswer>>,
+    documents_asked: Mutex<Vec<String>>,
 }
 
 impl ScriptedIdentify {
@@ -42,6 +45,8 @@ impl ScriptedIdentify {
             editions: Mutex::new(EditionPage::default()),
             artists: Mutex::new(HashMap::new()),
             artists_asked: Mutex::new(Vec::new()),
+            documents: Mutex::new(HashMap::new()),
+            documents_asked: Mutex::new(Vec::new()),
         })
     }
 
@@ -57,6 +62,20 @@ impl ScriptedIdentify {
     /// Every artist id looked up so far, in order.
     pub fn artists_asked(&self) -> Vec<String> {
         self.artists_asked.lock().expect("artist asks").clone()
+    }
+
+    /// Answer a lookup of release `mbid`'s document with `document`. An id
+    /// with no answer scripted gets none.
+    pub fn set_document(&self, mbid: &str, document: ReleaseAnswer) {
+        self.documents
+            .lock()
+            .expect("document script")
+            .insert(mbid.to_owned(), document);
+    }
+
+    /// Every release document looked up so far, in order.
+    pub fn documents_asked(&self) -> Vec<String> {
+        self.documents_asked.lock().expect("document asks").clone()
     }
 
     /// Answer every recall with `result`.
@@ -131,6 +150,23 @@ impl IdentifyProviders for ScriptedIdentify {
             .lock()
             .expect("artist script")
             .get(mbid)
+            .cloned();
+        Box::pin(async move { answer.ok_or_else(Unanswered::cannot_tell) })
+    }
+
+    fn release_document(
+        &self,
+        release_mbid: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ReleaseAnswer, Unanswered>> + Send + '_>> {
+        self.documents_asked
+            .lock()
+            .expect("document asks")
+            .push(release_mbid.to_owned());
+        let answer = self
+            .documents
+            .lock()
+            .expect("document script")
+            .get(release_mbid)
             .cloned();
         Box::pin(async move { answer.ok_or_else(Unanswered::cannot_tell) })
     }

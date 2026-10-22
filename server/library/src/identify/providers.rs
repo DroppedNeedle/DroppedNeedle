@@ -29,8 +29,8 @@ use std::sync::Arc;
 use super::evidence::local_album;
 use super::models::{LocalAlbumFacts, RecallResult};
 use super::sources::{
-    AlbumQuery, ArtistAnswer, EditionPage, EditionQuery, FingerprintSource, ReleaseHit,
-    ReleaseSource, SourceError, Unanswered, group_editions,
+    AlbumQuery, ArtistAnswer, EditionPage, EditionQuery, FingerprintSource, ReleaseAnswer,
+    ReleaseHit, ReleaseSource, SourceError, Unanswered, group_editions,
 };
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::fresh_release;
@@ -87,6 +87,16 @@ pub trait IdentifyProviders: Send + Sync {
         &self,
         _mbid: &str,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<ArtistAnswer, Unanswered>> + Send + '_>> {
+        Box::pin(async { Err(Unanswered::cannot_tell()) })
+    }
+
+    /// The document of one release, asked of MusicBrainz. The default
+    /// cannot tell, so nothing is learned.
+    fn release_document(
+        &self,
+        _release_mbid: &str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<ReleaseAnswer, Unanswered>> + Send + '_>>
+    {
         Box::pin(async { Err(Unanswered::cannot_tell()) })
     }
 }
@@ -421,6 +431,15 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<ArtistAnswer, Unanswered>> + Send + '_>> {
         let mbid = mbid.to_owned();
         Box::pin(async move { self.releases.canonical_artist(&mbid).await })
+    }
+
+    fn release_document(
+        &self,
+        release_mbid: &str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<ReleaseAnswer, Unanswered>> + Send + '_>>
+    {
+        let release_mbid = release_mbid.to_owned();
+        Box::pin(async move { self.releases.release_answer(&release_mbid).await })
     }
 }
 

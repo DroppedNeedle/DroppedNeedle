@@ -21510,3 +21510,192 @@ async fn a_re_ripped_track_is_managed_again_and_undo_gives_it_back() {
     );
     assert_eq!(managed.mark(&album).as_deref(), Some("run_undone"));
 }
+
+/// A library carried from v2: two albums matched to exact releases whose
+/// documents the upgrade did not bring, their artist linked by v2. The
+/// first sweep after the start keeps the link. Once identification runs,
+/// an idle pass fetches each missing document once: the one MusicBrainz
+/// has proves the artist on its album, and the album whose release it no
+/// longer has is offered for identification again.
+#[tokio::test]
+async fn a_carried_library_fetches_its_release_documents_and_keeps_its_links() {
+    use droppedneedle_library::identify::sources::ReleaseAnswer;
+
+    const ARTIST: &str = "33333333-3333-4333-8333-333333333333";
+    const GROUP: &str = "44444444-4444-4444-8444-444444444444";
+    let rig = Rig::start("lib-carried-documents").await;
+    let paused = rig.pause_identification().await;
+    let music = rig.app.config.root_app_dir.join("music");
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    plant(&music, "b/01.flac", "flac_full_01.flac");
+    rig.app.add_library_folder("music", &music).await;
+    let store = &rig.scan_store;
+    let track_a = store.track_at("music", "a/01.flac").unwrap().expect("a/01");
+    let track_b = store.track_at("music", "b/01.flac").unwrap().expect("b/01");
+    let album_a = store.album_for_track(&track_a).unwrap().expect("album a");
+    let album_b = store.album_for_track(&track_b).unwrap().expect("album b");
+    let db = rig.app.db();
+    let text = |sql: &str| texts(&db, sql);
+    let artist = text(&format!(
+        "SELECT album_artist_id FROM local_albums WHERE id = '{album_a}'"
+    ))[0]
+        .clone();
+    let credited = text(&format!(
+        "SELECT COALESCE(credited_name, '') FROM local_album_artists \
+         WHERE local_album_id = '{album_a}' AND position = 0"
+    ))[0]
+        .clone();
+    drop(db);
+
+    // The rows as the upgrade leaves them: matches, track mappings and the
+    // artist's link carried, no release document, proof or queued job, and
+    // no file artist ids on the carried credits.
+    let Rig {
+        app,
+        identify,
+        contrib,
+        scan_store,
+        identify_store,
+        settled_at,
+    } = rig;
+    let (app, ()) = app
+        .while_stopped(|config| {
+            let db = droppedneedle_kernel::db::open_connection(&config.library_db_path)
+                .expect("database opens");
+            db.execute_batch(&format!(
+                "DELETE FROM local_album_external_identities; \
+                 DELETE FROM local_track_external_identities; \
+                 DELETE FROM library_album_match_state; \
+                 DELETE FROM library_identify_jobs; \
+                 DELETE FROM library_artist_credit_proofs; \
+                 DELETE FROM library_artist_reconciliation_state; \
+                 DELETE FROM library_management_metadata_snapshots; \
+                 DELETE FROM local_artist_external_identities; \
+                 UPDATE local_album_artists SET artist_mbid = NULL; \
+                 UPDATE local_track_artists SET artist_mbid = NULL; \
+                 INSERT INTO local_album_external_identities (local_album_id, provider, \
+                 release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+                 ('{album_a}', 'musicbrainz', '{GROUP}', '{REL_1}', 'automatic', 1), \
+                 ('{album_b}', 'musicbrainz', '{GROUP}', '{REL_2}', 'automatic', 1); \
+                 INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, decision_source, \
+                 selected_at) VALUES \
+                 ('{track_a}', 'musicbrainz', 'rec-1', '{REL_1}', 'rt-1', 'automatic', 1), \
+                 ('{track_b}', 'musicbrainz', 'rec-1', '{REL_2}', 'rt-1', 'automatic', 1); \
+                 INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+                 provider_artist_id, decision_source, selected_at) \
+                 VALUES ('{artist}', 'musicbrainz', '{ARTIST}', 'automatic', 1);"
+            ))
+            .expect("carried rows seed");
+        })
+        .await;
+    let rig = Rig {
+        app,
+        identify,
+        contrib,
+        scan_store,
+        identify_store,
+        settled_at,
+    };
+    let db = rig.app.db();
+    let link = format!(
+        "SELECT provider_artist_id || ' ' || decision_source \
+         FROM local_artist_external_identities WHERE local_artist_id = '{artist}'"
+    );
+    let reasons = format!(
+        "SELECT local_album_id || ' ' || state || ' ' || reason_code \
+         FROM library_artist_reconciliation_state \
+         WHERE local_album_id IN ('{album_a}', '{album_b}') ORDER BY local_album_id = '{album_b}'"
+    );
+    let waiting = vec![
+        format!("{album_a} waiting_for_identity RELEASE_DOCUMENT_MISSING"),
+        format!("{album_b} waiting_for_identity RELEASE_DOCUMENT_MISSING"),
+    ];
+    rig.app
+        .until("the first sweep looks at both albums", || {
+            let done = texts(&db, &reasons) == waiting;
+            async move { done.then_some(()) }
+        })
+        .await;
+    assert_eq!(texts(&db, &link), [format!("{ARTIST} automatic")]);
+
+    let credit = CreditedArtist {
+        id: ARTIST.to_owned(),
+        name: credited.clone(),
+        sort_name: None,
+        join: String::new(),
+    };
+    rig.identify.set_document(
+        REL_1,
+        ReleaseAnswer::Found(Box::new(Release {
+            id: REL_1.to_owned(),
+            release_group_id: GROUP.to_owned(),
+            title: "Album".to_owned(),
+            artists: vec![credit.clone()],
+            tracks: vec![ReleaseTrack {
+                id: "rt-1".to_owned(),
+                recording_id: "rec-1".to_owned(),
+                title: "Song 1".to_owned(),
+                disc: 1,
+                position: 1,
+                absolute_position: 1,
+                artists: vec![credit],
+                ..ReleaseTrack::default()
+            }],
+            ..Release::default()
+        })),
+    );
+    rig.identify.set_document(REL_2, ReleaseAnswer::Missing);
+    rig.resume_identification(paused).await;
+    let proved = format!("{album_a} projected CREDITS_LINE_UP");
+    let offered = format!(
+        "SELECT local_album_id FROM library_identify_jobs WHERE local_album_id = '{album_b}'"
+    );
+    rig.app
+        .until(
+            "the documents are fetched, the album proved and the other offered",
+            || {
+                let done = texts(&db, &reasons).first() == Some(&proved)
+                    && !texts(&db, &offered).is_empty();
+                async move { done.then_some(()) }
+            },
+        )
+        .await;
+    assert_eq!(texts(&db, &link), [format!("{ARTIST} automatic")]);
+    assert_eq!(
+        texts(
+            &db,
+            &format!(
+                "SELECT subject_kind || ' ' || artist_mbid FROM library_artist_credit_proofs \
+                 WHERE local_artist_id = '{artist}' ORDER BY subject_kind"
+            )
+        ),
+        [format!("album {ARTIST}"), format!("track {ARTIST}")]
+    );
+    let finished = format!(
+        "SELECT state FROM library_identify_jobs WHERE local_album_id = '{album_b}' \
+         AND state NOT IN ('queued', 'running')"
+    );
+    rig.app
+        .until("the other album is identified again", || {
+            let done = !texts(&db, &finished).is_empty();
+            async move { done.then_some(()) }
+        })
+        .await;
+    assert_eq!(
+        texts(&db, &reasons).get(1),
+        Some(&format!("{album_b} waiting_for_identity RELEASE_NOT_FOUND"))
+    );
+    let asked = rig.identify.documents_asked();
+    assert_eq!(
+        asked.iter().filter(|id| *id == REL_1).count(),
+        1,
+        "{asked:?}"
+    );
+    assert_eq!(
+        asked.iter().filter(|id| *id == REL_2).count(),
+        1,
+        "{asked:?}"
+    );
+    rig.stop().await;
+}

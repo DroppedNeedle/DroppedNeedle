@@ -21,6 +21,12 @@
 //! follow an artist MusicBrainz merged into another ([`merged_ids`]). A
 //! release id MusicBrainz merged counts as the id it was merged into, and
 //! the ids that disagree on a row are recorded to be asked about.
+//!
+//! An album whose release document is not on file yet (an upgrade carries
+//! matches but no documents) changes nothing: its proofs stay, and the
+//! app's link of a row nothing proves stays while such an album credits
+//! it. Identification fetches the missing documents when it is idle, and
+//! a document that lands sends its albums through the next sweep.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,6 +38,7 @@ use super::sqlite::stored_release;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::accepted_release;
 use crate::identity::DecisionSource;
+use crate::identity::reads::release_input_hash;
 use crate::identity::sql::REVISABLE;
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
@@ -139,7 +146,9 @@ const STAMP: &str = "'rules-2|' || COALESCE((SELECT lower(trim(COALESCE(e.releas
       AND i.provider = 'musicbrainz' WHERE t.local_album_id = a.id)";
 
 /// The albums whose stamp moved since their last pass (or that have none),
-/// and the albums with a state but no match any more, at most `limit`.
+/// the albums with a state but no match any more, and the albums waiting
+/// for a release document that is now on file (`DOCUMENT_HASH`, the
+/// current document version's hash), at most `limit`.
 const STALE_ALBUMS: &str = "SELECT a.id FROM local_album_external_identities e \
      JOIN local_albums a ON a.id = e.local_album_id \
      LEFT JOIN library_artist_reconciliation_state s ON s.local_album_id = a.id \
@@ -150,6 +159,13 @@ const STALE_ALBUMS: &str = "SELECT a.id FROM local_album_external_identities e \
       JOIN local_album_external_identities e ON e.local_album_id = a.id \
        AND e.provider = 'musicbrainz' \
       WHERE a.id = s.local_album_id AND a.retired_into_album_id IS NULL) \
+     UNION ALL SELECT s.local_album_id FROM library_artist_reconciliation_state s \
+     JOIN local_album_external_identities e ON e.local_album_id = s.local_album_id \
+      AND e.provider = 'musicbrainz' \
+     WHERE s.state = 'waiting_for_identity' AND s.reason_code = 'RELEASE_DOCUMENT_MISSING' \
+     AND EXISTS (SELECT 1 FROM library_management_metadata_snapshots m \
+      WHERE m.provider = 'musicbrainz' AND m.entity_kind = 'release' \
+      AND m.entity_id = lower(trim(e.release_mbid)) AND m.input_hash = 'DOCUMENT_HASH') \
      LIMIT ?1";
 
 /// The rows the app linked, in id order after `?1`, at most `?2`. Every
@@ -189,8 +205,137 @@ pub(crate) fn mark_stale(conn: &Connection, album: &str) -> rusqlite::Result<()>
     Ok(())
 }
 
+/// The reason of an album whose accepted release has no document on file.
+pub(crate) const RELEASE_DOCUMENT_MISSING: &str = "RELEASE_DOCUMENT_MISSING";
+/// The reason of an album whose accepted release MusicBrainz answered it
+/// does not have. The album is offered for identification again, and its
+/// document is not asked for while the reason stands; the album's next
+/// pass, after its match or credits change, sets it back to missing.
+pub(crate) const RELEASE_NOT_FOUND: &str = "RELEASE_NOT_FOUND";
+/// The reason of an album whose accepted release's document MusicBrainz
+/// refused in a way asking again will not change (an id it refuses, a
+/// redirect not followed, a document that does not read). Its document is
+/// not asked for while the reason stands, as for [`RELEASE_NOT_FOUND`].
+pub(crate) const RELEASE_DOCUMENT_REFUSED: &str = "RELEASE_DOCUMENT_REFUSED";
+
+/// Whether row `?1` is credited on a live album waiting for the document
+/// of its accepted release (reasons `?2`, `?3` and `?4`).
+const WAITS_FOR_DOCUMENT: &str = "SELECT EXISTS (SELECT 1 FROM local_album_artists c \
+     JOIN library_artist_reconciliation_state s ON s.local_album_id = c.local_album_id \
+     JOIN local_albums a ON a.id = c.local_album_id \
+     WHERE c.local_artist_id = ?1 AND a.retired_into_album_id IS NULL \
+     AND s.state = 'waiting_for_identity' AND s.reason_code IN (?2, ?3, ?4)) \
+     OR EXISTS (SELECT 1 FROM local_track_artists c \
+     JOIN local_tracks t ON t.id = c.local_track_id \
+     JOIN library_artist_reconciliation_state s ON s.local_album_id = t.local_album_id \
+     JOIN local_albums a ON a.id = t.local_album_id \
+     WHERE c.local_artist_id = ?1 AND t.availability = 'indexed' \
+     AND a.retired_into_album_id IS NULL \
+     AND s.state = 'waiting_for_identity' AND s.reason_code IN (?2, ?3, ?4))";
+
+/// Whether row `artist` is credited on a live album that waits for its
+/// release's document. Such an album proves nothing yet and contradicts
+/// nothing, so the app's link of a row nothing proves stays meanwhile: a
+/// link carried from v2 outlives the first sweep after the upgrade.
+fn waits_for_document(conn: &Connection, artist: &str) -> rusqlite::Result<bool> {
+    conn.prepare_cached(WAITS_FOR_DOCUMENT)?.query_row(
+        params![
+            artist,
+            RELEASE_DOCUMENT_MISSING,
+            RELEASE_NOT_FOUND,
+            RELEASE_DOCUMENT_REFUSED
+        ],
+        |row| row.get(0),
+    )
+}
+
+/// Why album `album`'s document will not come ([`RELEASE_NOT_FOUND`] or
+/// [`RELEASE_DOCUMENT_REFUSED`]), while its stamp is the one that answer
+/// was recorded under: a pass over an unchanged match does not ask again.
+fn settled_reason(conn: &Connection, album: &str) -> rusqlite::Result<Option<String>> {
+    conn.prepare_cached(&format!(
+        "SELECT s.reason_code FROM library_artist_reconciliation_state s \
+         JOIN local_albums a ON a.id = s.local_album_id \
+         WHERE s.local_album_id = ?1 AND s.reason_code IN (?2, ?3) \
+         AND s.input_revision = ({STAMP})"
+    ))?
+    .query_row(
+        params![album, RELEASE_NOT_FOUND, RELEASE_DOCUMENT_REFUSED],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// Have the next sweep work through again every live album matched to
+/// release `release_mbid` (lowercased), once its document is on file.
+/// Release ids are stored as MusicBrainz gives them, with no spaces, so
+/// the lookup goes through the index on `lower(release_mbid)`.
+pub(crate) fn mark_release_stale(conn: &Connection, release_mbid: &str) -> rusqlite::Result<()> {
+    conn.prepare_cached(
+        "UPDATE library_artist_reconciliation_state SET input_revision = '' \
+         WHERE input_revision <> '' AND local_album_id IN (SELECT e.local_album_id \
+         FROM local_album_external_identities e JOIN local_albums a ON a.id = e.local_album_id \
+         WHERE e.provider = 'musicbrainz' AND a.retired_into_album_id IS NULL \
+         AND lower(e.release_mbid) = ?1)",
+    )?
+    .execute(params![release_mbid])?;
+    Ok(())
+}
+
+/// Up to `limit` releases whose document a live album waits for, the
+/// longest wait first, leaving out any whose current document (`?2`, the
+/// document version's hash) is on file already.
+pub(crate) fn releases_waiting(
+    conn: &Connection,
+    input_hash: &str,
+    limit: usize,
+) -> rusqlite::Result<Vec<String>> {
+    conn.prepare_cached(
+        "SELECT lower(trim(e.release_mbid)) AS release FROM library_artist_reconciliation_state s \
+         JOIN local_albums a ON a.id = s.local_album_id \
+         JOIN local_album_external_identities e ON e.local_album_id = a.id \
+          AND e.provider = 'musicbrainz' \
+         WHERE s.state = 'waiting_for_identity' AND s.reason_code = ?1 \
+         AND a.retired_into_album_id IS NULL AND trim(COALESCE(e.release_mbid, '')) <> '' \
+         AND NOT EXISTS (SELECT 1 FROM library_management_metadata_snapshots m \
+          WHERE m.provider = 'musicbrainz' AND m.entity_kind = 'release' \
+          AND m.entity_id = lower(trim(e.release_mbid)) AND m.input_hash = ?2) \
+         GROUP BY release ORDER BY min(s.updated_at), release LIMIT ?3",
+    )?
+    .query_map(
+        params![RELEASE_DOCUMENT_MISSING, input_hash, limit as i64],
+        |row| row.get(0),
+    )?
+    .collect()
+}
+
+/// Record on the albums waiting for release `release_mbid`'s (lowercased)
+/// document why it will not come: `reason` is [`RELEASE_NOT_FOUND`] or
+/// [`RELEASE_DOCUMENT_REFUSED`]. Returns those albums.
+pub(crate) fn release_settled(
+    conn: &Connection,
+    release_mbid: &str,
+    reason: &str,
+    now_ms: i64,
+) -> rusqlite::Result<Vec<String>> {
+    conn.prepare_cached(
+        "UPDATE library_artist_reconciliation_state SET reason_code = ?2, updated_at = ?3 \
+         WHERE state = 'waiting_for_identity' AND reason_code = ?1 \
+         AND local_album_id IN (SELECT local_album_id FROM local_album_external_identities \
+         WHERE provider = 'musicbrainz' AND lower(release_mbid) = ?4) \
+         RETURNING local_album_id",
+    )?
+    .query_map(
+        params![RELEASE_DOCUMENT_MISSING, reason, now_ms, release_mbid],
+        |row| row.get(0),
+    )?
+    .collect()
+}
+
 fn stale_albums_sql() -> String {
-    STALE_ALBUMS.replace("STAMP", STAMP)
+    STALE_ALBUMS
+        .replace("STAMP", STAMP)
+        .replace("DOCUMENT_HASH", &release_input_hash())
 }
 
 fn row_ids_sql() -> String {
@@ -795,10 +940,22 @@ pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::R
                 Some((CreditState::WaitingForIdentity, "MATCH_NOT_ACCEPTED")),
             ),
             Some(release) => match stored_release(tx, &release, 0.0)? {
-                None => (
-                    Vec::new(),
-                    Some((CreditState::WaitingForIdentity, "RELEASE_DOCUMENT_MISSING")),
-                ),
+                // A document not on file proves nothing and contradicts
+                // nothing: the album's proofs and its rows' links stay as
+                // they are until it lands ([`waits_for_document`]).
+                None => {
+                    let reason = settled_reason(tx, album)?;
+                    store_state(
+                        tx,
+                        album,
+                        Some((
+                            CreditState::WaitingForIdentity,
+                            reason.as_deref().unwrap_or(RELEASE_DOCUMENT_MISSING),
+                        )),
+                        now_ms,
+                    )?;
+                    return Ok(Linked::default());
+                }
                 Some(document) => {
                     let (proofs, state, reason) = prove(
                         tx,
@@ -853,7 +1010,8 @@ fn row_ids(conn: &Connection, artist: &str) -> rusqlite::Result<BTreeSet<String>
 /// person's or v2's link is left alone; a row proven to be exactly one
 /// non-placeholder id `x` is linked to it unless another row holds `x`
 /// (the oldest row wins among rows settled together); any other row loses
-/// the app's link. Reads only.
+/// the app's link, except a row proven nothing while an album crediting it
+/// waits for its release's document. Reads only.
 pub fn plan(conn: &Connection, rows: &[String]) -> rusqlite::Result<Vec<LinkChange>> {
     Ok(plan_rows(conn, rows)?.changes)
 }
@@ -917,6 +1075,7 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
         if ids.len() > 1 {
             conflicts.extend(ids.iter().cloned());
         }
+        let unproven = provable && ids.is_empty();
         let only = (ids.len() == 1)
             .then(|| ids.into_iter().next())
             .flatten()
@@ -929,7 +1088,7 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
                 mbid,
                 linked: link.is_some(),
             }),
-            None if link.is_some() => {
+            None if link.is_some() && !(unproven && waits_for_document(conn, artist)?) => {
                 unlinks.insert(artist.clone());
             }
             None => {}

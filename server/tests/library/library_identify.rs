@@ -1249,6 +1249,19 @@ impl Links {
             .expect("state reads")
     }
 
+    /// The album's state and reason, as `state REASON`.
+    fn reason(&self, album: &str) -> Option<String> {
+        self.db
+            .query_row(
+                "SELECT state || ' ' || reason_code FROM library_artist_reconciliation_state \
+                 WHERE local_album_id = ?1",
+                params![album],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("state reads")
+    }
+
     /// Everything a pass may write, with its revisions and times.
     fn written(&self) -> String {
         self.db
@@ -1572,6 +1585,136 @@ fn files_that_turn_to_another_artist_lose_the_link() {
     links.store.sweep_artist_links().unwrap();
     assert_eq!(links.link_of("ar-a"), None);
     assert_eq!(links.state("al").as_deref(), Some("projected"));
+}
+
+/// A link carried from v2 on an album whose release document is not on
+/// file yet stays: a missing document contradicts nothing. Files that do
+/// contradict a link still take it away while the album waits.
+#[test]
+fn a_carried_link_waits_for_its_release_document() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-b", "Beta", 2.0);
+    links.link("ar-a", LINK_X, "automatic");
+    links.link("ar-b", LINK_Y, "automatic");
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", None), ("ar-b", "Beta", Some(LINK_Z))],
+        &[
+            ("t1", &[("ar-a", "Alpha", None)]),
+            ("t2", &[("ar-b", "Beta", Some(LINK_Y))]),
+        ],
+        "automatic",
+    );
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    assert_eq!(links.link_of("ar-b"), None, "files naming two ids");
+    assert_eq!(
+        links.reason("al").as_deref(),
+        Some("waiting_for_identity RELEASE_DOCUMENT_MISSING")
+    );
+}
+
+/// A release document that lands after the album's pass wakes the album:
+/// the next sweep proves its artists and links them.
+#[test]
+fn a_release_document_that_lands_links_the_waiting_album() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", None)],
+        &[("t1", &[("ar-a", "Alpha", None)])],
+        "automatic",
+    );
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(
+        links.reason("al").as_deref(),
+        Some("waiting_for_identity RELEASE_DOCUMENT_MISSING")
+    );
+    assert_eq!(links.link_of("ar-a"), None);
+
+    links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(
+        links.proofs(),
+        vec![
+            Links::proof("album", "al", 0, "ar-a", LINK_X),
+            Links::proof("track", "t1", 0, "ar-a", LINK_X),
+        ]
+    );
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    assert_eq!(links.state("al").as_deref(), Some("projected"));
+}
+
+/// A document learned through an id MusicBrainz merged wakes the album
+/// matched to that id, also when the release's own document was already
+/// on file.
+#[test]
+fn a_document_learned_through_a_merged_id_links_its_album() {
+    const OLD: &str = "aaaaaaaa-0000-4000-8000-0000000000f0";
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.album("al", &[("ar-a", "Alpha", None)], &[], "automatic");
+    links
+        .db
+        .execute(
+            "UPDATE local_album_external_identities SET release_mbid = ?1",
+            params![OLD],
+        )
+        .expect("matched to the merged id");
+    links.release(&[(LINK_X, "Alpha")], 0, &[]);
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(
+        links.reason("al").as_deref(),
+        Some("waiting_for_identity RELEASE_DOCUMENT_MISSING")
+    );
+
+    let merged = Release {
+        id: LINK_RELEASE.to_owned(),
+        old_ids: vec![OLD.to_owned()],
+        ..Release::default()
+    };
+    assert!(
+        links
+            .store
+            .keep_old_ids(&merged, droppedneedle_kernel::db::Lane::Background)
+            .unwrap()
+    );
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    assert_eq!(links.state("al").as_deref(), Some("projected"));
+}
+
+/// An album whose release MusicBrainz no longer has keeps its artist's
+/// link and is offered for identification again, so a new match can end
+/// the wait.
+#[test]
+fn a_release_musicbrainz_no_longer_has_is_matched_again() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.link("ar-a", LINK_X, "automatic");
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", None)],
+        &[("t1", &[("ar-a", "Alpha", None)])],
+        "automatic",
+    );
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(links.store.release_not_found(LINK_RELEASE).unwrap(), 1);
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(
+        links.reason("al").as_deref(),
+        Some("waiting_for_identity RELEASE_NOT_FOUND")
+    );
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    assert_eq!(
+        links.count(
+            "SELECT COUNT(*) FROM library_identify_jobs \
+             WHERE local_album_id = 'al' AND state = 'queued'"
+        ),
+        1
+    );
 }
 
 /// A row whose every credit a matched album proves to be x is merged,

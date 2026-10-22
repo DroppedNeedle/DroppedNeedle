@@ -191,6 +191,37 @@ pub trait ReleaseSource: Send + Sync {
     ) -> BoxFuture<'a, Result<ArtistAnswer, Unanswered>> {
         Box::pin(async { Err(Unanswered::cannot_tell()) })
     }
+
+    /// [`Self::release`], telling an answer that will never do (refused)
+    /// from no answer this time. The default counts every failure as no
+    /// answer.
+    fn release_answer<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<ReleaseAnswer, Unanswered>> {
+        Box::pin(async move {
+            match self.release(mbid).await {
+                Ok(Some(release)) => Ok(ReleaseAnswer::Found(Box::new(release))),
+                Ok(None) => Ok(ReleaseAnswer::Missing),
+                Err(error) => Err(Unanswered {
+                    error,
+                    retry_after_secs: None,
+                }),
+            }
+        })
+    }
+}
+
+/// What MusicBrainz says about one release id.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReleaseAnswer {
+    /// The release, under the id it now has.
+    Found(Box<Release>),
+    /// MusicBrainz has no such release.
+    Missing,
+    /// An answer that asking again will not change: the id is refused,
+    /// the redirect is not followed, or the document does not read.
+    Refused(String),
 }
 
 /// Releases per page, and pages at most, when listing a group's editions.
@@ -368,24 +399,46 @@ impl ReleaseSource for MusicBrainzView {
 
     fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
         Box::pin(async move {
-            let found = self
-                .lookup_release(mbid, &RELEASE_INCLUDES, Criticality::IdentityCritical)
+            fetch_release(self, mbid)
                 .await
-                .map_err(|error| SourceError(error.to_string()))?;
-            let Some(lookup) = found else {
-                return Ok(None);
-            };
-            let mut old_ids: Vec<String> = lookup
-                .redirects
-                .iter()
-                .filter(|hop| hop.entity == "release")
-                .map(|hop| hop.from_mbid.to_ascii_lowercase())
-                .collect();
-            let requested = mbid.trim().to_ascii_lowercase();
-            if !requested.eq_ignore_ascii_case(&lookup.entity.id) && !old_ids.contains(&requested) {
-                old_ids.push(requested);
+                .map_err(|failure| match failure {
+                    ReleaseFailure::Provider(error) => SourceError(error.to_string()),
+                    ReleaseFailure::Wire(error) => error,
+                })
+        })
+    }
+
+    /// A 4xx other than 404, a redirect that is not followed, an answer
+    /// that does not decode or is too large, and a document that does not
+    /// convert are refused: the same id fails the same way next time.
+    fn release_answer<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<ReleaseAnswer, Unanswered>> {
+        Box::pin(async move {
+            match fetch_release(self, mbid).await {
+                Ok(Some(release)) => Ok(ReleaseAnswer::Found(Box::new(release))),
+                Ok(None) => Ok(ReleaseAnswer::Missing),
+                Err(ReleaseFailure::Wire(error)) => Ok(ReleaseAnswer::Refused(error.0)),
+                Err(ReleaseFailure::Provider(
+                    error @ (ProviderError::BadRequest { .. }
+                    | ProviderError::Redirect { .. }
+                    | ProviderError::Payload { .. }),
+                )) => Ok(ReleaseAnswer::Refused(error.to_string())),
+                Err(ReleaseFailure::Provider(error)) => {
+                    let retry_after_secs = match &error {
+                        ProviderError::RateLimited { retry_after, .. }
+                        | ProviderError::Unavailable { retry_after, .. } => {
+                            retry_after.map(|wait| wait.as_secs_f64())
+                        }
+                        _ => None,
+                    };
+                    Err(Unanswered {
+                        error: SourceError(error.to_string()),
+                        retry_after_secs,
+                    })
+                }
             }
-            release_from_wire(lookup.entity, old_ids).map(Some)
         })
     }
 
@@ -601,6 +654,13 @@ impl ReleaseSource for CachedMusicBrainz {
     ) -> BoxFuture<'a, Result<ArtistAnswer, Unanswered>> {
         self.view.canonical_artist(mbid)
     }
+
+    fn release_answer<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<ReleaseAnswer, Unanswered>> {
+        self.view.release_answer(mbid)
+    }
 }
 
 /// An edition-finder row from a release search hit; hits without a
@@ -642,6 +702,43 @@ pub fn edition_from_hit(hit: ReleaseSearchHit) -> Option<Edition> {
 /// The matcher's release from the MusicBrainz wire shape. A release
 /// without its group, or a track without its recording, breaks the
 /// provider contract for this include set.
+/// Why one release lookup gave no document.
+enum ReleaseFailure {
+    /// MusicBrainz did not answer, or refused.
+    Provider(ProviderError),
+    /// The answer did not convert to a release.
+    Wire(SourceError),
+}
+
+/// Release `mbid` with its tracklist; `None` when MusicBrainz has no such
+/// release. A redirected (merged) id comes back as the release it now
+/// names, with the requested id among its old ids.
+async fn fetch_release(
+    view: &MusicBrainzView,
+    mbid: &str,
+) -> Result<Option<Release>, ReleaseFailure> {
+    let found = view
+        .lookup_release(mbid, &RELEASE_INCLUDES, Criticality::IdentityCritical)
+        .await
+        .map_err(ReleaseFailure::Provider)?;
+    let Some(lookup) = found else {
+        return Ok(None);
+    };
+    let mut old_ids: Vec<String> = lookup
+        .redirects
+        .iter()
+        .filter(|hop| hop.entity == "release")
+        .map(|hop| hop.from_mbid.to_ascii_lowercase())
+        .collect();
+    let requested = mbid.trim().to_ascii_lowercase();
+    if !requested.eq_ignore_ascii_case(&lookup.entity.id) && !old_ids.contains(&requested) {
+        old_ids.push(requested);
+    }
+    release_from_wire(lookup.entity, old_ids)
+        .map(Some)
+        .map_err(ReleaseFailure::Wire)
+}
+
 pub fn release_from_wire(wire: MbRelease, old_ids: Vec<String>) -> Result<Release, SourceError> {
     let group = wire.release_group.ok_or_else(|| {
         SourceError(format!(

@@ -95,6 +95,8 @@ struct Drain {
 /// the queue is empty.
 const ATTEMPT_ARTIST_LOOKUPS: usize = 3;
 const IDLE_ARTIST_LOOKUPS: usize = 20;
+/// Release documents fetched when the queue is empty.
+const IDLE_DOCUMENT_FETCHES: usize = 20;
 
 /// Publish maintenance cadence (snapshot purge plus preview sweep).
 const PUBLISH_MAINTENANCE: Duration = Duration::from_secs(3600);
@@ -280,6 +282,7 @@ impl LibrarySetup {
                 Ok(None) => {
                     self.resolve_merged_artist_ids(IDLE_ARTIST_LOOKUPS, stop)
                         .await;
+                    self.fetch_waiting_documents(stop).await;
                     break;
                 }
                 Err(error) => {
@@ -421,6 +424,30 @@ impl LibrarySetup {
             resolved = self.identify.resolve_merged_artist_ids(limit) => {
                 if let Err(error) = resolved {
                     tracing::warn!(%error, "artist id lookups stopped on a store error");
+                }
+            }
+        }
+    }
+
+    /// Fetch release documents that albums with an accepted match wait for,
+    /// so the artist link sweep can prove their artists.
+    async fn fetch_waiting_documents(&self, stop: &CancellationToken) {
+        if stop.is_cancelled() || self.identification_paused() {
+            return;
+        }
+        tokio::select! {
+            biased;
+            () = stop.cancelled() => {}
+            pass = self.identify.fetch_waiting_documents(IDLE_DOCUMENT_FETCHES) => match pass {
+                Ok(pass) if pass.fetched + pass.not_found + pass.refused > 0 => tracing::info!(
+                    fetched = pass.fetched,
+                    not_found = pass.not_found,
+                    refused = pass.refused,
+                    "release documents fetched for matched albums"
+                ),
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "release document fetches stopped on a store error");
                 }
             }
         }

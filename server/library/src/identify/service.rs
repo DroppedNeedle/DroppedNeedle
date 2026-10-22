@@ -23,7 +23,7 @@ use super::providers::{IdentifyProviders, RecallOutcome};
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::review::reject_review;
 use super::rules::retracts_on_contradiction;
-use super::sources::{EditionPage, EditionQuery, SourceError};
+use super::sources::{EditionPage, EditionQuery, ReleaseAnswer, SourceError};
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
 use crate::edition_prefs::{LivePreferences, Preferences};
@@ -44,11 +44,13 @@ pub struct IdentifyService {
     preferences: Option<LivePreferences>,
     /// When artist id lookups may run again after MusicBrainz could not
     /// answer. In memory only: a restart asks again at once.
-    artist_hold: Mutex<ArtistHold>,
+    artist_hold: Mutex<LookupHold>,
+    /// The same for release document lookups.
+    document_hold: Mutex<LookupHold>,
 }
 
-/// The wait after an artist id lookup MusicBrainz could not answer.
-struct ArtistHold {
+/// The wait after a lookup MusicBrainz could not answer.
+struct LookupHold {
     until: Option<Instant>,
     failures: u32,
     rng: SplitMix64,
@@ -59,16 +61,61 @@ struct ArtistHold {
 const ARTIST_HOLD: Duration = Duration::from_secs(5 * 60);
 const ARTIST_HOLD_CAP: Duration = Duration::from_secs(3600);
 
+impl LookupHold {
+    fn new() -> Self {
+        Self {
+            until: None,
+            failures: 0,
+            rng: SplitMix64::new(SplitMix64::seed_from_time()),
+        }
+    }
+
+    fn held(&self) -> bool {
+        self.until.is_some_and(|until| Instant::now() < until)
+    }
+
+    fn clear(&mut self) {
+        self.until = None;
+        self.failures = 0;
+    }
+
+    /// Hold lookups back after one went unanswered: for the `Retry-After`
+    /// it gave, else 5 minutes doubling to an hour, with up to 20% more.
+    fn hold(&mut self, retry_after_secs: Option<f64>) {
+        let base = match retry_after_secs.filter(|secs| secs.is_finite() && *secs > 0.0) {
+            Some(secs) => Duration::from_secs_f64(secs.min(ARTIST_HOLD_CAP.as_secs_f64())),
+            None => ARTIST_HOLD
+                .saturating_mul(1 << self.failures.min(4))
+                .min(ARTIST_HOLD_CAP),
+        };
+        let jitter = self.rng.below_duration(base / 5);
+        self.failures = self.failures.saturating_add(1);
+        self.until = Some(Instant::now() + base + jitter);
+    }
+}
+
+fn lock(hold: &Mutex<LookupHold>) -> std::sync::MutexGuard<'_, LookupHold> {
+    hold.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// What one pass of [`IdentifyService::fetch_waiting_documents`] did.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DocumentPass {
+    /// Documents fetched and kept.
+    pub fetched: usize,
+    /// Releases MusicBrainz does not have.
+    pub not_found: usize,
+    /// Releases whose document MusicBrainz refused for good.
+    pub refused: usize,
+}
+
 impl IdentifyService {
     pub fn new(deps: IdentifyDeps) -> Self {
         Self {
             deps,
             preferences: None,
-            artist_hold: Mutex::new(ArtistHold {
-                until: None,
-                failures: 0,
-                rng: SplitMix64::new(SplitMix64::seed_from_time()),
-            }),
+            artist_hold: Mutex::new(LookupHold::new()),
+            document_hold: Mutex::new(LookupHold::new()),
         }
     }
 
@@ -251,30 +298,22 @@ impl IdentifyService {
     /// each with up to 20% more. Returns how many ids were answered. An
     /// answer that cannot be written holds lookups back too.
     pub async fn resolve_merged_artist_ids(&self, limit: usize) -> Result<usize, StoreError> {
-        if self
-            .hold_guard()
-            .until
-            .is_some_and(|until| Instant::now() < until)
-        {
+        if lock(&self.artist_hold).held() {
             return Ok(0);
         }
         let mut answered = 0;
         for mbid in self.deps.store.pending_artist_ids(limit)? {
             match self.deps.providers.canonical_artist(&mbid).await {
                 Ok(answer) => {
-                    {
-                        let mut hold = self.hold_guard();
-                        hold.until = None;
-                        hold.failures = 0;
-                    }
+                    lock(&self.artist_hold).clear();
                     if let Err(error) = self.deps.store.answer_artist_id(&mbid, &answer) {
-                        self.hold(None);
+                        lock(&self.artist_hold).hold(None);
                         return Err(error);
                     }
                     answered += 1;
                 }
                 Err(unanswered) => {
-                    self.hold(unanswered.retry_after_secs);
+                    lock(&self.artist_hold).hold(unanswered.retry_after_secs);
                     tracing::debug!(
                         artist_mbid = mbid,
                         error = unanswered.error.0,
@@ -287,24 +326,74 @@ impl IdentifyService {
         Ok(answered)
     }
 
-    fn hold_guard(&self) -> std::sync::MutexGuard<'_, ArtistHold> {
-        self.artist_hold
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    /// Hold artist id lookups back after one went unanswered.
-    fn hold(&self, retry_after_secs: Option<f64>) {
-        let mut hold = self.hold_guard();
-        let base = match retry_after_secs.filter(|secs| secs.is_finite() && *secs > 0.0) {
-            Some(secs) => Duration::from_secs_f64(secs.min(ARTIST_HOLD_CAP.as_secs_f64())),
-            None => ARTIST_HOLD
-                .saturating_mul(1 << hold.failures.min(4))
-                .min(ARTIST_HOLD_CAP),
+    /// Fetch up to `limit` release documents that albums with an accepted
+    /// match wait for (an upgrade carries matches but no documents), the
+    /// longest wait first, and keep each one, which sends its albums
+    /// through the next artist link sweep. A release MusicBrainz does not
+    /// have, or refuses in a way asking again will not change, is recorded
+    /// on its albums so it is not asked for again, and the pass goes on; an
+    /// album whose release is gone is offered for identification again. A
+    /// lookup that gets no answer stops the pass and holds these lookups
+    /// back the way artist id lookups are held. A busy database stops the
+    /// pass and the next one tries again.
+    pub async fn fetch_waiting_documents(&self, limit: usize) -> Result<DocumentPass, StoreError> {
+        let mut pass = DocumentPass::default();
+        if lock(&self.document_hold).held() {
+            return Ok(pass);
+        }
+        let waiting = match self.deps.store.releases_waiting_for_documents(limit) {
+            Ok(waiting) => waiting,
+            Err(StoreError::Busy(_)) => return Ok(pass),
+            Err(error) => return Err(error),
         };
-        let jitter = hold.rng.below_duration(base / 5);
-        hold.failures = hold.failures.saturating_add(1);
-        hold.until = Some(Instant::now() + base + jitter);
+        for mbid in waiting {
+            match self.deps.providers.release_document(&mbid).await {
+                Ok(answer) => {
+                    lock(&self.document_hold).clear();
+                    let kept = match answer {
+                        ReleaseAnswer::Found(release) => {
+                            keep_releases(&self.deps.store, vec![*release], Lane::Background)
+                                .await
+                                .map(|()| pass.fetched += 1)
+                        }
+                        ReleaseAnswer::Missing => self
+                            .deps
+                            .store
+                            .release_not_found(&mbid)
+                            .map(|_| pass.not_found += 1),
+                        ReleaseAnswer::Refused(reason) => {
+                            tracing::info!(
+                                release_mbid = mbid,
+                                reason,
+                                "MusicBrainz refused a release document; its albums stop asking"
+                            );
+                            self.deps
+                                .store
+                                .release_refused(&mbid)
+                                .map(|_| pass.refused += 1)
+                        }
+                    };
+                    match kept {
+                        Ok(()) => {}
+                        Err(StoreError::Busy(_)) => return Ok(pass),
+                        Err(error) => {
+                            lock(&self.document_hold).hold(None);
+                            return Err(error);
+                        }
+                    }
+                }
+                Err(unanswered) => {
+                    lock(&self.document_hold).hold(unanswered.retry_after_secs);
+                    tracing::debug!(
+                        release_mbid = mbid,
+                        error = unanswered.error.0,
+                        "MusicBrainz could not answer about a release; document lookups wait"
+                    );
+                    break;
+                }
+            }
+        }
+        Ok(pass)
     }
 
     /// One page of MusicBrainz releases for a curator choosing an edition.
