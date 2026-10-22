@@ -358,6 +358,7 @@ impl LandingLibrary for LibraryLanding {
                     release_group_id: edition.release_group_mbid,
                     score: edition.score,
                     track_count: (edition.track_count > 0).then_some(edition.track_count),
+                    title: edition.title,
                 })
                 .collect())
         })

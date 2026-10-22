@@ -632,6 +632,41 @@ pub struct ReleaseSearchHit {
     pub disambiguation: Option<String>,
 }
 
+/// Recording search hit: the recording and the releases that carry it.
+///
+/// Verified against api.brainzmash.cc/ws/2/recording on 2026-10-22:
+/// tests/fixtures/musicbrainz/search_recording_tuesday_morning.json, a
+/// search for `recording:"Tuesday Morning" AND artist:"Paul Kossoff"` with
+/// `limit=3` (BrainzMash mirror). Each release lists only the medium that
+/// holds the recording; its own `track-count` is the release's total.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RecordingSearchHit {
+    /// Recording MBID: required identity.
+    pub id: String,
+    /// Plain score key.
+    #[serde(default)]
+    pub score: Option<i64>,
+    /// Namespaced score key.
+    #[serde(rename = "ext:score", default)]
+    pub ext_score: Option<i64>,
+    /// Releases carrying the recording.
+    #[serde(default)]
+    pub releases: Vec<RecordingSearchRelease>,
+}
+
+/// One release a recording search hit lists.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RecordingSearchRelease {
+    /// Release MBID: required identity.
+    pub id: String,
+    /// Release-group facet.
+    #[serde(rename = "release-group", default)]
+    pub release_group: Option<ReleaseGroupRef>,
+    /// Tracks on the whole release, every medium.
+    #[serde(rename = "track-count", default)]
+    pub track_count: Option<u32>,
+}
+
 /// Release-group search hit.
 ///
 /// Verified against api.brainzmash.cc/ws/2/release-group on 2026-10-21:

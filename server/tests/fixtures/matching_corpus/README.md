@@ -35,7 +35,9 @@ musicbrainz.org).
   exercised here.
 - `musicbrainz.jsonl`: every MusicBrainz answer recall asks for, one per
   line, keyed by the exact request URL on the BrainzMash mirror, trimmed to
-  what matching reads. MusicBrainz data is CC0.
+  what matching reads. MusicBrainz data is CC0. Release search pages
+  recorded before 2026-10-22 carry no hit titles; only the loose word
+  search reads them, and its answers were recorded after that.
 - `record.py`: records missing answers.
 
 ## Verdicts

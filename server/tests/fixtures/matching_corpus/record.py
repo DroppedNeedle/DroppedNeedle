@@ -12,8 +12,10 @@ second form trims the answers already in the file again.
 Trimming keeps only what recall and matching read: ids, titles, artist
 credits (id and name), lengths, positions, media formats and track counts,
 dates, country, status, barcode, labels and catalog numbers, and the
-release group's types. Search pages keep each hit's id, score, release
+release group's types. Search pages keep each hit's id, score, title, release
 group and track counts, plus formats and barcode for edition listings.
+Recording search pages keep each hit's id and score, and the id, release
+group and track count of each release it lists.
 """
 import json
 import sys
@@ -74,13 +76,25 @@ def trim(value, parent=None):
 
 
 def trim_hit(hit, edition):
-    out = {k: hit[k] for k in ("id", "score") if k in hit}
+    out = {k: hit[k] for k in ("id", "score", "title") if k in hit}
     if "release-group" in hit:
         out["release-group"] = {"id": hit["release-group"]["id"]}
     keys = ("format", "track-count") if edition else ("track-count",)
     out["media"] = [{k: m[k] for k in keys if k in m} for m in hit.get("media", [])]
     if edition and hit.get("barcode"):
         out["barcode"] = hit["barcode"]
+    return out
+
+
+def trim_recording_hit(hit):
+    out = {k: hit[k] for k in ("id", "score") if k in hit}
+    releases = []
+    for release in hit.get("releases", []):
+        kept = {k: release[k] for k in ("id", "track-count") if k in release}
+        if "release-group" in release:
+            kept["release-group"] = {"id": release["release-group"]["id"]}
+        releases.append(kept)
+    out["releases"] = releases
     return out
 
 
@@ -91,6 +105,10 @@ def trim_answer(url, body):
         edition = "query=rgid" in url
         page = {k: body[k] for k in ("count", "offset") if k in body}
         page["releases"] = [trim_hit(hit, edition) for hit in body["releases"]]
+        return page
+    if "query=" in url and isinstance(body, dict) and "recordings" in body:
+        page = {k: body[k] for k in ("count", "offset") if k in body}
+        page["recordings"] = [trim_recording_hit(hit) for hit in body["recordings"]]
         return page
     return trim(body)
 

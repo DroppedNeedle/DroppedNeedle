@@ -50,6 +50,7 @@ impl ReleaseSource for OneRelease {
             release_group_id: self.0.release_group_id.clone(),
             score: 100,
             track_count: Some(self.0.tracks.len() as u32),
+            title: self.0.title.clone(),
         };
         Box::pin(async move { Ok(vec![hit]) })
     }

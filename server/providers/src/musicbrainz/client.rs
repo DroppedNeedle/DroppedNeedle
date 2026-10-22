@@ -15,8 +15,9 @@ use droppedneedle_kernel::runtime_config::{Live, sections::MusicBrainzSettings};
 use serde::de::DeserializeOwned;
 
 use super::models::{
-    ArtistSearchHit, MbArtist, MbRecording, MbRelease, MbReleaseGroup, ReleaseGroupBrowsePage,
-    ReleaseGroupSearchHit, ReleaseSearchHit, SearchPage, UrlResolution, decode_search_page,
+    ArtistSearchHit, MbArtist, MbRecording, MbRelease, MbReleaseGroup, RecordingSearchHit,
+    ReleaseGroupBrowsePage, ReleaseGroupSearchHit, ReleaseSearchHit, SearchPage, UrlResolution,
+    decode_search_page,
 };
 use super::redirects::{
     RedirectHop, brainzmash_redirect_path, lookup_redirect_pair, official_redirect_hop,
@@ -291,6 +292,18 @@ impl MusicBrainzView {
         criticality: Criticality,
     ) -> Result<SearchPage<ReleaseSearchHit>, ProviderError> {
         self.search_page("release", query, limit, 0, "releases", criticality)
+            .await
+    }
+
+    /// Search recordings with a query the caller built and escaped.
+    /// Identification uses it to find an album by one of its tracks.
+    pub async fn search_recordings_query(
+        &self,
+        query: &str,
+        limit: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<RecordingSearchHit>, ProviderError> {
+        self.search_page("recording", query, limit, 0, "recordings", criticality)
             .await
     }
 

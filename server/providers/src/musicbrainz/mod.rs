@@ -257,7 +257,48 @@ pub fn build_release_match_query(
     track_count: Option<usize>,
     artist_id: Option<&str>,
 ) -> String {
-    let query = build_release_search_query(title, artist);
+    let clause = format!(r#"release:"{}""#, escape_lucene_phrase(title));
+    match_query(&clause, artist, track_count, artist_id)
+}
+
+/// [`build_release_match_query`] with the title as loose words rather
+/// than a phrase: the index ORs words by default, so a release whose
+/// title lacks a word or orders them differently still ranks. The words
+/// "and", "or" and "not" are left out in any case, so none reads as an
+/// operator. `None` when no word is left.
+pub fn build_release_words_query(
+    title: &str,
+    artist: &str,
+    track_count: Option<usize>,
+    artist_id: Option<&str>,
+) -> Option<String> {
+    let words: Vec<String> = title
+        .split_whitespace()
+        .filter(|word| !matches!(word.to_lowercase().as_str(), "and" | "or" | "not"))
+        .map(escape_lucene_phrase)
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+    let clause = format!("release:({})", words.join(" "));
+    Some(match_query(&clause, artist, track_count, artist_id))
+}
+
+/// The title clause, the artist phrase when there is one, and the boosts
+/// ORed with the title clause.
+fn match_query(
+    title_clause: &str,
+    artist: &str,
+    track_count: Option<usize>,
+    artist_id: Option<&str>,
+) -> String {
+    let mut query = title_clause.to_owned();
+    if !artist.is_empty() {
+        query.push_str(&format!(
+            r#" AND artist:"{}""#,
+            escape_lucene_phrase(artist)
+        ));
+    }
     let mut boosts = Vec::new();
     if let Some(count) = track_count.filter(|count| *count > 0) {
         boosts.push(format!("tracks:{count}^2"));
@@ -268,11 +309,20 @@ pub fn build_release_match_query(
     if boosts.is_empty() {
         return query;
     }
-    format!(
-        r#"{query} AND ({} OR release:"{}")"#,
-        boosts.join(" OR "),
-        escape_lucene_phrase(title)
-    )
+    format!("{query} AND ({} OR {title_clause})", boosts.join(" OR "))
+}
+
+/// Recording query: the recording title as a phrase and, unless blank,
+/// the artist as a phrase.
+pub fn build_recording_query(title: &str, artist: &str) -> String {
+    let mut query = format!(r#"recording:"{}""#, escape_lucene_phrase(title));
+    if !artist.is_empty() {
+        query.push_str(&format!(
+            r#" AND artist:"{}""#,
+            escape_lucene_phrase(artist)
+        ));
+    }
+    query
 }
 
 /// Release-group tag query: the tag as
@@ -441,6 +491,18 @@ mod tests {
         assert_eq!(
             build_release_match_query("Hits", "", Some(12), Some("va-id")),
             r#"release:"Hits" AND (tracks:12^2 OR arid:"va\-id"^2 OR release:"Hits")"#
+        );
+        assert_eq!(
+            build_release_words_query("Court  AND (Crimson)", "King Crimson", Some(5), None)
+                .as_deref(),
+            Some(
+                r#"release:(Court \(Crimson\)) AND artist:"King Crimson" AND (tracks:5^2 OR release:(Court \(Crimson\)))"#
+            )
+        );
+        assert_eq!(build_release_words_query(" and ", "", None, None), None);
+        assert_eq!(
+            build_recording_query("Tuesday Morning", "Paul Kossoff"),
+            r#"recording:"Tuesday Morning" AND artist:"Paul Kossoff""#
         );
     }
 }

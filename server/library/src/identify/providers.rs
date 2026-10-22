@@ -5,8 +5,9 @@
 //! 1. When most files name one release MBID, fetch that release first. If
 //!    it matches closely ([`STRONG`]) recall stops there: one request.
 //! 2. Otherwise search by album title and album artist (no artist for
-//!    compilations), retrying once without an edition suffix such as
-//!    "(Deluxe Edition)" when nothing comes back.
+//!    compilations), looser each time nothing comes back: without edition
+//!    and disc words, then the title's words, then the first track as a
+//!    recording.
 //! 3. Fetch the tracklists of the best few hits, skipping releases too
 //!    small to hold the files, at most [`PER_GROUP`] editions of one
 //!    release group and [`FETCH_LIMIT`] in all. Fetched releases are
@@ -34,7 +35,8 @@ use super::sources::{
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::fresh_release;
 use crate::matching::decide::STRONG;
-use crate::matching::strings::fold;
+use crate::matching::score::NAME_GATE;
+use crate::matching::strings::{fold, string_dist, strip_edition_words, without_brackets};
 use crate::matching::{LocalAlbum, Release, match_release, should_fingerprint, unknown_recordings};
 use droppedneedle_providers::musicbrainz::Criticality;
 
@@ -131,27 +133,7 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
             }
         }
 
-        let various = is_various(&facts.album_artist_name);
-        let artist = if facts.is_compilation || various {
-            ""
-        } else {
-            facts.album_artist_name.as_str()
-        };
-        let query = |title| AlbumQuery {
-            title,
-            artist,
-            track_count: local.tracks.len(),
-            various,
-        };
-        let mut hits = Vec::new();
-        if !facts.title.trim().is_empty() {
-            hits = self.releases.search_album(query(&facts.title)).await?;
-            if hits.is_empty()
-                && let Some(stripped) = strip_edition_suffix(&facts.title)
-            {
-                hits = self.releases.search_album(query(stripped)).await?;
-            }
-        }
+        let hits = self.search(facts, local.tracks.len()).await?;
         for id in pick_hits(&hits, local.tracks.len(), &releases) {
             if let Some(release) = self.release(&id).await? {
                 push_new(&mut releases, release);
@@ -183,6 +165,82 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
             recording_aliases,
             ..RecallResult::default()
         })
+    }
+
+    /// Search hits for the album, each tier asked only when the ones
+    /// before it found nothing:
+    ///
+    /// 1. the title as a phrase;
+    /// 2. the title without edition and disc words ("Deluxe", "CD1"), when
+    ///    that changes it;
+    /// 3. the title's words, any trailing bracket dropped, matched loosely;
+    ///    the index ORs words, so only hits whose title passes the album
+    ///    title gate count;
+    /// 4. the first track's title as a recording, with the artist, which
+    ///    finds the releases that carry it.
+    ///
+    /// The artist is the album artist, none for a compilation, and the
+    /// most common track artist when the album row names a placeholder.
+    /// The last tier needs an artist. An album no tier finds costs at most
+    /// four searches and no release lookups; each search goes through the
+    /// source's own client and priority.
+    async fn search(
+        &self,
+        facts: &LocalAlbumFacts,
+        track_count: usize,
+    ) -> Result<Vec<ReleaseHit>, SourceError> {
+        let various = is_various(&facts.album_artist_name);
+        let artist = search_artist(facts, various);
+        let query = |title, words| AlbumQuery {
+            title,
+            artist,
+            track_count,
+            various,
+            words,
+        };
+        let title = facts.title.trim();
+        if !title.is_empty() {
+            let hits = self.releases.search_album(query(title, false)).await?;
+            if !hits.is_empty() {
+                return Ok(hits);
+            }
+            let stripped = strip_edition_words(title);
+            if fold(&stripped) != fold(title) {
+                let hits = self.releases.search_album(query(&stripped, false)).await?;
+                if !hits.is_empty() {
+                    return Ok(hits);
+                }
+            }
+            let loose = strip_edition_words(without_trailing_bracket(title));
+            let near: Vec<ReleaseHit> = self
+                .releases
+                .search_album(query(&loose, true))
+                .await?
+                .into_iter()
+                .filter(|hit| {
+                    let found = strip_edition_words(&hit.title);
+                    [&stripped, &loose]
+                        .iter()
+                        .any(|wanted| string_dist(wanted, &found) <= NAME_GATE)
+                })
+                .collect();
+            if !near.is_empty() {
+                return Ok(near);
+            }
+        }
+        if artist.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tracks: Vec<_> = facts.tracks.iter().collect();
+        tracks.sort_by_key(|track| (track.disc_number, track.track_number));
+        let Some(recording) = tracks
+            .iter()
+            .map(|track| without_brackets(&track.title))
+            .find(|title| !title.is_empty())
+        else {
+            return Ok(Vec::new());
+        };
+        self.releases.search_recording(&recording, artist).await
     }
 
     /// Once the release group is clear, weigh its other editions too:
@@ -385,29 +443,56 @@ fn is_various(name: &str) -> bool {
     matches!(fold(name).as_str(), "variousartists" | "various" | "va")
 }
 
-/// Drop a trailing "(Deluxe Edition)"-style suffix, if there is one.
-fn strip_edition_suffix(title: &str) -> Option<&str> {
-    const WORDS: [&str; 9] = [
-        "edition",
-        "deluxe",
-        "remaster",
-        "expanded",
-        "anniversary",
-        "bonus",
-        "special",
-        "version",
-        "reissue",
-    ];
+/// An artist name that stands for no artist: blank, "Unknown Artist",
+/// or MusicBrainz's "[unknown]".
+fn is_placeholder(name: &str) -> bool {
+    matches!(fold(name).as_str(), "" | "unknownartist" | "unknown")
+}
+
+/// The artist to search with: none for a compilation, the album artist,
+/// or, when the album row names a placeholder, the artist most of the
+/// tracks name (the earliest on a tie). Searching for a placeholder
+/// finds nothing, or only other placeholder albums.
+fn search_artist(facts: &LocalAlbumFacts, various: bool) -> &str {
+    if facts.is_compilation || various {
+        return "";
+    }
+    if !is_placeholder(&facts.album_artist_name) {
+        return facts.album_artist_name.as_str();
+    }
+    let mut counts: Vec<(String, usize, &str)> = Vec::new();
+    for track in &facts.tracks {
+        let name = track.artist_name.trim();
+        if is_placeholder(name) {
+            continue;
+        }
+        let key = fold(name);
+        match counts.iter_mut().find(|(known, _, _)| *known == key) {
+            Some((_, count, _)) => *count += 1,
+            None => counts.push((key, 1, name)),
+        }
+    }
+    let mut best: Option<(usize, &str)> = None;
+    for (_, count, name) in counts {
+        if best.is_none_or(|(most, _)| count > most) {
+            best = Some((count, name));
+        }
+    }
+    best.map_or("", |(_, name)| if is_various(name) { "" } else { name })
+}
+
+/// The title before a trailing "(...)" or "[...]", when something is left.
+fn without_trailing_bracket(title: &str) -> &str {
     let trimmed = title.trim_end();
-    let open = match trimmed.chars().last()? {
-        ')' => '(',
-        ']' => '[',
-        _ => return None,
+    let open = match trimmed.chars().last() {
+        Some(')') => '(',
+        Some(']') => '[',
+        _ => return trimmed,
     };
-    let start = trimmed.rfind(open)?;
-    let inside = trimmed[start..].to_lowercase();
-    let head = trimmed[..start].trim_end();
-    (WORDS.iter().any(|word| inside.contains(word)) && !head.is_empty()).then_some(head)
+    match trimmed.rfind(open) {
+        Some(start) if !trimmed[..start].trim().is_empty() => trimmed[..start].trim_end(),
+        _ => trimmed,
+    }
 }
 
 /// The hits worth a tracklist fetch: big enough to hold the files, best

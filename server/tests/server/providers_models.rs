@@ -51,6 +51,7 @@ enum Provider {
     MusicBrainzArtistSearch(&'static str),
     MusicBrainzReleaseGroupSearch(&'static str),
     MusicBrainzReleaseSearch(&'static str, &'static str),
+    MusicBrainzRecordingSearch(&'static str),
     MusicBrainzBrowse(&'static str),
 }
 
@@ -525,6 +526,24 @@ const ROWS: &[Row] = &[
         identity: "/releases/0/id",
     },
     Row {
+        name: "musicbrainz /recording, search hit id (title and artist)",
+        provider: Provider::MusicBrainzRecordingSearch(
+            r#"recording:"Tuesday Morning" AND artist:"Paul Kossoff""#,
+        ),
+        body: include_str!("../fixtures/musicbrainz/search_recording_tuesday_morning.json"),
+        kind: PayloadKind::Contract,
+        identity: "/recordings/0/id",
+    },
+    Row {
+        name: "musicbrainz /recording, release id (title and artist)",
+        provider: Provider::MusicBrainzRecordingSearch(
+            r#"recording:"Tuesday Morning" AND artist:"Paul Kossoff""#,
+        ),
+        body: include_str!("../fixtures/musicbrainz/search_recording_tuesday_morning.json"),
+        kind: PayloadKind::Contract,
+        identity: "/recordings/0/releases/0/id",
+    },
+    Row {
         name: "musicbrainz /release-group?artist, release group id (browse)",
         provider: Provider::MusicBrainzBrowse(MB_RADIOHEAD_MBID),
         body: include_str!("../fixtures/musicbrainz/browse_release_groups_radiohead.json"),
@@ -864,6 +883,18 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .search_releases(title, artist, 5, Criticality::IdentityCritical)
                 .await?;
             Ok(!page.items.is_empty())
+        }
+        Provider::MusicBrainzRecordingSearch(query) => {
+            let providers = musicbrainz_answer("/recording", body);
+            let page = providers
+                .musicbrainz
+                .fixed(MbSource::official(), PRIORITY)
+                .search_recordings_query(query, 3, Criticality::IdentityCritical)
+                .await?;
+            Ok(page
+                .items
+                .first()
+                .is_some_and(|hit| !hit.releases.is_empty()))
         }
         Provider::MusicBrainzBrowse(artist) => {
             let providers = musicbrainz_answer("/release-group", body);

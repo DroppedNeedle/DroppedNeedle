@@ -110,6 +110,16 @@ holds a key, a token or personal data.
 - `browse_release_groups_radiohead.json`: `release-group?artist=a74b1b7f-71a5-4011-9441-d0b5e4122711`
   with `inc=artist-credits`, `limit=5` and `offset=0`. HTTP 200.
 
+# Recorded 2026-10-22 from the BrainzMash mirror
+
+Read the same way, one GET with the app's User-Agent and `fmt=json`, body
+unchanged except re-indented (12 KB in 0.5 s):
+
+- `search_recording_tuesday_morning.json`: `recording?query=recording:"Tuesday Morning"
+  AND artist:"Paul Kossoff"` with `limit=3`. HTTP 200. Each recording lists
+  the releases carrying it; a release lists only the medium holding the
+  recording, and its own `track-count` is the whole release's.
+
 # Not kept
 
 The same `url` include set for `https://en.wikipedia.org/wiki/OK_Computer`

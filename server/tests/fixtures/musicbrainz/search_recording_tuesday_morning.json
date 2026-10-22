@@ -1,0 +1,689 @@
+{
+  "created": "2026-10-22T05:26:48.641Z",
+  "count": 8,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "8525411e-d1b3-41fe-90d1-dbd56f05ebc4",
+      "score": 100,
+      "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+      "title": "Tuesday Morning",
+      "length": 1057320,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Paul Kossoff",
+          "artist": {
+            "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+            "name": "Paul Kossoff",
+            "sort-name": "Kossoff, Paul",
+            "aliases": [
+              {
+                "sort-name": "Kossoff, Paul Francis",
+                "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+                "name": "Paul Francis Kossoff",
+                "locale": null,
+                "type": "Legal name",
+                "primary": null,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "c43d1b73-b5e8-4061-b4b8-2f0785e795fb",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "2415993e-2b54-3d4b-9d53-fe8453fb673e",
+          "count": 2,
+          "title": "The Band Plays On / 2nd Street / Back Street Crawler / Kossoff Kirke Testu Rabbit",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "2719b807-ed7e-4df6-8ed3-0ac3f4b8ff04",
+            "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "The Band Plays On / 2nd Street / Back Street Crawler / Kossoff Kirke Testu Rabbit",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Compilation"
+            ],
+            "secondary-type-ids": [
+              "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+            ]
+          },
+          "date": "2005",
+          "country": "RU",
+          "release-events": [
+            {
+              "date": "2005",
+              "area": {
+                "id": "1f1fc3a4-9500-39b8-9f10-f0a465557eef",
+                "name": "Russia",
+                "sort-name": "Russia",
+                "iso-3166-1-codes": [
+                  "RU"
+                ]
+              }
+            }
+          ],
+          "track-count": 34,
+          "media": [
+            {
+              "id": "99efbdf1-3b87-3ab1-8c31-0c67a85e0c79",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "1363624e-cbda-4e97-b037-bf377b287e77",
+                  "number": "11",
+                  "title": "Tuesday Morning",
+                  "length": 1057320
+                }
+              ],
+              "track-count": 15,
+              "track-offset": 10
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3ff6083e-1c8c-4bfe-a4e6-d023c2d045d7",
+      "score": 100,
+      "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+      "title": "Tuesday Morning",
+      "length": 1059000,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Paul Kossoff",
+          "artist": {
+            "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+            "name": "Paul Kossoff",
+            "sort-name": "Kossoff, Paul",
+            "aliases": [
+              {
+                "sort-name": "Kossoff, Paul Francis",
+                "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+                "name": "Paul Francis Kossoff",
+                "locale": null,
+                "type": "Legal name",
+                "primary": null,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "ba50bdc5-ed13-3a32-add7-281c6a98030e",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 1,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "2002-09-03",
+          "country": "US",
+          "release-events": [
+            {
+              "date": "2002-09-03",
+              "area": {
+                "id": "489ce91b-6658-3307-9877-795b68554c98",
+                "name": "United States",
+                "sort-name": "United States",
+                "iso-3166-1-codes": [
+                  "US"
+                ]
+              }
+            }
+          ],
+          "track-count": 5,
+          "media": [
+            {
+              "id": "4a38b5bd-3d90-3549-bd9f-71880fdb9acf",
+              "position": 1,
+              "track": [
+                {
+                  "id": "373f7639-46a5-3436-b062-7bc8692c4f04",
+                  "number": "1",
+                  "title": "Tuesday Morning",
+                  "length": 1059000
+                }
+              ],
+              "track-count": 5,
+              "track-offset": 0
+            }
+          ]
+        },
+        {
+          "id": "82dbc125-e469-3bd2-810c-ff92c73240b5",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 1,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "2006-01-03",
+          "country": "GB",
+          "release-events": [
+            {
+              "date": "2006-01-03",
+              "area": {
+                "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+                "name": "United Kingdom",
+                "sort-name": "United Kingdom",
+                "iso-3166-1-codes": [
+                  "GB"
+                ]
+              }
+            }
+          ],
+          "track-count": 5,
+          "media": [
+            {
+              "id": "aa15d60d-2098-37e6-9e3c-7c607bb41e75",
+              "position": 1,
+              "track": [
+                {
+                  "id": "41b201b3-c5d3-3e21-9949-9b91c63b9c8e",
+                  "number": "1",
+                  "title": "Tuesday Morning",
+                  "length": 1059000
+                }
+              ],
+              "track-count": 5,
+              "track-offset": 0
+            }
+          ]
+        },
+        {
+          "id": "41f422f5-8b41-4d63-a4e4-e15e7b4c75a9",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 1,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "1990",
+          "country": "GB",
+          "release-events": [
+            {
+              "date": "1990",
+              "area": {
+                "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+                "name": "United Kingdom",
+                "sort-name": "United Kingdom",
+                "iso-3166-1-codes": [
+                  "GB"
+                ]
+              }
+            }
+          ],
+          "track-count": 5,
+          "media": [
+            {
+              "id": "277e8643-bfa0-340c-96ce-98777c71f16c",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "48cfb780-9fe7-4042-96a2-e9ce6f05ada3",
+                  "number": "1",
+                  "title": "Tuesday Morning",
+                  "length": 1059000
+                }
+              ],
+              "track-count": 5,
+              "track-offset": 0
+            }
+          ]
+        },
+        {
+          "id": "5107137d-c3af-4c13-bc01-75695148c54c",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 1,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "1973",
+          "country": "US",
+          "release-events": [
+            {
+              "date": "1973",
+              "area": {
+                "id": "489ce91b-6658-3307-9877-795b68554c98",
+                "name": "United States",
+                "sort-name": "United States",
+                "iso-3166-1-codes": [
+                  "US"
+                ]
+              }
+            }
+          ],
+          "track-count": 5,
+          "media": [
+            {
+              "id": "891134b1-95cc-3c0b-8a4e-f85b589c07d7",
+              "position": 1,
+              "format": "12\" Vinyl",
+              "track": [
+                {
+                  "id": "d0906338-49c4-4a4d-93e0-edf241e30ee0",
+                  "number": "A",
+                  "title": "Tuesday Morning",
+                  "length": 1010000
+                }
+              ],
+              "track-count": 5,
+              "track-offset": 0
+            }
+          ]
+        },
+        {
+          "id": "d29bb7fd-abd7-4a18-bd90-0ff2c196ba40",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 2,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "disambiguation": "Deluxe Edition",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "2008-03-20",
+          "country": "XE",
+          "release-events": [
+            {
+              "date": "2008-03-20",
+              "area": {
+                "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+                "name": "Europe",
+                "sort-name": "Europe",
+                "iso-3166-1-codes": [
+                  "XE"
+                ]
+              }
+            }
+          ],
+          "track-count": 20,
+          "media": [
+            {
+              "id": "63285915-09ae-3857-bca9-c0127e4c7979",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "9f21a363-b014-4654-b0ed-4dfba768b6d1",
+                  "number": "1",
+                  "title": "Tuesday Morning",
+                  "length": 1059000
+                }
+              ],
+              "track-count": 11,
+              "track-offset": 0
+            }
+          ]
+        },
+        {
+          "id": "115c1d53-fe24-4236-bf99-bbd6a84dad42",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 1,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "1973",
+          "country": "GB",
+          "release-events": [
+            {
+              "date": "1973",
+              "area": {
+                "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+                "name": "United Kingdom",
+                "sort-name": "United Kingdom",
+                "iso-3166-1-codes": [
+                  "GB"
+                ]
+              }
+            }
+          ],
+          "track-count": 5,
+          "media": [
+            {
+              "id": "0971765b-2760-3e3d-ace5-6092b022dc95",
+              "position": 1,
+              "format": "12\" Vinyl",
+              "track": [
+                {
+                  "id": "3e97aaff-98ac-3232-8170-e6179cae30ca",
+                  "number": "A1",
+                  "title": "Tuesday Morning",
+                  "length": 1059000
+                }
+              ],
+              "track-count": 5,
+              "track-offset": 0
+            }
+          ]
+        },
+        {
+          "id": "6812b5b4-79dd-4311-8e62-e42b49a9bffd",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 1,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "1990",
+          "country": "XE",
+          "release-events": [
+            {
+              "date": "1990",
+              "area": {
+                "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+                "name": "Europe",
+                "sort-name": "Europe",
+                "iso-3166-1-codes": [
+                  "XE"
+                ]
+              }
+            }
+          ],
+          "track-count": 5,
+          "media": [
+            {
+              "id": "14b2a800-94c4-37a0-a8e5-7c5654e9d2f5",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "988060b7-13b1-43e1-bcb5-db398a8dc6fa",
+                  "number": "1",
+                  "title": "Tuesday Morning",
+                  "length": 1059000
+                }
+              ],
+              "track-count": 5,
+              "track-offset": 0
+            }
+          ]
+        },
+        {
+          "id": "6e2d9067-06d6-4554-907a-93e8ab9dc5fd",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 1,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "1992-12-05",
+          "country": "JP",
+          "release-events": [
+            {
+              "date": "1992-12-05",
+              "area": {
+                "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+                "name": "Japan",
+                "sort-name": "Japan",
+                "iso-3166-1-codes": [
+                  "JP"
+                ]
+              }
+            }
+          ],
+          "track-count": 5,
+          "media": [
+            {
+              "id": "b668fffb-3733-305c-8689-0fa8751a26a6",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "d984fb60-db3a-4384-badf-8df6a12099a0",
+                  "number": "1",
+                  "title": "Tuesday Morning",
+                  "length": 1059000
+                }
+              ],
+              "track-count": 5,
+              "track-offset": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ac706497-cbef-452e-aac6-4a43e5f66e6e",
+      "score": 93,
+      "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+      "title": "Tuesday Morning Blues",
+      "length": 337000,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Paul Kossoff",
+          "artist": {
+            "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+            "name": "Paul Kossoff",
+            "sort-name": "Kossoff, Paul",
+            "aliases": [
+              {
+                "sort-name": "Kossoff, Paul Francis",
+                "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+                "name": "Paul Francis Kossoff",
+                "locale": null,
+                "type": "Legal name",
+                "primary": null,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "d29bb7fd-abd7-4a18-bd90-0ff2c196ba40",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "748e5576-5766-30f0-ac59-f6bcff8bb836",
+          "count": 2,
+          "title": "Back Street Crawler",
+          "status": "Official",
+          "disambiguation": "Deluxe Edition",
+          "artist-credit": [
+            {
+              "name": "Paul Kossoff",
+              "artist": {
+                "id": "9d69fcb9-b891-47b3-933b-342fd27bf4c3",
+                "name": "Paul Kossoff",
+                "sort-name": "Kossoff, Paul"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c",
+            "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Back Street Crawler",
+            "primary-type": "Album"
+          },
+          "date": "2008-03-20",
+          "country": "XE",
+          "release-events": [
+            {
+              "date": "2008-03-20",
+              "area": {
+                "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+                "name": "Europe",
+                "sort-name": "Europe",
+                "iso-3166-1-codes": [
+                  "XE"
+                ]
+              }
+            }
+          ],
+          "track-count": 20,
+          "media": [
+            {
+              "id": "63285915-09ae-3857-bca9-c0127e4c7979",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "4e1a3ae5-5735-49f3-8ec0-bf75778a0ef8",
+                  "number": "8",
+                  "title": "Tuesday Morning Blues",
+                  "length": 337000
+                }
+              ],
+              "track-count": 11,
+              "track-offset": 7
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -25,7 +25,7 @@ use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService, Ra
 use droppedneedle_library::identify::sources::NoFingerprints;
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_providers::executor::{Prepared, Wire, WireAnswer, WireError};
-use droppedneedle_providers::musicbrainz::{self, MbSource};
+use droppedneedle_providers::musicbrainz::{self, MbSource, MusicBrainzView};
 use droppedneedle_providers::{Providers, RequestPriority};
 use futures_util::future::BoxFuture;
 use serde::Deserialize;
@@ -116,6 +116,7 @@ struct Answer {
 /// page, so recall carries on and one run lists every missing answer.
 struct Replay {
     answers: HashMap<String, WireAnswer>,
+    asked: Mutex<Vec<String>>,
     unrecorded: Mutex<BTreeSet<String>>,
 }
 
@@ -148,6 +149,7 @@ impl Replay {
             .collect();
         Self {
             answers,
+            asked: Mutex::new(Vec::new()),
             unrecorded: Mutex::new(BTreeSet::new()),
         }
     }
@@ -157,6 +159,7 @@ impl Wire for Replay {
     fn send<'a>(&'a self, prepared: Prepared<'a>) -> BoxFuture<'a, Result<WireAnswer, WireError>> {
         Box::pin(async move {
             let url = prepared.url.as_str();
+            self.asked.lock().expect("asked list").push(url.to_owned());
             if let Some(answer) = self.answers.get(url) {
                 return Ok(answer.clone());
             }
@@ -261,14 +264,10 @@ impl Tally {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn recorded_albums_match_as_recorded() {
-    let started = Instant::now();
-    let albums: Vec<Album> = serde_json::from_str(
-        &std::fs::read_to_string(corpus_path("albums.json")).expect("corpus reads"),
-    )
-    .expect("corpus parses");
-    let replay = Arc::new(Replay::load());
+type Live = LiveProviders<MusicBrainzView, NoFingerprints>;
+
+/// The live recall over the replayed answers, on a fresh store.
+fn live_providers(replay: &Arc<Replay>) -> (ScratchDir, Arc<SqliteIdentifyStore>, Arc<Live>) {
     let musicbrainz = Providers::unpaced(replay.clone()).musicbrainz.fixed(
         MbSource::BrainzMash {
             base_url: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
@@ -287,6 +286,87 @@ async fn recorded_albums_match_as_recorded() {
         store.clone(),
         NoFingerprints,
     ));
+    (dir, store, providers)
+}
+
+fn load_albums() -> Vec<Album> {
+    serde_json::from_str(
+        &std::fs::read_to_string(corpus_path("albums.json")).expect("corpus reads"),
+    )
+    .expect("corpus parses")
+}
+
+/// Recall for one corpus album with its ids stripped and `change`
+/// applied: the release groups recalled, and every request asked.
+async fn recall_groups(
+    key: &str,
+    change: impl FnOnce(&mut LocalAlbumFacts),
+) -> (Vec<String>, Vec<String>) {
+    let album = load_albums()
+        .into_iter()
+        .find(|album| album.key == key)
+        .expect("album in the corpus");
+    let mut facts = stripped(&album.facts);
+    change(&mut facts);
+    let replay = Arc::new(Replay::load());
+    let (_dir, _store, providers) = live_providers(&replay);
+    let recall = providers.recall_candidates(&facts).await.result;
+    let unrecorded = replay.unrecorded.lock().expect("unrecorded list").clone();
+    for url in &unrecorded {
+        println!("UNRECORDED {url}");
+    }
+    assert!(unrecorded.is_empty(), "unrecorded requests; see the README");
+    let groups = recall
+        .releases
+        .iter()
+        .map(|release| release.release_group_id.clone())
+        .collect();
+    let asked = replay.asked.lock().expect("asked list").clone();
+    (groups, asked)
+}
+
+/// An album row that names "Unknown Artist" is searched for under the
+/// artist its tracks name, never under the placeholder.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_placeholder_album_artist_searches_as_its_tracks_artist() {
+    let (groups, asked) = recall_groups("crimson-king", |facts| {
+        facts.album_artist_name = "Unknown Artist".to_owned();
+    })
+    .await;
+    assert!(
+        groups
+            .iter()
+            .any(|group| group == "a50636b5-5233-3329-a7f3-dba3d0e00ef7"),
+        "recall found {groups:?}"
+    );
+    assert!(
+        !asked.iter().any(|url| url.contains("Unknown+Artist")),
+        "searched for the placeholder: {asked:?}"
+    );
+}
+
+/// An album with no title is found through its first track's recording.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_untitled_album_is_found_by_its_first_track() {
+    let (groups, asked) = recall_groups("back-street-crawler-cd1", |facts| {
+        facts.title = String::new();
+    })
+    .await;
+    assert!(
+        groups
+            .iter()
+            .any(|group| group == "e3028c11-3abe-3dc1-9e3d-f975858e0b6c"),
+        "recall found {groups:?}"
+    );
+    assert!(asked.iter().any(|url| url.contains("/recording?query=")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn recorded_albums_match_as_recorded() {
+    let started = Instant::now();
+    let albums = load_albums();
+    let replay = Arc::new(Replay::load());
+    let (_dir, store, providers) = live_providers(&replay);
     let service = IdentifyService::new(IdentifyDeps {
         store,
         providers: providers.clone(),

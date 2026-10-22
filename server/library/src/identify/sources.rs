@@ -33,7 +33,8 @@ use droppedneedle_providers::acoustid::{AcoustIdClient, BatchQuery};
 use droppedneedle_providers::musicbrainz::models::Relation;
 use droppedneedle_providers::musicbrainz::{
     ArtistCreditName, Criticality, LiveSource, MbRelease, MusicBrainzClient, MusicBrainzView,
-    ReleaseSearchHit, build_release_match_query, hit_score, is_valid_mbid,
+    RecordingSearchHit, ReleaseSearchHit, build_recording_query, build_release_match_query,
+    build_release_words_query, hit_score, is_valid_mbid,
 };
 use droppedneedle_providers::{
     CacheKey, Fetched, PayloadKind, Policy, ProviderCacheStore, ProviderError,
@@ -85,6 +86,8 @@ pub struct ReleaseHit {
     pub score: i64,
     /// Total tracks over all media, when the index knows every count.
     pub track_count: Option<u32>,
+    /// Release title; blank when the index gave none.
+    pub title: String,
 }
 
 /// A curator's release search: one page of editions for a title and
@@ -143,7 +146,21 @@ pub trait ReleaseSource: Send + Sync {
         &'a self,
         query: AlbumQuery<'a>,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        if query.words {
+            return Box::pin(async { Ok(Vec::new()) });
+        }
         self.search(query.title, query.artist)
+    }
+
+    /// Releases that carry a recording of this title by this artist,
+    /// for when no album search finds anything. A source without a
+    /// recording index finds none.
+    fn search_recording<'a>(
+        &'a self,
+        _title: &'a str,
+        _artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 
     /// One release with its tracklist; `None` when MusicBrainz has no
@@ -233,9 +250,36 @@ fn release_hits(items: Vec<ReleaseSearchHit>) -> Vec<ReleaseHit> {
                     .map(|counts| counts.iter().sum()),
                 id: hit.id.to_ascii_lowercase(),
                 release_group_id: group.to_ascii_lowercase(),
+                title: hit.title.unwrap_or_default(),
             })
         })
         .collect()
+}
+
+/// Each release a recording search lists, once, with the score of the
+/// best recording that carries it and the release's total track count.
+fn recording_release_hits(items: Vec<RecordingSearchHit>) -> Vec<ReleaseHit> {
+    let mut hits: Vec<ReleaseHit> = Vec::new();
+    for recording in items {
+        let score = hit_score(recording.score, recording.ext_score);
+        for release in recording.releases {
+            let Some(group) = release.release_group else {
+                continue;
+            };
+            let id = release.id.to_ascii_lowercase();
+            if hits.iter().any(|hit| hit.id == id) {
+                continue;
+            }
+            hits.push(ReleaseHit {
+                id,
+                release_group_id: group.id.to_ascii_lowercase(),
+                score,
+                track_count: release.track_count.filter(|count| *count > 0),
+                title: String::new(),
+            });
+        }
+    }
+    hits
 }
 
 /// What identification searches for: the album title, the artist to
@@ -250,10 +294,15 @@ pub struct AlbumQuery<'a> {
     pub track_count: usize,
     /// The album is credited to Various Artists.
     pub various: bool,
+    /// Search the title's words loosely rather than as a phrase. A
+    /// source without a search index finds nothing this way.
+    pub words: bool,
 }
 
 /// Search hits per query.
 const SEARCH_LIMIT: u32 = 25;
+/// Recordings per recording search; each lists the releases carrying it.
+const RECORDING_LIMIT: u32 = 5;
 /// Includes for a release fetched for matching and tagging.
 const RELEASE_INCLUDES: [&str; 6] = [
     "artist-credits",
@@ -284,17 +333,36 @@ impl ReleaseSource for MusicBrainzView {
         query: AlbumQuery<'a>,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
         Box::pin(async move {
-            let lucene = build_release_match_query(
-                query.title,
-                query.artist,
-                Some(query.track_count),
-                query.various.then_some(VARIOUS_ARTISTS_MBID),
-            );
+            let tracks = Some(query.track_count);
+            let various = query.various.then_some(VARIOUS_ARTISTS_MBID);
+            let lucene = if query.words {
+                match build_release_words_query(query.title, query.artist, tracks, various) {
+                    Some(lucene) => lucene,
+                    None => return Ok(Vec::new()),
+                }
+            } else {
+                build_release_match_query(query.title, query.artist, tracks, various)
+            };
             let page = self
                 .search_releases_query(&lucene, SEARCH_LIMIT, Criticality::IdentityCritical)
                 .await
                 .map_err(|error| SourceError(error.to_string()))?;
             Ok(release_hits(page.items))
+        })
+    }
+
+    fn search_recording<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        Box::pin(async move {
+            let query = build_recording_query(title, artist);
+            let page = self
+                .search_recordings_query(&query, RECORDING_LIMIT, Criticality::IdentityCritical)
+                .await
+                .map_err(|error| SourceError(error.to_string()))?;
+            Ok(recording_release_hits(page.items))
         })
     }
 
@@ -472,6 +540,14 @@ impl ReleaseSource for CachedMusicBrainz {
         query: AlbumQuery<'a>,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
         self.view.search_album(query)
+    }
+
+    fn search_recording<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.view.search_recording(title, artist)
     }
 
     fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {

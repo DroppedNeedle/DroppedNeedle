@@ -60,6 +60,7 @@ impl ReleaseSource for Releases {
                 release_group_id: release.release_group_id.clone(),
                 score: 100,
                 track_count: Some(release.tracks.len() as u32),
+                title: release.title.clone(),
             })
             .collect();
         Box::pin(async move { Ok(hits) })

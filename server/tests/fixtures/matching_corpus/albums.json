@@ -82,8 +82,8 @@
     "key": "back-street-crawler-cd1",
     "why": "untagged, album row once left on Unknown Artist, disc words in the title",
     "truth": {"release_group": "e3028c11-3abe-3dc1-9e3d-f975858e0b6c", "release": null},
-    "tagged": {"verdict": "unmatched", "release": null, "known_miss": "the title carries disc words, so search finds nothing"},
-    "stripped": {"verdict": "unmatched", "release": null, "known_miss": "the title carries disc words, so search finds nothing"},
+    "tagged": {"verdict": "group", "release": "41f422f5-8b41-4d63-a4e4-e15e7b4c75a9"},
+    "stripped": {"verdict": "group", "release": "41f422f5-8b41-4d63-a4e4-e15e7b4c75a9"},
     "facts": {
       "local_album_id": "back-street-crawler-cd1",
       "title": "Back Street Crawler Deluxe CD1",

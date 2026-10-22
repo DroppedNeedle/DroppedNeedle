@@ -158,6 +158,15 @@ fn strip_enclosed(value: &str, open: char, close: char) -> String {
     out
 }
 
+/// A title without its parenthesized and bracketed parts, spaces
+/// collapsed: "Moonchild (including The Dream)" is "Moonchild".
+pub fn without_brackets(value: &str) -> String {
+    strip_bracketed(&strip_parenthesized(value))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn strip_parenthesized(value: &str) -> String {
     strip_enclosed(value, '(', ')')
 }
@@ -180,7 +189,7 @@ fn strip_part(value: &str) -> String {
 
 /// Words that name an edition rather than an album (v2's
 /// `EDITION_SUFFIXES`); album titles drop them before the title gate.
-const EDITION_WORDS: [&str; 22] = [
+const EDITION_WORDS: [&str; 23] = [
     "deluxe",
     "remastered",
     "remaster",
@@ -203,6 +212,7 @@ const EDITION_WORDS: [&str; 22] = [
     "single",
     "promo",
     "radio edit",
+    "reissue",
 ];
 
 /// An album title without its edition suffix: bracketed parts that name
@@ -241,9 +251,12 @@ pub fn strip_edition_words(title: &str) -> String {
         let pair = words.len() >= 2
             && bare == "edit"
             && words[words.len() - 2].trim_matches(|c: char| !c.is_alphanumeric()) == "radio";
-        if pair {
+        let numbered_disc = words.len() >= 2
+            && is_number(bare)
+            && is_disc_word(words[words.len() - 2].trim_matches(|c: char| !c.is_alphanumeric()));
+        if pair || numbered_disc {
             words.truncate(words.len() - 2);
-        } else if bare.is_empty() || EDITION_WORDS.contains(&bare) {
+        } else if bare.is_empty() || EDITION_WORDS.contains(&bare) || is_fused_disc(bare) {
             words.pop();
         } else {
             break;
@@ -265,13 +278,37 @@ pub fn strip_edition_words(title: &str) -> String {
     words.join(" ")
 }
 
-/// True when a bracketed part names an edition: it holds an edition word.
+/// True when a bracketed part names an edition: it holds an edition word
+/// or a disc marker ("Disc 1", "CD2").
 fn names_edition(inner: &str) -> bool {
     let padded = format!(" {inner} ");
+    let words: Vec<&str> = inner
+        .split_whitespace()
+        .map(|word| word.trim_matches(|c: char| !c.is_alphanumeric()))
+        .collect();
     padded.contains(" radio edit ")
-        || inner
-            .split_whitespace()
-            .any(|word| EDITION_WORDS.contains(&word.trim_matches(|c: char| !c.is_alphanumeric())))
+        || words
+            .iter()
+            .any(|word| EDITION_WORDS.contains(word) || is_fused_disc(word))
+        || words
+            .windows(2)
+            .any(|pair| is_disc_word(pair[0]) && is_number(pair[1]))
+}
+
+/// The words that number a disc of a set: "cd", "disc", "disk".
+fn is_disc_word(word: &str) -> bool {
+    matches!(word, "cd" | "disc" | "disk")
+}
+
+/// A disc marker written as one word: "cd1", "disc2".
+fn is_fused_disc(word: &str) -> bool {
+    ["cd", "disc", "disk"]
+        .iter()
+        .any(|marker| word.strip_prefix(marker).is_some_and(is_number))
+}
+
+fn is_number(word: &str) -> bool {
+    !word.is_empty() && word.chars().all(|c| c.is_ascii_digit())
 }
 
 /// The folded artists in a credit string, split on collaboration
@@ -352,6 +389,16 @@ mod tests {
             strip_edition_words("Songs (From the Basement)"),
             "songs from the basement"
         );
+        // Disc markers name a part of a set, not the album.
+        assert_eq!(
+            strip_edition_words("Back Street Crawler Deluxe CD1"),
+            "back street crawler"
+        );
+        assert_eq!(strip_edition_words("Rumours - Disc 2"), "rumours");
+        assert_eq!(strip_edition_words("Rumours (Disc 1 of 2)"), "rumours");
+        assert_eq!(strip_edition_words("Rumours [CD2]"), "rumours");
+        assert_eq!(strip_edition_words("Discovery"), "discovery");
+        assert_eq!(strip_edition_words("Album 2"), "album 2");
         assert!(artist_subset("Iron Coast feat. Vela", "Iron Coast"));
         assert!(!artist_subset("The Tribute Band", "Michael Jackson"));
     }
