@@ -12160,6 +12160,78 @@
         ]
       }
     },
+    "/api/v3/library/artist-repairs/{repair_id}/undo": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Undo the repair that gave an album left on \"Unknown Artist\" the artist\nits tracks are credited to: the album's earlier artist and credits come\nback, and the cleanup leaves it on them.",
+        "operationId": "undo_artist_repair",
+        "parameters": [
+          {
+            "name": "repair_id",
+            "in": "path",
+            "description": "The history entry's undo_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The album's earlier artist is back"
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No artist repair that can be undone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The album's artist changed since the repair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/artists": {
       "get": {
         "tags": [
@@ -36081,7 +36153,7 @@
               "string",
               "null"
             ],
-            "description": "For a `leftover_joined` entry that can be undone now, the id to\nundo it by; null otherwise."
+            "description": "For a `leftover_joined` or `artist_from_tracks` entry that can be\nundone now, the id to undo it by; null otherwise."
           }
         }
       },
@@ -36095,7 +36167,8 @@
           "retag_half_left_alone",
           "leftover_joined",
           "tracks_other_music",
-          "tracks_new_copy"
+          "tracks_new_copy",
+          "artist_from_tracks"
         ]
       },
       "AlbumHistoryView": {

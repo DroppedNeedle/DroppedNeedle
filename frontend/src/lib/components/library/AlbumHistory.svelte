@@ -1,9 +1,10 @@
 <!--
 	What DroppedNeedle did by itself to a library album: history moved to new
 	files, tracks whose paths other music took, tracks replaced by new copies
-	of the same recordings, and albums joined into this one. A curator can
-	undo the fold of a leftover album. Nothing shows while it loads or when
-	there is nothing to tell.
+	of the same recordings, albums joined into this one, and an artist taken
+	from the tracks instead of "Unknown Artist". A curator can undo the fold
+	of a leftover album and that artist change. Nothing shows while it loads
+	or when there is nothing to tell.
 -->
 <script lang="ts">
 	import { History, Undo2 } from 'lucide-svelte';
@@ -11,6 +12,7 @@
 	import {
 		getAlbumHistoryQuery,
 		undoAlbumFold,
+		undoArtistRepair,
 		type AlbumHistoryEntry
 	} from '$lib/queries/library/LibraryAlbumHistoryQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -33,18 +35,24 @@
 	);
 
 	const undoFold = undoAlbumFold();
-	let undoId = $state<string | null>(null);
+	const undoArtist = undoArtistRepair();
+	let undoing = $state<{ id: string; artist: boolean } | null>(null);
 	let confirming = $state(false);
 
-	function askUndo(id: string): void {
-		undoId = id;
+	function askUndo(entry: AlbumHistoryEntry, id: string): void {
+		undoing = { id, artist: entry.kind === 'artist_from_tracks' };
 		confirming = true;
 	}
 
 	async function runUndo(): Promise<void> {
-		if (!undoId) return;
-		await undoFold.mutateAsync(undoId);
-		toastStore.show({ message: 'Join undone.', type: 'success' });
+		if (!undoing) return;
+		if (undoing.artist) {
+			await undoArtist.mutateAsync(undoing.id);
+			toastStore.show({ message: 'Artist change undone.', type: 'success' });
+		} else {
+			await undoFold.mutateAsync(undoing.id);
+			toastStore.show({ message: 'Join undone.', type: 'success' });
+		}
 	}
 
 	const MOVED = 'plays, favorites and playlist entries';
@@ -92,6 +100,8 @@
 				return `Left unmanaged like ${old}, whose files were being retagged as this album.`;
 			case 'leftover_joined':
 				return `${old}, left over from an earlier version as a separate album, was folded into this album.`;
+			case 'artist_from_tracks':
+				return 'The artist was taken from the tracks, replacing "Unknown Artist".';
 		}
 	}
 </script>
@@ -120,7 +130,7 @@
 							>
 							{#if entry.undo_id && authStore.isTrusted}
 								{@const id = entry.undo_id}
-								<Button variant="outline" size="xs" icon={Undo2} onclick={() => askUndo(id)}
+								<Button variant="outline" size="xs" icon={Undo2} onclick={() => askUndo(entry, id)}
 									>Undo</Button
 								>
 							{/if}
@@ -134,9 +144,11 @@
 
 <ConfirmDialog
 	bind:open={confirming}
-	title="Undo this join?"
-	message="Plays, favorites and playlist entries stay on this album."
+	title={undoing?.artist ? 'Undo this artist change?' : 'Undo this join?'}
+	message={undoing?.artist
+		? 'The album goes back to "Unknown Artist", and this change is not made again.'
+		: 'Plays, favorites and playlist entries stay on this album.'}
 	confirmLabel="Undo"
-	pending={undoFold.isPending}
+	pending={undoFold.isPending || undoArtist.isPending}
 	onconfirm={runUndo}
 />

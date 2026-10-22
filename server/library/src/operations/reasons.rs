@@ -217,6 +217,18 @@ pub const FOLD_STALE: Reason = reason(
     "Reload the album.",
 );
 
+// Undoing the artist an album on "Unknown Artist" took from its tracks.
+pub const ARTIST_REPAIR_NOT_FOUND: Reason = reason(
+    "ARTIST_REPAIR_NOT_FOUND",
+    "This artist change is not one DroppedNeedle can undo.",
+    "Reload the album.",
+);
+pub const ARTIST_REPAIR_STALE: Reason = reason(
+    STALE,
+    "The album's artist changed after this, so it can't be undone.",
+    "Reload the album.",
+);
+
 // Notes on one planned file.
 pub const TRACK_ID_CORRECTED: Reason = reason(
     "TRACK_ID_CORRECTED",

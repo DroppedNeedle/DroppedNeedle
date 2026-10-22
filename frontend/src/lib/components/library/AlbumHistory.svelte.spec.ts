@@ -11,6 +11,7 @@ import AlbumHistory from './AlbumHistory.svelte';
 const AT = Date.UTC(2026, 9, 12, 9, 30);
 const HISTORY = 'GET /api/v3/library/albums/{album_id}/history';
 const UNDO = 'POST /api/v3/library/folds/{fold_id}/undo';
+const UNDO_ARTIST = 'POST /api/v3/library/artist-repairs/{repair_id}/undo';
 
 function entry(overrides: Partial<AlbumHistoryEntry>): AlbumHistoryEntry {
 	return {
@@ -74,7 +75,8 @@ describe('AlbumHistory', () => {
 			entry({ kind: 'retag_joined', by: 'you', other_album_title: 'Old Name' }),
 			entry({ kind: 'retag_joined', by: 'person', other_album_title: null }),
 			entry({ kind: 'retag_half_left_alone', other_album_title: 'Old Name' }),
-			entry({ kind: 'leftover_joined', other_album_title: 'Old Name' })
+			entry({ kind: 'leftover_joined', other_album_title: 'Old Name' }),
+			entry({ kind: 'artist_from_tracks' })
 		);
 		await expect.element(page.getByRole('heading', { name: 'Album history' })).toBeInTheDocument();
 		const lines = [
@@ -90,7 +92,8 @@ describe('AlbumHistory', () => {
 			'You merged Old Name into this album.',
 			'An admin merged Another album into this album.',
 			'Left unmanaged like Old Name, whose files were being retagged as this album.',
-			'Old Name, left over from an earlier version as a separate album, was folded into this album.'
+			'Old Name, left over from an earlier version as a separate album, was folded into this album.',
+			'The artist was taken from the tracks, replacing "Unknown Artist".'
 		];
 		for (const text of lines) {
 			await expect.element(page.getByText(text, { exact: true })).toBeInTheDocument();
@@ -182,6 +185,58 @@ describe('undoing a fold', () => {
 	it('offers no Undo to a listener', async () => {
 		await show(folded);
 		await expect.element(page.getByText(/was folded into this album/)).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+	});
+});
+
+describe('undoing an artist change', () => {
+	const repaired = entry({ kind: 'artist_from_tracks', undo_id: 'repair-1' });
+
+	it('undoes the artist change after a curator confirms', async () => {
+		signIn('trusted');
+		const api = fakeApi({ [HISTORY]: { items: [repaired] }, [UNDO_ARTIST]: undefined });
+		await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
+
+		await page.getByRole('button', { name: 'Undo' }).click();
+		const dialog = page.getByRole('dialog');
+		await expect.element(dialog.getByText('Undo this artist change?')).toBeVisible();
+		await expect
+			.element(
+				dialog.getByText(
+					'The album goes back to "Unknown Artist", and this change is not made again.'
+				)
+			)
+			.toBeVisible();
+		await dialog.getByRole('button', { name: 'Undo' }).click();
+
+		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+		expect(api.calls(UNDO_ARTIST).map((call) => call.params)).toEqual([{ repair_id: 'repair-1' }]);
+		expect(api.calls(UNDO)).toEqual([]);
+	});
+
+	it('says why a stale artist change cannot be undone', async () => {
+		signIn('admin');
+		fakeApi({
+			[HISTORY]: { items: [repaired] },
+			[UNDO_ARTIST]: apiError(
+				409,
+				'STALE_REVISION',
+				"The album's artist changed after this, so it can't be undone."
+			)
+		});
+		await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
+
+		await page.getByRole('button', { name: 'Undo' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Undo' }).click();
+
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent("The album's artist changed after this, so it can't be undone.");
+	});
+
+	it('offers no Undo to a listener', async () => {
+		await show(repaired);
+		await expect.element(page.getByText(/replacing "Unknown Artist"/)).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
 	});
 });

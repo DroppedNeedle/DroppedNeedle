@@ -18029,9 +18029,15 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
 /// takes the artist its tracks are credited to, by itself and once: the
 /// change is in the audit, no artist row is merged or retired, and the
 /// album is looked up again under the artist's name. A locked grouping is
-/// left alone.
+/// left alone. The album's history lists the change, and a curator can
+/// undo it while the album still holds what it gave: the album's earlier
+/// artist, sort name and credits come back, and later cleanups leave it
+/// there.
 #[tokio::test]
 async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
+    use droppedneedle_library::http::history::album_history_view;
+    use droppedneedle_library::operations::models::OperationError;
+    use droppedneedle_library::operations::service::Operations;
     use droppedneedle_library::repairs::service::Repairs;
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
@@ -18081,8 +18087,8 @@ async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
          updated_at) VALUES ('old-unknown', 'Unknown Artist', 'unknown artist', 'group', 0, 0); \
          UPDATE local_albums SET album_artist_id = 'old-unknown', \
-         album_artist_name = 'Unknown Artist', album_artist_name_folded = 'unknown artist' \
-         WHERE id = '{album}'; \
+         album_artist_name = 'Unknown Artist', album_artist_name_folded = 'unknown artist', \
+         album_artist_sort_name = 'Artist, Unknown' WHERE id = '{album}'; \
          UPDATE local_album_artists SET local_artist_id = 'old-unknown', \
          credited_name = 'Unknown Artist', role = 'primary' WHERE local_album_id = '{album}';"
     ))
@@ -18156,6 +18162,98 @@ async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
              WHERE idempotency_key = 'catalog-identity-hygiene:v1:backfill'"
         ),
         ["1"]
+    );
+
+    // The album's history lists the change, with Undo while it applies.
+    let ops = Operations::new(&library);
+    let history = || -> Value {
+        let view = album_history_view(&ops, &album, "curator").expect("history reads");
+        serde_json::to_value(view).expect("history serializes")["items"].clone()
+    };
+    let [repair] = read(
+        "SELECT id FROM library_catalog_actions \
+         WHERE reason_code = 'PLACEHOLDER_ARTIST_FROM_TRACKS'",
+    )
+    .try_into()
+    .expect("one repair");
+    let items = history();
+    assert_eq!(
+        items,
+        json!([{"kind": "artist_from_tracks", "at": items[0]["at"], "by": null,
+                "track_count": 0, "track_titles": [], "other_album_title": null,
+                "undo_id": repair}])
+    );
+    let undo = |id: &str| match ops.undo_artist_repair(id, "curator") {
+        Ok(()) => "restored".to_owned(),
+        Err(OperationError::NotFound(reason) | OperationError::Conflict(reason)) => {
+            reason.code.to_owned()
+        }
+        Err(other) => panic!("undo failed: {other}"),
+    };
+    assert_eq!(undo("no-such-repair"), "ARTIST_REPAIR_NOT_FOUND");
+
+    // A credit changed since the repair: the undo is stale and changes
+    // nothing.
+    let rename = |name: &str| {
+        db.execute(
+            "UPDATE local_album_artists SET credited_name = ?2 WHERE local_album_id = ?1",
+            rusqlite::params![album, name],
+        )
+        .expect("credit renamed");
+    };
+    rename("YES");
+    let changed = read(album_credits);
+    assert_eq!(
+        history()[0]["undo_id"],
+        Value::Null,
+        "no Undo while it would not apply"
+    );
+    assert_eq!(undo(&repair), "STALE_REVISION");
+    assert_eq!(
+        read(album_credits),
+        changed,
+        "a refused undo changes nothing"
+    );
+    rename("Yes");
+
+    assert_eq!(undo(&repair), "restored");
+    assert_eq!(
+        read(
+            "SELECT album_artist_id || ' ' || album_artist_name || ' ' || \
+             album_artist_name_folded || ' ' || album_artist_sort_name FROM local_albums"
+        ),
+        ["old-unknown Unknown Artist unknown artist Artist, Unknown"]
+    );
+    assert_eq!(
+        read(album_credits),
+        ["old-unknown Unknown Artist primary"],
+        "the credits are back as they were"
+    );
+    assert_eq!(
+        history()[0]["undo_id"],
+        Value::Null,
+        "the entry stays, without Undo"
+    );
+    assert_eq!(undo(&repair), "STALE_REVISION", "an undo runs once");
+
+    // A cleanup of the album leaves it undone.
+    let [cleanup] = read(
+        "SELECT id FROM library_operation_jobs \
+         WHERE idempotency_key = 'catalog-identity-hygiene:v1:backfill'",
+    )
+    .try_into()
+    .expect("one cleanup job");
+    let mut conn = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let tx = conn.transaction().expect("transaction");
+    let again = droppedneedle_library::repairs::hygiene::clean_album(&tx, &album, &cleanup, 0.0)
+        .expect("cleanup runs");
+    tx.commit().expect("commit");
+    assert_eq!(again, None);
+    assert_eq!(
+        read("SELECT album_artist_name FROM local_albums"),
+        ["Unknown Artist"],
+        "an undone repair stays undone"
     );
 }
 

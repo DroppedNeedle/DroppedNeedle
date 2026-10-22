@@ -18,7 +18,9 @@
 //! A person's edition choice is never lost: an album holding a chosen
 //! edition, made now or in v2, is only retired into an album with the same
 //! choice. The fold drops the split half's v2 choice; its audit row keeps
-//! it, so the fold can be undone ([`crate::identity::undo_fold`]).
+//! it, so the fold can be undone ([`crate::identity::undo_fold`]). The
+//! artist repair keeps the album's earlier artist and credits the same
+//! way ([`undo_artist_from_tracks`]).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -424,21 +426,62 @@ fn fold_split_legacy_album(
     Ok(Some(after))
 }
 
+/// Replace the album's credits and mark its artist links for another
+/// look. A plain delete and insert, so the read models that follow
+/// `local_album_artists` see each row go and come.
+fn write_album_credits(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    credits: &[CreditRow],
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "DELETE FROM local_album_artists WHERE local_album_id = ?1",
+        params![album_id],
+    )?;
+    for (position, credit) in credits.iter().enumerate() {
+        tx.execute(
+            INSERT_ALBUM_CREDIT,
+            params![
+                album_id,
+                position as i64,
+                credit.artist_id,
+                credit.role,
+                credit.credited_name,
+                credit.join_phrase,
+                credit.artist_mbid
+            ],
+        )?;
+    }
+    mark_stale(tx, album_id)
+}
+
+const INSERT_ALBUM_CREDIT: &str = "INSERT INTO local_album_artists (local_album_id, position, \
+     local_artist_id, role, credited_name, join_phrase, artist_mbid) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+
 /// One artist credit as `local_track_artists` and `local_album_artists`
-/// hold it, in position order.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+/// hold it, in position order. A track credit reads as role `main`, the
+/// role an album credit made from it takes.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct CreditRow {
     artist_id: String,
     credited_name: Option<String>,
     join_phrase: String,
     artist_mbid: Option<String>,
+    /// Audit rows written before the role was kept hold `main` credits.
+    #[serde(default = "main_role")]
+    role: String,
 }
 
-const TRACK_CREDITS: &str = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid \
-     FROM local_track_artists WHERE local_track_id = ?1 ORDER BY position";
+fn main_role() -> String {
+    "main".to_owned()
+}
 
-const ALBUM_CREDITS: &str = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid \
-     FROM local_album_artists WHERE local_album_id = ?1 ORDER BY position";
+const TRACK_CREDITS: &str = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid, \
+     'main' FROM local_track_artists WHERE local_track_id = ?1 ORDER BY position";
+
+const ALBUM_CREDITS: &str = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid, \
+     role FROM local_album_artists WHERE local_album_id = ?1 ORDER BY position";
 
 fn credit_rows(conn: &Connection, sql: &str, subject: &str) -> rusqlite::Result<Vec<CreditRow>> {
     conn.prepare_cached(sql)?
@@ -448,6 +491,7 @@ fn credit_rows(conn: &Connection, sql: &str, subject: &str) -> rusqlite::Result<
                 credited_name: row.get(1)?,
                 join_phrase: row.get(2)?,
                 artist_mbid: row.get(3)?,
+                role: row.get(4)?,
             })
         })?
         .collect()
@@ -543,7 +587,7 @@ fn artist_from_tracks(
         params![album.id],
         |row| row.get(0),
     )?;
-    if held {
+    if held || artist_repair_undone(tx, &album.id)? {
         return Ok(None);
     }
     let (previous_artist, previous_sort): (String, Option<String>) = tx.query_row(
@@ -554,6 +598,7 @@ fn artist_from_tracks(
     let before = serde_json::json!({
         "album_artist_id": previous_artist,
         "album_artist_name": album.artist_name,
+        "album_artist_name_folded": album.artist_folded,
         "album_artist_sort_name": previous_sort,
         "credits": credit_rows(tx, ALBUM_CREDITS, &album.id)?,
     });
@@ -570,25 +615,7 @@ fn artist_from_tracks(
             now
         ],
     )?;
-    tx.execute(
-        "DELETE FROM local_album_artists WHERE local_album_id = ?1",
-        params![album.id],
-    )?;
-    for (position, credit) in credits.iter().enumerate() {
-        tx.execute(
-            "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
-             credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6)",
-            params![
-                album.id,
-                position as i64,
-                credit.artist_id,
-                credit.credited_name,
-                credit.join_phrase,
-                credit.artist_mbid
-            ],
-        )?;
-    }
-    mark_stale(tx, &album.id)?;
+    write_album_credits(tx, &album.id, &credits)?;
     // An album the placeholder kept unmatched is looked up again under
     // its artist's name.
     if identity(tx, &album.id)?.is_none() {
@@ -610,9 +637,177 @@ fn artist_from_tracks(
             job_id: Some(job_id),
             before,
             after: after.clone(),
-            reason: "PLACEHOLDER_ARTIST_FROM_TRACKS",
+            reason: ARTIST_REPAIR_REASON,
         },
         now,
     )?;
     Ok(Some(after))
+}
+
+/// The reason code of the audit row [`artist_from_tracks`] writes.
+pub const ARTIST_REPAIR_REASON: &str = "PLACEHOLDER_ARTIST_FROM_TRACKS";
+
+/// The audit kind of an undone placeholder-artist repair, recorded on the
+/// album. The repair never runs again on that album.
+pub const ARTIST_REPAIR_UNDONE: &str = "album_artist_undone";
+
+/// Whether a placeholder-artist repair of the album was undone.
+fn artist_repair_undone(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    conn.prepare_cached(
+        "SELECT EXISTS(SELECT 1 FROM library_catalog_actions \
+         WHERE local_album_id = ?1 AND action_kind = ?2)",
+    )?
+    .query_row(params![album_id, ARTIST_REPAIR_UNDONE], |row| row.get(0))
+}
+
+/// The album's artist fields and credits before the repair, as its audit
+/// row's `before_json` keeps them.
+#[derive(serde::Deserialize)]
+struct ArtistBefore {
+    album_artist_id: String,
+    album_artist_name: String,
+    /// Absent from audit rows written before it was kept.
+    album_artist_name_folded: Option<String>,
+    album_artist_sort_name: Option<String>,
+    credits: Vec<CreditRow>,
+}
+
+/// What the repair gave the album, as its audit row's `after_json` keeps
+/// it.
+#[derive(serde::Deserialize)]
+struct ArtistAfter {
+    album_artist_id: String,
+    album_artist_name: String,
+    credits: Vec<CreditRow>,
+}
+
+/// How [`undo_artist_from_tracks`] ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtistRepairUndo {
+    /// The album's earlier artist and credits are back.
+    Restored,
+    /// The album's artist or credits changed since the repair, an artist
+    /// row it named is gone or merged away, the album was retired into
+    /// another, or the repair was undone already: nothing changed.
+    Stale,
+    /// `action_id` is not a placeholder-artist repair, or its album row is
+    /// gone: nothing changed.
+    Unknown,
+}
+
+/// The repair recorded as `action_id`, its album and what it replaced, or
+/// why [`undo_artist_from_tracks`] would refuse it.
+fn artist_standing(
+    conn: &Connection,
+    action_id: &str,
+) -> rusqlite::Result<Result<(String, ArtistBefore), ArtistRepairUndo>> {
+    let action: Option<(Option<String>, String, String)> = conn
+        .prepare_cached(
+            "SELECT local_album_id, before_json, after_json FROM library_catalog_actions \
+             WHERE id = ?1 AND action_kind = 'album_artist' AND reason_code = ?2",
+        )?
+        .query_row(params![action_id, ARTIST_REPAIR_REASON], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .optional()?;
+    let Some((Some(album_id), before, after)) = action else {
+        return Ok(Err(ArtistRepairUndo::Unknown));
+    };
+    let (Ok(before), Ok(after)) = (
+        serde_json::from_str::<ArtistBefore>(&before),
+        serde_json::from_str::<ArtistAfter>(&after),
+    ) else {
+        return Ok(Err(ArtistRepairUndo::Unknown));
+    };
+    let current: Option<(Option<String>, Option<String>)> = conn
+        .prepare_cached(
+            "SELECT album_artist_id, album_artist_name FROM local_albums \
+             WHERE id = ?1 AND retired_into_album_id IS NULL",
+        )?
+        .query_row(params![album_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()?;
+    let unchanged = current
+        == Some((
+            Some(after.album_artist_id.clone()),
+            Some(after.album_artist_name.clone()),
+        ))
+        && credit_rows(conn, ALBUM_CREDITS, &album_id)? == after.credits;
+    if !unchanged || artist_repair_undone(conn, &album_id)? {
+        return Ok(Err(ArtistRepairUndo::Stale));
+    }
+    let named = std::iter::once(&before.album_artist_id)
+        .chain(before.credits.iter().map(|credit| &credit.artist_id));
+    for artist_id in named {
+        let live: bool = conn
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM local_artists \
+                 WHERE id = ?1 AND retired_into_artist_id IS NULL)",
+            )?
+            .query_row(params![artist_id], |row| row.get(0))?;
+        if !live {
+            return Ok(Err(ArtistRepairUndo::Stale));
+        }
+    }
+    Ok(Ok((album_id, before)))
+}
+
+/// Whether [`undo_artist_from_tracks`] would undo the repair recorded as
+/// audit row `action_id` now. Reads only.
+pub fn artist_repair_undoable(conn: &Connection, action_id: &str) -> rusqlite::Result<bool> {
+    Ok(artist_standing(conn, action_id)?.is_ok())
+}
+
+/// Undo the placeholder-artist repair recorded as audit row `action_id`,
+/// for `actor`: the album's artist id, name, folded name and sort name and
+/// its credits are what they were before it, an audit row
+/// ([`ARTIST_REPAIR_UNDONE`]) keeps the repair from running on the album
+/// again, and the catalog revision moves once. Only while the album still
+/// holds what the repair gave it. No artist row is made or deleted.
+pub fn undo_artist_from_tracks(
+    tx: &Transaction<'_>,
+    action_id: &str,
+    actor: &str,
+    now: f64,
+) -> rusqlite::Result<ArtistRepairUndo> {
+    let (album_id, before) = match artist_standing(tx, action_id)? {
+        Ok(repair) => repair,
+        Err(outcome) => return Ok(outcome),
+    };
+    let folded = before
+        .album_artist_name_folded
+        .clone()
+        .unwrap_or_else(|| fold_text(&before.album_artist_name));
+    tx.execute(
+        "UPDATE local_albums SET album_artist_name = ?2, album_artist_name_folded = ?3, \
+         album_artist_id = ?4, album_artist_sort_name = ?5, updated_at = ?6, \
+         row_revision = row_revision + 1 WHERE id = ?1",
+        params![
+            album_id,
+            before.album_artist_name,
+            folded,
+            before.album_artist_id,
+            before.album_artist_sort_name,
+            now
+        ],
+    )?;
+    write_album_credits(tx, &album_id, &before.credits)?;
+    record_action(
+        tx,
+        CatalogAction {
+            actor,
+            kind: ARTIST_REPAIR_UNDONE,
+            album_id: &album_id,
+            job_id: None,
+            before: serde_json::json!({ "repair_action_id": action_id }),
+            after: serde_json::json!({
+                "album_artist_id": before.album_artist_id,
+                "album_artist_name": before.album_artist_name,
+                "credits": before.credits,
+            }),
+            reason: "PLACEHOLDER_ARTIST_UNDONE",
+        },
+        now,
+    )?;
+    bump_catalog(tx)?;
+    Ok(ArtistRepairUndo::Restored)
 }

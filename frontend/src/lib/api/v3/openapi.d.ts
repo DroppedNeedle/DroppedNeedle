@@ -3711,6 +3711,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/artist-repairs/{repair_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo the repair that gave an album left on "Unknown Artist" the artist
+         *     its tracks are credited to: the album's earlier artist and credits come
+         *     back, and the cleanup leaves it on them.
+         */
+        post: operations["undo_artist_repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/artists": {
         parameters: {
             query?: never;
@@ -10221,8 +10242,8 @@ export interface components {
             /** @description The first five of those tracks' titles, in album order. */
             track_titles: string[];
             /**
-             * @description For a `leftover_joined` entry that can be undone now, the id to
-             *     undo it by; null otherwise.
+             * @description For a `leftover_joined` or `artist_from_tracks` entry that can be
+             *     undone now, the id to undo it by; null otherwise.
              */
             undo_id?: string | null;
         };
@@ -10230,7 +10251,7 @@ export interface components {
          * @description What one history entry tells.
          * @enum {string}
          */
-        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "leftover_joined" | "tracks_other_music" | "tracks_new_copy";
+        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "leftover_joined" | "tracks_other_music" | "tracks_new_copy" | "artist_from_tracks";
         /**
          * @description An album's history, newest first: at most ten entries, none older than
          *     180 days.
@@ -32074,6 +32095,63 @@ export interface operations {
             };
             /** @description Unknown album id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    undo_artist_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The history entry's undo_id */
+                repair_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's earlier artist is back */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No artist repair that can be undone */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The album's artist changed since the repair */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -5,7 +5,8 @@
 //! Read from `library_catalog_actions`. The audit JSON keeps every row a
 //! move touched, other people's included, so only the typed fields below
 //! leave this module: no album or track ids, no reason codes, no counts of
-//! what moved. The one id is a fold's own audit row, as its undo handle.
+//! what moved. The one id is the audit row of a fold or of an artist
+//! repair, as its undo handle.
 
 use std::collections::BTreeSet;
 
@@ -13,6 +14,7 @@ use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use serde::Deserialize;
 
 use crate::identity;
+use crate::repairs::hygiene;
 
 /// How far back the history reaches.
 const MAX_AGE_SECS: f64 = 180.0 * 86_400.0;
@@ -38,6 +40,9 @@ pub enum HistoryKind {
     TracksOtherMusic,
     /// Tracks' files were replaced by new copies of the same recordings.
     TracksNewCopy,
+    /// The album took its artist from its tracks instead of the "Unknown
+    /// Artist" placeholder.
+    ArtistFromTracks,
 }
 
 /// Who asked for an entry, as the caller may know it.
@@ -63,7 +68,8 @@ pub struct HistoryEntry {
     pub track_titles: Vec<String>,
     /// The other album's title, when its row is still there.
     pub other_album_title: Option<String>,
-    /// For a fold that can be undone now: the id to undo it by.
+    /// For a fold or an artist repair that can be undone now: the id to
+    /// undo it by.
     pub undo_id: Option<String>,
 }
 
@@ -121,7 +127,9 @@ const ROWS: &str = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, 
         'RETAG_JOINED_SAME_RELEASE', 'AUTOMATIC_EMPTY_ALBUM_SHELL_CONVERGENCE', \
         'AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR')) \
       OR (a.action_kind = 'retag_first_half' \
-        AND a.reason_code = 'RETAG_FIRST_HALF_LEFT_AS_IT_WAS')) \
+        AND a.reason_code = 'RETAG_FIRST_HALF_LEFT_AS_IT_WAS') \
+      OR (a.action_kind = 'album_artist' \
+        AND a.reason_code = 'PLACEHOLDER_ARTIST_FROM_TRACKS')) \
     ORDER BY a.created_at DESC, a.rowid DESC LIMIT 10";
 
 struct Row {
@@ -269,6 +277,19 @@ pub fn album_history(
                     | "AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR",
                 ),
             ) => HistoryKind::LeftoverJoined,
+            ("album_artist", Some(hygiene::ARTIST_REPAIR_REASON)) => {
+                let undo_id = hygiene::artist_repair_undoable(conn, &row.id)?.then_some(row.id);
+                entries.push(HistoryEntry {
+                    kind: HistoryKind::ArtistFromTracks,
+                    at,
+                    by: None,
+                    track_count: 0,
+                    track_titles: Vec::new(),
+                    other_album_title: None,
+                    undo_id,
+                });
+                continue;
+            }
             _ => continue,
         };
         let Ok(other) = serde_json::from_str::<OtherAlbum>(&row.before) else {

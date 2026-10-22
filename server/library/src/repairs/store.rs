@@ -304,7 +304,8 @@ pub const HYGIENE_BACKFILL_KEY: &str = "catalog-identity-hygiene:v1:backfill";
 
 /// Albums the cleanup could apply to: imported groupings, automatic
 /// albums with no file left, and albums whose row names the "Unknown
-/// Artist" placeholder while a file's tags name an artist.
+/// Artist" placeholder while a file's tags name an artist, unless a
+/// curator undid that repair on the album.
 const HYGIENE_CANDIDATE: &str = "(a.grouping_source = 'legacy_import' \
      OR (a.grouping_source = 'automatic' AND NOT EXISTS \
      (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id)) \
@@ -312,7 +313,9 @@ const HYGIENE_CANDIDATE: &str = "(a.grouping_source = 'legacy_import' \
      AND a.grouping_locked = 0 AND a.grouping_source <> 'manual' \
      AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
      AND t.availability = 'indexed' AND t.album_artist_provenance = 'tag' \
-     AND t.album_artist_name <> 'Unknown Artist')))";
+     AND t.album_artist_name <> 'Unknown Artist') \
+     AND NOT EXISTS (SELECT 1 FROM library_catalog_actions u \
+     WHERE u.local_album_id = a.id AND u.action_kind = 'album_artist_undone')))";
 
 pub fn hygiene_candidates_exist(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(

@@ -36,3 +36,13 @@ export function undoAlbumFold() {
 		onSettled: () => invalidateLibraryCatalog()
 	}));
 }
+
+// Undo the artist an album left on "Unknown Artist" took from its tracks,
+// by its history entry's undo_id. The album's artist changes everywhere
+// it shows, so every catalog view refreshes, on a refusal too.
+export function undoArtistRepair() {
+	return createMutation(() => ({
+		mutationFn: (undoId: string) => api.global.v3.POST(LibraryV3Api.undoArtistRepair(undoId)),
+		onSettled: () => invalidateLibraryCatalog()
+	}));
+}

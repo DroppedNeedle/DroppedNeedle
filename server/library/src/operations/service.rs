@@ -741,6 +741,25 @@ impl Operations {
         )
     }
 
+    /// Undo the placeholder-artist repair recorded as `repair_id`, for
+    /// `actor`: the album's earlier artist and credits come back. Blocking.
+    pub fn undo_artist_repair(&self, repair_id: &str, actor: &str) -> Result<(), OperationError> {
+        use crate::repairs::hygiene::{ArtistRepairUndo, undo_artist_from_tracks};
+
+        self.db
+            .write_blocking(Lane::Foreground, "operations.undo_artist_repair", |tx| {
+                match undo_artist_from_tracks(tx, repair_id, actor, now_unix())? {
+                    ArtistRepairUndo::Restored => Ok(()),
+                    ArtistRepairUndo::Stale => {
+                        Err(OperationError::Conflict(reasons::ARTIST_REPAIR_STALE))
+                    }
+                    ArtistRepairUndo::Unknown => {
+                        Err(OperationError::NotFound(reasons::ARTIST_REPAIR_NOT_FOUND))
+                    }
+                }
+            })
+    }
+
     /// "Looks right": confirm the album's unconfirmed match. Blocking.
     pub fn confirm_match(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
         self.db

@@ -670,6 +670,11 @@ const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
     ("POST", "/api/v3/library/folds/{fold_id}/undo", SHARED_ALBUM),
     (
         "POST",
+        "/api/v3/library/artist-repairs/{repair_id}/undo",
+        SHARED_ALBUM,
+    ),
+    (
+        "POST",
         "/api/v3/library/albums/{album_id}/edition/tags",
         SHARED_ALBUM,
     ),

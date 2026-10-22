@@ -5,6 +5,9 @@
 //!   every signed-in user, as the album is catalog data.
 //! - `POST /library/folds/{fold_id}/undo`: undo the fold of a leftover
 //!   album, by the `undo_id` its history entry carries. For curators.
+//! - `POST /library/artist-repairs/{repair_id}/undo`: undo the repair that
+//!   gave an album on "Unknown Artist" its tracks' artist, by its history
+//!   entry's `undo_id`. For curators.
 
 use axum::{
     Json,
@@ -28,6 +31,7 @@ pub fn routes() -> Routes<LibrarySetup> {
     Routes::new()
         .user(routes!(get_album_history))
         .curator(routes!(undo_album_fold))
+        .curator(routes!(undo_artist_repair))
 }
 
 /// What one history entry tells.
@@ -50,6 +54,9 @@ pub enum AlbumHistoryKindView {
     TracksOtherMusic,
     /// Tracks' files were replaced by new copies of the same recordings.
     TracksNewCopy,
+    /// The album took its artist from its tracks instead of the "Unknown
+    /// Artist" placeholder.
+    ArtistFromTracks,
 }
 
 /// Who asked for a join.
@@ -76,8 +83,8 @@ pub struct AlbumHistoryEntryView {
     pub track_titles: Vec<String>,
     /// The other album's title, null when its row is gone.
     pub other_album_title: Option<String>,
-    /// For a `leftover_joined` entry that can be undone now, the id to
-    /// undo it by; null otherwise.
+    /// For a `leftover_joined` or `artist_from_tracks` entry that can be
+    /// undone now, the id to undo it by; null otherwise.
     pub undo_id: Option<String>,
 }
 
@@ -99,6 +106,7 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
                 HistoryKind::LeftoverJoined => AlbumHistoryKindView::LeftoverJoined,
                 HistoryKind::TracksOtherMusic => AlbumHistoryKindView::TracksOtherMusic,
                 HistoryKind::TracksNewCopy => AlbumHistoryKindView::TracksNewCopy,
+                HistoryKind::ArtistFromTracks => AlbumHistoryKindView::ArtistFromTracks,
             },
             at: entry.at,
             by: entry.by.map(|by| match by {
@@ -175,5 +183,32 @@ pub async fn undo_album_fold(
     let ops = Operations::new(&state);
     let user = caller.user_id().to_owned();
     blocking(move || ops.undo_fold(&fold_id, &user)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Undo the repair that gave an album left on "Unknown Artist" the artist
+/// its tracks are credited to: the album's earlier artist and credits come
+/// back, and the cleanup leaves it on them.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/artist-repairs/{repair_id}/undo",
+    params(("repair_id" = String, Path, description = "The history entry's undo_id")),
+    responses(
+        (status = 204, description = "The album's earlier artist is back"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "No artist repair that can be undone"),
+        (status = 409, description = "The album's artist changed since the repair"),
+    )
+)]
+pub async fn undo_artist_repair(
+    State(state): State<LibrarySetup>,
+    caller: Curator,
+    Path(repair_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let ops = Operations::new(&state);
+    let user = caller.user_id().to_owned();
+    blocking(move || ops.undo_artist_repair(&repair_id, &user)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
