@@ -302,11 +302,17 @@ pub fn create(
 /// upgrade's leftovers are cleaned without anyone asking.
 pub const HYGIENE_BACKFILL_KEY: &str = "catalog-identity-hygiene:v1:backfill";
 
-/// Albums the cleanup could apply to: imported groupings, and automatic
-/// albums with no file left.
+/// Albums the cleanup could apply to: imported groupings, automatic
+/// albums with no file left, and albums whose row names the "Unknown
+/// Artist" placeholder while a file's tags name an artist.
 const HYGIENE_CANDIDATE: &str = "(a.grouping_source = 'legacy_import' \
      OR (a.grouping_source = 'automatic' AND NOT EXISTS \
-     (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id)))";
+     (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id)) \
+     OR (a.album_artist_name = 'Unknown Artist' \
+     AND a.grouping_locked = 0 AND a.grouping_source <> 'manual' \
+     AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
+     AND t.availability = 'indexed' AND t.album_artist_provenance = 'tag' \
+     AND t.album_artist_name <> 'Unknown Artist')))";
 
 pub fn hygiene_candidates_exist(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
@@ -315,6 +321,14 @@ pub fn hygiene_candidates_exist(conn: &Connection) -> rusqlite::Result<bool> {
              WHERE a.retired_into_album_id IS NULL AND {HYGIENE_CANDIDATE})"
         ),
         [],
+        |row| row.get(0),
+    )
+}
+
+pub fn queued(conn: &Connection, idempotency_key: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE idempotency_key = ?1)",
+        params![idempotency_key],
         |row| row.get(0),
     )
 }
@@ -379,14 +393,6 @@ pub fn hygiene_count_after_scan(conn: &Connection, run_id: &str) -> rusqlite::Re
 /// Idempotency key of the cleanup after one scan run.
 pub fn hygiene_scan_key(run_id: &str) -> String {
     format!("catalog-identity-hygiene:v1:scan:{run_id}")
-}
-
-pub fn hygiene_backfill_queued(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE idempotency_key = ?1)",
-        params![HYGIENE_BACKFILL_KEY],
-        |row| row.get(0),
-    )
 }
 
 /// Marks the one-time identification of albums an older matcher left on

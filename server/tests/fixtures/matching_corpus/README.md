@@ -19,7 +19,10 @@ musicbrainz.org).
 - `albums.json`: one entry per album.
   - `facts`: the album as identification reads it from the catalog
     (`LocalAlbumFacts`). Album and track ids are placeholders; file paths
-    and stat revisions are left out.
+    and stat revisions are left out. The three albums whose row an upgrade
+    left on "Unknown Artist" (`crimson-king`, `close-to-the-edge`,
+    `back-street-crawler-cd1`) show the row after the catalog cleanup gave
+    it its tracks' artist.
   - `truth`: the release group and release the album is. `release` is null
     when the files cannot tell its editions apart.
   - `tagged` and `stripped`: the recorded result for the album as tagged,

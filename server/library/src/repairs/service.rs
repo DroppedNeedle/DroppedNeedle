@@ -350,7 +350,8 @@ impl Repairs {
     // -----------------------------------------------------------------------
 
     /// Queue the one-time catalog cleanup when this database has albums
-    /// it could apply to (imported groupings, empty shells).
+    /// it could apply to (imported groupings, empty shells, albums on the
+    /// placeholder artist).
     fn queue_hygiene_once(&self) -> Result<(), OperationError> {
         if self.hygiene_checked.load(Ordering::Relaxed) {
             return Ok(());
@@ -358,7 +359,9 @@ impl Repairs {
         let queued = self
             .db
             .write_blocking(Lane::Background, "repairs.queue_hygiene_once", |tx| {
-                if store::hygiene_backfill_queued(tx)? || !store::hygiene_candidates_exist(tx)? {
+                if store::queued(tx, store::HYGIENE_BACKFILL_KEY)?
+                    || !store::hygiene_candidates_exist(tx)?
+                {
                     return Ok(());
                 }
                 let new = NewRepair {

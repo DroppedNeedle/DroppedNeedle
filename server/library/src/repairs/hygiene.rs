@@ -1,4 +1,4 @@
-//! Catalog cleanup after an upgrade (v2's catalog identity hygiene): two
+//! Catalog cleanup after an upgrade (v2's catalog identity hygiene): three
 //! repairs of album rows an earlier version left behind. Catalog rows
 //! only; no file is touched. Each runs in the caller's transaction and
 //! does nothing unless the evidence is unambiguous.
@@ -9,6 +9,11 @@
 //! - An album an imported (v2 `legacy_import`) identity split off, whose
 //!   every file's own tags name another release group, is folded into the
 //!   one live album in the same folder that carries that group.
+//! - An album row that still names the "Unknown Artist" placeholder while
+//!   its files name the artist takes its artist from its tracks. A scan
+//!   writes an album's artist only from files it reads, so a row an
+//!   earlier version left on the placeholder stays there while its files
+//!   are unchanged.
 //!
 //! A person's edition choice is never lost: an album holding a chosen
 //! edition, made now or in v2, is only retired into an album with the same
@@ -22,9 +27,12 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_f
 
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::membership::retire;
+use crate::identify::artist_links::mark_stale;
+use crate::identify::queue::offer_again;
 use crate::identify::sqlite::offer_album;
 use crate::identity::{self, DecisionSource, Rows};
 use crate::operations::decisions::{CatalogAction, record_action};
+use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::scan::sqlite_store::awaits_retag;
 use droppedneedle_kernel::db::fold::fold_text;
 
@@ -42,7 +50,10 @@ pub fn clean_album(
     };
     let changed = match retire_empty_shell(tx, &album, job_id, now)? {
         Some(change) => Some(change),
-        None => fold_split_legacy_album(tx, &album, job_id, now)?,
+        None => match fold_split_legacy_album(tx, &album, job_id, now)? {
+            Some(change) => Some(change),
+            None => artist_from_tracks(tx, &album, job_id, now)?,
+        },
     };
     if changed.is_some() {
         bump_catalog(tx)?;
@@ -55,6 +66,7 @@ struct Album {
     id: String,
     root_id: String,
     title_folded: String,
+    artist_name: String,
     artist_folded: String,
     grouping_source: String,
     grouping_locked: bool,
@@ -62,8 +74,9 @@ struct Album {
 
 fn album(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Album>> {
     conn.query_row(
-        "SELECT id, root_id, title_folded, COALESCE(album_artist_name_folded, ''), \
-         grouping_source, grouping_locked FROM local_albums \
+        "SELECT id, root_id, title_folded, COALESCE(album_artist_name, ''), \
+         COALESCE(album_artist_name_folded, ''), grouping_source, grouping_locked \
+         FROM local_albums \
          WHERE id = ?1 AND retired_into_album_id IS NULL",
         params![album_id],
         |row| {
@@ -71,9 +84,10 @@ fn album(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Album>> {
                 id: row.get(0)?,
                 root_id: row.get(1)?,
                 title_folded: row.get(2)?,
-                artist_folded: row.get(3)?,
-                grouping_source: row.get(4)?,
-                grouping_locked: row.get(5)?,
+                artist_name: row.get(3)?,
+                artist_folded: row.get(4)?,
+                grouping_source: row.get(5)?,
+                grouping_locked: row.get(6)?,
             })
         },
     )
@@ -405,6 +419,199 @@ fn fold_split_legacy_album(
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
         &after,
         identity::FOLD_REASON,
+        now,
+    )?;
+    Ok(Some(after))
+}
+
+/// One artist credit as `local_track_artists` and `local_album_artists`
+/// hold it, in position order.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+struct CreditRow {
+    artist_id: String,
+    credited_name: Option<String>,
+    join_phrase: String,
+    artist_mbid: Option<String>,
+}
+
+const TRACK_CREDITS: &str = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid \
+     FROM local_track_artists WHERE local_track_id = ?1 ORDER BY position";
+
+const ALBUM_CREDITS: &str = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid \
+     FROM local_album_artists WHERE local_album_id = ?1 ORDER BY position";
+
+fn credit_rows(conn: &Connection, sql: &str, subject: &str) -> rusqlite::Result<Vec<CreditRow>> {
+    conn.prepare_cached(sql)?
+        .query_map(params![subject], |row| {
+            Ok(CreditRow {
+                artist_id: row.get(0)?,
+                credited_name: row.get(1)?,
+                join_phrase: row.get(2)?,
+                artist_mbid: row.get(3)?,
+            })
+        })?
+        .collect()
+}
+
+/// An indexed track as [`artist_from_tracks`] reads it.
+struct NamedTrack {
+    id: String,
+    album_artist: String,
+    album_artist_from_tag: bool,
+    album_artist_sort: Option<String>,
+    artist: String,
+}
+
+/// Give an album row that names the "Unknown Artist" placeholder the
+/// artist its files name. Every indexed track's album artist must come
+/// from its tags and be one real name, and the tracks credited under that
+/// same name must share one credit list. The album takes that list, so it
+/// points at the artist rows its own tracks already do. No artist row is
+/// made, merged or retired, and the move is not recorded as a merge
+/// candidate: the placeholder row stands for no artist.
+fn artist_from_tracks(
+    tx: &Transaction<'_>,
+    album: &Album,
+    job_id: &str,
+    now: f64,
+) -> rusqlite::Result<Option<serde_json::Value>> {
+    if album.artist_name != UNKNOWN_ARTIST
+        || album.grouping_locked
+        || album.grouping_source == "manual"
+    {
+        return Ok(None);
+    }
+    let tracks = tx
+        .prepare(
+            "SELECT id, COALESCE(album_artist_name, ''), album_artist_provenance = 'tag', \
+             album_artist_sort, COALESCE(artist_name, '') FROM local_tracks \
+             WHERE local_album_id = ?1 AND availability = 'indexed' \
+             ORDER BY disc_number, track_number, id",
+        )?
+        .query_map(params![album.id], |row| {
+            Ok(NamedTrack {
+                id: row.get(0)?,
+                album_artist: row.get(1)?,
+                album_artist_from_tag: row.get(2)?,
+                album_artist_sort: row.get(3)?,
+                artist: row.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if tracks.iter().any(|track| !track.album_artist_from_tag) {
+        return Ok(None);
+    }
+    let Some(name) = agreed(tracks.iter().map(|t| Some(t.album_artist.clone())), true) else {
+        return Ok(None);
+    };
+    if name == fold_text(UNKNOWN_ARTIST) {
+        return Ok(None);
+    }
+    let mut found: Option<(&NamedTrack, Vec<CreditRow>)> = None;
+    for track in tracks
+        .iter()
+        .filter(|track| fold_text(&track.artist) == name)
+    {
+        let credits = credit_rows(tx, TRACK_CREDITS, &track.id)?;
+        match &found {
+            None => found = Some((track, credits)),
+            Some((_, seen)) if *seen == credits => {}
+            Some(_) => return Ok(None),
+        }
+    }
+    let Some((source, credits)) = found else {
+        return Ok(None);
+    };
+    let Some(primary) = credits.first() else {
+        return Ok(None);
+    };
+    if credits
+        .iter()
+        .any(|credit| credit.artist_id == UNKNOWN_ARTIST_ID)
+        || busy(tx, &[&album.id], now)?
+    {
+        return Ok(None);
+    }
+    // A person's edit to the album is left alone. A running identification
+    // read the old artist and would land on it; the album stays a
+    // candidate and the cleanup after that identification comes back.
+    let held: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_catalog_actions \
+         WHERE local_album_id = ?1 AND actor_user_id IS NOT NULL) \
+         OR EXISTS(SELECT 1 FROM library_identify_jobs \
+         WHERE local_album_id = ?1 AND state = 'running')",
+        params![album.id],
+        |row| row.get(0),
+    )?;
+    if held {
+        return Ok(None);
+    }
+    let (previous_artist, previous_sort): (String, Option<String>) = tx.query_row(
+        "SELECT album_artist_id, album_artist_sort_name FROM local_albums WHERE id = ?1",
+        params![album.id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let before = serde_json::json!({
+        "album_artist_id": previous_artist,
+        "album_artist_name": album.artist_name,
+        "album_artist_sort_name": previous_sort,
+        "credits": credit_rows(tx, ALBUM_CREDITS, &album.id)?,
+    });
+    tx.execute(
+        "UPDATE local_albums SET album_artist_name = ?2, album_artist_name_folded = ?3, \
+         album_artist_id = ?4, album_artist_sort_name = ?5, updated_at = ?6, \
+         row_revision = row_revision + 1 WHERE id = ?1",
+        params![
+            album.id,
+            source.album_artist,
+            name,
+            primary.artist_id,
+            source.album_artist_sort,
+            now
+        ],
+    )?;
+    tx.execute(
+        "DELETE FROM local_album_artists WHERE local_album_id = ?1",
+        params![album.id],
+    )?;
+    for (position, credit) in credits.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
+             credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6)",
+            params![
+                album.id,
+                position as i64,
+                credit.artist_id,
+                credit.credited_name,
+                credit.join_phrase,
+                credit.artist_mbid
+            ],
+        )?;
+    }
+    mark_stale(tx, &album.id)?;
+    // An album the placeholder kept unmatched is looked up again under
+    // its artist's name.
+    if identity(tx, &album.id)?.is_none() {
+        offer_again(tx, &album.id, (now * 1000.0) as i64)?;
+    }
+    let after = serde_json::json!({
+        "kind": "album_artist_from_tracks",
+        "album_artist_id": primary.artist_id,
+        "album_artist_name": source.album_artist,
+        "credits": credits,
+        "filesystem_writes": 0,
+    });
+    record_action(
+        tx,
+        CatalogAction {
+            actor: "system",
+            kind: "album_artist",
+            album_id: &album.id,
+            job_id: Some(job_id),
+            before,
+            after: after.clone(),
+            reason: "PLACEHOLDER_ARTIST_FROM_TRACKS",
+        },
         now,
     )?;
     Ok(Some(after))

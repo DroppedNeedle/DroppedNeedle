@@ -61,7 +61,7 @@ fn now_ms() -> i64 {
     (now_secs() * 1000.0) as i64
 }
 
-fn kind_str(kind: IdentifyKind) -> &'static str {
+pub(crate) fn kind_str(kind: IdentifyKind) -> &'static str {
     match kind {
         IdentifyKind::Automatic => "automatic",
         IdentifyKind::Manual => "manual",

@@ -18023,6 +18023,142 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     assert!(queued().is_empty());
 }
 
+/// An album row an earlier version left on its own "Unknown Artist" row
+/// (not the catalog's sentinel) while every file names the artist keeps
+/// it through scans, because its files never change. After an upgrade it
+/// takes the artist its tracks are credited to, by itself and once: the
+/// change is in the audit, no artist row is merged or retired, and the
+/// album is looked up again under the artist's name. A locked grouping is
+/// left alone.
+#[tokio::test]
+async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
+    use droppedneedle_library::repairs::service::Repairs;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let (scratch, library, music) = bare_library("lib-placeholder-artist").await;
+    for (number, title) in [(1, "Close To The Edge"), (2, "And You And I")] {
+        let file = plant(
+            &music,
+            &format!("Yes/1972 - Close To The Edge/{number:02}.flac"),
+            "flac_full_01.flac",
+        );
+        save_tags(
+            &file,
+            &[
+                TagEdit::verbatim(TagField::Title, vec![title.to_owned()]),
+                TagEdit::verbatim(TagField::Album, vec!["Close To The Edge".to_owned()]),
+                TagEdit::verbatim(TagField::Artist, vec!["Yes".to_owned()]),
+                TagEdit::verbatim(TagField::Artists, Vec::new()),
+                TagEdit::verbatim(TagField::AlbumArtist, Vec::new()),
+                TagEdit::verbatim(TagField::TrackNumber, vec![number.to_string()]),
+            ],
+        )
+        .expect("file tagged");
+    }
+    add_music_root(&library, &music).await;
+    assert_eq!(library.identify_tick().await, 1);
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let read = |sql: &str| -> Vec<String> {
+        let mut stmt = db.prepare(sql).expect("query prepares");
+        stmt.query_map([], |row| row.get(0))
+            .expect("query runs")
+            .collect::<Result<_, _>>()
+            .expect("rows read")
+    };
+    let [album] = read("SELECT id FROM local_albums WHERE retired_into_album_id IS NULL")
+        .try_into()
+        .expect("one album");
+    let track_credits = "SELECT DISTINCT local_artist_id || ' ' || credited_name \
+                         FROM local_track_artists";
+    let album_credits = "SELECT local_artist_id || ' ' || credited_name || ' ' || role \
+                         FROM local_album_artists ORDER BY position";
+    let [yes] = read(track_credits).try_into().expect("one track artist");
+
+    // What the earlier version left behind.
+    db.execute_batch(&format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('old-unknown', 'Unknown Artist', 'unknown artist', 'group', 0, 0); \
+         UPDATE local_albums SET album_artist_id = 'old-unknown', \
+         album_artist_name = 'Unknown Artist', album_artist_name_folded = 'unknown artist' \
+         WHERE id = '{album}'; \
+         UPDATE local_album_artists SET local_artist_id = 'old-unknown', \
+         credited_name = 'Unknown Artist', role = 'primary' WHERE local_album_id = '{album}';"
+    ))
+    .expect("the placeholder is planted");
+    rescan(&library).await;
+    assert_eq!(
+        read("SELECT album_artist_name FROM local_albums"),
+        ["Unknown Artist"],
+        "a scan of unchanged files leaves the row as it is"
+    );
+
+    // A grouping a person locked is left as it is.
+    let lock = |locked: bool| {
+        db.execute(
+            "UPDATE local_albums SET grouping_locked = ?2 WHERE id = ?1",
+            rusqlite::params![album, locked],
+        )
+        .expect("lock set");
+    };
+    lock(true);
+    let locked = Repairs::new(&library);
+    droppedneedle_library::repairs::tick(&library, &locked, "worker").await;
+    assert_eq!(
+        read("SELECT album_artist_name FROM local_albums"),
+        ["Unknown Artist"],
+        "a locked album keeps its artist"
+    );
+    lock(false);
+
+    let repairs = Repairs::new(&library);
+    droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
+    assert_eq!(
+        read("SELECT album_artist_name || ' ' || album_artist_id FROM local_albums"),
+        [format!("Yes {}", yes.split(' ').next().expect("artist id"))]
+    );
+    assert_eq!(read(album_credits), [format!("{yes} main")]);
+    assert_eq!(
+        read(
+            "SELECT reason_code || ' ' || json_extract(before_json, '$.album_artist_id') \
+             FROM library_catalog_actions WHERE action_kind = 'album_artist'"
+        ),
+        ["PLACEHOLDER_ARTIST_FROM_TRACKS old-unknown"]
+    );
+    assert_eq!(
+        read(
+            "SELECT id FROM local_artists WHERE id = 'old-unknown' \
+             AND retired_into_artist_id IS NULL"
+        ),
+        ["old-unknown"],
+        "the placeholder row is not merged"
+    );
+    assert!(read("SELECT id FROM local_artist_merge_candidates").is_empty());
+    assert_eq!(
+        read("SELECT kind FROM library_identify_jobs WHERE state = 'queued'"),
+        ["historical"]
+    );
+
+    // The next start finds nothing to do.
+    let restarted = Repairs::new(&library);
+    droppedneedle_library::repairs::tick(&library, &restarted, "worker").await;
+    assert_eq!(
+        read(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM library_catalog_actions \
+             WHERE action_kind = 'album_artist'"
+        ),
+        ["1"]
+    );
+    assert_eq!(
+        read(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM library_operation_jobs \
+             WHERE idempotency_key = 'catalog-identity-hygiene:v1:backfill'"
+        ),
+        ["1"]
+    );
+}
+
 /// The file's AcoustID values as its own tag frames hold them, read with
 /// the test's byte readers: `kind` is "Id" or "Fingerprint".
 fn raw_acoustid(path: &Path, kind: &str) -> Vec<String> {

@@ -5,6 +5,9 @@
 use rusqlite::{Connection, OptionalExtension as _, params};
 use sha2::{Digest as _, Sha256};
 
+use super::models::IdentifyKind;
+use super::sqlite::kind_str;
+
 /// New or changed albums identify first.
 pub const PRIORITY_NEW_OR_CHANGED: u32 = 20;
 /// A curator asked for another look.
@@ -125,6 +128,39 @@ pub fn offer_album(conn: &Connection, local_album_id: &str, now_ms: i64) -> rusq
             now_ms,
             revision,
             key,
+        ],
+    )?;
+    if inserted == 1 {
+        bump_identification_stream(conn)?;
+    }
+    Ok(inserted == 1)
+}
+
+/// Queue identification of one album again, at backlog priority, because
+/// catalog rows it reads changed while its files did not. A live job on
+/// the album's files does the work instead. Runs inside the caller's
+/// transaction.
+pub(crate) fn offer_again(
+    conn: &Connection,
+    local_album_id: &str,
+    now_ms: i64,
+) -> rusqlite::Result<bool> {
+    let revision = album_input_revision(conn, local_album_id)?;
+    let inserted = conn.execute(
+        INSERT_JOB,
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            local_album_id,
+            kind_str(IdentifyKind::Historical),
+            PRIORITY_HISTORICAL_BACKLOG as i64,
+            "queued",
+            0_i64,
+            now_ms,
+            revision,
+            idempotency_key(local_album_id, &revision),
+            None::<String>,
+            None::<String>,
+            now_ms,
         ],
     )?;
     if inserted == 1 {
