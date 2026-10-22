@@ -301,25 +301,6 @@ droppedneedle_kernel::sql! {
     pub(crate) fragment WITH_MUSIC_PREDICATE = "((LED) OR EXISTS (SELECT 1 \
         FROM local_track_artists lta JOIN local_tracks lt ON lt.id = lta.local_track_id \
         WHERE lta.local_artist_id = r.id AND lt.availability = 'indexed'))";
-    /// How many owned albums the artist `r` leads, for the album-count
-    /// sort: a probe of the artist's albums.
-    pub(crate) fragment LED_ALBUM_TOTAL = (concat!(
-        "(SELECT COUNT(*) FROM local_albums lo WHERE lo.album_artist_id = r.id AND ",
-        owned_album!("lo"),
-        ")"
-    ));
-    /// How many albums the artist `r` appears on, for the appearance-count
-    /// sort: live albums led by someone else where the artist is credited
-    /// on an indexed track, reached from the artist's own credits.
-    pub(crate) fragment APPEARANCE_ALBUM_TOTAL = (concat!(
-        "(SELECT COUNT(DISTINCT at.local_album_id) FROM local_track_artists ata \
-         JOIN local_tracks at ON at.id = ata.local_track_id \
-         JOIN local_albums aa ON aa.id = at.local_album_id \
-         WHERE ata.local_artist_id = r.id AND +at.availability = 'indexed' \
-         AND aa.album_artist_id != r.id AND ",
-        live_album!("aa"),
-        ")"
-    ));
     /// One page of artist keys in a scope, one statement per scope, sort
     /// and direction, from the start or after a cursor.
     family ARTIST_PAGE = artist_page;
@@ -845,23 +826,62 @@ fn artist_scope_predicate(scope: ArtistScope) -> String {
         .replace("(CREDITED)", CREDITED_PREDICATE)
 }
 
-/// The artist list's order for one sort and direction. The count sorts
-/// count per artist in the page's scope and break ties by name, A to Z.
-pub(crate) fn artist_keys(sort: ArtistSort, descending: bool) -> Vec<OrderKey> {
+/// True when a page of `scope` sorted by `sort` walks the kept artist
+/// counts alone: the count sorts in every scope those counts list.
+fn counts_walk(scope: ArtistScope, sort: ArtistSort) -> bool {
+    matches!(sort, ArtistSort::AlbumCount | ArtistSort::AppearanceCount)
+        && !matches!(scope, ArtistScope::WithMusic)
+}
+
+/// The artist list's order for one scope, sort and direction. The count
+/// sorts break ties by name, A to Z, in both directions. Over the kept
+/// counts every key runs one way, so most first reads the negated count;
+/// elsewhere the counts are joined to the artist, zero with no row.
+pub(crate) fn artist_keys(scope: ArtistScope, sort: ArtistSort, descending: bool) -> Vec<OrderKey> {
     let d = descending;
-    match sort {
-        ArtistSort::Name => vec![("r.folded_name", d), ("r.id", d)],
-        ArtistSort::DateAdded => vec![("r.created_at", d), ("r.id", d)],
-        ArtistSort::AlbumCount => vec![
-            (LED_ALBUM_TOTAL, d),
-            ("r.folded_name", false),
-            ("r.id", false),
-        ],
-        ArtistSort::AppearanceCount => vec![
-            (APPEARANCE_ALBUM_TOTAL, d),
-            ("r.folded_name", false),
-            ("r.id", false),
-        ],
+    let walk = counts_walk(scope, sort);
+    let count = match (sort, d, walk) {
+        (ArtistSort::Name, ..) => return vec![("r.folded_name", d), ("r.id", d)],
+        (ArtistSort::DateAdded, ..) => return vec![("r.created_at", d), ("r.id", d)],
+        (ArtistSort::AlbumCount, true, true) => "s.album_count_neg",
+        (ArtistSort::AlbumCount, false, true) => "s.album_count",
+        (ArtistSort::AppearanceCount, true, true) => "s.appearance_count_neg",
+        (ArtistSort::AppearanceCount, false, true) => "s.appearance_count",
+        (ArtistSort::AlbumCount, _, false) => "COALESCE(s.album_count, 0)",
+        (ArtistSort::AppearanceCount, _, false) => "COALESCE(s.appearance_count, 0)",
+    };
+    if walk {
+        vec![
+            (count, false),
+            ("s.folded_name", false),
+            ("s.local_artist_id", false),
+        ]
+    } else {
+        vec![(count, d), ("r.folded_name", false), ("r.id", false)]
+    }
+}
+
+/// The scope of a walk over the kept counts, whose rows are the credited
+/// artists. A bound on the walked count is written on that column, so the
+/// first page seeks it. A lower bound is left out after a cursor: the
+/// cursor came from a row in scope and the walk only moves up from it, so
+/// the cursor alone seeks.
+fn counts_scope(
+    scope: ArtistScope,
+    sort: ArtistSort,
+    descending: bool,
+    after: bool,
+) -> &'static str {
+    match (scope, sort, descending) {
+        (ArtistScope::AlbumArtists, ArtistSort::AlbumCount, false) if after => "1",
+        (ArtistScope::AlbumArtists, ArtistSort::AlbumCount, false) => "s.album_count > 0",
+        (ArtistScope::AlbumArtists, ArtistSort::AlbumCount, true) => "s.album_count_neg < 0",
+        (ArtistScope::Contributors, ArtistSort::AlbumCount, false) => "s.album_count <= 0",
+        (ArtistScope::Contributors, ArtistSort::AlbumCount, true) if after => "1",
+        (ArtistScope::Contributors, ArtistSort::AlbumCount, true) => "s.album_count_neg >= 0",
+        (ArtistScope::AlbumArtists, ..) => "+s.album_count > 0",
+        (ArtistScope::Contributors, ..) => "+s.album_count = 0",
+        _ => "1",
     }
 }
 
@@ -873,12 +893,23 @@ pub(crate) fn artist_page(
     descending: bool,
     after_cursor: bool,
 ) -> String {
-    let keys = artist_keys(sort, descending);
+    let keys = artist_keys(scope, sort, descending);
+    if counts_walk(scope, sort) {
+        return format!(
+            "SELECT {} FROM library_artist_counts s \
+             WHERE {} AND (? IS NULL OR s.folded_name LIKE ? ESCAPE '\\'){} ORDER BY {} LIMIT ?",
+            key_columns(&keys),
+            counts_scope(scope, sort, descending, after_cursor),
+            after(&keys, after_cursor),
+            order_by(&keys)
+        );
+    }
     format!(
-        "SELECT {} FROM local_artists r \
+        "SELECT {} FROM local_artists r{} \
          WHERE r.retired_into_artist_id IS NULL AND ({}) \
          AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\'){} ORDER BY {} LIMIT ?",
         key_columns(&keys),
+        counts_join(sort),
         artist_scope_predicate(scope),
         after(&keys, after_cursor),
         order_by(&keys)
@@ -889,12 +920,24 @@ pub(crate) fn artist_page(
 /// the name filter (bound twice), the limit, the offset.
 pub(crate) fn artist_offset_page(scope: ArtistScope, sort: ArtistSort, descending: bool) -> String {
     format!(
-        "SELECT r.id FROM local_artists r \
+        "SELECT r.id FROM local_artists r{} \
          WHERE r.retired_into_artist_id IS NULL AND ({}) \
          AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') ORDER BY {} LIMIT ? OFFSET ?",
+        counts_join(sort),
         artist_scope_predicate(scope),
-        order_by(&artist_keys(sort, descending))
+        order_by(&artist_keys(ArtistScope::WithMusic, sort, descending))
     )
+}
+
+/// The kept counts joined to the artist `r`, for a count sort that does
+/// not walk them.
+fn counts_join(sort: ArtistSort) -> &'static str {
+    match sort {
+        ArtistSort::AlbumCount | ArtistSort::AppearanceCount => {
+            " LEFT JOIN library_artist_counts s ON s.local_artist_id = r.id"
+        }
+        ArtistSort::Name | ArtistSort::DateAdded => "",
+    }
 }
 
 /// How many artists of one scope match the name filter (bound twice).
@@ -926,23 +969,16 @@ pub(crate) fn artist_album_counts(ids: ListLen) -> String {
 }
 
 /// Indexed credited tracks, appearance albums and appearance tracks per
-/// artist id, one grouped pass over `ids` artists' credits. An appearance
-/// is on an album led by someone else.
+/// artist id, from the kept artist and album pairs of live albums. An
+/// appearance is on an album led by someone else.
 pub(crate) fn artist_credit_counts(ids: ListLen) -> String {
     format!(
-        "SELECT ata.local_artist_id AS id, \
-         COUNT(DISTINCT at.id) AS tracks, \
-         COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
-         THEN at.local_album_id END) AS appearances, \
-         COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
-         THEN at.id END) AS appearance_tracks \
-         FROM local_track_artists ata \
-         JOIN local_tracks at ON at.id = ata.local_track_id \
-         JOIN local_albums aa ON aa.id = at.local_album_id \
-         WHERE ata.local_artist_id IN ({}) AND at.availability = 'indexed' AND {} \
-         GROUP BY 1",
-        marks(ids),
-        live_album!("aa")
+        "SELECT p.local_artist_id AS id, SUM(p.indexed_tracks) AS tracks, \
+         SUM(p.appearance) AS appearances, \
+         SUM(p.appearance * p.indexed_tracks) AS appearance_tracks \
+         FROM library_artist_album_credits p \
+         WHERE p.local_artist_id IN ({}) AND p.live = 1 GROUP BY 1",
+        marks(ids)
     )
 }
 

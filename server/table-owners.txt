@@ -46,6 +46,13 @@
 # library_user_play_marks and local_tracks, whichever area makes it.
 # local_albums.has_indexed_track is kept the same way, from local_tracks.
 #
+# Kept by triggers (from migration 0080), not by code: no code writes
+# library_artist_album_credits or library_artist_counts. The database
+# rewrites their rows inside the transaction of every write to
+# local_track_artists, local_tracks, local_albums, local_album_artists and
+# local_artists, whichever area makes it. The partial index
+# idx_local_albums_owned_leader on local_albums belongs to that refresh.
+#
 # Add a table here in the commit that creates it and remove it in the
 # commit that drops it: the schema tests fail when this list and the
 # migrated schema disagree.
@@ -124,6 +131,8 @@ discovery_batch_items
 discovery_batches
 discovery_snapshots
 ignored_releases
+library_artist_album_credits
+library_artist_counts
 library_genre_artwork_revisions
 library_track_format_stats
 library_user_album_plays

@@ -411,11 +411,17 @@ pub async fn list_artists(
     let scope = artist_scope(query.scope.as_deref())?;
     let sort = artist_sort(query.sort.as_deref())?;
     let descending = descending(query.order.as_deref())?;
-    let order = format!("artists/{scope:?}/{sort:?}/{descending}");
+    // The count sorts' cursors hold the kept counts, the negated count when
+    // most come first; the tag turns a cursor from before them into a 400.
+    let kept = match sort {
+        ArtistSort::AlbumCount | ArtistSort::AppearanceCount => "/kept",
+        ArtistSort::Name | ArtistSort::DateAdded => "",
+    };
+    let order = format!("artists/{scope:?}/{sort:?}/{descending}{kept}");
     let after = start(
         query.after.as_deref(),
         &order,
-        sql::artist_keys(sort, descending).len(),
+        sql::artist_keys(scope, sort, descending).len(),
         false,
     )?;
     let (page, album_artist_total, contributor_total) = deps

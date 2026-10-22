@@ -416,7 +416,7 @@ impl LocalCatalog {
         limit: u64,
         after: &After,
     ) -> Result<ArtistKeyedListing, StoreError> {
-        let keys = sql::artist_keys(sort, descending);
+        let keys = sql::artist_keys(scope, sort, descending);
         let width = keys.len();
         let mut values = name_filter(q);
         if let Some(key) = &after.key {

@@ -68,13 +68,13 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 164);
+    assert_eq!(table_names(&pool).await.len(), 166);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 47);
+    assert_eq!(triggers, 61);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -4693,6 +4693,225 @@ async fn track_list_orders_walk_an_index() {
         .await
         .unwrap();
     assert!(version >= 79, "user_version {version}");
+}
+
+/// The artist and album pairs and the artist counts as the artist list
+/// counts them, worked out from the source rows: what migration 0080 keeps.
+const WORKED_PAIRS: &str = "SELECT c.local_artist_id, t.local_album_id, \
+     COUNT(DISTINCT t.id), b.retired_into_album_id IS NULL, \
+     b.retired_into_album_id IS NULL AND b.album_artist_id != c.local_artist_id \
+     FROM local_track_artists c JOIN local_tracks t ON t.id = c.local_track_id \
+     JOIN local_albums b ON b.id = t.local_album_id \
+     WHERE t.availability = 'indexed' GROUP BY 1, 2 ORDER BY 1, 2";
+const WORKED_COUNTS: &str = "SELECT r.id, r.folded_name, \
+     (SELECT COUNT(*) FROM local_albums lo WHERE lo.album_artist_id = r.id \
+      AND lo.retired_into_album_id IS NULL AND lo.has_indexed_track = 1), \
+     (SELECT COUNT(DISTINCT t.local_album_id) FROM local_track_artists c \
+      JOIN local_tracks t ON t.id = c.local_track_id \
+      JOIN local_albums b ON b.id = t.local_album_id \
+      WHERE c.local_artist_id = r.id AND t.availability = 'indexed' \
+      AND b.retired_into_album_id IS NULL AND b.album_artist_id != r.id) \
+     FROM local_artists r WHERE r.retired_into_artist_id IS NULL AND ( \
+     EXISTS (SELECT 1 FROM local_album_artists laa JOIN local_albums x ON x.id = laa.local_album_id \
+      WHERE laa.local_artist_id = r.id AND x.retired_into_album_id IS NULL \
+      AND x.has_indexed_track = 1) \
+     OR EXISTS (SELECT 1 FROM local_track_artists c JOIN local_tracks t ON t.id = c.local_track_id \
+      JOIN local_albums x ON x.id = t.local_album_id WHERE c.local_artist_id = r.id \
+      AND t.availability = 'indexed' AND x.retired_into_album_id IS NULL) \
+     OR EXISTS (SELECT 1 FROM local_albums x WHERE x.album_artist_id = r.id \
+      AND x.retired_into_album_id IS NULL AND x.has_indexed_track = 1)) ORDER BY 1";
+
+/// Migration 0080 works out every artist's album and appearance counts and
+/// the artist and album pairs behind them from the catalog already there:
+/// a leader, a guest on a live album and on a retired one, an artist on a
+/// retired album alone, one credited only on an album, one credited only on
+/// an album with no file, one credited twice on a track, a retired artist,
+/// a missing track and an artist with no credits. Both tables are STRICT
+/// and WITHOUT ROWID, and a write afterwards keeps them.
+#[tokio::test]
+async fn artist_counts_arrive_worked_out_from_the_catalog() {
+    let pool = scratch_pool().await;
+    migrator_through(79).run(&pool).await.unwrap();
+    let track = |id: &str, album: &str, availability: &str| {
+        format!(
+            "('{id}', '{album}', 'r1', '/m/{id}.flac', '{id}.flac', 'h-{id}', 1, 0, 's', 'T', \
+             't', 'T', 't', 'flac', '{availability}', 'scan', 0, 'automatic')"
+        )
+    };
+    sqlx::raw_sql(&format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('lead', 'Lead', 'lead', 'group', 1, 1), ('guest', 'Guest', 'guest', 'person', 1, 1), \
+         ('gone', 'Gone', 'gone', 'person', 1, 1), ('co', 'Co', 'co', 'person', 1, 1), \
+         ('idle', 'Idle', 'idle', 'person', 1, 1), ('ghost', 'Ghost', 'ghost', 'person', 1, 1), \
+         ('old', 'Old', 'old', 'person', 1, 1); \
+         UPDATE local_artists SET retired_into_artist_id = 'lead' WHERE id = 'old'; \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'lead', 'automatic', 1, 1), \
+         ('al2', 'r1', 'g2', 'T', 't', 'lead', 'automatic', 1, 1), \
+         ('al3', 'r1', 'g3', 'T', 't', 'lead', 'automatic', 1, 1), \
+         ('al4', 'r1', 'g4', 'T', 't', 'lead', 'automatic', 1, 1); \
+         UPDATE local_albums SET retired_into_album_id = 'al1' WHERE id = 'al3'; \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, availability, ingest_source, \
+         imported_at, membership_source) VALUES {}, {}, {}, {}, {}; \
+         INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) VALUES \
+         ('t1', 0, 'lead', 'main'), ('t1', 1, 'guest', 'guest'), ('t1', 2, 'guest', 'guest'), \
+         ('t2', 0, 'lead', 'main'), ('t2', 1, 'ghost', 'guest'), \
+         ('t3', 0, 'guest', 'main'), ('t3', 1, 'gone', 'main'), ('t4', 0, 'lead', 'main'), \
+         ('t5', 0, 'guest', 'main'); \
+         INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) VALUES \
+         ('al1', 0, 'lead', 'main'), ('al1', 1, 'co', 'main'), ('al2', 0, 'idle', 'main');",
+        track("t1", "al1", "indexed"),
+        track("t2", "al1", "missing"),
+        track("t3", "al3", "indexed"),
+        track("t4", "al4", "indexed"),
+        track("t5", "al2", "excluded"),
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+    type Pair = (String, String, i64, bool, bool);
+    type Count = (String, String, i64, i64);
+    async fn kept(pool: &SqlitePool) -> (Vec<Pair>, Vec<Count>) {
+        let pairs = sqlx::query_as(
+            "SELECT local_artist_id, local_album_id, indexed_tracks, live, appearance \
+             FROM library_artist_album_credits ORDER BY 1, 2",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let counts = sqlx::query_as(
+            "SELECT local_artist_id, folded_name, album_count, appearance_count \
+             FROM library_artist_counts ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        (pairs, counts)
+    }
+    async fn worked(pool: &SqlitePool) -> (Vec<Pair>, Vec<Count>) {
+        let pairs = sqlx::query_as(WORKED_PAIRS).fetch_all(pool).await.unwrap();
+        let counts = sqlx::query_as(WORKED_COUNTS).fetch_all(pool).await.unwrap();
+        (pairs, counts)
+    }
+    let pair = |artist: &str, album: &str, tracks: i64, live: bool, appearance: bool| {
+        (
+            artist.to_owned(),
+            album.to_owned(),
+            tracks,
+            live,
+            appearance,
+        )
+    };
+    let count = |artist: &str, albums: i64, appearances: i64| {
+        (artist.to_owned(), artist.to_owned(), albums, appearances)
+    };
+    let (pairs, counts) = kept(&pool).await;
+    assert_eq!(
+        pairs,
+        [
+            pair("gone", "al3", 1, false, false),
+            pair("guest", "al1", 1, true, true),
+            pair("guest", "al3", 1, false, false),
+            pair("lead", "al1", 1, true, false),
+            pair("lead", "al4", 1, true, false),
+        ]
+    );
+    // `co` is credited on an owned album; `idle` only on one with no
+    // indexed track; `gone` only on a retired one; `ghost` only on a
+    // missing track; `old` is retired.
+    assert_eq!(
+        counts,
+        [count("co", 0, 0), count("guest", 0, 1), count("lead", 2, 0)]
+    );
+    assert_eq!((pairs, counts), worked(&pool).await);
+
+    for (table, key) in [
+        (
+            "library_artist_album_credits",
+            "local_artist_id,local_album_id",
+        ),
+        ("library_artist_counts", "local_artist_id"),
+    ] {
+        let shape: (String, i64, i64) =
+            sqlx::query_as("SELECT type, strict, wr FROM pragma_table_list WHERE name = ?")
+                .bind(table)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            shape,
+            ("table".to_owned(), 1, 1),
+            "{table}: STRICT, WITHOUT ROWID"
+        );
+        let found: String = sqlx::query_scalar(
+            "SELECT group_concat(name, ',') FROM (SELECT name FROM pragma_table_info(?1) \
+             WHERE pk > 0 ORDER BY pk)",
+        )
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(found, key, "{table}");
+    }
+    for (index, columns) in [
+        ("idx_artist_album_credits_album", "local_album_id"),
+        ("idx_artist_album_credits_appearances", "local_artist_id"),
+        (
+            "idx_artist_counts_albums",
+            "album_count,folded_name,local_artist_id",
+        ),
+        (
+            "idx_artist_counts_albums_desc",
+            "album_count_neg,folded_name,local_artist_id",
+        ),
+        (
+            "idx_artist_counts_appearances",
+            "appearance_count,folded_name,local_artist_id,album_count",
+        ),
+        (
+            "idx_artist_counts_appearances_desc",
+            "appearance_count_neg,folded_name,local_artist_id,album_count",
+        ),
+        (
+            "idx_local_albums_owned_leader",
+            "album_artist_id,retired_into_album_id,has_indexed_track",
+        ),
+    ] {
+        let found: String = sqlx::query_scalar(
+            "SELECT group_concat(name, ',') FROM (SELECT name FROM pragma_index_info(?1) \
+             ORDER BY seqno)",
+        )
+        .bind(index)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(found, columns, "{index}");
+    }
+
+    // The idle artist's album gains a file; the guest's live track goes.
+    sqlx::raw_sql(&format!(
+        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, availability, ingest_source, \
+         imported_at, membership_source) VALUES {}; \
+         INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+         VALUES ('t6', 0, 'lead', 'main'); \
+         DELETE FROM local_track_artists WHERE local_track_id = 't1' AND position > 0;",
+        track("t6", "al2", "indexed"),
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (pairs, counts) = kept(&pool).await;
+    assert!(counts.contains(&count("idle", 0, 0)), "{counts:?}");
+    assert!(!counts.iter().any(|row| row.0 == "guest"), "{counts:?}");
+    assert_eq!((pairs, counts), worked(&pool).await);
 }
 
 /// Migration 0076 rebuilds the request, watch and approval tables as

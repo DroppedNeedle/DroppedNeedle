@@ -1029,13 +1029,27 @@ async fn assert_hot_plans(db: &Db) {
     .await;
     assert!(
         plan.iter()
-            .any(|line| line
-                .contains("SEARCH ata USING COVERING INDEX idx_local_track_artists_reverse")),
-        "credits drive from the artist index: {plan:?}"
+            .any(|line| line.contains("SEARCH p USING PRIMARY KEY (local_artist_id=?)")),
+        "credit counts read the kept pairs by artist: {plan:?}"
     );
     assert!(
         !plan.iter().any(|line| line.contains("SCAN ")),
-        "no scan in the credit aggregation: {plan:?}"
+        "no scan in the credit counts: {plan:?}"
+    );
+
+    // The kept artist counts work one artist out from that artist's own
+    // album pairs and led albums, never a walk of the catalog.
+    let plan = explain(
+        db,
+        "SELECT * FROM library_artist_counts_rule WHERE local_artist_id = ?",
+        &[ExplainBind::Text(Some("a1"))],
+    )
+    .await;
+    assert!(
+        plan.iter().any(|line| line
+            .contains("USING COVERING INDEX idx_local_albums_owned_leader (album_artist_id=?"))
+            && !plan.iter().any(|line| line.contains("SCAN ")),
+        "the artist rule reads one artist by key: {plan:?}"
     );
 
     // Long lists page by key, never by offset, so a deep page costs what
@@ -1153,35 +1167,44 @@ async fn assert_hot_plans(db: &Db) {
         "a deep album page seeks its title: {plan:?}"
     );
 
-    // The count sorts count per artist from the artist's own albums and
-    // credits, never by grouping every album or credit in the catalog.
-    for (sort, probe) in [
-        (
-            ArtistSort::AppearanceCount,
-            "SEARCH ata USING COVERING INDEX idx_local_track_artists_reverse (local_artist_id=?)",
-        ),
-        (
-            ArtistSort::AlbumCount,
-            "SEARCH lo USING INDEX idx_local_albums_artist_id (album_artist_id=?)",
-        ),
+    // The count sorts walk the kept counts in order, one index per order:
+    // a seek on the count where the scope bounds it, a seek on the cursor
+    // after one, and nothing sorted or counted per artist.
+    for scope in [
+        ArtistScope::All,
+        ArtistScope::AlbumArtists,
+        ArtistScope::Contributors,
     ] {
-        for after in [false, true] {
-            let plan = explain_unbound(
-                db,
-                &sql::artist_page(ArtistScope::Contributors, sort, true, after),
-            )
-            .await;
-            assert!(
-                plan.iter().any(|line| line.contains(probe)),
-                "{sort:?} page counts per artist: {plan:?}"
-            );
-            assert!(
-                !plan.iter().any(|line| line.contains("SCAN ata")
-                    || line.contains("SCAN lo")
-                    || line.contains("SCAN local_track_artists")
-                    || line.contains("SCAN local_tracks")),
-                "{sort:?} page never walks the catalog: {plan:?}"
-            );
+        for (sort, index) in [
+            (ArtistSort::AlbumCount, "idx_artist_counts_albums"),
+            (ArtistSort::AppearanceCount, "idx_artist_counts_appearances"),
+        ] {
+            for descending in [false, true] {
+                for after in [false, true] {
+                    let index = if descending {
+                        format!("{index}_desc")
+                    } else {
+                        index.to_owned()
+                    };
+                    let bounded = matches!(sort, ArtistSort::AlbumCount)
+                        && !matches!(scope, ArtistScope::All);
+                    let plan =
+                        explain_unbound(db, &sql::artist_page(scope, sort, descending, after))
+                            .await;
+                    let walk = if after || bounded {
+                        "SEARCH s"
+                    } else {
+                        "SCAN s"
+                    };
+                    assert!(
+                        plan.len() == 1
+                            && plan[0].starts_with(walk)
+                            && plan[0].split_whitespace().any(|word| word == index)
+                            && (!after || plan[0].contains(",folded_name,local_artist_id)>(")),
+                        "{scope:?} by {sort:?}, descending {descending}, after {after}: {plan:?}"
+                    );
+                }
+            }
         }
     }
 
@@ -2135,6 +2158,317 @@ async fn album_play_summary_follows_every_write() {
     assert_eq!(left, ["u1", "u2", "u3"], "u4 had marks alone");
 }
 
+/// One kept artist and album pair: artist, album, indexed tracks, live,
+/// appearance.
+type ArtistAlbumPair = (String, String, i64, bool, bool);
+/// One kept artist row: artist, folded name, album count, appearance
+/// count, and each negated count added to its count.
+type ArtistCountRow = (String, String, i64, i64, i64, i64);
+
+fn pair_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArtistAlbumPair> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+    ))
+}
+
+fn count_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArtistCountRow> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+    ))
+}
+
+/// The kept artist and album pairs and artist counts equal the rule
+/// worked out from the credits, tracks, albums and artists with plain
+/// grouped reads: the pairs from every credit on an indexed track, the
+/// counts as the artist list counted them for every live credited artist.
+async fn assert_artist_counts(db: &Db, step: &str) {
+    let kept = fetch(
+        db,
+        "SELECT local_artist_id, local_album_id, indexed_tracks, live, appearance \
+         FROM library_artist_album_credits ORDER BY 1, 2",
+        Vec::new(),
+        pair_row,
+    )
+    .await;
+    let worked = fetch(
+        db,
+        "SELECT c.local_artist_id, t.local_album_id, COUNT(DISTINCT t.id), \
+         b.retired_into_album_id IS NULL, \
+         b.retired_into_album_id IS NULL AND b.album_artist_id != c.local_artist_id \
+         FROM local_track_artists c JOIN local_tracks t ON t.id = c.local_track_id \
+         JOIN local_albums b ON b.id = t.local_album_id \
+         WHERE t.availability = 'indexed' GROUP BY 1, 2 ORDER BY 1, 2",
+        Vec::new(),
+        pair_row,
+    )
+    .await;
+    assert_eq!(kept, worked, "{step}: artist and album pairs");
+    let kept = fetch(
+        db,
+        "SELECT local_artist_id, folded_name, album_count, appearance_count, \
+         album_count + album_count_neg, appearance_count + appearance_count_neg \
+         FROM library_artist_counts ORDER BY 1",
+        Vec::new(),
+        count_row,
+    )
+    .await;
+    let worked = fetch(
+        db,
+        &format!(
+            "SELECT r.id, r.folded_name, \
+             (SELECT COUNT(*) FROM local_albums lo WHERE lo.album_artist_id = r.id \
+              AND lo.retired_into_album_id IS NULL AND lo.has_indexed_track = 1), \
+             (SELECT COUNT(DISTINCT t.local_album_id) FROM local_track_artists c \
+              JOIN local_tracks t ON t.id = c.local_track_id \
+              JOIN local_albums b ON b.id = t.local_album_id \
+              WHERE c.local_artist_id = r.id AND t.availability = 'indexed' \
+              AND b.retired_into_album_id IS NULL AND b.album_artist_id != r.id), 0, 0 \
+             FROM local_artists r WHERE r.retired_into_artist_id IS NULL AND {} ORDER BY 1",
+            sql::CREDITED_PREDICATE
+        ),
+        Vec::new(),
+        count_row,
+    )
+    .await;
+    assert_eq!(kept, worked, "{step}: artist counts");
+}
+
+const ALBUM_INSERT: &str = "INSERT INTO local_albums (id, root_id, grouping_key, title, \
+     title_folded, album_artist_name, album_artist_name_folded, album_artist_id, year, \
+     grouping_source, created_at, updated_at, retired_into_album_id) VALUES ";
+
+/// An album row on the small fixture's root, led by `artist`.
+fn album_values(id: &str, artist: &str, retired_into: &str) -> String {
+    format!(
+        "('{id}', 'r1', 'g-{id}', '{id}', '{id}', '{artist}', '{artist}', '{artist}', 2001, \
+         'automatic', 3000, 3000, {retired_into})"
+    )
+}
+
+/// The kept artist pairs and counts equal the rule worked out from the
+/// source rows after every kind of write that changes them, each in the
+/// shape of the statement that makes it.
+#[tokio::test]
+async fn artist_counts_follow_every_write() {
+    let fixture = seed_small().await;
+    let db = fixture.db();
+    assert_artist_counts(db, "seeded").await;
+    let step = |label: &'static str, sql: String| {
+        let fixture = &fixture;
+        async move {
+            write_batch(fixture, label, sql).await;
+            assert_artist_counts(fixture.db(), label).await;
+        }
+    };
+
+    // A scan adds an album: its artists, the album and its credits (one
+    // artist credited on the album only), then tracks and their credits.
+    step(
+        "new album",
+        format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('a4', 'Delta', 'delta', 'person', 3000, 3000), \
+             ('a5', 'Echo', 'echo', 'person', 3000, 3000); \
+             {ALBUM_INSERT}{}; \
+             INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+             VALUES ('al6', 0, 'a4', 'main'), ('al6', 1, 'a5', 'main'); \
+             {TRACK_INSERT}{}, {}; \
+             INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             VALUES ('t10', 0, 'a4', 'main'), ('t11', 0, 'a4', 'main'), \
+             ('t11', 1, 'a3', 'guest');",
+            album_values("al6", "a4", "NULL"),
+            track_values("t10", "al6", "indexed"),
+            track_values("t11", "al6", "indexed"),
+        ),
+    )
+    .await;
+    // A rescan rewrites a track's credits: the guest moves to another
+    // artist, and an artist is credited twice on one track.
+    step(
+        "credits rewritten",
+        "DELETE FROM local_track_artists WHERE local_track_id = 't6'; \
+         INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+         VALUES ('t6', 0, 'a2', 'main'), ('t6', 1, 'a4', 'guest'), ('t6', 2, 'a4', 'guest');"
+            .to_owned(),
+    )
+    .await;
+    // The missing sweep takes the album's last indexed tracks: it stops
+    // being owned, and its album-credited artist leaves the list.
+    step(
+        "last tracks missing",
+        "UPDATE local_tracks SET availability = 'missing', missing_since = 4000 \
+         WHERE id IN ('t10', 't11') AND availability = 'indexed';"
+            .to_owned(),
+    )
+    .await;
+    let listed: i64 = fetch_one(
+        db,
+        "SELECT COUNT(*) FROM library_artist_counts WHERE local_artist_id = 'a5'",
+        Vec::new(),
+        |row| row.get(0),
+    )
+    .await;
+    assert_eq!(
+        listed, 0,
+        "an artist credited on an album with no files is not listed"
+    );
+    step(
+        "tracks back",
+        "UPDATE local_tracks SET availability = 'indexed', missing_since = NULL \
+         WHERE id IN ('t10', 't11');"
+            .to_owned(),
+    )
+    .await;
+    step(
+        "track excluded",
+        "UPDATE local_tracks SET availability = 'excluded', excluded_at = 4100 \
+         WHERE id = 't11';"
+            .to_owned(),
+    )
+    .await;
+    // A track moved by hand to an album with no files, then an album merged
+    // into another: its tracks move and it is retired.
+    step(
+        "track moved",
+        "UPDATE local_tracks SET local_album_id = 'al4', membership_source = 'manual', \
+         membership_locked = 1, row_revision = row_revision + 1 WHERE id IN ('t7')"
+            .to_owned(),
+    )
+    .await;
+    step(
+        "album merged",
+        "UPDATE local_tracks SET local_album_id = 'al2' WHERE local_album_id = 'al5'; \
+         UPDATE local_albums SET retired_into_album_id = 'al2', grouping_locked = 1, \
+         updated_at = 5000, row_revision = row_revision + 1 WHERE id = 'al5';"
+            .to_owned(),
+    )
+    .await;
+    // Albums retired into the merged one follow it on: nothing they hold
+    // changes.
+    step(
+        "retired album retargeted",
+        "UPDATE local_albums SET retired_into_album_id = 'al1' \
+         WHERE retired_into_album_id = 'al2';"
+            .to_owned(),
+    )
+    .await;
+    step(
+        "album brought back",
+        "UPDATE local_albums SET retired_into_album_id = NULL, grouping_source = 'automatic', \
+         grouping_locked = 0, updated_at = 5100, row_revision = row_revision + 1 \
+         WHERE id = 'al5';"
+            .to_owned(),
+    )
+    .await;
+    // An album with files, retired as an import can bring it: its artist
+    // has a pair that counts for nothing.
+    step(
+        "credited only on a retired album",
+        format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('a6', 'Foxtrot', 'foxtrot', 'person', 3000, 3000); \
+             {ALBUM_INSERT}{}; \
+             {TRACK_INSERT}{}; \
+             INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             VALUES ('t12', 0, 'a6', 'main');",
+            album_values("al7", "a1", "'al1'"),
+            track_values("t12", "al7", "indexed"),
+        ),
+    )
+    .await;
+    // Brought back with its file: the pair counts again and its artist,
+    // credited on someone else's album, is listed.
+    step(
+        "album with files brought back",
+        "UPDATE local_albums SET retired_into_album_id = NULL, grouping_source = 'automatic', \
+         grouping_locked = 0, updated_at = 5150, row_revision = row_revision + 1 \
+         WHERE id = 'al7';"
+            .to_owned(),
+    )
+    .await;
+    step(
+        "leader changed",
+        "UPDATE local_albums SET album_artist_id = 'a3', updated_at = 5200 WHERE id = 'al3';"
+            .to_owned(),
+    )
+    .await;
+    step(
+        "album credit added",
+        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+         VALUES ('al1', 1, 'a5', 'main');"
+            .to_owned(),
+    )
+    .await;
+    step(
+        "album credit removed",
+        "DELETE FROM local_album_artists WHERE local_album_id = 'al1' AND position = 1;".to_owned(),
+    )
+    .await;
+    step(
+        "artist renamed",
+        "UPDATE local_artists SET display_name = 'Aardvark', folded_name = 'aardvark' \
+         WHERE id = 'a2';"
+            .to_owned(),
+    )
+    .await;
+    // A scan follows a retagged album onto its old row: the old row takes
+    // the new row's values (another leader), the tracks and album credits
+    // move over, and the new row goes.
+    step(
+        "album followed",
+        format!(
+            "{ALBUM_INSERT}{}; \
+             INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+             VALUES ('al8', 0, 'a5', 'main'); \
+             {TRACK_INSERT}{}; \
+             INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             VALUES ('t13', 0, 'a5', 'main'), ('t13', 1, 'a1', 'guest');",
+            album_values("al8", "a5", "NULL"),
+            track_values("t13", "al8", "indexed"),
+        ),
+    )
+    .await;
+    step(
+        "album followed onto its old row",
+        "UPDATE local_albums SET (root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, year, updated_at) = \
+         (SELECT root_id, grouping_key || '-kept', title, title_folded, album_artist_name, \
+          album_artist_name_folded, album_artist_id, year, updated_at \
+          FROM local_albums WHERE id = 'al8'), row_revision = row_revision + 1 \
+         WHERE id = 'al6'; \
+         UPDATE local_tracks SET local_album_id = 'al6' WHERE local_album_id = 'al8'; \
+         DELETE FROM local_album_artists WHERE local_album_id = 'al6'; \
+         UPDATE local_album_artists SET local_album_id = 'al6' WHERE local_album_id = 'al8'; \
+         DELETE FROM local_albums WHERE id = 'al8';"
+            .to_owned(),
+    )
+    .await;
+    // An artist merged into another: album credits, track credits and led
+    // albums move, then the artist is retired.
+    step(
+        "artist merged",
+        "UPDATE local_album_artists SET local_artist_id = 'a1', row_revision = row_revision + 1 \
+         WHERE local_artist_id = 'a2'; \
+         UPDATE local_track_artists SET local_artist_id = 'a1', row_revision = row_revision + 1 \
+         WHERE local_artist_id = 'a2'; \
+         UPDATE local_albums SET album_artist_id = 'a1', updated_at = 6000, \
+         row_revision = row_revision + 1 WHERE album_artist_id = 'a2'; \
+         UPDATE local_artists SET retired_into_artist_id = 'a1', updated_at = 6000, \
+         row_revision = row_revision + 1 WHERE id = 'a2';"
+            .to_owned(),
+    )
+    .await;
+}
+
 /// Every statement that reads the play history or the marks for Jellyfin
 /// reads them by key alone: the plays through the per-listener index over
 /// listener, track and time, or the small one of plays with an album and
@@ -2898,23 +3232,18 @@ async fn perf_100k_endpoints_hold_p95() {
         "library_tracks_by_artist",
         "library_tracks_by_artist_deep_99500",
         "library_recently_added",
-    ]
-    .into_iter()
-    .map(|name| (name, Vec::new()))
-    .collect();
-    // Timed and reported, not budgeted: the count sorts count each artist's
-    // albums or credits on every page (about 12 ms for the contributors
-    // view here) until per-artist counts are kept by triggers; random track
-    // pages key every track.
-    let mut reported: Vec<(&str, Vec<f64>)> = [
         "library_contributors_by_appearances",
         "library_artists_by_appearances",
         "library_artists_by_album_count",
-        "library_tracks_random",
     ]
     .into_iter()
     .map(|name| (name, Vec::new()))
     .collect();
+    // Timed and reported, not budgeted: random track pages key every track.
+    let mut reported: Vec<(&str, Vec<f64>)> = ["library_tracks_random"]
+        .into_iter()
+        .map(|name| (name, Vec::new()))
+        .collect();
     for _ in 0..3 {
         for (name, _) in endpoints.iter().chain(&reported) {
             read_endpoint(&fixture.catalog, name, &deep).await;
