@@ -167,29 +167,52 @@ impl LocalArtwork {
         .await
     }
 
-    /// The art standing in for a library artist's own picture: that of one
-    /// of the artist's albums. Albums under the artist's name come before
-    /// ones that only credit them, studio albums before compilations, then
-    /// the newest release, then the latest added.
-    pub async fn by_artist(&self, artist_id: &str) -> Result<Option<LocalArt>, sqlx::Error> {
-        self.first(
-            &format!(
-                "SELECT {} {ART_JOINS} \
-                 WHERE w.local_album_id IN (SELECT id FROM local_albums WHERE album_artist_id = ?1 \
-                 UNION SELECT local_album_id FROM local_album_artists WHERE local_artist_id = ?1) \
-                 AND a.has_indexed_track = 1 AND w.source IN ('folder', 'embedded') \
-                 ORDER BY a.album_artist_id = ?1 DESC, a.is_compilation, \
-                 a.year IS NULL, a.year DESC, a.created_at DESC, a.id LIMIT 20",
-                art_columns()
-            ),
-            artist_id,
-        )
-        .await
+    /// The art of a library artist's albums, which stands in for the
+    /// artist's own picture: at most `limit` albums, one per distinct
+    /// image. Albums under the artist's name come before ones that only
+    /// credit them, studio albums before compilations, then the newest
+    /// release, then the latest added.
+    pub async fn by_artist(
+        &self,
+        artist_id: &str,
+        limit: usize,
+    ) -> Result<Vec<LocalArt>, sqlx::Error> {
+        let mut arts = self
+            .servable(
+                &format!(
+                    "SELECT {} {ART_JOINS} \
+                     WHERE w.local_album_id IN (SELECT id FROM local_albums \
+                     WHERE album_artist_id = ?1 \
+                     UNION SELECT local_album_id FROM local_album_artists \
+                     WHERE local_artist_id = ?1) \
+                     AND a.has_indexed_track = 1 AND w.source IN ('folder', 'embedded') \
+                     ORDER BY a.album_artist_id = ?1 DESC, a.is_compilation, \
+                     a.year IS NULL, a.year DESC, a.created_at DESC, a.id LIMIT 40",
+                    art_columns()
+                ),
+                artist_id,
+            )
+            .await?;
+        let mut seen = std::collections::HashSet::new();
+        arts.retain(|art| {
+            art.content_hash
+                .as_ref()
+                .is_none_or(|hash| seen.insert(hash.clone()))
+        });
+        arts.truncate(limit);
+        Ok(arts)
     }
 
-    /// First servable row of a lookup: a local source with a path.
+    /// First servable row of a lookup.
     async fn first(&self, sql: &str, value: &str) -> Result<Option<LocalArt>, sqlx::Error> {
+        Ok(self.servable(sql, value).await?.into_iter().next())
+    }
+
+    /// The servable rows of a lookup, in its order: a local source with a
+    /// path.
+    async fn servable(&self, sql: &str, value: &str) -> Result<Vec<LocalArt>, sqlx::Error> {
         let rows = sqlx::query(sql).bind(value).fetch_all(&self.pool).await?;
+        let mut arts = Vec::new();
         for row in rows {
             let source: String = row.try_get("source")?;
             let path: Option<String> = row.try_get("path")?;
@@ -198,16 +221,16 @@ impl LocalArtwork {
                 continue;
             };
             let path = PathBuf::from(path);
-            return Ok(Some(LocalArt {
+            arts.push(LocalArt {
                 album_id: row.try_get("album_id")?,
                 source,
                 root: library_folder(&path, tracks.as_deref()),
                 path,
                 content_hash: row.try_get("content_hash")?,
                 version: row.try_get("version")?,
-            }));
+            });
         }
-        Ok(None)
+        Ok(arts)
     }
 }
 

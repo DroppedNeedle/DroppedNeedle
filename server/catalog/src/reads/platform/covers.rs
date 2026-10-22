@@ -130,9 +130,10 @@ pub trait CoverArt: Send + Sync + 'static {
         album_id: &'a str,
         size: Option<&'a str>,
     ) -> BoxFuture<'a, Option<CoverBytes>>;
-    /// A library artist's picture from their own albums' art (see
-    /// [`LocalArtwork::by_artist`](super::artwork::local::LocalArtwork::by_artist))
-    /// at `size`.
+    /// A library artist's picture at `size`: a mosaic of their own albums'
+    /// art (see
+    /// [`LocalArtwork::by_artist`](super::artwork::local::LocalArtwork::by_artist)),
+    /// or the one cover when only one has art.
     fn local_artist_art<'a>(
         &'a self,
         artist_id: &'a str,
@@ -623,13 +624,14 @@ pub async fn album_artwork(
     art_response(art, &headers, cache)
 }
 
-/// A library artist's picture, taken from the art of one of their own
-/// albums.
+/// A library artist's picture, a mosaic of the art of their own albums.
 ///
 /// For artists the library holds with no MusicBrainz link, which have no
-/// picture of their own. Never reaches out to the network. The album
-/// under the artist's name with the newest release is chosen, studio
-/// albums before compilations.
+/// picture of their own. Never reaches out to the network. Albums under
+/// the artist's name with the newest release come first, studio albums
+/// before compilations. Four or more covers give a 2x2 of the first four,
+/// two or three the first two crosswise, and one that cover alone. A
+/// mosaic is a JPEG; full size draws it at 1200 pixels.
 #[utoipa::path(
     get,
     tag = "platform",

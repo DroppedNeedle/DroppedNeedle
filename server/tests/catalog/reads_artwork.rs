@@ -353,23 +353,179 @@ async fn a_compat_cover_joins_a_running_fetch() {
     assert_eq!(status, StatusCode::OK);
 }
 
-/// A library artist with no MusicBrainz link shows the art of one of their
-/// own albums; an artist none of whose albums has art answers 404.
+const RED: [u8; 3] = [220, 20, 20];
+const GREEN: [u8; 3] = [20, 200, 20];
+const BLUE: [u8; 3] = [20, 20, 220];
+const YELLOW: [u8; 3] = [230, 220, 20];
+const MAGENTA: [u8; 3] = [210, 20, 210];
+
+/// A solid square PNG of `side` pixels.
+fn solid_png(colour: [u8; 3], side: u32) -> Vec<u8> {
+    solid_png_sized(colour, side, side)
+}
+
+/// A solid PNG of `width` by `height` pixels.
+fn solid_png_sized(colour: [u8; 3], width: u32, height: u32) -> Vec<u8> {
+    let image = image::RgbImage::from_pixel(width, height, image::Rgb(colour));
+    let mut out = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+/// Gives artist `a1` one album per cover, newest first, each with that
+/// file as its folder art. Album `m{i}`'s cover is `files/m{i}/cover.png`.
+async fn seed_artist_albums(rig: &Rig, files: &Path, covers: &[Vec<u8>]) {
+    let mut seed = String::new();
+    for (i, cover) in covers.iter().enumerate() {
+        let folder = files.join(format!("m{i}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("cover.png"), cover).unwrap();
+        let year = 2020 - i;
+        seed.push_str(&format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, year, \
+             grouping_source, created_at, updated_at) VALUES ('m{i}', 'r1', 'gm{i}', \
+             'Album {i}', 'album {i}', 'Aurora', 'aurora', 'a1', {year}, 'automatic', 1, 1); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, membership_source) VALUES ('mt{i}', 'm{i}', 'r1', '{track}', \
+             'm{i}/01.flac', 'mh{i}', 1, 1, 's1', 'Opener', 'opener', 'Album {i}', \
+             'album {i}', 'flac', 'indexed', 'scan', 1, 'automatic'); \
+             INSERT INTO local_album_artwork (local_album_id, source, source_locator, \
+             version, updated_at) VALUES ('m{i}', 'folder', '{cover}', 1, 1);",
+            track = folder.join("01.flac").display(),
+            cover = folder.join("cover.png").display(),
+        ));
+    }
+    rig.runtime
+        .db()
+        .write(Lane::Foreground, "artist albums", move |tx| {
+            tx.execute_batch(&seed).map_err(DbError::from)
+        })
+        .await
+        .unwrap();
+}
+
+/// Asks for `a1`'s picture at `size` and checks it is a `size` pixel JPEG
+/// mosaic whose quadrants (left to right, top to bottom) show `quadrants`.
+async fn assert_mosaic(rig: &Rig, size: u32, quadrants: [[u8; 3]; 4]) -> String {
+    let (status, headers, body) = get(
+        rig.app(true),
+        &format!("/api/v3/library/artists/a1/artwork?size={size}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(header(&headers, "content-type"), Some("image/jpeg"));
+    assert_eq!(header(&headers, "x-cover-source"), Some("mosaic"));
+    let picture = image::load_from_memory(&body).unwrap().to_rgb8();
+    assert_eq!(picture.dimensions(), (size, size));
+    let (near, far) = (size / 4, size * 3 / 4);
+    let points = [(near, near), (far, near), (near, far), (far, far)];
+    for ((x, y), want) in points.into_iter().zip(quadrants) {
+        let got = picture.get_pixel(x, y).0;
+        assert!(
+            got.iter()
+                .zip(want)
+                .all(|(got, want)| got.abs_diff(want) <= 30),
+            "pixel at ({x}, {y}) is {got:?}, wanted {want:?}"
+        );
+    }
+    header(&headers, "etag").unwrap().to_owned()
+}
+
+/// Four or more albums with art: a 2x2 of the first four, newest first.
+/// A cover that does not decode is passed over, not a failed picture.
 #[cfg(unix)]
 #[tokio::test]
-async fn a_library_artist_shows_the_art_of_their_own_album() {
-    let files = ScratchDir::new("reads-artwork-artist");
-    let rig = rig(Some(&files.join("01.flac"))).await;
-    std::fs::write(files.join("cover.png"), PNG_BYTES).unwrap();
-    set_folder_art(&rig, &files.join("cover.png"), 1).await;
+async fn an_unlinked_artist_with_four_covers_is_a_two_by_two() {
+    let files = ScratchDir::new("reads-artwork-mosaic-four");
+    let rig = rig(None).await;
+    let broken = b"\x89PNG\r\n\x1a\nnot really a picture".to_vec();
+    let covers = [
+        solid_png(RED, 300),
+        broken,
+        solid_png(GREEN, 300),
+        solid_png(BLUE, 300),
+        solid_png(YELLOW, 300),
+        solid_png(MAGENTA, 300),
+    ];
+    seed_artist_albums(&rig, &files, &covers).await;
+    assert_mosaic(&rig, 250, [RED, GREEN, BLUE, YELLOW]).await;
+}
+
+/// Two or three albums with art: the first two crosswise.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unlinked_artist_with_two_or_three_covers_is_crosswise() {
+    let files = ScratchDir::new("reads-artwork-mosaic-three");
+    let rig = rig(None).await;
+    let covers = [
+        solid_png(RED, 300),
+        solid_png(GREEN, 300),
+        solid_png(BLUE, 300),
+    ];
+    seed_artist_albums(&rig, &files, &covers).await;
+    assert_mosaic(&rig, 500, [RED, GREEN, GREEN, RED]).await;
+}
+
+/// One album with art: that cover as the album shows it.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unlinked_artist_with_one_cover_shows_it() {
+    let files = ScratchDir::new("reads-artwork-mosaic-one");
+    let rig = rig(None).await;
+    let cover = solid_png(RED, 300);
+    seed_artist_albums(&rig, &files, std::slice::from_ref(&cover)).await;
 
     let (status, headers, body) = get(rig.app(true), "/api/v3/library/artists/a1/artwork").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, PNG_BYTES);
+    assert_eq!(body, cover);
     assert_eq!(header(&headers, "x-cover-source"), Some("folder"));
+}
 
-    let (status, _, _) = get(rig.app(true), "/api/v3/library/artists/nobody/artwork").await;
+/// No album with art (the rig's album has none): 404, and the page shows
+/// its placeholder.
+#[tokio::test]
+async fn an_unlinked_artist_with_no_covers_has_no_picture() {
+    let rig = rig(None).await;
+    let (status, _, _) = get(rig.app(true), "/api/v3/library/artists/a1/artwork").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// A cover one pixel wide and thousands tall is cut to its centre square
+/// before it is scaled, so it costs no more memory than its own pixels
+/// and still fills its quadrant.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_sliver_cover_takes_its_quadrant_without_blowing_up() {
+    let files = ScratchDir::new("reads-artwork-mosaic-sliver");
+    let rig = rig(None).await;
+    let covers = [
+        solid_png_sized(YELLOW, 1, 200_000),
+        solid_png(RED, 300),
+        solid_png(GREEN, 300),
+        solid_png(BLUE, 300),
+    ];
+    seed_artist_albums(&rig, &files, &covers).await;
+    assert_mosaic(&rig, 250, [YELLOW, RED, GREEN, BLUE]).await;
+}
+
+/// A cover replaced on disk draws a new mosaic; the old one is not served.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_changed_cover_draws_a_new_mosaic() {
+    let files = ScratchDir::new("reads-artwork-mosaic-change");
+    let rig = rig(None).await;
+    let covers = [solid_png(RED, 300), solid_png(GREEN, 300)];
+    seed_artist_albums(&rig, &files, &covers).await;
+    let before = assert_mosaic(&rig, 250, [RED, GREEN, GREEN, RED]).await;
+
+    std::fs::write(files.join("m0").join("cover.png"), solid_png(BLUE, 200)).unwrap();
+    let after = assert_mosaic(&rig, 250, [BLUE, GREEN, GREEN, BLUE]).await;
+    assert_ne!(before, after);
 }
 
 #[tokio::test]

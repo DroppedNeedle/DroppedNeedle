@@ -51,6 +51,10 @@
 //! TheAudioDB album thumbnails, fetched by the library precache, stand in
 //! for a release group's cover when neither the album's own art nor the
 //! archive has one.
+//!
+//! A library artist with no MusicBrainz link is pictured by a mosaic of
+//! their own albums' local art, drawn here and cached like a rendition
+//! under the covers' identities and file stats.
 
 pub mod cache;
 pub mod local;
@@ -112,6 +116,11 @@ pub const MAX_REMOTE_BYTES: usize = 20 * 1024 * 1024;
 pub const ARTIST_SOURCE: &str = "artist-image";
 /// Source label for TheAudioDB album thumbnails served as covers.
 pub const AUDIODB_SOURCE: &str = "audiodb";
+/// Source label for a library artist's mosaic of album covers.
+pub const MOSAIC_SOURCE: &str = "mosaic";
+/// Albums whose art a library artist's mosaic may draw on: the first four
+/// that decode among these are used, so a broken cover is passed over.
+const MOSAIC_CANDIDATES: usize = 8;
 /// How long a precache run waits for one image before moving on (the
 /// fetch keeps going in the background).
 pub const PRECACHE_WAIT: Duration = Duration::from_secs(60);
@@ -200,6 +209,7 @@ pub struct ArtworkService {
     settings: Live<AdvancedSettings>,
     flights: Singleflight<Fetched>,
     resizes: Singleflight<Option<Rendition>>,
+    mosaics: Singleflight<MosaicBuild>,
     resize_permits: Arc<tokio::sync::Semaphore>,
     images: Option<Arc<dyn RemoteImages>>,
     artist_source: Option<Arc<dyn ArtistImageSource>>,
@@ -236,6 +246,17 @@ struct Rendition {
     hash: String,
 }
 
+/// What drawing an artist's mosaic came to.
+#[derive(Debug, Clone)]
+enum MosaicBuild {
+    /// The mosaic, now stored.
+    Built(Rendition),
+    /// Only the candidate at this index decoded.
+    Single(usize),
+    /// None of the candidates decoded.
+    Nothing,
+}
+
 impl ArtworkService {
     /// Wire the service. `remote` is `None` only where no network source
     /// should be used (tests of the local path). `settings` says, per
@@ -253,6 +274,7 @@ impl ArtworkService {
             settings,
             flights: Singleflight::new(),
             resizes: Singleflight::new(),
+            mosaics: Singleflight::new(),
             resize_permits: Arc::new(tokio::sync::Semaphore::new(RESIZE_PERMITS)),
             images: None,
             artist_source: None,
@@ -652,6 +674,74 @@ impl ArtworkService {
         Some(cover)
     }
 
+    /// A library artist's picture from their albums' art (`arts`, in
+    /// order) at `size`: a mosaic when two or more covers decode, else the
+    /// one cover as an album shows it. Full size is drawn at
+    /// [`ARTIST_STORED_MAX`]. The mosaic is cached under the identities and
+    /// file stats of the covers it may use, so a changed or added cover
+    /// draws a new one.
+    async fn artist_mosaic(&self, arts: Vec<LocalArt>, size: Option<&str>) -> Option<CoverBytes> {
+        let mut candidates = Vec::new();
+        for art in arts {
+            if let Some(stamp) = local_art_stamp(&art).await {
+                candidates.push((art, stamp));
+            }
+        }
+        if candidates.len() < 2 {
+            let (art, _) = candidates.into_iter().next()?;
+            return self.serve_local(&art, size).await;
+        }
+        let max = size
+            .and_then(|size| size.parse::<u32>().ok())
+            .unwrap_or(ARTIST_STORED_MAX);
+        let key = mosaic_key(&candidates, max);
+        let arts: Vec<LocalArt> = candidates.into_iter().map(|(art, _)| art).collect();
+        match self.cache.key(&key).await {
+            Some(KeyEntry::Hit { .. }) => {
+                if let Some(cover) = self.cached_image(&key, MOSAIC_SOURCE).await {
+                    return Some(cover);
+                }
+            }
+            Some(KeyEntry::Miss { until }) if until > unix_now() => {
+                return self.serve_local(arts.first()?, size).await;
+            }
+            _ => {}
+        }
+        let (cache, permits, sources) = (
+            self.cache.clone(),
+            self.resize_permits.clone(),
+            arts.clone(),
+        );
+        let flight_key = key.clone();
+        let build = self
+            .mosaics
+            .run(&flight_key, move || async move {
+                Ok(build_mosaic(cache, permits, key, sources, max / 2).await)
+            })
+            .await;
+        match build.as_deref() {
+            Ok(MosaicBuild::Built(mosaic)) => Some(CoverBytes {
+                bytes: mosaic.bytes.clone(),
+                content_type: mosaic.content_type.clone(),
+                source: MOSAIC_SOURCE.to_owned(),
+                hash: mosaic.hash.clone(),
+                version: None,
+            }),
+            Ok(MosaicBuild::Single(index)) => {
+                // Only one cover decodes: the mosaic key points at its
+                // rendition, so the next request reads nothing again.
+                let cover = self.serve_local(arts.get(*index)?, size).await?;
+                if self.cache.has_blob(&cover.hash).await {
+                    self.cache
+                        .put_key(&flight_key, &cover.hash, &cover.content_type)
+                        .await;
+                }
+                Some(cover)
+            }
+            Ok(MosaicBuild::Nothing) | Err(_) => self.serve_local(arts.first()?, size).await,
+        }
+    }
+
     /// `original` scaled down to `size` (`None` is full size), the rendition
     /// cached by the original's hash.
     async fn sized(&self, original: CoverBytes, size: Option<&str>) -> CoverBytes {
@@ -865,6 +955,77 @@ async fn resize_and_store(
     }
 }
 
+/// Draw an artist's mosaic from the first four of `arts` whose art decodes,
+/// each cut to a `side` pixel square, and cache it under `key`. Decoding
+/// and drawing hold a resize permit; reading the files does not. Art that
+/// cannot be read or decoded is passed over with a log line. When none
+/// decodes, `key` remembers that for a while so the files are not read
+/// again on every request.
+async fn build_mosaic(
+    cache: ArtworkCache,
+    permits: Arc<tokio::sync::Semaphore>,
+    key: String,
+    arts: Vec<LocalArt>,
+    side: u32,
+) -> MosaicBuild {
+    let mut tiles = Vec::new();
+    for (index, art) in arts.iter().enumerate() {
+        if tiles.len() == 4 {
+            break;
+        }
+        let Some((bytes, _)) = read_local_art(art).await else {
+            tracing::warn!(album = %art.album_id, "album art unreadable; left out of the artist mosaic");
+            continue;
+        };
+        let Some(_permit) = resize_permit(&permits).await else {
+            return MosaicBuild::Nothing;
+        };
+        match cache::blocking(move || resize::tile(&bytes, side)).await {
+            Some(Ok(tile)) => tiles.push((index, tile)),
+            Some(Err(error)) => {
+                tracing::warn!(album = %art.album_id, %error, "album art did not decode; left out of the artist mosaic");
+            }
+            None => {}
+        }
+    }
+    match tiles.as_slice() {
+        [] => {
+            cache.put_miss(&key, UNUSABLE_TTL_SECS).await;
+            return MosaicBuild::Nothing;
+        }
+        [(index, _)] => return MosaicBuild::Single(*index),
+        _ => {}
+    }
+    let tiles: Vec<_> = tiles.into_iter().map(|(_, tile)| tile).collect();
+    let Some(_permit) = resize_permit(&permits).await else {
+        return MosaicBuild::Nothing;
+    };
+    match cache::blocking(move || resize::mosaic(&tiles, side)).await {
+        Some(Some(bytes)) => {
+            let hash = cache.put(Some(&key), bytes.clone(), "image/jpeg").await;
+            MosaicBuild::Built(Rendition {
+                bytes,
+                content_type: "image/jpeg".to_owned(),
+                hash,
+            })
+        }
+        Some(None) | None => MosaicBuild::Nothing,
+    }
+}
+
+/// One of the resize permits, or `None` (logged) if they are closed.
+async fn resize_permit(
+    permits: &Arc<tokio::sync::Semaphore>,
+) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    match permits.clone().acquire_owned().await {
+        Ok(permit) => Some(permit),
+        Err(error) => {
+            tracing::error!(%error, "resize permits closed; no artist mosaic");
+            None
+        }
+    }
+}
+
 /// One archive fetch.
 struct CoverFetch<'a> {
     entity: EntityKind,
@@ -969,6 +1130,25 @@ fn local_rendition_key(art: &LocalArt, stamp: &str, max: u32) -> String {
         art.source,
         art.path.to_string_lossy()
     )
+}
+
+/// Cache key of an artist's mosaic at `max` pixels: every cover it may draw
+/// on, with the stat its file had, in order.
+fn mosaic_key(candidates: &[(LocalArt, String)], max: u32) -> String {
+    let sources: Vec<String> = candidates
+        .iter()
+        .map(|(art, stamp)| {
+            format!(
+                "{}:{}:{}:{stamp}:{}:{}",
+                art.album_id,
+                art.source,
+                art.path.to_string_lossy(),
+                art.version,
+                art.content_hash.as_deref().unwrap_or("")
+            )
+        })
+        .collect();
+    format!("mosaic:{}:{max}", sha256_hex(sources.join("\n").as_bytes()))
 }
 
 /// Cache key of an artist's full-size image.
@@ -1201,9 +1381,8 @@ impl CoverArt for ArtworkService {
         size: Option<&'a str>,
     ) -> BoxFuture<'a, Option<CoverBytes>> {
         Box::pin(async move {
-            match self.local.by_artist(artist_id).await {
-                Ok(Some(art)) => self.serve_local(&art, size).await,
-                Ok(None) => None,
+            match self.local.by_artist(artist_id, MOSAIC_CANDIDATES).await {
+                Ok(arts) => self.artist_mosaic(arts, size).await,
                 Err(error) => {
                     tracing::warn!(%error, "artist art lookup failed");
                     None

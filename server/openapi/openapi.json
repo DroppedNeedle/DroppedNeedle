@@ -13065,8 +13065,8 @@
         "tags": [
           "platform"
         ],
-        "summary": "A library artist's picture, taken from the art of one of their own\nalbums.",
-        "description": "For artists the library holds with no MusicBrainz link, which have no\npicture of their own. Never reaches out to the network. The album\nunder the artist's name with the newest release is chosen, studio\nalbums before compilations.",
+        "summary": "A library artist's picture, a mosaic of the art of their own albums.",
+        "description": "For artists the library holds with no MusicBrainz link, which have no\npicture of their own. Never reaches out to the network. Albums under\nthe artist's name with the newest release come first, studio albums\nbefore compilations. Four or more covers give a 2x2 of the first four,\ntwo or three the first two crosswise, and one that cover alone. A\nmosaic is a JPEG; full size draws it at 1200 pixels.",
         "operationId": "library_artist_artwork",
         "parameters": [
           {

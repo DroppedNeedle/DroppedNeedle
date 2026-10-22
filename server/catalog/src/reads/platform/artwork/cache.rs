@@ -519,13 +519,15 @@ impl ArtworkCache {
     }
 }
 
-/// Run blocking file work off the async workers. `None` if the task
-/// panicked, which is logged.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+/// Run blocking file or image work off the async workers. `None` if the
+/// task panicked, which is logged.
+pub(crate) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     match tokio::task::spawn_blocking(work).await {
         Ok(value) => Some(value),
         Err(error) => {
-            tracing::error!(%error, "cover cache file task failed");
+            tracing::error!(%error, "cover blocking task failed");
             None
         }
     }

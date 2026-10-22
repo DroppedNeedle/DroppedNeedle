@@ -61,8 +61,8 @@ export function albumArtworkPath(albumId: string, coverVersion?: number, size?: 
 }
 
 /**
- * Root-relative path to a library artist's picture taken from one of their
- * own albums' art, by local artist id. For artists with no MusicBrainz link.
+ * Root-relative path to a library artist's picture, a mosaic of their own
+ * albums' art, by local artist id. For artists with no MusicBrainz link.
  */
 export function artistArtworkPath(artistId: string, size?: CoverSize): string {
 	return v3('/api/v3/library/artists/{id}/artwork', {

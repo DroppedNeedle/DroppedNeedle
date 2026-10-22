@@ -3913,12 +3913,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * A library artist's picture, taken from the art of one of their own
-         *     albums.
+         * A library artist's picture, a mosaic of the art of their own albums.
          * @description For artists the library holds with no MusicBrainz link, which have no
-         *     picture of their own. Never reaches out to the network. The album
-         *     under the artist's name with the newest release is chosen, studio
-         *     albums before compilations.
+         *     picture of their own. Never reaches out to the network. Albums under
+         *     the artist's name with the newest release come first, studio albums
+         *     before compilations. Four or more covers give a 2x2 of the first four,
+         *     two or three the first two crosswise, and one that cover alone. A
+         *     mosaic is a JPEG; full size draws it at 1200 pixels.
          */
         get: operations["library_artist_artwork"];
         put?: never;
