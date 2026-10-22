@@ -84,9 +84,9 @@ pub struct Repairs {
     /// The latest ended scan when play filing was last queued or skipped.
     /// `None` until the first look after a server start.
     plays_scan: Arc<Mutex<Option<Option<String>>>>,
-    /// The latest ended scan when the one-time track id re-look was last
+    /// The latest ended scan when the one-time re-identifications were last
     /// checked; `None` until the first look after a server start.
-    track_id_scan: Arc<Mutex<Option<Option<String>>>>,
+    backfill_scan: Arc<Mutex<Option<Option<String>>>>,
     management: Live<LibraryManagement>,
     wakeups: WorkWakeups,
     /// The worker hands its job back between albums once this is
@@ -107,7 +107,7 @@ impl Repairs {
             hygiene_scan: Arc::new(Mutex::new(None)),
             hygiene_identified: Arc::new(Mutex::new(crate::clock::now_ms() as i64)),
             plays_scan: Arc::new(Mutex::new(None)),
-            track_id_scan: Arc::new(Mutex::new(None)),
+            backfill_scan: Arc::new(Mutex::new(None)),
             management: setup.settings.management.clone(),
             wakeups: setup.wakeups.clone(),
             shutdown: None,
@@ -386,44 +386,82 @@ impl Repairs {
     /// Identify once more, at background priority, every album an older
     /// matcher may have left on another edition or unmatched because one
     /// file's track id named another edition (see
-    /// [`store::track_id_backfill_albums`]). Looked at once per server
-    /// start and after each scan until the set first holds an album, so a
-    /// library that arrives later (a v2 import, a first scan) still gets
-    /// it; then never again.
-    fn queue_track_id_backfill_once(&self) -> Result<(), OperationError> {
+    /// [`store::track_id_backfill_albums`]), and every album whose
+    /// automatic match names a release group but no release (see
+    /// [`store::group_only_backfill_albums`]). Each set is looked at once
+    /// per server start and after each scan until it first holds an album,
+    /// so a library that arrives later (a v2 import, a first scan) still
+    /// gets it; then never again.
+    fn queue_backfills_once(&self) -> Result<(), OperationError> {
         let run = self.db.read_blocking("repairs.latest_ended_scan", |conn| {
             Ok::<_, OperationError>(store::latest_ended_scan(conn)?)
         })?;
         // A busy database leaves the run unseen, so the next turn queues
         // its albums again.
         let mut seen = self
-            .track_id_scan
+            .backfill_scan
             .lock()
-            .map_err(|_| OperationError::Store("track id marker poisoned".to_owned()))?;
+            .map_err(|_| OperationError::Store("backfill marker poisoned".to_owned()))?;
         if seen.as_ref() == Some(&run) {
             return Ok(());
         }
-        let queued = self.queue_track_id_backfill();
-        if settled(&queued) {
-            *seen = Some(run);
+        // Each pass runs on its own: one that fails leaves the other be.
+        let passes = [
+            (
+                store::TRACK_ID_BACKFILL_KEY,
+                self.queue_backfill(
+                    store::TRACK_ID_BACKFILL_KEY,
+                    store::track_id_backfill_albums,
+                    "queued albums for re-identification after the track id rule changed",
+                ),
+            ),
+            (
+                store::GROUP_ONLY_BACKFILL_KEY,
+                self.queue_backfill(
+                    store::GROUP_ONLY_BACKFILL_KEY,
+                    store::group_only_backfill_albums,
+                    "queued albums matched to a release group only, to find their edition",
+                ),
+            ),
+        ];
+        let mut busy = None;
+        for (key, result) in passes {
+            match result {
+                Ok(()) => {}
+                Err(error @ OperationError::Busy(_)) => busy = Some(error),
+                Err(error) => {
+                    tracing::error!(key, error = %error, "a one-time re-identification could not be queued");
+                }
+            }
         }
-        queued
+        match busy {
+            Some(error) => Err(error),
+            None => {
+                *seen = Some(run);
+                Ok(())
+            }
+        }
     }
 
-    fn queue_track_id_backfill(&self) -> Result<(), OperationError> {
-        let albums = self
-            .db
-            .read_blocking("repairs.track_id_backfill_done", |conn| {
-                if store::track_id_backfill_done(conn)? {
-                    return Ok::<_, OperationError>(Vec::new());
-                }
-                let mut albums = Vec::new();
-                for album in store::track_id_backfill_albums(conn)? {
-                    let revision = album_input_revision(conn, &album)?;
-                    albums.push((album, revision));
-                }
-                Ok(albums)
-            })?;
+    /// Queue identification for the albums `set` lists, unless the
+    /// marker under `key` says it was done, then write that marker.
+    fn queue_backfill(
+        &self,
+        key: &'static str,
+        set: fn(&rusqlite::Connection) -> rusqlite::Result<Vec<String>>,
+        message: &'static str,
+    ) -> Result<(), OperationError> {
+        let albums = self.db.read_blocking("repairs.backfill_albums", |conn| {
+            if store::queued(conn, key)? {
+                return Ok::<_, OperationError>(Vec::new());
+            }
+            let mut albums = Vec::new();
+            for album in set(conn)? {
+                let revision = album_input_revision(conn, &album)?;
+                albums.push((album, revision));
+            }
+            Ok(albums)
+        })?;
         if albums.is_empty() {
             return Ok(());
         }
@@ -441,15 +479,13 @@ impl Repairs {
                 Lane::Background,
             )?;
         }
-        tracing::info!(
-            albums = albums.len(),
-            "queued albums for re-identification after the track id rule changed"
-        );
+        tracing::info!(albums = albums.len(), key, "{message}");
         self.db
-            .write_blocking(Lane::Background, "repairs.mark_track_id_backfill", |tx| {
-                Ok(store::mark_track_id_backfill(
+            .write_blocking(Lane::Background, "repairs.mark_backfill", |tx| {
+                Ok(store::mark_backfill(
                     tx,
                     &self.ids.new_id(),
+                    key,
                     now_unix(),
                 )?)
             })
@@ -633,7 +669,7 @@ impl Repairs {
     /// block: run this on a blocking thread.
     pub async fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
         self.queue_hygiene_once()?;
-        self.queue_track_id_backfill_once()?;
+        self.queue_backfills_once()?;
         self.queue_hygiene_after_scan()?;
         self.queue_hygiene_after_identification()?;
         self.queue_play_filing()?;

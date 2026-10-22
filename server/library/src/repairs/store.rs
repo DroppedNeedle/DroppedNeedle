@@ -403,14 +403,6 @@ pub fn hygiene_scan_key(run_id: &str) -> String {
 /// another edition.
 pub const TRACK_ID_BACKFILL_KEY: &str = "track-id-elsewhere:v1:backfill";
 
-pub fn track_id_backfill_done(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE idempotency_key = ?1)",
-        params![TRACK_ID_BACKFILL_KEY],
-        |row| row.get(0),
-    )
-}
-
 /// Albums whose identification may have obeyed a file's stray track id.
 /// On an identity, a file carrying release, track and recording ids counts
 /// when it names another release than the identity's (by id or a merged
@@ -460,11 +452,43 @@ pub fn track_id_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<Strin
         .collect()
 }
 
-/// Record that the one-time identification was queued: a finished job
-/// row under [`TRACK_ID_BACKFILL_KEY`], which no list shows.
-pub fn mark_track_id_backfill(
+/// Marks the one-time identification of albums matched to a release
+/// group with no release in it, as v2 left some.
+pub const GROUP_ONLY_BACKFILL_KEY: &str = "group-only-edition:v1:backfill";
+
+/// Albums whose automatic match names a release group but no release,
+/// with every indexed file in a folder identified automatically. Never an
+/// album a person decided: a chosen or imported match, a custom edition,
+/// or a review a person settled.
+pub fn group_only_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT a.id FROM local_albums a \
+         JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         WHERE a.retired_into_album_id IS NULL \
+         AND i.release_mbid IS NULL AND i.decision_source IN {REVISABLE} \
+         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND t.applied_policy != 'automatic') \
+         ORDER BY a.id"
+    ))?;
+    stmt.query_map(params![PROVIDER], |row| row.get(0))?
+        .collect()
+}
+
+/// Record that a one-time identification was queued: a finished repair
+/// job under its key ([`TRACK_ID_BACKFILL_KEY`],
+/// [`GROUP_ONLY_BACKFILL_KEY`]), so it never runs again on this database.
+pub fn mark_backfill(
     tx: &Transaction<'_>,
     job_id: &str,
+    key: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
     jobs::insert_done(
@@ -472,7 +496,7 @@ pub fn mark_track_id_backfill(
         job_id,
         OperationKind::Repair,
         "IDENTIFY_QUEUED",
-        TRACK_ID_BACKFILL_KEY,
+        key,
         now,
     )
 }

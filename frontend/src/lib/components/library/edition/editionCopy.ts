@@ -214,16 +214,20 @@ export function plateCopy(
 			}
 		};
 	} else {
-		const line2 =
-			status.edition_kind === 'group_only'
+		// A person who chose only the group left the files unmanaged on
+		// purpose; an automatic group-only match is waiting for its edition.
+		const groupOnly = status.edition_kind === 'group_only';
+		const line2 = groupOnly
+			? status.state === 'chosen'
 				? 'Left unmanaged'
-				: status.state === 'unmatched'
-					? 'Nothing on MusicBrainz fits it yet'
-					: status.reason.code === 'FOLDER_KEEPS_TAGS'
-						? 'This folder keeps its own tags'
-						: "DroppedNeedle hasn't matched it yet";
+				: 'Files kept as they are'
+			: status.state === 'unmatched'
+				? 'Nothing on MusicBrainz fits it yet'
+				: status.reason.code === 'FOLDER_KEEPS_TAGS'
+					? 'This folder keeps its own tags'
+					: "DroppedNeedle hasn't matched it yet";
 		copy = {
-			line1: 'No edition yet',
+			line1: groupOnly && status.state !== 'chosen' ? 'Edition not chosen yet' : 'No edition yet',
 			chip: null,
 			line2: busy ?? line2,
 			warnings: [],

@@ -158,9 +158,13 @@ describe('the edition plate', () => {
 		expect(plateCopy(status({ ...none, state: 'unmatched' }), null, 4).line2).toBe(
 			'Nothing on MusicBrainz fits it yet'
 		);
-		expect(
-			plateCopy(status({ edition_kind: 'group_only', release_mbid: null }), null, 4).line2
-		).toBe('Left unmanaged');
+		const groupOnly = { edition_kind: 'group_only' as const, release_mbid: null };
+		const automatic = plateCopy(status({ ...groupOnly, state: 'confirmed' }), null, 4);
+		expect(automatic.line1).toBe('Edition not chosen yet');
+		expect(automatic.line2).toBe('Files kept as they are');
+		const chosen = plateCopy(status({ ...groupOnly, state: 'chosen' }), null, 4);
+		expect(chosen.line1).toBe('No edition yet');
+		expect(chosen.line2).toBe('Left unmanaged');
 	});
 });
 

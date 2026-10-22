@@ -18023,6 +18023,161 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     assert!(queued().is_empty());
 }
 
+/// v2 carried some matches with a release group and no edition. Until it
+/// has one, the album's status says the edition is not chosen yet. After
+/// the upgrade such a match the app made (A) is identified once more, by
+/// itself, and lands on the edition its files fit, which can be undone. A
+/// group a person chose, now (B) or in v2 (C), is left alone. It happens
+/// once per database.
+#[tokio::test]
+async fn albums_matched_to_a_group_only_get_an_edition_once() {
+    use droppedneedle_library::operations::status::edition_status;
+    use droppedneedle_library::repairs::service::Repairs;
+
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let (scratch, library, music) = bare_library("lib-group-only-relook").await;
+    let editions: Vec<Release> = (1..=3)
+        .map(|n| sibling_editions(n, &format!("Group Only {n}")).0)
+        .collect();
+    // Files tagged with their release group and recordings, no release.
+    for (index, release) in editions.iter().enumerate() {
+        for (number, track) in release.tracks.iter().enumerate() {
+            let file = plant(
+                &music,
+                &format!("album-{index}/{:02}.flac", number + 1),
+                "flac_full_01.flac",
+            );
+            save_tags(
+                &file,
+                &[
+                    TagEdit::verbatim(TagField::Title, vec![track.title.clone()]),
+                    TagEdit::verbatim(TagField::Album, vec![release.title.clone()]),
+                    TagEdit::verbatim(TagField::Artist, vec!["Radiohead".to_owned()]),
+                    TagEdit::verbatim(TagField::AlbumArtist, vec!["Radiohead".to_owned()]),
+                    TagEdit::verbatim(TagField::TrackNumber, vec![(number + 1).to_string()]),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+                    TagEdit::verbatim(
+                        TagField::MusicBrainzReleaseGroupId,
+                        vec![release.release_group_id.clone()],
+                    ),
+                    TagEdit::verbatim(
+                        TagField::MusicBrainzRecordingId,
+                        vec![track.recording_id.clone()],
+                    ),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+                ],
+            )
+            .expect("file tagged");
+        }
+    }
+    add_music_root(&library, &music).await;
+    let album = |index: usize| {
+        let track = library
+            .scan_store
+            .track_at("music", &format!("album-{index}/01.flac"))
+            .unwrap()
+            .expect("track indexed");
+        library
+            .scan_store
+            .album_for_track(&track)
+            .unwrap()
+            .expect("album")
+    };
+    let (a, b, c) = (album(0), album(1), album(2));
+    scratch.identify.set_recall(RecallResult {
+        releases: editions.clone(),
+        ..RecallResult::default()
+    });
+    assert_eq!(library.identify_tick().await, 3);
+
+    // What v2 carried: the group only, with no track matches.
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let group_only = |album: &str, source: &str| {
+        db.execute(
+            "UPDATE local_album_external_identities SET release_mbid = NULL, \
+             decision_source = ?2 WHERE local_album_id = ?1",
+            rusqlite::params![album, source],
+        )
+        .expect("identity carried");
+        db.execute(
+            "DELETE FROM local_track_external_identities WHERE local_track_id IN \
+             (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+            [album],
+        )
+        .expect("tracks carried");
+    };
+    group_only(&a, "embedded");
+    group_only(&b, "manual");
+    group_only(&c, "legacy_import");
+    let reason = |album: &str| {
+        let status = edition_status(&db, album)
+            .expect("status reads")
+            .expect("album known");
+        (status.reason.code, status.reason.message)
+    };
+    let (code, message) = reason(&a);
+    assert_eq!(code, "EDITION_NOT_CHOSEN");
+    assert!(message.starts_with("Edition not chosen yet"), "{message}");
+    assert_eq!(reason(&b).0, "CHOSEN");
+    assert_eq!(reason(&c).0, "CHOSEN");
+    let queued = || -> Vec<String> {
+        let mut stmt = db
+            .prepare(
+                "SELECT local_album_id FROM library_identify_jobs \
+                 WHERE state = 'queued' ORDER BY local_album_id",
+            )
+            .expect("queue reads");
+        stmt.query_map([], |row| row.get(0))
+            .expect("queue reads")
+            .collect::<Result<_, _>>()
+            .expect("queue reads")
+    };
+    assert!(queued().is_empty());
+
+    let repairs = Repairs::new(&library);
+    droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
+    assert_eq!(queued(), vec![a.clone()]);
+    assert_eq!(library.identify_tick().await, 1);
+
+    let release_of = |album: &str| {
+        library
+            .identify_store
+            .album_identity(album)
+            .unwrap()
+            .map(|identity| {
+                (
+                    identity.release_mbid,
+                    identity.decision_source.as_str().to_owned(),
+                )
+            })
+    };
+    assert_eq!(
+        release_of(&a),
+        Some((Some(editions[0].id.clone()), "automatic".to_owned()))
+    );
+    assert_eq!(release_of(&b), Some((None, "manual".to_owned())));
+    assert_eq!(release_of(&c), Some((None, "legacy_import".to_owned())));
+    assert_eq!(reason(&a).0, "SUPPORTED");
+    let undo: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_automatic_edition_undo \
+             WHERE local_album_id = ?1 AND consumed_at IS NULL",
+            [&a],
+            |row| row.get(0),
+        )
+        .expect("undo reads");
+    assert_eq!(undo, 1, "the edition it got can be undone");
+
+    // The next start looks no more, even at a group-only match.
+    group_only(&a, "embedded");
+    let restarted = Repairs::new(&library);
+    droppedneedle_library::repairs::tick(&library, &restarted, "worker").await;
+    assert!(queued().is_empty());
+}
+
 /// An album row an earlier version left on its own "Unknown Artist" row
 /// (not the catalog's sentinel) while every file names the artist keeps
 /// it through scans, because its files never change. After an upgrade it

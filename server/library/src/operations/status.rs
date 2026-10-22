@@ -113,6 +113,11 @@ pub fn edition_status(
         crate::identity::DecisionSource::parse(source)
             .is_some_and(crate::identity::DecisionSource::is_persons_choice)
     });
+    let custom: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
+        params![album_id],
+        |row| row.get(0),
+    )?;
     let (state, reason) = match (&identity, &flagged) {
         // A chosen edition stays chosen; a flag on it explains a problem
         // with the choice (it fits none of the files).
@@ -122,6 +127,11 @@ pub fn edition_status(
             (EditionState::Unmatched, reasons::match_reason(code))
         }
         (Some(_), Some((_, code, _))) => (EditionState::Unconfirmed, reasons::match_reason(code)),
+        // The album is matched to a release group but no release in it yet.
+        (Some((_, None, _, _, _, _)), None) if !custom => (
+            EditionState::Confirmed,
+            reasons::match_reason("EDITION_NOT_CHOSEN"),
+        ),
         (Some(_), None) => (EditionState::Confirmed, reasons::match_reason("SUPPORTED")),
         (None, _) if keeps_own_tags(conn, album_id)? => (
             EditionState::Unidentified,
@@ -142,11 +152,6 @@ pub fn edition_status(
         ),
         None => (None, None, None, None, 0),
     };
-    let custom: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
-        params![album_id],
-        |row| row.get(0),
-    )?;
     // A custom edition counts only where no release is chosen, as
     // automatic management reads it.
     let edition_kind = match (&group, &release) {

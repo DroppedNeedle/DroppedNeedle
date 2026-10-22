@@ -541,6 +541,11 @@ pub fn match_reason(code: &str) -> Reason {
             "This edition fits the files closely: titles, track order and lengths agree.",
             "Nothing to do; pick another edition if it is wrong.",
         ),
+        "EDITION_NOT_CHOSEN" => reason(
+            "EDITION_NOT_CHOSEN",
+            "Edition not chosen yet: the album is matched, but not which release your files are.",
+            "Pick an edition if you know which one your files are.",
+        ),
         "EDITION_UNCERTAIN" => reason(
             "EDITION_UNCERTAIN",
             "The album is clear, but this is a live or compilation release, so the exact edition is a best guess.",
