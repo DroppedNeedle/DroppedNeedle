@@ -23,7 +23,10 @@
 //!
 //! Every image lands in the content-addressed [`cache`], so a cover is
 //! fetched from the archive once and served from disk afterwards, and a
-//! "no art" answer is remembered for a while instead of asked again.
+//! "no art" answer is remembered for a while instead of asked again. A
+//! fetch that learned nothing (the archive down or refusing, or our own
+//! limiter turning it down) is never taken for "no art": the routes answer
+//! 202 and the cover is asked for again after [`OUTAGE_TTL_SECS`].
 //! Concurrent requests for the same cover share one fetch. A page never
 //! joins a background fetch, which queues behind every page at the
 //! archive; it starts its own. A fetch that
@@ -75,6 +78,9 @@ use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 /// Source label for Cover Art Archive bytes; the routes give these the
 /// short cache window, as v2 did.
 pub const CAA_SOURCE: &str = "cover-art-archive";
+/// How long a warm job gives its page's images to start before checking
+/// whether the page is still fetching.
+pub const PAGE_SETTLE: Duration = Duration::from_secs(2);
 /// How long the web routes wait for an archive fetch before answering 202.
 /// A typical fetch takes about 1.8 s (probed 2026-10-19), which this wait
 /// covers. Past it, the 202 frees the browser connection, which matters on
@@ -85,9 +91,18 @@ pub const COMPAT_WAIT: Duration = Duration::from_secs(20);
 /// The archive said it has no cover: ask again after four hours (v2
 /// `COVER_NEGATIVE_TTL_SECONDS`).
 pub const MISS_TTL_SECS: u64 = 4 * 3600;
-/// The archive could not be reached: ask again after 15 minutes (v2
-/// `COVER_TRANSIENT_NEGATIVE_TTL_SECONDS`).
-pub const OUTAGE_TTL_SECS: u64 = 900;
+/// A source could not be asked (down, refusing, or resting after
+/// failures): nothing is known about the art, so the routes answer
+/// "warming" and ask again after one rest of the provider's row.
+pub const OUTAGE_TTL_SECS: u64 = 30;
+/// The archive sent an image too large to use: ask again after 15 minutes.
+pub const UNUSABLE_TTL_SECS: u64 = 900;
+/// Longest one archive fetch runs, waits for its turn included, once no
+/// page waits on it. Past it the fetch ends and counts as unreachable.
+pub const FLIGHT_LIMIT: Duration = Duration::from_secs(30);
+/// [`FLIGHT_LIMIT`] for an artist image resolve, which asks several
+/// providers in turn.
+pub const ARTIST_FLIGHT_LIMIT: Duration = Duration::from_secs(60);
 /// Local art resizes decoding at once; each can hold a large picture in
 /// memory.
 pub const RESIZE_PERMITS: usize = 3;
@@ -183,13 +198,34 @@ pub struct ArtworkService {
     local: LocalArtwork,
     remote: Option<Arc<dyn RemoteCovers>>,
     settings: Live<AdvancedSettings>,
-    flights: Singleflight<Option<CoverBytes>>,
+    flights: Singleflight<Fetched>,
     resizes: Singleflight<Option<Rendition>>,
     resize_permits: Arc<tokio::sync::Semaphore>,
     images: Option<Arc<dyn RemoteImages>>,
     artist_source: Option<Arc<dyn ArtistImageSource>>,
-    artist_flights: Singleflight<Option<CoverBytes>>,
+    artist_flights: Singleflight<Fetched>,
     artist_permits: Arc<tokio::sync::Semaphore>,
+}
+
+/// What one fetch or resolve learned.
+#[derive(Debug, Clone)]
+enum Fetched {
+    /// The image, now stored.
+    Found(CoverBytes),
+    /// The source has none.
+    Missing,
+    /// The source could not be asked; nothing is known.
+    Unreachable,
+}
+
+impl Fetched {
+    fn lookup(&self) -> CoverLookup {
+        match self {
+            Self::Found(cover) => CoverLookup::Found(cover.clone()),
+            Self::Missing => CoverLookup::Missing,
+            Self::Unreachable => CoverLookup::Warming,
+        }
+    }
 }
 
 /// A scaled-down copy of local art.
@@ -382,16 +418,31 @@ impl ArtworkService {
                     .await;
             }
             ImageFetch::Unusable => self.cache.put_miss(&key, MISS_TTL_SECS).await,
-            ImageFetch::Failed => self.cache.put_miss(&key, OUTAGE_TTL_SECS).await,
+            ImageFetch::Failed => self.cache.put_unreachable(&key, OUTAGE_TTL_SECS).await,
         }
     }
 
-    /// True when `key` holds an image still on disk, or a fresh miss.
+    /// True when `key` holds an image still on disk, or a fresh marker.
     async fn settled(&self, key: &str) -> bool {
         match self.cache.key(key).await {
             Some(KeyEntry::Hit { hash, .. }) => self.cache.has_blob(&hash).await,
-            Some(KeyEntry::Miss { until }) => until > unix_now(),
+            Some(KeyEntry::Miss { until } | KeyEntry::Unreachable { until }) => until > unix_now(),
             None => false,
+        }
+    }
+
+    /// Wait, up to `limit`, until no page is fetching an image, so a page's
+    /// warm job does not reach the providers alongside the page itself. A
+    /// page's images start a moment after its data, so the wait first
+    /// gives them [`PAGE_SETTLE`] to begin.
+    pub async fn after_page_fetches(&self, limit: Duration) {
+        let started = tokio::time::Instant::now();
+        tokio::time::sleep(PAGE_SETTLE.min(limit)).await;
+        while started.elapsed() < limit
+            && (self.flights.any_running("page:").await
+                || self.artist_flights.any_running("page:").await)
+        {
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
 
@@ -428,6 +479,9 @@ impl ArtworkService {
                 }
             }
             Some(KeyEntry::Miss { until }) if until > unix_now() => return CoverLookup::Missing,
+            Some(KeyEntry::Unreachable { until }) if until > unix_now() => {
+                return CoverLookup::Warming;
+            }
             _ => {}
         }
         self.resolve_artist_original(mbid, key, wait, priority)
@@ -455,29 +509,44 @@ impl ArtworkService {
         } else {
             "background"
         };
+        let flight_key = format!("{class}:{key}");
+        // A page asking again (a poll) while its resolve runs is answered
+        // at once rather than waiting out another `wait`. Only the web
+        // routes, which poll a 202; compat callers wait and join the flight.
+        if priority.is_user_facing() && wait <= WARM_WAIT && flights.is_running(&flight_key).await {
+            return CoverLookup::Warming;
+        }
         // Spawned so a resolve the caller stops waiting for still lands in
         // the cache for the next request.
         let flight = tokio::spawn(async move {
-            let flight_key = format!("{class}:{key}");
             flights
                 .run(&flight_key, move || async move {
-                    let _permit = permits.acquire_owned().await.ok();
-                    Ok(resolve_artist(
-                        (source.as_ref(), images.as_ref()),
-                        &cache,
-                        &mbid,
-                        &key,
-                        priority,
+                    let resolve = async {
+                        let _permit = permits.acquire_owned().await.ok();
+                        resolve_artist(
+                            (source.as_ref(), images.as_ref()),
+                            &cache,
+                            &mbid,
+                            &key,
+                            priority,
+                        )
+                        .await
+                    };
+                    Ok(
+                        match tokio::time::timeout(ARTIST_FLIGHT_LIMIT, resolve).await {
+                            Ok(fetched) => fetched,
+                            Err(_) => {
+                                tracing::debug!(artist = %mbid, "artist image resolve ran out of time");
+                                cache.put_unreachable(&key, OUTAGE_TTL_SECS).await;
+                                Fetched::Unreachable
+                            }
+                        },
                     )
-                    .await)
                 })
                 .await
         });
         match tokio::time::timeout(wait, flight).await {
-            Ok(Ok(Ok(found))) => match found.as_ref() {
-                Some(image) => CoverLookup::Found(image.clone()),
-                None => CoverLookup::Missing,
-            },
+            Ok(Ok(Ok(fetched))) => fetched.lookup(),
             Ok(Ok(Err(error))) => {
                 tracing::warn!(%error, "artist image resolve failed");
                 CoverLookup::Missing
@@ -685,23 +754,32 @@ impl ArtworkService {
                 }
             }
             Some(KeyEntry::Miss { until }) if until > unix_now() => return CoverLookup::Missing,
+            Some(KeyEntry::Unreachable { until }) if until > unix_now() => {
+                return CoverLookup::Warming;
+            }
             _ => {}
         }
         let flights = self.flights.clone();
         let cache = self.cache.clone();
         let mbid = mbid.to_owned();
-        // Spawned so a fetch the caller stops waiting for still lands in
-        // the cache for the next request.
         let class = if priority.is_user_facing() {
             "page"
         } else {
             "background"
         };
+        let flight_key = format!("{class}:{key}");
+        // A page asking again (a poll) while its fetch runs is answered at
+        // once rather than waiting out another `wait`. Only the web routes,
+        // which poll a 202; compat callers wait and join the flight.
+        if priority.is_user_facing() && wait <= WARM_WAIT && flights.is_running(&flight_key).await {
+            return CoverLookup::Warming;
+        }
+        // Spawned so a fetch the caller stops waiting for still lands in
+        // the cache for the next request.
         let flight = tokio::spawn(async move {
-            let flight_key = format!("{class}:{key}");
             flights
                 .run(&flight_key, move || async move {
-                    Ok(fetch_and_store(
+                    let fetch = fetch_and_store(
                         remote.as_ref(),
                         &cache,
                         CoverFetch {
@@ -711,16 +789,20 @@ impl ArtworkService {
                             priority,
                         },
                         &key,
-                    )
-                    .await)
+                    );
+                    Ok(match tokio::time::timeout(FLIGHT_LIMIT, fetch).await {
+                        Ok(fetched) => fetched,
+                        Err(_) => {
+                            tracing::debug!(mbid = %mbid, "cover fetch ran out of time");
+                            cache.put_unreachable(&key, OUTAGE_TTL_SECS).await;
+                            Fetched::Unreachable
+                        }
+                    })
                 })
                 .await
         });
         match tokio::time::timeout(wait, flight).await {
-            Ok(Ok(Ok(found))) => match found.as_ref() {
-                Some(cover) => CoverLookup::Found(cover.clone()),
-                None => CoverLookup::Missing,
-            },
+            Ok(Ok(Ok(fetched))) => fetched.lookup(),
             Ok(Ok(Err(error))) => {
                 tracing::warn!(%error, "cover fetch failed");
                 CoverLookup::Missing
@@ -791,13 +873,14 @@ struct CoverFetch<'a> {
     priority: RequestPriority,
 }
 
-/// One archive fetch: store the bytes or a miss marker.
+/// One archive fetch: store the bytes, a miss marker, or an unreachable
+/// marker.
 async fn fetch_and_store(
     remote: &dyn RemoteCovers,
     cache: &ArtworkCache,
     fetch: CoverFetch<'_>,
     key: &str,
-) -> Option<CoverBytes> {
+) -> Fetched {
     let CoverFetch {
         entity,
         mbid,
@@ -809,7 +892,7 @@ async fn fetch_and_store(
             let hash = cache
                 .put(Some(key), art.bytes.clone(), &art.content_type)
                 .await;
-            Some(CoverBytes {
+            Fetched::Found(CoverBytes {
                 bytes: art.bytes,
                 content_type: art.content_type,
                 source: CAA_SOURCE.to_owned(),
@@ -819,36 +902,62 @@ async fn fetch_and_store(
         }
         Ok(None) => {
             cache.put_miss(key, MISS_TTL_SECS).await;
-            None
+            Fetched::Missing
         }
         Err(error) => {
             tracing::warn!(%error, entity = entity.path(), mbid, "cover art archive fetch failed");
-            cache.put_miss(key, failure_ttl_secs(&error)).await;
-            None
+            match failure_marker(&error) {
+                Marker::Unreachable(ttl) => {
+                    cache.put_unreachable(key, ttl).await;
+                    Fetched::Unreachable
+                }
+                Marker::Miss(ttl) => {
+                    cache.put_miss(key, ttl).await;
+                    Fetched::Missing
+                }
+            }
         }
     }
 }
 
-/// How long a failed archive fetch is remembered before the cover is asked
-/// for again. An outage, and an image too large to use, are asked again
-/// soon; a rate limit is held only as long as the archive asked; anything
-/// else (a refused redirect, bytes that are not an image, a malformed
-/// MBID) is remembered like "no cover".
-fn failure_ttl_secs(error: &ProviderError) -> u64 {
+/// How a failed archive fetch is remembered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Marker {
+    /// Nothing was learned (an outage, a refusal, a rate limit, or our own
+    /// limiter turning the call down): ask again after this many seconds.
+    Unreachable(u64),
+    /// The archive answered with something unusable: treat it as no art
+    /// for this many seconds.
+    Miss(u64),
+}
+
+/// How a failed archive fetch is remembered, and for how long. A wait the
+/// archive or our limiter named is honoured up to [`OUTAGE_TTL_SECS`]; an
+/// image too large to use is asked again after [`UNUSABLE_TTL_SECS`];
+/// anything else (a refused redirect, bytes that are not an image, a
+/// malformed MBID) is remembered like "no cover".
+fn failure_marker(error: &ProviderError) -> Marker {
+    let named = |wait: &Duration| {
+        (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).clamp(1, OUTAGE_TTL_SECS)
+    };
     match error {
         ProviderError::RateLimited {
             retry_after: Some(wait),
             ..
-        } => (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).clamp(1, OUTAGE_TTL_SECS),
+        }
+        | ProviderError::Unavailable {
+            retry_after: Some(wait),
+            ..
+        } => Marker::Unreachable(named(wait)),
         ProviderError::RateLimited { .. }
         | ProviderError::Unavailable { .. }
         | ProviderError::Server { .. }
-        | ProviderError::Transport { .. }
-        | ProviderError::Payload {
+        | ProviderError::Transport { .. } => Marker::Unreachable(OUTAGE_TTL_SECS),
+        ProviderError::Payload {
             kind: PayloadKind::TooLarge,
             ..
-        } => OUTAGE_TTL_SECS,
-        _ => MISS_TTL_SECS,
+        } => Marker::Miss(UNUSABLE_TTL_SECS),
+        _ => Marker::Miss(MISS_TTL_SECS),
     }
 }
 
@@ -912,14 +1021,15 @@ async fn shrink_artist_image(art: ArtworkBytes) -> ArtworkBytes {
 }
 
 /// One artist image resolve: the first candidate that downloads is
-/// cached; with none, a miss marker (short when a source was down).
+/// cached. With none, a miss marker, or an unreachable marker when a
+/// source could not answer.
 async fn resolve_artist(
     (source, images): (&dyn ArtistImageSource, &dyn RemoteImages),
     cache: &ArtworkCache,
     mbid: &str,
     key: &str,
     priority: RequestPriority,
-) -> Option<CoverBytes> {
+) -> Fetched {
     let candidates = source.candidates(mbid, priority).await;
     let mut failed = candidates.incomplete;
     for candidate in &candidates.images {
@@ -934,7 +1044,7 @@ async fn resolve_artist(
                         candidate.credit.as_ref(),
                     )
                     .await;
-                return Some(CoverBytes {
+                return Fetched::Found(CoverBytes {
                     bytes: art.bytes,
                     content_type: art.content_type,
                     source: ARTIST_SOURCE.to_owned(),
@@ -946,13 +1056,13 @@ async fn resolve_artist(
             ImageFetch::Failed => failed = true,
         }
     }
-    let ttl = if failed {
-        OUTAGE_TTL_SECS
+    if failed {
+        cache.put_unreachable(key, OUTAGE_TTL_SECS).await;
+        Fetched::Unreachable
     } else {
-        MISS_TTL_SECS
-    };
-    cache.put_miss(key, ttl).await;
-    None
+        cache.put_miss(key, MISS_TTL_SECS).await;
+        Fetched::Missing
+    }
 }
 
 /// Map a validated size (`250`, `500`, `1200`, or `None` for full size)

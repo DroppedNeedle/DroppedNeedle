@@ -974,12 +974,96 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
         "the portrait was asked for"
     );
     let cache = ArtworkCache::new(dir.join("covers"), 1024 * 1024);
-    let Some(KeyEntry::Miss { until }) = cache.key(&format!("artist:{ARTIST}")).await else {
-        panic!("a miss is remembered");
+    let Some(KeyEntry::Unreachable { until }) = cache.key(&format!("artist:{ARTIST}")).await else {
+        panic!("the outage is remembered");
     };
     assert!(
         (before + OUTAGE_TTL_SECS..=unix_now() + OUTAGE_TTL_SECS).contains(&until),
         "remembered for the outage wait, until {until} (asked at {before})"
+    );
+}
+
+/// TheAudioDB still names some artist pictures over plain http. Such a
+/// picture is fetched over https from the same host, not refused, which
+/// stored a four-hour "no picture" for artists TheAudioDB has a thumbnail
+/// for.
+#[tokio::test]
+async fn an_audiodb_picture_named_over_http_is_fetched_over_https() {
+    use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
+    use droppedneedle_catalog::reads::platform::artwork::{
+        ArtworkService, cache::ArtworkCache, local::LocalArtwork,
+    };
+    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, audiodb, musicbrainz};
+
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{}/artist/{ARTIST}", musicbrainz::MB_API_BASE),
+        200,
+        &[],
+        fixture("mb_artist.json"),
+    );
+    // Shaped as TheAudioDB answered for Hiroyuki Sawano on 2026-10-22
+    // (thumbnail over http), with this suite's artist.
+    wire.answer(
+        &format!("{}/123/artist-mb.php", audiodb::DEFAULT_BASE_URL),
+        200,
+        &[],
+        json!({"artists": [{
+            "idArtist": "111239",
+            "strArtist": "Radiohead",
+            "strMusicBrainzID": ARTIST,
+            "strArtistThumb": "http://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg",
+        }]})
+        .to_string(),
+    );
+    wire.answer(
+        "https://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg",
+        200,
+        &[("content-type", "image/png")],
+        PNG,
+    );
+    let providers = Arc::new(Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints {
+            musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
+            audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let (pool, dir) = crate::common::migrated_pool("reads-catalog-audiodb-http").await;
+    let rig = AuthRig::new("reads-catalog-audiodb-http").await;
+    let catalog = Catalog::new(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(TestSettings {
+                mb_url: musicbrainz::MB_API_BASE.to_owned(),
+            }),
+            rig.deps.clone(),
+        ),
+        local_catalog(&dir),
+    );
+    let config = crate::common::config_store(&dir.join("settings"));
+    let artwork = ArtworkService::new(
+        ArtworkCache::new(dir.join("covers"), 1024 * 1024),
+        LocalArtwork::new(pool),
+        None,
+        config.live(),
+    )
+    .with_images(Arc::new(providers.images.clone()))
+    .with_artist_source(Arc::new(CatalogArtistImages(catalog)));
+
+    assert!(
+        artwork.warm_artist_image(ARTIST).await,
+        "the picture is fetched and stored"
     );
 }
 

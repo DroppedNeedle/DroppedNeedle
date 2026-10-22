@@ -10,7 +10,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use droppedneedle_catalog::reads::platform::artwork::{
-    ArtworkService, MISS_TTL_SECS, OUTAGE_TTL_SECS,
+    ArtworkService, MISS_TTL_SECS, UNUSABLE_TTL_SECS,
     cache::{ArtworkCache, KeyEntry, unix_now},
     local::LocalArtwork,
 };
@@ -134,6 +134,16 @@ async fn rig_at(seed_track: Option<(&Path, &str)>) -> Rig {
 
 impl Rig {
     fn app(&self, prefer_local: bool) -> Router {
+        Self::router(self.service(prefer_local))
+    }
+
+    fn router(service: Arc<ArtworkService>) -> Router {
+        covers::routes()
+            .with_state(CoversState::new(service))
+            .into_router()
+    }
+
+    fn service(&self, prefer_local: bool) -> Arc<ArtworkService> {
         let config =
             crate::common::config_store(&self.dir.join(format!("settings-{prefer_local}")));
         config
@@ -148,9 +158,7 @@ impl Rig {
             Some(Arc::new(self.archive.providers.coverart.clone())),
             config.live(),
         );
-        covers::routes()
-            .with_state(CoversState::new(Arc::new(service)))
-            .into_router()
+        Arc::new(service)
     }
 }
 
@@ -202,25 +210,28 @@ async fn archive_cover_is_fetched_once_then_served_from_cache() {
     );
 }
 
-/// How long a cover the archive could not give is remembered: "no cover"
-/// (404) for hours, an outage and an image too large to use for minutes,
-/// and a rate limit only as long as the archive asked.
+/// How long a cover the archive could not give is remembered, and as
+/// what: "no cover" (404) for hours and an image too large to use for
+/// minutes, both as "no art"; an outage or a rate limit only as long as the
+/// archive asked, as "could not ask", which the route answers 202.
 #[tokio::test]
 async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
     type Headers = &'static [(&'static str, &'static str)];
-    let rows: [(&str, u16, Headers, usize, u64); 4] = [
-        ("no cover", 404, &[], 0, MISS_TTL_SECS),
-        ("outage", 503, &[("retry-after", "3")], 0, OUTAGE_TTL_SECS),
+    let rows: [(&str, u16, Headers, usize, u64, bool); 4] = [
+        ("no cover", 404, &[], 0, MISS_TTL_SECS, false),
+        ("outage", 503, &[("retry-after", "3")], 0, 3, true),
         (
             "too large to use",
             200,
             &[("content-type", "image/png")],
             20 * 1024 * 1024 + 1,
-            OUTAGE_TTL_SECS,
+            UNUSABLE_TTL_SECS,
+            false,
         ),
-        ("rate limited", 429, &[("retry-after", "7")], 0, 7),
+        ("rate limited", 429, &[("retry-after", "7")], 0, 7, true),
     ];
-    for (index, (name, status, headers, body_len, ttl)) in rows.into_iter().enumerate() {
+    for (index, (name, status, headers, body_len, ttl, unreachable)) in rows.into_iter().enumerate()
+    {
         let rig = rig(None).await;
         let mbid = format!("0a1b2c3d-0000-4000-8000-00000000010{index}");
         rig.archive
@@ -234,30 +245,112 @@ async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
         .await;
         // A loaded host can outlast the route's wait, which then answers
         // "still warming" while the fetch finishes behind it.
-        assert!(
-            matches!(status, StatusCode::NOT_FOUND | StatusCode::ACCEPTED),
-            "{name}: no cover to serve, got {status}"
-        );
+        if unreachable {
+            assert_eq!(status, StatusCode::ACCEPTED, "{name}: still warming");
+        } else {
+            assert!(
+                matches!(status, StatusCode::NOT_FOUND | StatusCode::ACCEPTED),
+                "{name}: no cover to serve, got {status}"
+            );
+        }
         let cache = ArtworkCache::new(rig.dir.join("covers"), 1024 * 1024);
         let key = format!("caa:release-group:{mbid}:500");
         // The route answers after a bounded wait while the fetch carries on
-        // in the background, so the marker can land after the 404.
+        // in the background, so the marker can land after the answer.
         let until = tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
-                if let Some(KeyEntry::Miss { until }) = cache.key(&key).await {
-                    break until;
+                match cache.key(&key).await {
+                    Some(KeyEntry::Miss { until }) if !unreachable => break until,
+                    Some(KeyEntry::Unreachable { until }) if unreachable => break until,
+                    _ => {}
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         })
         .await
-        .unwrap_or_else(|_| panic!("{name}: a miss is remembered"));
+        .unwrap_or_else(|_| panic!("{name}: the failure is remembered"));
         let upper = unix_now();
         assert!(
             (before + ttl..=upper + ttl).contains(&until),
             "{name}: remembered for {ttl} s, until {until} (asked at {before})"
         );
     }
+}
+
+/// An archive that cannot be reached says nothing about the art: the cover
+/// answers "warming" (202) while it is down, never "no art" (404), and is
+/// served once the archive answers again.
+#[tokio::test]
+async fn a_cover_the_archive_cannot_give_yet_is_warming_until_it_can() {
+    use droppedneedle_providers::TransportKind;
+    use droppedneedle_providers::executor::{Method, Scripted};
+
+    let rig = rig(None).await;
+    let mbid = "0a1b2c3d-0000-4000-8000-000000000201";
+    // The first request's try and its retry fail; the archive then answers.
+    let down = Scripted::Transport(TransportKind::Connect);
+    for _ in 0..2 {
+        rig.archive
+            .wire
+            .on(Method::Get, &front_url(mbid), down.clone());
+    }
+    rig.archive
+        .wire
+        .answer(&front_url(mbid), 307, &[("location", CDN)], "");
+    let uri = format!("/api/v3/covers/release-group/{mbid}?size=500");
+
+    for _ in 0..2 {
+        let (status, _, _) = get(rig.app(true), &uri).await;
+        assert_eq!(
+            status,
+            StatusCode::ACCEPTED,
+            "an unreachable archive is not 'no art'"
+        );
+    }
+
+    // The wait before asking again runs out.
+    let cache = ArtworkCache::new(rig.dir.join("covers"), 1024 * 1024);
+    cache
+        .put_miss(&format!("caa:release-group:{mbid}:500"), 0)
+        .await;
+    let (status, _, body) = get(rig.app(true), &uri).await;
+    assert_eq!(status, StatusCode::OK, "served once the archive answers");
+    assert_eq!(body, PNG_BYTES);
+}
+
+/// A music app cannot poll a "warming" answer, so its cover request joins a
+/// fetch a web page already started and gets the cover, where a web
+/// page's poll is answered at once.
+#[tokio::test]
+async fn a_compat_cover_joins_a_running_fetch() {
+    use droppedneedle_catalog::reads::platform::covers::CoverArt as _;
+
+    let rig = rig(None).await;
+    let service = rig.service(true);
+    // The archive's turn comes in two seconds: within a page's wait.
+    rig.archive
+        .providers
+        .limiter("coverartarchive")
+        .unwrap()
+        .cool_down(std::time::Duration::from_secs(2));
+    let router = Rig::router(service.clone());
+    let page = tokio::spawn(async move {
+        get(
+            router,
+            &format!("/api/v3/covers/release-group/{RG}?size=500"),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let cover = service.album_cover("al1", Some("500")).await;
+    assert_eq!(
+        cover.map(|cover| cover.bytes),
+        Some(PNG_BYTES.to_vec()),
+        "the app gets the cover"
+    );
+    let (status, _, _) = page.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

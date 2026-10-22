@@ -50,6 +50,9 @@ pub const SPEC: KindSpec = KindSpec::new(KIND)
     .keep_done(Duration::from_secs(24 * 3600))
     .keep_failed(Duration::from_secs(7 * 24 * 3600));
 
+/// Longest a warm job waits for its page to finish fetching images.
+const PAGE_WAIT: Duration = Duration::from_secs(10);
+
 /// Release-group covers one job warms at most.
 pub const MAX_COVERS: usize = 200;
 /// Artist images one job warms at most.
@@ -167,6 +170,9 @@ impl JobHandler for CoverWarmJobs {
                     code: PAYLOAD_INVALID,
                 };
             };
+            // Let the page fetch its own images first: the two together
+            // make the bursts the providers refuse.
+            artwork.after_page_fetches(PAGE_WAIT).await;
             let mut fetched = 0_usize;
             // One at a time: a fetch a page started for the same image
             // has usually landed by the time the next check runs.

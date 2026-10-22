@@ -36,6 +36,7 @@ static SPEC: Spec = Spec {
 static HOPS: RedirectRule = RedirectRule {
     max_hops: 2,
     next: |_, next| Some(next.clone()),
+    foreign: droppedneedle_providers::executor::never_foreign,
 };
 
 fn url(path: &str) -> String {
@@ -647,6 +648,79 @@ async fn cover_art_archive_hooks() {
             "{name}: the archive is not rested"
         );
     }
+}
+
+/// The archive's redirects lead to the Internet Archive's storage nodes,
+/// which fail one at a time. Five failures in a row there do not rest the
+/// archive; five on a hop that stays on the archive's own host do; and a
+/// wait a storage node names still cools the row.
+#[tokio::test(start_paused = true)]
+async fn only_storage_node_failures_are_kept_off_the_archive() {
+    let front = format!(
+        "{}/release-group/{RELEASE}/front-500",
+        coverart::COVER_ART_ARCHIVE_BASE
+    );
+    let node = "https://ia600508.us.archive.org/9/items/mbid-x/front_500.jpg";
+    let same_host = format!(
+        "{}/release/{RELEASE}/front-500",
+        coverart::COVER_ART_ARCHIVE_BASE
+    );
+    let fetch = |providers: &Providers| {
+        let client = providers.coverart.clone();
+        async move {
+            client
+                .fetch_front(
+                    EntityKind::ReleaseGroup,
+                    RELEASE,
+                    DownloadSize::Size500,
+                    1 << 20,
+                    RequestPriority::BackgroundSync,
+                )
+                .await
+        }
+    };
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(Method::Get, &front, answer(307, &[("location", node)], ""));
+    wire.on(
+        Method::Get,
+        node,
+        Scripted::Transport(TransportKind::Connect),
+    );
+    let providers = providers_over(&wire);
+    for _ in 0..5 {
+        fetch(&providers).await.expect_err("the node is down");
+    }
+    assert!(
+        !providers.coverart.executor().resting_after_failures(),
+        "a failing storage node does not rest the archive"
+    );
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        &front,
+        answer(307, &[("location", &same_host)], ""),
+    );
+    wire.on(Method::Get, &same_host, answer(500, &[], ""));
+    let providers = providers_over(&wire);
+    for _ in 0..5 {
+        fetch(&providers).await.expect_err("the archive fails");
+    }
+    assert!(
+        providers.coverart.executor().resting_after_failures(),
+        "failures on the archive's own host rest it"
+    );
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(Method::Get, &front, answer(307, &[("location", node)], ""));
+    wire.on(Method::Get, node, answer(429, &[("retry-after", "20")], ""));
+    let providers = providers_over(&wire);
+    fetch(&providers).await.expect_err("the node is busy");
+    assert!(
+        providers.limiter("coverartarchive").unwrap().cooling_for() > Duration::from_secs(10),
+        "the wait the node named cools the row"
+    );
 }
 
 /// The ListenBrainz rules: a policy block (the popularity 500 "currently

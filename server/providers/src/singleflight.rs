@@ -100,6 +100,24 @@ impl<T: Send + Sync + 'static, E: Send + Sync + 'static> Singleflight<T, E> {
         self.pending.lock().await.clear();
     }
 
+    /// Whether a flight for `key` is in the air.
+    pub async fn is_running(&self, key: &str) -> bool {
+        self.pending
+            .lock()
+            .await
+            .get(key)
+            .is_some_and(|flight| flight.peek().is_none())
+    }
+
+    /// Whether any flight whose key starts with `prefix` is in the air.
+    pub async fn any_running(&self, prefix: &str) -> bool {
+        self.pending
+            .lock()
+            .await
+            .iter()
+            .any(|(key, flight)| key.starts_with(prefix) && flight.peek().is_none())
+    }
+
     /// Flights currently in the air.
     pub async fn pending_count(&self) -> usize {
         self.pending.lock().await.len()

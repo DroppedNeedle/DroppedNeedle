@@ -52,6 +52,7 @@ const fn spec(source: &'static str) -> Spec {
 static HOPS: RedirectRule = RedirectRule {
     max_hops: MAX_IMAGE_REDIRECTS,
     next: |_, next| check_image_url(next.as_str()),
+    foreign: crate::executor::never_foreign,
 };
 
 /// Validate a third-party image URL: https on the default port, no credentials,
@@ -60,7 +61,18 @@ static HOPS: RedirectRule = RedirectRule {
 /// else.
 #[must_use]
 pub fn check_image_url(raw: &str) -> Option<Url> {
-    let url = Url::parse(raw.trim()).ok()?;
+    let mut url = Url::parse(raw.trim()).ok()?;
+    // TheAudioDB still names some pictures over http. Its host serves the
+    // same path over https (the http address answers 301 to it; checked
+    // 2026-10-22 on r2.theaudiodb.com), so those are fetched over https.
+    if url.scheme() == "http"
+        && url.port().is_none()
+        && url
+            .domain()
+            .is_some_and(|host| is_audiodb(&host.to_ascii_lowercase()))
+    {
+        url.set_scheme("https").ok()?;
+    }
     if url.scheme() != "https"
         || !url.username().is_empty()
         || url.password().is_some()

@@ -99,6 +99,18 @@ pub struct RedirectRule {
     /// Where a hop from the first URL toward the second goes: the URL to
     /// fetch, or `None` to refuse the hop.
     pub next: fn(&Url, &Url) -> Option<Url>,
+    /// Whether a hop target is another service than the provider (such as
+    /// the archive's storage nodes). A target's failure then neither counts
+    /// toward the provider's failure rest nor marks it down; a wait it
+    /// names still cools the row.
+    pub foreign: fn(&Url) -> bool,
+}
+
+/// [`RedirectRule::foreign`] for rules whose targets all belong to the
+/// provider.
+#[must_use]
+pub fn never_foreign(_: &Url) -> bool {
+    false
 }
 
 /// One outgoing request. Built only from a parsed base URL, with path
@@ -610,6 +622,7 @@ impl Executor {
         let budget = Budget::for_priority(priority);
         let mut first_sent: Option<Instant> = None;
         let mut last_error: Option<ProviderError> = None;
+        let mut off_host = false;
         let mut attempt = 1;
         loop {
             // A page's request never queues longer than this.
@@ -626,6 +639,7 @@ impl Executor {
                 Ok(slot) => slot,
                 Err(Refused::TooLong { wait }) => {
                     return Err(match last_error {
+                        Some(error) if off_host => self.finish_off_host(error),
                         Some(error) => self.finish(error),
                         None => self.decline(wait),
                     });
@@ -638,7 +652,7 @@ impl Executor {
                 }
             };
             let sent = *first_sent.get_or_insert_with(Instant::now);
-            let outcome = self.attempt(&request, priority).await;
+            let (outcome, foreign) = self.attempt(&request, priority).await;
             // The slot and the token are never held through a sleep.
             drop(slot);
             let error = match outcome {
@@ -648,6 +662,7 @@ impl Executor {
                     return Ok(reply);
                 }
                 Err(error) => {
+                    off_host = foreign;
                     let error = self.cap_wait(error);
                     if let Some(delay) = self.cooldown_after(&error) {
                         self.limiter.cool_down(delay);
@@ -665,7 +680,11 @@ impl Executor {
                 None
             };
             let Some(wait) = wait else {
-                return Err(self.finish(error));
+                return Err(if off_host {
+                    self.finish_off_host(error)
+                } else {
+                    self.finish(error)
+                });
             };
             last_error = Some(error);
             tokio::time::sleep(wait).await;
@@ -691,24 +710,28 @@ impl Executor {
         &self,
         request: &Request,
         priority: RequestPriority,
-    ) -> Result<Reply, ProviderError> {
+    ) -> (Result<Reply, ProviderError>, bool) {
         let mut body_bytes = 0;
-        let outcome =
-            tokio::time::timeout(self.spec.timeout, self.exchange(request, &mut body_bytes))
-                .await
-                .unwrap_or(Err(ProviderError::Transport {
-                    provider: self.spec.source,
-                    kind: TransportKind::Timeout,
-                }));
+        let mut foreign = false;
+        let outcome = tokio::time::timeout(
+            self.spec.timeout,
+            self.exchange(request, &mut body_bytes, &mut foreign),
+        )
+        .await
+        .unwrap_or(Err(ProviderError::Transport {
+            provider: self.spec.source,
+            kind: TransportKind::Timeout,
+        }));
         self.limiter
             .record_call(priority, CallOutcome::of(&outcome), body_bytes);
-        outcome
+        (outcome, foreign)
     }
 
     async fn exchange(
         &self,
         request: &Request,
         body_bytes: &mut u64,
+        foreign: &mut bool,
     ) -> Result<Reply, ProviderError> {
         let provider = self.spec.source;
         let max_body = request
@@ -771,6 +794,7 @@ impl Executor {
                             });
                         };
                         hops += 1;
+                        *foreign = (rule.foreign)(&next);
                         url = next;
                         continue;
                     }
@@ -849,6 +873,17 @@ impl Executor {
         if let Some(error) = error {
             tracing::debug!(provider = self.spec.source, %error, "provider call refused");
         }
+    }
+
+    /// Hand back the last error of a call whose last hop went to a foreign
+    /// target: a failure there is logged but recorded nothing against this
+    /// provider; anything else is finished as usual.
+    fn finish_off_host(&self, error: ProviderError) -> ProviderError {
+        if !error.trips_breaker() {
+            return self.finish(error);
+        }
+        tracing::warn!(provider = self.spec.source, %error, "provider redirect target failed");
+        error
     }
 
     /// Record the final failure once, and hand it back.

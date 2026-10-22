@@ -7,7 +7,7 @@
 //!   found in a folder and served through two routes, is stored once.
 //! - `keys/<aa>/<key hash>`: a small text record mapping a lookup key (for
 //!   example `caa:release-group:<mbid>:500`) to a blob, or recording that
-//!   the archive had no art until a given time. A record may also carry the
+//!   the archive had no art, or could not be asked, until a given time. A record may also carry the
 //!   image's credit (see [`ImageCredit`]). TheAudioDB album
 //!   thumbnails keep theirs under `keys-audiodb/` instead, so they can be
 //!   forgotten on their own.
@@ -52,6 +52,12 @@ pub enum KeyEntry {
     },
     /// The source had no art; do not ask again before `until` (unix secs).
     Miss {
+        /// Unix second the marker expires.
+        until: u64,
+    },
+    /// The source could not be asked (down, refusing, or resting); nothing
+    /// is known about the art. Ask again after `until` (unix secs).
+    Unreachable {
         /// Unix second the marker expires.
         until: u64,
     },
@@ -299,13 +305,23 @@ impl ArtworkCache {
     /// that already holds an image still on disk keeps it: a failed fetch
     /// running beside one that succeeded never blanks the stored image.
     pub async fn put_miss(&self, key: &str, ttl_secs: u64) {
+        self.put_marker(key, "miss", ttl_secs).await;
+    }
+
+    /// Record that the source could not be asked about `key`, for
+    /// `ttl_secs`. Like [`ArtworkCache::put_miss`], a stored image is kept.
+    pub async fn put_unreachable(&self, key: &str, ttl_secs: u64) {
+        self.put_marker(key, "unreachable", ttl_secs).await;
+    }
+
+    async fn put_marker(&self, key: &str, kind: &str, ttl_secs: u64) {
         if let Some(KeyEntry::Hit { hash, .. }) = self.key(key).await
             && self.has_blob(&hash).await
         {
             return;
         }
         let path = self.key_path(key);
-        let text = format!("miss\n{}\n", unix_now() + ttl_secs);
+        let text = format!("{kind}\n{}\n", unix_now() + ttl_secs);
         if let Some(Err(error)) = blocking(move || write_atomic(&path, text.as_bytes())).await {
             tracing::warn!(%error, "cover cache miss marker not written");
         }
@@ -526,6 +542,9 @@ fn parse_key(text: &str) -> Option<KeyEntry> {
         "miss" => Some(KeyEntry::Miss {
             until: lines.next()?.parse().ok()?,
         }),
+        "unreachable" => Some(KeyEntry::Unreachable {
+            until: lines.next()?.parse().ok()?,
+        }),
         _ => None,
     }
 }
@@ -615,7 +634,9 @@ fn clean_key_files(
                         true
                     }
                 }
-                Some(Some(KeyEntry::Miss { until })) => until <= now,
+                Some(Some(KeyEntry::Miss { until } | KeyEntry::Unreachable { until })) => {
+                    until <= now
+                }
                 Some(None) => true,
                 None => false,
             };

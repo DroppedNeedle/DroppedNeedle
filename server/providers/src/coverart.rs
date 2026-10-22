@@ -53,7 +53,20 @@ pub static SPEC: Spec = Spec {
 static HOPS: RedirectRule = RedirectRule {
     max_hops: MAX_REDIRECT_HOPS,
     next: |_, next| check_redirect_hop(next),
+    foreign: is_storage_node,
 };
+
+/// Whether a hop goes to one of the Internet Archive's storage nodes (such
+/// as `ia600508.us.archive.org` or `dn720905.ca.archive.org`, both seen on
+/// 2026-10-22), which hold the image files. One failing node says nothing
+/// about the archive; `archive.org` itself and the archive's own hosts are
+/// the provider.
+fn is_storage_node(url: &Url) -> bool {
+    url.domain().is_some_and(|host| {
+        let host = host.to_ascii_lowercase();
+        host != "archive.org" && host.ends_with(".archive.org")
+    })
+}
 
 /// Which entity the artwork was listed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
