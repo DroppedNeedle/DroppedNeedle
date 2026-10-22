@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use super::{DownloadWorker, Pass, handled_count, live_attempt, now_unix_f64, successor_row};
+use super::{DownloadWorker, Pass, handled_count, live_attempt, successor_row};
 use crate::downloads::queue_rows::ProgressColumns;
 use crate::downloads::reasons::NEXT_SOURCE_NOTE;
 use crate::downloads::source_tag::SourceTag;
@@ -136,7 +136,7 @@ impl DownloadWorker {
         };
         let source = task.clone();
         let next = row.clone();
-        let now = now_unix_f64();
+        let now = self.now_unix_f64();
         let outcome = self
             .journal
             .run_foreground("downloads.manual_retry", move |store| {
@@ -212,7 +212,7 @@ impl DownloadWorker {
             watchdog: Watchdog::new(config.watchdog.clone()),
             sources: self.inputs.sources(),
             config,
-            now: now_unix_f64(),
+            now: self.now_unix_f64(),
         };
         let attempts = self.attempts(&task.id).await.ok_or_else(|| {
             NextSourceError::Unavailable("download attempts unreadable".to_owned())

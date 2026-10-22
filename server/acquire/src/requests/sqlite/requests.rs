@@ -427,6 +427,7 @@ impl RequestStore {
     ) -> Result<Result<Vec<BeginOutcome>, QuotaRefusal>, RequestsError> {
         let owner = owner.to_owned();
         let now = records.first().map_or(0, |(record, _)| record.requested_at);
+        let clock = self.db.clock().clone();
         self.db
             .write("requests.begin", move |tx| {
                 if let Some(gate) = gate.filter(|gate| gate.limit > 0) {
@@ -444,7 +445,7 @@ impl RequestStore {
                 for (record, follow) in records {
                     let outcome = begin_tx(tx, record)?;
                     if let (BeginOutcome::Won(_), Some(follow)) = (&outcome, follow) {
-                        follow.apply(tx, &owner)?;
+                        follow.apply(tx, &owner, crate::follows::now_ms(clock.as_ref()))?;
                     }
                     outcomes.push(outcome);
                 }
@@ -608,6 +609,7 @@ impl RequestStore {
     ) -> Result<bool, RequestsError> {
         let stored = row_key(RequestKind::Album, key);
         let user_id = user_id.to_owned();
+        let clock = self.db.clock().clone();
         self.db
             .write("requests.attach", move |tx| {
                 if !attach_tx(tx, &stored, &user_id, name.as_deref(), now)? {
@@ -620,7 +622,7 @@ impl RequestStore {
                          WHERE musicbrainz_id_lower = ?1 AND monitor_artist = 0",
                         params![stored, follow.auto_download],
                     )?;
-                    follow.apply(tx, &user_id)?;
+                    follow.apply(tx, &user_id, crate::follows::now_ms(clock.as_ref()))?;
                 }
                 Ok(true)
             })

@@ -66,7 +66,10 @@ fn scratch_dir(name: &str) -> crate::common::ScratchDir {
 async fn runtime(name: &str) -> (DbRuntime, AcquireDb, crate::common::ScratchDir) {
     let dir = scratch_dir(name);
     let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    let db = AcquireDb::new(runtime.db().clone());
+    let db = AcquireDb::new(
+        runtime.db().clone(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     (runtime, db, dir)
 }
 

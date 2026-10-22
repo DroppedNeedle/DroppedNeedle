@@ -470,7 +470,7 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
     let link = SpotifyConnection {
         access_token: grant.access_token,
         refresh_token: grant.refresh_token.unwrap_or_default(),
-        expires_at_unix: now_unix_secs() + grant.expires_in_secs,
+        expires_at_unix: now_unix_secs(deps.spotify_links.clock().as_ref()) + grant.expires_in_secs,
         username,
         spotify_user_id,
     };

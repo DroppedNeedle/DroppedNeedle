@@ -24,7 +24,7 @@ use crate::downloads::manifest::{PlannedAlbum, ReplaceVersion};
 use crate::edition::{copy_is_held, local_names};
 use crate::flows::stores::UpgradeWorklist;
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::{EditionMark, now_epoch, validate_mbid};
+use crate::requests::ledger::{EditionMark, validate_mbid};
 use crate::requests::models::EditionAcquireResponse;
 use droppedneedle_auth::Curator;
 use droppedneedle_library::operations::models::OperationError;
@@ -179,7 +179,7 @@ impl RequestsService {
         replace_versions: bool,
     ) -> Result<EditionAcquireResponse, RequestsError> {
         let mbid = validate_mbid(release_group)?;
-        let now = now_epoch();
+        let now = self.now_epoch();
         if let Some(busy) = self.album_busy(&mbid).await? {
             return Ok(already_in_progress(busy));
         }

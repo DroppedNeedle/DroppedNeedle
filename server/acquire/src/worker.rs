@@ -25,7 +25,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use super::downloads::journal::Journal;
 use super::downloads::manifest::{DownloadManifest, ExpectedFile, ManifestCodec};
@@ -92,14 +92,6 @@ const POLL_BACKOFF_BASE_SECONDS: f64 = 30.0;
 /// Longest wait between polls of a client that keeps failing, so one that
 /// comes back is polled again within a few minutes.
 const POLL_BACKOFF_CAP_SECONDS: f64 = 5.0 * 60.0;
-
-/// Current unix time as float seconds.
-fn now_unix_f64() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
-}
 
 /// A journal step's value, or `None` after logging why it failed.
 fn logged<R>(name: &'static str, result: Result<R, StoreError>) -> Option<R> {
@@ -182,9 +174,11 @@ pub async fn run_startup_recovery(
             StartupAction::ResumePoll => report.resumed += 1,
             StartupAction::RestartClean => {
                 let task_id = task.id.clone();
+                let clock = journal.db().clock().clone();
                 journal
                     .run("downloads.recovery.restart", move |store| {
-                        store.transition_task(&task_id, TaskStatus::Queued, now_unix_f64(), None)
+                        let now = crate::db::unix_secs_f64(clock.as_ref());
+                        store.transition_task(&task_id, TaskStatus::Queued, now, None)
                     })
                     .await
                     .map_err(|error| error.to_string())?;
@@ -599,6 +593,11 @@ pub struct DownloadWorker {
 }
 
 impl DownloadWorker {
+    /// Now, as the float unix seconds the journal stores.
+    fn now_unix_f64(&self) -> f64 {
+        self.journal.db().now_unix_f64()
+    }
+
     /// Wire the worker over the shared journal and the saved settings,
     /// sending live progress to `events` and the cleanup warning to
     /// `health`. `readiness` reads the same settings.
@@ -754,7 +753,7 @@ impl DownloadWorker {
             watchdog: Watchdog::new(config.watchdog.clone()),
             sources: self.inputs.sources(),
             config,
-            now: now_unix_f64(),
+            now: self.now_unix_f64(),
         };
         self.enqueue_pass(&pass_ctx).await;
         self.poll_pass(&pass_ctx).await;
@@ -1852,11 +1851,13 @@ impl DownloadWorker {
         let client_job_active = source.job_active(&handle).await?;
         // Real client-side mount truth; a lookup error fails closed.
         let mount_healthy = source.mount_healthy(&handle).await?;
+        let now_ms = u64::try_from(self.journal.db().clock().now_ms()).unwrap_or(0);
+        let now = UNIX_EPOCH + Duration::from_millis(now_ms);
         let age_seconds = tokio::fs::metadata(path)
             .await
             .ok()
             .and_then(|meta| meta.modified().ok())
-            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .and_then(|modified| now.duration_since(modified).ok())
             .map(|age| age.as_secs_f64())
             .unwrap_or(0.0);
         Some(OrphanEvidence {

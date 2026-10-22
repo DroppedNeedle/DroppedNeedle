@@ -56,7 +56,10 @@ impl Rig {
         let plain_user = rig.seed_user("molly", Role::User).await;
         let quota = Arc::new(
             droppedneedle_acquire::requests::quota::QuotaLedger::unlimited(
-                droppedneedle_acquire::db::AcquireDb::new(runtime.db().clone()),
+                droppedneedle_acquire::db::AcquireDb::new(
+                    runtime.db().clone(),
+                    platform.clock.clone(),
+                ),
             ),
         );
         let providers = Arc::new(droppedneedle_providers::Providers::build(

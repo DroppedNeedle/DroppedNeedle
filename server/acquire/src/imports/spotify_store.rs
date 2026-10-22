@@ -25,6 +25,7 @@ use droppedneedle_auth::times::{parse_iso, to_iso};
 use droppedneedle_catalog::reads::collections::db::StoreError;
 use droppedneedle_catalog::reads::collections::store::PlaylistStore;
 use droppedneedle_catalog::reads::collections::store::playlists::{CoverImage, NewEntry, Written};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
 /// The `user_connections.service` tag for Spotify links (v2's).
@@ -45,9 +46,10 @@ impl SqliteSpotifyStates {
     /// Remember `state` for [`STATE_TTL_SECS`], pruning expired states.
     pub async fn store_state(&self, state: &str, pending: &PendingAuth) -> Result<(), String> {
         let (state, pending) = (state.to_owned(), pending.clone());
+        let clock = self.db.clock().clone();
         self.db
             .write("spotify.state.store", move |tx| {
-                let now = now_unix_secs();
+                let now = now_unix_secs(clock.as_ref());
                 tx.execute(
                     "DELETE FROM spotify_auth_requests WHERE expires_at <= ?1",
                     params![now],
@@ -72,6 +74,7 @@ impl SqliteSpotifyStates {
     /// none.
     pub async fn consume_state(&self, state: &str) -> Result<Option<PendingAuth>, String> {
         let state = state.to_owned();
+        let clock = self.db.clock().clone();
         self.db
             .write("spotify.state.consume", move |tx| {
                 let row: Option<(String, String, i64)> = tx
@@ -87,7 +90,7 @@ impl SqliteSpotifyStates {
                     params![state],
                 )?;
                 Ok(row
-                    .filter(|(_, _, expires_at)| *expires_at > now_unix_secs())
+                    .filter(|(_, _, expires_at)| *expires_at > now_unix_secs(clock.as_ref()))
                     .map(|(user_id, redirect_uri, _)| PendingAuth {
                         user_id,
                         redirect_uri,
@@ -138,6 +141,11 @@ impl SqliteSpotifyLinks {
         Self { db, crypto }
     }
 
+    /// The platform clock the links are stamped with.
+    pub fn clock(&self) -> &Arc<dyn Clock> {
+        self.db.clock()
+    }
+
     fn seal(&self, link: &SpotifyConnection) -> Result<String, String> {
         let document = serde_json::to_string(&LinkDocument::from(link))
             .map_err(|error| format!("spotify link encode: {error}"))?;
@@ -153,9 +161,10 @@ impl SqliteSpotifyLinks {
         connection: &SpotifyConnection,
     ) -> Result<(), String> {
         let (user_id, sealed) = (user_id.to_owned(), self.seal(connection)?);
+        let clock = self.db.clock().clone();
         self.db
             .write("spotify.link.upsert", move |tx| {
-                let now = to_iso(now_unix_secs());
+                let now = to_iso(now_unix_secs(clock.as_ref()));
                 tx.execute(
                     "INSERT INTO user_connections \
                      (user_id, service, connection_data, enabled, created_at, updated_at) \
@@ -180,12 +189,18 @@ impl SqliteSpotifyLinks {
         connection: &SpotifyConnection,
     ) -> Result<bool, String> {
         let (user_id, sealed) = (user_id.to_owned(), self.seal(connection)?);
+        let clock = self.db.clock().clone();
         self.db
             .write("spotify.link.refresh", move |tx| {
                 let changed = tx.execute(
                     "UPDATE user_connections SET connection_data = ?3, updated_at = ?4 \
                      WHERE user_id = ?1 AND service = ?2",
-                    params![user_id, SERVICE, sealed, to_iso(now_unix_secs())],
+                    params![
+                        user_id,
+                        SERVICE,
+                        sealed,
+                        to_iso(now_unix_secs(clock.as_ref()))
+                    ],
                 )?;
                 Ok(changed > 0)
             })

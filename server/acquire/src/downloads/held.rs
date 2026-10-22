@@ -112,13 +112,6 @@ impl Drop for Claim {
     }
 }
 
-fn now_unix_f64() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
 impl HeldImports {
     /// The review over `journal`; `worker` lands the files and wakes.
     pub fn new(journal: Arc<Journal>, worker: Arc<DownloadWorker>) -> Self {
@@ -379,7 +372,7 @@ impl HeldImports {
             return Ok(());
         }
         let id = row.id;
-        let now = now_unix_f64();
+        let now = self.journal.db().now_unix_f64();
         self.journal
             .run_foreground("downloads.held_vanished", move |store| {
                 store.resolve_held(&[id], "discarded", now)
@@ -561,7 +554,7 @@ impl HeldImports {
 
     async fn finish(&self, row: &HeldRow, status: &'static str) -> Result<(), HeldError> {
         let id = row.id;
-        let now = now_unix_f64();
+        let now = self.journal.db().now_unix_f64();
         self.journal
             .run_foreground("downloads.held_resolve", move |store| {
                 store.resolve_held(&[id], status, now)
@@ -573,7 +566,7 @@ impl HeldImports {
 
     async fn discard_rows(&self, rows: Vec<HeldRow>) -> Result<(), HeldError> {
         let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
-        let now = now_unix_f64();
+        let now = self.journal.db().now_unix_f64();
         self.journal
             .run_foreground("downloads.held_discard", move |store| {
                 store.resolve_held(&ids, "discarded", now)
@@ -635,7 +628,7 @@ impl HeldImports {
                 return;
             }
         }
-        let now = now_unix_f64();
+        let now = self.journal.db().now_unix_f64();
         let id = task_id.clone();
         match self
             .journal

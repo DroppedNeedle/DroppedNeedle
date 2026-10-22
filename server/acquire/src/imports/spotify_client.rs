@@ -9,7 +9,6 @@
 //! Answers decode through [`super::spotify_models`].
 
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 
@@ -19,6 +18,7 @@ use super::spotify_models::{
 };
 use super::spotify_oauth::{SpotifyConnection, UNRESERVED};
 use super::spotify_store::SqliteSpotifyLinks;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Seconds before expiry a token counts as expired (v2 buffer).
@@ -29,12 +29,9 @@ pub const MAX_COVER_FETCH_BYTES: usize = 5 * 1024 * 1024;
 /// Largest Web API answer read.
 pub const MAX_API_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// Seconds since the Unix epoch, saturating on clock failure.
-pub fn now_unix_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
+/// `clock`'s time in unix seconds; a clock before the epoch reads as zero.
+pub fn now_unix_secs(clock: &dyn Clock) -> i64 {
+    clock.now_unix().max(0)
 }
 
 /// Track count of a listed playlist (v2 `_playlist_track_count`). The
@@ -509,7 +506,8 @@ impl<'a> TokenRefresher<'a> {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        if SpotifyClient::is_expired(connection.expires_at_unix, now_unix_secs()) {
+        let now = now_unix_secs(self.connections.clock().as_ref());
+        if SpotifyClient::is_expired(connection.expires_at_unix, now) {
             return self.refresh_now().await;
         }
         Ok(connection.access_token)
@@ -542,7 +540,8 @@ impl<'a> TokenRefresher<'a> {
         let updated = SpotifyConnection {
             access_token: grant.access_token.clone(),
             refresh_token: grant.refresh_token.unwrap_or(connection.refresh_token),
-            expires_at_unix: now_unix_secs() + grant.expires_in_secs,
+            expires_at_unix: now_unix_secs(self.connections.clock().as_ref())
+                + grant.expires_in_secs,
             username: connection.username,
             spotify_user_id: connection.spotify_user_id,
         };

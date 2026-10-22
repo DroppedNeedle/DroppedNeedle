@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use axum::Router;
 use futures_util::future::BoxFuture;
@@ -517,10 +517,13 @@ pub struct AcquireStores {
 }
 
 impl AcquireStores {
-    /// The stores over the platform's database, announcing flow outcomes
-    /// on `ticks`.
-    pub fn open(db: &droppedneedle_kernel::db::Db, ticks: Arc<dyn TickSink>) -> Self {
-        Self::over(AcquireDb::new(db.clone()), ticks)
+    /// The stores over the platform's database and clock, announcing flow
+    /// outcomes on `ticks`.
+    pub fn open(platform: &Platform, ticks: Arc<dyn TickSink>) -> Self {
+        Self::over(
+            AcquireDb::new(platform.db.clone(), platform.clock.clone()),
+            ticks,
+        )
     }
 
     fn over(db: AcquireDb, ticks: Arc<dyn TickSink>) -> Self {
@@ -932,10 +935,7 @@ impl AcquireSetup {
         // playlists.
         let spotify_imports = SpotifyImports::new(
             db.db().clone(),
-            JobQueue::new(
-                db.db().clone(),
-                Arc::new(droppedneedle_kernel::clock::SystemClock),
-            ),
+            JobQueue::new(db.db().clone(), db.clock().clone()),
         );
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http),
@@ -1201,14 +1201,13 @@ fn flows_bundle(
         library: library.clone(),
         ticks: ticks.clone(),
         preferences: settings.live(),
-        today: Arc::new(|| {
-            // Days since epoch to a UTC calendar date.
-            let days = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|span| span.as_secs() / 86_400)
-                .unwrap_or(0);
-            utc_ymd(days)
-        }),
+        today: {
+            let clock = db.clock().clone();
+            Arc::new(move || {
+                // Days since epoch to a UTC calendar date.
+                utc_ymd(super::db::epoch_secs(clock.as_ref()) / 86_400)
+            })
+        },
     });
     let sweep_deps = Arc::new(SweepDeps {
         policy: settings.live(),

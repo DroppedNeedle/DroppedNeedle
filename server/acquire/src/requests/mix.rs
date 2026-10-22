@@ -216,6 +216,11 @@ pub struct PersonalMixBuilder {
 }
 
 impl PersonalMixBuilder {
+    /// Now, as whole unix seconds.
+    fn now_epoch(&self) -> u64 {
+        self.requests.library.now_epoch()
+    }
+
     /// Builder over its ports. `requests` supplies the library database,
     /// the approval rows and album intake; it is the state as built before
     /// the builder, so it holds no mixer of its own.
@@ -282,7 +287,12 @@ impl PersonalMixBuilder {
         if !enabled || role.is_curator() {
             return;
         }
-        if let Err(error) = self.requests.mixes.file_pending(user_id, now_epoch()).await {
+        if let Err(error) = self
+            .requests
+            .mixes
+            .file_pending(user_id, self.now_epoch())
+            .await
+        {
             tracing::error!(?error, "personal mix approval could not be queued");
         }
     }
@@ -366,7 +376,9 @@ impl PersonalMixBuilder {
                 .await
                 .map_err(store_fault)?
                 .map(|row| row.updated_at);
-            if updated_at.is_some_and(|at| now_epoch().saturating_sub(at) < REFRESH_MIN_AGE_SECS) {
+            if updated_at
+                .is_some_and(|at| self.now_epoch().saturating_sub(at) < REFRESH_MIN_AGE_SECS)
+            {
                 return Ok(MixOutcome::skipped(SkipReason::Fresh, existing));
             }
         }
@@ -806,13 +818,6 @@ fn entry_for(track: &MixTrack) -> NewEntry {
 
 fn store_fault(error: droppedneedle_catalog::reads::collections::db::StoreError) -> RequestsError {
     RequestsError::internal(&error)
-}
-
-fn now_epoch() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0)
 }
 
 /// The scrobble-settings hooks over the mix builder: the toggle feeds the

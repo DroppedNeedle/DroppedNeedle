@@ -393,7 +393,7 @@ impl DropImports {
         }
         match self
             .store
-            .prune_stale_review_items(now() - REVIEW_RETENTION_SECS)
+            .prune_stale_review_items(self.store.db().now_unix_f64() - REVIEW_RETENTION_SECS)
             .await
         {
             Ok(paths) if !paths.is_empty() => {
@@ -996,7 +996,7 @@ impl DropImports {
             job_id: job.id.clone(),
             folder_name: name,
             status: item_status::PROCESSING.to_owned(),
-            updated_at: now(),
+            updated_at: self.store.db().now_unix_f64(),
             release_group_mbid: None,
             album_title: None,
             artist_name: None,
@@ -1034,7 +1034,7 @@ impl DropImports {
         if !fulfills {
             return;
         }
-        let at = crate::db::now_epoch();
+        let at = self.store.db().now_epoch();
         let record = match self.ledger.get(RequestKind::Album, &group).await {
             Ok(record) => record,
             Err(error) => {
@@ -1311,13 +1311,6 @@ fn remove_empty_dirs(root: &Path) {
     if std::fs::remove_dir(root).is_err() {
         tracing::debug!(dir = %root.display(), "drop staging folder kept: files remain");
     }
-}
-
-fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 #[cfg(test)]

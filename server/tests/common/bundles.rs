@@ -97,7 +97,7 @@ pub fn acquire_at(
     AcquireSetup::build(
         platform,
         users,
-        AcquireStores::open(&platform.db, ticks),
+        AcquireStores::open(platform, ticks),
         AcquirePorts {
             library: Arc::new(LibraryLanding::new(
                 library.clone(),

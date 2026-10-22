@@ -6,23 +6,6 @@
 # the file is still listed. Inline #[cfg(test)] modules are skipped; a test
 # file of its own is checked like any other. Instant::now() is never listed.
 
-acquire/src/db.rs  to move: take time from the kernel clock
-acquire/src/dispatch.rs  to move: take time from the kernel clock
-acquire/src/downloads/held.rs  to move: take time from the kernel clock
-acquire/src/downloads/queue.rs  to move: take time from the kernel clock
-acquire/src/drop_import/mod.rs  to move: take time from the kernel clock
-acquire/src/drop_import/store.rs  to move: take time from the kernel clock
-acquire/src/follows/cursors.rs  to move: take time from the kernel clock
-acquire/src/imports/spotify_client.rs  to move: take time from the kernel clock
-acquire/src/landing/mod.rs  to move: take time from the kernel clock
-acquire/src/library_removal.rs  to move: take time from the kernel clock
-acquire/src/requests/mix.rs  to move: take time from the kernel clock
-acquire/src/search_jobs/store.rs  to move: take time from the kernel clock
-acquire/src/sources.rs  to move: take time from the kernel clock
-acquire/src/target/mod.rs  to move: take time from the kernel clock
-acquire/src/wiring.rs  to move: take time from the kernel clock
-acquire/src/worker.rs  to move: take time from the kernel clock
-
 auth/src/federated/oidc.rs  to move: take time from the kernel clock
 auth/src/session/store.rs  to move: take time from the kernel clock
 auth/src/wiring.rs  to move: take time from the kernel clock

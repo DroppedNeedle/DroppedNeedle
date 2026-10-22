@@ -977,10 +977,12 @@ impl LandingService {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         let task_id = task.id.clone();
+        let clock = self.journal.db().clock().clone();
         if let Err(error) = self
             .journal
             .run("downloads.wrong_product", move |store| {
-                store.record_wrong_product_verdict(&task_id, &folder, now())
+                let now = crate::db::unix_secs_f64(clock.as_ref());
+                store.record_wrong_product_verdict(&task_id, &folder, now)
             })
             .await
         {
@@ -1016,7 +1018,8 @@ impl LandingService {
                 )
             })
             .collect();
-        hold::hold(&self.journal, &self.held_dir, items, now()).await
+        let now = self.journal.db().now_unix_f64();
+        hold::hold(&self.journal, &self.held_dir, items, now).await
     }
 
     /// The held row for one file, with the release track it was paired
@@ -1147,7 +1150,7 @@ impl LandingService {
             files_held: held as i64,
             checks_json: checks_json(&decision.checks),
             missing_positions: serde_json::to_string(&missing).unwrap_or_else(|_| "[]".into()),
-            decided_at: now(),
+            decided_at: self.journal.db().now_unix_f64(),
         };
         if let Err(error) = self
             .journal
@@ -1443,11 +1446,4 @@ fn remove_sources(paths: &[PathBuf]) {
             tracing::debug!(dir = %parent.display(), "download folder kept: not empty");
         }
     }
-}
-
-fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }

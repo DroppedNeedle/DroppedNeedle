@@ -15,7 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::{Attempt, DownloadWorker, Pass, handled_count, now_unix_f64, read_manifest};
+use super::{Attempt, DownloadWorker, Pass, handled_count, read_manifest};
 use crate::downloads::quarantine::QuarantineReason;
 use crate::downloads::sources::{DownloadSource, SourceHandle};
 use crate::downloads::state::{AttemptState, TaskStatus};
@@ -209,7 +209,7 @@ impl DownloadWorker {
         let Some(landing) = self.landing.clone() else {
             return;
         };
-        let now = now_unix_f64();
+        let now = self.now_unix_f64();
         let landed = match source.landed(handle).await {
             Ok(landed) => landed,
             Err(error) => {
@@ -575,7 +575,7 @@ impl DownloadWorker {
             return Ok(None);
         };
         let was_partial = task.status == TaskStatus::Partial;
-        let now = now_unix_f64();
+        let now = self.now_unix_f64();
         let begun = {
             let task_id = task_id.to_owned();
             self.journal

@@ -122,13 +122,6 @@ fn item_from(row: &sqlx::sqlite::SqliteRow) -> Result<ItemRecord, sqlx::Error> {
     })
 }
 
-fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
 /// Drop-import rows over the application database.
 #[derive(Clone)]
 pub struct DropStore {
@@ -138,6 +131,11 @@ pub struct DropStore {
 impl DropStore {
     pub fn new(db: AcquireDb) -> Self {
         Self { db }
+    }
+
+    /// The database the rows live in, and its clock.
+    pub fn db(&self) -> &AcquireDb {
+        &self.db
     }
 
     /// Register a job as processing.
@@ -155,7 +153,7 @@ impl DropStore {
             user_name.to_owned(),
             upload_name.to_owned(),
             staging_dir.to_owned(),
-            now(),
+            self.db.now_unix_f64(),
         );
         self.db
             .write("drop_import.create_job", move |tx| {
@@ -203,7 +201,7 @@ impl DropStore {
             folder_name.to_owned(),
             serde_json::to_string(paths).unwrap_or_else(|_| "[]".to_owned()),
             i64::try_from(paths.len()).unwrap_or(i64::MAX),
-            now(),
+            self.db.now_unix_f64(),
         );
         self.db
             .write_background("drop_import.add_item", move |tx| {
@@ -227,6 +225,7 @@ impl DropStore {
         expected: &'static str,
     ) -> Result<bool, StoreError> {
         let item = item.clone();
+        let clock = self.db.clock().clone();
         self.db
             .write_background("drop_import.save_item", move |tx| {
                 let changed = tx.execute(
@@ -248,7 +247,7 @@ impl DropStore {
                         item.reason_action,
                         serde_json::to_string(&item.staging_paths)
                             .unwrap_or_else(|_| "[]".to_owned()),
-                        now(),
+                        crate::db::unix_secs_f64(clock.as_ref()),
                     ],
                 )?;
                 Ok(changed == 1)
@@ -260,12 +259,13 @@ impl DropStore {
     /// Claim a review item for a person's match: `needs_review` to
     /// `processing`, so a second click or a discard cannot race it.
     pub async fn claim_review(&self, item_id: i64) -> Result<bool, StoreError> {
+        let clock = self.db.clock().clone();
         self.db
             .write("drop_import.claim_review", move |tx| {
                 let changed = tx.execute(
                     "UPDATE drop_import_items SET status = 'processing', updated_at = ?2 \
                      WHERE id = ?1 AND status = 'needs_review'",
-                    params![item_id, now()],
+                    params![item_id, crate::db::unix_secs_f64(clock.as_ref())],
                 )?;
                 Ok(changed == 1)
             })
@@ -345,9 +345,10 @@ impl DropStore {
         code: &'static str,
         action: &'static str,
     ) -> Result<usize, StoreError> {
+        let clock = self.db.clock().clone();
         self.db
             .write_background("drop_import.fail_stale", move |tx| {
-                let at = now();
+                let at = crate::db::unix_secs_f64(clock.as_ref());
                 tx.execute(
                     "UPDATE drop_import_items SET status = 'needs_review', \
                      detail = COALESCE(detail, ?1), reason_code = COALESCE(reason_code, ?2), \

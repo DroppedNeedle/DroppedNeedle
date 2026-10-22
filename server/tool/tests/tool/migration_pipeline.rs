@@ -539,7 +539,10 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
             Db::open_for_tests(&v3_root.join("cache").join("library.db")).expect("database opens");
         let key = Crypto::load(&v3_root.join("config")).expect("v3 key loads");
         droppedneedle_acquire::imports::spotify_store::SqliteSpotifyLinks::new(
-            droppedneedle_acquire::db::AcquireDb::new(db),
+            droppedneedle_acquire::db::AcquireDb::new(
+                db,
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ),
             std::sync::Arc::new(key),
         )
         .get(&fixture.bob_id)

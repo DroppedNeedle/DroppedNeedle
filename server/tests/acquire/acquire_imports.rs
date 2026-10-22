@@ -122,7 +122,7 @@ fn rig_with(
 ) -> Rig {
     let http = http_client();
     let platform = &auth.platform;
-    let db = AcquireDb::new(platform.db.clone());
+    let db = AcquireDb::new(platform.db.clone(), platform.clock.clone());
     let playlists = PlaylistStore::new(CollectionsDb::new(platform.db.clone()));
     let lidarr_settings = Arc::new(ConfigLidarrSettings::new(platform.settings.clone()));
     let follows = Follows::new(db.clone());
@@ -412,7 +412,10 @@ async fn lidarr_non_admin_mirror_opens_approval_batch_at_service_level() {
     let (auth, _, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     seed_lidarr(&auth, &lidarr.base_url).await;
-    let follows = Follows::new(AcquireDb::new(auth.platform.db.clone()));
+    let follows = Follows::new(AcquireDb::new(
+        auth.platform.db.clone(),
+        auth.platform.clock.clone(),
+    ));
     let service = LidarrImportService::new(
         LidarrClient::new(http_client()),
         Arc::new(ConfigLidarrSettings::new(auth.platform.settings.clone())),
@@ -1057,7 +1060,7 @@ async fn spotify_failed_reimport_keeps_the_old_tracks() {
     assert_eq!(before.len(), 2);
 
     // Fail the insert of the second track, after the first one is written.
-    AcquireDb::new(auth.platform.db.clone())
+    AcquireDb::new(auth.platform.db.clone(), auth.platform.clock.clone())
         .write("test.fail_second_track", |tx| {
             tx.execute(
                 "CREATE TRIGGER fail_second_track BEFORE INSERT ON playlist_tracks \
@@ -1721,7 +1724,7 @@ async fn readiness_answers(setup: SourceSetup) -> (Vec<bool>, Vec<String>) {
         .download_client;
 
     let platform = &auth.platform;
-    let db = AcquireDb::new(platform.db.clone());
+    let db = AcquireDb::new(platform.db.clone(), platform.clock.clone());
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let targets = Arc::new(Targets::new(
         journal.clone(),

@@ -132,13 +132,6 @@ pub enum ReviewOutcome {
 /// How long an unpicked job is kept after it last changed: a week.
 pub const PRUNE_AFTER_SECONDS: f64 = 7.0 * 86_400.0;
 
-fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
 /// Search jobs over the acquisition database.
 #[derive(Clone)]
 pub struct JobStore {
@@ -161,9 +154,10 @@ impl JobStore {
             release_mbid: job.release_mbid.clone(),
             ..JobPayload::default()
         };
+        let clock = self.db.clock().clone();
         self.db
             .write("search_jobs.insert", move |tx| {
-                let at = now();
+                let at = crate::db::unix_secs_f64(clock.as_ref());
                 tx.execute(
                     "INSERT INTO search_jobs (id, user_id, artist_name, album_title, year, \
                      release_group_mbid, search_query, status, candidates_blob, created_at, \
@@ -242,9 +236,10 @@ impl JobStore {
         reason: Option<&'static str>,
     ) -> Result<bool, String> {
         let job_id = job_id.to_owned();
+        let clock = self.db.clock().clone();
         self.db
             .write_background("search_jobs.finish", move |tx| {
-                let at = now();
+                let at = crate::db::unix_secs_f64(clock.as_ref());
                 let changed = tx.execute(
                     "UPDATE search_jobs SET status = ?2, candidates_blob = ?3, \
                      error_message = ?4, completed_at = ?5, updated_at = ?5 \
@@ -271,9 +266,10 @@ impl JobStore {
         outcome: ReviewOutcome,
     ) -> Result<bool, String> {
         let task_id = task_id.to_owned();
+        let clock = self.db.clock().clone();
         self.db
             .write("search_jobs.review", move |tx| {
-                let at = now();
+                let at = crate::db::unix_secs_f64(clock.as_ref());
                 let open: bool = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM download_tasks WHERE id = ?1 \
                      AND status = 'queued' AND search_job_id IS NULL)",
@@ -329,9 +325,10 @@ impl JobStore {
     /// whether the job moved.
     pub async fn close(&self, job_id: &str) -> Result<bool, String> {
         let job_id = job_id.to_owned();
+        let clock = self.db.clock().clone();
         self.db
             .write("search_jobs.close", move |tx| {
-                let at = now();
+                let at = crate::db::unix_secs_f64(clock.as_ref());
                 let moved = tx.execute(
                     "UPDATE search_jobs SET status = ?2, updated_at = ?3 \
                      WHERE id = ?1 AND status IN (?4, ?5, ?6)",
@@ -361,9 +358,10 @@ impl JobStore {
         reason: Option<&'static str>,
     ) -> Result<bool, String> {
         let job_id = job_id.to_owned();
+        let clock = self.db.clock().clone();
         self.db
             .write("search_jobs.transition", move |tx| {
-                let at = now();
+                let at = crate::db::unix_secs_f64(clock.as_ref());
                 let mut moved = 0;
                 for status in from {
                     moved += tx.execute(
@@ -418,11 +416,12 @@ impl JobStore {
         picked: PickedTask,
     ) -> Result<Result<String, PickRefusal>, String> {
         let job_id = job_id.to_owned();
+        let clock = self.db.clock().clone();
         let outcome = self
             .db
             .db()
             .write(Lane::Foreground, "search_jobs.pick", move |tx| {
-                let at = now();
+                let at = crate::db::unix_secs_f64(clock.as_ref());
                 let status: Option<String> = tx
                     .query_row(
                         "SELECT status FROM search_jobs WHERE id = ?1",

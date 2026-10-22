@@ -80,7 +80,7 @@ impl Journal {
         announce_fulfilled(
             self.ticks.as_ref(),
             fulfilled,
-            crate::db::to_i64(crate::db::now_epoch()),
+            crate::db::to_i64(self.db.now_epoch()),
         );
         Ok(result)
     }

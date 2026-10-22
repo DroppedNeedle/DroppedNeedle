@@ -14,9 +14,7 @@ use std::sync::Arc;
 use super::RequestsState;
 use super::auth::auto_approves;
 use super::error::RequestsError;
-use super::ledger::{
-    BeginOutcome, RequestRecord, RequestStatus, meaningful_name, now_epoch, validate_mbid,
-};
+use super::ledger::{BeginOutcome, RequestRecord, RequestStatus, meaningful_name, validate_mbid};
 use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, AlbumIntake, BatchCancelResponse,
     BatchIntake, BatchIntakeResponse, ClearHistoryResponse, HistoryQuery, HistoryResponse,
@@ -79,6 +77,11 @@ pub struct RequestsService {
 }
 
 impl RequestsService {
+    /// Now, as whole unix seconds.
+    fn now_epoch(&self) -> u64 {
+        self.library.now_epoch()
+    }
+
     /// Service over one requests state.
     pub fn new(state: &RequestsState) -> Self {
         Self {
@@ -385,7 +388,7 @@ impl RequestsService {
     ) -> Result<IntakeResponse, RequestsError> {
         let role = principal.role();
         let mbid = validate_mbid(&body.musicbrainz_id)?;
-        let now = now_epoch();
+        let now = self.now_epoch();
         // Seam note: v2 resolves provider ids and release aliases through
         // the ownership and MBID stores, then fills missing names from the
         // album service. Intake treats the submitted id as canonical and
@@ -504,7 +507,7 @@ impl RequestsService {
         })?;
         let album_title = meaningful_name(body.album_title.as_deref())
             .unwrap_or_else(|| "Single track".to_owned());
-        let now = now_epoch();
+        let now = self.now_epoch();
 
         if let Some(existing) = self.store.get(RequestKind::Track, &mbid).await?
             && (existing.status.is_active() || existing.status == RequestStatus::Cancelling)
@@ -606,7 +609,7 @@ impl RequestsService {
                 message: format!("Batch must hold at most {BATCH_MAX_ITEMS} items"),
             });
         }
-        let now = now_epoch();
+        let now = self.now_epoch();
 
         // Dedupe pass one: raw submitted ids, case-insensitive.
         let mut seen_raw = std::collections::HashSet::new();
@@ -853,7 +856,7 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<BatchCancelResponse, RequestsError> {
         let is_admin = principal.is_admin();
-        let now = now_epoch();
+        let now = self.now_epoch();
         let mut cancelled = 0_u32;
         let mut failed = 0_u32;
         let mut seen = std::collections::HashSet::new();
@@ -899,7 +902,7 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<ActionResponse, RequestsError> {
         let mbid = validate_mbid(mbid)?;
-        let now = now_epoch();
+        let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
             return Ok(ActionResponse {
                 success: false,
@@ -992,7 +995,7 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<ActionResponse, RequestsError> {
         let mbid = validate_mbid(mbid)?;
-        let now = now_epoch();
+        let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
             return Ok(ActionResponse {
                 success: false,
@@ -1035,7 +1038,7 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<ActionResponse, RequestsError> {
         let mbid = validate_mbid(mbid)?;
-        let now = now_epoch();
+        let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
             return Ok(ActionResponse {
                 success: false,
@@ -1153,7 +1156,7 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<ActionResponse, RequestsError> {
         let mbid = validate_mbid(mbid)?;
-        let now = now_epoch();
+        let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
             return Ok(ActionResponse {
                 success: false,
@@ -1290,7 +1293,7 @@ impl RequestsService {
             self.store.delete(kind, &mbid).await?
         } else {
             self.store
-                .dismiss(kind, &mbid, principal.user_id(), now_epoch())
+                .dismiss(kind, &mbid, principal.user_id(), self.now_epoch())
                 .await?
         };
         Ok(ClearHistoryResponse { success: cleared })
@@ -1518,7 +1521,7 @@ impl RequestsService {
                 &mbid,
                 principal.user_id(),
                 principal.is_admin(),
-                now_epoch(),
+                self.now_epoch(),
             )
             .await?;
         watch_action(change)
@@ -1568,7 +1571,7 @@ impl RequestsService {
     ) -> Result<ActionResponse, RequestsError> {
         if !self
             .mixes
-            .decide(user_id, "approved", reviewer(admin), now_epoch())
+            .decide(user_id, "approved", reviewer(admin), self.now_epoch())
             .await?
         {
             return Ok(no_match());
@@ -1587,7 +1590,7 @@ impl RequestsService {
     ) -> Result<ActionResponse, RequestsError> {
         if !self
             .mixes
-            .decide(user_id, "rejected", reviewer(admin), now_epoch())
+            .decide(user_id, "rejected", reviewer(admin), self.now_epoch())
             .await?
         {
             return Ok(no_match());
@@ -1610,7 +1613,7 @@ impl RequestsService {
     ) -> Result<ActionResponse, RequestsError> {
         if !self
             .mixes
-            .revoke(user_id, reviewer(admin), now_epoch())
+            .revoke(user_id, reviewer(admin), self.now_epoch())
             .await?
         {
             return Ok(no_match());
@@ -1659,7 +1662,7 @@ impl RequestsService {
     /// or its link cut off: it relinks to the task created for it, or
     /// dispatches under the same idempotency key, so nothing runs twice.
     pub async fn recover(&self) -> Result<RequestRecovery, RequestsError> {
-        let now = now_epoch();
+        let now = self.now_epoch();
         let mut report = RequestRecovery::default();
         for kind in [RequestKind::Album, RequestKind::Track] {
             for record in self
@@ -1744,7 +1747,7 @@ impl RequestsService {
                 &existing.key,
                 principal.user_id(),
                 Some(principal.username_display().to_owned()),
-                now_epoch(),
+                self.now_epoch(),
                 follow,
             )
             .await?;
@@ -1752,7 +1755,9 @@ impl RequestsService {
         // who needs no approval and has room of their own.
         if existing.waits_for_quota()
             && auto_approves(principal.role())
-            && let Some(task_id) = self.start_one(existing, principal, now_epoch()).await?
+            && let Some(task_id) = self
+                .start_one(existing, principal, self.now_epoch())
+                .await?
         {
             return Ok(IntakeResponse {
                 success: true,
@@ -1841,7 +1846,7 @@ impl RequestsService {
     ) -> Result<IntakeResponse, RequestsError> {
         let owner = won.user_id.clone().unwrap_or_else(|| actor_id.to_owned());
         let request = stored_dispatch(won, origin, &owner);
-        let now = now_epoch();
+        let now = self.now_epoch();
         match self.dispatch.dispatch(&request).await {
             Err(cause) => {
                 self.store
@@ -1893,7 +1898,7 @@ impl RequestsService {
     ) -> Result<TrackIntakeResponse, RequestsError> {
         let owner = won.user_id.clone().unwrap_or_default();
         let request = stored_dispatch(won, origin, &owner);
-        let now = now_epoch();
+        let now = self.now_epoch();
         match self.dispatch.dispatch(&request).await {
             Err(cause) => {
                 self.store
@@ -2130,7 +2135,7 @@ impl RequestsService {
         let reason = match self.store.role_of(owner).await {
             Ok(Some(role)) => {
                 let principal = Principal::acting_for(owner, role, None);
-                self.waiting_reason_for(&principal, now_epoch()).await
+                self.waiting_reason_for(&principal, self.now_epoch()).await
             }
             Ok(None) => Ok(None),
             Err(error) => Err(error),

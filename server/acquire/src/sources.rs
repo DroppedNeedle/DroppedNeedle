@@ -23,7 +23,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::future::BoxFuture;
 
@@ -49,14 +48,6 @@ use super::usenet::indexer::{Indexer, IndexerQuery};
 use super::usenet::newznab::{IndexerResult, usenet_identity};
 use super::usenet::policy::UsenetPolicy;
 use super::usenet::sabnzbd::{SabnzbdError, SabnzbdQueue};
-
-/// Current unix time as float seconds for retention math.
-fn now_unix_f64() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
-}
 
 /// A refused request or an answer of the wrong shape is the client
 /// rejecting this request; a refused key, a missing item, a rate limit or
@@ -93,7 +84,7 @@ pub(super) async fn blocklist(
     source: &SourceTag,
 ) -> Result<Blocklist, SourceError> {
     journal
-        .read_blocklist(source, now_unix_f64())
+        .read_blocklist(source, journal.db().now_unix_f64())
         .await
         .map_err(|error| SourceError::LocalFault(error.to_string()))
 }
@@ -518,7 +509,7 @@ impl SabnzbdSource {
         .await;
         // The first copy of a release wins (v2's composite indexer rule).
         let mut seen = std::collections::HashSet::new();
-        let now = now_unix_f64();
+        let now = self.journal.db().now_unix_f64();
         let hits = found
             .into_iter()
             .flatten()

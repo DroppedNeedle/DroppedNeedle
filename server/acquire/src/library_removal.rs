@@ -9,8 +9,11 @@
 //! Held files are deleted before the one write that drops their rows and
 //! finishes the job, so a run that stops in between finds them again.
 
+use std::sync::Arc;
+
 use futures_util::future::BoxFuture;
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::jobs::queue::{
     JobCtx, JobError, JobHandler, KindSpec, Outcome, PAYLOAD_INVALID,
@@ -29,6 +32,7 @@ const CLEANUP_FAILED: &str = "CLEANUP_FAILED";
 /// Cleans up download and wanted state for removed albums.
 pub struct AcquireAlbumCleanup {
     db: Db,
+    clock: Arc<dyn Clock>,
 }
 
 impl AcquireAlbumCleanup {
@@ -37,6 +41,7 @@ impl AcquireAlbumCleanup {
     pub fn new(stores: &super::wiring::AcquireStores) -> Self {
         Self {
             db: stores.db.db().clone(),
+            clock: stores.db.clock().clone(),
         }
     }
 }
@@ -77,13 +82,14 @@ impl CleanupError {
 impl JobHandler for AcquireAlbumCleanup {
     fn run(&self, job: JobCtx) -> BoxFuture<'static, Outcome> {
         let db = self.db.clone();
+        let clock = self.clock.clone();
         Box::pin(async move {
             let Ok(removed) = job.payload::<AlbumRemovedJob>() else {
                 return Outcome::Fail {
                     code: PAYLOAD_INVALID,
                 };
             };
-            match clean_up(&db, job, &removed).await {
+            match clean_up(&db, clock, job, &removed).await {
                 Ok(()) => Outcome::Done,
                 Err(error) if error.is_busy() => Outcome::Busy,
                 Err(error) => {
@@ -98,7 +104,12 @@ impl JobHandler for AcquireAlbumCleanup {
     }
 }
 
-async fn clean_up(db: &Db, job: JobCtx, removed: &AlbumRemovedJob) -> Result<(), CleanupError> {
+async fn clean_up(
+    db: &Db,
+    clock: Arc<dyn Clock>,
+    job: JobCtx,
+    removed: &AlbumRemovedJob,
+) -> Result<(), CleanupError> {
     let (group, removed_at) = (removed.release_group_mbid.clone(), removed.removed_at);
     let held_paths = db
         .read("downloads.removed_album_held", move |conn| {
@@ -123,10 +134,7 @@ async fn clean_up(db: &Db, job: JobCtx, removed: &AlbumRemovedJob) -> Result<(),
         .write(Lane::Background, "downloads.removed_album", move |tx| {
             let removed = job_removed;
             let group = removed.release_group_mbid.as_str();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_secs_f64())
-                .unwrap_or(0.0);
+            let now = crate::db::unix_secs_f64(clock.as_ref());
             let purge = DownloadStore::new(tx).purge_album(group, removed.removed_at, now)?;
             let wanted_changed = if removed.stop_wanted {
                 stop_after_removal(tx, group, removed.removed_at)?

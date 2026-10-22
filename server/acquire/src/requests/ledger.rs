@@ -506,8 +506,6 @@ pub struct EditionMark {
     pub started_at: u64,
 }
 
-pub use crate::db::now_epoch;
-
 /// Validate one MBID to the UUID shape v2 enforces (`validators.py`
 /// `MBID_PATTERN`): 8-4-4-4-12 lowercase-insensitive hex with dashes.
 pub fn validate_mbid(value: &str) -> Result<String, RequestsError> {

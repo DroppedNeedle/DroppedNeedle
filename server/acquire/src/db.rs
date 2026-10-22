@@ -5,27 +5,39 @@
 //! a clone; nothing in acquisition opens its own connection.
 
 use std::path::Path;
-#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 use rusqlite::Transaction;
 use sqlx::SqlitePool;
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 
-/// The application database, for the acquisition stores.
-#[derive(Clone, Debug)]
+/// The application database and the platform clock, for the acquisition
+/// stores. Rows are stamped with the clock's time, so a test's
+/// `ManualClock` drives every stamp.
+#[derive(Clone)]
 pub struct AcquireDb {
     db: Db,
+    clock: Arc<dyn Clock>,
     #[cfg(any(test, feature = "test-support"))]
     _scratch: Option<Arc<droppedneedle_kernel::db::scratch::ScratchDir>>,
 }
 
+impl std::fmt::Debug for AcquireDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AcquireDb")
+            .field("db", &self.db)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AcquireDb {
-    /// Handle over the serving runtime's database.
-    pub fn new(db: Db) -> Self {
+    /// Handle over the serving runtime's database and clock.
+    pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self {
             db,
+            clock,
             #[cfg(any(test, feature = "test-support"))]
             _scratch: None,
         }
@@ -39,6 +51,21 @@ impl AcquireDb {
     /// The database, for a write that is not one of the two below.
     pub fn db(&self) -> &Db {
         &self.db
+    }
+
+    /// The platform clock.
+    pub fn clock(&self) -> &Arc<dyn Clock> {
+        &self.clock
+    }
+
+    /// Now, as whole unix seconds.
+    pub fn now_epoch(&self) -> u64 {
+        epoch_secs(self.clock.as_ref())
+    }
+
+    /// Now, as float unix seconds.
+    pub fn now_unix_f64(&self) -> f64 {
+        unix_secs_f64(self.clock.as_ref())
     }
 
     /// The database file.
@@ -79,6 +106,7 @@ impl AcquireDb {
         let db = Db::open_for_tests(&path).map_err(|error| error.to_string())?;
         Ok(Self {
             db,
+            clock: Arc::new(droppedneedle_kernel::clock::SystemClock),
             _scratch: Some(scratch),
         })
     }
@@ -100,13 +128,16 @@ impl AcquireDb {
     }
 }
 
-/// Current unix time in whole seconds. A clock before the epoch reads as
-/// zero, which only ever makes rows look old.
-pub fn now_epoch() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs())
-        .unwrap_or(0)
+/// `clock`'s time in whole unix seconds. A clock before the epoch reads
+/// as zero, which only ever makes rows look old.
+pub fn epoch_secs(clock: &dyn Clock) -> u64 {
+    u64::try_from(clock.now_unix()).unwrap_or(0)
+}
+
+/// `clock`'s time as float unix seconds, to the millisecond. A clock
+/// before the epoch reads as zero.
+pub fn unix_secs_f64(clock: &dyn Clock) -> f64 {
+    clock.now_ms().max(0) as f64 / 1000.0
 }
 
 /// Convert a stored integer to `u64`, clamping negatives to zero.

@@ -163,10 +163,11 @@ impl DownloadQueue {
 
     async fn stop(&self, task: TaskRow) -> Result<Stopped, QueueError> {
         let task_id = task.id.clone();
+        let clock = self.journal.db().clock().clone();
         let stopped = self
             .journal
             .run_foreground("downloads.stop", move |store| {
-                store.stop_task(&task, now_unix_f64())
+                store.stop_task(&task, crate::db::unix_secs_f64(clock.as_ref()))
             })
             .await
             .map_err(unavailable)?;
@@ -417,11 +418,4 @@ impl DownloadQueue {
             })
             .collect())
     }
-}
-
-fn now_unix_f64() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }

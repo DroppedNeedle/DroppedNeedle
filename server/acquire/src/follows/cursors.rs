@@ -157,6 +157,7 @@ impl Follows {
         })?;
         let cursor = cursor.clone();
         let feed = feed.to_vec();
+        let clock = self.db.clock().clone();
         self.db
             .write_background("follows.record_poll", move |tx| {
                 let artist = cursor.artist_mbid.to_lowercase();
@@ -179,10 +180,7 @@ impl Follows {
                         params![artist, rg.to_lowercase()],
                     )?;
                 }
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|span| span.as_secs_f64())
-                    .unwrap_or(0.0);
+                let now = crate::db::unix_secs_f64(clock.as_ref());
                 for row in &feed {
                     tx.execute(
                         "INSERT OR IGNORE INTO new_release_feed (release_group_mbid_lower, \

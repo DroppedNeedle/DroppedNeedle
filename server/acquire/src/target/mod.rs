@@ -397,9 +397,11 @@ impl Targets {
         };
         {
             let task_id = task.id.clone();
+            let clock = self.journal.db().clock().clone();
             self.journal
                 .run("downloads.target.track_album", move |store| {
-                    store.set_track_album(&task_id, &columns, now_unix_f64())
+                    let now = crate::db::unix_secs_f64(clock.as_ref());
+                    store.set_track_album(&task_id, &columns, now)
                 })
                 .await
                 .map_err(|error| TargetError::LocalFault(error.to_string()))?;
@@ -516,11 +518,4 @@ pub fn expected_tracks(release: &AlbumRelease) -> Vec<ExpectedTrack> {
             release_track_mbid: Some(track.release_track_mbid.clone()),
         })
         .collect()
-}
-
-fn now_unix_f64() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }

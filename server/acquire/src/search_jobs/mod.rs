@@ -31,7 +31,6 @@ use self::store::{
     CANCELLED, COMPLETED, FAILED, JobPayload, JobRow, JobStore, MATCHED, NewJob, PickRefusal,
     PickedTask, SEARCHING,
 };
-use super::db::now_epoch;
 use super::dispatch::DispatchOrigin;
 use super::downloads::journal::Journal;
 use super::downloads::source_tag::SourceTag;
@@ -516,7 +515,7 @@ impl SearchJobs {
         };
         self.close(&row).await?;
         let refused = |error: RequestsError| SearchJobError::Refused(error);
-        let now = now_epoch();
+        let now = self.store.db().now_epoch();
         let seen: Vec<(String, String)> = JobPayload::decode(&row.blob)
             .map(|payload| {
                 payload

@@ -33,7 +33,7 @@ use self::models::{
     ApprovalBatchItem, ApprovalBatchListResponse, AutoDownloadApprovalItem,
     AutoDownloadApprovalListResponse,
 };
-use crate::db::{AcquireDb, now_epoch};
+use crate::db::{AcquireDb, epoch_secs};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{ApprovalState, validate_mbid};
 use crate::requests::models::ActionResponse;
@@ -44,6 +44,7 @@ use droppedneedle_catalog::reads::collections::error::CollectionsError;
 use droppedneedle_catalog::reads::collections::models::FollowStatusResponse;
 use droppedneedle_catalog::reads::collections::service::follow_status;
 use droppedneedle_catalog::reads::collections::store::FollowStore;
+use droppedneedle_kernel::clock::Clock;
 
 pub use self::http::routes;
 
@@ -103,8 +104,13 @@ pub struct FollowAsk {
 
 impl FollowAsk {
     /// Follow the artist for `user_id`, and ask for auto-download the way
-    /// the Following page does.
-    pub(crate) fn apply(&self, tx: &Transaction, user_id: &str) -> rusqlite::Result<()> {
+    /// the Following page does. An ask is filed at `now_ms`.
+    pub(crate) fn apply(
+        &self,
+        tx: &Transaction,
+        user_id: &str,
+        now_ms: i64,
+    ) -> rusqlite::Result<()> {
         set_follow_tx(
             tx,
             user_id,
@@ -113,7 +119,14 @@ impl FollowAsk {
             self.artist_name.as_deref(),
         )?;
         if self.auto_download {
-            set_auto_download_tx(tx, user_id, &self.artist_mbid, true, self.self_approves)?;
+            set_auto_download_tx(
+                tx,
+                user_id,
+                &self.artist_mbid,
+                true,
+                self.self_approves,
+                now_ms,
+            )?;
         }
         Ok(())
     }
@@ -178,6 +191,7 @@ impl Follows {
     ) -> Result<FollowStatusResponse, RequestsError> {
         let (user, mbid) = (caller.user_id().to_owned(), artist_mbid.to_owned());
         let self_approves = caller.role().is_curator();
+        let clock = self.db.clock().clone();
         let followed = self
             .db
             .write("follows.set_auto_download", move |tx| {
@@ -187,6 +201,7 @@ impl Follows {
                     &mbid,
                     enabled,
                     self_approves,
+                    now_ms(clock.as_ref()),
                 )?)
             })
             .await
@@ -229,10 +244,11 @@ impl Follows {
             artist_mbid.to_lowercase(),
             reviewer(admin),
         );
+        let clock = self.db.clock().clone();
         let decided = self
             .db
             .write("follows.decide", move |tx| {
-                let now = now_ms();
+                let now = now_ms(clock.as_ref());
                 let Some(row) =
                     approvals::transition(tx, &user, &lower, (from, verdict), &reviewer, now)?
                 else {
@@ -265,10 +281,17 @@ impl Follows {
         verdict: ApprovalState,
     ) -> Result<ActionResponse, RequestsError> {
         let (batch, reviewer) = (batch_id.to_owned(), reviewer(admin));
+        let clock = self.db.clock().clone();
         let rows = self
             .db
             .write("follows.decide_batch", move |tx| {
-                let rows = approvals::decide_batch_rows(tx, &batch, verdict, &reviewer, now_ms())?;
+                let rows = approvals::decide_batch_rows(
+                    tx,
+                    &batch,
+                    verdict,
+                    &reviewer,
+                    now_ms(clock.as_ref()),
+                )?;
                 for (user, mbid, name) in &rows {
                     apply_verdict(tx, user, (mbid, name), verdict)?;
                 }
@@ -379,9 +402,10 @@ impl Follows {
         batch_id: Option<String>,
     ) -> Result<ImportOutcome, RequestsError> {
         let user = user_id.to_owned();
+        let clock = self.db.clock().clone();
         self.db
             .write("follows.import", move |tx| {
-                let (now, now_ms) = (now_real(), now_ms());
+                let (now, now_ms) = (now_real(), now_ms(clock.as_ref()));
                 let mut already_following = 0;
                 let mut armed = Vec::new();
                 for artist in &artists {
@@ -428,9 +452,10 @@ impl Follows {
     }
 }
 
-/// Now as an approval row stores it: integer milliseconds.
-fn now_ms() -> i64 {
-    ms_from_secs(now_epoch())
+/// `clock`'s time as an approval row stores it: whole seconds, in integer
+/// milliseconds.
+pub(crate) fn now_ms(clock: &dyn Clock) -> i64 {
+    ms_from_secs(epoch_secs(clock))
 }
 
 /// The reviewer stamp: acting id plus display name.
@@ -473,6 +498,7 @@ pub(crate) fn set_auto_download_tx(
     artist_mbid: &str,
     enabled: bool,
     self_approves: bool,
+    now_ms: i64,
 ) -> rusqlite::Result<bool> {
     let lower = artist_mbid.to_lowercase();
     let name: Option<(String, String)> = tx
@@ -490,7 +516,7 @@ pub(crate) fn set_auto_download_tx(
     if !enabled {
         approvals::withdraw_pending(tx, user_id, &lower)?;
     } else if !self_approves {
-        approvals::file_pending(tx, user_id, &mbid, &name, now_ms())?;
+        approvals::file_pending(tx, user_id, &mbid, &name, now_ms)?;
     }
     Ok(true)
 }

@@ -12,7 +12,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::downloads::journal::Journal;
 use super::downloads::manifest::{DownloadManifest, ManifestCodec, PlannedAlbum, TrackPosition};
@@ -24,14 +23,6 @@ use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
-
-/// Current unix time as the float seconds the journal stores.
-fn now_unix_f64() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
-}
 
 /// What started a download. Stored as the task's `origin`; origins decide
 /// quota exemptions and how a landing treats the files, never routing.
@@ -308,7 +299,7 @@ impl DownloadDispatch {
         };
         let planned_album = request.planned_album.clone().filter(|_| on_release);
         let task_id = self.mint_task_id();
-        let now = now_unix_f64();
+        let now = self.journal.db().now_unix_f64();
         // An album ask without a release fetches the edition the library
         // has chosen for that album (a single track resolves its album
         // when it is searched for).
@@ -460,9 +451,12 @@ impl DownloadDispatch {
     /// record. Unknown or finished ids are a no-op success.
     pub async fn cancel(&self, task_id: &str) -> Result<(), DispatchError> {
         let task_id = task_id.to_owned();
+        let clock = self.journal.db().clock().clone();
         self.journal
             .run_foreground("downloads.cancel", move |store| {
-                store.cancel_task(&task_id, now_unix_f64()).map(|_| ())
+                store
+                    .cancel_task(&task_id, crate::db::unix_secs_f64(clock.as_ref()))
+                    .map(|_| ())
             })
             .await
             .map_err(DispatchError::from)

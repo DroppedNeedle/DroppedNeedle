@@ -84,7 +84,10 @@ impl Rig {
     /// The collections routes beside the follows' routes, as the app
     /// mounts them.
     fn app(&self) -> Router {
-        let follows = Follows::new(AcquireDb::new(self.runtime.db().clone()));
+        let follows = Follows::new(AcquireDb::new(
+            self.runtime.db().clone(),
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ));
         collections::routes()
             .with_state(self.state())
             .into_router()

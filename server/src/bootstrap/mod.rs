@@ -301,7 +301,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // Flow outcomes (fulfilled requests among them) go to plugins and the
     // event stream.
     let acquire_stores = AcquireStores::open(
-        db,
+        p,
         Arc::new(droppedneedle_acquire::plugin_events::FlowTicks::new(
             Some(plugin_host.clone()),
             p.events.clone(),

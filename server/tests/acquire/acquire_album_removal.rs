@@ -113,7 +113,7 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
         Handlers::default().with(
             SPEC,
             Arc::new(AcquireAlbumCleanup::new(&AcquireStores::open(
-                &platform.db,
+                &platform,
                 quiet_ticks(),
             ))),
         ),
@@ -174,7 +174,7 @@ async fn album_cleanup_stops_only_a_watch_armed_before_the_removal() {
         Handlers::default().with(
             SPEC,
             Arc::new(AcquireAlbumCleanup::new(&AcquireStores::open(
-                &platform.db,
+                &platform,
                 quiet_ticks(),
             ))),
         ),
