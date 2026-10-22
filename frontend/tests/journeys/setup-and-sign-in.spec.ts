@@ -27,3 +27,20 @@ test('a fresh server is set up and its admin signs in again', async ({ page }) =
 	await expect(page).toHaveURL(/\/$/);
 	await expect(page.getByRole('button', { name: 'Log out' })).toBeVisible();
 });
+
+// A network change while the first page loads aborts the download of the
+// app's code before the app exists. The page reloads once and shows, rather
+// than staying blank.
+test('a page whose code fails to download as it opens reloads and shows', async ({ page }) => {
+	let documents = 0;
+	page.on('request', (request) => {
+		if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documents += 1;
+	});
+	await page.route('**/_app/env.js', (route) =>
+		documents < 2 ? route.abort('connectionreset') : route.fallback()
+	);
+
+	await page.goto('/');
+	await expect(page.getByLabel('Username')).toBeVisible();
+	expect(documents).toBe(2);
+});

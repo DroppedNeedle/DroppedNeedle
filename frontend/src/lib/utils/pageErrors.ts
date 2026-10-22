@@ -18,6 +18,8 @@ export function isFailedModuleLoad(error: unknown): boolean {
 	return error instanceof TypeError && FAILED_MODULE_LOAD.test(error.message);
 }
 
+// static/boot-retry.js covers the page's first download with the same key and
+// timings; change them together.
 const MODULE_RELOAD_KEY = 'dn-module-reload-at';
 // A second failure this soon after a reload shows the error page and stays.
 const MODULE_RELOAD_WINDOW_MS = 60_000;
