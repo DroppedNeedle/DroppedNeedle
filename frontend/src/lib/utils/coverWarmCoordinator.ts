@@ -87,6 +87,26 @@ async function poll(key: string, entry: WarmEntry) {
 	}
 }
 
+// The browser keeps 250 resource timing entries by default and then drops new
+// ones; the app's own scripts and a long grid pass that, which would turn the
+// 404 check below off. Raised once, when this module loads.
+const RESOURCE_TIMING_ENTRIES = 1000;
+if (typeof performance !== 'undefined') {
+	performance.setResourceTimingBufferSize?.(RESOURCE_TIMING_ENTRIES);
+}
+
+/**
+ * True when the browser saw `url` answer 404: the server's word that there is
+ * no art, so polling would only ask again. Browsers without the status in
+ * their resource timing entries report false and keep polling.
+ */
+export function coverAnsweredMissing(url: string): boolean {
+	if (typeof performance === 'undefined' || !url) return false;
+	const entries = performance.getEntriesByName(url, 'resource');
+	const last = entries[entries.length - 1];
+	return Boolean(last && 'responseStatus' in last && last.responseStatus === 404);
+}
+
 export function watchWarmingCover(url: string, listener: Listener): () => void {
 	let entry = entries.get(url);
 	if (!entry) {

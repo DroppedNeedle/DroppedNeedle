@@ -3,7 +3,7 @@ import { browser } from '$app/environment';
 const BLANK_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 /** How far outside the visible area an image starts loading, in CSS pixels. */
-const LAZY_MARGIN_PX = 800;
+const LAZY_MARGIN_PX = 300;
 
 /**
  * How many leading items of a grid or carousel load their image straight

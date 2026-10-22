@@ -16,6 +16,8 @@
 				? 'grid-cols-2 grid-rows-1'
 				: 'grid-cols-2 grid-rows-2'
 	);
+	// A lone cover fills the tile; two to four share it, so a small rendition is enough.
+	let requestSize = $derived<250 | 500>(albums.length === 1 ? 500 : 250);
 </script>
 
 <div class="absolute inset-0 bg-linear-to-br {gradientClass}" data-testid="genre-gradient"></div>
@@ -35,6 +37,7 @@
 				<AlbumImage
 					albumId={album.album_id}
 					coverVersion={album.cover_version}
+					{requestSize}
 					alt=""
 					size="full"
 					rounded="none"

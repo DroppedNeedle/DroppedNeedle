@@ -9,6 +9,7 @@
 	import { getApiUrl } from '$lib/api/api-utils';
 	import {
 		COVER_VISUAL_SETTLE_MS,
+		coverAnsweredMissing,
 		watchWarmingCover,
 		type CoverWarmUpdate
 	} from '$lib/utils/coverWarmCoordinator';
@@ -220,15 +221,14 @@
 		imgError = true;
 		imgLoaded = false;
 
-		if (!retryOnError || warmResolvedUrl) {
-			imgError = true;
+		const selected = (event.currentTarget as HTMLImageElement).currentSrc;
+		if (!retryOnError || warmResolvedUrl || coverAnsweredMissing(selected)) {
 			visualSettled = true;
 			return;
 		}
 
 		scheduleVisualSettlement();
 
-		const selected = (event.currentTarget as HTMLImageElement).currentSrc;
 		stopWatchingWarmCover ??= watchWarmingCover(currentCoverRequestUrl(selected), handleWarmUpdate);
 	}
 

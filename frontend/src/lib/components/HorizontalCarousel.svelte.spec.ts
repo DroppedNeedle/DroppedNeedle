@@ -43,13 +43,16 @@ describe('carousel images', () => {
 			.toHaveAttribute('data-src', expect.stringContaining(`/covers/artist/${mbidOf(0)}`));
 		// Started loading: the cover address is set, or the test server's missing
 		// cover has already swapped the image for its placeholder.
-		const artist7 = page.getByRole('img', { name: 'Artist 7' });
+		const artist4 = page.getByRole('img', { name: 'Artist 4' });
 		await expect
 			.poll(() => {
-				const src = artist7.query()?.getAttribute('src');
-				return src === undefined || src?.includes(`/covers/artist/${mbidOf(7)}`);
+				const src = artist4.query()?.getAttribute('src');
+				return src === undefined || src?.includes(`/covers/artist/${mbidOf(4)}`);
 			})
 			.toBe(true);
+		await expect
+			.element(page.getByRole('img', { name: 'Artist 7' }))
+			.toHaveAttribute('src', expect.stringMatching(/^data:/));
 		await expect
 			.element(page.getByRole('img', { name: 'Artist 19' }))
 			.toHaveAttribute('src', expect.stringMatching(/^data:/));
