@@ -712,11 +712,16 @@ async fn loop_cadence_and_shutdown() {
     seed_request(&ledger, "rg-2", "downloading", Some("task-10")).await;
     seed_task(&db, "task-9", "rg-1", TaskStatus::Completed).await;
     seed_task(&db, "task-10", "rg-2", TaskStatus::Downloading).await;
+    // A held album with no task: settling it is the pass's last step.
+    seed_request(&ledger, "rg-held", "pending", None).await;
+    let library = Arc::new(LibraryPresence::new());
+    library.add(&["rg-held"]);
+    let announced = Arc::new(crate::common::bundles::FulfilledTicks::default());
     let deps = Arc::new(SyncDeps {
         ledger: ledger.clone(),
         journal: Arc::new(Journal::new(db.clone(), quiet_ticks())),
-        library: Arc::new(LibraryPresence::new()),
-        ticks: ticks(&EventHub::new()),
+        library,
+        ticks: announced.clone(),
     });
     let supervisor = Supervisor::start(
         runtime.db().clone(),
@@ -744,7 +749,15 @@ async fn loop_cadence_and_shutdown() {
     spawn_sync_loop(&supervisor, deps).unwrap();
     settle_loop().await;
     tokio::time::advance(SYNC_INITIAL_DELAY).await;
-    until("the first pass", &ledger, "rg-1", "imported").await;
+    // The announce is the pass's last act, and the loop arms its interval
+    // in the same poll: advancing before then would start the interval
+    // late.
+    until("the first pass", || {
+        let done = announced.keys() == ["rg-held"];
+        async move { done }
+    })
+    .await;
+    assert_eq!(unpaused_status(&ledger, "rg-1").await, "imported");
     // Written with the clock running: an idle runtime on a paused clock
     // would jump straight to the loop's next pass while the write waits.
     tokio::time::resume();
@@ -758,7 +771,10 @@ async fn loop_cadence_and_shutdown() {
         "a pass ran inside the interval"
     );
     tokio::time::advance(Duration::from_secs(1)).await;
-    until("the second pass", &ledger, "rg-2", "imported").await;
+    until("the second pass", || async {
+        status_of(&ledger, "rg-2").await == "imported"
+    })
+    .await;
 
     supervisor.shutdown(GRACE).await;
     // Store reads wait for a pooled connection on a tokio timer, which the
@@ -793,19 +809,17 @@ async fn unpaused_status(ledger: &RequestStore, key: &str) -> String {
     status
 }
 
-/// Wait until the request `key` reads `status`, bounded in wall-clock
-/// time. The pass's database calls wait on tokio timers too, so each turn
-/// moves the paused clock by a millisecond.
-async fn until(what: &str, ledger: &RequestStore, key: &str, status: &str) {
+/// Wait until `done` answers true, bounded in wall-clock time. The pass's
+/// database calls wait on tokio timers too, so each turn moves the paused
+/// clock by a millisecond.
+async fn until<F: Future<Output = bool>>(what: &str, mut done: impl FnMut() -> F) {
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
-        // Read with the clock running, as in `unpaused_status`.
+        // Checked with the clock running, as in `unpaused_status`.
         tokio::time::resume();
-        let row = ledger.get(RequestKind::Album, key).await;
+        let done = done().await;
         tokio::time::pause();
-        if let Ok(Some(row)) = row
-            && row.status.as_str() == status
-        {
+        if done {
             return;
         }
         assert!(std::time::Instant::now() < deadline, "{what} never came");
