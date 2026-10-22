@@ -28,7 +28,7 @@ use super::sqlite::SqliteIdentifyStore;
 use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
 use crate::edition_prefs::{LivePreferences, Preferences};
 use crate::identity::AutomaticOutcome;
-use crate::matching::decide::{EDITION_COHORT, eligible};
+use crate::matching::decide::{EDITION_COHORT, candidate_order, eligible};
 use crate::matching::{EditionPrefs, LocalAlbum, ReleaseMatch, Verdict, decide, match_release};
 
 /// Every dependency the identify service needs, injected by constructor.
@@ -331,9 +331,11 @@ impl IdentifyService {
     }
 
     /// Score every recalled release and decide. Candidates come back
-    /// chosen edition first, then by distance. `held` is the edition the
-    /// album already has: it stays unless another edition of its group
-    /// fits the files better by more than the edition cohort.
+    /// chosen edition first, then by distance and edition order (see
+    /// `candidate_order`), so of two equally close guesses the one the
+    /// files complete comes first. `held` is the edition the album already
+    /// has: it stays unless another edition of its group fits the files
+    /// better by more than the edition cohort.
     fn ranked(
         &self,
         facts: &LocalAlbumFacts,
@@ -348,15 +350,11 @@ impl IdentifyService {
             .map(|release| match_release(&local, release, &recall.recording_aliases))
             .collect();
         let tagged = local.tagged_release();
-        let verdict = decide(
-            &local,
-            &recall.releases,
-            &matches,
-            EditionPrefs {
-                tagged: tagged.as_deref(),
-                preferences: Some(preferences),
-            },
-        );
+        let prefs = EditionPrefs {
+            tagged: tagged.as_deref(),
+            preferences: Some(preferences),
+        };
+        let verdict = decide(&local, &recall.releases, &matches, prefs);
         let keep = |index: usize| -> usize {
             let Some(held) = held else {
                 return index;
@@ -390,11 +388,9 @@ impl IdentifyService {
         };
         let mut order: Vec<usize> = (0..recall.releases.len()).collect();
         order.sort_by(|a, b| {
-            (Some(*b) == lead).cmp(&(Some(*a) == lead)).then_with(|| {
-                matches[*a]
-                    .library_distance()
-                    .total_cmp(&matches[*b].library_distance())
-            })
+            (Some(*b) == lead)
+                .cmp(&(Some(*a) == lead))
+                .then_with(|| candidate_order(*a, *b, &local, &recall.releases, &matches, prefs))
         });
         let scored: Vec<CandidateEvidence> = order
             .iter()

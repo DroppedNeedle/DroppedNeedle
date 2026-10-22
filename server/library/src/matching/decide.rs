@@ -10,7 +10,16 @@
 //!   distance ceiling; past it the album has no plausible candidate.
 //! - The best release group must beat every other group by
 //!   [`GROUP_MARGIN`] (0.05), v2's margin floor. Editions of one group
-//!   are not rivals: they go through edition choice instead.
+//!   are not rivals: they go through edition choice instead. Within the
+//!   margin, a group still wins when the files make up one of its
+//!   releases completely and closely (see below) and that release's full
+//!   distance, missing tracks counted, beats every other group's by more
+//!   than the margin: a one-file "Night Shift" goes to the single, not to
+//!   the ten-track album it also fits. When groups the files complete
+//!   closely are within the margin of each other on that distance, a
+//!   group with an Official release beats groups whose every recalled
+//!   release has another status (a promotional copy filed as its own
+//!   group); a release with no status is never counted as another status.
 //! - Edition choice looks at the group's editions within
 //!   [`EDITION_COHORT`] (0.10, v2's consensus epsilon) of the best and
 //!   prefers the release the tags name, then one whose barcode or catalog
@@ -21,8 +30,16 @@
 //!   earliest date, worldwide country), then MBID.
 //! - A lone candidate (no other release group plausible) needs v2's
 //!   quorum: two tracks paired within 0.40, or a recording or
-//!   release-track MBID on any file. Without it there is too little to
-//!   go on and the verdict is insufficient evidence.
+//!   release-track MBID on any file. A complete close fit also passes:
+//!   no missing or unmatched tracks, a non-blank album title and artist
+//!   that pass the name gate, and every pair within [`COMPLETE_TRACK`]
+//!   (0.10) with titles that agree in full. On an untagged pair 0.10
+//!   allows a length up to about 19 s off with the track number right; a
+//!   wrong track number alone is 0.17. The titles are compared with their
+//!   bracketed parts kept and no discounts, also within 0.10, so "Song"
+//!   never completes "Song (Acoustic)" or "Song (Instrumental)", while a
+//!   remix named on both sides still does. Without either there is too
+//!   little to go on and the verdict is insufficient evidence.
 //! - A release that fails the album title or artist gate (see `score`)
 //!   goes to review however close its tracks are.
 //! - Live releases, and compilations the tags do not call compilations,
@@ -37,6 +54,7 @@ use std::cmp::Ordering;
 
 use super::model::{EditionHints, LocalAlbum, Release};
 use super::score::ReleaseMatch;
+use super::strings::basic_dist;
 use crate::edition_prefs::{EditionFacts, Preferences};
 
 pub const ACCEPT_ALBUM: f64 = 0.20;
@@ -44,6 +62,8 @@ pub const ACCEPT_TRACK: f64 = 0.40;
 pub const REVIEW_CEILING: f64 = 0.35;
 pub const GROUP_MARGIN: f64 = 0.05;
 pub const EDITION_COHORT: f64 = 0.10;
+/// Every pair of a complete close fit is at most this far off.
+pub const COMPLETE_TRACK: f64 = 0.10;
 /// A tagged release this close needs no search (beets' "strong" match).
 pub const STRONG: f64 = 0.04;
 /// Weak tags past this distance call for fingerprints (Lidarr).
@@ -107,12 +127,10 @@ pub fn decide(
     let candidates: Vec<usize> = (0..releases.len())
         .filter(|index| eligible(&matches[*index]))
         .collect();
-    let Some(&best) = candidates.iter().min_by(|a, b| {
-        matches[**a]
-            .library_distance()
-            .total_cmp(&matches[**b].library_distance())
-            .then_with(|| edition_order(**a, **b, local, releases, matches, prefs))
-    }) else {
+    let Some(&best) = candidates
+        .iter()
+        .min_by(|a, b| candidate_order(**a, **b, local, releases, matches, prefs))
+    else {
         return if matches.iter().any(|matched| !matched.conflicts.is_empty()) {
             Verdict::Contradictory
         } else {
@@ -120,33 +138,38 @@ pub fn decide(
         };
     };
     let best_distance = matches[best].library_distance();
-    let group = releases[best].release_group_id.as_str();
+    let in_group =
+        |index: usize, group: &str| releases[index].release_group_id.eq_ignore_ascii_case(group);
+    let mut group = releases[best].release_group_id.as_str();
     let rival = candidates
         .iter()
-        .filter(|index| {
-            !releases[**index]
-                .release_group_id
-                .eq_ignore_ascii_case(group)
-        })
+        .filter(|index| !in_group(**index, group))
+        .map(|index| matches[*index].library_distance())
+        .fold(f64::INFINITY, f64::min);
+    if rival - best_distance < GROUP_MARGIN {
+        match completed_group(&candidates, best_distance, local, releases, matches, prefs) {
+            Some(completed) => group = completed,
+            None => return Verdict::Review(ReviewReason::Ambiguous),
+        }
+    }
+    let group_best = candidates
+        .iter()
+        .filter(|index| in_group(**index, group))
         .map(|index| matches[*index].library_distance())
         .fold(f64::INFINITY, f64::min);
     let Some(&chosen) = candidates
         .iter()
-        .filter(|index| {
-            releases[**index]
-                .release_group_id
-                .eq_ignore_ascii_case(group)
-        })
-        .filter(|index| matches[**index].library_distance() <= best_distance + EDITION_COHORT)
+        .filter(|index| in_group(**index, group))
+        .filter(|index| matches[**index].library_distance() <= group_best + EDITION_COHORT)
         .min_by(|a, b| edition_order(**a, **b, local, releases, matches, prefs))
     else {
         return Verdict::Insufficient;
     };
-    if rival - best_distance < GROUP_MARGIN {
-        return Verdict::Review(ReviewReason::Ambiguous);
-    }
     let matched = &matches[chosen];
-    if rival.is_infinite() && !quorum(local, matched) {
+    if rival.is_infinite()
+        && !quorum(local, matched)
+        && !complete_fit(local, &releases[chosen], matched)
+    {
         return Verdict::Insufficient;
     }
     let unmatched_limit = if local.tracks.len() <= 20 { 1 } else { 2 };
@@ -189,6 +212,126 @@ pub fn should_fingerprint(local: &LocalAlbum, matches: &[ReleaseMatch]) -> bool 
                 || best.worst_track() > ACCEPT_TRACK
         }
     }
+}
+
+/// Candidate order: the closest library distance, then edition order,
+/// which counts missing tracks. The best guess follows it too.
+pub fn candidate_order(
+    a: usize,
+    b: usize,
+    local: &LocalAlbum,
+    releases: &[Release],
+    matches: &[ReleaseMatch],
+    prefs: EditionPrefs<'_>,
+) -> Ordering {
+    matches[a]
+        .library_distance()
+        .total_cmp(&matches[b].library_distance())
+        .then_with(|| edition_order(a, b, local, releases, matches, prefs))
+}
+
+/// The files make up the whole release closely: nothing missing or left
+/// over, a real album title and artist that pass the name gate, and every
+/// pair within [`COMPLETE_TRACK`] with titles that agree in full,
+/// bracketed parts included.
+fn complete_fit(local: &LocalAlbum, release: &Release, matched: &ReleaseMatch) -> bool {
+    !local.title.trim().is_empty()
+        && !local.artist.trim().is_empty()
+        && !matched.pairs.is_empty()
+        && matched.missing.is_empty()
+        && matched.unmatched.is_empty()
+        && matched.names_agree
+        && matched.pairs.iter().all(|pair| {
+            pair.distance <= COMPLETE_TRACK
+                && local.tracks.get(pair.local).is_some_and(|file| {
+                    release.tracks.get(pair.track).is_some_and(|track| {
+                        basic_dist(&file.title, &track.title) <= COMPLETE_TRACK
+                    })
+                })
+        })
+}
+
+/// For release groups tied within the margin: the group of the release
+/// the files complete closely, when its full distance beats every other
+/// group's releases by more than the margin. Among groups the files
+/// complete about equally well, the one group with an Official release
+/// wins when every recalled release of the others has another status.
+fn completed_group<'a>(
+    candidates: &[usize],
+    best_distance: f64,
+    local: &LocalAlbum,
+    releases: &'a [Release],
+    matches: &[ReleaseMatch],
+    prefs: EditionPrefs<'_>,
+) -> Option<&'a str> {
+    let complete: Vec<usize> = candidates
+        .iter()
+        .copied()
+        .filter(|index| matches[*index].library_distance() < best_distance + GROUP_MARGIN)
+        .filter(|index| complete_fit(local, &releases[*index], &matches[*index]))
+        .collect();
+    let completed = complete.iter().copied().min_by(|a, b| {
+        matches[*a]
+            .album_distance()
+            .total_cmp(&matches[*b].album_distance())
+            .then_with(|| edition_order(*a, *b, local, releases, matches, prefs))
+    })?;
+    let group = releases[completed].release_group_id.as_str();
+    let distance = matches[completed].album_distance();
+    let close = |index: &usize| matches[*index].album_distance() - distance <= GROUP_MARGIN;
+    let rivals: Vec<&str> = candidates
+        .iter()
+        .filter(|index| !same_group(&releases[**index], group) && close(index))
+        .map(|index| releases[*index].release_group_id.as_str())
+        .collect();
+    if rivals.is_empty() {
+        return Some(group);
+    }
+    // Every group in the tie must be complete closely within the margin.
+    let mut tied: Vec<&str> = vec![group];
+    for rival in rivals {
+        if !tied.iter().any(|seen| seen.eq_ignore_ascii_case(rival)) {
+            tied.push(rival);
+        }
+    }
+    let completes = |group: &str| {
+        complete
+            .iter()
+            .any(|index| same_group(&releases[*index], group) && close(index))
+    };
+    if !tied.iter().all(|group| completes(group)) {
+        return None;
+    }
+    let with_official: Vec<&str> = tied
+        .iter()
+        .copied()
+        .filter(|group| releases.iter().any(|r| same_group(r, group) && official(r)))
+        .collect();
+    let [winner] = with_official[..] else {
+        return None;
+    };
+    tied.iter()
+        .filter(|group| !group.eq_ignore_ascii_case(winner))
+        .all(|group| {
+            releases
+                .iter()
+                .filter(|release| same_group(release, group))
+                .all(other_status)
+        })
+        .then_some(winner)
+}
+
+fn same_group(release: &Release, group: &str) -> bool {
+    release.release_group_id.eq_ignore_ascii_case(group)
+}
+
+/// A status that is stated and is not Official (Promotion, Bootleg, ...).
+fn other_status(release: &Release) -> bool {
+    release
+        .status
+        .as_deref()
+        .is_some_and(|status| !status.trim().is_empty())
+        && !official(release)
 }
 
 /// v2's lone-candidate quorum (`_lone_eligible_supported`).
@@ -462,10 +605,18 @@ mod tests {
         let night = |count| release("group-a", "Night Shift", count);
         let weak = Verdict::Review(ReviewReason::WeakMatch);
         let cases: Vec<(&str, LocalAlbum, Vec<Release>, Verdict)> = vec![
+            // One file that makes up the whole release closely is enough;
+            // one file of a longer release is not.
             (
-                "lone candidate, one plain track",
+                "lone candidate, one plain track, complete",
                 local(1, 0, false),
                 vec![night(1)],
+                Verdict::Identified(0),
+            ),
+            (
+                "lone candidate, one plain track of two",
+                local(1, 0, false),
+                vec![night(2)],
                 Verdict::Insufficient,
             ),
             (
@@ -520,6 +671,144 @@ mod tests {
         for (name, local, releases, expected) in cases {
             assert_eq!(verdict(&local, &releases), expected, "{name}");
         }
+    }
+
+    /// One untagged "Night Shift" fits the single and the first track of
+    /// the ten-track album equally well; it completes only the single.
+    #[test]
+    fn a_lone_file_goes_to_the_single_it_completes() {
+        let mut album = release("album", "Night Shift", 1);
+        album.tracks = (0..10)
+            .map(|index| ReleaseTrack {
+                id: format!("album-track-{index}"),
+                recording_id: format!("album-recording-{index}"),
+                title: if index == 0 {
+                    "Night Shift".to_owned()
+                } else {
+                    format!("Album Track {index}")
+                },
+                position: index + 1,
+                absolute_position: index + 1,
+                ..album.tracks[0].clone()
+            })
+            .collect();
+        let mut single = release("single", "Night Shift", 1);
+        single.tracks[0].title = "Night Shift".to_owned();
+        let mut file = local(1, 0, false);
+        file.tracks[0].title = "Night Shift".to_owned();
+
+        assert_eq!(
+            verdict(&file, &[album.clone(), single.clone()]),
+            Verdict::Identified(1)
+        );
+
+        // A single with a second track the files lack is no better a fit.
+        let mut two_sided = single;
+        two_sided.tracks.push(ReleaseTrack {
+            id: "single-track-1".to_owned(),
+            recording_id: "single-recording-1".to_owned(),
+            title: "Blue Hour".to_owned(),
+            position: 2,
+            absolute_position: 2,
+            ..two_sided.tracks[0].clone()
+        });
+        assert_eq!(
+            verdict(&file, &[album, two_sided]),
+            Verdict::Review(ReviewReason::Ambiguous)
+        );
+    }
+
+    /// A one-track release of `group` titled `title`, its track `song`.
+    fn one_track(group: &str, title: &str, song: &str, status: Option<&str>) -> Release {
+        let mut single = release(group, title, 1);
+        single.tracks[0].title = song.to_owned();
+        single.status = status.map(str::to_owned);
+        single
+    }
+
+    /// One untagged file titled `song`, on an album titled `album`.
+    fn one_file(album: &str, song: &str) -> LocalAlbum {
+        let mut file = local(1, 0, false);
+        file.title = album.to_owned();
+        file.tracks[0].title = song.to_owned();
+        file
+    }
+
+    #[test]
+    fn what_a_complete_fit_needs() {
+        let city = "Midnight In The Quiet City";
+        let acoustic = "Midnight In The Quiet City (Acoustic)";
+        let mut album = release("album", city, 1);
+        album.tracks = (0..10)
+            .map(|index| ReleaseTrack {
+                id: format!("album-track-{index}"),
+                recording_id: format!("album-recording-{index}"),
+                title: if index == 0 {
+                    city.to_owned()
+                } else {
+                    format!("Album Track {index}")
+                },
+                position: index + 1,
+                absolute_position: index + 1,
+                ..album.tracks[0].clone()
+            })
+            .collect();
+        let official = Some("Official");
+        let promotion = Some("Promotion");
+        let cases: Vec<(&str, LocalAlbum, Vec<Release>, Verdict)> = vec![
+            (
+                "another version of the song is not the song",
+                one_file("Sunrise", "Sunrise"),
+                vec![one_track(
+                    "g",
+                    "Sunrise (Instrumental)",
+                    "Sunrise (Instrumental)",
+                    official,
+                )],
+                Verdict::Insufficient,
+            ),
+            (
+                "nor does it break a tie with the album",
+                one_file(city, city),
+                vec![
+                    album.clone(),
+                    one_track("acoustic", acoustic, acoustic, official),
+                ],
+                Verdict::Review(ReviewReason::Ambiguous),
+            ),
+            (
+                "a blank album title completes nothing",
+                one_file("", "Night Shift"),
+                vec![one_track("g", "Night Shift", "Night Shift", official)],
+                Verdict::Insufficient,
+            ),
+            (
+                "the Official single beats a promotional group",
+                one_file("Night Shift", "Night Shift"),
+                vec![
+                    one_track("promo", "Night Shift - Single", "Night Shift", promotion),
+                    one_track("single", "Night Shift", "Night Shift", official),
+                ],
+                Verdict::Identified(1),
+            ),
+            (
+                "a group with no status is not promotional",
+                one_file("Night Shift", "Night Shift"),
+                vec![
+                    one_track("unknown", "Night Shift", "Night Shift", None),
+                    one_track("single", "Night Shift", "Night Shift", official),
+                ],
+                Verdict::Review(ReviewReason::Ambiguous),
+            ),
+        ];
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(name, local, releases, expected)| {
+                let got = verdict(&local, &releases);
+                (got != expected).then(|| format!("{name}: expected {expected:?}, got {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     /// Release `id` of `group`: the four recordings, its own track ids.

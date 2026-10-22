@@ -370,8 +370,8 @@
     "key": "moonlight-sunrise-remix",
     "why": "untagged one-track single that fits exactly",
     "truth": {"release_group": "443ebb4e-a17d-4b76-a8f9-9c58ff565c2d", "release": "5216422d-ade4-4583-99b0-ce34c437c67e"},
-    "tagged": {"verdict": "review", "release": "5216422d-ade4-4583-99b0-ce34c437c67e", "known_miss": "a lone one-track single that fits exactly still needs two close pairs or an id"},
-    "stripped": {"verdict": "review", "release": "5216422d-ade4-4583-99b0-ce34c437c67e", "known_miss": "a lone one-track single that fits exactly still needs two close pairs or an id"},
+    "tagged": {"verdict": "group", "release": "3e2dff1c-a016-440c-ab3b-e74140e0746c", "known_miss": "without ids, editions with the same tracklist cannot be told apart"},
+    "stripped": {"verdict": "group", "release": "3e2dff1c-a016-440c-ab3b-e74140e0746c", "known_miss": "without ids, editions with the same tracklist cannot be told apart"},
     "facts": {
       "local_album_id": "moonlight-sunrise-remix",
       "title": "MOONLIGHT SUNRISE (Jonas Blue Remix)",
@@ -456,7 +456,7 @@
     "why": "single",
     "truth": {"release_group": "12624c6f-20b7-4668-a5ad-2d1de0abe77c", "release": "ab2efeef-dfb0-4f6c-a29e-f798732c41f9"},
     "tagged": {"verdict": "exact", "release": "ab2efeef-dfb0-4f6c-a29e-f798732c41f9"},
-    "stripped": {"verdict": "review", "release": "ab2efeef-dfb0-4f6c-a29e-f798732c41f9", "known_miss": "a lone one-track single that fits exactly still needs two close pairs or an id"},
+    "stripped": {"verdict": "exact", "release": "ab2efeef-dfb0-4f6c-a29e-f798732c41f9"},
     "facts": {
       "local_album_id": "pretty-girl",
       "title": "Pretty Girl",
@@ -474,7 +474,7 @@
     "why": "single",
     "truth": {"release_group": "439e2009-1435-4b61-a69f-a9750399821b", "release": "0f048466-cd7d-4bbc-beec-a28975904c08"},
     "tagged": {"verdict": "exact", "release": "0f048466-cd7d-4bbc-beec-a28975904c08"},
-    "stripped": {"verdict": "review", "release": "6f0cf80d-6bb7-4dec-bd1d-343e757c818c", "known_miss": "a promotional copy filed as a second release group ties with the single"},
+    "stripped": {"verdict": "exact", "release": "0f048466-cd7d-4bbc-beec-a28975904c08"},
     "facts": {
       "local_album_id": "sippy-cup",
       "title": "Sippy Cup",
@@ -492,7 +492,7 @@
     "why": "single, remix title with symbols",
     "truth": {"release_group": "f680f22c-4c42-4219-bbb3-179190eb2b41", "release": "bd3470cf-4b1f-4ff3-8649-72f9332c24d4"},
     "tagged": {"verdict": "exact", "release": "bd3470cf-4b1f-4ff3-8649-72f9332c24d4"},
-    "stripped": {"verdict": "review", "release": "bd3470cf-4b1f-4ff3-8649-72f9332c24d4", "known_miss": "a lone one-track single that fits exactly still needs two close pairs or an id"},
+    "stripped": {"verdict": "exact", "release": "bd3470cf-4b1f-4ff3-8649-72f9332c24d4"},
     "facts": {
       "local_album_id": "heart-shaker-remix",
       "title": "Heart Shaker (GALACTIKA * holiday remix)",
@@ -528,7 +528,7 @@
     "why": "single, two artists joined by x",
     "truth": {"release_group": "ef44c81b-a090-4a9f-9ce1-16db5918b8a6", "release": "a78b8e60-d7b3-4c37-9380-9fb64569d18f"},
     "tagged": {"verdict": "exact", "release": "a78b8e60-d7b3-4c37-9380-9fb64569d18f"},
-    "stripped": {"verdict": "review", "release": "a78b8e60-d7b3-4c37-9380-9fb64569d18f", "known_miss": "a lone one-track single that fits exactly still needs two close pairs or an id"},
+    "stripped": {"verdict": "group", "release": "445bc3cd-1431-4ae3-b802-689b817f4047", "known_miss": "without ids, editions with the same tracklist cannot be told apart"},
     "facts": {
       "local_album_id": "violence-against-nature",
       "title": "Violence Against Nature",
@@ -546,7 +546,7 @@
     "why": "single, two artists joined by &",
     "truth": {"release_group": "4549a80c-efe6-4386-b3a2-4b4a918eb31f", "release": "335592d1-ed05-4c07-8d57-12cb9c2efab3"},
     "tagged": {"verdict": "exact", "release": "335592d1-ed05-4c07-8d57-12cb9c2efab3"},
-    "stripped": {"verdict": "review", "release": "50561ac6-a289-4898-9574-c4cac72ca71c", "known_miss": "a lone one-track single that fits exactly still needs two close pairs or an id"},
+    "stripped": {"verdict": "exact", "release": "335592d1-ed05-4c07-8d57-12cb9c2efab3"},
     "facts": {
       "local_album_id": "the-moon-song",
       "title": "The Moon Song",

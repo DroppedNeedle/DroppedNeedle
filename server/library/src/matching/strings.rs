@@ -76,7 +76,9 @@ fn prepare(value: &str) -> String {
     lowered.replace('&', "and")
 }
 
-fn basic_dist(left: &str, right: &str) -> f64 {
+/// Plain normalized Levenshtein distance over the folded strings, with
+/// none of beets' discounts: every bracketed part counts in full.
+pub fn basic_dist(left: &str, right: &str) -> f64 {
     let left: Vec<char> = fold(left).chars().collect();
     let right: Vec<char> = fold(right).chars().collect();
     if left.is_empty() && right.is_empty() {
