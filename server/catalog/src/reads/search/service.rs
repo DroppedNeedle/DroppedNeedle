@@ -26,7 +26,7 @@ use crate::reads::library::definitions::{musicbrainz, owned_album, owned_artist,
 use super::models::{
     Degradation, EnrichmentBatchRequest, EnrichmentResponse, EnrichmentSource,
     SearchBucketResponse, SearchKind, SearchRemoteStatus, SearchResponse, SearchResultItem,
-    SuggestResponse, SuggestResult,
+    SearchTrackDetail, SuggestResponse, SuggestResult,
 };
 use super::ports::{EnrichmentPort, MAX_ENRICHMENT_PER_BUCKET};
 
@@ -37,6 +37,8 @@ pub const SCORE_EXACT: i32 = 100;
 pub const SCORE_PREFIX: i32 = 90;
 /// Score for a folded-substring match. Ranks, never headlines.
 pub const SCORE_SUBSTRING: i32 = 70;
+/// Score for a song matched only through its artist or album words.
+pub const SCORE_OTHER_FIELD: i32 = 60;
 
 /// A drill-down bucket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -461,6 +463,7 @@ impl SearchService {
                     score: match_score(&name_folded, folded),
                     disambiguation: None,
                     type_info: None,
+                    track: None,
                 }
             })
             .collect())
@@ -522,63 +525,30 @@ impl SearchService {
                     score: match_score(&title_folded, folded),
                     disambiguation: None,
                     type_info: None,
+                    track: None,
                 }
             })
             .collect())
     }
 
-    /// One page of track hits, exact title first. Every word must appear in
-    /// the title, artist or album (the FTS index for words of 3+
-    /// characters, LIKE for shorter ones); a query with no long word keeps
-    /// the LIKE substring match.
+    /// One page of song hits, ranked by [`song_query`]. The page is cut on
+    /// `local_tracks` alone; identities, artwork and the track artist are
+    /// read for the page's rows only.
     async fn search_tracks(
         &self,
         folded: &str,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
-        let search = crate::reads::library::sqlite::TextSearch::parse(folded);
-        let text = match &search {
-            Some(search) => search.sql(),
-            None => "(t.title_folded LIKE ? ESCAPE '\\' \
-             OR COALESCE(t.artist_name_folded, '') LIKE ? ESCAPE '\\' \
-             OR t.album_title_folded LIKE ? ESCAPE '\\')"
-                .to_owned(),
-        };
-        let sql = format!(
-            "SELECT t.id, t.title, t.title_folded, t.artist_name, t.year, \
-             {recording} AS mbid \
-             FROM local_tracks t \
-             LEFT JOIN local_track_external_identities e \
-             ON e.local_track_id = t.id AND {provider} \
-             WHERE t.availability = 'indexed' AND {text} \
-             ORDER BY CASE WHEN t.title_folded = ? THEN 0 \
-             WHEN t.title_folded LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
-             t.title_folded ASC LIMIT ? OFFSET ?",
-            recording = recording_mbid!("e", "t"),
-            provider = musicbrainz!("e")
-        );
+        let (sql, binds) = song_query(folded, limit, offset);
         let mut query = sqlx::query(&sql);
-        match search {
-            Some(search) => {
-                for bind in search.binds() {
-                    query = query.bind(bind);
-                }
-            }
-            None => {
-                query = query
-                    .bind(like_contains(folded))
-                    .bind(like_contains(folded))
-                    .bind(like_contains(folded));
-            }
+        for bind in binds {
+            query = match bind {
+                SongBind::Text(text) => query.bind(text),
+                SongBind::Int(number) => query.bind(number),
+            };
         }
-        let rows = query
-            .bind(folded)
-            .bind(like_prefix(folded))
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
             .map(|row| {
@@ -592,13 +562,109 @@ impl SearchService {
                     musicbrainz_id: row.get("mbid"),
                     in_library: true,
                     requested: false,
-                    score: match_score(&title_folded, folded),
+                    score: song_score(&title_folded, folded),
                     disambiguation: None,
                     type_info: None,
+                    track: Some(SearchTrackDetail {
+                        album_id: row.get("local_album_id"),
+                        album_title: row.get("album_title"),
+                        artist_id: row.get("artist_id"),
+                        release_group_mbid: row.get("release_group_mbid"),
+                        disc_number: row.get("disc_number"),
+                        track_number: row.get("track_number"),
+                        duration_seconds: row.get("duration_seconds"),
+                        format: row.get("file_format"),
+                        cover_available: row.get("cover_available"),
+                    }),
                 }
             })
             .collect())
     }
+}
+
+/// One bind of [`song_query`]'s statement, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SongBind {
+    /// A text value.
+    Text(String),
+    /// An integer value.
+    Int(i64),
+}
+
+/// The song search statement for one page and its binds, in order.
+///
+/// A query with a word of 3+ characters goes through the FTS index: every
+/// word must appear in the title, artist or album. One with only shorter
+/// words ("U2", "xx") matches a title prefix or an exact artist name, each
+/// through its own index: the prefix walk stops after the page's last row,
+/// since every prefix match outranks every other match and the walk runs in
+/// rank order. Either way the candidates drive the read: the availability
+/// test is kept off its index (`+`), which would otherwise walk every
+/// streamable track. Songs rank exact title, title prefix, title
+/// containing the query, then songs matched only through their artist or
+/// album; ties go by title, then id, so offset pages never repeat or skip
+/// a row.
+pub(crate) fn song_query(folded: &str, limit: u32, offset: u32) -> (String, Vec<SongBind>) {
+    let search = crate::reads::library::sqlite::TextSearch::parse(folded);
+    let mut binds: Vec<SongBind> = [
+        folded.to_owned(),
+        like_prefix(folded),
+        like_contains(folded),
+    ]
+    .into_iter()
+    .map(SongBind::Text)
+    .collect();
+    let text = match &search {
+        Some(search) => {
+            binds.extend(search.binds().into_iter().map(SongBind::Text));
+            search.sql()
+        }
+        None => {
+            binds.extend([
+                SongBind::Text(folded.to_owned()),
+                SongBind::Text(format!("{folded}\u{10FFFF}")),
+                SongBind::Int(i64::from(limit) + i64::from(offset)),
+                SongBind::Text(folded.to_owned()),
+            ]);
+            "t.rowid IN (SELECT rowid FROM (SELECT rowid FROM local_tracks \
+             WHERE availability = 'indexed' AND title_folded >= ? AND title_folded < ? \
+             ORDER BY title_folded, id LIMIT ?) \
+             UNION SELECT rowid FROM local_tracks \
+             WHERE availability = 'indexed' AND COALESCE(artist_name_folded, '') = ?)"
+                .to_owned()
+        }
+    };
+    binds.extend([
+        SongBind::Int(i64::from(limit)),
+        SongBind::Int(i64::from(offset)),
+    ]);
+    let order = "tier, t.title_folded, t.id";
+    let sql = format!(
+        "SELECT t.id, t.title, t.title_folded, t.artist_name, t.year, t.local_album_id, \
+         t.album_title, t.disc_number, t.track_number, t.duration_seconds, t.file_format, \
+         {recording} AS mbid, ae.release_group_mbid AS release_group_mbid, \
+         (w.local_album_id IS NOT NULL) AS cover_available, \
+         (SELECT ta.local_artist_id FROM local_track_artists ta \
+          WHERE ta.local_track_id = t.id ORDER BY ta.position LIMIT 1) AS artist_id \
+         FROM (SELECT t.rowid AS hit, \
+               CASE WHEN t.title_folded = ? THEN 0 \
+               WHEN t.title_folded LIKE ? ESCAPE '\\' THEN 1 \
+               WHEN t.title_folded LIKE ? ESCAPE '\\' THEN 2 ELSE 3 END AS tier \
+               FROM local_tracks t \
+               WHERE +t.availability = 'indexed' AND {text} \
+               ORDER BY {order} LIMIT ? OFFSET ?) p \
+         JOIN local_tracks t ON t.rowid = p.hit \
+         LEFT JOIN local_track_external_identities e \
+         ON e.local_track_id = t.id AND {provider} \
+         LEFT JOIN local_album_external_identities ae \
+         ON ae.local_album_id = t.local_album_id AND {album_provider} \
+         LEFT JOIN local_album_artwork w ON w.local_album_id = t.local_album_id \
+         ORDER BY p.{order}",
+        recording = recording_mbid!("e", "t"),
+        provider = musicbrainz!("e"),
+        album_provider = musicbrainz!("ae"),
+    );
+    (sql, binds)
 }
 
 /// Enrich one mixed batch through the port. A provider failure degrades
@@ -688,6 +754,16 @@ fn match_score(title_folded: &str, query_folded: &str) -> i32 {
         SCORE_PREFIX
     } else {
         SCORE_SUBSTRING
+    }
+}
+
+/// Score one song's folded title against the folded query, matching the
+/// tiers [`song_query`] ranks by.
+fn song_score(title_folded: &str, query_folded: &str) -> i32 {
+    if title_folded.contains(query_folded) {
+        match_score(title_folded, query_folded)
+    } else {
+        SCORE_OTHER_FIELD
     }
 }
 
@@ -788,6 +864,7 @@ fn remote_item(hit: RemoteHit) -> SearchResultItem {
         score: hit.score,
         disambiguation: hit.disambiguation,
         type_info: hit.type_info,
+        track: None,
     }
 }
 
@@ -903,6 +980,7 @@ mod tests {
             score,
             disambiguation: None,
             type_info: None,
+            track: None,
         }
     }
 

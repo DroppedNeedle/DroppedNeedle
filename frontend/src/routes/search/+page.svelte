@@ -4,6 +4,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import AlbumCard from '$lib/components/AlbumCard.svelte';
 	import SearchArtistCard from '$lib/components/SearchArtistCard.svelte';
+	import SearchSongRow from '$lib/components/SearchSongRow.svelte';
 	import ViewMoreAlbumCard from '$lib/components/ViewMoreAlbumCard.svelte';
 	import ViewMoreArtistCard from '$lib/components/ViewMoreArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
@@ -20,6 +21,7 @@
 	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
 	import {
 		toSearchRemoteStatus,
+		toSearchSongs,
 		toV1Album,
 		toV1Artist
 	} from '$lib/queries/search/SearchV3Adapters';
@@ -58,6 +60,7 @@
 	);
 	let baseArtists = $derived(remoteArtists.map(toV1Artist));
 	let baseAlbums = $derived((searchQuery.data?.albums ?? []).map(toV1Album));
+	let songs = $derived(toSearchSongs(searchQuery.data?.tracks ?? []));
 	let artists = $derived(enrichment ? applyArtistEnrichment(baseArtists, enrichment) : baseArtists);
 	let albums = $derived(enrichment ? applyAlbumEnrichment(baseAlbums, enrichment) : baseAlbums);
 	let topArtist = $derived.by(() => {
@@ -97,7 +100,7 @@
 		topAlbum ? albums.filter((a) => a.musicbrainz_id !== topAlbum?.musicbrainz_id) : albums
 	);
 
-	function navigateToBucket(bucket: 'artists' | 'albums') {
+	function navigateToBucket(bucket: 'artists' | 'albums' | 'tracks') {
 		if (normalizedQuery) {
 			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
 		}
@@ -138,6 +141,7 @@
 			<Button variant="primary" size="sm" pill aria-current="page">All</Button>
 			<Button size="sm" pill onclick={() => navigateToBucket('artists')}>Artists</Button>
 			<Button size="sm" pill onclick={() => navigateToBucket('albums')}>Albums</Button>
+			<Button size="sm" pill onclick={() => navigateToBucket('tracks')}>Songs</Button>
 		</div>
 	</div>
 {/if}
@@ -162,6 +166,28 @@
 				{#if topAlbum}
 					<SearchTopResult album={topAlbum} />
 				{/if}
+			</div>
+		{/if}
+
+		{#if songs.length > 0}
+			<div>
+				<div class="flex items-center justify-between mb-4">
+					<h2 class="text-xl font-bold">Songs</h2>
+					<a
+						href={`/search/tracks?q=${encodeURIComponent(normalizedQuery)}`}
+						class="text-sm text-primary hover:underline"
+					>
+						View more <ArrowRight class="h-4 w-4 inline align-middle" />
+					</a>
+				</div>
+				<div
+					class="divide-y divide-base-content/5 overflow-hidden rounded-xl bg-base-100/40 shadow-sm"
+					aria-label="Song search results"
+				>
+					{#each songs as song (song.id)}
+						<SearchSongRow {song} />
+					{/each}
+				</div>
 			</div>
 		{/if}
 

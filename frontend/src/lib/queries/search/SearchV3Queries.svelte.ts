@@ -39,9 +39,9 @@ export const successfulEnrichStaleTime = (query: { state: { data?: EnrichmentRes
 
 const DEFAULT_LIMITS: SearchV3Limits = { artists: 6, albums: 6, tracks: 6 };
 
-// The combined page shows a top hit plus five artist cards and the full
-// album shelf; tracks have no shelf there.
-export const COMBINED_SEARCH_LIMITS: SearchV3Limits = { artists: 6, albums: 24, tracks: 0 };
+// The combined page shows a top hit, five songs, five artist cards and the
+// full album shelf.
+export const COMBINED_SEARCH_LIMITS: SearchV3Limits = { artists: 6, albums: 24, tracks: 5 };
 // Drill-down pages fetch this many rows per infinite-scroll page.
 export const SEARCH_BUCKET_PAGE_SIZE = 24;
 

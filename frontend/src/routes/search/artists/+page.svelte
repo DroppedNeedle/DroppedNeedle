@@ -74,7 +74,7 @@
 		}
 	}
 
-	function navigateToBucket(bucket: 'albums') {
+	function navigateToBucket(bucket: 'albums' | 'tracks') {
 		if (normalizedQuery) {
 			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
 		}
@@ -159,6 +159,7 @@
 		<Button size="sm" pill onclick={navigateBack}>All</Button>
 		<Button variant="primary" size="sm" pill aria-current="page">Artists</Button>
 		<Button size="sm" pill onclick={() => navigateToBucket('albums')}>Albums</Button>
+		<Button size="sm" pill onclick={() => navigateToBucket('tracks')}>Songs</Button>
 	</div>
 </div>
 

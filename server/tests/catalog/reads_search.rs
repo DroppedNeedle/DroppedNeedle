@@ -248,7 +248,166 @@ async fn unified_search_returns_ranked_buckets_with_tops() {
     assert_eq!(body["albums"][0]["artist"], "Beyoncé");
     assert_eq!(body["albums"][0]["year"], 2022);
     assert_eq!(body["tracks"][0]["title"], "Alien Superstar");
+    assert_eq!(body["tracks"][0]["track"]["album_id"], "album-renaissance");
+    assert_eq!(body["tracks"][0]["track"]["album_title"], "Renaissance");
+    assert_eq!(body["tracks"][0]["track"]["format"], "flac");
+    assert!(body["artists"][0]["track"].is_null());
     assert!(body["top_track"].is_null());
+}
+
+/// Insert one track; `availability` other than `indexed` must never match.
+async fn seed_track(
+    pool: &SqlitePool,
+    id: &str,
+    album_id: &str,
+    title: &str,
+    album_title: &str,
+    availability: &str,
+) {
+    sqlx::query(
+        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         artist_name, artist_name_folded, album_title, album_title_folded, duration_seconds, \
+         file_format, availability, ingest_source, imported_at, membership_source) \
+         VALUES (?, ?, 'root-1', ?, ?, ?, 1000, 0, 'stat-1', ?, lower(?), \
+         'Someone', 'someone', ?, lower(?), 61.5, 'mp3', ?, 'scan', 0, 'manual')",
+    )
+    .bind(id)
+    .bind(album_id)
+    .bind(format!("/music/{id}.mp3"))
+    .bind(format!("{id}.mp3"))
+    .bind(format!("hash-{id}"))
+    .bind(title)
+    .bind(title)
+    .bind(album_title)
+    .bind(album_title)
+    .bind(availability)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A song title finds the song, ranked exact title, title prefix, title
+/// substring, then songs matched only through their album; each carries
+/// what playing it and linking its album need. Tied titles page stably,
+/// a missing file never matches, and a query with no word of three
+/// characters matches title prefixes.
+#[tokio::test]
+async fn a_song_title_finds_the_song() {
+    let (app, pool, _held) = authed_app().await;
+    seed_track(
+        &pool,
+        "t-opening",
+        "album-gulag",
+        "Opening",
+        "Intro Sessions",
+        "indexed",
+    )
+    .await;
+    seed_track(
+        &pool,
+        "t-song",
+        "album-gulag",
+        "The Intro Song",
+        "Gulag Orkestar",
+        "indexed",
+    )
+    .await;
+    seed_track(
+        &pool,
+        "t-reprise",
+        "album-gulag",
+        "Intro (Reprise)",
+        "Gulag Orkestar",
+        "indexed",
+    )
+    .await;
+    seed_track(
+        &pool,
+        "t-intro-r",
+        "album-renaissance",
+        "Intro",
+        "Renaissance",
+        "indexed",
+    )
+    .await;
+    seed_track(
+        &pool,
+        "t-intro-g",
+        "album-gulag",
+        "Intro",
+        "Gulag Orkestar",
+        "indexed",
+    )
+    .await;
+    seed_track(
+        &pool,
+        "t-gone",
+        "album-gulag",
+        "Intro",
+        "Gulag Orkestar",
+        "missing",
+    )
+    .await;
+
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search?q=intro&buckets=tracks",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    let hits: Vec<(&str, i64)> = body["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| (hit["id"].as_str().unwrap(), hit["score"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(
+        hits,
+        vec![
+            ("t-intro-g", 100),
+            ("t-intro-r", 100),
+            ("t-reprise", 90),
+            ("t-song", 70),
+            ("t-opening", 60),
+        ]
+    );
+    let first = &body["tracks"][0];
+    assert_eq!(first["kind"], "track");
+    assert_eq!(first["artist"], "Someone");
+    assert_eq!(first["track"]["album_id"], "album-gulag");
+    assert_eq!(first["track"]["album_title"], "Gulag Orkestar");
+    assert_eq!(first["track"]["duration_seconds"], 61.5);
+    assert_eq!(first["track"]["cover_available"], false);
+
+    let mut paged = Vec::new();
+    for offset in 0..2 {
+        let uri = format!("/api/v3/search/tracks?q=intro&limit=1&offset={offset}");
+        let (status, _, bytes) = call(app.clone(), Method::GET, &uri, Some(TEST_TOKEN), None).await;
+        assert_eq!(status, StatusCode::OK);
+        paged.push(json(&bytes)["results"][0]["id"].clone());
+    }
+    assert_eq!(paged, vec!["t-intro-g", "t-intro-r"]);
+
+    let (_, _, bytes) = call(
+        app,
+        Method::GET,
+        "/api/v3/search?q=in&buckets=tracks",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    let short: Vec<String> = json(&bytes)["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(short, vec!["t-intro-g", "t-intro-r", "t-reprise"]);
 }
 
 #[tokio::test]

@@ -21671,12 +21671,14 @@ export interface components {
             /**
              * Format: int32
              * @description Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;
-             *     library rows score 100 exact, 90 prefix, 70 substring. Ranks hits,
+             *     library rows score 100 exact, 90 prefix, 70 substring, and songs
+             *     matched only through their artist or album 60. Ranks hits,
              *     never filters them.
              */
             score: number;
             /** @description Display title (artist name, album title, or track title). */
             title: string;
+            track?: null | components["schemas"]["SearchTrackDetail"];
             /** @description Artist type, or an `Album + Live` style type label. */
             type_info?: string | null;
             /**
@@ -21691,6 +21693,36 @@ export interface components {
             albums: components["schemas"]["AlbumCard"][];
             /** @description Tracks matching the query. */
             tracks: components["schemas"]["SuggestionTrack"][];
+        };
+        /** @description What playing a library song and linking its album need. */
+        SearchTrackDetail: {
+            /** @description Owning library album id. */
+            album_id: string;
+            /** @description Album title as tagged on the track. */
+            album_title: string;
+            /** @description Library id of the first credited track artist, when credited. */
+            artist_id?: string | null;
+            /** @description True when the owning album has artwork. */
+            cover_available: boolean;
+            /**
+             * Format: int64
+             * @description Disc number.
+             */
+            disc_number: number;
+            /**
+             * Format: double
+             * @description Duration, seconds, when probed.
+             */
+            duration_seconds?: number | null;
+            /** @description Container or codec label, e.g. `flac`. */
+            format: string;
+            /** @description The album's release group, when identified; covers fall back to it. */
+            release_group_mbid?: string | null;
+            /**
+             * Format: int64
+             * @description Track number within the disc.
+             */
+            track_number: number;
         };
         /**
          * @description One row inside a section. The `type` field on the section names which

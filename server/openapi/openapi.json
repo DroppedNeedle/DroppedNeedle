@@ -61761,11 +61761,22 @@
           "score": {
             "type": "integer",
             "format": "int32",
-            "description": "Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;\nlibrary rows score 100 exact, 90 prefix, 70 substring. Ranks hits,\nnever filters them."
+            "description": "Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;\nlibrary rows score 100 exact, 90 prefix, 70 substring, and songs\nmatched only through their artist or album 60. Ranks hits,\nnever filters them."
           },
           "title": {
             "type": "string",
             "description": "Display title (artist name, album title, or track title)."
+          },
+          "track": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SearchTrackDetail",
+                "description": "Library details of a song hit; present exactly when `kind` is\n`track`."
+              }
+            ]
           },
           "type_info": {
             "type": [
@@ -61805,6 +61816,68 @@
               "$ref": "#/components/schemas/SuggestionTrack"
             },
             "description": "Tracks matching the query."
+          }
+        }
+      },
+      "SearchTrackDetail": {
+        "type": "object",
+        "description": "What playing a library song and linking its album need.",
+        "required": [
+          "album_id",
+          "album_title",
+          "disc_number",
+          "track_number",
+          "format",
+          "cover_available"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Owning library album id."
+          },
+          "album_title": {
+            "type": "string",
+            "description": "Album title as tagged on the track."
+          },
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Library id of the first credited track artist, when credited."
+          },
+          "cover_available": {
+            "type": "boolean",
+            "description": "True when the owning album has artwork."
+          },
+          "disc_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Disc number."
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Duration, seconds, when probed."
+          },
+          "format": {
+            "type": "string",
+            "description": "Container or codec label, e.g. `flac`."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album's release group, when identified; covers fall back to it."
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track number within the disc."
           }
         }
       },

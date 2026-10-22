@@ -1020,6 +1020,38 @@ async fn hot_plans_avoid_scans_and_sorts() {
     assert_hot_plans(fixture.db()).await;
 }
 
+/// Song search reads candidates through the FTS index, or for a query of
+/// short words through the title and artist-order indexes, and never
+/// scans the track table.
+#[tokio::test]
+async fn song_search_plans_avoid_track_scans() {
+    use crate::reads::search::service::song_query;
+
+    let fixture = seed_small().await;
+    for (query, wants) in [
+        ("track 0123", "local_tracks_fts VIRTUAL TABLE"),
+        ("pe", "idx_local_tracks_availability_title"),
+        ("pe", "idx_local_tracks_artist_order"),
+    ] {
+        let (statement, _) = song_query(query, 24, 0);
+        let plan = explain_unbound(fixture.db(), &statement).await;
+        assert!(
+            plan.iter().any(|line| line.contains(wants)),
+            "{query}: no {wants} in {plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|line| {
+                let mut words = line.split_whitespace();
+                let verb = words.next();
+                let tracks = matches!(words.next(), Some("t" | "local_tracks"));
+                // Walking every indexed track by availability alone is a scan.
+                tracks && (verb == Some("SCAN") || line.ends_with("(availability=?)"))
+            }),
+            "{query}: scans the track table: {plan:?}"
+        );
+    }
+}
+
 async fn assert_hot_plans(db: &Db) {
     let plan = explain(
         db,
@@ -3235,24 +3267,35 @@ async fn perf_100k_endpoints_hold_p95() {
         "library_contributors_by_appearances",
         "library_artists_by_appearances",
         "library_artists_by_album_count",
+        "search_songs_hit",
+        "search_songs_miss",
+        "search_songs_short",
     ]
     .into_iter()
     .map(|name| (name, Vec::new()))
     .collect();
-    // Timed and reported, not budgeted: random track pages key every track.
-    let mut reported: Vec<(&str, Vec<f64>)> = ["library_tracks_random"]
-        .into_iter()
-        .map(|name| (name, Vec::new()))
-        .collect();
+    let search = crate::reads::search::service::SearchService::new(fixture.db().sqlx().clone());
+    // Timed and reported, not budgeted: random track pages key every track,
+    // and a song search whose words are in every track ("perf", "artist")
+    // reads the whole FTS index and ranks every track, as the player's
+    // common-word search page does.
+    let mut reported: Vec<(&str, Vec<f64>)> = [
+        "library_tracks_random",
+        "search_songs_common",
+        "search_songs_deep_offset",
+    ]
+    .into_iter()
+    .map(|name| (name, Vec::new()))
+    .collect();
     for _ in 0..3 {
         for (name, _) in endpoints.iter().chain(&reported) {
-            read_endpoint(&fixture.catalog, name, &deep).await;
+            read_timed(&fixture.catalog, &search, name, &deep).await;
         }
     }
     for _ in 0..50 {
         for (name, samples) in endpoints.iter_mut().chain(&mut reported) {
             let tick = std::time::Instant::now();
-            read_endpoint(&fixture.catalog, name, &deep).await;
+            read_timed(&fixture.catalog, &search, name, &deep).await;
             samples.push(tick.elapsed().as_secs_f64() * 1000.0);
         }
     }
@@ -3277,7 +3320,41 @@ async fn perf_100k_endpoints_hold_p95() {
     }
 }
 
-/// One read of a timed endpoint.
+/// One read of a timed endpoint: a song search page, or a library read.
+async fn read_timed(
+    catalog: &LocalCatalog,
+    search: &crate::reads::search::service::SearchService,
+    name: &str,
+    deep: &(After, After, After),
+) {
+    let page = match name {
+        "search_songs_hit" => Some(("track 0123", 0)),
+        "search_songs_common" => Some(("perf artist 01", 0)),
+        "search_songs_miss" => Some(("zzz-no-such-thing-zzz", 0)),
+        "search_songs_short" => Some(("pe", 0)),
+        "search_songs_deep_offset" => Some(("perf artist 01", 480)),
+        _ => None,
+    };
+    let Some((query, offset)) = page else {
+        return read_endpoint(catalog, name, deep).await;
+    };
+    let page = search
+        .search_bucket(
+            crate::reads::search::service::Bucket::Tracks,
+            query,
+            24,
+            offset,
+        )
+        .await
+        .expect("song search reads");
+    assert_eq!(
+        page.results.is_empty(),
+        name == "search_songs_miss",
+        "{name}"
+    );
+}
+
+/// One read of a timed library endpoint.
 async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After, After)) {
     let first = After::default();
     let random = After {

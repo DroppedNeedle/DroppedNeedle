@@ -1,7 +1,12 @@
 import type { components } from '$lib/api/v3/openapi';
+import { gatewayStreamUrl } from '$lib/player/playbackGateway';
+import { normalizeDiscNumber } from '$lib/player/queueHelpers';
+import type { QueueItem } from '$lib/player/types';
 import type { Album, Artist, SearchRemoteStatus, SuggestResult } from '$lib/types';
+import { getCoverUrl } from '$lib/utils/errorHandling';
 
 export type SearchResultItemV3 = components['schemas']['SearchResultItem'];
+export type SearchTrackDetailV3 = components['schemas']['SearchTrackDetail'];
 export type SearchRemoteStatusV3 = components['schemas']['SearchRemoteStatus'];
 export type SuggestResultV3 = components['schemas']['SuggestResult'];
 
@@ -111,4 +116,34 @@ export function toSuggestResultsV1(rows: SuggestResultV3[]): SuggestResult[] {
 		});
 	}
 	return out;
+}
+
+/** A library song hit: a track row with its id and library details. */
+export type SearchSong = SearchResultItemV3 & { id: string; track: SearchTrackDetailV3 };
+
+/** The playable song hits of a tracks bucket, in rank order. */
+export function toSearchSongs(rows: SearchResultItemV3[]): SearchSong[] {
+	return rows.filter((row): row is SearchSong => row.kind === 'track' && !!row.id && !!row.track);
+}
+
+/** The queue item that plays one library song. */
+export function searchSongQueueItem(song: SearchSong): QueueItem {
+	const detail = song.track;
+	return {
+		trackSourceId: song.id,
+		trackName: song.title,
+		artistName: song.artist ?? '',
+		trackNumber: detail.track_number,
+		discNumber: normalizeDiscNumber(detail.disc_number),
+		albumId: detail.album_id,
+		albumName: detail.album_title,
+		coverUrl: getCoverUrl(null, detail.album_id),
+		coverRemoteUrl: null,
+		sourceType: 'local',
+		artistId: detail.artist_id ?? undefined,
+		streamUrl: gatewayStreamUrl('local', song.id),
+		format: detail.format.toLowerCase(),
+		availableSources: ['local'],
+		duration: detail.duration_seconds ?? undefined
+	};
 }

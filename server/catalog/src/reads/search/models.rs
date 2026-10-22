@@ -2,8 +2,9 @@
 //!
 //! Everything is snake_case. Artist and album hits come from MusicBrainz
 //! joined with the library (`id` set when the library holds a copy); track
-//! hits come from the library alone. `in_library` and `requested` are read
-//! fresh from the library and the request list on every search.
+//! hits come from the library alone and carry [`SearchTrackDetail`].
+//! `in_library` and `requested` are read fresh from the library and the
+//! request list on every search.
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -62,13 +63,40 @@ pub struct SearchResultItem {
     /// True when an acquisition request is open for this album.
     pub requested: bool,
     /// Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;
-    /// library rows score 100 exact, 90 prefix, 70 substring. Ranks hits,
+    /// library rows score 100 exact, 90 prefix, 70 substring, and songs
+    /// matched only through their artist or album 60. Ranks hits,
     /// never filters them.
     pub score: i32,
     /// MusicBrainz disambiguation comment.
     pub disambiguation: Option<String>,
     /// Artist type, or an `Album + Live` style type label.
     pub type_info: Option<String>,
+    /// Library details of a song hit; present exactly when `kind` is
+    /// `track`.
+    pub track: Option<SearchTrackDetail>,
+}
+
+/// What playing a library song and linking its album need.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SearchTrackDetail {
+    /// Owning library album id.
+    pub album_id: String,
+    /// Album title as tagged on the track.
+    pub album_title: String,
+    /// Library id of the first credited track artist, when credited.
+    pub artist_id: Option<String>,
+    /// The album's release group, when identified; covers fall back to it.
+    pub release_group_mbid: Option<String>,
+    /// Disc number.
+    pub disc_number: i64,
+    /// Track number within the disc.
+    pub track_number: i64,
+    /// Duration, seconds, when probed.
+    pub duration_seconds: Option<f64>,
+    /// Container or codec label, e.g. `flac`.
+    pub format: String,
+    /// True when the owning album has artwork.
+    pub cover_available: bool,
 }
 
 /// Unified search response: one ranked list per bucket plus the standout
