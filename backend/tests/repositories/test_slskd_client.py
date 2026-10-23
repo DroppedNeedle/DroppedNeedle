@@ -117,6 +117,47 @@ async def test_enqueue_sends_plain_array():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("username", "encoded_peer"),
+    [
+        ("alice", b"alice"),
+        ("remove/replace", b"remove%2Freplace"),
+        ("who?", b"who%3F"),
+        ("hash#tag", b"hash%23tag"),
+        ("100%lossless", b"100%25lossless"),
+        ("Bj\u00f6rk \u97f3\u697d", b"Bj%C3%B6rk%20%E9%9F%B3%E6%A5%BD"),
+    ],
+)
+async def test_transfer_operations_keep_username_in_one_url_segment(username, encoded_peer):
+    """Peer names must not add route segments, queries, or fragments to requests."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["X-API-Key"] == "k"
+        assert not request.url.fragment
+        if request.method == "POST":
+            assert json.loads(request.content) == [{"filename": "a.flac", "size": 100}]
+            return httpx.Response(201, json={"Enqueued": [], "Failed": []})
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(204)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = SlskdClient(http, "http://slskd", "k")
+        await client.enqueue(username, [{"filename": "a.flac", "size": 100}])
+        assert await client.get_downloads(username) == []
+        assert await client.cancel_transfer(username, "transfer-123") is True
+
+    peer_path = b"/api/v0/transfers/downloads/" + encoded_peer
+    assert [(request.method, request.url.raw_path) for request in requests] == [
+        ("POST", peer_path),
+        ("GET", peer_path),
+        ("DELETE", peer_path + b"/transfer-123?remove=true"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_get_options_parses_directories():
     # Shape verified against a live slskd: directories is top-level with downloads/incomplete.
     def handler(request: httpx.Request) -> httpx.Response:
@@ -148,13 +189,14 @@ async def test_429_raises_rate_limited():
 
 
 @pytest.mark.asyncio
-async def test_get_downloads_404_returns_empty():
+@pytest.mark.parametrize("username", ["ghost", "remove/replace"])
+async def test_get_downloads_404_returns_empty(username):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = SlskdClient(http, "http://slskd", "k")
-    assert await client.get_downloads("ghost") == []
+    assert await client.get_downloads(username) == []
 
 
 def _reset_slskd_breakers() -> None:
@@ -165,6 +207,30 @@ def _reset_slskd_breakers() -> None:
 
     _slskd_circuit_breaker.reset()
     _slskd_verify_circuit_breaker.reset()
+
+
+@pytest.mark.asyncio
+async def test_get_downloads_400_remains_error_for_encoded_peer(monkeypatch):
+    """A malformed inspection must never become false evidence of absent source files."""
+    _reset_slskd_breakers()
+
+    async def no_delay(_delay):
+        pass
+
+    monkeypatch.setattr(asyncio, "sleep", no_delay)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.raw_path == b"/api/v0/transfers/downloads/remove%2Freplace"
+        return httpx.Response(400)
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = SlskdClient(http, "http://slskd", "k")
+            with pytest.raises(SlskdApiError) as exc_info:
+                await client.get_downloads("remove/replace")
+            assert exc_info.value.code == 400
+    finally:
+        _reset_slskd_breakers()
 
 
 @pytest.mark.asyncio

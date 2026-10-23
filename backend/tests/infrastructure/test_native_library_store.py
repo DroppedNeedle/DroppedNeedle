@@ -5150,3 +5150,78 @@ async def test_library_revisions_missing_stream_row_raises_not_found(
         )
     with pytest.raises(ResourceNotFoundError, match="operation"):
         await store.get_library_revisions()
+
+
+@pytest.mark.asyncio
+async def test_local_artwork_sources_use_stable_id_and_bound_first_last_tracks(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    membership = _membership()
+    template = membership.tracks[0]
+    membership.tracks = [
+        msgspec.structs.replace(
+            template, id=f"art-track-{number}", track_number=number,
+            file_path=f"/music/album/{number}.flac",
+            relative_path=f"album/{number}.flac", path_hash=f"art-hash-{number}",
+        )
+        for number in range(1, 16)
+    ]
+    membership.track_credits = {}
+    await store.create_catalog_membership(membership)
+    # One missing source must not authorize reads; no external identity exists.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE local_tracks SET availability='missing' WHERE track_number=15")
+    sources = await store.get_local_artwork_sources("album-1")
+    context = await store.get_local_artwork_context("album-1")
+    assert context["id"] == "album-1"
+    assert context["provider_id"] is None
+    assert context["source"] is None
+    assert len(sources) == 14
+    assert {row["relative_path"] for row in sources} == {
+        f"album/{number}.flac" for number in range(1, 15)
+    }
+    assert await store.get_local_artwork_sources("not-an-album") == []
+    assert await store.get_local_artwork_context("not-an-album") is None
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE local_albums SET retired_into_album_id='survivor' WHERE id='album-1'")
+    assert await store.get_local_artwork_sources("album-1") == []
+    assert await store.get_local_artwork_context("album-1") is None
+
+
+@pytest.mark.asyncio
+async def test_local_artwork_sources_prioritize_embedded_association_beyond_sampling(
+    store: NativeLibraryStore, db_path: Path, tmp_path: Path
+) -> None:
+    from services.home.local_album_artwork_service import LocalAlbumArtworkService
+    from tests.services.test_local_album_artwork_service import embedded_flac, PNG
+
+    root = tmp_path.resolve()
+    membership = _membership()
+    template = membership.tracks[0]
+    membership.tracks = [msgspec.structs.replace(
+        template, id=f'art-track-{number}', track_number=number,
+        file_path=str(root / f'{number}.flac'), relative_path=f'{number}.flac',
+        path_hash=f'art-hash-{number}',
+    ) for number in range(1, 101)]
+    membership.track_credits = {}
+    await store.create_catalog_membership(membership)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO local_album_artwork(local_album_id,source,source_locator,version,updated_at) "
+            "VALUES('album-1','embedded','art-track-50',1,1)"
+        )
+    sources = await store.get_local_artwork_sources('album-1')
+    assert len(sources) == 65
+    assert sources[0]['id'] == 'art-track-50'
+    assert {row['id'] for row in sources[1:]} == {
+        f'art-track-{number}' for number in [*range(1, 33), *range(69, 101)]
+    }
+    embedded_flac(root / '50.flac')
+    result = await LocalAlbumArtworkService(store).get('album-1', {'root-1': root})
+    assert result[:3] == (PNG, 'image/png', 'embedded')
+    # A stale association cannot reopen a missing source or an unrelated album's file.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE local_tracks SET availability='missing' WHERE id='art-track-50'")
+    sources = await store.get_local_artwork_sources('album-1')
+    assert len(sources) == 64
+    assert all(row['id'] != 'art-track-50' for row in sources)

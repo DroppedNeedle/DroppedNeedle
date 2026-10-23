@@ -18,6 +18,7 @@ from core.dependencies import (
     get_request_history_store,
     get_library_policy_resolver,
     get_cached_local_artwork_service,
+    get_native_library_store,
     get_preferences_service,
     get_target_catalog_writer_service,
     get_target_library_scan_coordinator,
@@ -98,6 +99,7 @@ def app() -> FastAPI:
     )
     artwork = AsyncMock()
     artwork.get.return_value = None
+    artwork.read.return_value = None
     application.dependency_overrides[get_cached_local_artwork_service] = lambda: artwork
     writer = AsyncMock()
     download_service = AsyncMock()
@@ -215,6 +217,7 @@ def test_every_target_library_route_rejects_unauthenticated(app: FastAPI) -> Non
         ("POST", "/library/edition-conversions/j/cancel", {}),
         ("GET", "/library/albums/a/copies", None),
         ("GET", "/library/albums/a/artwork/cached?v=1", None),
+        ("GET", "/library/albums/a/artwork/local", None),
         ("POST", "/library/resolve-tracks", {"items": []}),
         ("GET", "/library/albums/a/tracks", None),
         ("GET", "/library/albums/a/status", None),
@@ -646,6 +649,46 @@ def test_cached_artwork_route_returns_terminal_local_miss(app: FastAPI) -> None:
     assert response.headers["x-cover-state"] == "missing"
 
 
+def test_local_artwork_route_reads_stable_id_and_revalidates(app: FastAPI, tmp_path) -> None:
+    from api.v1.schemas.library_policies import LibraryRootSettings, TypedLibrarySettings
+    from services.native.library_policy_resolver import LibraryPolicyResolver
+
+    override_user_auth(app, role="user")
+    root = tmp_path.resolve()
+    (root / "album").mkdir()
+    (root / "album/track.flac").write_bytes(b"audio")
+    content = b"\x89PNG\r\n\x1a\ncover"
+    (root / "album/cover.png").write_bytes(content)
+    store = AsyncMock()
+    store.get_local_artwork_context.return_value = {"source": "provider", "provider_id": None}
+    store.get_local_artwork_sources.return_value = [{
+        "root_id": "music", "relative_path": "album/track.flac",
+        "file_path": str(root / "album/track.flac"),
+    }]
+    app.dependency_overrides[get_native_library_store] = lambda: store
+    resolver = LibraryPolicyResolver(TypedLibrarySettings(library_roots=[
+        LibraryRootSettings(id="music", path=str(root), label="Music")
+    ]))
+    app.dependency_overrides[get_library_policy_resolver] = lambda: resolver
+    client = build_test_client(app)
+
+    response = client.get("/library/albums/local-only/artwork/local")
+    assert response.status_code == 200
+    assert response.content == content
+    assert response.headers["cache-control"] == "private, no-cache"
+    assert response.headers["x-cover-source"] == "folder"
+    not_modified = client.get("/library/albums/local-only/artwork/local",
+                              headers={"If-None-Match": response.headers["etag"]})
+    assert not_modified.status_code == 304
+    assert not_modified.content == b""
+    (root / "album/cover.png").unlink()
+    (root / "album/track.flac").unlink()
+    missing = client.get("/library/albums/local-only/artwork/local")
+    assert missing.status_code == 404
+    assert missing.headers["cache-control"] == "private, no-cache"
+    assert missing.headers["x-cover-state"] == "missing"
+
+
 def test_target_library_route_inventory_is_complete() -> None:
     inventory = {
         (method, route.path)
@@ -676,6 +719,7 @@ def test_target_library_route_inventory_is_complete() -> None:
         ("POST", "/library/edition-conversions/{job_id}/cancel"),
         ("GET", "/library/albums/{album_id}/copies"),
         ("GET", "/library/albums/{album_id}/artwork/cached"),
+        ("GET", "/library/albums/{album_id}/artwork/local"),
         ("POST", "/library/resolve-tracks"),
         ("GET", "/library/albums/{album_id}/tracks"),
         ("GET", "/library/albums/{album_id}/status"),
@@ -686,3 +730,81 @@ def test_target_library_route_inventory_is_complete() -> None:
         ("GET", "/library/tracks/{track_id}/tags"),
         ("POST", "/library/albums/{album_id}/rescan"),
     }
+
+
+@pytest.mark.parametrize("source_kind,locator,identity,expected", [
+    ("provider", "c44e9c22-ef82-4a77-9bcd-af6c958446d6", None, "c44e9c22-ef82-4a77-9bcd-af6c958446d6"),
+    (None, None, "c44e9c22-ef82-4a77-9bcd-af6c958446d6", "c44e9c22-ef82-4a77-9bcd-af6c958446d6"),
+    ("manual", "c44e9c22-ef82-4a77-9bcd-af6c958446d6", None, None),
+    ("provider", "../../outside", None, None),
+    (None, None, None, None),
+])
+def test_local_artwork_redirects_only_explicit_provider_identity(
+    app, source_kind, locator, identity, expected
+):
+    override_user_auth(app, role="user")
+    app.root_path = "/prefix"
+    @app.get("/covers/release-group/{release_group_id}", name="cover_from_release_group")
+    def provider(release_group_id):
+        raise AssertionError("Local handler must not fetch a provider")
+    store = AsyncMock()
+    store.get_local_artwork_context.return_value = {
+        "source": source_kind, "source_locator": locator, "provider_id": identity,
+    }
+    store.get_local_artwork_sources.return_value = []
+    app.dependency_overrides[get_native_library_store] = lambda: store
+    app.dependency_overrides[get_library_policy_resolver] = lambda: SimpleNamespace(
+        settings=SimpleNamespace(library_roots=[])
+    )
+    cached = app.dependency_overrides[get_cached_local_artwork_service]()
+    cached.read.return_value = None
+    client = build_test_client(app)
+    response = client.get("/library/albums/b1392450-e666-3926-a536-22c65f834433/artwork/local",
+                          headers={"Host": "hostile.invalid"}, follow_redirects=False)
+    assert response.status_code == (307 if expected else 404)
+    assert response.headers["cache-control"] == "private, no-cache"
+    if expected:
+        assert response.headers["location"] == f"/prefix/covers/release-group/{expected}"
+    else:
+        assert "location" not in response.headers
+
+
+def test_local_artwork_manual_cached_choice_precedes_local_files(app):
+    override_user_auth(app, role="user")
+    store = AsyncMock()
+    store.get_local_artwork_context.return_value = {"source": "manual", "version": 7}
+    app.dependency_overrides[get_native_library_store] = lambda: store
+    cached = app.dependency_overrides[get_cached_local_artwork_service]()
+    cached.read.return_value = (b"\xff\xd8\xffmanual", "image/jpeg", "manual", "manual-hash")
+    response = build_test_client(app).get("/library/albums/local-id/artwork/local")
+    assert response.status_code == 200
+    assert response.content == b"\xff\xd8\xffmanual"
+    store.get_local_artwork_sources.assert_not_awaited()
+
+
+def test_local_artwork_known_provider_association_does_not_block_embedded(app, tmp_path):
+    from api.v1.schemas.library_policies import LibraryRootSettings, TypedLibrarySettings
+    from services.native.library_policy_resolver import LibraryPolicyResolver
+    from tests.services.test_local_album_artwork_service import embedded_flac, PNG
+    override_user_auth(app, role="user")
+    root = tmp_path.resolve()
+    embedded_flac(root / "track.flac")
+    store = AsyncMock()
+    store.get_local_artwork_context.return_value = {
+        "source": "provider", "provider_id": None,
+        "source_locator": "c44e9c22-ef82-4a77-9bcd-af6c958446d6", "version": 1,
+    }
+    store.get_local_artwork_sources.return_value = [{
+        "root_id": "music", "relative_path": "track.flac", "file_path": str(root / "track.flac"),
+    }]
+    app.dependency_overrides[get_native_library_store] = lambda: store
+    app.dependency_overrides[get_library_policy_resolver] = lambda: LibraryPolicyResolver(
+        TypedLibrarySettings(library_roots=[LibraryRootSettings(id="music",path=str(root),label="Music")])
+    )
+    cached = app.dependency_overrides[get_cached_local_artwork_service]()
+    cached.read.return_value = None
+    response = build_test_client(app).get("/library/albums/local-id/artwork/local")
+    assert response.status_code == 200
+    assert response.content == PNG
+    assert response.headers["x-cover-source"] == "embedded"
+    cached.read.assert_not_awaited()

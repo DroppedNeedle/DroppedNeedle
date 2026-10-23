@@ -9,6 +9,7 @@ deadline.
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import msgspec
@@ -152,7 +153,7 @@ class SlskdClient:
         """
         try:
             response = await self._http.post(
-                self._url(f"/transfers/downloads/{username}"),
+                self._url(f"/transfers/downloads/{quote(username, safe='')}"),
                 headers=self._headers,
                 json=files,
             )
@@ -171,7 +172,8 @@ class SlskdClient:
         # GET /api/v0/transfers/downloads/{username}, flattened to transfers.
         try:
             response = await self._http.get(
-                self._url(f"/transfers/downloads/{username}"), headers=self._headers
+                self._url(f"/transfers/downloads/{quote(username, safe='')}"),
+                headers=self._headers,
             )
         except httpx.HTTPError as exc:
             raise SlskdApiError(f"slskd get_downloads failed: {exc}") from exc
@@ -223,7 +225,7 @@ class SlskdClient:
         removal of a completed transfer record (DEC-1)."""
         try:
             response = await self._http.delete(
-                self._url(f"/transfers/downloads/{username}/{transfer_id}"),
+                self._url(f"/transfers/downloads/{quote(username, safe='')}/{transfer_id}"),
                 headers=self._headers,
                 params={"remove": "true"},
             )
