@@ -147,7 +147,7 @@ async def _expected_tracks_for_task(  # noqa: ANN001, ANN201
     return selected_release, expected
 
 
-def _file_serves_expected(value, tracks) -> bool:  # noqa: ANN001
+def _file_serves_expected(value, tracks, prefix=frozenset()) -> bool:  # noqa: ANN001
     """Whether one search-result file plausibly serves any of ``tracks`` - the
     per-file failover filter (#292). Search-side evidence only (filename stem +
     advertised duration), judged by the SAME thresholds the post-download matcher
@@ -158,8 +158,11 @@ def _file_serves_expected(value, tracks) -> bool:  # noqa: ANN001
     no usable signal cannot be discriminated - its files pass rather than strand
     the position on every candidate. Thin wrapper over the shared
     ``scoring_core`` pair rule so the failover filter and grab-time overlap can
-    never drift apart."""
-    stem = scoring_core.filename_stem(value.filename)
+    never drift apart. ``prefix`` (artist + album tokens) sheds an
+    ``Artist - Album - `` filename lead first, as the overlap judge does."""
+    stem = scoring_core.strip_release_prefix(
+        scoring_core.filename_stem(value.filename), prefix
+    )
     return any(
         scoring_core.pair_serves_track(
             stem, value.duration, track.title, track.duration_seconds
@@ -500,10 +503,13 @@ class SoulseekStrategy:
             ]
             if not expected_tracks:
                 raise OrchestrationError("nothing left to acquire from this source")
+            prefix = scoring_core.release_prefix_tokens(
+                getattr(task, "artist_name", None), getattr(task, "album_title", None)
+            )
             serving = [
                 value
                 for value in candidate.files
-                if _file_serves_expected(value, expected_tracks)
+                if _file_serves_expected(value, expected_tracks, prefix)
             ]
             if not serving:
                 raise OrchestrationError("candidate has no files serving the remaining tracks")
