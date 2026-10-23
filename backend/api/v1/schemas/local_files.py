@@ -40,6 +40,8 @@ class LocalAlbumSummary(AppStruct):
     musicbrainz_id: str
     name: str
     artist_name: str
+    # Explicit stable catalog ID; musicbrainz_id remains the legacy lookup token.
+    local_id: str | None = None
     artist_mbid: str | None = None
     year: int | None = None
     track_count: int = 0
@@ -91,6 +93,7 @@ class CrateTrack(AppStruct):
     title: str
     album_name: str
     artist_name: str
+    local_album_id: str | None = None
     album_mbid: str | None = None
     cover_url: str | None = None
     format: str = ""

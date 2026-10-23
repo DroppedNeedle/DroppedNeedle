@@ -11,7 +11,7 @@ This is the mock seam for the scanner: tests mock ``AudioTagger`` (or
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import mutagen
 from mutagen.flac import FLAC
@@ -229,7 +229,7 @@ class AudioTagger:
         """Read an admitted format without generic Mutagen dispatch."""
         return self._metadata_engine.read(path)
 
-    def read_cover_art(self, path: Path) -> bytes | None:
+    def read_cover_art(self, path: Path | BinaryIO) -> bytes | None:
         try:
             audio = mutagen.File(path)
         except mutagen.MutagenError:

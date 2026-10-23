@@ -6,9 +6,7 @@ const RETRY_DELAYS_MS = [1500, 3000, 5000, 8000, 12000, 20000] as const;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export type CoverWarmUpdate =
-	| { status: 'warming' }
-	| { status: 'ready'; url: string }
-	| { status: 'failed' };
+	{ status: 'warming' } | { status: 'ready'; url: string } | { status: 'failed' };
 
 type Listener = (update: CoverWarmUpdate) => void;
 
@@ -66,6 +64,13 @@ async function poll(key: string, entry: WarmEntry) {
 
 		if (response.status === 202) {
 			schedule(key, entry);
+			return;
+		}
+
+		// Stable local artwork can redirect to a warming provider. Its actual
+		// absence is terminal: never spend the warming retry budget on a 404.
+		if (response.status === 404) {
+			notify(entry, { status: 'failed' });
 			return;
 		}
 

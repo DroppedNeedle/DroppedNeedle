@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import time
+import uuid
+from pathlib import Path
 
 import msgspec.structs
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -55,6 +57,7 @@ from core.dependencies.type_aliases import (
     EditionConversionServiceDep,
     TargetAlbumEditionFinderServiceDep,
     CachedLocalArtworkServiceDep,
+    NativeLibraryStoreDep,
     WantedWatcherServiceDep,
 )
 from core.dependencies import get_download_service
@@ -81,6 +84,55 @@ def _path_relative_location(target: URL) -> str:
     """
     path = "/" + target.path.lstrip("/")
     return f"{path}?{target.query}" if target.query else path
+
+
+@router.get("/albums/{album_id}/artwork/local")
+async def get_local_album_artwork(
+    album_id: str,
+    request: Request,
+    _user: CurrentUserDep,
+    store: NativeLibraryStoreDep,
+    resolver: LibraryPolicyResolverDep,
+    cached_artwork: CachedLocalArtworkServiceDep,
+) -> Response:
+    from services.home.local_album_artwork_service import LocalAlbumArtworkService
+
+    def admitted_path(path: Path) -> bool:
+        policy = resolver.resolve(path)
+        return policy is not None and policy.policy != "excluded"
+
+    headers = {"Cache-Control": "private, no-cache"}
+    context = await store.get_local_artwork_context(album_id)
+    if context is None:
+        return Response(status_code=404, headers={**headers, "X-Cover-State": "missing"})
+    artwork = None
+    if context.get("source") in {"manual", "cover_cache"}:
+        artwork = await cached_artwork.read(context)
+    if artwork is None:
+        artwork = await LocalAlbumArtworkService(store).get(
+            album_id, {root.id: Path(root.path) for root in resolver.settings.library_roots},
+            admitted_path,
+        )
+    if artwork is None and context.get("source") == "provider":
+        artwork = await cached_artwork.read(context)
+    if artwork is None:
+        provider_id = context.get("provider_id")
+        if not provider_id and context.get("source") == "provider":
+            provider_id = context.get("source_locator")
+        try:
+            provider_id = str(uuid.UUID(str(provider_id)))
+        except (ValueError, TypeError, AttributeError):
+            provider_id = None
+        if provider_id is not None:
+            # Never reinterpret a local catalog UUID as a provider identity.
+            target = request.url_for("cover_from_release_group", release_group_id=provider_id)
+            return RedirectResponse(_path_relative_location(target), status_code=307, headers=headers)
+        return Response(status_code=404, headers={**headers, "X-Cover-State": "missing"})
+    content, mime, source, content_hash = artwork
+    headers.update({"ETag": f'"{content_hash}"', "X-Cover-Source": source})
+    if request.headers.get("if-none-match") == headers["ETag"]:
+        return Response(status_code=304, headers=headers)
+    return Response(content=content, media_type=mime, headers=headers)
 
 
 @router.get("/albums/{album_id}/artwork/cached")

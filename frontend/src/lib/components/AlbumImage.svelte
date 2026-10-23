@@ -49,6 +49,14 @@
 			? API.library.cachedAlbumArtwork(albumId, coverVersion)
 			: null
 	);
+	// A local catalog ID can have embedded art before any provider identity exists.
+	// The server resolves explicit provider fallback; local UUIDs are never provider IDs.
+	let stableLocalUrl = $derived(
+		source === 'local' && mbid
+			? `/api/v1/library/albums/${encodeURIComponent(mbid)}/artwork/local`
+			: null
+	);
+	let localUrl = $derived(cachedLocalUrl ?? stableLocalUrl);
 </script>
 
 <BaseImage
@@ -61,13 +69,14 @@
 	{showPlaceholder}
 	{className}
 	{rounded}
-	customUrl={cachedLocalUrl ?? customUrl}
-	{remoteUrl}
+	customUrl={localUrl ?? customUrl}
+	remoteUrl={localUrl ? null : remoteUrl}
 	{onload}
 	{testId}
-	source={cachedLocalUrl ? 'local' : source}
-	{available}
+	source={localUrl ? 'local' : source}
+	available={Boolean(localUrl) || available}
 	retryOnError={retryOnError ?? !cachedLocalUrl}
-	transparentFallback={Boolean(cachedLocalUrl)}
+	transparentFallback={Boolean(localUrl)}
+	preferCustomUrl={Boolean(localUrl)}
 	imageType="album"
 />

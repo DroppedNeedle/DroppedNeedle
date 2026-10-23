@@ -27,6 +27,7 @@
 		remoteUrl?: string | null;
 		imageType?: 'album' | 'artist';
 		source?: 'provider' | 'local';
+		preferCustomUrl?: boolean;
 		available?: boolean;
 		retryOnError?: boolean;
 		transparentFallback?: boolean;
@@ -48,6 +49,7 @@
 		remoteUrl = null,
 		imageType = 'album',
 		source = 'provider',
+		preferCustomUrl = false,
 		available = true,
 		retryOnError = true,
 		transparentFallback = false,
@@ -137,13 +139,15 @@
 		getApiUrl(`/api/v1/covers/${apiEndpoint}/${mbid}?size=${requestedPixels}`)
 	);
 	let responsiveCoverUrl = $derived(
-		requestSize === 250 && responsiveSizes
+		!preferCustomUrl && requestSize === 250 && responsiveSizes
 			? getApiUrl(`/api/v1/covers/${apiEndpoint}/${mbid}?size=500`)
 			: null
 	);
 	let coverUrl = $derived(
 		imageType === 'album'
-			? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? fallbackCoverUrl)
+			? preferCustomUrl && resolvedCustomUrl
+				? resolvedCustomUrl
+				: (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? fallbackCoverUrl)
 			: fallbackCoverUrl
 	);
 	let displayCoverUrl = $derived(warmResolvedUrl ?? coverUrl);
@@ -193,8 +197,7 @@
 	});
 
 	$effect(() => {
-		const source =
-			imageType === 'album' ? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? mbid) : mbid;
+		const source = imageType === 'album' ? coverUrl : mbid;
 		if (source && imgElement && source !== currentSource) {
 			currentSource = source;
 			imgError = false;

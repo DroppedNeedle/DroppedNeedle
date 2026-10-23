@@ -39,6 +39,10 @@ vi.mock('$lib/queries/lyrics/LyricsQuery.svelte', () => ({
 
 import { playerStore } from '$lib/stores/player.svelte';
 import Turntable from './Turntable.svelte';
+import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
+import { getCoverUrl } from '$lib/utils/errorHandling';
+import { playSourceTrack } from '../../../routes/album/[id]/albumPlaybackHandlers';
+import type { LocalTrackInfo } from '$lib/types';
 
 const callbacks = {
 	onDropPlay: vi.fn(),
@@ -100,9 +104,14 @@ describe('Turntable lyrics', () => {
 describe('Turntable deck cover', () => {
 	const deckMbid = 'b1392450-e666-3926-a536-22c65f834433';
 	const proxyCover = `/api/v1/covers/release-group/${deckMbid}?size=250`;
+	const localCover = `/api/v1/library/albums/${deckMbid}/artwork/local`;
 	const remoteCover = 'https://r2.theaudiodb.com/images/media/album/thumb/abc123.jpg';
 
-	function playDeckTrack(overrides: { coverUrl?: string | null; coverRemoteUrl?: string | null }) {
+	function playDeckTrack(overrides: {
+		coverUrl?: string | null;
+		coverRemoteUrl?: string | null;
+		sourceType?: 'local' | 'navidrome';
+	}) {
 		playerStore.playQueue([
 			{
 				trackSourceId: 'file-9',
@@ -111,7 +120,7 @@ describe('Turntable deck cover', () => {
 				trackNumber: 1,
 				albumId: deckMbid,
 				albumName: 'Guard Album',
-				coverUrl: proxyCover,
+				coverUrl: localCover,
 				coverRemoteUrl: null,
 				sourceType: 'local',
 				streamUrl: '/api/v1/stream/local/file-9',
@@ -130,15 +139,87 @@ describe('Turntable deck cover', () => {
 		};
 	});
 
-	it('renders the covers proxy when the queued remote cover is a local path', async () => {
+	it('renders stable local album artwork when the queued remote cover is a local path', async () => {
 		playDeckTrack({ coverRemoteUrl: proxyCover });
 		await render(Turntable, callbacks);
 
-		await expect.element(page.getByAltText('Guard Album')).toHaveAttribute('src', proxyCover);
+		await expect
+			.element(page.getByAltText('Guard Album'))
+			.toHaveAttribute('src', `/api/v1/library/albums/${deckMbid}/artwork/local`);
 	});
 
-	it('renders the remote branch for https covers', async () => {
+	it('preserves provider artwork when local audio has no explicit local album identity', async () => {
 		playDeckTrack({ coverUrl: remoteCover, coverRemoteUrl: remoteCover });
+		await render(Turntable, callbacks);
+		await expect
+			.element(page.getByAltText('Guard Album'))
+			.toHaveAttribute('src', `${remoteCover}/small`);
+	});
+
+	it('keeps provider-detail identity through the actual local launcher and Turntable', async () => {
+		const track: LocalTrackInfo = {
+			track_file_id: 'file-9',
+			title: 'Song',
+			track_number: 1,
+			disc_number: 1,
+			size_bytes: 1,
+			format: 'FLAC'
+		};
+		playSourceTrack(
+			'local',
+			1,
+			1,
+			'Song',
+			{
+				musicbrainz_id: deckMbid,
+				title: 'Provider detail',
+				artist_name: 'Artist',
+				artist_id: 'artist',
+				in_library: true,
+				cover_url: null
+			},
+			null,
+			{
+				found: true,
+				musicbrainz_id: deckMbid,
+				tracks: [track],
+				total_size_bytes: 1,
+				primary_format: 'FLAC'
+			},
+			null,
+			null,
+			[]
+		);
+		await vi.waitFor(() => expect(playerStore.nowPlaying?.sourceType).toBe('local'));
+		expect(playerStore.nowPlaying?.albumId).toBe(deckMbid);
+		await render(Turntable, callbacks);
+		await expect.element(page.getByAltText('Provider detail')).toHaveAttribute('src', proxyCover);
+	});
+
+	it('keeps explicit native DTO artwork through launcher and repeated player normalization', async () => {
+		const track: LocalTrackInfo = {
+			track_file_id: 'file-9',
+			title: 'Song',
+			track_number: 1,
+			disc_number: 1,
+			size_bytes: 1,
+			format: 'FLAC'
+		};
+		launchLocalPlayback([track], 0, false, {
+			albumId: deckMbid,
+			albumName: 'Native DTO album',
+			artistName: 'Artist',
+			coverUrl: localCover
+		});
+		await vi.waitFor(() => expect(playerStore.nowPlaying?.albumId).toBe(deckMbid));
+		const np = playerStore.nowPlaying!;
+		expect(getCoverUrl(getCoverUrl(np.coverUrl, np.albumId), np.albumId)).toBe(localCover);
+		await render(Turntable, callbacks);
+		await expect.element(page.getByAltText('Native DTO album')).toHaveAttribute('src', localCover);
+	});
+
+	it('preserves remote artwork for provider playback', async () => {
+		playDeckTrack({ coverUrl: remoteCover, coverRemoteUrl: remoteCover, sourceType: 'navidrome' });
 		await render(Turntable, callbacks);
 
 		await expect

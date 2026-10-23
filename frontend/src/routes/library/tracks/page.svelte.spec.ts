@@ -84,27 +84,29 @@ function coverUrls(container: HTMLElement): string {
 }
 
 describe('library All Tracks artwork wiring (issue 377)', () => {
-	it('requests the provider release-group for identified tracks, never the local album id', async () => {
+	it('requests stable local album artwork for identified tracks, never treats its provider ID as a local ID', async () => {
 		const { container } = await render(TracksPage);
 
 		await expect.element(page.getByText('Identified Track')).toBeVisible();
 		await expect
 			.element(page.getByAltText('Identified Album'))
-			.toHaveAttribute('data-src', `/api/v1/covers/release-group/${PROVIDER_RG_MBID}?size=250`);
+			.toHaveAttribute('data-src', `/api/v1/library/albums/${LOCAL_ALBUM_ID}/artwork/local`);
 
 		const urls = coverUrls(container);
-		expect(urls).toContain(PROVIDER_RG_MBID);
-		expect(urls).not.toContain(LOCAL_ALBUM_ID);
+		expect(urls).not.toContain(PROVIDER_RG_MBID);
+		expect(urls).toContain(LOCAL_ALBUM_ID);
 	});
 
-	it('keeps local-only tracks on the placeholder without requesting the local id', async () => {
+	it('requests existing local artwork for unlinked tracks by stable album ID', async () => {
 		const { container } = await render(TracksPage);
 
 		await expect.element(page.getByText('Local Only Track')).toBeVisible();
-		await expect.element(page.getByAltText('Local Only Album')).not.toBeInTheDocument();
+		await expect
+			.element(page.getByAltText('Local Only Album'))
+			.toHaveAttribute('data-src', `/api/v1/library/albums/${LOCAL_ONLY_ALBUM_ID}/artwork/local`);
 
 		const urls = coverUrls(container);
-		expect(urls).not.toContain(LOCAL_ONLY_ALBUM_ID);
-		expect(urls).not.toContain(LOCAL_ALBUM_ID);
+		expect(urls).toContain(LOCAL_ONLY_ALBUM_ID);
+		expect(urls).not.toContain(`/api/v1/covers/release-group/${LOCAL_ONLY_ALBUM_ID}`);
 	});
 });
