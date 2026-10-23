@@ -60,6 +60,7 @@ from services.native.acquisition.decision import (
 from services.native.acquisition.scoring_core import (
     artist_from_path as _artist_from_path,  # noqa: F401 - re-exported for tests/callers
     artist_words as _artist_words,
+    release_prefix_tokens as _release_prefix_tokens,
     file_confidence as _core_file_confidence,
     normalize_folder_identity as _normalize_folder_identity,
     normalize_for_match as _normalize_for_match,
@@ -416,6 +417,10 @@ class AlbumPreflightScorer:
         # Overlap title judging ignores the artist's own words (same rule as
         # the strict file-confidence path): "Poppy - Kitty" names Kitty.
         overlap_ignore = _artist_words(target.artist_name)
+        # ...and sheds an "Artist - Album - " filename lead before judging, so
+        # "iamalex - Blue Bird - 02 - Belle" claims position 2 as "Belle"
+        # instead of reading the album's words as a foreign title.
+        overlap_prefix = _release_prefix_tokens(target.artist_name, target.album_title)
         for (username, parent), files in groups.items():
             # A folder search returns the album's sidecars (cover art, cue, log, m3u)
             # alongside the tracks; gate, score and enqueue on the AUDIO files only -
@@ -521,6 +526,7 @@ class AlbumPreflightScorer:
                         for t in expected_tracks
                     ],
                     ignore=overlap_ignore,
+                    prefix=overlap_prefix,
                 )
                 if expected_tracks
                 else None

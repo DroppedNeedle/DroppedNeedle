@@ -63,6 +63,48 @@ def artist_words(artist_name: str | None) -> frozenset[str]:
     )
 
 
+def name_tokens(text: str | None) -> frozenset[str]:
+    """Every alphanumeric token of a release name (artist or album), normalized
+    and punctuation-split, single letters KEPT: ``"S I M"`` must still be
+    recognisable as a filename prefix, and ``"Kaspa."`` must equal ``"Kaspa"``.
+    Prefix recognition only - title judging keeps ``artist_words``."""
+    return frozenset(
+        t for t in re.split(r"[^a-z0-9]+", normalize_for_match(text or "")) if t
+    )
+
+
+def release_prefix_tokens(artist_name: str | None, album_title: str | None) -> frozenset[str]:
+    """The words a peer may prepend to every file of a release: its artist's
+    and its album's. Feed to ``tracklist_overlap(prefix=...)`` /
+    ``strip_release_prefix``."""
+    return name_tokens(artist_name) | name_tokens(album_title)
+
+
+_PREFIX_SEGMENT_RE = re.compile(r"\s+[-\u2013\u2014]\s+")
+
+
+def strip_release_prefix(stem: str, prefix: frozenset[str]) -> str:
+    """Drop the leading `` - ``-separated segments of a filename stem that only
+    repeat the release's own words, so ``Artist - Album - 02 - Title`` is judged
+    as ``02 - Title``: the number becomes a positional claim and the album's
+    words stop reading as a conflicting title (``Blue Bird`` is the album, not
+    a song called Blue Bird). The common ``Artist - Album - NN - Title`` rip
+    layout otherwise scores every file foreign and parks a correct, complete
+    folder for review. The last segment always survives (a title track named
+    only ``Blue Moon`` is still a title), and a segment carrying any other
+    word is kept whole."""
+    if not prefix or not stem:
+        return stem
+    parts = _PREFIX_SEGMENT_RE.split(stem)
+    while len(parts) > 1:
+        tokens = name_tokens(parts[0])
+        if tokens and tokens <= prefix:
+            parts.pop(0)
+        else:
+            break
+    return " - ".join(parts)
+
+
 def strip_edition_suffix(title: str) -> str:
     return _EDITION_SUFFIXES.sub("", title or "").strip()
 
@@ -339,12 +381,15 @@ def tracklist_overlap(
     expected: list[tuple[int, str | None, float | None]],
     *,
     ignore: frozenset[str] = frozenset(),
+    prefix: frozenset[str] = frozenset(),
 ) -> float | None:
     """0..1: how well a folder's NAMED files cover an expected tracklist —
     the grab-time simulation of the import-time positional check. ``files``
     is ``(filename, advertised duration)`` per audio file; ``expected`` is
     ``(track_number, title, duration)`` per pinned-edition track. None when
     there is no tracklist to judge against (caller keeps today's behavior).
+    ``prefix`` (the release's artist + album tokens) lets a stem shed its
+    ``Artist - Album - `` lead before judging - see ``strip_release_prefix``.
 
     Position-aware: a numbered file claims its position and is judged ONLY
     against it, so same-songs-in-shuffled-order scores low exactly as the
@@ -369,12 +414,12 @@ def tracklist_overlap(
     correct = 0
     foreign = 0
     for filename, file_duration in files:
-        stem = filename_stem(filename)
+        stem = strip_release_prefix(filename_stem(filename), prefix)
         # Titles judge on signal words only: numbering residue and filler
         # words ("01", "Track 05") are not a conflicting title - without this
         # every obfuscated rip would read as foreign.
         signal = stem_title_signal(stem)
-        number = leading_track_number(filename)
+        number = leading_track_number(stem)
         options = by_number.get(number, []) if number is not None else []
         if options:
             claims += 1

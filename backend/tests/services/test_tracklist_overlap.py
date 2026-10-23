@@ -24,7 +24,9 @@ from services.native.acquisition.scoring_core import (
     leading_track_number,
     normalize_folder_identity,
     pair_serves_track,
+    release_prefix_tokens,
     stem_title_signal,
+    strip_release_prefix,
     tracklist_overlap,
 )
 from services.native.album_preflight_scorer import AlbumPreflightScorer
@@ -332,3 +334,107 @@ async def test_rank_single_with_overlap_keeps_strict_path_ungated():
     assert candidate.track_overlap == 1.0
     assert candidate.tier == "auto"
     assert candidate.final_score == legacy.final_score
+
+
+# Live 2026-10-22 parks: 35 complete, in-policy folders held for review because
+# the peer named every file ``Artist - Album - NN - Title`` (the deezer/qobuz
+# rip layout) and the album's words read as a foreign title.
+_BLUE_BIRD = [
+    (1, "Nightlight", 129.8),
+    (2, "Belle", 183.9),
+    (3, "Bluebird", 165.4),
+    (4, "Visible", 161.8),
+    (5, "Golden Week", 149.4),
+]
+_BLUE_BIRD_PREFIX = release_prefix_tokens("iamalex", "Blue Bird")
+
+
+def _blue_bird_files(shape):
+    return [
+        (shape.format(n=n, title=title), duration)
+        for n, title, duration in _BLUE_BIRD
+    ]
+
+
+def test_artist_album_prefix_files_claim_their_positions():
+    files = _blue_bird_files("iamalex - Blue Bird - {n:02d} - {title}.flac")
+    # Without the prefix every file is foreign (the incident).
+    assert tracklist_overlap(files, _BLUE_BIRD, ignore=frozenset({"iamalex"})) == 0.0
+    assert tracklist_overlap(files, _BLUE_BIRD, prefix=_BLUE_BIRD_PREFIX) == 1.0
+    # The shed lead exposes the number as a POSITIONAL claim: the same songs
+    # under shuffled numbers score as the positional import would hold them.
+    shuffled = [
+        (f"iamalex - Blue Bird - {6 - n:02d} - {title}.flac", duration)
+        for n, title, duration in _BLUE_BIRD
+    ]
+    assert tracklist_overlap(shuffled, _BLUE_BIRD, prefix=_BLUE_BIRD_PREFIX) < 0.5
+
+
+def test_album_only_prefix_and_unnumbered_shapes():
+    for shape in (
+        "Blue Bird - {n:02d} - {title}.flac",
+        "iamalex - {title}.flac",
+        "{n:02d} - {title}.flac",
+        "iamalex - Blue Bird - {title}.flac",
+    ):
+        files = _blue_bird_files(shape)
+        assert tracklist_overlap(files, _BLUE_BIRD, prefix=_BLUE_BIRD_PREFIX) == 1.0, shape
+
+
+def test_prefix_never_hides_a_wrong_product():
+    # Same lead, different songs: still foreign.
+    foreign = [
+        ("iamalex - Blue Bird - 01 - Someone Else.flac", 129.0),
+        ("iamalex - Blue Bird - 02 - Another Song.flac", 183.0),
+    ]
+    assert tracklist_overlap(foreign, _BLUE_BIRD, prefix=_BLUE_BIRD_PREFIX) == 0.0
+
+
+def test_strip_release_prefix_shapes():
+    prefix = release_prefix_tokens("Intoku", "Blue Moon")
+    assert strip_release_prefix("Intoku - Blue Moon - 03 - Noctu", prefix) == "03 - Noctu"
+    assert strip_release_prefix("Blue Moon - 03 - Noctu", prefix) == "03 - Noctu"
+    assert strip_release_prefix("Intoku - Noctu", prefix) == "Noctu"
+    # The title track keeps its (only) segment; a trailing album word is a title.
+    assert strip_release_prefix("Blue Moon", prefix) == "Blue Moon"
+    assert strip_release_prefix("Intoku - Blue Moon", prefix) == "Blue Moon"
+    # A lead carrying any other word is not the release's own and stays whole.
+    assert strip_release_prefix("Intoku Live - 03 - Noctu", prefix) == "Intoku Live - 03 - Noctu"
+    # Nothing to shed, or no prefix known: unchanged.
+    assert strip_release_prefix("03 - Noctu", prefix) == "03 - Noctu"
+    assert strip_release_prefix("Intoku - 03 - Noctu", frozenset()) == "Intoku - 03 - Noctu"
+    # Single-letter artists and trailing punctuation still read as the lead.
+    assert (
+        strip_release_prefix(
+            "S I M - School Trip - 01 - Field", release_prefix_tokens("S I M", "School Trip")
+        )
+        == "01 - Field"
+    )
+    assert (
+        strip_release_prefix(
+            "Kaspa - 12 Am Study Session - 18 - Baltic Sea",
+            release_prefix_tokens("Kaspa.", "12 Am. Study Session"),
+        )
+        == "18 - Baltic Sea"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rank_auto_accepts_artist_album_prefixed_folder():
+    parent = "iamalex - Blue Bird"
+    target = TargetAlbum(
+        artist_name="iamalex",
+        album_title="Blue Bird",
+        year=2024,
+        track_count=5,
+    )
+    files = [
+        _search_result(parent, f"iamalex - Blue Bird - {n:02d} - {title}", duration)
+        for n, title, duration in _BLUE_BIRD
+    ]
+    scorer = AlbumPreflightScorer(_store())
+    (candidate,) = await scorer.rank(
+        target, files, snapshot=_snapshot(), expected_tracks=_expected(_BLUE_BIRD)
+    )
+    assert candidate.track_overlap == 1.0
+    assert candidate.tier == "auto"
