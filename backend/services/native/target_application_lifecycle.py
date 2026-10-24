@@ -42,6 +42,29 @@ async def _cleanup_orphan_staging(store: Any, staging_path: Path | None) -> None
         logger.info("startup.orphan_staging_swept", extra={"removed": removed})
 
 
+async def backfill_import_bundle_lookups(store: Any) -> None:
+    """Index import bundles stored before the lookup tables, in bounded batches.
+
+    Each batch commits on its own, and a restart skips what is already indexed,
+    so an interrupted run resumes. The completion marker is written last; until
+    then the lookups use the slower JSON scan and stay correct.
+    """
+
+    if await store.has_completed_import_bundle_lookup_backfill():
+        return
+    after_id = ""
+    batches = 0
+    while True:
+        last_id = await store.backfill_import_bundle_lookups(after_id=after_id)
+        if last_id is None:
+            break
+        after_id = last_id
+        batches += 1
+        await asyncio.sleep(0)
+    await store.complete_import_bundle_lookup_backfill(completed_at=time.time())
+    logger.info("Indexed stored import bundles in %d batches", batches)
+
+
 async def _migrate_shared_avatar(auth_store: Any, cache_dir: Path) -> None:
     try:
         admin = await auth_store.get_first_admin()
@@ -165,6 +188,9 @@ async def run_target_one_time_migrations(
     )
     if release_year_count:
         logger.info("Backfilled %d accepted release catalog years", release_year_count)
+    # Recovery scans bundles by state right after this phase; one index build
+    # costs less than the full table scans it replaces.
+    await store.ensure_import_bundle_state_index()
     if not library_enabled:
         logger.info(
             "Skipped catalog hygiene and artist reconciliation backfills: "
@@ -288,6 +314,10 @@ async def start_target_operational_runtime(
     target = get_target_consumer_composition()
     library = target.repository
 
+    _register_task(
+        "import-bundle-lookup-backfill",
+        backfill_import_bundle_lookups(get_native_library_store()),
+    )
     try:
         await get_acquisition_cleanup_service().recover_startup()
     except Exception:  # noqa: BLE001 - durable worker continues recovery after startup

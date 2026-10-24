@@ -239,8 +239,39 @@ _IMPORT_JOURNAL_TRANSITIONS: dict[str, frozenset[str]] = {
     "needs_attention": frozenset(),
     "resolved": frozenset(),
 }
+_IMPORT_BUNDLE_LOOKUP_MARKER = "import_bundle_lookup_index"
+IMPORT_BUNDLE_LOOKUP_BACKFILL_BATCH_SIZE = 8
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
+
+
+class _ImportFileLookupKey(msgspec.Struct):
+    download_task_id: str | None = None
+
+
+class _ImportBundleLookupKeys(msgspec.Struct):
+    files: tuple[_ImportFileLookupKey, ...] = ()
+    conversion_job_id: str | None = None
+
+
+def _import_bundle_lookup_keys(
+    request_json: str,
+) -> tuple[tuple[str, ...], str | None]:
+    """Download-task and conversion identities of a sealed import bundle.
+
+    Decodes only the identity fields, so the bundle's embedded artwork bytes are
+    skipped rather than materialized.
+    """
+
+    keys = msgspec.json.decode(request_json, type=_ImportBundleLookupKeys)
+    return (
+        tuple(
+            file.download_task_id
+            for file in keys.files
+            if file.download_task_id is not None
+        ),
+        keys.conversion_job_id,
+    )
 
 
 def _complete_track_identity_mapping(
@@ -21473,11 +21504,21 @@ class NativeLibraryStore(PersistenceBase):
                 "SELECT state FROM library_edition_conversion_jobs WHERE id=?",
                 (job_id,),
             ).fetchone()
-            bundle = connection.execute(
-                "SELECT state FROM library_management_import_bundles WHERE "
-                "json_extract(request_json,'$.conversion_job_id')=?",
-                (job_id,),
-            ).fetchone()
+            if self._import_bundle_lookups_complete(connection):
+                bundle = connection.execute(
+                    "SELECT bundle.state FROM "
+                    "library_management_import_bundle_conversions conversion "
+                    "JOIN library_management_import_bundles bundle "
+                    "ON bundle.id=conversion.bundle_id "
+                    "WHERE conversion.conversion_job_id=?",
+                    (job_id,),
+                ).fetchone()
+            else:
+                bundle = connection.execute(
+                    "SELECT state FROM library_management_import_bundles WHERE "
+                    "json_extract(request_json,'$.conversion_job_id')=?",
+                    (job_id,),
+                ).fetchone()
             if conversion is None or str(conversion["state"]) != "ready":
                 return
             if bundle is not None and str(bundle["state"]) in {
@@ -24523,9 +24564,154 @@ class NativeLibraryStore(PersistenceBase):
                     bundle.row_revision,
                 ),
             )
+            self._insert_import_bundle_lookups(
+                connection, bundle.id, *_import_bundle_lookup_keys(bundle.request_json)
+            )
             return bundle, True
 
         return await self._write(operation)
+
+    @staticmethod
+    def _insert_import_bundle_lookups(
+        connection: sqlite3.Connection,
+        bundle_id: str,
+        task_ids: tuple[str, ...],
+        conversion_job_id: str | None,
+    ) -> None:
+        # Selecting from the bundle keeps a bundle pruned since it was read from
+        # failing the foreign key.
+        for task_id in task_ids:
+            connection.execute(
+                "INSERT OR IGNORE INTO library_management_import_bundle_tasks "
+                "(download_task_id,bundle_id) "
+                "SELECT ?,id FROM library_management_import_bundles WHERE id=?",
+                (task_id, bundle_id),
+            )
+        if conversion_job_id is not None:
+            connection.execute(
+                "INSERT OR IGNORE INTO library_management_import_bundle_conversions "
+                "(conversion_job_id,bundle_id) "
+                "SELECT ?,id FROM library_management_import_bundles WHERE id=?",
+                (conversion_job_id, bundle_id),
+            )
+
+    @staticmethod
+    def _import_bundle_lookups_complete(connection: sqlite3.Connection) -> bool:
+        return (
+            connection.execute(
+                "SELECT 1 FROM library_migration_markers WHERE marker=?",
+                (_IMPORT_BUNDLE_LOOKUP_MARKER,),
+            ).fetchone()
+            is not None
+        )
+
+    async def has_completed_import_bundle_lookup_backfill(self) -> bool:
+        def operation(connection: sqlite3.Connection) -> bool:
+            return self._import_bundle_lookups_complete(connection)
+
+        return await self._read(operation)
+
+    async def backfill_import_bundle_lookups(
+        self,
+        *,
+        after_id: str = "",
+        limit: int = IMPORT_BUNDLE_LOOKUP_BACKFILL_BATCH_SIZE,
+    ) -> str | None:
+        """Index one bounded batch of bundles stored before the lookup tables.
+
+        Resumes after `after_id` and skips bundles that already have lookup rows,
+        so an interrupted run continues where it stopped. Returns the last bundle
+        id examined, or None when no unindexed bundle follows `after_id`.
+        """
+
+        if limit < 1 or limit > MANAGEMENT_PERSISTENCE_BATCH_SIZE:
+            raise ValidationError("Import bundle backfill batch size is out of range.")
+
+        def read(
+            connection: sqlite3.Connection,
+        ) -> tuple[str | None, list[tuple[str, tuple[str, ...], str | None]]]:
+            bundle_ids = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT bundle.id FROM library_management_import_bundles bundle "
+                    "WHERE bundle.id>? "
+                    "AND NOT EXISTS (SELECT 1 FROM "
+                    "library_management_import_bundle_tasks task "
+                    "WHERE task.bundle_id=bundle.id) "
+                    "AND NOT EXISTS (SELECT 1 FROM "
+                    "library_management_import_bundle_conversions conversion "
+                    "WHERE conversion.bundle_id=bundle.id) "
+                    "ORDER BY bundle.id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            ]
+            indexed: list[tuple[str, tuple[str, ...], str | None]] = []
+            for bundle_id in bundle_ids:
+                row = connection.execute(
+                    "SELECT request_json FROM library_management_import_bundles "
+                    "WHERE id=?",
+                    (bundle_id,),
+                ).fetchone()
+                if row is None:
+                    continue
+                try:
+                    task_ids, conversion_job_id = _import_bundle_lookup_keys(
+                        str(row[0])
+                    )
+                except msgspec.DecodeError:
+                    logger.warning(
+                        "Import bundle %s has an unreadable request and was not "
+                        "indexed.",
+                        bundle_id,
+                    )
+                    continue
+                if task_ids or conversion_job_id is not None:
+                    indexed.append((bundle_id, task_ids, conversion_job_id))
+            return (bundle_ids[-1] if bundle_ids else None), indexed
+
+        last_id, indexed = await self._read(read)
+
+        def write(connection: sqlite3.Connection) -> None:
+            for bundle_id, task_ids, conversion_job_id in indexed:
+                self._insert_import_bundle_lookups(
+                    connection, bundle_id, task_ids, conversion_job_id
+                )
+
+        if indexed:
+            await self._write_background(write)
+        return last_id
+
+    async def complete_import_bundle_lookup_backfill(
+        self, *, completed_at: float
+    ) -> None:
+        """Record that every stored bundle is covered by the lookup tables."""
+
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "INSERT INTO library_migration_markers "
+                "(marker,source_revision,target_catalog_revision,created_at) "
+                "VALUES (?,'1',(SELECT value FROM library_catalog_revision "
+                "WHERE singleton=1),?) ON CONFLICT(marker) DO NOTHING",
+                (_IMPORT_BUNDLE_LOOKUP_MARKER, completed_at),
+            )
+
+        await self._write_background(operation)
+
+    async def ensure_import_bundle_state_index(self) -> None:
+        """Index import bundles by state for the recovery and diagnostics scans.
+
+        `state` follows the multi-MB `request_json` in each row, so building the
+        index reads the whole table once. That single pass replaces the full
+        scans startup recovery would otherwise run, and is a no-op once built.
+        """
+
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_import_bundles_state "
+                "ON library_management_import_bundles(state,updated_at,id)"
+            )
+
+        await self._write(operation)
 
     async def get_library_management_import_bundle(
         self, bundle_id: str
@@ -24554,23 +24740,37 @@ class NativeLibraryStore(PersistenceBase):
     ) -> list[LibraryManagementImportBundleRecord]:
         """Import-publication barriers associated with one acquisition task.
 
-        The task identity is part of each file request in the durable bundle JSON.
-        SQLite's JSON table function keeps this an exact lookup rather than a path- or
-        substring-based inference during legacy workspace reconciliation.
+        The task identity is part of each file request in the durable bundle JSON,
+        mirrored into an indexed lookup table when the bundle is stored. Until the
+        backfill has covered bundles stored earlier, SQLite's JSON table function
+        keeps this an exact lookup rather than a path- or substring-based inference
+        during legacy workspace reconciliation.
         """
 
         def operation(
             connection: sqlite3.Connection,
         ) -> list[LibraryManagementImportBundleRecord]:
-            rows = connection.execute(
-                """SELECT DISTINCT bundle.*
-                   FROM library_management_import_bundles bundle,
-                        json_each(bundle.request_json, '$.files') file
-                   WHERE bundle.origin='acquisition'
-                     AND json_extract(file.value, '$.download_task_id')=?
-                   ORDER BY bundle.created_at,bundle.id""",
-                (download_task_id,),
-            ).fetchall()
+            if self._import_bundle_lookups_complete(connection):
+                rows = connection.execute(
+                    """SELECT bundle.*
+                       FROM library_management_import_bundle_tasks task
+                       JOIN library_management_import_bundles bundle
+                         ON bundle.id=task.bundle_id
+                       WHERE task.download_task_id=?
+                         AND bundle.origin='acquisition'
+                       ORDER BY bundle.created_at,bundle.id""",
+                    (download_task_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """SELECT DISTINCT bundle.*
+                       FROM library_management_import_bundles bundle,
+                            json_each(bundle.request_json, '$.files') file
+                       WHERE bundle.origin='acquisition'
+                         AND json_extract(file.value, '$.download_task_id')=?
+                       ORDER BY bundle.created_at,bundle.id""",
+                    (download_task_id,),
+                ).fetchall()
             return [
                 msgspec.convert(
                     dict(row),

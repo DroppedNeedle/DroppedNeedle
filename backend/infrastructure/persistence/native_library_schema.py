@@ -908,6 +908,28 @@ CREATE TABLE IF NOT EXISTS library_management_import_bundles (
         CHECK(row_revision BETWEEN 1 AND 9223372036854775807)
 );
 
+-- Derived lookups over `request_json`, which can be several MB per row: they let
+-- cancel and recovery find a bundle without decoding every bundle's JSON.
+CREATE TABLE IF NOT EXISTS library_management_import_bundle_tasks (
+    download_task_id TEXT NOT NULL,
+    bundle_id TEXT NOT NULL
+        REFERENCES library_management_import_bundles(id) ON DELETE CASCADE,
+    PRIMARY KEY(download_task_id, bundle_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_import_bundle_tasks_bundle
+    ON library_management_import_bundle_tasks(bundle_id);
+
+CREATE TABLE IF NOT EXISTS library_management_import_bundle_conversions (
+    conversion_job_id TEXT NOT NULL,
+    bundle_id TEXT NOT NULL
+        REFERENCES library_management_import_bundles(id) ON DELETE CASCADE,
+    PRIMARY KEY(conversion_job_id, bundle_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_import_bundle_conversions_bundle
+    ON library_management_import_bundle_conversions(bundle_id);
+
 CREATE TABLE IF NOT EXISTS library_management_import_journal (
     bundle_id TEXT NOT NULL
         REFERENCES library_management_import_bundles(id) ON DELETE RESTRICT,
