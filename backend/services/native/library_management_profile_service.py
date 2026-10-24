@@ -1017,6 +1017,8 @@ class LibraryManagementProfileService:
             effective.genres.sources = ["existing_local"]
             effective.genres.mode = "replace"
             effective.genres.canonicalize = False
+        # The preview pins this detached profile, not the stored root profile.
+        effective.revision = profile_revision(effective)
         return settings, effective
 
     def _validate_root_assignments(
