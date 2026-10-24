@@ -261,7 +261,7 @@ class ArtistIdentityReconciliationService:
 
     async def run_claimed(self, job: dict, worker_id: str) -> dict:
         job_id = str(job["id"])
-        started = time.monotonic()
+        materialization_started = time.monotonic()
         while True:
             now = self._clock()
             while True:
@@ -284,11 +284,14 @@ class ArtistIdentityReconciliationService:
                     ) if rebased["rebased"] else rebased["job"]
                 if staged["complete"]:
                     break
-                if time.monotonic() - started >= BACKGROUND_TIMESLICE_SECONDS:
+                if (
+                    time.monotonic() - materialization_started
+                    >= BACKGROUND_TIMESLICE_SECONDS
+                ):
                     return await self._store.yield_operation_job(
                         job_id,
                         worker_id,
-                        now=now,
+                        now=self._clock(),
                         reason_code="BACKGROUND_TIMESLICE_EXPIRED",
                     )
             controlled = await self._store.checkpoint_operation_control(
@@ -305,6 +308,11 @@ class ArtistIdentityReconciliationService:
                 await self._workload_gate.wait_until_available()
             if self._bootstrap_demand is not None:
                 await self._bootstrap_demand.wait_until_idle()
+            # Admission can wait much longer than a work timeslice. Start the
+            # subject allowance only after admission; materialization retains
+            # its own bounded allowance above.
+            work_started = time.monotonic()
+            now = self._clock()
             if (
                 self._wal_checkpoint is not None
                 and self._wal_checkpoint.background_suspended
@@ -318,7 +326,7 @@ class ArtistIdentityReconciliationService:
             # One bounded pass of subjects; control is probed read-only between
             # units and materialization stays sealed (read-only probe).
             control_pending = False
-            while time.monotonic() - started < BACKGROUND_TIMESLICE_SECONDS:
+            while time.monotonic() - work_started < BACKGROUND_TIMESLICE_SECONDS:
                 if await self._store.probe_operation_control(job_id, worker_id):
                     control_pending = True
                     break
@@ -573,7 +581,7 @@ class ArtistIdentityReconciliationService:
             return await self._store.yield_operation_job(
                 job_id,
                 worker_id,
-                now=now,
+                now=self._clock(),
                 reason_code="BACKGROUND_TIMESLICE_EXPIRED",
             )
 
