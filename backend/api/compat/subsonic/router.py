@@ -620,11 +620,15 @@ def _normalize_search_query(raw: str | None) -> str | None:
 async def _search(c: Ctx):
     _validate_music_folder(c)
     q = _normalize_search_query(c.p("query"))
-    a_count = c.pint("artistCount", 20, minimum=0, maximum=500) or 0
+    page_limit = (
+        c.services.preferences.get_advanced_settings().subsonic_search_page_limit
+    )
+    default_count = min(20, page_limit)
+    a_count = c.pint("artistCount", default_count, minimum=0, maximum=page_limit) or 0
     a_offset = c.pint("artistOffset", 0, minimum=0, maximum=2_147_483_647) or 0
-    al_count = c.pint("albumCount", 20, minimum=0, maximum=500) or 0
+    al_count = c.pint("albumCount", default_count, minimum=0, maximum=page_limit) or 0
     al_offset = c.pint("albumOffset", 0, minimum=0, maximum=2_147_483_647) or 0
-    s_count = c.pint("songCount", 20, minimum=0, maximum=500) or 0
+    s_count = c.pint("songCount", default_count, minimum=0, maximum=page_limit) or 0
     s_offset = c.pint("songOffset", 0, minimum=0, maximum=2_147_483_647) or 0
 
     artists = []

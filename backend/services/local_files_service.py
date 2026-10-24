@@ -8,6 +8,7 @@ import zipfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import aiofiles
 
@@ -29,7 +30,6 @@ from core.exceptions import (
 )
 from infrastructure.cache.cache_keys import LOCAL_FILES_PREFIX
 from infrastructure.cache.memory_cache import CacheInterface
-from infrastructure.cover_urls import prefer_release_group_cover_url
 from infrastructure.constants import STREAM_CHUNK_SIZE
 from infrastructure.serialization import to_jsonable
 from repositories.protocols import LibraryRepositoryProtocol
@@ -426,10 +426,13 @@ class LocalFilesService:
 
     def _native_album_to_summary(self, album: Any) -> LocalAlbumSummary:
         """Map a native ``LibraryAlbumSummary`` onto the local-files DTO."""
+        # TargetLibraryRepository keeps the compatibility field name, but its
+        # projection is a.id AS release_group_mbid, not a provider identity.
         mbid = album.release_group_mbid
-        cover_url = prefer_release_group_cover_url(mbid, album.cover_url, size=500)
+        cover_url = f"/api/v1/library/albums/{quote(mbid, safe='')}/artwork/local"
         return LocalAlbumSummary(
             musicbrainz_id=mbid,
+            local_id=mbid,
             name=album.album_title or "Unknown",
             artist_name=album.album_artist_name or "Unknown",
             artist_mbid=None,
@@ -481,7 +484,9 @@ class LocalFilesService:
 
     def _row_to_crate_track(self, row: dict, reason: str) -> CrateTrack:
         mbid = row.get("release_group_mbid")
-        cover_url = prefer_release_group_cover_url(mbid, row.get("cover_url"), size=300)
+        # Native track projection also aliases the stable album ID to this
+        # compatibility column; keep it distinct from provider metadata.
+        cover_url = f"/api/v1/library/albums/{quote(str(mbid), safe='')}/artwork/local" if mbid else None
         return CrateTrack(
             track_file_id=str(row.get("id") or ""),
             title=row.get("track_title") or "Unknown",
@@ -490,6 +495,7 @@ class LocalFilesService:
             or row.get("artist_name")
             or "Unknown",
             album_mbid=mbid,
+            local_album_id=mbid,
             cover_url=cover_url,
             format=row.get("file_format") or "",
             year=row.get("year"),

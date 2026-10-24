@@ -279,7 +279,7 @@
 				</div>
 			</div>
 		</div>
-	{:else if deck.phase === 'building' || deck.phase === 'finished'}
+	{:else if deck.phase === 'building'}
 		<div class="relative flex flex-col items-center gap-5 px-6 py-14 text-center">
 			<div class="flex h-10 items-end justify-center gap-1 pb-1">
 				<span class="w-1.5 rounded-full bg-primary animate-equalizer-1" style="height: 60%;"></span>
@@ -291,17 +291,28 @@
 				></span>
 			</div>
 			<div>
-				<h3 class="text-xl font-bold">
-					{deck.phase === 'finished' ? "That's your queue - fresh one brewing" : 'Discover Queue'}
-				</h3>
-				<p class="mt-1 text-sm text-base-content/60">
-					{deck.phase === 'finished'
-						? 'Nice digging. New recommendations are building now.'
-						: 'Building your personalised queue…'}
-				</p>
+				<h3 class="text-xl font-bold">Discover Queue</h3>
+				<p class="mt-1 text-sm text-base-content/60">Building your personalised queue…</p>
 			</div>
 			<button class="btn btn-ghost btn-sm text-base-content/50" onclick={() => deck.buildNow()}>
 				Build now instead
+			</button>
+		</div>
+	{:else if deck.phase === 'waiting' || deck.phase === 'finished'}
+		<div class="relative flex flex-col items-center gap-4 px-6 py-14 text-center">
+			<Disc3 class="h-10 w-10 text-base-content/30" strokeWidth={1.5} />
+			<div>
+				<h3 class="text-xl font-bold">
+					{deck.phase === 'finished' ? "You've finished this queue" : 'Discover Queue'}
+				</h3>
+				<p class="mt-1 text-sm text-base-content/60">
+					{deck.phase === 'waiting'
+						? 'Your queue isn’t ready yet.'
+						: 'Choose Build now when you want more recommendations.'}
+				</p>
+			</div>
+			<button class="btn btn-primary btn-sm gap-2" onclick={() => deck.buildNow()}>
+				<RefreshCw class="h-4 w-4" /> Build now
 			</button>
 		</div>
 	{:else if deck.phase === 'error'}

@@ -105,10 +105,74 @@ function makeItem(mbid: string) {
 describe('discoverQueueDeck state machine', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		cacheTtls.discoverQueueAutoGenerate = true;
+		statusMock.triggerGenerate.mockReset().mockResolvedValue(undefined);
 		authMock.user.id = 'user-1';
 		statusMock.listeners.length = 0;
 		cacheMock.getQueueCachedData.mockReturnValue(null);
 		discoverQueueDeck.destroy();
+	});
+
+	it('settles a building-to-idle queue without another generation or inline build', async () => {
+		statusMock.fetchStatus.mockResolvedValue({ status: 'building' });
+		await discoverQueueDeck.init();
+		expect(discoverQueueDeck.phase).toBe('building');
+
+		statusMock.emit({ status: 'idle' });
+
+		expect(discoverQueueDeck.phase).toBe('waiting');
+		expect(discoverQueueDeck.replacing).toBe(false);
+		expect(statusMock.stopPolling).toHaveBeenCalledOnce();
+		expect(statusMock.listeners).toHaveLength(0);
+		expect(statusMock.triggerGenerate).not.toHaveBeenCalled();
+		expect(apiMock.global.get).not.toHaveBeenCalled();
+	});
+
+	it('settles an immediate idle generation response and keeps automatic force policy', async () => {
+		statusMock.fetchStatus.mockResolvedValue({ status: 'idle' });
+		statusMock.triggerGenerate.mockImplementation(async () => {
+			statusMock.emit({ status: 'building' });
+			statusMock.emit({ status: 'idle' });
+		});
+
+		await discoverQueueDeck.init();
+
+		expect(discoverQueueDeck.phase).toBe('waiting');
+		expect(statusMock.triggerGenerate).toHaveBeenCalledExactlyOnceWith(false);
+		expect(statusMock.stopPolling).toHaveBeenCalledOnce();
+		expect(apiMock.global.get).not.toHaveBeenCalled();
+	});
+
+	it('keeps existing cards when a forced replacement returns idle', async () => {
+		cacheMock.getQueueCachedData.mockReturnValue({
+			data: { items: [makeItem('rg-1')], currentIndex: 0, queueId: 'q1' },
+			timestamp: Date.now()
+		});
+		apiMock.global.post.mockResolvedValue({ in_library: [] });
+		await discoverQueueDeck.init();
+		discoverQueueDeck.buildNow();
+		statusMock.emit({ status: 'idle' });
+
+		expect(discoverQueueDeck.phase).toBe('ready');
+		expect(discoverQueueDeck.current?.release_group_mbid).toBe('rg-1');
+		expect(discoverQueueDeck.replacing).toBe(false);
+		expect(statusMock.triggerGenerate).toHaveBeenCalledExactlyOnceWith(true);
+		expect(statusMock.stopPolling).toHaveBeenCalledOnce();
+		expect(apiMock.global.get).not.toHaveBeenCalled();
+	});
+
+	it('finishes without generation when automatic generation is disabled', async () => {
+		cacheTtls.discoverQueueAutoGenerate = false;
+		cacheMock.getQueueCachedData.mockReturnValue({
+			data: { items: [makeItem('rg-1')], currentIndex: 0, queueId: 'q1' },
+			timestamp: Date.now()
+		});
+		apiMock.global.post.mockResolvedValue({ in_library: [] });
+		await discoverQueueDeck.init();
+		discoverQueueDeck.finish();
+
+		expect(discoverQueueDeck.phase).toBe('finished');
+		expect(statusMock.triggerGenerate).not.toHaveBeenCalled();
 	});
 
 	it('dedupes duplicate and missing release group IDs from a fetched queue', async () => {

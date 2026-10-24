@@ -6,6 +6,7 @@
 	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import { getLocalArtworkAlbumId } from '$lib/utils/errorHandling';
 	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
@@ -44,6 +45,9 @@
 
 	const np = $derived(playerStore.nowPlaying);
 	const isLocal = $derived(np?.sourceType === 'local');
+	const hasLocalArtworkIdentity = $derived(
+		Boolean(np && isLocal && getLocalArtworkAlbumId(np.coverUrl) === np.albumId)
+	);
 	const isPlaying = $derived(playerStore.isPlaying);
 	const format = $derived(playerStore.currentQueueItem?.format ?? null);
 	const isYouTube = $derived(np?.sourceType === 'youtube');
@@ -165,6 +169,7 @@
 				{#if np}
 					<AlbumImage
 						mbid={np.albumId}
+						source={hasLocalArtworkIdentity ? 'local' : 'provider'}
 						remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
 						customUrl={np.coverUrl}
 						alt={np.albumName ?? 'Album'}

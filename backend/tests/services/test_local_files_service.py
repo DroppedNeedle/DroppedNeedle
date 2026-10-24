@@ -494,3 +494,32 @@ async def test_search_returns_albums_and_tracks(service):
     _, album_kwargs = library_repo.get_albums_page.call_args
     assert album_kwargs["q"] == "abbey"
     library_repo.search_tracks.assert_awaited_once_with("abbey", limit=30)
+
+
+def test_native_album_dto_keeps_stable_id_distinct_from_provider_identity(service):
+    from services.native.target_library_repository import TargetLibraryRepository
+    svc, *_ = service
+    local = '11111111-1111-4111-8111-111111111111'
+    provider = '22222222-2222-4222-8222-222222222222'
+    # Mirrors native-store projection: release_group_mbid is the compatibility
+    # alias of local_albums.id; the actual MB identity is a separate column.
+    native = TargetLibraryRepository._to_album_summary({
+        'release_group_mbid': local, 'provider_release_group_mbid': provider,
+        'album_title': 'Album', 'album_artist_mbid': 'artist',
+    })
+    result = svc._native_album_to_summary(native)
+    assert result.local_id == local
+    assert result.musicbrainz_id == local  # unchanged legacy lookup token
+    assert result.cover_url == f'/api/v1/library/albums/{local}/artwork/local'
+    assert provider not in result.cover_url
+
+
+def test_crate_dto_exposes_stable_local_album_id_and_local_artwork(service):
+    svc, *_ = service
+    result = svc._row_to_crate_track({
+        'id': 'track', 'release_group_mbid': 'local-album',
+        'provider_release_group_mbid': 'provider-group',
+    }, 'recent')
+    assert result.local_album_id == 'local-album'
+    assert result.album_mbid == 'local-album'  # compatibility lookup token
+    assert result.cover_url == '/api/v1/library/albums/local-album/artwork/local'

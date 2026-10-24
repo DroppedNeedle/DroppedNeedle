@@ -134,6 +134,12 @@ async def test_interactive_hold_defers_demand_warm_until_release(tmp_path, monke
     home = SimpleNamespace(warm_cache=AsyncMock(return_value=True))
     discover = SimpleNamespace(warm_cache=AsyncMock(return_value=True))
     gate = _GateEntrySignal(interactive_quiet_period=0.0, interactive_max_deferral=30.0)
+    discover_build = AsyncMock(return_value=True)
+    # Discover's public warm_cache now owns admission; the demand service must
+    # not acquire a second serialized slot around it.
+    async def discover_warm(user):
+        return await gate.run_warmer_unit(lambda: discover_build(user))
+    discover.warm_cache.side_effect = discover_warm
     service = DiscoveryDemandService(
         store, lambda: discover, lambda: home,
         lambda: SimpleNamespace(scheduled_enabled=lambda: True, start_build=AsyncMock(), wait_for_build=AsyncMock()),
@@ -149,7 +155,7 @@ async def test_interactive_hold_defers_demand_warm_until_release(tmp_path, monke
     try:
         await asyncio.wait_for(gate.entered.wait(), timeout=5.0)
         assert home.warm_cache.await_count == 0
-        assert discover.warm_cache.await_count == 0
+        assert discover_build.await_count == 0
     finally:
         gate.end_interactive_request()
         try:
@@ -160,6 +166,7 @@ async def test_interactive_hold_defers_demand_warm_until_release(tmp_path, monke
             raise
     assert home.warm_cache.await_count == 1
     assert discover.warm_cache.await_count == 1
+    assert discover_build.await_count == 1
 
 
 @pytest.mark.asyncio

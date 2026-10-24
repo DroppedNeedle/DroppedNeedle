@@ -10,7 +10,8 @@ vi.mock('$lib/constants', () => ({
 }));
 
 vi.mock('$lib/utils/errorHandling', () => ({
-	getCoverUrl: (url: string | null, albumId: string) => url ?? `/cover/${albumId}`
+	getCoverUrl: (url: string | null, albumId: string) => url ?? `/cover/${albumId}`,
+	getLocalAlbumArtworkUrl: (id: string) => `/api/v1/library/albums/${id}/artwork/local`
 }));
 
 import type { JellyfinTrackInfo, LocalTrackInfo, NativeTrackListItem } from '$lib/types';
@@ -371,7 +372,7 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		expect(item.albumId).toBe('local-album-9');
 		expect(item.sourceType).toBe('local');
 		expect(item.streamUrl).toBe('/api/v1/stream/local/file-7');
-		expect(item.coverUrl).toBe('/cover/local-album-9');
+		expect(item.coverUrl).toBe('/api/v1/library/albums/local-album-9/artwork/local');
 		expect(item.format).toBe('flac');
 		expect(item.discNumber).toBe(2);
 		expect(item.duration).toBe(200);
@@ -381,7 +382,7 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		expect.assertions(3);
 		const [item] = buildDiscoveryQueueFromLocal([{ ...nativeTrack, disc_number: 0 }]);
 		expect(item.albumId).toBe('local-album-9');
-		expect(item.coverUrl).toBe('/cover/local-album-9');
+		expect(item.coverUrl).toBe('/api/v1/library/albums/local-album-9/artwork/local');
 		expect(item.discNumber).toBe(1);
 	});
 });

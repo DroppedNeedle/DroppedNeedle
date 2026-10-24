@@ -31,7 +31,8 @@ import type {
 	DiscoverQueueResponse
 } from '$lib/types';
 
-export type DeckPhase = 'idle' | 'loading' | 'building' | 'ready' | 'finished' | 'empty' | 'error';
+export type DeckPhase =
+	'idle' | 'loading' | 'building' | 'waiting' | 'ready' | 'finished' | 'empty' | 'error';
 
 function emptyEnrichment(): DiscoverQueueEnrichment {
 	return {
@@ -121,6 +122,14 @@ function createDiscoverQueueDeck() {
 			if (phase !== 'building' && phase !== 'finished' && !replacing) return;
 			if (s.status === 'ready') {
 				void fetchQueue();
+			} else if (s.status === 'building') {
+				if (!queue.length) phase = 'building';
+			} else if (s.status === 'idle') {
+				replacing = false;
+				phase = queue.length ? 'ready' : 'waiting';
+				errorMessage = '';
+				discoverQueueStatusStore.stopPolling();
+				stopWatchingStatus();
 			} else if (s.status === 'error') {
 				replacing = false;
 				phase = queue.length ? 'ready' : 'error';

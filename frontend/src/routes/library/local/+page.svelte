@@ -81,7 +81,7 @@
 			artistName: t.artist_name,
 			trackNumber: 0,
 			discNumber: 1,
-			albumId: t.album_mbid ?? '',
+			albumId: t.local_album_id ?? t.album_mbid ?? '',
 			albumName: t.album_name,
 			coverUrl: getCoverUrl(t.cover_url, t.album_mbid ?? ''),
 			coverRemoteUrl: t.cover_url?.startsWith('http') ? t.cover_url : null,
@@ -114,7 +114,7 @@
 			const tracks = [...match.tracks].sort((a, b) => a.track_number - b.track_number);
 			if (!tracks.length) return;
 			launchLocalPlayback(tracks, 0, shuffle, {
-				albumId: album.musicbrainz_id,
+				albumId: album.local_id ?? album.musicbrainz_id,
 				albumName: album.name,
 				artistName: album.artist_name,
 				coverUrl: album.cover_url ?? null,
@@ -143,7 +143,7 @@
 			const tracks = [...match.tracks].sort((a, b) => a.track_number - b.track_number);
 			if (!tracks.length) return;
 			const items = buildQueueItemsFromLocal(tracks, {
-				albumId: album.musicbrainz_id,
+				albumId: album.local_id ?? album.musicbrainz_id,
 				albumName: album.name,
 				artistName: album.artist_name,
 				coverUrl: album.cover_url ?? null,
@@ -352,7 +352,8 @@
 					title="Play {album.name}"
 				>
 					<AlbumImage
-						mbid={album.musicbrainz_id}
+						mbid={album.local_id ?? album.musicbrainz_id}
+						source="local"
 						remoteUrl={album.cover_url}
 						alt={album.name}
 						size="full"

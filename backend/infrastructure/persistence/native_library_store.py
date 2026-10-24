@@ -5403,6 +5403,52 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def get_local_artwork_context(self, album_id: str) -> dict[str, Any] | None:
+        """Exact local ID only; provider fallback must come from persisted identity."""
+        def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            row = connection.execute(
+                "SELECT a.id,w.source,w.source_locator,w.version, "
+                "i.release_group_mbid AS provider_id "
+                "FROM local_albums a LEFT JOIN local_album_artwork w ON w.local_album_id=a.id "
+                "LEFT JOIN local_album_external_identities i ON i.local_album_id=a.id "
+                "AND i.provider='musicbrainz' WHERE a.id=? AND a.retired_into_album_id IS NULL "
+                "AND EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id=a.id "
+                "AND t.availability='indexed')",
+                (album_id,),
+            ).fetchone()
+            return _row(row)
+
+        return await self._read(operation)
+
+    async def get_local_artwork_sources(self, album_id: str) -> list[dict[str, Any]]:
+        """All tracks up to 64, plus an explicit embedded source for larger albums."""
+        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            parameters = (album_id,)
+            predicate = (
+                "FROM local_tracks t JOIN local_albums a ON a.id=t.local_album_id "
+                "WHERE a.id=? AND a.retired_into_album_id IS NULL "
+                "AND t.availability='indexed' "
+            )
+            # A persisted embedded association wins sampling, but never bypasses
+            # indexed availability, album membership or the filesystem boundary.
+            rows = list(connection.execute(
+                "SELECT t.id,t.root_id,t.relative_path,t.file_path " + predicate
+                + "AND EXISTS(SELECT 1 FROM local_album_artwork w "
+                "WHERE w.local_album_id=a.id AND w.source='embedded' "
+                "AND w.source_locator=t.id) LIMIT 1", parameters,
+            ).fetchall())
+            # Both ends cover every indexed source for albums of <=64 tracks;
+            # huge compilations remain bounded without a directory walk.
+            for direction in ("ASC", "DESC"):
+                rows.extend(connection.execute(
+                    "SELECT t.id,t.root_id,t.relative_path,t.file_path " + predicate
+                    + f"ORDER BY t.disc_number {direction},t.track_number {direction},t.id {direction} LIMIT 32",
+                    parameters,
+                ).fetchall())
+            return list({str(row["id"]): dict(row) for row in rows}.values())
+
+        return await self._read(operation)
+
     async def get_cached_local_artwork_context(
         self, album_id: str, expected_version: int
     ) -> dict[str, Any] | None:

@@ -1149,6 +1149,7 @@ export type LocalAlbumMatch = {
 
 export type LocalAlbumSummary = {
 	musicbrainz_id: string;
+	local_id?: string | null;
 	name: string;
 	artist_name: string;
 	artist_mbid?: string | null;
@@ -1172,6 +1173,7 @@ export type CrateTrack = {
 	title: string;
 	album_name: string;
 	artist_name: string;
+	local_album_id?: string | null;
 	album_mbid?: string | null;
 	cover_url?: string | null;
 	format?: string;

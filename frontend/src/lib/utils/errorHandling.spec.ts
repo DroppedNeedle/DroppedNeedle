@@ -27,6 +27,11 @@ describe('isAbortError', () => {
 describe('getCoverUrl', () => {
 	const validMbid = '12345678-1234-1234-1234-123456789abc';
 
+	it('preserves explicit local artwork when the stable catalog ID is UUID shaped', () => {
+		const local = `/api/v1/library/albums/${validMbid}/artwork/local`;
+		expect(getCoverUrl(local, validMbid)).toBe(local);
+	});
+
 	it('returns API URL when albumId is a valid MBID', () => {
 		expect.assertions(1);
 		expect(getCoverUrl(null, validMbid)).toBe(`/api/v1/covers/release-group/${validMbid}?size=250`);

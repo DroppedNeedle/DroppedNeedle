@@ -59,6 +59,10 @@ class AdvancedSettings(AppStruct):
     http_timeout: int = 10
     http_connect_timeout: int = 5
     http_max_connections: int = 200
+    # Per-kind result ceiling for OpenSubsonic search2/search3.  The protocol
+    # leaves page sizing to clients; keep a practical default while allowing
+    # operators to accommodate clients that request larger pages.
+    subsonic_search_page_limit: int = 1000
     batch_artist_images: int = 10
     batch_albums: int = 8
     delay_artist: float = 0.5
@@ -148,6 +152,7 @@ class AdvancedSettings(AppStruct):
             "http_timeout": (5, 60),
             "http_connect_timeout": (1, 30),
             "http_max_connections": (50, 500),
+            "subsonic_search_page_limit": (1, 2_147_483_647),
             "batch_artist_images": (1, 20),
             "batch_albums": (1, 20),
             "delay_artist": (0.0, 5.0),
@@ -246,6 +251,7 @@ class AdvancedSettingsFrontend(AppStruct):
     http_timeout: int = 10
     http_connect_timeout: int = 5
     http_max_connections: int = 200
+    subsonic_search_page_limit: int = 1000
     batch_artist_images: int = 10
     batch_albums: int = 8
     delay_artist: float = 0.5
@@ -371,6 +377,7 @@ class AdvancedSettingsFrontend(AppStruct):
             "http_timeout": (5, 60),
             "http_connect_timeout": (1, 30),
             "http_max_connections": (50, 500),
+            "subsonic_search_page_limit": (1, 2_147_483_647),
             "batch_artist_images": (1, 20),
             "batch_albums": (1, 20),
             "delay_artist": (0.0, 5.0),
@@ -455,6 +462,7 @@ class AdvancedSettingsFrontend(AppStruct):
             http_timeout=settings.http_timeout,
             http_connect_timeout=settings.http_connect_timeout,
             http_max_connections=settings.http_max_connections,
+            subsonic_search_page_limit=settings.subsonic_search_page_limit,
             batch_artist_images=settings.batch_artist_images,
             batch_albums=settings.batch_albums,
             delay_artist=settings.delay_artist,
@@ -543,6 +551,7 @@ class AdvancedSettingsFrontend(AppStruct):
             http_timeout=self.http_timeout,
             http_connect_timeout=self.http_connect_timeout,
             http_max_connections=self.http_max_connections,
+            subsonic_search_page_limit=self.subsonic_search_page_limit,
             batch_artist_images=self.batch_artist_images,
             batch_albums=self.batch_albums,
             delay_artist=self.delay_artist,

@@ -9,7 +9,7 @@ import type {
 } from '$lib/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
 import { API } from '$lib/constants';
-import { getCoverUrl } from '$lib/utils/errorHandling';
+import { getCoverUrl, getLocalAlbumArtworkUrl } from '$lib/utils/errorHandling';
 
 const SUPPORTED_CODECS = new Set(['aac', 'mp3', 'opus', 'flac', 'wav', 'wma', 'vorbis', 'alac']);
 const CODEC_ALIASES: Record<string, string> = { alac: 'flac', wma: 'aac' };
@@ -344,7 +344,7 @@ export function buildDiscoveryQueueFromLocal(tracks: NativeTrackListItem[]): Que
 		discNumber: normalizeDiscNumber(t.disc_number),
 		albumId: t.album_id,
 		albumName: t.album_title,
-		coverUrl: getCoverUrl(null, t.album_id),
+		coverUrl: getLocalAlbumArtworkUrl(t.album_id),
 		coverRemoteUrl: null,
 		sourceType: 'local' as const,
 		artistId: t.artist_id,
