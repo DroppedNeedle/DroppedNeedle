@@ -12,7 +12,7 @@ import sqlite3
 import unicodedata
 import uuid
 from collections import Counter, OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path, PurePosixPath
 import threading
 import time
@@ -245,6 +245,9 @@ _IMPORT_JOURNAL_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 _IMPORT_BUNDLE_LOOKUP_MARKER = "import_bundle_lookup_index"
 IMPORT_BUNDLE_LOOKUP_BACKFILL_BATCH_SIZE = 8
+IMPORT_BUNDLE_PRUNE_BATCH_SIZE = 50
+# Blob references an import bundle holds on its artwork, keyed by the bundle id.
+IMPORT_BUNDLE_REFERENCE_PREFIX = "import-bundle:"
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
 
@@ -24802,6 +24805,192 @@ class NativeLibraryStore(PersistenceBase):
             ]
 
         return await self._read(operation)
+
+    async def prune_terminal_import_bundles(
+        self,
+        *,
+        updated_before: float,
+        limit: int = IMPORT_BUNDLE_PRUNE_BATCH_SIZE,
+    ) -> tuple[int, bool]:
+        """Delete finished import bundles last touched before `updated_before`.
+
+        A bundle is kept only for idempotent retries, recovery and the cleanup
+        barrier of the download attempts that published it, so a completed or
+        resolved one expires on age once no unfinished attempt holds it. A
+        rolled-back bundle is never pruned: the orphan workspace reconcile keeps
+        a task's folder while any of its bundles is not completed. The journal
+        rows go first (their foreign key restricts), the lookup rows cascade, and
+        the bundle's artwork references go with it so the blob cleanup can
+        reclaim the bytes. Waits for the lookup backfill, which is what shows a
+        bundle still tied to an unfinished edition conversion. Returns
+        `(removed, more_candidates)`.
+        """
+
+        if limit < 1 or limit > MANAGEMENT_PERSISTENCE_BATCH_SIZE:
+            raise ValidationError("Import bundle prune batch size is out of range.")
+
+        def operation(connection: sqlite3.Connection) -> tuple[int, bool]:
+            if not self._import_bundle_lookups_complete(connection):
+                return 0, False
+            held = self._attempt_held_import_bundle_ids(connection)
+            if held is None:
+                return 0, False
+            removable: list[str] = []
+            more = False
+            cursor_updated_at, cursor_id = -1.0, ""
+            while not more:
+                page = connection.execute(
+                    "SELECT bundle.id,bundle.updated_at "
+                    "FROM library_management_import_bundles bundle "
+                    "WHERE bundle.state IN ('completed','resolved') "
+                    "AND bundle.updated_at<? "
+                    "AND (bundle.updated_at>? OR (bundle.updated_at=? AND bundle.id>?)) "
+                    "AND NOT EXISTS (SELECT 1 FROM "
+                    "library_management_import_bundle_conversions conversion "
+                    "JOIN library_edition_conversion_jobs job "
+                    "ON job.id=conversion.conversion_job_id "
+                    "WHERE conversion.bundle_id=bundle.id AND job.state='ready') "
+                    "ORDER BY bundle.updated_at,bundle.id LIMIT ?",
+                    (
+                        updated_before,
+                        cursor_updated_at,
+                        cursor_updated_at,
+                        cursor_id,
+                        limit,
+                    ),
+                ).fetchall()
+                for row in page:
+                    cursor_updated_at, cursor_id = float(row[1]), str(row[0])
+                    if cursor_id in held:
+                        continue
+                    if len(removable) == limit:
+                        more = True
+                        break
+                    removable.append(cursor_id)
+                if len(page) < limit:
+                    break
+            for bundle_id in removable:
+                connection.execute(
+                    "DELETE FROM library_management_import_journal WHERE bundle_id=?",
+                    (bundle_id,),
+                )
+                connection.execute(
+                    "DELETE FROM library_management_blob_references "
+                    "WHERE reference_kind='artwork' AND reference_id=?",
+                    (f"{IMPORT_BUNDLE_REFERENCE_PREFIX}{bundle_id}",),
+                )
+                connection.execute(
+                    "DELETE FROM library_management_import_bundles WHERE id=?",
+                    (bundle_id,),
+                )
+            return len(removable), more
+
+        return await self._write_background(operation)
+
+    @staticmethod
+    def _attempt_held_import_bundle_ids(
+        connection: sqlite3.Connection,
+    ) -> set[str] | None:
+        """Bundles an unfinished download attempt still needs as cleanup barriers.
+
+        None means the attempts could not be read, so nothing may be pruned.
+        """
+
+        if (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='download_attempts'"
+            ).fetchone()
+            is None
+        ):
+            return set()
+        held: set[str] = set()
+        for row in connection.execute(
+            "SELECT publisher_bundle_ids_json FROM download_attempts "
+            "WHERE state NOT IN ('complete','preserved') "
+            "AND publisher_bundle_ids_json<>'[]'"
+        ):
+            try:
+                held.update(str(value) for value in json.loads(str(row[0])))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "A download attempt has unreadable import bundle ids; "
+                    "import bundles are not pruned."
+                )
+                return None
+        return held
+
+    async def list_ready_edition_conversion_ids(self) -> list[str]:
+        """Conversions whose sealed bundle can still be applied."""
+
+        def operation(connection: sqlite3.Connection) -> list[str]:
+            return [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT id FROM library_edition_conversion_jobs "
+                    "WHERE state='ready' AND final_bundle_json IS NOT NULL"
+                )
+            ]
+
+        return await self._read(operation)
+
+    async def remove_orphaned_import_bundle_references(
+        self,
+        *,
+        created_before: float,
+        keep_bundle_ids: Collection[str] = (),
+    ) -> int:
+        """Drop artwork references held for import bundles that do not exist.
+
+        Publishing records the references before the bundle row, so a publish
+        that fails in between leaves them behind. Recent ones belong to a publish
+        still in flight and `keep_bundle_ids` to a sealed bundle not stored yet.
+        """
+
+        keep = {f"{IMPORT_BUNDLE_REFERENCE_PREFIX}{value}" for value in keep_bundle_ids}
+
+        def find(connection: sqlite3.Connection) -> list[str]:
+            return [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT reference_id "
+                    "FROM library_management_blob_references "
+                    "WHERE reference_kind='artwork' AND reference_id>=? "
+                    "AND reference_id<? AND created_at<? "
+                    "AND substr(reference_id,?) NOT IN "
+                    "(SELECT id FROM library_management_import_bundles)",
+                    (
+                        IMPORT_BUNDLE_REFERENCE_PREFIX,
+                        IMPORT_BUNDLE_REFERENCE_PREFIX[:-1] + ";",
+                        created_before,
+                        len(IMPORT_BUNDLE_REFERENCE_PREFIX) + 1,
+                    ),
+                )
+                if str(row[0]) not in keep
+            ]
+
+        orphaned = await self._read(find)
+
+        def operation(connection: sqlite3.Connection) -> int:
+            removed = 0
+            for reference_id in orphaned:
+                # Re-checked here: the bundle may have been stored since the read.
+                removed += connection.execute(
+                    "DELETE FROM library_management_blob_references "
+                    "WHERE reference_kind='artwork' AND reference_id=? "
+                    "AND created_at<? AND substr(reference_id,?) NOT IN "
+                    "(SELECT id FROM library_management_import_bundles)",
+                    (
+                        reference_id,
+                        created_before,
+                        len(IMPORT_BUNDLE_REFERENCE_PREFIX) + 1,
+                    ),
+                ).rowcount
+            return removed
+
+        if not orphaned:
+            return 0
+        return await self._write_background(operation)
 
     async def list_recoverable_library_management_import_bundles(
         self,

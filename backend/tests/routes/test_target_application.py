@@ -1062,6 +1062,12 @@ def test_store_prune_task_receives_the_native_library_singleton() -> None:
         and isinstance(native.func, ast.Name)
         and native.func.id == "get_native_library_store"
     ), "native_store must come from get_native_library_store()"
+    retention = keywords.get("import_retention")
+    assert (
+        isinstance(retention, ast.Call)
+        and isinstance(retention.func, ast.Name)
+        and retention.func.id == "get_library_management_import_retention"
+    ), "import_retention must come from get_library_management_import_retention()"
 
 
 def _build_production_app_with_base(

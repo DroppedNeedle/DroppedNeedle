@@ -96,6 +96,14 @@ _SNAPSHOT_NAMESPACE = uuid.UUID("77d7be20-4ff2-475a-941f-e0a575806d78")
 _BASELINE_NAMESPACE = uuid.UUID("bf48a4f8-5968-41f6-9c82-f95a976a8f21")
 _IMPORT_BUNDLE_NAMESPACE = uuid.UUID("4ac147e4-7371-4eb4-89d3-5cc30f394277")
 _MAX_DIRECTORY_COLLISION_ENTRIES = 10_000
+
+
+def import_bundle_id(idempotency_key: str) -> str:
+    """The stored bundle id an import idempotency key maps to."""
+
+    return str(uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, idempotency_key))
+
+
 CommitCallback = Callable[[set[str], set[str]], Awaitable[None]]
 ImportCommitCallback = Callable[
     [str, tuple[LibraryManagementPublishedImportFile, ...], MbSourceContext | None],

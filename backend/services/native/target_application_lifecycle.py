@@ -258,6 +258,7 @@ async def start_target_operational_runtime(
         get_target_events_watcher_service,
         get_jellyfin_repository,
         get_jellyfin_library_service,
+        get_library_management_import_retention,
         get_mbid_store,
         get_target_navidrome_library_service,
         get_now_playing_service,
@@ -487,6 +488,7 @@ async def start_target_operational_runtime(
         wanted_store=get_wanted_store(),
         # F-PERF-04: the singleton native store joins the six-hour prune pass.
         native_store=get_native_library_store(),
+        import_retention=get_library_management_import_retention(),
     )
     start_recycle_bin_prune_task(preferences)
     start_background_upgrade_scan_task(

@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from infrastructure.persistence.native_library_store import NativeLibraryStore
     from infrastructure.persistence.wanted_store import WantedStore
     from services.requests_page_service import RequestsPageService
+    from services.native.library_management_import_retention import (
+        LibraryManagementImportRetention,
+    )
     from services.native.new_release_service import NewReleaseService
     from services.native.background_workload_gate import BackgroundWorkloadGate
     from services.personal_mix_service import PersonalMixService
@@ -997,6 +1000,7 @@ async def prune_stores_periodically(
     interval: int = 21600,
     wanted_store: "WantedStore | None" = None,
     native_store: "NativeLibraryStore | None" = None,
+    import_retention: "LibraryManagementImportRetention | None" = None,
 ) -> None:
     await asyncio.sleep(600)
     while True:
@@ -1015,6 +1019,9 @@ async def prune_stores_periodically(
                 await native_store.prune_old_terminal_identification_jobs(
                     now=time()
                 )
+            if import_retention is not None:
+                # #517: finished import bundles and the artwork only they held.
+                await import_retention.prune()
         except asyncio.CancelledError:
             break
         except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
@@ -1032,6 +1039,7 @@ def start_store_prune_task(
     interval: int = 21600,
     wanted_store: "WantedStore | None" = None,
     native_store: "NativeLibraryStore | None" = None,
+    import_retention: "LibraryManagementImportRetention | None" = None,
 ) -> asyncio.Task:
     task = asyncio.create_task(
         prune_stores_periodically(
@@ -1043,6 +1051,7 @@ def start_store_prune_task(
             interval=interval,
             wanted_store=wanted_store,
             native_store=native_store,
+            import_retention=import_retention,
         )
     )
     TaskRegistry.get_instance().register("store-prune", task)
