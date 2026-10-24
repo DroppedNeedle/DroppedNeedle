@@ -125,7 +125,7 @@ class CatalogIdentityHygieneService:
 
     async def run_claimed(self, job: dict, worker_id: str) -> dict:
         job_id = str(job["id"])
-        started = time.monotonic()
+        materialization_started = time.monotonic()
         while True:
             now = self._clock()
             # (GH-293) Hoisted: materialization runs to seal before any subject
@@ -150,25 +150,28 @@ class CatalogIdentityHygieneService:
                     ) if rebased["rebased"] else rebased["job"]
                 if staged["complete"]:
                     break
-                if time.monotonic() - started >= BACKGROUND_TIMESLICE_SECONDS:
+                if time.monotonic() - materialization_started >= BACKGROUND_TIMESLICE_SECONDS:
                     return await self._store.yield_operation_job(
                         job_id,
                         worker_id,
-                        now=now,
+                        now=self._clock(),
                         reason_code="BACKGROUND_TIMESLICE_EXPIRED",
                     )
+            # Capture materialization cost before control checkpoint admission:
+            # waiting for its background write must not consume subject time.
+            materialization_elapsed = time.monotonic() - materialization_started
             # Control is checked at pass cadence only (<= the 250 ms timeslice),
-            # never per subject.
+            # never per subject, including before an exhausted-page yield.
             controlled = await self._store.checkpoint_operation_control(
                 job_id, worker_id, now=now
             )
             if controlled is not None and controlled["state"] != "running":
                 return controlled
-            if time.monotonic() - started >= BACKGROUND_TIMESLICE_SECONDS:
+            if materialization_elapsed >= BACKGROUND_TIMESLICE_SECONDS:
                 return await self._store.yield_operation_job(
                     job_id,
                     worker_id,
-                    now=now,
+                    now=self._clock(),
                     reason_code="BACKGROUND_TIMESLICE_EXPIRED",
                 )
             if (
@@ -180,6 +183,10 @@ class CatalogIdentityHygieneService:
                 await self._workload_gate.wait_until_available()
             if self._bootstrap_demand is not None:
                 await self._bootstrap_demand.wait_until_idle()
+            # Admission may outlast a work timeslice. Materialization has its
+            # own allowance above; give admitted subjects a fresh bounded pass.
+            work_started = time.monotonic()
+            now = self._clock()
             if (
                 self._wal_checkpoint is not None
                 and self._wal_checkpoint.background_suspended
@@ -193,10 +200,11 @@ class CatalogIdentityHygieneService:
             # One bounded pass of subjects; control is probed read-only between
             # units and transitioned at pass cadence (never a write per subject).
             control_pending = False
-            while time.monotonic() - started < BACKGROUND_TIMESLICE_SECONDS:
+            while time.monotonic() - work_started < BACKGROUND_TIMESLICE_SECONDS:
                 if await self._store.probe_operation_control(job_id, worker_id):
                     control_pending = True
                     break
+                now = self._clock()
                 work = await self._store.claim_operation_work(
                     job_id, worker_id, now=now
                 )
@@ -235,6 +243,6 @@ class CatalogIdentityHygieneService:
             return await self._store.yield_operation_job(
                 job_id,
                 worker_id,
-                now=now,
+                now=self._clock(),
                 reason_code="BACKGROUND_TIMESLICE_EXPIRED",
             )
