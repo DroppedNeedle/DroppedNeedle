@@ -237,6 +237,5 @@ async def test_task_deferral_is_not_classified_as_degradation():
     service = _make_service(_FakeCache())
     service._last_failed_task_keys = set()
     deferred = AsyncMock(side_effect=OptionalWorkDeferred())
-    with pytest.raises(OptionalWorkDeferred):
-        await service._execute_tasks({"lb_trending": deferred()})
+    assert await service._execute_tasks({"lb_trending": deferred()}) == {"lb_trending": None}
     assert service._last_failed_task_keys == set()

@@ -120,9 +120,7 @@ class DiscoveryDemandService:
                     lambda: self._home().warm_cache(user_id)
                 )
             elif feature == "discover":
-                return await self._workload_gate.run_warmer_unit(
-                    lambda: self._discover().warm_cache(user_id)
-                )
+                return await self._discover().warm_cache(user_id)
             elif feature == "queue":
                 with optional_dispatch_guard(lambda: self._queue().scheduled_enabled()):
                     manager = self._queue()

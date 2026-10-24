@@ -214,6 +214,34 @@ describe('DiscoverQueueDeck', () => {
 		expect(deckMock.retryBuild).toHaveBeenCalled();
 	});
 
+	it('waiting phase offers an explicit build without claiming active work or no results', async () => {
+		deckMock.phase = 'waiting';
+		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+
+		await expect.element(page.getByText('Your queue isn’t ready yet.')).toBeVisible();
+		await expect
+			.element(page.getByText('Building your personalised queue…'))
+			.not.toBeInTheDocument();
+		await expect.element(page.getByText('Nothing to discover right now')).not.toBeInTheDocument();
+		expect(deckMock.buildNow).not.toHaveBeenCalled();
+		await page.getByRole('button', { name: 'Build now', exact: true }).click();
+		expect(deckMock.buildNow).toHaveBeenCalledOnce();
+	});
+
+	it('finished phase does not claim that another queue is brewing', async () => {
+		deckMock.phase = 'finished';
+		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+
+		await expect.element(page.getByText("You've finished this queue")).toBeVisible();
+		await expect
+			.element(page.getByText('Building your personalised queue…'))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByText('Nice digging. New recommendations are building now.'))
+			.not.toBeInTheDocument();
+		expect(deckMock.buildNow).not.toHaveBeenCalled();
+	});
+
 	it('keeps unresolved video and external search reachable without automatic lookup', async () => {
 		await render(DiscoverQueueDeck, { youtubeEnabled: false });
 		await expect.element(page.getByRole('button', { name: 'Play music video' })).toBeVisible();
