@@ -49,6 +49,10 @@ from models.library_management import (
 )
 from models.library_work import OperationJob
 from api.v1.schemas.library_management import settings_revision
+from models.library_management_stored_artwork import (
+    embedded_artwork_choices,
+    persisted_import_file,
+)
 from services.native.library_management_naming_policy import naming_policy_revision
 from services.native.file_processor import _fingerprint_recording_proof
 from services.native.library_policy_resolver import LibraryPolicyResolver
@@ -567,6 +571,22 @@ class EditionConversionService:
         bundle = msgspec.json.decode(
             job.final_bundle_json.encode(), type=LibraryManagementImportBundle
         )
+        if await self._import_library.encode_import_bundle(bundle) != (
+            job.final_bundle_json
+        ):
+            # Sealed before artwork bytes moved to the blob store: publishing it
+            # would persist a different request than the one the seal hashed.
+            await self._store.set_edition_conversion_state(
+                job.id,
+                expected_row_revision=job.row_revision,
+                expected_states=(job.state,),
+                state="needs_recheck",
+                now=self._clock(),
+                error_code="STALE_REVISION",
+            )
+            raise StaleRevisionError(
+                "The final conversion preview predates this version; recheck this conversion."
+            )
         if (
             bundle.conversion_job_id != job.id
             or bundle.conversion_preview_job_id != preview_job_id
@@ -1009,7 +1029,9 @@ class EditionConversionService:
             raise ValidationError(
                 "The final conversion preview has no current management profile."
             )
-        bundle_json = msgspec.json.encode(prepared).decode()
+        # The sealed bundle keeps artwork bytes in the blob store; Apply hands
+        # it back to the publisher, which reads them from there.
+        bundle_json = await self._import_library.encode_import_bundle(prepared)
         bundle_hash = hashlib.sha256(bundle_json.encode()).hexdigest()
         now = self._clock()
         catalog_revision = await self._store.get_catalog_revision()
@@ -1154,7 +1176,8 @@ class EditionConversionService:
         created_at: float,
         live_revisions: dict[str, dict[str, Any]],
     ) -> LibraryManagementPlanItem:
-        desired_json = msgspec.json.encode(request.desired_document).decode()
+        stored = persisted_import_file(request)
+        desired_json = msgspec.json.encode(stored.desired_document).decode()
         source_root_id = request.replacement_root_id or request.destination_root_id
         source_relative = (
             request.replacement_relative_path
@@ -1188,11 +1211,14 @@ class EditionConversionService:
             "edition_conversion_recycle": request.conversion_recycle_only,
         }
         artwork = [
-            {
-                "output_kind": artifact.kind,
-                "destination_relative_path": artifact.destination_relative_path,
-            }
-            for artifact in request.artifacts
+            *embedded_artwork_choices(stored.desired_artwork or ()),
+            *(
+                {
+                    "output_kind": artifact.kind,
+                    "destination_relative_path": artifact.destination_relative_path,
+                }
+                for artifact in request.artifacts
+            ),
         ]
         fingerprint = _sha256_file(Path(request.input_path))
         # The freshness check compares these fields against the current
@@ -1229,8 +1255,6 @@ class EditionConversionService:
             ).casefold(),
             desired_document_json=desired_json,
             desired_document_hash=hashlib.sha256(desired_json.encode()).hexdigest(),
-            catalog_document_json=desired_json,
-            catalog_document_hash=hashlib.sha256(desired_json.encode()).hexdigest(),
             artwork_choices_json=msgspec.json.encode(artwork).decode(),
             diff_json=msgspec.json.encode(diff).decode(),
             capability_json=msgspec.json.encode(capability).decode(),

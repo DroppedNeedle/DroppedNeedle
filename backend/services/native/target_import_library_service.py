@@ -106,6 +106,13 @@ class TargetImportLibraryService:
     def is_configured(self) -> bool:
         return bool(self._resolver_getter().settings.library_roots)
 
+    async def encode_import_bundle(self, bundle: LibraryManagementImportBundle) -> str:
+        """Persisted JSON of a bundle, with its artwork bytes in the blob store."""
+
+        if self._management_publisher is None:
+            raise RuntimeError("The staged import publisher is not configured.")
+        return await self._management_publisher.encode_import_bundle(bundle)
+
     async def publish_import_bundle(
         self, bundle: LibraryManagementImportBundle
     ) -> LibraryManagementImportResult:

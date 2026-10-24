@@ -89,6 +89,10 @@ from models.library_management import (
     LibraryTrackManagementState,
     MutationJournalState,
 )
+from models.library_management_stored_artwork import (
+    embedded_artwork_choices,
+    persisted_import_file,
+)
 from models.library_management_planning import (
     LibraryManagementCatalogFilter,
     LibraryManagementSelectionCursor,
@@ -252,6 +256,23 @@ class _ImportFileLookupKey(msgspec.Struct):
 class _ImportBundleLookupKeys(msgspec.Struct):
     files: tuple[_ImportFileLookupKey, ...] = ()
     conversion_job_id: str | None = None
+
+
+def _import_plan_documents(
+    request: LibraryManagementImportFile,
+) -> tuple[str, str, list[dict[str, object]]]:
+    """Desired document without artwork bytes, its hash and the embedded artwork choices.
+
+    The bytes stay in the blob store, where the import bundle already put them.
+    """
+
+    stored = persisted_import_file(request)
+    desired_json = msgspec.json.encode(stored.desired_document).decode()
+    return (
+        desired_json,
+        hashlib.sha256(desired_json.encode()).hexdigest(),
+        embedded_artwork_choices(stored.desired_artwork or ()),
+    )
 
 
 def _import_bundle_lookup_keys(
@@ -25711,8 +25732,9 @@ class NativeLibraryStore(PersistenceBase):
                 raise ValidationError(
                     "An edition-conversion recycle snapshot is incomplete."
                 )
-            desired_json = msgspec.json.encode(request.desired_document).decode()
-            desired_hash = hashlib.sha256(desired_json.encode()).hexdigest()
+            desired_json, desired_hash, embedded_choices = _import_plan_documents(
+                request
+            )
             override_revision = self._management_override_revision_tx(
                 connection, album_id, track_id
             )
@@ -25750,9 +25772,9 @@ class NativeLibraryStore(PersistenceBase):
                 ).casefold(),
                 desired_document_json=desired_json,
                 desired_document_hash=desired_hash,
-                catalog_document_json=desired_json,
-                catalog_document_hash=desired_hash,
-                artwork_choices_json="[]",
+                artwork_choices_json=json.dumps(
+                    embedded_choices, separators=(",", ":"), sort_keys=True
+                ),
                 diff_json=json.dumps(
                     {
                         "requires_write": True,
@@ -26406,8 +26428,9 @@ class NativeLibraryStore(PersistenceBase):
                     (track_id,),
                 ).fetchone()[0]
             )
-            desired_json = msgspec.json.encode(request.desired_document).decode()
-            desired_hash = hashlib.sha256(desired_json.encode()).hexdigest()
+            desired_json, desired_hash, embedded_choices = _import_plan_documents(
+                request
+            )
             before_root_id = (
                 str(request.replacement_root_id)
                 if request.replacement_root_id is not None
@@ -26453,15 +26476,16 @@ class NativeLibraryStore(PersistenceBase):
                 ).casefold(),
                 desired_document_json=desired_json,
                 desired_document_hash=desired_hash,
-                catalog_document_json=desired_json,
-                catalog_document_hash=desired_hash,
                 artwork_choices_json=json.dumps(
                     [
-                        {
-                            "output_kind": artifact.kind,
-                            "destination_relative_path": artifact.destination_relative_path,
-                        }
-                        for artifact in request.artifacts
+                        *embedded_choices,
+                        *(
+                            {
+                                "output_kind": artifact.kind,
+                                "destination_relative_path": artifact.destination_relative_path,
+                            }
+                            for artifact in request.artifacts
+                        ),
                     ],
                     separators=(",", ":"),
                     sort_keys=True,
@@ -26804,6 +26828,20 @@ class NativeLibraryStore(PersistenceBase):
                 item.created_at,
             ),
         )
+        # Embedded artwork bytes live in the blob store; the item keeps them
+        # referenced the way the preview planner does.
+        for index, choice in enumerate(json.loads(item.artwork_choices_json)):
+            if choice.get("output_kind") == "embedded" and choice.get("blob_sha256"):
+                connection.execute(
+                    "INSERT OR IGNORE INTO library_management_blob_references "
+                    "(blob_sha256, reference_kind, reference_id, created_at) "
+                    "VALUES (?,'artwork',?,?)",
+                    (
+                        choice["blob_sha256"],
+                        f"{item.job_id}:{item.ordinal}:{index}",
+                        item.created_at,
+                    ),
+                )
 
     async def finish_library_management_import_cleanup(
         self,

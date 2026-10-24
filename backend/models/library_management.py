@@ -8,6 +8,7 @@ from infrastructure.msgspec_fastapi import AppStruct
 from models.audio import AudioInfo, AudioTag
 from models.audio_metadata import AudioFieldValue
 from models.audio_metadata import DesiredAudioDocument
+from models.library_management_artwork import StoredEmbeddedArtwork
 from models.library_management_planning import PinnedLibraryManagementProfile
 
 ManagementBlobKind = Literal[
@@ -42,6 +43,8 @@ class LibraryManagementImportArtifact(AppStruct):
     destination_relative_path: str
     source_path: str | None = None
     content: bytes | None = None
+    # Persisted form only: the payload sits in the blob store under this hash.
+    content_blob_sha256: str | None = None
     source_fingerprint: str | None = None
 
 
@@ -71,6 +74,9 @@ class LibraryManagementImportFile(AppStruct):
     release_track_position: int | None = None
     baseline_relative_path: str | None = None
     desired_document: DesiredAudioDocument | None = None
+    # Persisted form only: stands in for desired_document.artwork, whose bytes
+    # sit in the blob store.
+    desired_artwork: tuple[StoredEmbeddedArtwork, ...] | None = None
     pinned_profile: PinnedLibraryManagementProfile | None = None
     metadata_snapshot_id: str | None = None
     projection_hash: str | None = None
