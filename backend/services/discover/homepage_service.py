@@ -101,6 +101,7 @@ DISCOVER_CACHE_TTL = 43200  # 12 hours
 STALE_REVALIDATE_SECONDS = 300  # 5 minutes
 # cap any single upstream call within a build so one slow service can't hang the update
 DISCOVER_TASK_TIMEOUT_SECONDS = 25
+DISCOVER_BUILD_TIMEOUT_SECONDS = 300
 # Inner budgets for the Last.fm->MusicBrainz release-group resolution that every section
 # falls back to during a ListenBrainz-popularity outage. MB is a hard 1 req/s, so with
 # every section resolving at once the sections mutually starve and hit the 25s task
@@ -185,6 +186,7 @@ class DiscoverHomepageService:
         # cache_key -> unix time of the last successful build, for stale-while-revalidate
         self._built_at: dict[str, float] = {}
         self._refresh_started_at: dict[str, float] = {}
+        self._attempted_at: dict[tuple[str, MbSourceContext], float] = {}
         self._stale_snapshot_keys: set[str] = set()
         # task keys that failed in the most recent _execute_tasks call
         self._last_failed_task_keys: set[str] = set()
@@ -277,10 +279,7 @@ class DiscoverHomepageService:
         ):
             try:
                 check_optional_dispatch()
-                if self._workload_gate is None:
-                    await self.warm_cache(user_id)
-                    return
-                await self._workload_gate.run_warmer_unit(lambda: self.warm_cache(user_id))
+                await self.warm_cache(user_id)
             except OptionalWorkDeferred:
                 return
             finally:
@@ -297,6 +296,10 @@ class DiscoverHomepageService:
         cache_key = self._integration.get_discover_cache_key(
             user_id, lb_enabled, lfm_enabled
         )
+        attempted_recently = time.time() - max(
+            self._built_at.get(cache_key, 0.0),
+            getattr(self, "_attempted_at", {}).get((cache_key, self._source_context()), 0.0),
+        ) <= STALE_REVALIDATE_SECONDS
         cached: DiscoverResponse | None = None
         if self._memory_cache:
             cached = await self._memory_cache.get(cache_key)
@@ -316,7 +319,7 @@ class DiscoverHomepageService:
             self._built_at[cache_key] = built_at
             force_stale = cache_key in getattr(self, "_stale_snapshot_keys", set())
             age = float("inf") if force_stale else time.time() - built_at
-            if not building and age > STALE_REVALIDATE_SECONDS:
+            if not building and not attempted_recently and age > STALE_REVALIDATE_SECONDS:
                 self._trigger_warm(user_id)
                 building = True
             response = clone_with_updates(
@@ -337,12 +340,9 @@ class DiscoverHomepageService:
             return response
         # cache miss (first build, restart-wiped cache, or a user whose build is
         # legitimately empty). Back off if a build was attempted within the freshness
-        # window so an empty/failed build doesn't rebuild on every 3s poll and hammer
+        # window so an empty/failed build doesn't rebuild on every 10s poll and hammer
         # upstream APIs; if backed off we report refreshing=false so the UI settles on
         # the empty state instead of polling forever.
-        attempted_recently = (
-            time.time() - self._built_at.get(cache_key, 0.0) <= STALE_REVALIDATE_SECONDS
-        )
         if not building and not attempted_recently:
             self._trigger_warm(user_id)
             building = True
@@ -453,6 +453,7 @@ class DiscoverHomepageService:
             user_id, lb_enabled, lfm_enabled
         )
         self._built_at.pop(cache_key, None)
+        getattr(self, "_attempted_at", {}).pop((cache_key, capture_mb_source_context()), None)
         if getattr(self, "_memory_cache", None):
             await asyncio.gather(
                 self._memory_cache.clear_prefix(f"{DAILY_MIX_PREFIX}{user_id}:"),
@@ -461,19 +462,47 @@ class DiscoverHomepageService:
         self._trigger_warm(user_id)
 
     async def warm_cache(self, user_id: str) -> bool:
-        _discover_source_context.set(capture_mb_source_context())
-        operation_context = self._source_context()
-        store = getattr(self, "_snapshot_store", None)
-        lease = store.user_lease(user_id) if store is not None else None
-        if self._workload_gate is not None:
-            await self._workload_gate.wait_until_available()
-        _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
-            user_id, None
-        )
         if user_id in self._building_keys:
             return False
         self._building_keys.add(user_id)
         self._refresh_started_at.setdefault(user_id, time.time())
+        context = capture_mb_source_context()
+        store = getattr(self, "_snapshot_store", None)
+        lease = store.user_lease(user_id) if store is not None else None
+        attempt_key = None
+        try:
+            with optional_dispatch_guard(
+                lambda: is_mb_source_current(context) and (lease is None or lease.active)
+            ):
+                async with asyncio.timeout(DISCOVER_BUILD_TIMEOUT_SECONDS):
+                    _, _, _, _, lb_enabled, lfm_enabled, _ = await self._resolve_user_music(
+                        user_id, None
+                    )
+                    cache_key = self._integration.get_discover_cache_key(
+                        user_id, lb_enabled, lfm_enabled
+                    )
+                    attempt_key = (cache_key, context)
+                    if self._workload_gate is None:
+                        return await self._warm_cache(user_id, context, lease, lb_enabled, lfm_enabled)
+                    return await self._workload_gate.run_warmer_unit(
+                        lambda: self._warm_cache(user_id, context, lease, lb_enabled, lfm_enabled)
+                    )
+        finally:
+            self._building_keys.discard(user_id)
+            self._refresh_started_at.pop(user_id, None)
+            if attempt_key is not None:
+                self._attempted_at[attempt_key] = time.time()
+
+    async def _warm_cache(
+        self, user_id: str, operation_context: MbSourceContext, lease,
+        lb_enabled: bool, lfm_enabled: bool,
+    ) -> bool:
+        check_optional_dispatch()
+        if not is_mb_source_current(operation_context):
+            return False
+        if lease is not None and not lease.active:
+            raise OptionalWorkDeferred()
+        _discover_source_context.set(operation_context)
         cache_key = self._integration.get_discover_cache_key(
             user_id, lb_enabled, lfm_enabled
         )
@@ -487,6 +516,9 @@ class DiscoverHomepageService:
                 and (lease is None or lease.active)
             ):
                 response = await self.build_discover_data(user_id)
+                check_optional_dispatch()
+            if not is_mb_source_current(operation_context):
+                return False
             if lease is not None and not lease.active:
                 raise OptionalWorkDeferred()
             generated_at = time.time()
@@ -502,6 +534,7 @@ class DiscoverHomepageService:
             )
             if self._has_meaningful_content(response):
                 async def publish() -> None:
+                    check_optional_dispatch()
                     if lease is not None and not lease.active:
                         raise OptionalWorkDeferred()
                     if self._memory_cache:
@@ -534,6 +567,11 @@ class DiscoverHomepageService:
         except OptionalWorkDeferred:
             raise
         except Exception as e:  # noqa: BLE001
+            check_optional_dispatch()
+            if not is_mb_source_current(operation_context):
+                return False
+            if lease is not None and not lease.active:
+                raise OptionalWorkDeferred() from e
             logger.error(f"Failed to build discover data: {e}")
             await self._cache_empty_build_marker(
                 cache_key,
@@ -546,8 +584,6 @@ class DiscoverHomepageService:
                 ),
             )
         finally:
-            self._building_keys.discard(user_id)
-            self._refresh_started_at.pop(user_id, None)
             self._stale_snapshot_keys.discard(cache_key)
             # record the attempt time on every build (success, empty, or failure) so both
             # the stale-while-revalidate window and the cache-miss path back off instead of
@@ -713,7 +749,10 @@ class DiscoverHomepageService:
         self, response: DiscoverResponse | None, updating: bool = False
     ) -> dict[str, str]:
         if response is None:
-            return {zone: "loading" for zone in self._discover_zone_names()}
+            return {
+                zone: "loading" if updating else "empty"
+                for zone in self._discover_zone_names()
+            }
 
         has = {
             "picks": bool(response.top_picks and response.top_picks.items),
@@ -961,12 +1000,12 @@ class DiscoverHomepageService:
         )
 
         await self._wait_for_background_window()
-        response.popular_in_your_genres = await self._build_popular_in_genres(
-            results,
-            library_mbids,
-            seen_artist_mbids,
-            resolved_source=primary,
-        )
+        genre_results = await self._execute_tasks({
+            "popular_in_your_genres": self._build_popular_in_genres(
+                results, library_mbids, seen_artist_mbids, resolved_source=primary
+            )
+        })
+        response.popular_in_your_genres = genre_results.get("popular_in_your_genres")
 
         response.genre_list = self._build_genre_list(results, lb_enabled)
 
@@ -2975,13 +3014,17 @@ class DiscoverHomepageService:
 
         coros = [timed(key, coro) for key, coro in tasks.items()]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
-        for outcome in raw_results:
-            if isinstance(outcome, OptionalWorkDeferred):
-                raise outcome
+        # Budget exhaustion omits optional sections, while invalid user/source
+        # guards still abort the entire build. Successful siblings stay useful.
+        check_optional_dispatch()
         results = {}
         self._last_failed_task_keys = set()
         for key, result in zip(keys, raw_results):
-            if isinstance(result, Exception):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, OptionalWorkDeferred):
+                results[key] = None
+            elif isinstance(result, Exception):
                 logger.warning(f"Discover task {key} failed: {result}")
                 results[key] = None
                 self._last_failed_task_keys.add(key)

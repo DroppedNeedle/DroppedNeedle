@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from time import monotonic
 from typing import AsyncIterator, Awaitable, Callable
 
@@ -32,6 +33,9 @@ class BackgroundWorkloadGate:
         self._available = asyncio.Event()
         self._available.set()
         self._warmer_slot = asyncio.Lock()
+        self._admission_deadline: ContextVar[float | None] = ContextVar(
+            "warmer_admission_deadline", default=None
+        )
         self._state_changed = asyncio.Event()
         self._generation = 0
         self._last_interactive_at: float | None = None
@@ -74,17 +78,26 @@ class BackgroundWorkloadGate:
     @asynccontextmanager
     async def warmer_slot(self) -> AsyncIterator[None]:
         """Serialize bounded proactive warmer units across warmer families."""
-        async with self._warmer_slot:
-            await self.wait_until_available()
-            yield
+        token = self._admission_deadline.set(monotonic() + self._interactive_max_deferral)
+        try:
+            async with self._warmer_slot:
+                await self.wait_until_available()
+                yield
+        finally:
+            self._admission_deadline.reset(token)
 
     async def run_warmer_unit[T](self, operation: Callable[[], Awaitable[T]]) -> T:
-        await self.wait_until_available()
         async with self.warmer_slot():
             return await operation()
 
     async def wait_until_available(self) -> None:
         started = monotonic()
+        # Child checkpoints share the unit's allowance. Repeated polling must not
+        # restart a fresh fairness delay for every section. Scan exclusion below
+        # remains unconditional even after this deadline.
+        deadline = self._admission_deadline.get()
+        if deadline is None:
+            deadline = started + self._interactive_max_deferral
         deferred = False
         forced = False
 
@@ -97,7 +110,7 @@ class BackgroundWorkloadGate:
                 if last_activity is None
                 else self._interactive_quiet_period - (now - last_activity)
             )
-            max_remaining = self._interactive_max_deferral - (now - started)
+            max_remaining = deadline - now
 
             if (
                 self._available.is_set()

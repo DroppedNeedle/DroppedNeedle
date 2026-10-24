@@ -193,3 +193,49 @@ async def test_queued_warmer_rechecks_interactive_admission_after_slot() -> None
     await asyncio.sleep(0.01)
     assert not second_entered.is_set()
     await asyncio.wait_for(second_task, timeout=0.08)
+
+
+@pytest.mark.asyncio
+async def test_scan_started_mid_unit_blocks_child_checkpoint_after_fairness_pass():
+    gate = BackgroundWorkloadGate(interactive_quiet_period=0, interactive_max_deferral=0)
+    waiting = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def operation():
+        gate.set_scan_active(True)
+        async def child():
+            waiting.set()
+            await gate.wait_until_available()
+            finished.set()
+        await asyncio.create_task(child())
+
+    task = asyncio.create_task(gate.run_warmer_unit(operation))
+    await waiting.wait()
+    await asyncio.sleep(0)
+    assert not finished.is_set()
+    gate.set_scan_active(False)
+    await task
+    assert finished.is_set()
+    assert gate._admission_deadline.get() is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_unit_releases_slot_and_next_unit_has_fresh_deadline():
+    gate = BackgroundWorkloadGate(interactive_quiet_period=0, interactive_max_deferral=30)
+    entered = asyncio.Event()
+    async def first():
+        entered.set()
+        await asyncio.Event().wait()
+    task = asyncio.create_task(gate.run_warmer_unit(first))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not gate._warmer_slot.locked()
+    assert gate._admission_deadline.get() is None
+    gate.begin_interactive_request()
+    second = asyncio.create_task(gate.run_warmer_unit(lambda: asyncio.sleep(0)))
+    await asyncio.sleep(0)
+    assert not second.done()
+    gate.end_interactive_request()
+    await asyncio.wait_for(second, timeout=1)
