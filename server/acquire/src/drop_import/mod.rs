@@ -854,7 +854,7 @@ impl DropImports {
             self.review_leftovers(job, &settled_item, files, *reason)
                 .await;
         }
-        intake::dispose::remove_sources(consumed).await;
+        intake::dispose::remove_sources(consumed, vec![PathBuf::from(&job.staging_dir)]).await;
         if placed > 0 {
             self.after_import(job, release, placed, fulfills).await;
         }

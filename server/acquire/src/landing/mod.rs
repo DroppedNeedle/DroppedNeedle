@@ -921,7 +921,7 @@ impl LandingService {
         }
         // Only after the decision is durable: a restart in between then
         // still finds the files, sees them in the library, and lands again.
-        intake::dispose::remove_sources(imported_sources).await;
+        intake::dispose::remove_sources(imported_sources, landing.downloads_folders.clone()).await;
         tracing::info!(
             task_id = %task.id,
             outcome,

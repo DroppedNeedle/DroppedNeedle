@@ -3,18 +3,21 @@
 
 use std::path::{Path, PathBuf};
 
-/// Remove consumed source files, then each folder they leave empty.
-/// Best effort: a leftover is the orphan sweep's.
-pub async fn remove_sources(paths: Vec<PathBuf>) {
+/// Remove consumed source files, then each folder they leave empty, but
+/// only a folder strictly beneath one of `roots` (resolved the way the
+/// paths are): a downloads or staging folder itself always stays, even
+/// when a file landed straight in it was its last. Best effort: a
+/// leftover is the orphan sweep's.
+pub async fn remove_sources(paths: Vec<PathBuf>, roots: Vec<PathBuf>) {
     if paths.is_empty() {
         return;
     }
-    if let Err(error) = tokio::task::spawn_blocking(move || remove_blocking(&paths)).await {
+    if let Err(error) = tokio::task::spawn_blocking(move || remove_blocking(&paths, &roots)).await {
         tracing::warn!(%error, "consumed source cleanup did not run");
     }
 }
 
-fn remove_blocking(paths: &[PathBuf]) {
+fn remove_blocking(paths: &[PathBuf], roots: &[PathBuf]) {
     let mut parents: Vec<&Path> = Vec::new();
     for path in paths {
         if let Err(error) = std::fs::remove_file(path)
@@ -29,6 +32,12 @@ fn remove_blocking(paths: &[PathBuf]) {
         }
     }
     for parent in parents {
+        let beneath = roots
+            .iter()
+            .any(|root| parent != root.as_path() && parent.starts_with(root));
+        if !beneath {
+            continue;
+        }
         // Succeeds only once the folder is empty; a folder still holding
         // other files (held ones, extras) is meant to stay.
         if std::fs::remove_dir(parent).is_err() {

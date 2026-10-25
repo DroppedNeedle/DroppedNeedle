@@ -4416,6 +4416,33 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     assert_eq!(status, "imported");
 }
 
+/// A flat file a client put straight in its downloads folder: once it is
+/// imported, the downloads folder itself stays, even though it is empty.
+#[tokio::test]
+async fn a_flat_file_landed_alone_leaves_the_downloads_folder() {
+    let (acquire, music, _platform) = land_for(
+        new_task("t-flat", GOOD_GROUP),
+        |downloads| {
+            vec![land_file(
+                downloads,
+                "01 - Mysterons.flac",
+                "flac_full_01.flac",
+                "Mysterons",
+                1,
+            )]
+        },
+        |lengths| release(GOOD_RELEASE, GOOD_GROUP, &["Mysterons"], lengths),
+    )
+    .await;
+    assert_eq!(
+        decisions(&acquire, "t-flat").await,
+        vec![("imported".to_owned(), None)]
+    );
+    assert_eq!(files_under(&music, "flac").len(), 1, "the file is imported");
+    let downloads = music.parent().expect("scratch dir").join("downloads");
+    assert!(downloads.is_dir(), "the downloads folder stays");
+}
+
 /// MusicBrainz for the intake table: every search returns every release,
 /// and a release group lists its releases.
 struct GroupListing(Vec<Release>);
