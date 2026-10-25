@@ -31,6 +31,10 @@ droppedneedle_kernel::sql! {
     /// Move a row (`?2`) from `?3` to `?1` only.
     pub(super) JOURNAL_TRANSITION = "UPDATE library_publish_journal SET state = ?1, seq = seq + 1 \
              WHERE id = ?2 AND state = ?3";
+    /// Move a row (`?2`) from `?3` to `?1` only, recording the hash of its
+    /// staged bytes (`?4`).
+    pub(super) JOURNAL_STAGE = "UPDATE library_publish_journal \
+             SET state = ?1, staged_sha256 = ?4, seq = seq + 1 WHERE id = ?2 AND state = ?3";
     /// Record a row's (`?2`) backup path (`?1`), unless it names another.
     pub(super) JOURNAL_SET_BACKUP = "UPDATE library_publish_journal SET backup = ?1 \
              WHERE id = ?2 AND (backup IS NULL OR backup = ?1)";

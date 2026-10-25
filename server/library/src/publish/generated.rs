@@ -9,11 +9,10 @@
 use std::path::Path;
 
 use super::place::{self, Original, PlaceError, PlacementMode, Seams};
-use super::snapshots::sha256_hex;
 use super::{PublishError, paths};
 
 fn holds(path: &Path, sha256: &str) -> bool {
-    paths::read_regular_file(path).is_ok_and(|bytes| sha256_hex(&bytes) == sha256)
+    paths::holds(path, sha256)
 }
 
 fn sync_parent(path: &Path) {
@@ -63,6 +62,7 @@ pub fn set_aside(
         home: dest,
         sha256: Some(sha256),
         root_dev,
+        known: None,
     };
     place::set_aside_with(mode, original, seams, None)
         .map_err(|error| error.into_publish(root, rel))

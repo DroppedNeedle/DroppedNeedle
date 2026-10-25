@@ -57,7 +57,6 @@ use super::journal::{FileJournal, JournalKind, JournalState, JournalStore, Journ
 use super::paths::Sandbox;
 use super::place::{PlaceError, Seams, place_with};
 use super::publisher::{durable, long_read};
-use super::snapshots::sha256_hex;
 use super::step::{AdoptionFrom, Advanced, Hooks, Run};
 use super::{PublishError, paths};
 
@@ -359,6 +358,7 @@ fn reconcile_bundle(
             i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
         });
     let temps = BTreeMap::new();
+    let known = paths::Known::default();
     let run = Run {
         db,
         sandbox,
@@ -369,6 +369,7 @@ fn reconcile_bundle(
         adoption: AdoptionFrom::Provenance,
         known_removals: false,
         temps: &temps,
+        known: &known,
         hooks: Hooks::default(),
     };
     Ok(match run.advance(bundle_id, plan.as_ref())? {
@@ -590,12 +591,21 @@ fn unwind_row(
             }
             dest
         }
-        JournalKind::Audio
-        | JournalKind::Sidecar
-        | JournalKind::Artwork
-        | JournalKind::Output
-        | JournalKind::Delete
-        | JournalKind::Remove => {
+        // The same for a staged copy: a row still being staged was never
+        // placed, so its temp, whatever it holds, is a part copy.
+        JournalKind::Audio | JournalKind::Sidecar | JournalKind::Artwork | JournalKind::Output => {
+            let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
+            let staged = Path::new(&journal.staged);
+            if journal.state == JournalState::Prepared
+                && std::fs::symlink_metadata(staged).is_ok()
+                && !paths::same_file(staged, &dest)
+            {
+                sandbox.ensure_under_roots(staged)?;
+                std::fs::remove_file(staged).map_err(PublishError::from)?;
+            }
+            dest
+        }
+        JournalKind::Delete | JournalKind::Remove => {
             sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?
         }
     };
@@ -630,8 +640,7 @@ fn unwind_row(
     // and, for a file written in place, the original was set aside first.
     // A row still `Prepared` was never placed: its temp may be missing
     // only because it was never written.
-    let staged_bytes_at_dest = paths::read_regular_file(&dest)
-        .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256);
+    let staged_bytes_at_dest = paths::holds(&dest, &journal.staged_sha256);
     let temp_went_there = journal.state != JournalState::Prepared
         && (std::fs::symlink_metadata(staged).is_err() || paths::same_file(staged, &dest));
     let in_place = journal.source.as_ref().is_some_and(|(root, rel)| {
@@ -674,8 +683,11 @@ fn unwind_row(
             std::fs::remove_file(backup).map_err(PublishError::from)?;
         } else {
             let expected = journal.backup_sha256().unwrap_or_default();
-            let intact = paths::read_regular_file(backup)
-                .is_ok_and(|bytes| expected.is_empty() || sha256_hex(&bytes) == expected);
+            let intact = if expected.is_empty() {
+                paths::FileStat::read(backup).is_ok()
+            } else {
+                paths::holds(backup, expected)
+            };
             if !intact {
                 return Ok(Unwound::BackupKept(format!(
                     "journal {} backup bytes changed",
@@ -718,9 +730,7 @@ fn unwind_row(
             Err(error) => return Err(error.into_publish(&journal.dest_root, &journal.dest_rel)),
         }
     }
-    if let Ok(bytes) = paths::read_regular_file(staged)
-        && sha256_hex(&bytes) == journal.staged_sha256
-    {
+    if paths::holds(staged, &journal.staged_sha256) {
         std::fs::remove_file(staged).map_err(PublishError::from)?;
     }
     if let Some(parent) = dest.parent()

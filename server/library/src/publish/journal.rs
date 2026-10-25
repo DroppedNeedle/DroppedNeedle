@@ -400,6 +400,27 @@ impl<'a> JournalWriter<'a> {
         Ok(changed == 1)
     }
 
+    /// Move a row from `Prepared` to `Staged` with the hash of the bytes
+    /// its temp now holds, which a tag write learns only once the temp is
+    /// written. A row in any other state, or no row, is an error.
+    pub fn stage(&self, id: &str, staged_sha256: &str) -> Result<(), PublishError> {
+        let changed =
+            self.tx
+                .prepare_cached(sql::JOURNAL_STAGE.text())?
+                .execute(rusqlite::params![
+                    JournalState::Staged.as_str(),
+                    id,
+                    JournalState::Prepared.as_str(),
+                    staged_sha256
+                ])?;
+        if changed != 1 {
+            return Err(PublishError::Journal(format!(
+                "journal {id} is not prepared, or is missing"
+            )));
+        }
+        Ok(())
+    }
+
     /// Record the absolute backup path retained for a same-path write. A
     /// row that already names this path is touched again; one naming
     /// another path, or no row, is an error.

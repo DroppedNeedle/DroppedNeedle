@@ -286,9 +286,8 @@ fn hash_copy(path: &Path, file: &RemoveFile) -> Option<FileStat> {
     if before.size != file.fingerprint.size {
         return None;
     }
-    let bytes = paths::read_regular_file(path).ok()?;
-    let after = FileStat::read(path).ok()?;
-    (after == before && sha256_hex(&bytes) == file.fingerprint.sha256).then_some(after)
+    let hashed = paths::hash_regular_file(path).ok()?;
+    (hashed.stat == before && hashed.sha256 == file.fingerprint.sha256).then_some(hashed.stat)
 }
 
 /// Plan putting back what the removal `removal_id` took from album
@@ -569,8 +568,8 @@ fn check_copy(
     if hashed == Some(&stat) {
         return Ok(Some(stat));
     }
-    match paths::read_regular_file(copy) {
-        Ok(bytes) => Ok((sha256_hex(&bytes) == file.fingerprint.sha256).then_some(stat)),
+    match paths::hash_regular_file(copy) {
+        Ok(hashed) => Ok((hashed.sha256 == file.fingerprint.sha256).then_some(stat)),
         Err(PublishError::Io(error)) => Err(unreadable(&error)),
         Err(_) => Ok(None),
     }
@@ -598,20 +597,31 @@ pub(super) fn item_of<'a>(put_back: &'a PutBack, journal: &FileJournal) -> Optio
     put_back.items.iter().find(|item| item.track_id == track)
 }
 
-/// The copy's bytes, read once, checked where it is and against the
-/// removed bytes.
-pub(super) fn read_copy(sandbox: &Sandbox, item: &PutBackItem) -> Result<Vec<u8>, PublishError> {
+/// Copy the item's copy, checked where it is, into `temp` with permission
+/// bits `bits`, in one read that checks it holds the removed bytes. A
+/// copy that does not is refused, and its temp goes.
+pub(super) fn copy_into(
+    sandbox: &Sandbox,
+    item: &PutBackItem,
+    temp: &Path,
+    bits: u32,
+) -> Result<(), PublishError> {
     let copy = Path::new(&item.copy);
     copy_place(sandbox, copy, item.copy_in)?;
-    let bytes = paths::read_regular_file(copy)?;
-    if bytes.len() as u64 != item.fingerprint.size || sha256_hex(&bytes) != item.fingerprint.sha256
-    {
+    let read = paths::copy_hashed(copy, temp, Some(bits))?;
+    if read.size != item.fingerprint.size || read.sha256 != item.fingerprint.sha256 {
+        if let Err(error) = std::fs::remove_file(temp) {
+            tracing::warn!(%error, "a put-back temp with other bytes was not removed");
+        }
         return Err(PublishError::Validation(format!(
             "the removed copy of {} changed",
             item.relative_path
         )));
     }
-    Ok(bytes)
+    if let Some(parent) = temp.parent() {
+        super::journal::fsync_dir(parent)?;
+    }
+    Ok(())
 }
 
 /// Make `temp` a hard link of the item's copy, checked to be that file as

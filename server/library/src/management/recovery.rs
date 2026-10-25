@@ -15,7 +15,6 @@ use super::models::ManagementError;
 use super::service::Management;
 use crate::clock::{now_ms, now_unix};
 use crate::publish::recovery::Leftover;
-use crate::publish::snapshots::sha256_hex;
 
 /// One write that needs an administrator.
 #[derive(Debug, Clone)]
@@ -250,10 +249,10 @@ impl Management {
                 .resolve_no_symlink(root, rel)
                 .map_err(|_| "could not be checked")
                 .and_then(|path| {
-                    crate::publish::paths::read_regular_file(&path).map_err(|_| "is missing")
+                    crate::publish::paths::hash_regular_file(&path).map_err(|_| "is missing")
                 });
             match found {
-                Ok(bytes) if &sha256_hex(&bytes) == staged => {}
+                Ok(hashed) if &hashed.sha256 == staged => {}
                 Ok(_) => problems.push(format!("{rel} holds different bytes")),
                 Err(problem) => problems.push(format!("{rel} {problem}")),
             }

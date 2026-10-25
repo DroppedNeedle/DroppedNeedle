@@ -503,6 +503,17 @@ impl Sandbox {
         hidden_path(dest, journal_id, "tmp")
     }
 
+    /// [`Self::temp_path_for`] for a temp the tag writer saves in: it ends
+    /// in the container's own extension, which names the format.
+    pub fn audio_temp_path_for(
+        &self,
+        dest: &Path,
+        journal_id: &str,
+        extension: &str,
+    ) -> Result<PathBuf, PublishError> {
+        hidden_path(dest, journal_id, &format!("tmp.{extension}"))
+    }
+
     /// Hidden same-directory backup for a same-path write. The original
     /// is retained here across the publish/catalog window and restored
     /// from it on compensation.
@@ -691,27 +702,181 @@ fn ensure_no_symlink(path: &Path) -> Result<(), PublishError> {
     Ok(())
 }
 
-/// Prove a path names a symlink-free regular file, returning its bytes.
-pub fn read_regular_file(path: &Path) -> Result<Vec<u8>, PublishError> {
-    let meta = std::fs::symlink_metadata(path).map_err(|err| match err.kind() {
-        std::io::ErrorKind::NotFound => {
-            PublishError::Validation(format!("missing file: {}", message_name(path)))
-        }
-        _ => PublishError::Io(err.to_string()),
-    })?;
-    if meta.file_type().is_symlink() {
-        return Err(PublishError::UnsafePath(format!(
+/// What one streamed read of a file found: its SHA-256 and size, and its
+/// identity on disk while it was read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hashed {
+    pub sha256: String,
+    pub size: u64,
+    pub stat: FileStat,
+}
+
+/// The piece size of a streamed read.
+const CHUNK: usize = 1 << 17;
+
+/// Open a symlink-free regular file for reading, never through a link. A
+/// FIFO swapped in at the name does not block the open.
+fn open_regular(path: &Path) -> Result<(std::fs::File, FileStat), PublishError> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let unsafe_path = || {
+        PublishError::UnsafePath(format!(
             "refusing to read through symlink: {}",
             message_name(path)
-        )));
-    }
+        ))
+    };
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|err| match err.kind() {
+            std::io::ErrorKind::NotFound => {
+                PublishError::Validation(format!("missing file: {}", message_name(path)))
+            }
+            _ if err.raw_os_error() == Some(libc::ELOOP) => unsafe_path(),
+            _ => PublishError::Io(err.to_string()),
+        })?;
+    let meta = file.metadata().map_err(PublishError::from)?;
     if !meta.file_type().is_file() {
         return Err(PublishError::Validation(format!(
             "not a regular file: {}",
             message_name(path)
         )));
     }
-    std::fs::read(path).map_err(PublishError::from)
+    Ok((file, FileStat::of(&meta)))
+}
+
+/// Stream `file` into `sink` in pieces, hashing it, and check it kept its
+/// identity throughout. The size read must be the size it had.
+fn stream(
+    path: &Path,
+    file: &mut std::fs::File,
+    stat: FileStat,
+    mut sink: impl FnMut(&[u8]) -> Result<(), PublishError>,
+) -> Result<Hashed, PublishError> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = vec![0_u8; CHUNK];
+    let mut size = 0_u64;
+    loop {
+        let read = match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(PublishError::from(error)),
+        };
+        hasher.update(&buffer[..read]);
+        sink(&buffer[..read])?;
+        size += read as u64;
+    }
+    let after = FileStat::of(&file.metadata().map_err(PublishError::from)?);
+    if after != stat || size != stat.size {
+        return Err(PublishError::Validation(format!(
+            "{} changed while it was read",
+            message_name(path)
+        )));
+    }
+    Ok(Hashed {
+        sha256: super::snapshots::hex_digest(&hasher.finalize()),
+        size,
+        stat,
+    })
+}
+
+/// Prove a path names a symlink-free regular file and hash it, reading it
+/// in pieces: no file is ever held whole in memory.
+pub fn hash_regular_file(path: &Path) -> Result<Hashed, PublishError> {
+    let (mut file, stat) = open_regular(path)?;
+    stream(path, &mut file, stat, |_| Ok(()))
+}
+
+/// Whether the symlink-free regular file at `path` holds `sha256`.
+pub fn holds(path: &Path, sha256: &str) -> bool {
+    hash_regular_file(path).is_ok_and(|hashed| hashed.sha256 == sha256)
+}
+
+/// Copy the symlink-free regular file `source` into the new hidden file
+/// `temp`, hashing the bytes as they pass, in one read. The copy gets
+/// `mode` (else the default bits) and is on disk when this returns. What
+/// comes back is the source's hash, size and identity; the caller checks
+/// them against what it expects. A copy that fails part way is removed.
+pub fn copy_hashed(source: &Path, temp: &Path, mode: Option<u32>) -> Result<Hashed, PublishError> {
+    let (mut file, stat) = open_regular(source)?;
+    let copied = (|| {
+        let mut out = create_hidden(temp).map_err(PublishError::from)?;
+        let hashed = stream(source, &mut file, stat, |piece| {
+            out.write_all(piece).map_err(PublishError::from)
+        })?;
+        lend_mode(&out, mode, temp);
+        super::journal::fsync_file(&out)?;
+        Ok(hashed)
+    })();
+    if copied.is_err()
+        && let Err(error) = std::fs::remove_file(temp)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(temp = %temp.display(), %error, "partial copy not removed");
+    }
+    copied
+}
+
+/// Give a staged file the permission bits of the file it stands in for.
+/// The bits go on the open file, never on the name, so a link swapped in
+/// at the name is not followed. A folder that refuses the change does not
+/// fail the write: the file keeps the default bits.
+pub(crate) fn lend_mode(file: &std::fs::File, mode: Option<u32>, temp: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let Some(bits) = mode else {
+        return;
+    };
+    if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(bits)) {
+        tracing::warn!(temp = %temp.display(), %error, "staged file keeps the default permission bits");
+    }
+}
+
+/// Hashes one publish worked out for files it read or wrote, each with the
+/// whole identity the file had then. Between adjacent steps of that
+/// publish a file whose identity is unchanged, change time included, holds
+/// the bytes hashed, so it is not read again. Any write moves the change
+/// time, and so does a rename or link, so a file the publisher itself
+/// moved is read again. Recovery runs in a new process and starts empty:
+/// it reads every file it checks.
+#[derive(Debug, Default)]
+pub struct Known(BTreeMap<FileStat, String>);
+
+impl Known {
+    /// Forget every file, at the start of a publish.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Note that the file with identity `stat` holds `sha256`.
+    pub fn record(&mut self, stat: FileStat, sha256: &str) {
+        self.0.insert(stat, sha256.to_owned());
+    }
+
+    /// The identity of the regular file at `path` when it is a file this
+    /// publish knows to hold `sha256`.
+    pub fn vouch(&self, path: &Path, sha256: &str) -> Option<FileStat> {
+        let stat = FileStat::read(path).ok()?;
+        (self.0.get(&stat).map(String::as_str) == Some(sha256)).then_some(stat)
+    }
+
+    /// The SHA-256 of the regular file at `path`: the one this publish
+    /// knows for it, else read. `None` when it is not a readable regular
+    /// file.
+    pub fn hash(&self, path: &Path) -> Option<String> {
+        let stat = FileStat::read(path).ok()?;
+        if let Some(known) = self.0.get(&stat) {
+            return Some(known.clone());
+        }
+        hash_regular_file(path).ok().map(|hashed| hashed.sha256)
+    }
+
+    /// Whether the regular file at `path` holds `sha256`.
+    pub fn holds(&self, path: &Path, sha256: &str) -> bool {
+        self.vouch(path, sha256).is_some() || holds(path, sha256)
+    }
 }
 
 /// True when two paths name the same file on disk: a case-only rename
@@ -775,7 +940,9 @@ pub fn backup_home(
 /// moves the change time, which nothing can set back. A rename on one disk
 /// moves the change time too, but keeps the other four, so after a move
 /// [`FileStat::same_moved`] compares those.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct FileStat {
     pub dev: u64,
     pub ino: u64,
@@ -847,8 +1014,7 @@ pub fn recycle_backup(
     sha256: &str,
     known: Option<FileStat>,
 ) -> Result<bool, PublishError> {
-    use super::snapshots::sha256_hex;
-    let hash_of = |path: &Path| read_regular_file(path).ok().map(|bytes| sha256_hex(&bytes));
+    let hash_of = |path: &Path| hash_regular_file(path).ok().map(|hashed| hashed.sha256);
     let changed = || {
         PublishError::Validation(format!(
             "set-aside file {} changed; it stays where it is",
@@ -888,9 +1054,9 @@ pub fn recycle_backup(
     }
     let made = make_dirs(parent).map_err(PublishError::from)?;
     let made_synced = sync_made(&made);
-    let read_checked = || -> Result<(Vec<u8>, String), PublishError> {
-        let read = read_regular_file(backup)?;
-        let actual = sha256_hex(&read);
+    // Whether the bytes read are the ones expected: a trusted file that
+    // changed in place goes as it is now, logged.
+    let check = |actual: &str| -> Result<(), PublishError> {
         if actual != sha256 {
             if !trusted {
                 return Err(changed());
@@ -900,11 +1066,10 @@ pub fn recycle_backup(
                 "a removed file changed in place after it was read; it goes to the recycle bin as it is now"
             );
         }
-        Ok((read, actual))
+        Ok(())
     };
-    let mut bytes = None;
     if !trusted {
-        bytes = Some(read_checked()?);
+        check(&hash_regular_file(backup)?.sha256)?;
     }
     match place::place_with(mode, backup, recycle_to, seams) {
         Ok(_) => {}
@@ -914,16 +1079,12 @@ pub fn recycle_backup(
         // Another disk: the one case that copies. A failed sync keeps the
         // set-aside file, and the row stays pending.
         Err(PlaceError::CrossDevice) => {
-            let (bytes, actual) = match bytes {
-                Some(read) => read,
-                None => read_checked()?,
-            };
             made_synced?;
             let bits = {
                 use std::os::unix::fs::PermissionsExt as _;
                 backup_meta.permissions().mode() & 0o777
             };
-            copy_verified(&bytes, recycle_to, &actual, bits, mode, seams)?;
+            copy_verified(backup, recycle_to, &check, bits, mode, seams)?;
             std::fs::remove_file(backup).map_err(PublishError::from)?;
             return Ok(true);
         }
@@ -953,35 +1114,32 @@ fn refused(error: PlaceError, recycle_to: &Path) -> PublishError {
     }
 }
 
-/// Copy `bytes` to `recycle_to` on another disk: under a hidden temporary
-/// name with permission bits `bits`, synced and read back, then placed.
-/// A temp that did not end up placed is ours, and goes.
+/// Copy `backup` to `recycle_to` on another disk in one streamed read:
+/// under a hidden temporary name with permission bits `bits`, the bytes
+/// read passed by `check`, synced and read back, then placed. A temp that
+/// did not end up placed is ours, and goes.
 fn copy_verified(
-    bytes: &[u8],
+    backup: &Path,
     recycle_to: &Path,
-    sha256: &str,
+    check: &dyn Fn(&str) -> Result<(), PublishError>,
     bits: u32,
     mode: PlacementMode,
     seams: Seams,
 ) -> Result<(), PublishError> {
-    use std::os::unix::fs::PermissionsExt as _;
     let temp = incoming_temp(recycle_to)
         .ok_or_else(|| PublishError::UnsafePath("recycle bin path has no folder".into()))?;
     let copied = (|| -> Result<(), PublishError> {
-        let mut file = create_hidden(&temp).map_err(PublishError::from)?;
+        let read = copy_hashed(backup, &temp, Some(bits))?;
         if seams.short_write {
-            file.write_all(&bytes[..bytes.len() / 2])
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&temp)
+                .and_then(|file| file.set_len(read.size / 2))
                 .map_err(PublishError::from)?;
             return Err(PublishError::Io("the copy stopped part way".into()));
         }
-        file.write_all(bytes).map_err(PublishError::from)?;
-        if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(bits)) {
-            tracing::warn!(%error, "recycle bin copy keeps the default permission bits");
-        }
-        super::journal::fsync_file(&file)?;
-        drop(file);
-        let copied = read_regular_file(&temp)?;
-        if super::snapshots::sha256_hex(&copied) != sha256 {
+        check(&read.sha256)?;
+        if hash_regular_file(&temp)?.sha256 != read.sha256 {
             return Err(PublishError::Cleanup(format!(
                 "the copy of {} did not read back the same",
                 message_name(recycle_to)

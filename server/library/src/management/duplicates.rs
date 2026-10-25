@@ -475,8 +475,8 @@ impl Management {
                             &intent.existing_relative_path,
                         )
                         .ok()
-                        .and_then(|path| crate::publish::paths::read_regular_file(&path).ok())
-                        .map(|bytes| crate::publish::snapshots::sha256_hex(&bytes));
+                        .and_then(|path| crate::publish::paths::hash_regular_file(&path).ok())
+                        .map(|hashed| hashed.sha256);
                     let tracked: Option<String> =
                         self.setup
                             .db

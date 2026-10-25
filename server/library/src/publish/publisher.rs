@@ -737,6 +737,9 @@ pub struct Publisher<P: SpaceProbe> {
     /// Each put-back temp's identity as this publish wrote it, by journal
     /// id: publish and cleanup check it instead of reading the file again.
     temps: BTreeMap<String, paths::FileStat>,
+    /// What this publish hashed while it copied and wrote files: later
+    /// steps check a file by its identity instead of reading it again.
+    known: paths::Known,
     /// The bytes of the file the bundle being published adds.
     added_bytes: Option<Vec<u8>>,
     /// When the file the bundle being published adds stops being wanted:
@@ -843,6 +846,7 @@ impl<P: SpaceProbe> Publisher<P> {
             before_place: None,
             before_set_aside: None,
             temps: BTreeMap::new(),
+            known: paths::Known::default(),
             added_bytes: None,
             add_budget: None,
             now_ms,
@@ -971,6 +975,7 @@ impl<P: SpaceProbe> Publisher<P> {
     ) -> Result<PublishOutcome, PublishError> {
         let bundle = &sealed.bundle;
         self.temps.clear();
+        self.known.clear();
         self.now_ms = (self.clock)();
         self.today_day = day_of(self.now_ms);
         self.run_pregates(sealed, live)?;
@@ -1057,6 +1062,7 @@ impl<P: SpaceProbe> Publisher<P> {
             adoption: AdoptionFrom::Plan,
             known_removals: true,
             temps: &self.temps,
+            known: &self.known,
             hooks: Hooks {
                 crash: self.injector,
                 before_place: self
@@ -1249,8 +1255,8 @@ impl<P: SpaceProbe> Publisher<P> {
         })
     }
 
-    /// Prepare: verify sources, render staged bytes through the tag
-    /// seam, write destination-side temps, capture before-state
+    /// Prepare: copy each source into its destination-side temp, checked
+    /// in the same read, write its tags in that temp, capture before-state
     /// snapshots, and journal every intent as staged.
     fn prepare(
         &mut self,
@@ -1296,15 +1302,6 @@ impl<P: SpaceProbe> Publisher<P> {
             let source = self
                 .sandbox
                 .resolve_no_symlink(&item.source_root, &item.source_rel)?;
-            let source_bytes = paths::read_regular_file(&source)?;
-            if source_bytes.len() as u64 != item.fingerprint.size
-                || sha256_hex(&source_bytes) != item.fingerprint.sha256
-            {
-                return Err(PublishError::Validation(format!(
-                    "source for track {} changed after planning",
-                    item.track_id
-                )));
-            }
             let before = docs
                 .get(&item.track_id)
                 .cloned()
@@ -1318,28 +1315,30 @@ impl<P: SpaceProbe> Publisher<P> {
                 super::folders::make(&self.db, &self.sandbox, &bundle.id, &item.dest_root, parent)?;
             }
             if let Some(replaced) = &item.replaces {
-                let holds = paths::read_regular_file(&dest)
-                    .is_ok_and(|bytes| sha256_hex(&bytes) == replaced.sha256);
-                if !holds {
+                let holds = paths::hash_regular_file(&dest)
+                    .ok()
+                    .filter(|hashed| hashed.sha256 == replaced.sha256);
+                let Some(holds) = holds else {
                     return Err(PublishError::Validation(format!(
                         "the file this one replaces at {} changed after planning",
                         item.dest_rel
                     )));
-                }
+                };
+                self.known.record(holds.stat, &holds.sha256);
             }
-            let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
-            self.sandbox.ensure_under_roots(&temp)?;
-            // Real tag staging through the tags save wrapper.
-            // Refusals surface before any journal or temp lands.
+            // A tag write saves in the temp itself, so its name carries the
+            // container's extension. A write with no tag change stages the
+            // source's own bytes, known before the copy.
             let pictures = self.planned_pictures(item)?;
-            let staged_bytes = super::staging::render_staged_bytes(
-                &source_bytes,
-                &item.format,
-                &item.managed_updates,
-                pictures.as_deref(),
-                &temp,
-            )?;
-            let staged_sha = sha256_hex(&staged_bytes);
+            let tags_change = !item.managed_updates.is_empty() || pictures.is_some();
+            let temp = if tags_change {
+                let extension = super::staging::writable_extension(&item.format)?;
+                self.sandbox
+                    .audio_temp_path_for(&dest, &journal_id, extension)?
+            } else {
+                self.sandbox.temp_path_for(&dest, &journal_id)?
+            };
+            self.sandbox.ensure_under_roots(&temp)?;
             let journal = FileJournal {
                 id: journal_id.clone(),
                 bundle_id: bundle.id.clone(),
@@ -1350,7 +1349,13 @@ impl<P: SpaceProbe> Publisher<P> {
                 staged: temp.to_string_lossy().to_string(),
                 backup: None,
                 source_sha256: Some(item.fingerprint.sha256.clone()),
-                staged_sha256: staged_sha.clone(),
+                // A tag write's hash is known once its temp is written; the
+                // row records it when it moves to staged.
+                staged_sha256: if tags_change {
+                    String::new()
+                } else {
+                    item.fingerprint.sha256.clone()
+                },
                 track_id: Some(item.track_id.clone()),
                 mgmt_state: Some(mgmt_state_for(
                     item.adopt.is_some(),
@@ -1378,7 +1383,25 @@ impl<P: SpaceProbe> Publisher<P> {
             } else {
                 None
             };
-            write_staged_temp(&temp, &staged_bytes, mode)?;
+            // One read of the source: hashed while it is copied.
+            let read = paths::copy_hashed(&source, &temp, mode)?;
+            if read.size != item.fingerprint.size || read.sha256 != item.fingerprint.sha256 {
+                return Err(PublishError::Validation(format!(
+                    "source for track {} changed after planning",
+                    item.track_id
+                )));
+            }
+            self.known.record(read.stat, &read.sha256);
+            let staged_sha = if tags_change {
+                super::staging::stage_tags(&temp, &item.managed_updates, pictures.as_deref())?
+            } else {
+                read.sha256
+            };
+            let staged_stat = paths::FileStat::read(&temp).map_err(PublishError::from)?;
+            self.known.record(staged_stat, &staged_sha);
+            if let Some(parent) = temp.parent() {
+                super::journal::fsync_dir(parent)?;
+            }
             self.maybe_crash(CrashPoint::AfterTempWritten)?;
             if item.adopt.is_none() {
                 self.capture_before(bundle, item, before)?;
@@ -1387,7 +1410,9 @@ impl<P: SpaceProbe> Publisher<P> {
             // a bundle only when every row is staged. This durable write
             // also puts the before-state on disk ahead of the placement
             // that overwrites the file.
-            self.journal_staged(&journal_id)?;
+            durable(&self.db, "publish.journal_staged", |tx| {
+                JournalWriter::new(tx).stage(&journal_id, &staged_sha)
+            })?;
             for (side_ordinal, sidecar) in item.sidecars.iter().enumerate() {
                 self.prepare_sidecar(
                     bundle,
@@ -1516,15 +1541,6 @@ impl<P: SpaceProbe> Publisher<P> {
         let source = self
             .sandbox
             .resolve_no_symlink(&sidecar.source_root, &sidecar.source_rel)?;
-        let bytes = paths::read_regular_file(&source)?;
-        if bytes.len() as u64 != sidecar.fingerprint.size
-            || sha256_hex(&bytes) != sidecar.fingerprint.sha256
-        {
-            return Err(PublishError::Validation(format!(
-                "sidecar {} changed after planning",
-                sidecar.source_rel
-            )));
-        }
         let journal_id = sidecar_journal_id(audio_journal_id, side_ordinal);
         let dest = self
             .sandbox
@@ -1551,7 +1567,7 @@ impl<P: SpaceProbe> Publisher<P> {
             staged: temp.to_string_lossy().to_string(),
             backup: None,
             source_sha256: Some(sidecar.fingerprint.sha256.clone()),
-            staged_sha256: sha256_hex(&bytes),
+            staged_sha256: sidecar.fingerprint.sha256.clone(),
             track_id: None,
             mgmt_state: None,
             state: JournalState::Prepared,
@@ -1561,7 +1577,19 @@ impl<P: SpaceProbe> Publisher<P> {
         let mode = keep_mode
             .then(|| paths::permission_bits(&source))
             .transpose()?;
-        write_staged_temp(&temp, &bytes, mode)?;
+        let read = paths::copy_hashed(&source, &temp, mode)?;
+        if read.size != sidecar.fingerprint.size || read.sha256 != sidecar.fingerprint.sha256 {
+            return Err(PublishError::Validation(format!(
+                "sidecar {} changed after planning",
+                sidecar.source_rel
+            )));
+        }
+        self.known.record(read.stat, &read.sha256);
+        self.known
+            .record(paths::FileStat::read(&temp)?, &read.sha256);
+        if let Some(parent) = temp.parent() {
+            super::journal::fsync_dir(parent)?;
+        }
         self.journal_staged(&journal_id)
     }
 
@@ -1770,7 +1798,7 @@ impl<P: SpaceProbe> Publisher<P> {
     /// Journal one file a put-back brings home, then make the row's hidden
     /// temp beside home: a hard link of its recycled copy when both are on
     /// one filesystem, else a copy of it with the copy's permission bits
-    /// and modified time, read once, hashed once, read back once.
+    /// and modified time, hashed in the one read that copies it.
     fn prepare_put_back(
         &mut self,
         bundle: &PlanBundle,
@@ -1804,13 +1832,12 @@ impl<P: SpaceProbe> Publisher<P> {
             replaces: None,
         })?;
         if !super::put_back::link_temp(&self.sandbox, item, &temp, self.place_seams)? {
-            let bytes = super::put_back::read_copy(&self.sandbox, item)?;
             let copy = std::fs::symlink_metadata(&item.copy).map_err(PublishError::from)?;
             let bits = {
                 use std::os::unix::fs::PermissionsExt as _;
                 copy.permissions().mode() & 0o777
             };
-            write_staged_temp(&temp, &bytes, Some(bits))?;
+            super::put_back::copy_into(&self.sandbox, item, &temp, bits)?;
             // The file comes home with the time it was last changed, not today.
             let dated = copy.modified().and_then(|modified| {
                 use std::os::unix::fs::OpenOptionsExt as _;
@@ -1920,76 +1947,29 @@ pub(super) fn journal_ids(bundle: &PlanBundle) -> Vec<String> {
     ids
 }
 
-/// Write a staged temp atomically: create, write, fsync, re-read, and
-/// fsync the directory. An existing temp with identical bytes is
-/// reused so crashed attempts retry idempotently; mismatched bytes
-/// fail closed. Anything else under the name (a symlink) is unlinked and
-/// the temp created new. `mode` is the permission bits of the file this
-/// one replaces; a file that replaces nothing keeps the default.
+/// Write bytes held in memory (a generated file, a file a plugin adds) to
+/// a new staged temp, with the permission bits `mode` when given, and put
+/// it and its folder on disk. Whatever was under the name goes first; a
+/// temp that fails part way is ours (just created), so it goes too.
 fn write_staged_temp(temp: &Path, bytes: &[u8], mode: Option<u32>) -> Result<(), PublishError> {
     use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-    if let Ok(current) = paths::read_regular_file(temp) {
-        if current == bytes {
-            let reopened = std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(temp);
-            lend_mode(reopened, mode, temp);
-            return Ok(());
-        }
-        let name = temp
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("staging temp");
-        return Err(PublishError::Journal(format!(
-            "staged temp {name} holds foreign bytes"
-        )));
-    }
     let written = (|| {
         let mut file = paths::create_hidden(temp).map_err(PublishError::from)?;
         file.write_all(bytes).map_err(PublishError::from)?;
+        paths::lend_mode(&file, mode, temp);
         super::journal::fsync_file(&file)?;
-        lend_mode(Ok(file), mode, temp);
-        let reread = paths::read_regular_file(temp)?;
-        if reread != bytes {
-            return Err(PublishError::Validation(
-                "staged temp failed re-read".into(),
-            ));
-        }
         if let Some(parent) = temp.parent() {
             super::journal::fsync_dir(parent)?;
         }
         Ok(())
     })();
-    if written.is_err() {
-        // A partial temp would hold foreign bytes for the retry; it is
-        // ours (just created), so it goes.
-        if let Err(error) = std::fs::remove_file(temp)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(temp = %temp.display(), %error, "partial staging temp not removed");
-        }
+    if written.is_err()
+        && let Err(error) = std::fs::remove_file(temp)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(temp = %temp.display(), %error, "partial staging temp not removed");
     }
     written
-}
-
-/// Give a staged file the permission bits of the file it stands in for.
-/// The bits go on the open file, never on the name, so a link swapped in
-/// at the name is not followed. A folder that refuses the change does not
-/// fail the write: the file keeps the default bits.
-fn lend_mode(file: std::io::Result<std::fs::File>, mode: Option<u32>, temp: &Path) {
-    use std::os::unix::fs::PermissionsExt as _;
-    let Some(bits) = mode else {
-        return;
-    };
-    let set = file.and_then(|file| {
-        file.set_permissions(std::fs::Permissions::from_mode(bits))?;
-        file.sync_all()
-    });
-    if let Err(error) = set {
-        tracing::warn!(temp = %temp.display(), %error, "staged file keeps the default permission bits");
-    }
 }
 
 /// Prune newly empty source parents up to (not including) the root,

@@ -1211,14 +1211,14 @@ impl LibrarySetup {
         let path = sandbox
             .resolve_no_symlink(root_id, rel_path)
             .map_err(publish_error)?;
-        let bytes =
-            super::publish::paths::read_regular_file(&path).map_err(|error| match error {
+        let hashed =
+            super::publish::paths::hash_regular_file(&path).map_err(|error| match error {
                 PublishError::Validation(message) => ServiceError::Conflict { message },
                 other => publish_error(other),
             })?;
         Ok(FileFingerprint {
-            size: bytes.len() as u64,
-            sha256: sha256_hex(&bytes),
+            size: hashed.size,
+            sha256: hashed.sha256,
         })
     }
 
@@ -2296,9 +2296,7 @@ impl LibrarySetup {
         for sidecar in moved {
             let unchanged = sandbox
                 .resolve_no_symlink(&sidecar.dest_root, &sidecar.dest_rel)
-                .ok()
-                .and_then(|path| super::publish::paths::read_regular_file(&path).ok())
-                .is_some_and(|bytes| sha256_hex(&bytes) == sidecar.fingerprint.sha256);
+                .is_ok_and(|path| super::publish::paths::holds(&path, &sidecar.fingerprint.sha256));
             let free = sandbox
                 .resolve_no_symlink(&sidecar.source_root, &sidecar.source_rel)
                 .is_ok_and(|path| path.symlink_metadata().is_err());
@@ -2373,13 +2371,13 @@ impl LibrarySetup {
             by_track.insert(track_id.clone(), item.clone());
             let before =
                 super::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?;
-            let staged_size = super::publish::paths::read_regular_file(
+            let staged_size = super::publish::paths::FileStat::read(
                 &open
                     .sandbox
                     .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)
                     .unwrap_or_else(|_| PathBuf::from(&journal.staged)),
             )
-            .map(|bytes| bytes.len() as u64)
+            .map(|stat| stat.size)
             .unwrap_or(item.fingerprint.size);
             inputs.push(UndoInput {
                 track_id: track_id.clone(),
@@ -2499,9 +2497,7 @@ impl LibrarySetup {
                 let unchanged = open
                     .sandbox
                     .resolve_no_symlink(&output.dest_root, &output.dest_rel)
-                    .ok()
-                    .and_then(|path| super::publish::paths::read_regular_file(&path).ok())
-                    .is_some_and(|bytes| sha256_hex(&bytes) == output.sha256);
+                    .is_ok_and(|path| super::publish::paths::holds(&path, &output.sha256));
                 if unchanged {
                     removals.push(output.clone());
                 } else {
@@ -2739,9 +2735,7 @@ impl LibrarySetup {
                 .filter(|output| {
                     sandbox
                         .resolve_no_symlink(&output.dest_root, &output.dest_rel)
-                        .ok()
-                        .and_then(|path| super::publish::paths::read_regular_file(&path).ok())
-                        .is_some_and(|bytes| sha256_hex(&bytes) == output.sha256)
+                        .is_ok_and(|path| super::publish::paths::holds(&path, &output.sha256))
                 })
                 .collect();
             let mut capabilities = Vec::new();

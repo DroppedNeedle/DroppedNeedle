@@ -1,12 +1,10 @@
 //! Real tag staging: the publish→tags seam.
 //!
-//! The publisher stages destination bytes through the tags save
-//! wrapper instead of appending a semantic sidecar. Staging runs on a
-//! hidden work copy carrying the real audio extension (the journal
-//! temps end in `.tmp`, which the tag router would refuse); on
-//! success the staged bytes flow into the normal temp/journal/rename
-//! protocol, on refusal the work copy is removed and nothing is
-//! staged.
+//! The publisher copies each source into its journal temp, whose name
+//! ends in the real audio extension, and the tags save wrapper writes the
+//! managed updates in that temp: one temp per file. The hash the wrapper
+//! reads back while it verifies the write is the one the journal keeps.
+//! A refusal leaves the temp to its row's unwind.
 //!
 //! Two loudness rules:
 //!
@@ -18,9 +16,10 @@
 //!   (read-only formats, mixed ID3) on files whose tags they keep.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use super::super::tags::save::{accepts, writable};
+use super::super::tags::save::{accepts, check_writable, writable};
+
 use super::super::tags::{Refusal, TagEdit, TagField, TagsError, format_for_path, read_document};
 use super::PublishError;
 use super::tags_seam::{
@@ -115,53 +114,31 @@ fn staged_extension(format: &str) -> Result<&'static str, PublishError> {
     }
 }
 
-/// Hidden work copy for tag staging: the journal temp with its `.tmp`
-/// suffix swapped for `.staging.<ext>` so the tag router sees the
-/// real container. The rest of the name survives, so the work copy stays
-/// pruned and unique.
-fn work_path_for(temp: &Path, extension: &str) -> Result<PathBuf, PublishError> {
-    let file_name = temp
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| PublishError::UnsafePath("staging temp name is not UTF-8".into()))?;
-    let Some(parent) = temp.parent() else {
-        return Err(PublishError::UnsafePath(
-            "staging temp has no parent directory".into(),
-        ));
-    };
-    let stem = file_name.strip_suffix(".tmp").unwrap_or(file_name);
-    Ok(parent.join(format!("{stem}.staging.{extension}")))
+/// The extension of a tag write's temp, which names its container to the
+/// save wrapper. A container the wrapper only reads is refused here,
+/// before anything is journaled.
+pub fn writable_extension(format: &str) -> Result<&'static str, PublishError> {
+    let extension = staged_extension(format)?;
+    let format = format_for_path(&Path::new("staged").with_extension(extension)).map_err(|_| {
+        PublishError::Capability(format!("format {extension} has no staged writer"))
+    })?;
+    check_writable(format).map_err(|refusal| PublishError::Capability(refusal.to_string()))?;
+    Ok(extension)
 }
 
-/// Render staged bytes for one plan item. `temp` is the item's
-/// journal temp (its parent directory already exists); the work copy
-/// is removed on every path out.
-pub fn render_staged_bytes(
-    source: &[u8],
-    format: &str,
+/// Write one plan item's tags into its journal temp, which already holds
+/// the source's bytes and whose extension names the container. Returns
+/// the SHA-256 the save wrapper read back while it verified the write.
+/// A refusal leaves the temp for its row's unwind to remove.
+pub fn stage_tags(
+    temp: &Path,
     managed_updates: &BTreeMap<String, Vec<String>>,
     pictures: Option<&[super::super::tags::save::PictureSpec]>,
-    temp: &Path,
-) -> Result<Vec<u8>, PublishError> {
-    if managed_updates.is_empty() && pictures.is_none() {
-        return Ok(source.to_vec());
-    }
+) -> Result<String, PublishError> {
     let edits = check_managed_updates(managed_updates)?;
-    let extension = staged_extension(format)?;
-    let work = work_path_for(temp, extension)?;
-    if let Err(error) = super::paths::create_hidden(&work).and_then(|mut file| {
-        use std::io::Write as _;
-        file.write_all(source)
-    }) {
-        let _ = std::fs::remove_file(&work);
-        return Err(PublishError::Io(error.to_string()));
-    }
-    let staged = match super::super::tags::save::save_tags_with_pictures(&work, &edits, pictures) {
-        Ok(_) => std::fs::read(&work).map_err(PublishError::from),
-        Err(error) => Err(map_tags_error(&work, error)),
-    };
-    let _ = std::fs::remove_file(&work);
-    staged
+    super::super::tags::save::save_in_place(temp, &edits, pictures)
+        .map(|saved| saved.sha256)
+        .map_err(|error| map_tags_error(temp, error))
 }
 
 /// Read the current semantic tag document for one audio file: every

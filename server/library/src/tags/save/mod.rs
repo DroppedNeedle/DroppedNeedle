@@ -68,7 +68,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use lofty::file::TaggedFile;
 use thiserror::Error;
@@ -203,7 +202,7 @@ fn error_chain(error: &impl std::error::Error) -> String {
 }
 
 type SaveFn =
-    fn(&Path, AudioFormat, &[TagEdit], Option<&[PictureSpec]>) -> Result<SaveReport, TagsError>;
+    fn(&Path, AudioFormat, &[TagEdit], Option<&[PictureSpec]>) -> Result<SavedInPlace, TagsError>;
 
 /// The save for this container's tag format, or why it is read-only.
 fn writer(format: AudioFormat) -> Result<SaveFn, Refusal> {
@@ -228,7 +227,13 @@ pub fn writable(format: AudioFormat) -> bool {
     writer(format).is_ok()
 }
 
-/// Apply `edits` to `path` through the full wrapper pipeline.
+/// Why the save wrapper cannot write this container, if it cannot.
+pub fn check_writable(format: AudioFormat) -> Result<(), Refusal> {
+    writer(format).map(|_| ())
+}
+
+/// Apply `edits` to `path` through the full wrapper pipeline, on a copy
+/// beside it that replaces it only once verified.
 pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError> {
     save_tags_with_pictures(path, edits, None)
 }
@@ -265,7 +270,99 @@ pub fn save_tags_with_pictures(
             edits_applied: 0,
         });
     }
+    let temp = sibling_copy(path)?;
+    let saved = save(&temp, format, edits, pictures).and_then(|saved| {
+        fs::rename(&temp, path).map_err(|source| TagsError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        if let Some(dir) = path.parent()
+            && let Ok(handle) = File::open(dir)
+        {
+            let _ = handle.sync_all();
+        }
+        Ok(saved.report)
+    });
+    if saved.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    saved
+}
+
+/// What a save in place left in the file: the report, and the SHA-256
+/// and size of the bytes saved, from the read that verified them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedInPlace {
+    pub report: SaveReport,
+    pub sha256: String,
+    pub size: u64,
+}
+
+/// Apply `edits` (and `pictures`, as [`save_tags_with_pictures`] takes
+/// them) to `path` itself, through the full wrapper pipeline: for a file
+/// that is already a private copy, such as the publisher's journal temp.
+/// A refusal may leave `path` part written. Its extension names the
+/// container.
+pub fn save_in_place(
+    path: &Path,
+    edits: &[TagEdit],
+    pictures: Option<&[PictureSpec]>,
+) -> Result<SavedInPlace, TagsError> {
+    let format = format_for_path(path)?;
+    let save = writer(format).map_err(|refusal| refused(path, refusal))?;
     save(path, format, edits, pictures)
+}
+
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// A hidden copy of `original` in its own folder, with its extension, for
+/// [`save_tags_with_pictures`] to save in and rename over it.
+fn sibling_copy(original: &Path) -> Result<PathBuf, TagsError> {
+    let dir = original.parent().filter(|dir| !dir.as_os_str().is_empty());
+    let dir = dir.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let extension = original
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("tmp");
+    let io = |path: &Path, source| TagsError::Io {
+        path: path.display().to_string(),
+        source,
+    };
+    for _ in 0..100 {
+        let count = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp = dir.join(format!(
+            ".dn-tagtmp-{}-{count}.{extension}",
+            std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&temp) {
+            Ok(_) => {
+                return match fs::copy(original, &temp) {
+                    Ok(_) => Ok(temp),
+                    Err(source) => {
+                        let _ = fs::remove_file(&temp);
+                        Err(io(&temp, source))
+                    }
+                };
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(source) => return Err(io(&temp, source)),
+        }
+    }
+    Err(io(
+        original,
+        std::io::Error::new(ErrorKind::AlreadyExists, "could not pick a temp name"),
+    ))
+}
+
+/// The whole file, with the SHA-256 of what was read.
+fn read_hashed(path: &Path) -> Result<(Vec<u8>, String), TagsError> {
+    use sha2::{Digest as _, Sha256};
+    let bytes = fs::read(path).map_err(|source| TagsError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    Ok((bytes, sha256))
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +443,9 @@ fn save_as<F: TagFormat>(
     format: AudioFormat,
     edits: &[TagEdit],
     pictures: Option<&[PictureSpec]>,
-) -> Result<SaveReport, TagsError> {
+) -> Result<SavedInPlace, TagsError> {
+    // The file's bytes are held only while they are parsed, never across
+    // the save.
     let original_bytes = fs::read(path).map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
@@ -357,6 +456,8 @@ fn save_as<F: TagFormat>(
     })?;
     let mut snapshot = Snapshot::<F>::capture(format, &original_bytes)
         .map_err(|refusal| refused(path, refusal))?;
+    drop(original_bytes);
+
     snapshot.truth = snapshot
         .truth
         .take()
@@ -369,34 +470,38 @@ fn save_as<F: TagFormat>(
     let native = resolve_edits::<F>(snapshot.truth.as_ref(), edits)
         .map_err(|refusal| refused(path, refusal))?;
 
-    let temp = TempCopy::create(path)?;
-    F::apply(
-        snapshot.truth.as_ref(),
-        &tagged,
-        &native,
-        pictures,
-        temp.path(),
-    )
-    .map_err(|refusal| refused(temp.path(), refusal))?;
-    let temp_bytes = fs::read(temp.path()).map_err(|source| TagsError::Io {
-        path: temp.path().display().to_string(),
-        source,
-    })?;
-    // The written copy must still read as a whole.
-    lofty::read_from_path(temp.path()).map_err(|error| TagsError::TagRead {
-        path: temp.path().display().to_string(),
+    F::apply(snapshot.truth.as_ref(), &tagged, &native, pictures, path)
+        .map_err(|refusal| refused(path, refusal))?;
+    drop(tagged);
+    // The verify read: its hash is the saved file's.
+    let (after, sha256, size) = {
+        let (saved_bytes, sha256) = read_hashed(path)?;
+        let after = Snapshot::<F>::capture(format, &saved_bytes)
+            .map_err(|refusal| refused(path, refusal))?;
+        (after, sha256, saved_bytes.len() as u64)
+    };
+    // The written file must still read as a whole.
+    lofty::read_from_path(path).map_err(|error| TagsError::TagRead {
+        path: path.display().to_string(),
         reason: error.to_string(),
     })?;
-    let after = Snapshot::<F>::capture(format, &temp_bytes)
-        .map_err(|refusal| refused(temp.path(), refusal))?;
     snapshot
         .verify_against(&after, &native, pictures)
         .map_err(|refusal| refused(path, refusal))?;
-    temp.commit()?;
-    Ok(SaveReport {
-        format,
-        id3_version: snapshot.truth.as_ref().and_then(F::version),
-        edits_applied: edits.len(),
+    File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|source| TagsError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+    Ok(SavedInPlace {
+        report: SaveReport {
+            format,
+            id3_version: snapshot.truth.as_ref().and_then(F::version),
+            edits_applied: edits.len(),
+        },
+        sha256,
+        size,
     })
 }
 
@@ -469,91 +574,5 @@ fn lofty_picture(spec: &PictureSpec) -> lofty::picture::Picture {
 fn save_failed<E: std::error::Error>(error: E) -> Refusal {
     Refusal::SaveFailed {
         reason: error_chain(&error),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Temp copy in the target directory: same filesystem, same extension.
-// ---------------------------------------------------------------------------
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-struct TempCopy {
-    temp: PathBuf,
-    original: PathBuf,
-}
-
-impl TempCopy {
-    fn create(original: &Path) -> Result<Self, TagsError> {
-        let dir = original.parent().filter(|dir| !dir.as_os_str().is_empty());
-        let dir = dir.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let extension = original
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("tmp");
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|span| span.as_nanos())
-            .unwrap_or(0);
-        for _ in 0..100 {
-            let count = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let name = format!(
-                ".dn-tagtmp-{}-{nanos}-{count}.{extension}",
-                std::process::id()
-            );
-            let temp = dir.join(name);
-            match OpenOptions::new().write(true).create_new(true).open(&temp) {
-                Ok(_) => {
-                    fs::copy(original, &temp).map_err(|source| TagsError::Io {
-                        path: temp.display().to_string(),
-                        source,
-                    })?;
-                    return Ok(Self {
-                        temp,
-                        original: original.to_path_buf(),
-                    });
-                }
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
-                Err(source) => {
-                    return Err(TagsError::Io {
-                        path: temp.display().to_string(),
-                        source,
-                    });
-                }
-            }
-        }
-        Err(TagsError::Io {
-            path: original.display().to_string(),
-            source: std::io::Error::new(ErrorKind::AlreadyExists, "could not pick a temp name"),
-        })
-    }
-
-    fn path(&self) -> &Path {
-        &self.temp
-    }
-
-    fn commit(&self) -> Result<(), TagsError> {
-        File::open(&self.temp)
-            .and_then(|file| file.sync_all())
-            .map_err(|source| TagsError::Io {
-                path: self.temp.display().to_string(),
-                source,
-            })?;
-        fs::rename(&self.temp, &self.original).map_err(|source| TagsError::Io {
-            path: self.original.display().to_string(),
-            source,
-        })?;
-        if let Some(dir) = self.original.parent()
-            && let Ok(handle) = File::open(dir)
-        {
-            let _ = handle.sync_all();
-        }
-        Ok(())
-    }
-}
-
-impl Drop for TempCopy {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.temp);
     }
 }

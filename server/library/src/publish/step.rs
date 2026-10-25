@@ -35,7 +35,6 @@ use super::publisher::{
 use super::recovery::{
     compensate_bundle, flag_attention, flag_rows, placements_first, removals_first, remove_folders,
 };
-use super::snapshots::sha256_hex;
 
 /// Where a commit's imported files say they came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +76,8 @@ pub(super) struct Run<'a> {
     pub known_removals: bool,
     /// Each put-back temp's identity as this publish wrote it.
     pub temps: &'a BTreeMap<String, FileStat>,
+    /// Hashes this publish worked out; empty in recovery.
+    pub known: &'a paths::Known,
     pub hooks: Hooks<'a>,
 }
 
@@ -513,9 +514,17 @@ fn place_step(journal: &FileJournal, evidence: PlaceEvidence) -> RowStep {
     use JournalState as S;
     use Temp as T;
     let step = match (journal.state, evidence.temp, evidence.dest) {
+        // Still being staged, its temp part written (a tag write's row
+        // learns its hash only once staged): it is our own part copy, and
+        // the unwind takes it.
+        (S::Prepared, T::Other, D::Other) => foreign(),
         (
-            S::Prepared
-            | S::Staged
+            S::Prepared,
+            T::Other,
+            D::Free | D::Staged | D::StagedAlsoSource | D::Source | D::Replaced | D::Removed,
+        ) => RowStep::Unwind,
+        (
+            S::Staged
             | S::Published
             | S::Committed
             | S::CleanupPending
@@ -536,6 +545,10 @@ fn place_step(journal: &FileJournal, evidence: PlaceEvidence) -> RowStep {
         // Still being staged: the bundle unwinds.
         (S::Prepared, T::Missing | T::SameAsDest, D::Other) => foreign(),
         (S::Prepared, T::Staged, D::Other) => foreign(),
+        // An unchanged write in place: the destination is the original.
+        (S::Prepared, T::Staged, D::StagedAlsoSource) if evidence.unchanged_original => {
+            RowStep::Unwind
+        }
         (S::Prepared, T::Staged, D::Staged | D::StagedAlsoSource) => duplicate(),
         (
             S::Prepared,
@@ -806,10 +819,7 @@ impl Run<'_> {
                 journal.id
             )));
         }
-        let holds = |path: &Path| {
-            paths::read_regular_file(path)
-                .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256)
-        };
+        let holds = |path: &Path| self.known.holds(path, &journal.staged_sha256);
         if journal.kind == JournalKind::Delete {
             // A generated file being taken away: it is either still in
             // place or set aside, never both, and never anything else.
@@ -822,16 +832,15 @@ impl Run<'_> {
                 aside_present: std::fs::symlink_metadata(staged).is_ok(),
             }));
         }
-        let temp = match paths::read_regular_file(staged) {
-            Err(_) => Temp::Missing,
-            Ok(bytes) if sha256_hex(&bytes) != journal.staged_sha256 => Temp::Other,
-            Ok(_) if paths::same_file(staged, &dest) => Temp::SameAsDest,
-            Ok(_) => Temp::Staged,
+        let temp = match self.known.hash(staged) {
+            None => Temp::Missing,
+            Some(sha) if sha != journal.staged_sha256 => Temp::Other,
+            Some(_) if paths::same_file(staged, &dest) => Temp::SameAsDest,
+            Some(_) => Temp::Staged,
         };
-        let dest_state = match paths::read_regular_file(&dest) {
-            Err(_) => Dest::Free,
-            Ok(bytes) => {
-                let sha = sha256_hex(&bytes);
+        let dest_state = match self.known.hash(&dest) {
+            None => Dest::Free,
+            Some(sha) => {
                 let source = journal.source_sha256.as_deref() == Some(sha.as_str());
                 if sha == journal.staged_sha256 && source {
                     Dest::StagedAlsoSource
@@ -857,16 +866,16 @@ impl Run<'_> {
         let backup = match journal.backup.as_deref().map(Path::new) {
             None => Backup::Fine,
             Some(backup) if sandbox.ensure_under_roots(backup).is_err() => Backup::Escapes,
-            Some(backup) => match paths::read_regular_file(backup) {
-                Ok(bytes) => {
+            Some(backup) => match self.known.hash(backup) {
+                Some(sha) => {
                     let expected = journal.backup_sha256().unwrap_or_default();
-                    if !expected.is_empty() && sha256_hex(&bytes) != expected {
+                    if !expected.is_empty() && sha != expected {
                         Backup::Changed
                     } else {
                         Backup::Fine
                     }
                 }
-                Err(_) => Backup::Fine,
+                None => Backup::Fine,
             },
         };
         Ok(RowEvidence::Place(PlaceEvidence {
@@ -1086,6 +1095,9 @@ impl Run<'_> {
             home: &home,
             sha256: journal.backup_sha256(),
             root_dev: self.root_dev(root),
+            known: journal
+                .backup_sha256()
+                .and_then(|sha256| self.known.vouch(dest, sha256)),
         };
         let mode = self.sandbox.placement_mode(root);
         match set_aside_with(mode, original, self.seams, self.hooks.before_set_aside) {
@@ -1318,10 +1330,7 @@ impl Run<'_> {
             }
             let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
             let staged = Path::new(&journal.staged);
-            let holds = |path: &Path| {
-                paths::read_regular_file(path)
-                    .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256)
-            };
+            let holds = |path: &Path| self.known.holds(path, &journal.staged_sha256);
             let staged_holds = sandbox.ensure_under_roots(staged).is_ok() && holds(staged);
             let mode = super::add::mode_for(sandbox, journal);
             let dest_free = matches!(
@@ -1521,7 +1530,7 @@ impl Run<'_> {
                 Path::new(backup_text),
                 self.bin_seams,
                 now,
-                None,
+                self.known.vouch(Path::new(backup_text), &replaced.sha256),
             )?;
             if !moved {
                 tracing::warn!(journal_id = %journal.id, "the file to recycle is gone; nothing was moved");
@@ -1530,9 +1539,11 @@ impl Run<'_> {
             let backup = Path::new(backup_text);
             if !gone(backup)? {
                 sandbox.ensure_under_roots(backup)?;
-                let bytes = paths::read_regular_file(backup)?;
                 let expected = journal.source_sha256.as_deref().unwrap_or_default();
-                if expected.is_empty() || sha256_hex(&bytes) == expected {
+                // A file is deleted for good only once it is read: an edit
+                // that kept its size and modified time is not deleted.
+                let held = paths::hash_regular_file(backup)?.sha256 == expected;
+                if expected.is_empty() || held {
                     std::fs::remove_file(backup).map_err(PublishError::from)?;
                     if let Some(parent) = backup.parent()
                         && let Err(error) = super::journal::fsync_dir(parent)
@@ -1552,10 +1563,10 @@ impl Run<'_> {
             if source != dest
                 && !paths::same_file(&source, &dest)
                 && !gone(&source)?
-                && let Ok(bytes) = paths::read_regular_file(&source)
+                && FileStat::read(&source).is_ok()
             {
                 let expected = journal.source_sha256.as_deref().unwrap_or_default();
-                if expected.is_empty() || sha256_hex(&bytes) == expected {
+                if expected.is_empty() || paths::holds(&source, expected) {
                     std::fs::remove_file(&source).map_err(PublishError::from)?;
                     super::publisher::prune_empty_parents(sandbox, root, &source);
                 }
@@ -1688,8 +1699,11 @@ fn put_back_refused(sandbox: &Sandbox, journals: &[FileJournal]) -> bool {
                 return false;
             };
             let expected = sha256.unwrap_or_default();
-            let intact = paths::read_regular_file(Path::new(hidden))
-                .is_ok_and(|bytes| expected.is_empty() || sha256_hex(&bytes) == expected);
+            let intact = if expected.is_empty() {
+                FileStat::read(Path::new(hidden)).is_ok()
+            } else {
+                paths::holds(Path::new(hidden), expected)
+            };
             intact && std::fs::symlink_metadata(&home).is_err()
         })
 }
@@ -1747,7 +1761,7 @@ fn in_place(sandbox: &Sandbox, journal: &FileJournal, dest: &Path) -> bool {
 /// test left, which is the original itself).
 fn unchanged_original(sandbox: &Sandbox, journal: &FileJournal, dest: &Path) -> bool {
     let staged = Path::new(&journal.staged);
-    journal.state == JournalState::Staged
+    matches!(journal.state, JournalState::Prepared | JournalState::Staged)
         && journal.source_sha256.as_deref() == Some(journal.staged_sha256.as_str())
         && std::fs::symlink_metadata(staged).is_ok()
         && !paths::same_file(staged, dest)

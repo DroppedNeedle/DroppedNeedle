@@ -3596,7 +3596,7 @@ fn error_messages_name_files_not_server_paths() {
     assert!(!err.to_string().contains(&root_text), "{err}");
     // Missing and symlinked files: file name only.
     let missing = fix.sandbox.resolve("music", "gone.flac").unwrap();
-    let err = publish::paths::read_regular_file(&missing).unwrap_err();
+    let err = publish::paths::hash_regular_file(&missing).unwrap_err();
     assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
     assert!(err.to_string().contains("gone.flac"), "{err}");
     assert!(!err.to_string().contains(&root_text), "{err}");
@@ -3606,7 +3606,7 @@ fn error_messages_name_files_not_server_paths() {
         std::fs::write(&target, b"real").unwrap();
         let link = fix.sandbox.resolve("music", "alias.flac").unwrap();
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let err = publish::paths::read_regular_file(&link).unwrap_err();
+        let err = publish::paths::hash_regular_file(&link).unwrap_err();
         assert!(matches!(err, PublishError::UnsafePath(_)), "got {err:?}");
         assert!(err.to_string().contains("alias.flac"), "{err}");
         assert!(!err.to_string().contains(&root_text), "{err}");
@@ -3614,9 +3614,9 @@ fn error_messages_name_files_not_server_paths() {
     // Tag staging on garbage bytes: the hidden temp path stays home.
     let mut updates = BTreeMap::new();
     updates.insert("title".to_string(), vec!["X".to_string()]);
-    let temp = fix.dir.join("w.tmp");
-    let err = publish::staging::render_staged_bytes(&[0u8; 64], "flac", &updates, None, &temp)
-        .unwrap_err();
+    let temp = fix.dir.join("w.tmp.flac");
+    std::fs::write(&temp, [0u8; 64]).unwrap();
+    let err = publish::staging::stage_tags(&temp, &updates, None).unwrap_err();
     assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
     assert!(!err.to_string().contains(&root_text), "{err}");
     // Reading the current tag document off garbage: file name only.
@@ -3963,16 +3963,16 @@ fn a_240_byte_file_name_is_published_and_retagged() {
     tags::probe(&dest).unwrap();
     assert!(hidden_leftovers(&fix.dir).is_empty());
 
-    // The longest hidden name is the tag work copy: the temp's name with a
-    // longer ending. It keeps the start of the file's name and stays short.
+    // The longest hidden name is a tag write's temp, which ends in the
+    // container's extension. It keeps the start of the file's name and
+    // stays short.
     let temp = fix
         .sandbox
-        .temp_path_for(&dest, "bundle-long-retag-000-audio")
+        .audio_temp_path_for(&dest, "bundle-long-retag-000-audio", "flac")
         .unwrap();
     let temp = temp.file_name().unwrap().to_string_lossy().into_owned();
     assert!(temp.contains(".n\u{e9}"), "{temp}");
-    let work = temp.replace(".tmp", ".staging.flac");
-    assert!(work.len() <= 128, "{} bytes", work.len());
+    assert!(temp.len() <= 128, "{} bytes", temp.len());
 }
 
 /// A hidden working name that someone turned into a symlink is unlinked,
@@ -3985,26 +3985,17 @@ fn a_symlink_at_a_hidden_working_name_is_never_written_through() {
     let dest = fix.sandbox.resolve("music", "staging/s.flac").unwrap();
     let temp = fix
         .sandbox
-        .temp_path_for(&dest, "bundle-link-000-audio")
+        .audio_temp_path_for(&dest, "bundle-link-000-audio", "flac")
         .unwrap();
-    let work = temp.with_file_name(
-        temp.file_name()
-            .unwrap()
-            .to_string_lossy()
-            .replace(".tmp", ".staging.flac"),
-    );
-    let victims = [fix.dir.join("victim-temp"), fix.dir.join("victim-work")];
-    for (victim, link) in victims.iter().zip([&temp, &work]) {
-        std::fs::write(victim, b"theirs").unwrap();
-        std::os::unix::fs::symlink(victim, link).unwrap();
-    }
+    let victim = fix.dir.join("victim-temp");
+    std::fs::write(&victim, b"theirs").unwrap();
+    std::os::unix::fs::symlink(&victim, &temp).unwrap();
     let (sealed, live) = seal(&bundle);
     let mut publisher = open_publisher(&fix);
     publisher.publish(&sealed, &live, &docs).unwrap();
 
-    for victim in &victims {
-        assert_eq!(std::fs::read(victim).unwrap(), b"theirs");
-    }
+    assert_eq!(std::fs::read(&victim).unwrap(), b"theirs");
+
     let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Flac).unwrap();
     assert_eq!(tag.title, "Retagged");
     assert!(hidden_leftovers(&fix.dir).is_empty());
@@ -5020,4 +5011,94 @@ fn a_half_unwound_placed_row_unwinds() {
         "staging/a.flac",
         "the catalog still names the file where it is"
     );
+}
+
+/// A crash while a file's journal temp was being written leaves part of
+/// it. The row never staged, so recovery unwinds it: the part copy goes
+/// and the source stays as it was.
+#[test]
+fn a_part_written_temp_unwinds_at_recovery() {
+    let fix = fixture("part-temp");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let (sealed, live) = seal(&bundle);
+    let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let original = std::fs::read(&source).unwrap();
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+    let journals = JournalStore::new(&open_db(&fix))
+        .bundle("bundle-1")
+        .unwrap();
+    let temp = &journals[0].staged;
+    let half = std::fs::read(temp).unwrap().len() as u64 / 2;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(temp)
+        .unwrap()
+        .set_len(half)
+        .unwrap();
+
+    let db = restart(&fix);
+    let results = reconcile(&db, &fix.sandbox).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    assert_eq!(std::fs::read(&source).unwrap(), original);
+}
+
+/// A moved file's source is deleted only once it is read: an edit made
+/// while the move ran, which kept the file's size and put its modified
+/// time back (a tagger set to keep timestamps), is kept, not deleted.
+#[test]
+fn an_edit_that_kept_size_and_time_is_never_deleted() {
+    let fix = fixture("kept-edit");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    bundle.items.truncate(1);
+    bundle.items[0].managed_updates.clear();
+    let (sealed, live) = seal(&bundle);
+    let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let original = std::fs::read(&source).unwrap();
+    let mut edited = original.clone();
+    let last = edited.len() - 1;
+    edited[last] ^= 0xff;
+    let modified = std::fs::metadata(&source).unwrap().modified().unwrap();
+    let mut publisher = open_publisher(&fix);
+    let (path, bytes) = (source.clone(), edited.clone());
+    publisher.set_before_place(Some(Box::new(move |_| {
+        let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut file, &bytes).unwrap();
+        file.set_modified(modified).unwrap();
+    })));
+    publisher.publish(&sealed, &live, &docs).unwrap();
+
+    let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), original);
+    assert_eq!(std::fs::read(&source).unwrap(), edited, "the edit is kept");
+}
+
+/// A write in place with no tag change that stopped once its temp was
+/// written unwinds: the file at its name is the original, not a second
+/// copy, and is left as it is.
+#[test]
+fn an_unchanged_write_in_place_that_stopped_at_its_temp_unwinds() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("unchanged-temp");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    for item in bundle.items.iter_mut() {
+        item.managed_updates.clear();
+    }
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+
+    let db = restart(&fix);
+    let results = reconcile(&db, &fix.sandbox).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let path = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
 }

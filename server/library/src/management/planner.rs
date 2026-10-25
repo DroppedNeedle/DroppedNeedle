@@ -565,13 +565,12 @@ fn plan_file(
         .sandbox
         .resolve_no_symlink(&track.root_id, &track.relative_path)
         .map_err(|error| path_reason(&error))?;
-    let bytes =
-        crate::publish::paths::read_regular_file(&path).map_err(|error| path_reason(&error))?;
+    let hashed =
+        crate::publish::paths::hash_regular_file(&path).map_err(|error| path_reason(&error))?;
     let fingerprint = FileFingerprint {
-        size: bytes.len() as u64,
-        sha256: sha256_hex(&bytes),
+        size: hashed.size,
+        sha256: hashed.sha256,
     };
-    drop(bytes);
     let doc = crate::publish::staging::document_from_file(&path).map_err(|error| {
         tracing::info!(%error, track = track.id, "tags unreadable at preview");
         reasons::file_unreadable()
@@ -699,9 +698,9 @@ fn plan_file(
             let same = ctx
                 .sandbox
                 .resolve_no_symlink(&dest_root, &lrc_rel)
-                .ok()
-                .and_then(|path| crate::publish::paths::read_regular_file(&path).ok())
-                .is_some_and(|bytes| bytes == synced.as_bytes());
+                .is_ok_and(|path| {
+                    crate::publish::paths::holds(&path, &sha256_hex(synced.as_bytes()))
+                });
             if !same {
                 item.facts
                     .warnings
@@ -1754,11 +1753,11 @@ fn plan_folder_sidecars(
             items[index].block(reasons::sidecar_collision());
             return;
         }
-        let bytes = ctx
+        let hashed = ctx
             .sandbox
             .resolve_no_symlink(&plan.source_root, &source_rel)
-            .and_then(|path| crate::publish::paths::read_regular_file(&path));
-        let Ok(bytes) = bytes else {
+            .and_then(|path| crate::publish::paths::hash_regular_file(&path));
+        let Ok(hashed) = hashed else {
             items[index].block(reasons::sidecar_unreadable());
             return;
         };
@@ -1768,8 +1767,8 @@ fn plan_folder_sidecars(
             dest_root: plan.dest_root.clone(),
             dest_rel: dest_rel.clone(),
             fingerprint: FileFingerprint {
-                size: bytes.len() as u64,
-                sha256: sha256_hex(&bytes),
+                size: hashed.size,
+                sha256: hashed.sha256,
             },
         });
     }
@@ -1846,9 +1845,9 @@ fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
                 let identical = ctx
                     .sandbox
                     .resolve_no_symlink(&plan.dest_root, &plan.dest_rel)
-                    .ok()
-                    .and_then(|path| crate::publish::paths::read_regular_file(&path).ok())
-                    .is_some_and(|bytes| sha256_hex(&bytes) == plan.fingerprint.sha256);
+                    .is_ok_and(|path| {
+                        crate::publish::paths::holds(&path, &plan.fingerprint.sha256)
+                    });
                 item.block(reasons::path_collision(identical));
             }
             Err(error) => item.block(path_reason(&error)),

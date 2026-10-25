@@ -19,6 +19,11 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex_encode(&hasher.finalize())
 }
 
+/// Lowercase hex of a finished digest.
+pub(crate) fn hex_digest(digest: &[u8]) -> String {
+    hex_encode(digest)
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

@@ -1023,8 +1023,7 @@ impl SamePathSelf {
         let Some(wanted) = self.replaces_sha256.as_deref() else {
             return false;
         };
-        super::paths::read_regular_file(dest)
-            .is_ok_and(|bytes| super::snapshots::sha256_hex(&bytes) == wanted)
+        super::paths::holds(dest, wanted)
     }
 
     /// True when `path`, found at or folding onto `dest_root:dest_rel`, is
@@ -1054,10 +1053,7 @@ impl SamePathSelf {
         let Some(wanted) = self.sha256.as_deref() else {
             return false;
         };
-        let Ok(bytes) = super::paths::read_regular_file(dest) else {
-            return false;
-        };
-        super::snapshots::sha256_hex(&bytes) == wanted
+        super::paths::holds(dest, wanted)
     }
 }
 

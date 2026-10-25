@@ -26,7 +26,6 @@ library/src/scan/coordinator.rs  to move: take time from the kernel clock
 library/src/scan/sqlite_store/artwork.rs  to move: take time from the kernel clock
 library/src/scan/sqlite_store/lyrics.rs  to move: take time from the kernel clock
 library/src/scan/walk.rs  to move: take time from the kernel clock
-library/src/tags/save/mod.rs  to move: take time from the kernel clock
 
 tool/src/export/exporter.rs  offline tool, not a server area
 tool/src/export/fernet.rs  offline tool, not a server area

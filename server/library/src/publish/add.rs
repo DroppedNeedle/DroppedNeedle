@@ -18,7 +18,6 @@ use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use super::paths::{self, Sandbox};
 use super::place::PlacementMode;
 use super::planner::PlanBundle;
-use super::snapshots::sha256_hex;
 use super::{PublishError, sql};
 
 /// Who made a change no person applied.
@@ -96,7 +95,7 @@ pub(super) fn mode_for(sandbox: &Sandbox, journal: &FileJournal) -> PlacementMod
 }
 
 fn holds(path: &Path, sha256: &str) -> bool {
-    paths::read_regular_file(path).is_ok_and(|bytes| sha256_hex(&bytes) == sha256)
+    paths::holds(path, sha256)
 }
 
 /// What an add's pre-commit row shows on disk.

@@ -22,7 +22,6 @@ use crate::clock::now_unix;
 use crate::operations::decisions::{CatalogAction, record_action};
 use crate::publish::record::changed_since_written;
 pub use crate::publish::record::record_sql;
-use crate::publish::snapshots::sha256_hex;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::Lane;
 
@@ -561,8 +560,8 @@ pub(crate) fn hand_back(
             let sha256 = sandbox
                 .resolve_no_symlink(&root_id, &relative_path)
                 .ok()
-                .and_then(|path| crate::publish::paths::read_regular_file(&path).ok())
-                .map(|bytes| sha256_hex(&bytes));
+                .and_then(|path| crate::publish::paths::hash_regular_file(&path).ok())
+                .map(|hashed| hashed.sha256);
             if sha256.is_none() {
                 tracing::warn!(
                     track_id,

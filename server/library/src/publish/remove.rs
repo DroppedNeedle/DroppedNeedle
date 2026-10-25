@@ -26,7 +26,6 @@ use super::place::{self, Original, PlaceError, PlacementMode, Seams};
 use super::planner::{
     FileFingerprint, Removal, RemoveFile, RemoveItem, UndoRecord, removal_moved, removal_seals,
 };
-use super::snapshots::sha256_hex;
 use super::{PublishError, sql};
 
 /// One track a removal takes away, as the caller found it, with what was
@@ -110,8 +109,8 @@ pub fn probe(root: &Path, path: &Path) -> Result<Probe, PublishError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Probe::Gone),
         Err(error) => return Err(PublishError::from(error)),
     };
-    let bytes = paths::read_regular_file(path)?;
-    if FileStat::read(path).ok() != Some(before) {
+    let hashed = paths::hash_regular_file(path)?;
+    if hashed.stat != before {
         return Err(PublishError::Validation(
             "a file changed while it was read".into(),
         ));
@@ -119,8 +118,8 @@ pub fn probe(root: &Path, path: &Path) -> Result<Probe, PublishError> {
     Ok(Probe::File {
         path: path.to_path_buf(),
         fingerprint: FileFingerprint {
-            size: bytes.len() as u64,
-            sha256: sha256_hex(&bytes),
+            size: hashed.size,
+            sha256: hashed.sha256,
         },
         stat: before,
     })
@@ -274,7 +273,7 @@ pub(super) fn holds(path: &Path, sha256: &str, known: Option<FileStat>) -> bool 
     if FileStat::read(path).is_ok_and(|now| known.is_some_and(|known| known.same_moved(&now))) {
         return true;
     }
-    paths::read_regular_file(path).is_ok_and(|bytes| sha256_hex(&bytes) == sha256)
+    paths::holds(path, sha256)
 }
 
 /// Set the file at `root:rel` (`dest`) aside under `aside`. Safe to repeat:
@@ -316,6 +315,7 @@ pub(super) fn set_aside(
         home: dest,
         sha256: known.is_none().then_some(sha256),
         root_dev,
+        known: None,
     };
     place::set_aside_with(mode, original, seams, before_move)
         .map_err(|error| error.into_publish(root, rel))?;

@@ -242,6 +242,9 @@ pub struct Original<'a> {
     /// device that refuses a link is not the server's to change, or is
     /// locked; anywhere else the refusal can also mean no hard links.
     pub root_dev: Option<u64>,
+    /// Its identity when the caller already knows it holds `sha256`: then
+    /// a set-aside file that is still that file is not read again.
+    pub known: Option<super::paths::FileStat>,
 }
 
 /// Why a user's file was not set aside.
@@ -333,6 +336,7 @@ pub(super) fn set_aside_with(
         home,
         sha256,
         root_dev,
+        known,
     } = original;
     if matches!(mode, PlacementMode::Link | PlacementMode::Unknown) {
         let links_work = mode == PlacementMode::Link
@@ -361,8 +365,9 @@ pub(super) fn set_aside_with(
     let Some(expected) = sha256 else {
         return Ok(());
     };
-    let intact = paths::read_regular_file(hidden)
-        .is_ok_and(|bytes| super::snapshots::sha256_hex(&bytes) == expected);
+    let still_known = known
+        .is_some_and(|known| paths::FileStat::read(hidden).is_ok_and(|now| known.same_moved(&now)));
+    let intact = still_known || paths::holds(hidden, expected);
     if intact {
         return Ok(());
     }
@@ -786,6 +791,7 @@ mod tests {
             home,
             sha256: Some("not-checked-here"),
             root_dev: None,
+            known: None,
         }
     }
 
@@ -899,6 +905,7 @@ mod tests {
                 home: &visible,
                 sha256: Some(&sha),
                 root_dev: None,
+                known: None,
             };
             std::fs::write(&visible, b"original").expect("writes");
             std::fs::hard_link(&visible, &hidden).expect("links");
