@@ -15,6 +15,8 @@
 //! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
 //! - [`landing`] verifies a finished download, matches it to the
 //!   requested release, and publishes it into the library or holds it.
+//! - [`intake`] places matched files in the library, the same way for
+//!   every door they come through (a download, an upload, a held file).
 //! - [`target`] works out what a task fetches (its edition, tracklist and
 //!   wanted tracks; a single track is fetched as part of its album), with
 //!   [`edition`] answering which edition the library has chosen.
@@ -40,6 +42,7 @@ pub mod edition;
 pub mod flows;
 pub mod follows;
 pub mod imports;
+pub mod intake;
 pub mod landing;
 pub mod library_removal;
 pub mod plugin_events;

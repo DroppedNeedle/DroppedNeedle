@@ -45,7 +45,7 @@ use self::confine::{Place, place};
 use self::decision::{Decision, Outcome, check_files, decide};
 use self::hold::HoldItem;
 use self::matching::{FilePlan, FoundRelease, MatchSummary, find};
-use self::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary};
+use self::ports::LandingLibrary;
 use self::probe::{LandedFile, Landing};
 use self::specs::{Check, Disposition, QualityPolicy, Rejection, Target, Verdict};
 use super::downloads::journal::Journal;
@@ -53,10 +53,10 @@ use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
 use super::downloads::plan::{PlannedAlbum, TaskPlan};
 use super::downloads::sources::SourceHandle;
 use super::downloads::store::{StoreError, TaskDetails, TaskRow};
+use crate::intake;
 use crate::reason::Reason;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
-use droppedneedle_library::import::ImportJoin;
 
 /// The rejection a landing answers when its task records cannot be read.
 fn journal_unreadable() -> Rejection {
@@ -130,20 +130,6 @@ pub struct LandingReport {
     /// already taken, an upgrade waiting): another source would not help,
     /// so the task settles without blocklisting this one.
     pub local_only: bool,
-}
-
-/// What "Replace tracks you have in another version" made of a landing.
-#[derive(Default)]
-struct Versions {
-    /// Release tracks (by index) handled here, never by the upgrade loop.
-    handled: HashSet<usize>,
-    /// Handled tracks whose file was dropped: they count as owned.
-    dropped: HashSet<usize>,
-    /// Files whose old version they replace, which goes to the recycle bin
-    /// in the same publish.
-    replace: Vec<(usize, String)>,
-    /// `(release track, old track)` for every file imported to replace one.
-    replaced: Vec<(String, String)>,
 }
 
 /// The landing service the worker calls.
@@ -515,9 +501,10 @@ impl LandingService {
         }))
     }
 
-    /// Carry out an import plan: fingerprint, publish, hold what must be
-    /// held, and work out what is still missing. `heard` is what AcoustID
-    /// already said about the paired files, when it was asked.
+    /// Carry out an import plan through the one intake: place the files,
+    /// hold what must be held, and work out what is still missing. `heard`
+    /// is what AcoustID already said about the paired files, when it was
+    /// asked.
     #[allow(clippy::too_many_arguments)]
     async fn act(
         &self,
@@ -527,182 +514,117 @@ impl LandingService {
         matched: &MatchSummary,
         heard: Option<HashMap<String, Vec<String>>>,
         mut decision: Decision,
-        mut plan: FilePlan,
+        plan: FilePlan,
         library: &Arc<dyn LandingLibrary>,
     ) -> Acted {
         let Some(found) = matched.best() else {
             return Acted::decided(decision, 0);
         };
-        let mut held: Vec<Held<'_>> = Vec::new();
-        for (file, track) in &plan.held {
-            let detail = found
-                .scored
-                .pair_for(*file)
-                .and_then(|pair| specs::artist_conflict(target, landing, found, pair))
-                .unwrap_or_else(|| {
-                    "the file's tags name a different track than the release has here".to_owned()
-                });
-            held.push(Held {
-                file: &landing.audio[*file],
+        let held: Vec<intake::Hold> = plan
+            .held
+            .iter()
+            .map(|(file, track)| intake::Hold {
+                file: *file,
                 track: Some(*track),
-                code: Reason::TagMismatch,
-                detail,
-            });
-        }
-        let mut replaces: HashMap<usize, Vec<String>> = HashMap::new();
-        let versions = self
-            .replace_versions(target, found, landing, &mut plan, &mut held, library)
-            .await;
-        for (file, old) in &versions.replace {
-            replaces.insert(*file, vec![old.clone()]);
-        }
-        // An upgrade replaces the library's copy of a track only when the
-        // new file is strictly better (v2 replace-on-import). Equal or
-        // worse leaves the library alone and the file is dropped.
-        let upgrade = target.origin == "upgrade";
-        // The albums the replaced copies sit on, with their release.
-        let mut replaced_on: Vec<(String, String)> = Vec::new();
-        if upgrade || !target.album_wanted.is_empty() {
-            for file in &plan.owned {
-                let Some(track) = found.scored.pair_for(*file).map(|pair| pair.track) else {
-                    continue;
-                };
-                if versions.handled.contains(&track) {
-                    continue;
-                }
-                let release_track = &found.release.tracks[track];
-                // "Get missing tracks" upgrades only the owned tracks it
-                // asked for (those below the cutoff).
-                if !upgrade
-                    && !target
-                        .album_wanted
-                        .contains(&(release_track.disc.max(1), release_track.position))
-                {
-                    continue;
-                }
-                let copies = library
-                    .owned_copies(
-                        &found.release.release_group_id,
-                        target.planned_album_id(),
-                        &found.release.id,
-                        &release_track.id,
-                        &release_track.recording_id,
-                    )
-                    .await;
-                let tier = landing.audio[*file].tier();
-                if !copies.is_empty() && copies.iter().all(|copy| quality::beats(tier, copy.tier)) {
-                    for copy in &copies {
-                        let on = (copy.album_id.clone(), copy.release_mbid.clone());
-                        if !replaced_on.contains(&on) {
-                            replaced_on.push(on);
-                        }
-                    }
-                    replaces.insert(
-                        *file,
-                        copies.into_iter().map(|copy| copy.track_id).collect(),
-                    );
-                    plan.import.push((*file, track));
-                }
-            }
-        }
-        // The files join the copy they were fetched for, else the one album
-        // every replaced copy sat on.
-        let join = match (&target.planned_album, replaced_on.as_slice()) {
-            (Some(planned), _) => Some(ImportJoin {
-                album_id: planned.album_id.clone(),
-                release_mbid: planned.release_mbid.clone(),
-                replaced: versions.replaced.clone(),
-            }),
-            (None, [(album_id, release_mbid)]) if !release_mbid.is_empty() => Some(ImportJoin {
-                album_id: album_id.clone(),
-                release_mbid: release_mbid.clone(),
-                replaced: Vec::new(),
-            }),
-            _ => None,
+                reason: Reason::TagMismatch,
+                detail: found
+                    .scored
+                    .pair_for(*file)
+                    .and_then(|pair| specs::artist_conflict(target, landing, found, pair))
+                    .unwrap_or_else(|| {
+                        "the file's tags name a different track than the release has here"
+                            .to_owned()
+                    }),
+            })
+            .collect();
+        let pairing = intake::Pairing {
+            import: plan.import.clone(),
+            owned: plan
+                .owned
+                .iter()
+                .filter_map(|file| Some((*file, found.scored.pair_for(*file)?.track)))
+                .collect(),
+            held,
+            // Files the release does not list are left out of a download.
+            extras: Vec::new(),
         };
-        let heard_check = self
-            .fingerprint_check(landing, found, heard, &mut plan, &mut held, library)
-            .await;
-        decision.checks.extend(heard_check);
-
-        // Each file's old copies go in the same publish as the file: the
-        // library takes them to the recycle bin only once the file is in,
-        // and a file it holds keeps them where they are.
-        let mut imported_tracks: Vec<usize> = Vec::new();
-        let mut imported_sources = Vec::new();
-        if !plan.import.is_empty() {
-            let request = ImportRequest {
-                staging: None,
-                task_id: task.id.clone(),
-                origin: self::ports::ImportOrigin::Download,
-                extras: Vec::new(),
+        let upgrade = target.origin == "upgrade";
+        let batch = intake::IntakeBatch {
+            files: landing
+                .audio
+                .iter()
+                .map(|file| intake::IntakeFile {
+                    file: file.clone(),
+                    held_for: None,
+                })
+                .collect(),
+            target: intake::Target {
                 release: found.release.clone(),
-                join: join.clone(),
-                files: plan
-                    .import
-                    .iter()
-                    .map(|(file, track)| ImportFile {
-                        path: landing.audio[*file].path.clone(),
-                        track: *track,
-                        replaces: replaces.remove(file).unwrap_or_default(),
-                    })
-                    .collect(),
-                actor: task.user_id.clone(),
-            };
-            match library.import(request).await {
-                Ok(receipt) => {
-                    let skipped: HashMap<usize, String> = receipt.skipped.into_iter().collect();
-                    let blocked: HashMap<usize, String> = receipt.blocked.into_iter().collect();
-                    for (index, (file, track)) in plan.import.iter().enumerate() {
-                        let refused = match (skipped.get(&index), blocked.get(&index)) {
-                            (Some(detail), _) => Some((Reason::TargetOccupied, detail)),
-                            (None, Some(detail)) => Some((Reason::UpgradeBlocked, detail)),
-                            (None, None) => None,
-                        };
-                        match refused {
-                            Some((code, detail)) => held.push(Held {
-                                file: &landing.audio[*file],
-                                track: Some(*track),
-                                code,
-                                detail: detail.clone(),
-                            }),
-                            None => {
-                                imported_tracks.push(*track);
-                                imported_sources.push(landing.audio[*file].path.clone());
-                            }
-                        }
-                    }
-                    tracing::info!(
-                        task_id = %task.id,
-                        bundle = %receipt.bundle_id,
-                        album = %receipt.album_id,
-                        files = imported_tracks.len(),
-                        "download imported into the library"
-                    );
-                }
-                Err(failure @ (ImportFailure::LocalFault(_) | ImportFailure::NamingScript(_))) => {
-                    let detail = failure.detail().to_owned();
-                    decision.outcome = Outcome::Reject(match failure {
-                        ImportFailure::NamingScript(_) => Rejection {
-                            code: Reason::NamingScriptFailed,
-                            ..local_fault(detail)
-                        },
-                        _ => local_fault(detail),
-                    });
-                    return Acted::decided(decision, 0);
-                }
-                Err(ImportFailure::Occupied(detail)) => {
-                    // The library changed between the import's own checks
-                    // and the publish, which put everything back. The next
+                join: target.planned_album.clone(),
+                asked: target.album_wanted.clone(),
+            },
+            origin: intake::Origin::Download {
+                task_id: task.id.clone(),
+                upgrade,
+                staging: None,
+            },
+            gate: intake::Gate::Automatic,
+            owner: task.user_id.clone(),
+        };
+        let placed = match intake::place(library.as_ref(), &batch, pairing, heard).await {
+            Ok(placed) => placed,
+            Err(deferred) => {
+                decision.outcome = Outcome::Reject(match deferred.reason {
+                    // The library changed under the import twice; the next
                     // pass decides file by file again.
-                    decision.outcome = Outcome::Reject(Rejection {
+                    Reason::LibraryChanged => Rejection {
                         code: Reason::LibraryChanged,
                         disposition: Disposition::Temporary,
                         quarantine: None,
-                        detail,
-                    });
-                    return Acted::decided(decision, 0);
+                        detail: deferred.detail,
+                    },
+                    code => Rejection {
+                        code,
+                        ..local_fault(deferred.detail)
+                    },
+                });
+                return Acted::decided(decision, 0);
+            }
+        };
+        decision.checks.extend(placed.fingerprint.clone());
+
+        let held: Vec<Held<'_>> = placed
+            .held
+            .iter()
+            .filter_map(|file| match &placed.outcomes[*file] {
+                intake::Outcome::Held {
+                    track,
+                    reason,
+                    detail,
+                } => Some(Held {
+                    file: &landing.audio[*file],
+                    track: *track,
+                    code: *reason,
+                    detail: detail.clone(),
+                }),
+                _ => None,
+            })
+            .collect();
+        let mut imported_tracks: Vec<usize> = Vec::new();
+        let mut imported_sources = Vec::new();
+        let mut owned_tracks: HashSet<usize> = HashSet::new();
+        for (file, outcome) in placed.outcomes.iter().enumerate() {
+            match outcome {
+                intake::Outcome::Imported {
+                    track: Some(track), ..
+                } => {
+                    imported_tracks.push(*track);
+                    imported_sources.push(landing.audio[file].path.clone());
                 }
+                intake::Outcome::AlreadyOwned { track } => {
+                    owned_tracks.insert(*track);
+                }
+                _ => {}
             }
         }
         let first_hold = held.first().map(|item| (item.code, item.detail.clone()));
@@ -733,7 +655,7 @@ impl LandingService {
                 .filter(|(index, track)| {
                     !covered.contains(index)
                         && !matched.owns(track)
-                        && !versions.dropped.contains(index)
+                        && !owned_tracks.contains(index)
                 })
                 .map(|(index, _)| index)
                 .collect()
@@ -765,7 +687,7 @@ impl LandingService {
         } else {
             any_local && missing.is_empty()
         };
-        let anything_landed = !imported_tracks.is_empty() || (!upgrade && !plan.owned.is_empty());
+        let anything_landed = !imported_tracks.is_empty() || (!upgrade && !owned_tracks.is_empty());
         decision.outcome = if anything_landed {
             Outcome::Import(FilePlan {
                 complete: requested_landed,
@@ -794,164 +716,6 @@ impl LandingService {
             local_only,
             imported_sources,
         }
-    }
-
-    /// "Replace tracks you have in another version": each landed file on a
-    /// release track the planned copy holds in another version (the
-    /// plan's `replace` list) replaces that version, whether the plan
-    /// put it under `import` or `owned`. Only while the matched release is
-    /// the planned one and the copy still names it. The old track must be
-    /// on the copy, on no track of the release, its album not held, and
-    /// not an alias: an indexed one goes to the recycle bin when the new
-    /// file is as good or better, and a missing one (its file already
-    /// gone) is simply replaced. A worse file is held and the old one
-    /// stays. Otherwise nothing is replaced and the file is dropped as an
-    /// owned one is.
-    async fn replace_versions<'a>(
-        &self,
-        target: &Target,
-        found: &FoundRelease,
-        landing: &'a Landing,
-        plan: &mut FilePlan,
-        held: &mut Vec<Held<'a>>,
-        library: &Arc<dyn LandingLibrary>,
-    ) -> Versions {
-        let mut versions = Versions::default();
-        let Some(planned) = target.planned_album.as_ref().filter(|planned| {
-            !planned.replace.is_empty() && found.release.answers_to(&planned.release_mbid)
-        }) else {
-            return versions;
-        };
-        for version in &planned.replace {
-            let Some(track) = found
-                .release
-                .tracks
-                .iter()
-                .position(|track| track.id.eq_ignore_ascii_case(&version.release_track_mbid))
-            else {
-                continue;
-            };
-            let file = match plan.import.iter().position(|(_, on)| *on == track) {
-                Some(at) => plan.import.remove(at).0,
-                None => match plan.owned.iter().position(|file| {
-                    found.scored.pair_for(*file).map(|pair| pair.track) == Some(track)
-                }) {
-                    Some(at) => plan.owned.remove(at),
-                    None => continue,
-                },
-            };
-            versions.handled.insert(track);
-            let old = library
-                .version_row(&version.local_track_id, planned, &found.release)
-                .await
-                .filter(|row| {
-                    row.on_planned
-                        && !row.alias
-                        && !row.on_release
-                        && !row.held
-                        && matches!(row.availability.as_str(), "indexed" | "missing")
-                });
-            let Some(old) = old else {
-                plan.owned.push(file);
-                versions.dropped.insert(track);
-                continue;
-            };
-            if quality::beats(old.tier, landing.audio[file].tier()) {
-                held.push(Held {
-                    file: &landing.audio[file],
-                    track: Some(track),
-                    code: Reason::VersionLowerQuality,
-                    detail: format!(
-                        "the new file is {}, your version is {}",
-                        landing.audio[file].tier(),
-                        old.tier
-                    ),
-                });
-                continue;
-            }
-            if old.availability == "indexed" {
-                versions
-                    .replace
-                    .push((file, version.local_track_id.clone()));
-            }
-            versions.replaced.push((
-                found.release.tracks[track].id.clone(),
-                version.local_track_id.clone(),
-            ));
-            plan.import.push((file, track));
-        }
-        versions
-    }
-
-    /// AcoustID check on the files about to import (v2
-    /// `_fingerprint_disagrees`): a file whose audio AcoustID confidently
-    /// names other recordings, and whose length does not vouch for the
-    /// track, is held on its own. Off without an AcoustID key. `known` is
-    /// an answer already looked up for every paired file.
-    async fn fingerprint_check<'a>(
-        &self,
-        landing: &'a Landing,
-        found: &FoundRelease,
-        known: Option<HashMap<String, Vec<String>>>,
-        plan: &mut FilePlan,
-        held: &mut Vec<Held<'a>>,
-        library: &Arc<dyn LandingLibrary>,
-    ) -> Option<Check> {
-        if plan.import.is_empty() {
-            return None;
-        }
-        let heard = match known {
-            Some(heard) => heard,
-            None => {
-                let files: Vec<(String, PathBuf)> = plan
-                    .import
-                    .iter()
-                    .map(|(file, _)| (file.to_string(), landing.audio[*file].path.clone()))
-                    .collect();
-                library.fingerprints(files).await
-            }
-        };
-        if heard.is_empty() {
-            return None;
-        }
-        let mut kept = Vec::with_capacity(plan.import.len());
-        let mut disagreed = 0;
-        for (file, track) in plan.import.drain(..) {
-            let release_track = &found.release.tracks[track];
-            let disagrees = specs::fingerprint_disagrees(
-                heard
-                    .get(&file.to_string())
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-                &release_track.recording_id,
-                landing.audio[file].header.duration_seconds,
-                release_track.length_ms.map(|ms| ms as f64 / 1000.0),
-            );
-            if disagrees {
-                disagreed += 1;
-                held.push(Held {
-                    file: &landing.audio[file],
-                    track: Some(track),
-                    code: Reason::FingerprintMismatch,
-                    detail: "AcoustID identified a different recording".to_owned(),
-                });
-            } else {
-                kept.push((file, track));
-            }
-        }
-        plan.import = kept;
-        Some(Check {
-            spec: "fingerprint_agrees",
-            verdict: if disagreed == 0 {
-                Verdict::Accept { note: None }
-            } else {
-                Verdict::Accept {
-                    note: Some(format!(
-                        "{disagreed} file(s) held: AcoustID heard another recording"
-                    )),
-                }
-            },
-        })
     }
 
     /// v2's wrong-product verdict: an album whose files all failed on
@@ -1157,12 +921,7 @@ impl LandingService {
         }
         // Only after the decision is durable: a restart in between then
         // still finds the files, sees them in the library, and lands again.
-        if !imported_sources.is_empty()
-            && let Err(error) =
-                tokio::task::spawn_blocking(move || remove_sources(&imported_sources)).await
-        {
-            tracing::warn!(%error, "imported source cleanup did not run");
-        }
+        intake::dispose::remove_sources(imported_sources).await;
         tracing::info!(
             task_id = %task.id,
             outcome,
@@ -1409,29 +1168,4 @@ fn checks_json(checks: &[Check]) -> String {
 fn non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
-}
-
-/// Remove imported source files (the library holds them now), then the
-/// folder they leave empty. Best effort: a leftover is the orphan sweep's.
-fn remove_sources(paths: &[PathBuf]) {
-    let mut parents: Vec<&Path> = Vec::new();
-    for path in paths {
-        if let Err(error) = std::fs::remove_file(path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::info!(file = %path.display(), %error, "imported source file kept");
-        }
-        if let Some(parent) = path.parent()
-            && !parents.contains(&parent)
-        {
-            parents.push(parent);
-        }
-    }
-    for parent in parents {
-        // Succeeds only once the folder is empty; a folder still holding
-        // other files (held ones, extras) is meant to stay.
-        if std::fs::remove_dir(parent).is_err() {
-            tracing::debug!(dir = %parent.display(), "download folder kept: not empty");
-        }
-    }
 }

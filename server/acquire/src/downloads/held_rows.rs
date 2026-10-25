@@ -137,6 +137,21 @@ impl DownloadStore<'_> {
         Ok(moved)
     }
 
+    /// Keep a held file held for another reason, in place: its id and
+    /// every other column stay. Answers how many rows moved.
+    pub fn rehold(
+        &self,
+        id: i64,
+        reason: Reason,
+        detail: Option<&str>,
+    ) -> Result<usize, StoreError> {
+        Ok(self.conn.execute(
+            "UPDATE held_imports SET reason = ?1, reason_detail = ?2 \
+             WHERE id = ?3 AND status = 'held'",
+            params![reason.code(), detail, id],
+        )?)
+    }
+
     /// Clear a task's wrong-product verdict once its held files are gone.
     pub fn clear_wrong_product_verdict(&self, task_id: &str) -> Result<(), StoreError> {
         self.conn.execute(

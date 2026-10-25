@@ -1,13 +1,15 @@
 //! The held-import review: files the landing would not import on its own
 //! wait here for a person (v2 "import anyway").
 //!
-//! A person can listen to a held file, import it as it is, discard it, or
-//! (for an AcoustID hold) ask for a fresh fingerprint check. An import goes
-//! through the same library import seam as a landing, into the edition the
-//! library chose for the album, so a held file lands exactly where an
-//! automatic import would have put it. For an upgrade, the library's copy
-//! is replaced only by a strictly better file and goes to the recycle bin
-//! once the new file is in, never deleted.
+//! A person can listen to a held file, import it, discard it, or (for an
+//! AcoustID hold) ask for a fresh fingerprint check. An import goes through
+//! the one intake as a person's choice, with the plan of the download the
+//! file came from: a file fetched for a copy joins it, a version replaces
+//! yours, otherwise it goes into the edition the library chose for the
+//! album. The check that held the file is skipped; the comparison with
+//! your copy still runs, and a file no better than it is kept, never
+//! deleted, until a second import says to use it anyway. A replaced copy
+//! goes to the recycle bin once the new file is in.
 //!
 //! Holds the library side caused (a taken destination, an old copy that
 //! could not be recycled) can also be retried or discarded for a whole
@@ -19,10 +21,13 @@ use std::sync::{Arc, Mutex};
 
 use super::held_rows::HeldRow;
 use super::journal::Journal;
+use super::plan::PlannedAlbum;
 use super::queue_rows::Viewer;
 use super::state::TaskStatus;
-use crate::landing::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary};
-use crate::landing::{probe, quality, specs};
+use crate::intake::{self, Gate, IntakeBatch, IntakeFile, Origin, Outcome, Pairing};
+use crate::landing::ports::LandingLibrary;
+use crate::landing::probe::{self, LandedFile};
+use crate::landing::specs;
 use crate::reason::{Reason, ReasonKind};
 use crate::worker::DownloadWorker;
 use droppedneedle_library::matching::Release;
@@ -176,11 +181,23 @@ impl HeldImports {
             })
     }
 
-    /// Import one held file as it is, skipping the check that held it.
+    /// Import one held file, skipping the check that held it. A file no
+    /// better than your copy is kept and the answer says so; importing it
+    /// again then replaces yours.
     pub async fn import(&self, viewer: &Viewer, id: i64, actor: &str) -> Result<Placed, HeldError> {
         let _claim = self.claim(id)?;
         let row = self.get(viewer, id).await?;
-        self.import_row(&row, actor).await
+        self.import_one(row, actor).await
+    }
+
+    async fn import_one(&self, row: HeldRow, actor: &str) -> Result<Placed, HeldError> {
+        let placed = self.place_rows(vec![row], actor).await?;
+        match placed.held.first() {
+            Some(reason) => Err(refused(*reason)),
+            None => Ok(Placed::Imported(
+                placed.paths.into_iter().next().unwrap_or_default(),
+            )),
+        }
     }
 
     /// Delete one held file and let the album's automatic retry resume.
@@ -281,12 +298,25 @@ impl HeldImports {
         for row in &rows {
             claims.push(self.claim(row.id)?);
         }
-        let mut imported = 0;
-        for row in &rows {
-            self.import_row(row, &viewer.user_id).await?;
-            imported += 1;
+        self.place_rows(rows, &viewer.user_id).await?.imported()
+    }
+
+    /// Import several held files in one go: one batch per download they
+    /// came from, each with that download's plan. Answers files imported;
+    /// when none went in, why the first stays held.
+    pub async fn import_files(
+        &self,
+        viewer: &Viewer,
+        ids: &[i64],
+        actor: &str,
+    ) -> Result<usize, HeldError> {
+        let mut claims = Vec::with_capacity(ids.len());
+        let mut rows = Vec::with_capacity(ids.len());
+        for id in ids {
+            claims.push(self.claim(*id)?);
+            rows.push(self.get(viewer, *id).await?);
         }
-        Ok(imported)
+        self.place_rows(rows, actor).await?.imported()
     }
 
     /// Delete every file of a download that waits on the library side.
@@ -363,7 +393,9 @@ impl HeldImports {
         {
             return Ok(Reverified::StillHeld);
         }
-        self.import_row(row, actor).await.map(Reverified::Imported)
+        self.import_one(row.clone(), actor)
+            .await
+            .map(Reverified::Imported)
     }
 
     /// A held row whose file vanished is resolved as discarded, so it
@@ -385,117 +417,180 @@ impl HeldImports {
         ))
     }
 
-    /// Place one held file through the library's import seam.
-    async fn import_row(&self, row: &HeldRow, actor: &str) -> Result<Placed, HeldError> {
-        let library = self.library()?;
-        let source = PathBuf::from(&row.held_path);
-        self.ensure_on_disk(row, &source).await?;
-        let (release, track) = self.release_track(&library, row).await?;
-        let release_track = &release.tracks[track];
-
-        // An upgrade replaces the library's copy only with a better file;
-        // the old copy goes to the recycle bin in the publish that places
-        // the new one, and stays when the new one is not placed.
-        let mut replaces = Vec::new();
-        if row.origin == "upgrade" {
-            let copies = library
-                .owned_copies(
-                    &release.release_group_id,
-                    None,
-                    &release.id,
-                    &release_track.id,
-                    &release_track.recording_id,
-                )
-                .await;
-            if !copies.is_empty() {
-                // A file whose quality cannot be read is never judged worse
-                // than the copy: that would delete it. It stays held.
-                let Some(tier) = held_tier(&source).await else {
-                    return Err(HeldError::Refused(
-                        "The held file could not be read to compare its quality with your \
-                         copy, so nothing was changed. Play it to check it, or discard it."
-                            .to_owned(),
-                    ));
-                };
-                if !copies.iter().all(|copy| quality::beats(tier, copy.tier)) {
-                    self.finish(row, "imported").await?;
-                    remove_held_copy(&source).await;
-                    self.settle_task(&library, row, &release).await;
-                    return Ok(Placed::KeptExisting);
-                }
-                replaces = copies.into_iter().map(|copy| copy.track_id).collect();
+    /// Place held files as a person's choice, through the one intake: one
+    /// batch per download they came from, each with that download's plan,
+    /// so a file fetched for a copy joins it and a version replaces yours.
+    /// A file the intake holds again keeps its copy and takes its new
+    /// reason; a whole batch the library could not take answers why.
+    async fn place_rows(&self, rows: Vec<HeldRow>, actor: &str) -> Result<RowsPlaced, HeldError> {
+        let mut groups: Vec<Vec<HeldRow>> = Vec::new();
+        for row in rows {
+            match groups
+                .iter_mut()
+                .find(|group| group[0].source_task_id == row.source_task_id)
+            {
+                Some(group) => group.push(row),
+                None => groups.push(vec![row]),
             }
         }
-
-        let request = ImportRequest {
-            task_id: row
-                .source_task_id
-                .clone()
-                .unwrap_or_else(|| format!("held-{}", row.id)),
-            staging: Some(format!("held-{}", row.id)),
-            origin: crate::landing::ports::ImportOrigin::Download,
-            extras: Vec::new(),
-            release: release.clone(),
-            join: None,
-            files: vec![ImportFile {
-                path: source.clone(),
-                track,
-                replaces,
-            }],
-            actor: actor.to_owned(),
-        };
-        let outcome = library.import(request).await;
-        let failed = match &outcome {
-            Ok(receipt) => receipt
-                .blocked
-                .first()
-                .map(|(_, detail)| (Reason::UpgradeBlocked, detail.clone()))
-                .or_else(|| {
-                    receipt
-                        .skipped
-                        .first()
-                        .map(|(_, detail)| (Reason::TargetOccupied, detail.clone()))
-                }),
-            Err(failure) => Some((
-                match failure {
-                    ImportFailure::Occupied(_) => Reason::TargetOccupied,
-                    ImportFailure::LocalFault(_) => Reason::LocalFault,
-                    ImportFailure::NamingScript(_) => Reason::NamingScriptFailed,
-                },
-                failure.detail().to_owned(),
-            )),
-        };
-        if let Some((reason, detail)) = failed {
-            tracing::warn!(
-                held_id = row.id,
-                detail,
-                code = reason.code(),
-                "held import refused"
-            );
-            return Err(HeldError::Refused(format!(
-                "{} {}",
-                reason.message(),
-                reason.action()
-            )));
+        let mut placed = RowsPlaced::default();
+        for group in groups {
+            self.place_group(group, actor, &mut placed).await?;
         }
-        let placed = outcome
-            .ok()
-            .and_then(|receipt| receipt.paths.into_iter().next())
-            .unwrap_or_default();
-        self.finish(row, "imported").await?;
-        remove_held_copy(&source).await;
-        self.settle_task(&library, row, &release).await;
-        tracing::info!(held_id = row.id, path = %placed.display(), "held file imported");
-        Ok(Placed::Imported(placed))
+        Ok(placed)
     }
 
-    /// The release the file goes into (the album's chosen edition, else
-    /// the one it was matched to) and its track there.
-    async fn release_track(
+    async fn place_group(
+        &self,
+        rows: Vec<HeldRow>,
+        actor: &str,
+        placed: &mut RowsPlaced,
+    ) -> Result<(), HeldError> {
+        let library = self.library()?;
+        for row in &rows {
+            self.ensure_on_disk(row, Path::new(&row.held_path)).await?;
+        }
+        let first = &rows[0];
+        let target = self.task_target(first).await?;
+        let (release, join) = self.release_for(&library, first, target.as_ref()).await?;
+        let mut files = Vec::with_capacity(rows.len());
+        let mut pairing = Pairing::default();
+        for (index, row) in rows.iter().enumerate() {
+            // A file whose quality cannot be read is never judged against
+            // your copy: that could replace it with something unplayable.
+            let Some(file) = probe_held(Path::new(&row.held_path)).await else {
+                return Err(HeldError::Refused(
+                    "The held file could not be read to compare its quality with your copy, \
+                     so nothing was changed. Play it to check it, or discard it."
+                        .to_owned(),
+                ));
+            };
+            let track = track_on(&release, row).ok_or_else(|| {
+                HeldError::Refused(
+                    "This track is not on the edition chosen for the album. Choose the edition \
+                     it belongs to on the album page, or discard the file."
+                        .to_owned(),
+                )
+            })?;
+            files.push(IntakeFile {
+                file,
+                held_for: Some(row.reason),
+            });
+            // Every file is compared with the library's copies of its
+            // track; with none there, it is placed as it is.
+            pairing.owned.push((index, track));
+        }
+        let batch = IntakeBatch {
+            files,
+            target: intake::Target {
+                release: release.clone(),
+                join,
+                asked: target.map(|target| target.album_wanted).unwrap_or_default(),
+            },
+            origin: Origin::Download {
+                task_id: first
+                    .source_task_id
+                    .clone()
+                    .unwrap_or_else(|| format!("held-{}", first.id)),
+                upgrade: first.origin == "upgrade",
+                staging: Some(format!("held-{}", first.id)),
+            },
+            gate: Gate::PersonChoseFile,
+            owner: actor.to_owned(),
+        };
+        let placement = match intake::place(library.as_ref(), &batch, pairing, None).await {
+            Ok(placement) => placement,
+            Err(deferred) => {
+                tracing::warn!(
+                    held_id = first.id,
+                    detail = %deferred.detail,
+                    code = deferred.reason.code(),
+                    "held import refused"
+                );
+                if deferred.reason != Reason::LibraryChanged {
+                    return Err(refused(deferred.reason));
+                }
+                // The library changed under the import twice: the files
+                // stay held with the publisher's words, to try again.
+                for row in &rows {
+                    self.rehold(row, Reason::LibraryChanged, &deferred.detail)
+                        .await?;
+                    placed.held.push(Reason::LibraryChanged);
+                }
+                return Ok(());
+            }
+        };
+        let mut imported = false;
+        for (row, outcome) in rows.iter().zip(&placement.outcomes) {
+            match outcome {
+                Outcome::Imported { .. } => {
+                    self.finish(row, "imported").await?;
+                    remove_held_copy(Path::new(&row.held_path)).await;
+                    imported = true;
+                    placed.imported += 1;
+                }
+                Outcome::Held { reason, detail, .. } => {
+                    tracing::info!(
+                        held_id = row.id,
+                        code = reason.code(),
+                        detail,
+                        "held file stays held"
+                    );
+                    self.rehold(row, *reason, detail).await?;
+                    placed.held.push(*reason);
+                }
+                // A person's import is never dropped as owned; the file
+                // stays as it was.
+                Outcome::AlreadyOwned { .. } | Outcome::Untouched => placed.held.push(row.reason),
+            }
+        }
+        placed.paths.extend(placement.paths);
+        if imported {
+            tracing::info!(
+                held_id = first.id,
+                files = placed.imported,
+                "held files imported"
+            );
+            self.settle_task(&library, first, &release).await;
+        }
+        Ok(())
+    }
+
+    /// What the download a held file came from was for: its row, details
+    /// and plan. `None` when the file names no download, or the download
+    /// is gone. A plan that does not read is an error, never an empty
+    /// plan: that would lose the copy the file joins.
+    async fn task_target(&self, row: &HeldRow) -> Result<Option<specs::Target>, HeldError> {
+        let Some(task_id) = row.source_task_id.clone() else {
+            return Ok(None);
+        };
+        let Some(task) = self
+            .journal
+            .read_task(&task_id)
+            .await
+            .map_err(unavailable)?
+        else {
+            return Ok(None);
+        };
+        let (details, plan) = self
+            .journal
+            .read("downloads.held_plan", move |store| {
+                Ok((store.task_details(&task_id)?, store.task_plan(&task_id)?))
+            })
+            .await
+            .map_err(unavailable)?;
+        Ok(Some(crate::landing::target_for(&task, &details, &plan)))
+    }
+
+    /// The release the files go into and the copy they join: the planned
+    /// copy's release when the download was fetched for one, else the
+    /// album's chosen edition, else the one the file was matched to.
+    async fn release_for(
         &self,
         library: &Arc<dyn LandingLibrary>,
         row: &HeldRow,
-    ) -> Result<(Release, usize), HeldError> {
+        target: Option<&specs::Target>,
+    ) -> Result<(Release, Option<PlannedAlbum>), HeldError> {
         let unmatched = || {
             HeldError::Refused(
                 "This file was never matched to an album, so it cannot be imported as it is. \
@@ -503,16 +598,23 @@ impl HeldImports {
                     .to_owned(),
             )
         };
-        let group = row
-            .release_group_mbid
-            .as_deref()
-            .filter(|mbid| !mbid.is_empty())
-            .ok_or_else(unmatched)?;
-        let chosen = library.chosen_edition(group).await;
-        let release_mbid = chosen
-            .or_else(|| row.release_mbid.clone())
-            .filter(|mbid| !mbid.is_empty())
-            .ok_or_else(unmatched)?;
+        let planned = target.and_then(|target| target.planned_album.clone());
+        let release_mbid = match &planned {
+            Some(planned) => planned.release_mbid.clone(),
+            None => {
+                let group = row
+                    .release_group_mbid
+                    .as_deref()
+                    .filter(|mbid| !mbid.is_empty())
+                    .ok_or_else(unmatched)?;
+                library
+                    .chosen_edition(group)
+                    .await
+                    .or_else(|| row.release_mbid.clone())
+                    .filter(|mbid| !mbid.is_empty())
+                    .ok_or_else(unmatched)?
+            }
+        };
         let release = match library
             .release(&release_mbid, RequestPriority::UserInitiated)
             .await
@@ -534,27 +636,23 @@ impl HeldImports {
                 ));
             }
         };
-        let same = |left: &str, right: Option<&str>| {
-            right.is_some_and(|right| !right.is_empty() && left.eq_ignore_ascii_case(right))
-        };
-        let track = release
-            .tracks
-            .iter()
-            .position(|track| same(&track.id, row.release_track_mbid.as_deref()))
-            .or_else(|| {
-                release
-                    .tracks
-                    .iter()
-                    .position(|track| same(&track.recording_id, row.recording_mbid.as_deref()))
+        Ok((release, planned))
+    }
+
+    /// Keep a held file held for `reason`, with the intake's words.
+    async fn rehold(&self, row: &HeldRow, reason: Reason, detail: &str) -> Result<(), HeldError> {
+        if row.reason == reason && row.reason_detail.as_deref() == Some(detail) {
+            return Ok(());
+        }
+        let id = row.id;
+        let detail = Some(detail.to_owned()).filter(|detail| !detail.is_empty());
+        self.journal
+            .run_foreground("downloads.held_rehold", move |store| {
+                store.rehold(id, reason, detail.as_deref())
             })
-            .ok_or_else(|| {
-                HeldError::Refused(
-                    "This track is not on the edition chosen for the album. Choose the edition \
-                     it belongs to on the album page, or discard the file."
-                        .to_owned(),
-                )
-            })?;
-        Ok((release, track))
+            .await
+            .map(|_| ())
+            .map_err(unavailable)
     }
 
     async fn finish(&self, row: &HeldRow, status: &'static str) -> Result<(), HeldError> {
@@ -649,17 +747,60 @@ impl HeldImports {
     }
 }
 
-/// The quality tier of a held file, read from its header. `None` when it
-/// cannot be read as audio.
-async fn held_tier(path: &Path) -> Option<&'static str> {
+/// What placing held files did.
+#[derive(Debug, Default)]
+struct RowsPlaced {
+    imported: usize,
+    /// Where the imported files now live.
+    paths: Vec<PathBuf>,
+    /// The reason each file still held stays held for.
+    held: Vec<Reason>,
+}
+
+impl RowsPlaced {
+    /// Files imported; when none went in, why the first stays held.
+    fn imported(self) -> Result<usize, HeldError> {
+        match self.held.first() {
+            Some(reason) if self.imported == 0 => Err(refused(*reason)),
+            _ => Ok(self.imported),
+        }
+    }
+}
+
+/// The answer for a file that stays held.
+fn refused(reason: Reason) -> HeldError {
+    HeldError::Refused(format!("{} {}", reason.message(), reason.action()))
+}
+
+/// A held file as the intake reads it. `None` when it cannot be read as
+/// audio.
+async fn probe_held(path: &Path) -> Option<LandedFile> {
     let paths = vec![path.to_path_buf()];
     match tokio::task::spawn_blocking(move || probe::probe(&paths, &[])).await {
-        Ok(landing) => landing.audio.first().map(|file| file.tier()),
+        Ok(landing) => landing.audio.into_iter().next(),
         Err(error) => {
             tracing::warn!(%error, "held file probe failed");
             None
         }
     }
+}
+
+/// The track of `release` a held file was paired to: by release track,
+/// else by recording.
+fn track_on(release: &Release, row: &HeldRow) -> Option<usize> {
+    let same = |left: &str, right: Option<&str>| {
+        right.is_some_and(|right| !right.is_empty() && left.eq_ignore_ascii_case(right))
+    };
+    release
+        .tracks
+        .iter()
+        .position(|track| same(&track.id, row.release_track_mbid.as_deref()))
+        .or_else(|| {
+            release
+                .tracks
+                .iter()
+                .position(|track| same(&track.recording_id, row.recording_mbid.as_deref()))
+        })
 }
 
 /// Remove a held copy. A copy already gone is fine; any other failure

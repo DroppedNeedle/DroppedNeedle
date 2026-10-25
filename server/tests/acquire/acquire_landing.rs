@@ -11,14 +11,19 @@ use std::sync::Arc;
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::SourceTag;
+use droppedneedle_acquire::downloads::held::HeldImports;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
+use droppedneedle_acquire::downloads::queue_rows::Viewer as HeldViewer;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
 use droppedneedle_acquire::downloads::store::{NewTask, TaskOutcome};
 use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion, TaskPlan};
+use droppedneedle_acquire::intake::{self, Gate};
 use droppedneedle_acquire::landing::library::LibraryLanding;
-use droppedneedle_acquire::landing::ports::LandingLibrary;
+use droppedneedle_acquire::landing::ports::{
+    ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, OwnedCopy, OwnedTracks, VersionRow,
+};
 use droppedneedle_acquire::landing::specs::{Disposition, Rejection};
 use droppedneedle_acquire::landing::{Landed, LandingReport, LandingResult, Reported};
 use droppedneedle_acquire::reason::{Reason, ReasonKind};
@@ -39,6 +44,7 @@ use droppedneedle_library::scan::EffectivePolicy;
 use droppedneedle_library::tags::TagField;
 use droppedneedle_library::tags::save::{TagEdit, save_tags};
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use futures_util::future::BoxFuture;
 
@@ -4408,4 +4414,1003 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
             .await
             .expect("request row");
     assert_eq!(status, "imported");
+}
+
+/// MusicBrainz for the intake table: every search returns every release,
+/// and a release group lists its releases.
+struct GroupListing(Vec<Release>);
+
+impl ReleaseSource for GroupListing {
+    fn search<'a>(
+        &'a self,
+        _title: &'a str,
+        _artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        let hits = self
+            .0
+            .iter()
+            .map(|release| ReleaseHit {
+                id: release.id.clone(),
+                release_group_id: release.release_group_id.clone(),
+                score: 100,
+                track_count: Some(release.tracks.len() as u32),
+                title: release.title.clone(),
+            })
+            .collect();
+        Box::pin(async move { Ok(hits) })
+    }
+
+    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        let found = self
+            .0
+            .iter()
+            .find(|release| release.answers_to(mbid))
+            .cloned();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        _mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn search_editions<'a>(
+        &'a self,
+        query: &'a EditionQuery,
+    ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
+        let items: Vec<Edition> = self
+            .0
+            .iter()
+            .filter(|release| {
+                query
+                    .release_group_mbid
+                    .as_deref()
+                    .is_some_and(|group| group.eq_ignore_ascii_case(&release.release_group_id))
+            })
+            .map(|release| Edition {
+                release_mbid: release.id.clone(),
+                release_group_mbid: release.release_group_id.clone(),
+                title: release.title.clone(),
+                disc_count: release.media.len() as u32,
+                track_count: release.tracks.len() as u32,
+                score: 100,
+                ..Edition::default()
+            })
+            .collect();
+        let total = items.len() as u64;
+        Box::pin(async move {
+            Ok(EditionPage {
+                items,
+                total,
+                offset: 0,
+            })
+        })
+    }
+}
+
+/// AcoustID hearing one recording in every file, or nothing at all.
+struct Hears(Option<String>);
+
+impl FingerprintSource for Hears {
+    fn identify<'a>(&'a self, _tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
+        Box::pin(async { AudioMatches::default() })
+    }
+
+    fn identify_files<'a>(
+        &'a self,
+        files: &'a [(String, PathBuf)],
+    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        Box::pin(async move {
+            match &self.0 {
+                Some(recording) => files
+                    .iter()
+                    .map(|(id, _)| (id.clone(), vec![recording.clone()]))
+                    .collect(),
+                None => HashMap::new(),
+            }
+        })
+    }
+}
+
+/// The real library port, whose first `changes` imports find the library
+/// changed under them (a destination taken between the plan and the
+/// publish).
+struct Shaky {
+    inner: Arc<dyn LandingLibrary>,
+    changes: std::sync::atomic::AtomicUsize,
+}
+
+impl LandingLibrary for Shaky {
+    fn search<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.inner.search(title, artist, priority)
+    }
+
+    fn release<'a>(
+        &'a self,
+        mbid: &'a str,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        self.inner.release(mbid, priority)
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        self.inner.canonical_recording(mbid, priority)
+    }
+
+    fn chosen_edition<'a>(&'a self, group: &'a str) -> BoxFuture<'a, Option<String>> {
+        self.inner.chosen_edition(group)
+    }
+
+    fn owned<'a>(&'a self, group: &'a str, album: Option<&'a str>) -> BoxFuture<'a, OwnedTracks> {
+        self.inner.owned(group, album)
+    }
+
+    fn held_tier<'a>(
+        &'a self,
+        group: &'a str,
+        album: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<String>> {
+        self.inner.held_tier(group, album)
+    }
+
+    fn owned_copies<'a>(
+        &'a self,
+        group: &'a str,
+        album: Option<&'a str>,
+        release: &'a str,
+        release_track: &'a str,
+        recording: &'a str,
+    ) -> BoxFuture<'a, Vec<OwnedCopy>> {
+        self.inner
+            .owned_copies(group, album, release, release_track, recording)
+    }
+
+    fn version_row<'a>(
+        &'a self,
+        track_id: &'a str,
+        planned: &'a PlannedAlbum,
+        release: &'a Release,
+    ) -> BoxFuture<'a, Option<VersionRow>> {
+        self.inner.version_row(track_id, planned, release)
+    }
+
+    fn fingerprints(
+        &self,
+        files: Vec<(String, PathBuf)>,
+    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
+        self.inner.fingerprints(files)
+    }
+
+    fn group_releases<'a>(
+        &'a self,
+        group: &'a str,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.inner.group_releases(group, priority)
+    }
+
+    fn fingerprint_releases(
+        &self,
+        files: Vec<(String, PathBuf)>,
+    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
+        self.inner.fingerprint_releases(files)
+    }
+
+    fn library_dirs(&self) -> Vec<PathBuf> {
+        self.inner.library_dirs()
+    }
+
+    fn import(
+        &self,
+        request: ImportRequest,
+    ) -> BoxFuture<'_, Result<ImportReceipt, ImportFailure>> {
+        use std::sync::atomic::Ordering;
+        let changed = self
+            .changes
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok();
+        if changed {
+            return Box::pin(async {
+                Err(ImportFailure::Occupied(
+                    "a file appeared where this one goes".to_owned(),
+                ))
+            });
+        }
+        self.inner.import(request)
+    }
+
+    fn publish_settled<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
+        self.inner.publish_settled(task_id)
+    }
+}
+
+/// What the library holds of the album before a row's file comes in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Have {
+    Nothing,
+    /// A copy on NEW holding "Mysterons" from this fixture, and "Sour
+    /// Times".
+    Copy(&'static str),
+    /// A copy on NEW holding only "Sour Times"; the download was fetched
+    /// for it ("Get missing tracks" for "Mysterons").
+    Planned,
+    /// A copy holding "Mysterons" in another version, on no track of NEW;
+    /// the download replaces it.
+    Version,
+}
+
+/// One row: the plan (what the library has, the file, its origin, what
+/// AcoustID hears, the destination, the library changing) and the gate.
+#[derive(Debug, Clone, Copy)]
+struct Row {
+    have: Have,
+    /// The fixture the incoming "Mysterons" is made from.
+    file: &'static str,
+    upgrade: bool,
+    /// `Some(true)`: AcoustID hears the track's recording; `Some(false)`:
+    /// another one; `None`: no answer.
+    heard: Option<bool>,
+    /// The release's track lengths agree with the file's, so a length
+    /// vouches for it whatever AcoustID hears.
+    length_agrees: bool,
+    /// A file the catalog does not know already sits where it goes.
+    taken: bool,
+    /// Imports that find the library changed under them.
+    changes: usize,
+    gate: Gate,
+    /// The hold a person imports it from, under `PersonChoseFile`.
+    held_for: Reason,
+    expect: Seen,
+}
+
+/// What became of the incoming file, as every door shows it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Seen {
+    /// In the library; `joined` when it went into the existing copy.
+    Imported {
+        joined: bool,
+    },
+    AlreadyOwned,
+    Held(Reason),
+    Deferred(Reason),
+}
+
+/// The ways a batch reaches `place`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Door {
+    Place,
+    Landing,
+    DropMatch,
+    HeldImport,
+}
+
+/// The scenario every row runs in.
+const INTAKE: u16 = 40;
+
+/// One row's world: the rig, the scenario's editions, the copy's album and
+/// the track a download may replace.
+struct IntakeCase {
+    rig: JoinRig,
+    e: Editions,
+    copy: Option<String>,
+    old: Option<String>,
+}
+
+impl IntakeCase {
+    async fn new(row: &Row) -> Self {
+        let s = INTAKE;
+        let mut lengths = fixture_lengths();
+        if row.heard == Some(false) && !row.length_agrees {
+            // A length that does not vouch for the track either.
+            lengths = lengths.iter().map(|ms| ms.map(|ms| ms + 5_000)).collect();
+        }
+        let e = editions(s, &lengths);
+        let (db, dir, auth) = bare_db().await;
+        let config = Arc::new(
+            ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+                .expect("config"),
+        );
+        let platform = TestPlatform::on(db.db(), &dir)
+            .settings(config)
+            .build()
+            .await;
+        let (mut library, _) = library_at(&platform);
+        let recording = e.new.tracks[0].recording_id.clone();
+        library.fingerprints = Arc::new(Hears(
+            row.heard
+                .map(|right| if right { recording } else { mb(s, 3, 9) }),
+        ));
+        let music = dir.join("music");
+        std::fs::create_dir_all(&music).expect("music root");
+        library
+            .add_root(
+                Some("music".to_owned()),
+                music.to_string_lossy().into_owned(),
+                EffectivePolicy::Automatic,
+            )
+            .expect("root adds");
+        let releases = if row.have == Have::Version {
+            vec![e.old.clone(), e.new.clone()]
+        } else {
+            vec![e.new.clone()]
+        };
+        let port: Arc<dyn LandingLibrary> = Arc::new(Shaky {
+            inner: Arc::new(LibraryLanding::new(
+                library.clone(),
+                every_priority(Arc::new(GroupListing(releases.clone()))),
+                db.pool().clone(),
+            )),
+            changes: row.changes.into(),
+        });
+        let acquire = acquire_over(&db, Some(port));
+        let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
+            acquire.journal.clone(),
+            Some(Arc::new(Lookup(releases))),
+        ));
+        let rig = JoinRig {
+            acquire,
+            library,
+            targets,
+            music,
+            downloads: dir.join("downloads"),
+            _auth: auth,
+        };
+        let sour = copy_rel(s, SOUR_TIMES);
+        let (copy, old) = match row.have {
+            Have::Nothing => (None, None),
+            Have::Copy(fixture) => {
+                let mysterons = copy_rel(s, &format!("0101 Mysterons.{}", ext(fixture)));
+                rig.plant_from(&mysterons, fixture, 0, &e.new);
+                rig.plant(&sour, 1, &e.new);
+                rig.scan().await;
+                let old = rig.track_at(&mysterons);
+                let album = rig.album_of(&old);
+                rig.set_edition(&album, &e.group, &e.new.id, "manual");
+                rig.place(&old, &e.new, 0, "manual");
+                rig.place(&rig.track_at(&sour), &e.new, 1, "manual");
+                (Some(album), Some(old))
+            }
+            Have::Planned => {
+                rig.plant(&sour, 1, &e.new);
+                rig.scan().await;
+                let kept = rig.track_at(&sour);
+                let album = rig.album_of(&kept);
+                rig.set_edition(&album, &e.group, &e.new.id, "manual");
+                rig.place(&kept, &e.new, 1, "manual");
+                (Some(album), None)
+            }
+            Have::Version => {
+                let o = copy_rel(s, "01 Mysterons.flac");
+                rig.plant(&sour, 1, &e.old);
+                rig.plant(&o, 0, &e.old);
+                rig.scan().await;
+                let old = rig.track_at(&o);
+                let album = rig.album_of(&old);
+                rig.set_edition(&album, &e.group, &e.new.id, "manual");
+                rig.place(&rig.track_at(&sour), &e.new, 1, "manual");
+                rig.listen(&old);
+                (Some(album), Some(old))
+            }
+        };
+        if row.taken {
+            let taken = rig
+                .music
+                .join(format!("Portishead/Dummy {s}/0101 Mysterons.flac"));
+            std::fs::create_dir_all(taken.parent().expect("folder")).expect("folder");
+            std::fs::copy(fixture("flac_full_02.flac"), &taken).expect("stray file");
+        }
+        Self { rig, e, copy, old }
+    }
+
+    /// The copy the download was fetched for, with the version it
+    /// replaces.
+    fn join(&self, row: &Row) -> Option<PlannedAlbum> {
+        let copy = self.copy.clone()?;
+        if !matches!(row.have, Have::Planned | Have::Version) {
+            return None;
+        }
+        Some(PlannedAlbum {
+            album_id: copy,
+            release_mbid: self.e.new.id.clone(),
+            replace: self
+                .old
+                .iter()
+                .filter(|_| row.have == Have::Version)
+                .map(|old| ReplaceVersion {
+                    release_track_mbid: self.e.new.tracks[0].id.clone(),
+                    local_track_id: old.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    /// The task the file was downloaded for, with its plan.
+    async fn ask(&self, row: &Row) {
+        let origin = if row.upgrade { "upgrade" } else { "user" };
+        let e = &self.e;
+        match self.join(row) {
+            Some(join) => {
+                let replace: Vec<(&str, &str)> = join
+                    .replace
+                    .iter()
+                    .map(|version| {
+                        (
+                            version.release_track_mbid.as_str(),
+                            version.local_track_id.as_str(),
+                        )
+                    })
+                    .collect();
+                self.rig
+                    .ask_replacing(
+                        "t-intake",
+                        &e.group,
+                        &e.new.title,
+                        origin,
+                        Some(&e.new.id),
+                        Some((&join.album_id, &e.new.id)),
+                        &[(1, 1)],
+                        &replace,
+                    )
+                    .await;
+            }
+            None => {
+                self.rig
+                    .ask("t-intake", &e.group, &e.new.title, origin, None, None, &[])
+                    .await;
+            }
+        }
+    }
+
+    /// Indexed "Mysterons" tracks: id and album.
+    async fn mysterons(&self) -> Vec<(String, String)> {
+        sqlx::query_as(
+            "SELECT id, local_album_id FROM local_tracks WHERE availability = 'indexed' \
+             AND title = 'Mysterons'",
+        )
+        .fetch_all(self.rig.acquire.db.pool())
+        .await
+        .expect("tracks")
+    }
+
+    /// Run `row` through `door` and say what became of the file.
+    async fn run(&self, row: &Row, door: Door) -> Seen {
+        let before = self.mysterons().await;
+        let file = self.rig.landed("t-intake", &self.e.new, 0, row.file);
+        let said = match door {
+            Door::Place => self.through_place(row, file).await,
+            Door::Landing => self.through_landing(row, file).await,
+            Door::DropMatch => self.through_drop(file).await,
+            Door::HeldImport => self.through_held(row, file).await,
+        };
+        if let Some(seen) = said {
+            return seen;
+        }
+        let after = self.mysterons().await;
+        match after.iter().find(|track| !before.contains(track)) {
+            Some((_, album)) => Seen::Imported {
+                joined: self.copy.as_deref() == Some(album.as_str()),
+            },
+            // A file that replaced one at its own path keeps that row; the
+            // copy it replaced is in the recycle bin.
+            None if files_under(&self.rig.music.join(".recycle"), "flac")
+                .into_iter()
+                .chain(files_under(&self.rig.music.join(".recycle"), "mp3"))
+                .any(|path| path.to_string_lossy().contains("Mysterons")) =>
+            {
+                Seen::Imported {
+                    joined: self.copy.is_some(),
+                }
+            }
+            None => Seen::AlreadyOwned,
+        }
+    }
+
+    async fn through_place(&self, row: &Row, file: PathBuf) -> Option<Seen> {
+        let mut probed = droppedneedle_acquire::landing::probe::probe(&[file], &[]);
+        let file = probed.audio.remove(0);
+        let mut pairing = intake::Pairing::default();
+        if matches!(row.have, Have::Copy(_)) {
+            pairing.owned.push((0, 0));
+        } else {
+            pairing.import.push((0, 0));
+        }
+        let join = self.join(row);
+        let batch = intake::IntakeBatch {
+            files: vec![intake::IntakeFile {
+                file,
+                held_for: (row.gate == Gate::PersonChoseFile).then_some(row.held_for),
+            }],
+            target: intake::Target {
+                release: self.e.new.clone(),
+                asked: if join.is_some() {
+                    vec![(1, 1)]
+                } else {
+                    Vec::new()
+                },
+                join,
+            },
+            origin: if row.gate == Gate::PersonChoseAlbum {
+                intake::Origin::Upload { drop_item_id: 1 }
+            } else {
+                intake::Origin::Download {
+                    task_id: "t-intake".to_owned(),
+                    upgrade: row.upgrade,
+                    staging: None,
+                }
+            },
+            gate: row.gate,
+            owner: "u-ada".to_owned(),
+        };
+        let library = self.rig.acquire.landing.library().expect("library").clone();
+        match intake::place(library.as_ref(), &batch, pairing, None).await {
+            Ok(placement) => match &placement.outcomes[0] {
+                intake::Outcome::Held { reason, .. } => Some(Seen::Held(*reason)),
+                intake::Outcome::AlreadyOwned { .. } => Some(Seen::AlreadyOwned),
+                _ => None,
+            },
+            Err(deferred) => Some(Seen::Deferred(deferred.reason)),
+        }
+    }
+
+    async fn through_landing(&self, row: &Row, file: PathBuf) -> Option<Seen> {
+        self.ask(row).await;
+        self.rig.land(vec![file]).await;
+        let last = decisions(&self.rig.acquire, "t-intake").await.pop();
+        if let Some((outcome, Some(code))) = &last
+            && outcome == "deferred"
+        {
+            return Some(Seen::Deferred(Reason::from_stored(code)));
+        }
+        let held: Vec<String> = sqlx::query_scalar(
+            "SELECT reason FROM held_imports WHERE source_task_id = 't-intake' \
+             AND status = 'held'",
+        )
+        .fetch_all(self.rig.acquire.db.pool())
+        .await
+        .expect("held rows");
+        held.first()
+            .map(|code| Seen::Held(Reason::from_stored(code)))
+    }
+
+    async fn through_drop(&self, file: PathBuf) -> Option<Seen> {
+        let staging = self
+            .rig
+            .acquire
+            .drops
+            .incoming_dir()
+            .parent()
+            .expect("drop root")
+            .join("job-intake");
+        std::fs::create_dir_all(&staging).expect("staging");
+        let staged = staging.join(file.file_name().expect("name"));
+        std::fs::copy(&file, &staged).expect("staged upload");
+        let paths = serde_json::json!([staged.to_string_lossy()]).to_string();
+        let dir = staging.to_string_lossy().into_owned();
+        let item: i64 = self
+            .rig
+            .acquire
+            .db
+            .write("test.drop", move |tx| {
+                tx.execute(
+                    "INSERT INTO drop_import_jobs (id, user_id, user_name, status, created_at, \
+                     upload_name, staging_dir) VALUES ('job-intake', 'u-ada', 'Ada', \
+                     'completed', 1.0, 'up', ?1)",
+                    [&dir],
+                )?;
+                tx.execute(
+                    "INSERT INTO drop_import_items (job_id, folder_name, status, files_total, \
+                     staging_paths, updated_at, reason_code) VALUES ('job-intake', 'Odds', \
+                     'needs_review', 1, ?1, 1.0, 'no_album_match')",
+                    [&paths],
+                )?;
+                Ok(tx.last_insert_rowid())
+            })
+            .await
+            .expect("drop item");
+        let viewer = droppedneedle_acquire::drop_import::Viewer {
+            user_id: "u-ada".to_owned(),
+            admin: false,
+        };
+        let matched = self
+            .rig
+            .acquire
+            .drops
+            .match_item(&viewer, item, &self.e.group)
+            .await
+            .expect("matched by hand");
+        if matched.status == "needs_review" {
+            assert!(staged.is_file(), "a waiting upload is kept");
+            return matched.reason_code.map(|reason| match reason {
+                Reason::LibraryChanged => Seen::Deferred(reason),
+                _ => Seen::Held(reason),
+            });
+        }
+        let left: Vec<String> = sqlx::query_scalar(
+            "SELECT reason_code FROM drop_import_items WHERE job_id = 'job-intake' \
+             AND id != ?1 AND status = 'needs_review'",
+        )
+        .bind(item)
+        .fetch_all(self.rig.acquire.db.pool())
+        .await
+        .expect("left over");
+        if let Some(code) = left.first() {
+            assert!(staged.is_file(), "a held upload is kept");
+            return Some(Seen::Held(Reason::from_stored(code)));
+        }
+        (matched.reason_code == Some(Reason::AlreadyOwned)).then_some(Seen::AlreadyOwned)
+    }
+
+    async fn through_held(&self, row: &Row, file: PathBuf) -> Option<Seen> {
+        self.ask(row).await;
+        let held_dir = self.rig.downloads.parent().expect("scratch").join("held");
+        std::fs::create_dir_all(&held_dir).expect("held dir");
+        let copy = held_dir.join(file.file_name().expect("name"));
+        std::fs::copy(&file, &copy).expect("held copy");
+        let track = &self.e.new.tracks[0];
+        let (group, release, release_track, recording) = (
+            self.e.group.clone(),
+            self.e.new.id.clone(),
+            track.id.clone(),
+            track.recording_id.clone(),
+        );
+        let path = copy.to_string_lossy().into_owned();
+        let reason = row.held_for.code();
+        let origin = if row.upgrade { "upgrade" } else { "user" };
+        let id: i64 = self
+            .rig
+            .acquire
+            .db
+            .write("test.held", move |tx| {
+                tx.execute(
+                    "INSERT INTO held_imports (user_id, release_group_mbid, release_mbid, \
+                     release_track_mbid, recording_mbid, track_number, disc_number, held_path, \
+                     reason, source, source_task_id, origin, created_at) VALUES ('u-ada', ?1, \
+                     ?2, ?3, ?4, 1, 1, ?5, ?6, 'soulseek', 't-intake', ?7, 1.0)",
+                    rusqlite::params![
+                        group,
+                        release,
+                        release_track,
+                        recording,
+                        path,
+                        reason,
+                        origin
+                    ],
+                )?;
+                Ok(tx.last_insert_rowid())
+            })
+            .await
+            .expect("held row");
+        let held = HeldImports::new(
+            self.rig.acquire.journal.clone(),
+            self.rig.worker(Vec::new(), false),
+        );
+        let viewer = HeldViewer {
+            user_id: "u-ada".to_owned(),
+            admin: false,
+        };
+        if held.import(&viewer, id, "u-ada").await.is_ok() {
+            assert!(!copy.exists(), "an imported held copy is removed");
+            return None;
+        }
+        assert!(copy.is_file(), "a file that stays held is kept");
+        let still: Vec<String> = sqlx::query_scalar(
+            "SELECT reason FROM held_imports WHERE held_path = ?1 AND status = 'held'",
+        )
+        .bind(copy.to_string_lossy().into_owned())
+        .fetch_all(self.rig.acquire.db.pool())
+        .await
+        .expect("held rows");
+        let reason = Reason::from_stored(still.first().expect("still held"));
+        Some(if reason == Reason::LibraryChanged {
+            Seen::Deferred(reason)
+        } else {
+            Seen::Held(reason)
+        })
+    }
+}
+
+fn ext(name: &str) -> String {
+    Path::new(name)
+        .extension()
+        .map(|ext| ext.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+// One intake: the same plan and gate give the same outcome whichever door
+// built the batch. Each row runs through `place` itself and through every
+// door that produces its gate: a landing for the app's own choice, Match
+// on an upload for a person's album, Import on a held file for a person's
+// file. A file a person imported is never dropped: one no better than
+// theirs stays held and is kept, and importing it again replaces theirs.
+#[tokio::test]
+async fn one_plan_and_gate_give_one_outcome_through_every_door() {
+    use Gate::{Automatic as Auto, PersonChoseAlbum as Album, PersonChoseFile as File};
+    const FLAC: &str = "flac_full_01.flac";
+    const MP3: &str = "mp3_full_01.mp3";
+    let base = Row {
+        have: Have::Nothing,
+        file: FLAC,
+        upgrade: false,
+        heard: None,
+        length_agrees: false,
+        taken: false,
+        changes: 0,
+        gate: Auto,
+        held_for: Reason::TagMismatch,
+        expect: Seen::Imported { joined: false },
+    };
+    let owned = |fixture, heard| Row {
+        have: Have::Copy(fixture),
+        upgrade: true,
+        heard,
+        ..base
+    };
+    let joined = Seen::Imported { joined: true };
+    let mut rows: Vec<(&str, Row)> = Vec::new();
+    for gate in [Auto, Album, File] {
+        rows.push(("plain import", Row { gate, ..base }));
+        rows.push((
+            "destination taken",
+            Row {
+                gate,
+                taken: true,
+                expect: Seen::Held(Reason::TargetOccupied),
+                ..base
+            },
+        ));
+        rows.push((
+            "library changed once",
+            Row {
+                gate,
+                changes: 1,
+                ..base
+            },
+        ));
+        rows.push((
+            "library changed twice",
+            Row {
+                gate,
+                changes: 2,
+                expect: Seen::Deferred(Reason::LibraryChanged),
+                ..base
+            },
+        ));
+        rows.push((
+            "owned better, AcoustID confirms",
+            Row {
+                gate,
+                expect: joined,
+                ..owned(MP3, Some(true))
+            },
+        ));
+    }
+    let by_gate = |name, row: Row, expect: [Seen; 3]| {
+        [Auto, Album, File]
+            .into_iter()
+            .zip(expect)
+            .map(move |(gate, expect)| {
+                (
+                    name,
+                    Row {
+                        gate,
+                        expect,
+                        ..row
+                    },
+                )
+            })
+    };
+    rows.extend(by_gate(
+        "owned equal",
+        owned(FLAC, Some(true)),
+        [
+            Seen::AlreadyOwned,
+            Seen::AlreadyOwned,
+            Seen::Held(Reason::NoBetterThanYours),
+        ],
+    ));
+    rows.extend(by_gate(
+        "AcoustID gives no answer",
+        Row {
+            held_for: Reason::FingerprintMismatch,
+            ..owned(MP3, None)
+        },
+        [joined, Seen::Held(Reason::FingerprintUnconfirmed), joined],
+    ));
+    rows.extend(by_gate(
+        "AcoustID hears another recording",
+        Row {
+            held_for: Reason::FingerprintMismatch,
+            ..owned(MP3, Some(false))
+        },
+        [
+            Seen::Held(Reason::FingerprintMismatch),
+            Seen::Held(Reason::FingerprintMismatch),
+            joined,
+        ],
+    ));
+    rows.extend(by_gate(
+        "AcoustID hears another recording, the length vouches",
+        Row {
+            held_for: Reason::FingerprintMismatch,
+            length_agrees: true,
+            ..owned(MP3, Some(false))
+        },
+        [joined, Seen::AlreadyOwned, joined],
+    ));
+    rows.push((
+        "use this file",
+        Row {
+            gate: File,
+            held_for: Reason::NoBetterThanYours,
+            expect: joined,
+            ..owned(FLAC, Some(true))
+        },
+    ));
+    for gate in [Auto, File] {
+        rows.push((
+            "planned copy joins",
+            Row {
+                gate,
+                have: Have::Planned,
+                expect: joined,
+                ..base
+            },
+        ));
+        rows.push((
+            "version replaced",
+            Row {
+                gate,
+                have: Have::Version,
+                expect: joined,
+                ..base
+            },
+        ));
+    }
+    rows.push((
+        "version worse",
+        Row {
+            have: Have::Version,
+            file: MP3,
+            expect: Seen::Held(Reason::VersionLowerQuality),
+            ..base
+        },
+    ));
+    rows.push((
+        "version worse, used anyway",
+        Row {
+            have: Have::Version,
+            file: MP3,
+            gate: File,
+            held_for: Reason::VersionLowerQuality,
+            expect: joined,
+            ..base
+        },
+    ));
+
+    for (name, row) in rows {
+        let doors: &[Door] = match row.gate {
+            Auto => &[Door::Place, Door::Landing],
+            Album => &[Door::Place, Door::DropMatch],
+            File => &[Door::Place, Door::HeldImport],
+        };
+        for door in doors {
+            let case = IntakeCase::new(&row).await;
+            let seen = case.run(&row, *door).await;
+            assert_eq!(seen, row.expect, "{name}, {:?}, through {door:?}", row.gate);
+            if row.have == Have::Version
+                && matches!(row.expect, Seen::Imported { .. })
+                && let Some(old) = &case.old
+            {
+                assert!(
+                    case.rig.in_recycle_bin("01 Mysterons.flac"),
+                    "{name}, through {door:?}: your version is in the recycle bin"
+                );
+                let (played, _, starred) = case.rig.history(old).await;
+                assert_ne!(&played, old, "{name}, through {door:?}: the play moved");
+                assert!(!starred, "{name}, through {door:?}: the star moved");
+            }
+        }
+    }
+}
+
+// Held files from two downloads imported in one go are placed one batch
+// per download, each with its own plan: the file fetched for a copy joins
+// it, and the other download's file goes into its own album.
+#[tokio::test]
+async fn held_files_of_two_downloads_keep_their_own_plans() {
+    let lengths = fixture_lengths();
+    let (e, f) = (editions(41, &lengths), editions(42, &lengths));
+    let rig = join_rig(vec![e.new.clone(), f.new.clone()]).await;
+    let sour = copy_rel(41, SOUR_TIMES);
+    rig.plant(&sour, 1, &e.new);
+    rig.scan().await;
+    let kept = rig.track_at(&sour);
+    let copy = rig.album_of(&kept);
+    rig.set_edition(&copy, &e.group, &e.new.id, "manual");
+    rig.place(&kept, &e.new, 1, "manual");
+    rig.ask(
+        "t-copy",
+        &e.group,
+        &e.new.title,
+        "user",
+        Some(&e.new.id),
+        Some((&copy, &e.new.id)),
+        &[(1, 1)],
+    )
+    .await;
+    rig.ask("t-other", &f.group, &f.new.title, "user", None, None, &[])
+        .await;
+    let held_dir = rig.downloads.parent().expect("scratch").join("held");
+    std::fs::create_dir_all(&held_dir).expect("held dir");
+    let mut ids = Vec::new();
+    for (task, editions) in [("t-copy", &e), ("t-other", &f)] {
+        let file = rig.landed(task, &editions.new, 0, FIXTURES[0]);
+        let copy = held_dir.join(format!("{task}.flac"));
+        std::fs::copy(&file, &copy).expect("held copy");
+        let track = &editions.new.tracks[0];
+        let values = (
+            editions.group.clone(),
+            editions.new.id.clone(),
+            track.id.clone(),
+            track.recording_id.clone(),
+            copy.to_string_lossy().into_owned(),
+            task.to_owned(),
+        );
+        let id: i64 = rig
+            .acquire
+            .db
+            .write("test.held", move |tx| {
+                tx.execute(
+                    "INSERT INTO held_imports (user_id, release_group_mbid, release_mbid, \
+                     release_track_mbid, recording_mbid, track_number, disc_number, held_path, \
+                     reason, source, source_task_id, origin, created_at) VALUES ('u-ada', ?1, \
+                     ?2, ?3, ?4, 1, 1, ?5, 'tag_mismatch', 'soulseek', ?6, 'user', 1.0)",
+                    rusqlite::params![values.0, values.1, values.2, values.3, values.4, values.5],
+                )?;
+                Ok(tx.last_insert_rowid())
+            })
+            .await
+            .expect("held row");
+        ids.push(id);
+    }
+    let held = HeldImports::new(rig.acquire.journal.clone(), rig.worker(Vec::new(), false));
+    let viewer = HeldViewer {
+        user_id: "u-ada".to_owned(),
+        admin: false,
+    };
+    let imported = held
+        .import_files(&viewer, &ids, "u-ada")
+        .await
+        .expect("both import");
+    assert_eq!(imported, 2);
+    let albums: Vec<(String, String)> = sqlx::query_as(
+        "SELECT i.release_group_mbid, t.local_album_id FROM local_tracks t \
+         JOIN local_track_external_identities x ON x.local_track_id = t.id \
+         JOIN local_album_external_identities i ON i.local_album_id = t.local_album_id \
+         WHERE t.availability = 'indexed' AND t.title = 'Mysterons' ORDER BY i.release_group_mbid",
+    )
+    .fetch_all(rig.acquire.db.pool())
+    .await
+    .expect("tracks");
+    assert_eq!(albums.len(), 2, "{albums:?}");
+    assert_eq!(
+        albums[0],
+        (e.group.clone(), copy.clone()),
+        "joined the copy"
+    );
+    assert_eq!(albums[1].0, f.group, "filed with its own album");
+    assert_ne!(albums[1].1, copy);
 }
