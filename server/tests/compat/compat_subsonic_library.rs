@@ -1140,6 +1140,105 @@ async fn cover_art_buckets_caching_and_misses() {
     rig.stop().await;
 }
 
+pub(crate) const RED: [u8; 3] = [220, 20, 20];
+pub(crate) const GREEN: [u8; 3] = [20, 200, 20];
+
+/// Gives Radiohead, an artist with no MusicBrainz link, folder art on two
+/// albums: red on OK Computer, and green on Achtung Baby, which is made to
+/// credit them too. Their picture is then those two covers crosswise.
+/// Returns Radiohead's local id.
+pub(crate) fn two_covers_for_radiohead(rig: &CompatApp) -> String {
+    let music = rig.app.config.root_app_dir.join("music");
+    let db = rig.app.db();
+    let album_of = |path: &str| -> (String, String) {
+        db.query_row(
+            "SELECT a.id, a.album_artist_id FROM local_tracks t \
+             JOIN local_albums a ON a.id = t.local_album_id WHERE t.relative_path = ?1",
+            [path],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the album")
+    };
+    let (ok_computer, radiohead) = album_of("Radiohead/OK Computer/01 Airbag.flac");
+    let (achtung_baby, _) = album_of("U2/Achtung Baby/03 One.mp3");
+    for (album, folder, colour) in [
+        (&ok_computer, "Radiohead/OK Computer", RED),
+        (&achtung_baby, "U2/Achtung Baby", GREEN),
+    ] {
+        let cover = music.join(folder).join("cover.png");
+        std::fs::write(&cover, png(colour, 300)).expect("cover writes");
+        db.execute(
+            "INSERT INTO local_album_artwork \
+             (local_album_id, source, source_locator, version, updated_at) \
+             VALUES (?1, 'folder', ?2, 1, 1)",
+            [album.as_str(), cover.to_str().expect("utf-8 path")],
+        )
+        .expect("art row");
+    }
+    db.execute(
+        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+         SELECT ?1, MAX(position) + 1, ?2, 'main' FROM local_album_artists \
+         WHERE local_album_id = ?1",
+        [achtung_baby.as_str(), radiohead.as_str()],
+    )
+    .expect("credit row");
+    radiohead
+}
+
+/// Checks `body` is a `side` pixel JPEG whose quadrants (left to right,
+/// top to bottom) show `quadrants`.
+pub(crate) fn assert_quadrants(body: &[u8], side: u32, quadrants: [[u8; 3]; 4]) {
+    let picture = image::load_from_memory_with_format(body, image::ImageFormat::Jpeg)
+        .expect("a JPEG")
+        .to_rgb8();
+    assert_eq!(picture.dimensions(), (side, side));
+    let (near, far) = (side / 4, side * 3 / 4);
+    for ((x, y), want) in [(near, near), (far, near), (near, far), (far, far)]
+        .into_iter()
+        .zip(quadrants)
+    {
+        let got = picture.get_pixel(x, y).0;
+        assert!(
+            got.iter()
+                .zip(want)
+                .all(|(got, want)| got.abs_diff(want) <= 30),
+            "pixel at ({x}, {y}) is {got:?}, wanted {want:?}"
+        );
+    }
+}
+
+/// An artist with no MusicBrainz link gets the picture the web UI shows,
+/// the mosaic of their albums' art, at the bucket the size asks for. One
+/// with no art keeps its placeholder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unlinked_artist_shows_their_album_mosaic() {
+    let rig = CompatApp::start("compat-sub-artist-mosaic").await;
+    let client = Client::player(&rig);
+    let radiohead = format!("ar-{}", two_covers_for_radiohead(&rig));
+    let artist = client.ok("getArtist", &[("id", &radiohead)]).await;
+    assert_eq!(artist["artist"]["coverArt"], radiohead.as_str(), "{artist}");
+    for (size, side) in [(Some("100"), 250), (None, 500)] {
+        let mut pairs = vec![("id", radiohead.as_str())];
+        pairs.extend(size.map(|size| ("size", size)));
+        let answer = client.get("getCoverArt", &pairs).await;
+        assert_eq!(
+            (answer.status, answer.content_type()),
+            (StatusCode::OK, "image/jpeg"),
+            "{size:?}"
+        );
+        assert_quadrants(&answer.body, side, [RED, GREEN, GREEN, RED]);
+    }
+    let ids = Ids::read(&client).await;
+    let bare = client
+        .get("getCoverArt", &[("id", &ids.artist("Massive Attack"))])
+        .await;
+    assert_eq!(
+        (bare.status, bare.content_type()),
+        (StatusCode::OK, "image/webp")
+    );
+    rig.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn binary_endpoints_render_errors_as_text() {
     use base64::Engine as _;

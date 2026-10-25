@@ -522,7 +522,14 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
     /// Release art bytes (`size` is the 250/500/1200 bucket); `None` renders
     /// 404 with no placeholder, unlike Subsonic (v2 `_image`).
     fn cover(&self, rg_mbid: &str, size: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
-    fn artist_image(&self, mbid: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
+    /// An artist's picture. `size` (the 250/500/1200 bucket) sizes the
+    /// picture drawn for an artist with no MusicBrainz link; a linked
+    /// artist's own image is served as stored.
+    fn artist_image(
+        &self,
+        mbid: &str,
+        size: &str,
+    ) -> impl Future<Output = Option<CoverBytes>> + Send;
     /// The album title or artist name of a catalog id, read for a caller who
     /// has not signed in (the picture address), so no user overlays. `kind`
     /// is `album` or `artist`; any other kind has no name here, and so does

@@ -1087,7 +1087,8 @@ impl Store for SubsonicStore {
         px: Option<i64>,
     ) -> Result<Option<ImageBytes>, CompatError> {
         let px = px.and_then(|value| u32::try_from(value).ok());
-        self.library.artist_cover(artist_mbid, px).await
+        let bucket = px.map_or_else(|| "500".to_owned(), |px| px.to_string());
+        self.library.artist_cover(artist_mbid, px, &bucket).await
     }
 
     async fn advanced_decide(

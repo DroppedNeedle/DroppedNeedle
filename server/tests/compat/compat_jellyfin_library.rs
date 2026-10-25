@@ -766,6 +766,35 @@ async fn images_serve_anonymously_with_immutable_cache() {
     rig.stop().await;
 }
 
+/// An artist with no MusicBrainz link advertises a picture when their
+/// albums have art, and it is the mosaic the web UI shows, at the bucket
+/// the size asks for. One with no art advertises none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unlinked_artist_shows_their_album_mosaic() {
+    use crate::compat_subsonic_library::{GREEN, RED, assert_quadrants, two_covers_for_radiohead};
+    let rig = CompatApp::start("jf-artist-mosaic").await;
+    let auth = finamp(&rig.secret);
+    two_covers_for_radiohead(&rig);
+    let artists = json(&rig, "/jellyfin/Artists", &auth).await;
+    let radiohead = named(&artists["Items"], "Name", "Radiohead");
+    assert!(radiohead["ImageTags"]["Primary"].is_string(), "{radiohead}");
+    let massive = named(&artists["Items"], "Name", "Massive Attack");
+    assert_eq!(massive["ImageTags"], json!({}), "{massive}");
+    let id = radiohead["Id"].as_str().expect("artist id");
+    let reply = get(
+        &rig,
+        &format!("/jellyfin/Items/{id}/Images/Primary?fillWidth=200"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (reply.status, reply.header("content-type")),
+        (StatusCode::OK, "image/jpeg")
+    );
+    assert_quadrants(&reply.body, 250, [RED, GREEN, GREEN, RED]);
+    rig.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn favorite_dialects_and_played_markers() {
     let rig = CompatApp::start("jf-favorites").await;

@@ -121,7 +121,7 @@ where
             content_type: "image/png".to_owned(),
         }),
         "album" => state.library.cover(&internal, size).await,
-        "artist" => state.library.artist_image(&internal).await,
+        "artist" => state.library.artist_image(&internal, size).await,
         _ => None,
     };
     match found {

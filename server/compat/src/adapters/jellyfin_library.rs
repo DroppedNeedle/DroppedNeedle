@@ -118,10 +118,7 @@ fn album_view(album: PlayerAlbum) -> AlbumView {
 }
 
 fn artist_view(artist: ArtistRecord) -> ArtistView {
-    let image_tag = artist
-        .artist_mbid
-        .is_some()
-        .then(|| tag_for(&format!("artist:{}", artist.id)));
+    let image_tag = artist.artist_mbid.is_some().then(|| artist_tag(&artist.id));
     ArtistView {
         id: artist.id,
         artist_mbid: artist.artist_mbid,
@@ -134,6 +131,12 @@ fn artist_view(artist: ArtistRecord) -> ArtistView {
         starred: false,
         image_tag,
     }
+}
+
+/// The picture tag of an artist. An unlinked artist gets it only when it
+/// has album art to draw its picture from (see `overlay_artists`).
+fn artist_tag(id: &str) -> String {
+    tag_for(&format!("artist:{id}"))
 }
 
 /// Short stable etag for an image key.
@@ -230,7 +233,16 @@ impl JellyfinLibrary {
         let ids = views.iter().map(|view| view.id.clone()).collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "artist", &ids).await?;
         let durations = self.library.player.artist_durations(&ids).await?;
+        let unlinked = views
+            .iter()
+            .filter(|view| view.artist_mbid.is_none())
+            .map(|view| view.id.clone())
+            .collect::<Vec<_>>();
+        let drawn = self.library.artists_with_local_art(&unlinked).await?;
         for view in &mut views {
+            if drawn.contains(&view.id) {
+                view.image_tag = Some(artist_tag(&view.id));
+            }
             view.starred = starred.contains_key(&view.id);
             let (seconds, tracks) = durations.get(&view.id).copied().unwrap_or((0.0, 0));
             view.total_duration_seconds = seconds;
@@ -662,8 +674,8 @@ impl LibraryRead for JellyfinLibrary {
         })
     }
 
-    async fn artist_image(&self, mbid: &str) -> Option<CoverBytes> {
-        let outcome = self.library.artist_cover(mbid, None).await;
+    async fn artist_image(&self, mbid: &str, size: &str) -> Option<CoverBytes> {
+        let outcome = self.library.artist_cover(mbid, None, size).await;
         logged("artist_image", outcome).map(|(bytes, content_type)| CoverBytes {
             bytes,
             content_type,

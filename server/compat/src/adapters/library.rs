@@ -9,7 +9,7 @@
 //! [`CompatLibrary::player_ids`]: the accepted match's, else the files'
 //! tags'.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use droppedneedle_catalog::reads::collections::service::{
@@ -714,21 +714,68 @@ impl CompatLibrary {
             .map(|cover| (cover.bytes, cover.content_type)))
     }
 
-    /// Artist image for a local artist, through its MBID.
+    /// An artist's picture: a linked artist's own image through its MBID
+    /// (`size_px` wide), else the picture the web UI shows for an unlinked
+    /// one, a mosaic of their albums' art, at the `size` bucket
+    /// (250/500/1200). None when there is no picture.
     pub async fn artist_cover(
         &self,
         artist_id: &str,
         size_px: Option<u32>,
+        size: &str,
     ) -> Result<Option<ImageBytes>, CompatError> {
         let Some(artist) = self.catalog.get_artist(artist_id).await? else {
             return Ok(None);
         };
         let Some(mbid) = artist.artist_mbid else {
-            return Ok(None);
+            return Ok(self
+                .covers
+                .local_artist_art(&artist.id, Some(size))
+                .await
+                .map(|cover| (cover.bytes, cover.content_type)));
         };
         Ok(match self.covers.artist_image(&mbid, size_px).await {
             CoverLookup::Found(cover) => Some((cover.bytes, cover.content_type)),
             CoverLookup::Warming | CoverLookup::Missing => None,
         })
+    }
+
+    /// Which of `artist_ids` have an album with its own art (folder or
+    /// embedded) to draw their picture from: the albums the catalog's
+    /// artist mosaic reads, in one query. Lets a list say which unlinked
+    /// artists have a picture without drawing one.
+    pub async fn artists_with_local_art(
+        &self,
+        artist_ids: &[String],
+    ) -> Result<HashSet<String>, CompatError> {
+        if artist_ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let ids = serde_json::to_string(artist_ids)
+            .map_err(|error| CompatError::Internal(format!("artist ids: {error}")))?;
+        let found: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT credit.artist_id FROM ( \
+               SELECT album_artist_id AS artist_id, id AS album_id FROM local_albums \
+               WHERE album_artist_id IN (SELECT value FROM json_each(?1)) \
+               UNION SELECT local_artist_id, local_album_id FROM local_album_artists \
+               WHERE local_artist_id IN (SELECT value FROM json_each(?1))) credit \
+             JOIN local_albums a ON a.id = credit.album_id \
+               AND a.retired_into_album_id IS NULL AND a.has_indexed_track = 1 \
+             JOIN local_album_artwork w ON w.local_album_id = a.id \
+             LEFT JOIN local_tracks t ON t.id = w.source_locator AND w.source = 'embedded' \
+               AND t.availability = 'indexed' \
+             WHERE (w.source = 'folder' AND w.source_locator IS NOT NULL) \
+               OR (w.source = 'embedded' AND t.file_path IS NOT NULL)",
+        )
+        .bind(ids)
+        .fetch_all(self.collections.db.pool()?)
+        .await
+        .map_err(|error| {
+            droppedneedle_catalog::reads::collections::db::StoreError::read(
+                "compat.artist_art",
+                error,
+            )
+        })?;
+        Ok(found.into_iter().collect())
     }
 }

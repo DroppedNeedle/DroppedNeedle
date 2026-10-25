@@ -682,7 +682,7 @@ impl LibraryRead for FakeLibrary {
         .flatten()
     }
 
-    async fn artist_image(&self, mbid: &str) -> Option<CoverBytes> {
+    async fn artist_image(&self, mbid: &str, _size: &str) -> Option<CoverBytes> {
         self.with_rows(|rows| rows.artist_images.get(mbid).cloned())
             .flatten()
     }
