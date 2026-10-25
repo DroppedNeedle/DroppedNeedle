@@ -942,7 +942,12 @@ pub(super) enum Evidence {
     Ambiguous(String),
 }
 
-pub(super) fn evidence(sandbox: &Sandbox, journal: &FileJournal) -> Evidence {
+/// `known` is the temp's identity as this publish wrote it, when it did.
+pub(super) fn evidence(
+    sandbox: &Sandbox,
+    journal: &FileJournal,
+    known: Option<FileStat>,
+) -> Evidence {
     let Ok(home) = sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel) else {
         return Evidence::Ambiguous(format!("journal {} destination unsafe", journal.id));
     };
@@ -953,7 +958,7 @@ pub(super) fn evidence(sandbox: &Sandbox, journal: &FileJournal) -> Evidence {
             journal.id
         ));
     }
-    let holds = |path: &Path| super::remove::holds(path, &journal.staged_sha256, None);
+    let holds = |path: &Path| super::remove::holds(path, &journal.staged_sha256, known);
     let temp_present = std::fs::symlink_metadata(temp).is_ok();
     if temp_present && !paths::same_file(temp, &home) && !holds(temp) {
         // A temp still being written belongs to the row; the unwind

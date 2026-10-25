@@ -21,6 +21,11 @@
 //! prepare -> publish -> catalog-commit -> cleanup
 //! ```
 //!
+//! A publish stages its files, then runs the same steps recovery runs
+//! after a crash, from `staged` on: one function reads what the rows and
+//! the files show and decides the next step, whichever of the two calls
+//! it.
+//!
 //! - **Prepare** writes destination-side hidden temps
 //!   (`.droppedneedle-management-*`), re-reads and validates them, fsyncs
 //!   file bytes, then fsyncs the containing directory. Journal:
@@ -110,6 +115,7 @@ pub mod remove;
 pub mod snapshots;
 pub(crate) mod sql;
 pub mod staging;
+mod step;
 pub mod tags_seam;
 pub mod undo;
 pub mod v2_baseline;

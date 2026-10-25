@@ -11,10 +11,10 @@
 //! steps so the tests can prove that restart recovery always resumes
 //! or compensates. Production never sets a crash point.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use droppedneedle_kernel::db::{CancelFlag, Db, Durable, DurableLane, Lane};
@@ -25,12 +25,12 @@ use super::journal::{
     FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore, JournalWriter,
 };
 use super::paths::Sandbox;
-use super::place::Original;
 use super::planner::{
     AlbumJoin, CapabilityGate, CollisionGate, CommitSeal, DiskPreflight, JoinedTrack, PlanBundle,
-    PlanKind, ReleaseIdentity, SealError, SealRecheck, SealedPreview, SpaceProbe,
+    ReleaseIdentity, SealError, SealRecheck, SealedPreview, SpaceProbe,
 };
 use super::snapshots::{BlobStore, SnapshotStore, sha256_hex};
+use super::step::{AdoptionFrom, Advanced, Hooks, Run};
 use super::tags_seam::TagDocument;
 use super::{PublishError, paths};
 
@@ -119,15 +119,6 @@ pub(super) fn enqueue_after_commit(
             other => PublishError::Store(other.to_string()),
         },
     )
-}
-
-/// Flush a directory entry change where a failure must not undo work
-/// already done (cleanup and compensation): the next sync or recovery
-/// pass covers it, so it is logged instead of returned.
-fn sync_dir_logged(dir: &Path) {
-    if let Err(error) = super::journal::fsync_dir(dir) {
-        tracing::warn!(dir = %dir.display(), %error, "directory sync failed");
-    }
 }
 
 fn now_secs() -> f64 {
@@ -998,32 +989,86 @@ impl<P: SpaceProbe> Publisher<P> {
             })?;
         // A file that cannot be staged unwinds the ones staged before it,
         // so no part of the bundle is held or later finished by recovery.
-        let staged = match self.prepare(bundle, docs) {
-            Ok(staged) => staged,
+        if let Err(err) = self.prepare(bundle, docs) {
+            if Self::compensatable(&err) {
+                self.compensate(bundle)?;
+            }
+            return Err(err);
+        }
+        self.maybe_crash(CrashPoint::AfterStage)?;
+        // From here on a publish runs the steps recovery runs, from
+        // `Staged`, with the plan it holds.
+        let advanced = self.run().advance(&bundle.id, Some(bundle));
+        let (err, backup_kept) = match advanced {
+            Ok(Advanced::Committed { pending: false }) => return Ok(PublishOutcome::Committed),
+            Ok(Advanced::Committed { pending: true }) => {
+                return Ok(PublishOutcome::CleanupPending);
+            }
+            Ok(Advanced::Unwound { refused, kept }) => (
+                // A file of the bundle changed under it before anything
+                // committed, and the bundle was put back as it was.
+                refused.map_or_else(
+                    || {
+                        PublishError::Validation(format!(
+                            "bundle {} changed while it was being written and was put back",
+                            bundle.id
+                        ))
+                    },
+                    |refused| refused.error,
+                ),
+                kept.is_some(),
+            ),
+            Ok(Advanced::CommitRefused(err)) => (err, false),
+            Ok(Advanced::Attention(reason)) => return Err(PublishError::Journal(reason)),
+            Ok(Advanced::Waiting(_)) => return Err(PublishError::FolderMissing),
+            Ok(Advanced::Noop | Advanced::FoldersWait | Advanced::CleanupFinished) => {
+                return Err(PublishError::Journal(format!(
+                    "bundle {} was not published",
+                    bundle.id
+                )));
+            }
             Err(err) => {
-                if Self::compensatable(&err) {
-                    self.compensate(bundle)?;
+                if !Self::compensatable(&err) {
+                    return Err(err);
                 }
-                return Err(err);
+                let backup_kept = self.compensate(bundle)?;
+                (err, backup_kept)
             }
         };
-        self.maybe_crash(CrashPoint::AfterStage)?;
-        let outcome = self.publish_and_commit(bundle, &staged);
-        match outcome {
-            Ok(outcome) => Ok(outcome),
-            Err(err) => {
-                if Self::compensatable(&err) {
-                    let backup_kept = self.compensate(bundle)?;
-                    // Only the unwind knows whether a set-aside original
-                    // made it home, so the sentence is chosen after it.
-                    if backup_kept && matches!(err, PublishError::NoSafePlacement(_)) {
-                        return Err(PublishError::NoSafePlacement(
-                            NO_SAFE_METHOD_ORIGINAL_ASIDE.to_owned(),
-                        ));
-                    }
-                }
-                Err(err)
-            }
+        // Only the unwind knows whether a set-aside original made it home,
+        // so the sentence is chosen after it.
+        if backup_kept && matches!(err, PublishError::NoSafePlacement(_)) {
+            return Err(PublishError::NoSafePlacement(
+                NO_SAFE_METHOD_ORIGINAL_ASIDE.to_owned(),
+            ));
+        }
+        Err(err)
+    }
+
+    /// The shared steps, with this publish's own state and hooks.
+    fn run(&self) -> Run<'_> {
+        Run {
+            db: &self.db,
+            sandbox: &self.sandbox,
+            jobs: &self.jobs,
+            seams: self.place_seams,
+            bin_seams: self.bin_seams,
+            now_ms: self.now_ms,
+            adoption: AdoptionFrom::Plan,
+            known_removals: true,
+            temps: &self.temps,
+            hooks: Hooks {
+                crash: self.injector,
+                before_place: self
+                    .before_place
+                    .as_deref()
+                    .map(|hook| hook as &dyn Fn(&Path)),
+                before_set_aside: self
+                    .before_set_aside
+                    .as_deref()
+                    .map(|hook| hook as &dyn Fn(&Path)),
+                add_budget: self.add_budget.as_ref(),
+            },
         }
     }
 
@@ -1211,7 +1256,7 @@ impl<P: SpaceProbe> Publisher<P> {
         &mut self,
         bundle: &PlanBundle,
         docs: &BTreeMap<String, TagDocument>,
-    ) -> Result<Vec<PreparedFile>, PublishError> {
+    ) -> Result<(), PublishError> {
         if let Some(removal) = &bundle.removal {
             let files: Vec<(
                 usize,
@@ -1247,7 +1292,6 @@ impl<P: SpaceProbe> Publisher<P> {
         if let Some(added) = &bundle.added {
             self.prepare_added(bundle, added)?;
         }
-        let mut staged_files = Vec::new();
         for (ordinal, item) in bundle.items.iter().enumerate() {
             let source = self
                 .sandbox
@@ -1359,19 +1403,11 @@ impl<P: SpaceProbe> Publisher<P> {
             for (index, removal) in item.removals.iter().enumerate() {
                 self.prepare_removal(bundle, &journal_id, index, removal)?;
             }
-            staged_files.push(PreparedFile {
-                journal_id,
-                track_id: item.track_id.clone(),
-                kind: item.kind,
-                staged_sha256: staged_sha,
-                source_root: item.source_root.clone(),
-                source_rel: item.source_rel.clone(),
-            });
             if ordinal == 0 && bundle.items.len() > 1 {
                 self.maybe_crash(CrashPoint::AfterFirstFileStaged)?;
             }
         }
-        Ok(staged_files)
+        Ok(())
     }
 
     /// One blob's bytes, hash-verified.
@@ -1794,505 +1830,6 @@ impl<P: SpaceProbe> Publisher<P> {
         self.journal_staged(&journal_id)
     }
 
-    /// Publish renames plus the atomic catalog commit, then cleanup.
-    fn publish_and_commit(
-        &mut self,
-        bundle: &PlanBundle,
-        staged: &[PreparedFile],
-    ) -> Result<PublishOutcome, PublishError> {
-        let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
-            JournalStore::new(conn).bundle(&bundle.id)
-        })?;
-        let mut probed: BTreeSet<&str> = BTreeSet::new();
-        for journal in &journals {
-            if probed.insert(journal.dest_root.as_str()) {
-                probe_root(&self.sandbox, journal)?;
-            }
-        }
-        // Every file the bundle takes away is set aside before any file is
-        // placed: an upgrade often places its new file on the old one's path.
-        let mut first = true;
-        for journal in super::recovery::removals_first(&journals) {
-            self.publish_one(bundle, staged, journal)?;
-            if first {
-                first = false;
-                self.maybe_crash(CrashPoint::AfterFirstRename)?;
-            }
-        }
-        self.maybe_crash(CrashPoint::BeforeCatalogCommit)?;
-        self.commit(bundle, staged)?;
-        self.maybe_crash(CrashPoint::AfterCatalogCommit)?;
-        self.cleanup(bundle, staged)
-    }
-
-    /// Record one placement, durably.
-    fn journal_published(&self, id: &str) -> Result<(), PublishError> {
-        durable(&self.db, "publish.journal_published", |tx| {
-            JournalWriter::new(tx).advance(id, JournalState::Staged, JournalState::Published)
-        })
-    }
-
-    /// Place one staged journal on its destination. Same-path
-    /// writes retain the original under a hidden backup first; moves
-    /// keep the source until after catalog commit. A late occupier
-    /// fails the bundle instead of being overwritten, and so does an
-    /// original that another program replaced since it was read or that
-    /// could not be put back once set aside.
-    fn publish_one(
-        &mut self,
-        bundle: &PlanBundle,
-        staged: &[PreparedFile],
-        journal: &FileJournal,
-    ) -> Result<(), PublishError> {
-        if journal.bundle_id != bundle.id {
-            return Err(PublishError::Journal("journal bundle mismatch".into()));
-        }
-        let current = long_read(&self.db, "publish.journal", |conn| {
-            JournalStore::new(conn).get(&journal.id)
-        })?
-        .ok_or_else(|| PublishError::Journal(format!("missing journal {}", journal.id)))?;
-        if current.state == JournalState::Published {
-            return Ok(());
-        }
-        if current.state != JournalState::Staged {
-            return Err(PublishError::Journal(format!(
-                "journal {} is in state {}",
-                journal.id,
-                current.state.as_str()
-            )));
-        }
-        if current.kind == JournalKind::Remove {
-            return self.publish_remove(bundle, &current);
-        }
-        if current.kind == JournalKind::PutBack {
-            let hook = self
-                .before_place
-                .as_deref()
-                .map(|hook| hook as &dyn Fn(&Path));
-            super::put_back::place(
-                &self.sandbox,
-                &current,
-                self.temps.get(&current.id).copied(),
-                self.place_seams,
-                hook,
-            )?;
-            return self.journal_published(&current.id);
-        }
-        let dest = self
-            .sandbox
-            .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-        self.sandbox.ensure_under_roots(&dest)?;
-        match current.kind {
-            JournalKind::Delete => {
-                let aside = Path::new(&journal.staged);
-                self.sandbox.ensure_under_roots(aside)?;
-                super::generated::set_aside(
-                    self.sandbox.placement_mode(&journal.dest_root),
-                    (&journal.dest_root, &journal.dest_rel),
-                    &dest,
-                    aside,
-                    &journal.staged_sha256,
-                    self.place_seams,
-                )?;
-                return self.journal_published(&journal.id);
-            }
-            JournalKind::Remove | JournalKind::PutBack => {
-                return Err(PublishError::Journal(format!(
-                    "journal {} is not a placement",
-                    journal.id
-                )));
-            }
-            JournalKind::Audio
-            | JournalKind::Sidecar
-            | JournalKind::Artwork
-            | JournalKind::Output
-            | JournalKind::Add => {}
-        }
-        let staged_path = Path::new(&journal.staged);
-        self.sandbox.ensure_under_roots(staged_path)?;
-        let staged_bytes = paths::read_regular_file(staged_path)?;
-        if sha256_hex(&staged_bytes) != journal.staged_sha256 {
-            return Err(PublishError::Validation(format!(
-                "staged bytes for journal {} changed",
-                journal.id
-            )));
-        }
-        let prepared = staged.iter().find(|file| file.journal_id == journal.id);
-        // A same-path write, or a case-only rename on a filesystem that
-        // folds case (the new name reaches the source itself): both set
-        // the original aside under a journaled backup, then publish.
-        let same_path_self = match prepared {
-            Some(file) => {
-                let source = self
-                    .sandbox
-                    .resolve_no_symlink(&file.source_root, &file.source_rel)?;
-                match file.kind {
-                    PlanKind::SamePath => source == dest,
-                    PlanKind::Move => paths::case_alias(
-                        &self.sandbox,
-                        (&file.source_root, &file.source_rel),
-                        (&journal.dest_root, &journal.dest_rel),
-                    ),
-                }
-            }
-            None => false,
-        };
-        match std::fs::symlink_metadata(&dest) {
-            Ok(meta) => {
-                if meta.file_type().is_symlink() {
-                    return Err(PublishError::UnsafePath(format!(
-                        "destination is a symlink: {}:{}",
-                        journal.dest_root, journal.dest_rel
-                    )));
-                }
-                let replaced_here = current.replaces.as_ref().is_some_and(|replaced| {
-                    paths::read_regular_file(&dest)
-                        .is_ok_and(|bytes| sha256_hex(&bytes) == replaced.sha256)
-                });
-                if !same_path_self && !replaced_here {
-                    return Err(PublishError::Collision(format!(
-                        "late occupier at {}:{}",
-                        journal.dest_root, journal.dest_rel
-                    )));
-                }
-                // Journal the backup before the rename: a crash between
-                // the two then still knows where the original went.
-                let backup = self.sandbox.backup_path_for(&dest, &journal.id)?;
-                self.sandbox.ensure_under_roots(&backup)?;
-                let backup_text = backup.to_string_lossy();
-                durable(&self.db, "publish.journal_backup", |tx| {
-                    JournalWriter::new(tx).set_backup(&journal.id, &backup_text)
-                })?;
-                self.maybe_crash(CrashPoint::AfterBackupJournaled)?;
-                let home = paths::backup_home(
-                    &self.sandbox,
-                    current.source.as_ref(),
-                    &journal.dest_root,
-                    &journal.dest_rel,
-                )?;
-                let original = Original {
-                    visible: &dest,
-                    hidden: &backup,
-                    home: &home,
-                    sha256: current.backup_sha256(),
-                };
-                let hook = self
-                    .before_set_aside
-                    .as_deref()
-                    .map(|hook| hook as &dyn Fn(&Path));
-                let mode = self.sandbox.placement_mode(&journal.dest_root);
-                super::place::set_aside_with(mode, original, self.place_seams, hook)
-                    .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(PublishError::Io(err.to_string())),
-        }
-        if let Some(hook) = self.before_place.as_ref() {
-            hook(&dest);
-        }
-        self.within_add_budget()?;
-        // The checks above can go stale before the file lands, so the
-        // placement itself refuses a name that is taken by then.
-        let mode = super::add::mode_for(&self.sandbox, &current);
-        super::place::place_with(mode, staged_path, &dest, self.place_seams)
-            .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
-        self.journal_published(&journal.id)
-    }
-
-    /// Set one file a removal takes away aside under its row's hidden name,
-    /// checked by the identity the plan read when it is known.
-    fn publish_remove(
-        &self,
-        bundle: &PlanBundle,
-        journal: &FileJournal,
-    ) -> Result<(), PublishError> {
-        let dest = self
-            .sandbox
-            .resolve_removal(&journal.dest_root, &journal.dest_rel)?;
-        let aside = Path::new(&journal.staged);
-        self.sandbox.ensure_under_removal_roots(aside)?;
-        let known = bundle
-            .removal
-            .as_ref()
-            .and_then(|removal| super::remove::file_of(removal, journal))
-            .map(|file| file.stat);
-        let hook = self
-            .before_set_aside
-            .as_deref()
-            .map(|hook| hook as &dyn Fn(&Path));
-        super::remove::set_aside(
-            self.sandbox.placement_mode(&journal.dest_root),
-            (&journal.dest_root, &journal.dest_rel),
-            &dest,
-            aside,
-            &journal.staged_sha256,
-            known,
-            self.place_seams,
-            hook,
-        )?;
-        self.journal_published(&journal.id)
-    }
-
-    /// Single durable transaction: the catalog commit plus every journal
-    /// `published -> committed`. The adopted files are read before it.
-    fn commit(&mut self, bundle: &PlanBundle, staged: &[PreparedFile]) -> Result<(), PublishError> {
-        let mut tracks = Vec::with_capacity(staged.len());
-        for file in staged {
-            let item = bundle
-                .items
-                .iter()
-                .find(|item| item.track_id == file.track_id)
-                .ok_or_else(|| PublishError::Journal("staged file without a plan item".into()))?;
-            let dest = self
-                .sandbox
-                .resolve_no_symlink(&item.dest_root, &item.dest_rel)?;
-            tracks.push(TrackCommit {
-                track_id: file.track_id.clone(),
-                root_id: item.dest_root.clone(),
-                rel_path: item.dest_rel.clone(),
-                file_path: dest.to_string_lossy().into_owned(),
-                fingerprint: file.staged_sha256.clone(),
-                source: Some((item.source_root.clone(), item.source_rel.clone())),
-                source_sha256: Some(item.fingerprint.sha256.clone()),
-                mgmt_state: mgmt_state_for(item.adopt.is_some(), bundle.profile_revision),
-                adopt: item.adopt.clone(),
-                replaces: item.replaces.as_ref().and_then(|replaced| {
-                    replaced
-                        .track_id
-                        .clone()
-                        .map(|track| (track, replaced.recycle_to.clone()))
-                }),
-                indexed: None,
-                sealed: item.commit_seal(),
-                identity: item.adopt.is_some().then(|| item.identity.clone()),
-            });
-        }
-        read_adopted(&mut tracks)?;
-        let put_back = bundle
-            .put_back
-            .as_ref()
-            .map(|put_back| super::put_back::read_placed(&self.sandbox, put_back))
-            .transpose()?;
-        let commit = BundleCommit {
-            bundle_id: bundle.id.clone(),
-            tracks,
-            removal: bundle.removal.clone(),
-            put_back,
-        };
-        durable(&self.db, "publish.bundle_commit", |tx| {
-            commit_bundle(tx, &commit)?;
-            enqueue_after_commit(tx, &self.jobs, &commit)?;
-            let writer = JournalWriter::new(tx);
-            for journal in JournalStore::new(tx).bundle(&bundle.id)? {
-                if journal.state != JournalState::Published {
-                    return Err(PublishError::Journal(format!(
-                        "journal {} is {} at commit",
-                        journal.id,
-                        journal.state.as_str()
-                    )));
-                }
-                writer.advance(
-                    &journal.id,
-                    JournalState::Published,
-                    JournalState::Committed,
-                )?;
-            }
-            Ok(())
-        })
-    }
-
-    /// Post-commit cleanup: remove verified old sources and backups,
-    /// prune newly empty source directories, and mark journals
-    /// cleaned. Failures stay durable `cleanup_pending` and never roll
-    /// back the commit. A database that refuses a call, or a write that
-    /// runs out of time, ends the cleanup with the bundle committed and
-    /// its cleanup pending: recovery finishes it.
-    fn cleanup(
-        &mut self,
-        bundle: &PlanBundle,
-        staged: &[PreparedFile],
-    ) -> Result<PublishOutcome, PublishError> {
-        match self.cleanup_rows(bundle, staged) {
-            Ok(false) => Ok(PublishOutcome::Committed),
-            Ok(true) => Ok(PublishOutcome::CleanupPending),
-            Err(error) if error.wrote_nothing() => {
-                tracing::warn!(bundle_id = %bundle.id, %error, "publish cleanup stopped; recovery finishes it");
-                Ok(PublishOutcome::CleanupPending)
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    /// [`Self::cleanup`] row by row; true when some cleanup stays pending.
-    fn cleanup_rows(
-        &self,
-        bundle: &PlanBundle,
-        staged: &[PreparedFile],
-    ) -> Result<bool, PublishError> {
-        let mut pending = false;
-        let mut cleaned_any = false;
-        let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
-            JournalStore::new(conn).bundle(&bundle.id)
-        })?;
-        for journal in journals.iter() {
-            if journal.state != JournalState::Committed {
-                continue;
-            }
-            if let Err(error) = self.cleanup_one(bundle, journal, staged) {
-                if error.wrote_nothing() {
-                    return Err(error);
-                }
-                pending = true;
-                tracing::warn!(journal_id = %journal.id, %error, "publish cleanup failed; left pending");
-                let recorded = durable(&self.db, "publish.journal_cleanup_pending", |tx| {
-                    JournalWriter::new(tx).transition(
-                        &journal.id,
-                        JournalState::Committed,
-                        JournalState::CleanupPending,
-                    )
-                });
-                match recorded {
-                    Err(error) if error.wrote_nothing() => return Err(error),
-                    Err(error) => {
-                        tracing::warn!(journal_id = %journal.id, %error, "cleanup-pending not recorded");
-                    }
-                    Ok(_) => {}
-                }
-                continue;
-            }
-            let moved = durable(&self.db, "publish.journal_cleaned", |tx| {
-                JournalWriter::new(tx).transition(
-                    &journal.id,
-                    JournalState::Committed,
-                    JournalState::Cleaned,
-                )
-            })?;
-            if !moved {
-                pending = true;
-            }
-            if !cleaned_any {
-                cleaned_any = true;
-                self.maybe_crash(CrashPoint::DuringCleanup)?;
-            }
-        }
-        Ok(pending)
-    }
-
-    /// Remove one journal's verified source or backup, then prune
-    /// newly empty source parents. Unknown files are never deleted.
-    fn cleanup_one(
-        &self,
-        bundle: &PlanBundle,
-        journal: &FileJournal,
-        staged: &[PreparedFile],
-    ) -> Result<(), PublishError> {
-        let now =
-            std::time::UNIX_EPOCH + std::time::Duration::from_millis(self.now_ms.max(0) as u64);
-        match journal.kind {
-            JournalKind::Delete => {
-                let aside = Path::new(&journal.staged);
-                self.sandbox.ensure_under_roots(aside)?;
-                return super::generated::discard(aside, &journal.staged_sha256);
-            }
-            // A removed file goes to its bin, never away.
-            JournalKind::Remove => {
-                let replaced = journal.replaces.as_ref().ok_or_else(|| {
-                    PublishError::Journal(format!("journal {} has no bin entry", journal.id))
-                })?;
-                let known = bundle
-                    .removal
-                    .as_ref()
-                    .and_then(|removal| super::remove::file_of(removal, journal))
-                    .map(|file| file.stat);
-                let moved = super::bin::recycle_replaced(
-                    &self.db,
-                    &self.sandbox,
-                    journal,
-                    replaced,
-                    Path::new(&journal.staged),
-                    self.bin_seams,
-                    now,
-                    known,
-                )?;
-                if !moved {
-                    tracing::warn!(journal_id = %journal.id, "a removed file's hidden copy is gone");
-                }
-                return Ok(());
-            }
-            JournalKind::PutBack => {
-                let item = bundle
-                    .put_back
-                    .as_ref()
-                    .and_then(|put_back| super::put_back::item_of(put_back, journal));
-                return super::put_back::drop_copy(
-                    &self.db,
-                    &self.sandbox,
-                    journal,
-                    item,
-                    self.temps.get(&journal.id).copied(),
-                    self.now_ms,
-                );
-            }
-            JournalKind::Audio
-            | JournalKind::Sidecar
-            | JournalKind::Artwork
-            | JournalKind::Output
-            | JournalKind::Add => {}
-        }
-        if let (Some(replaced), Some(backup_text)) =
-            (journal.replaces.as_ref(), journal.backup.as_deref())
-        {
-            super::bin::recycle_replaced(
-                &self.db,
-                &self.sandbox,
-                journal,
-                replaced,
-                Path::new(backup_text),
-                self.bin_seams,
-                now,
-                None,
-            )?;
-        } else if let Some(backup_text) = journal.backup.as_deref() {
-            let backup = Path::new(backup_text);
-            self.sandbox.ensure_under_roots(backup)?;
-            let bytes = paths::read_regular_file(backup)?;
-            let expected = journal.source_sha256.as_deref().unwrap_or_default();
-            if !expected.is_empty() && sha256_hex(&bytes) == expected {
-                std::fs::remove_file(backup).map_err(PublishError::from)?;
-                if let Some(parent) = backup.parent() {
-                    sync_dir_logged(parent);
-                }
-            } else if expected.is_empty() {
-                std::fs::remove_file(backup).map_err(PublishError::from)?;
-            }
-        }
-        if let Some((root, rel)) = journal.source.as_ref() {
-            let prepared = staged.iter().find(|file| file.journal_id == journal.id);
-            let is_move = prepared
-                .map(|file| file.kind == PlanKind::Move)
-                .unwrap_or(true);
-            if is_move || journal.kind == JournalKind::Sidecar {
-                let source = self.sandbox.resolve_no_symlink(root, rel)?;
-                let dest = self
-                    .sandbox
-                    .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-                // After a case-only rename on a case-folding filesystem the
-                // old name reaches the published file: never delete it.
-                if source != dest
-                    && !paths::same_file(&source, &dest)
-                    && let Ok(bytes) = paths::read_regular_file(&source)
-                {
-                    let expected = journal.source_sha256.as_deref().unwrap_or_default();
-                    if expected.is_empty() || sha256_hex(&bytes) == expected {
-                        std::fs::remove_file(&source).map_err(PublishError::from)?;
-                        prune_empty_parents(&self.sandbox, root, &source);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Compensate a pre-commit failure with the unwind recovery uses:
     /// remove published destinations whose bytes still match the staged
     /// copy, restore same-path backups, delete unpublished temps, and
@@ -2300,24 +1837,7 @@ impl<P: SpaceProbe> Publisher<P> {
     /// keeps its backup and needs attention; the publish still fails with
     /// its own error. True when a backup was kept.
     fn compensate(&mut self, bundle: &PlanBundle) -> Result<bool, PublishError> {
-        let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
-            JournalStore::new(conn).bundle(&bundle.id)
-        })?;
-        let journals: Vec<FileJournal> = super::recovery::placements_first(&journals)
-            .into_iter()
-            .cloned()
-            .collect();
-        let rows = if self.armed() == Some(CrashPoint::AfterFirstUnwind) {
-            &journals[..journals.len().min(1)]
-        } else {
-            &journals[..]
-        };
-        let kept =
-            super::recovery::compensate_bundle(&self.db, &self.sandbox, rows, self.place_seams)?;
-        self.maybe_crash(CrashPoint::AfterFirstUnwind)?;
-        self.maybe_crash(CrashPoint::BeforeFolderRemoval)?;
-        super::recovery::remove_folders(&self.db, &self.sandbox, &bundle.id);
-        Ok(kept.is_some())
+        Ok(self.run().unwind(&bundle.id)?.is_some())
     }
 
     /// Whether a publish failure compensates (pre-commit) rather than
@@ -2335,44 +1855,13 @@ impl<P: SpaceProbe> Publisher<P> {
         )
     }
 
-    /// Refuse to place an added file past its deadline or once whoever
-    /// asked stopped waiting. A bundle with no budget always passes.
-    fn within_add_budget(&self) -> Result<(), PublishError> {
-        match &self.add_budget {
-            Some((deadline, cancelled))
-                if cancelled.load(Ordering::SeqCst) || Instant::now() >= *deadline =>
-            {
-                Err(PublishError::TimedOut(
-                    "the file was not placed in time and was not added".into(),
-                ))
-            }
-            _ => Ok(()),
-        }
-    }
-
-    /// The crash point armed for the bundle being published.
-    fn armed(&self) -> Option<CrashPoint> {
-        self.injector
-    }
-
     /// Fail with the armed crash point, if it matches.
     fn maybe_crash(&self, point: CrashPoint) -> Result<(), PublishError> {
-        if self.armed() == Some(point) {
+        if self.injector == Some(point) {
             return Err(PublishError::InjectedCrash(point.as_str().to_string()));
         }
         Ok(())
     }
-}
-
-/// One staged file: the journal plus the plan facts publish needs.
-#[derive(Debug, Clone)]
-struct PreparedFile {
-    journal_id: String,
-    track_id: String,
-    kind: PlanKind,
-    staged_sha256: String,
-    source_root: String,
-    source_rel: String,
 }
 
 /// Deterministic journal ids for idempotent retry: an audio file's row,

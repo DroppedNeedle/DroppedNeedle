@@ -7,6 +7,9 @@
 //! process death both before and after each filesystem rename, even
 //! when the corresponding SQLite transition did not run.
 //!
+//! Recovery runs the same steps a publish does (see `step`), from
+//! wherever a crash left the bundle; a publish runs them from `Staged`.
+//!
 //! - A fully prepared bundle finishes publication and the pinned
 //!   catalog transaction. Fully prepared means every journal row its
 //!   recorded operation calls for exists and is staged (its temp
@@ -43,7 +46,7 @@
 //!   catalog still names the journaled destination with matching
 //!   bytes, then retries the pinned cleanup policy.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -52,14 +55,10 @@ use droppedneedle_kernel::jobs::queue::JobQueue;
 
 use super::journal::{FileJournal, JournalKind, JournalState, JournalStore, JournalWriter};
 use super::paths::Sandbox;
-use super::place::{
-    Original, PlaceError, Seams, SetAsideError, place_from_hidden, place_with, set_aside_with,
-};
-use super::publisher::{
-    BundleCommit, TrackCommit, commit_bundle, durable, locate, long_read, mark_missing,
-    read_adopted,
-};
+use super::place::{PlaceError, Seams, place_with};
+use super::publisher::{durable, long_read};
 use super::snapshots::sha256_hex;
+use super::step::{AdoptionFrom, Advanced, Hooks, Run};
 use super::{PublishError, paths};
 
 /// What recovery did with one bundle.
@@ -310,31 +309,19 @@ fn reconcile_with(
     let bundles = active_bundles(db)?;
     let mut results = Vec::new();
     for bundle_id in bundles {
-        let journals = long_read(db, "publish.bundle_journals", |conn| {
-            JournalStore::new(conn).bundle(&bundle_id)
-        })?;
-        let action = if let Some(root) = unusable_root(sandbox, &journals) {
-            // The root may come back (a re-added or re-included root), and
-            // the bundle may hold a hidden backup there: keep it as it is.
-            tracing::warn!(bundle_id, root, "publish bundle waits for its root");
-            RecoveryAction::Deferred(format!(
-                "bundle {bundle_id} names root {root}, which is not a usable library root"
-            ))
-        } else {
-            match reconcile_bundle(db, sandbox, jobs, &bundle_id, seams) {
-                Ok(action) => action,
-                Err(error) if error.is_interrupted() => {
-                    tracing::warn!(bundle_id, %error, "publish recovery stopped: the database refused it");
-                    results.push(BundleRecovery {
-                        bundle_id,
-                        action: RecoveryAction::Deferred(error.to_string()),
-                    });
-                    break;
-                }
-                Err(error) => {
-                    tracing::warn!(bundle_id, %error, "publish bundle left for the next recovery pass");
-                    RecoveryAction::Deferred(error.to_string())
-                }
+        let action = match reconcile_bundle(db, sandbox, jobs, &bundle_id, seams) {
+            Ok(action) => action,
+            Err(error) if error.is_interrupted() => {
+                tracing::warn!(bundle_id, %error, "publish recovery stopped: the database refused it");
+                results.push(BundleRecovery {
+                    bundle_id,
+                    action: RecoveryAction::Deferred(error.to_string()),
+                });
+                break;
+            }
+            Err(error) => {
+                tracing::warn!(bundle_id, %error, "publish bundle left for the next recovery pass");
+                RecoveryAction::Deferred(error.to_string())
             }
         };
         results.push(BundleRecovery { bundle_id, action });
@@ -342,38 +329,11 @@ fn reconcile_with(
     Ok(results)
 }
 
-/// The first root a bundle's active journals name that the sandbox does
-/// not hold for them, or whose folder is not there now (a share not yet
-/// mounted, a link to nothing). A removal's row may name a remove-only
-/// root.
-fn unusable_root(sandbox: &Sandbox, journals: &[FileJournal]) -> Option<String> {
-    journals
-        .iter()
-        .filter(|journal| !journal.state.is_terminal())
-        .flat_map(|journal| {
-            std::iter::once((journal.kind, journal.dest_root.as_str())).chain(
-                journal
-                    .source
-                    .as_ref()
-                    .map(|(root, _)| (journal.kind, root.as_str())),
-            )
-        })
-        .find(|(kind, root)| {
-            let dir = match kind {
-                JournalKind::Remove | JournalKind::PutBack => sandbox.removal_root_dir(root),
-                JournalKind::Audio
-                | JournalKind::Sidecar
-                | JournalKind::Artwork
-                | JournalKind::Output
-                | JournalKind::Add
-                | JournalKind::Delete => sandbox.root_dir(root),
-            };
-            dir.and_then(paths::ensure_library_dir).is_err()
-        })
-        .map(|(_, root)| root.to_owned())
-}
-
-/// Reconcile one bundle.
+/// Reconcile one bundle through the steps a publish runs, from its rows
+/// and its recorded operation. A bundle
+/// naming a root that is not usable now (removed, excluded, or not
+/// mounted) waits as it is: the root may come back, and the bundle may
+/// hold a hidden backup there.
 fn reconcile_bundle(
     db: &Db,
     sandbox: &Sandbox,
@@ -381,94 +341,60 @@ fn reconcile_bundle(
     bundle_id: &str,
     seams: Seams,
 ) -> Result<RecoveryAction, PublishError> {
-    // The rows and the recorded operation in one read, so they agree.
-    let (journals, operation) = long_read(db, "publish.bundle_journals", |conn| {
-        Ok((
-            JournalStore::new(conn).bundle(bundle_id)?,
-            super::operations::operation_json(conn, bundle_id)?,
-        ))
+    let operation = long_read(db, "publish.bundle_operation", |conn| {
+        super::operations::operation_json(conn, bundle_id)
     })?;
-    if journals.iter().all(|journal| journal.state.is_terminal()) {
-        // An unwind, or a flag for attention, that stopped before the
-        // folders the bundle made were removed.
-        return Ok(if super::folders::remove(db, sandbox, bundle_id)? {
-            RecoveryAction::Noop
-        } else {
-            RecoveryAction::Deferred(format!(
-                "bundle {bundle_id} has folders waiting for their library folder"
-            ))
-        });
-    }
-    let evidence = match inspect_bundle(sandbox, &journals)? {
-        BundleEvidence::Ambiguous(reason) => {
-            flag_attention(db, &journals)?;
-            remove_folders(db, sandbox, bundle_id);
-            return Ok(RecoveryAction::NeedsAttention(reason));
-        }
-        BundleEvidence::Clear(clear) => clear,
-    };
-    // Whatever comes next may place a file: find out how each root the
-    // bundle targets can do that, if nothing has yet.
-    let mut probed: BTreeSet<&str> = BTreeSet::new();
-    for journal in journals
-        .iter()
-        .filter(|journal| !journal.state.is_terminal())
-    {
-        if probed.insert(journal.dest_root.as_str()) {
-            super::publisher::probe_root(sandbox, journal)?;
-        }
-    }
-    if evidence.any_committed {
-        return reconcile_committed(db, sandbox, bundle_id, &journals);
-    }
-    // A compensated or needs-attention row means an unwind already began
-    // and stopped, between two rows or on an error. Such a bundle can
-    // never commit, so it is never resumed.
-    let unwinding = journals.iter().any(|journal| {
-        matches!(
-            journal.state,
-            JournalState::Compensated | JournalState::NeedsAttention
-        )
+    // Unwinding is always safe before a commit; a record that no longer
+    // decodes must not hold the bundle's tracks for good.
+    let plan = operation.and_then(|json| {
+        serde_json::from_str::<super::planner::PlanBundle>(&json)
+            .inspect_err(|error| {
+                tracing::warn!(bundle_id, %error, "recorded operation does not decode");
+            })
+            .ok()
     });
-    if unwinding && put_back_refused(sandbox, &journals) {
-        flag_attention(db, &journals)?;
-        remove_folders(db, sandbox, bundle_id);
-        return Ok(RecoveryAction::NeedsAttention(format!(
-            "bundle {bundle_id} has a file with no safe way back onto its name"
-        )));
-    }
-    // A resume that is refused unwinds, as a publish does: the files
-    // placed so far come off and their originals go home.
-    let mut refused = None;
-    let resumeable = evidence.resumeable && !unwinding;
-    let recorded = resumeable
-        .then(|| staged_in_full(bundle_id, operation.as_deref(), &journals))
-        .flatten();
-    if resumeable && recorded.is_none() {
-        tracing::warn!(
-            bundle_id,
-            "publish bundle stopped before every file staged; unwinding it"
-        );
-    } else if let Some(recorded) = recorded {
-        match resume_precommit(db, sandbox, jobs, &recorded, &journals, seams)? {
-            None => return Ok(RecoveryAction::ResumedCommitted),
-            Some(reason) => {
-                tracing::warn!(bundle_id, reason, "publish bundle unwound after its resume");
-                refused = Some(reason);
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |span| {
+            i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
+        });
+    let temps = BTreeMap::new();
+    let run = Run {
+        db,
+        sandbox,
+        jobs,
+        seams,
+        bin_seams: Seams::default(),
+        now_ms,
+        adoption: AdoptionFrom::Provenance,
+        known_removals: false,
+        temps: &temps,
+        hooks: Hooks::default(),
+    };
+    Ok(match run.advance(bundle_id, plan.as_ref())? {
+        Advanced::Noop => RecoveryAction::Noop,
+        Advanced::FoldersWait => RecoveryAction::Deferred(format!(
+            "bundle {bundle_id} has folders waiting for their library folder"
+        )),
+        Advanced::Waiting(root) => {
+            tracing::warn!(bundle_id, root, "publish bundle waits for its root");
+            RecoveryAction::Deferred(format!(
+                "bundle {bundle_id} names root {root}, which is not a usable library root"
+            ))
+        }
+        Advanced::Attention(reason) => RecoveryAction::NeedsAttention(reason),
+        Advanced::Unwound { refused, kept } => match (kept, refused) {
+            (None, _) => RecoveryAction::Compensated,
+            (Some(kept), None) => RecoveryAction::NeedsAttention(kept),
+            (Some(kept), Some(refused)) => {
+                RecoveryAction::NeedsAttention(format!("{}; then {kept}", refused.reason))
             }
-        }
-    }
-    let journals = long_read(db, "publish.bundle_journals", |conn| {
-        JournalStore::new(conn).bundle(bundle_id)
-    })?;
-    let unwound = compensate_bundle(db, sandbox, &journals, seams)?;
-    remove_folders(db, sandbox, bundle_id);
-    Ok(match (unwound, refused) {
-        (None, _) => RecoveryAction::Compensated,
-        (Some(kept), None) => RecoveryAction::NeedsAttention(kept),
-        (Some(kept), Some(refused)) => {
-            RecoveryAction::NeedsAttention(format!("{refused}; then {kept}"))
-        }
+        },
+        // Nothing committed, and the bundle is unwound; the next pass
+        // finds it settled.
+        Advanced::CommitRefused(error) => return Err(error),
+        Advanced::Committed { .. } => RecoveryAction::ResumedCommitted,
+        Advanced::CleanupFinished => RecoveryAction::CleanupFinished,
     })
 }
 
@@ -480,411 +406,15 @@ pub(super) fn remove_folders(db: &Db, sandbox: &Sandbox, bundle_id: &str) {
     }
 }
 
-/// The recorded bundle, when every row `prepare` writes for it exists and
-/// is past `Prepared` (its temp written and its before-state kept). A
-/// bundle that stopped partway through staging can look complete on disk,
-/// so only its recorded operation (`operation`, its JSON) can tell; one
-/// with no record, or one that no longer decodes, is treated as partial.
-fn staged_in_full(
-    bundle_id: &str,
-    operation: Option<&str>,
-    journals: &[FileJournal],
-) -> Option<super::planner::PlanBundle> {
-    let json = operation?;
-    let bundle: super::planner::PlanBundle = match serde_json::from_str(json) {
-        Ok(bundle) => bundle,
-        // Unwinding is always safe before a commit; a record that no
-        // longer decodes must not hold the bundle's tracks forever.
-        Err(error) => {
-            tracing::warn!(bundle_id, %error, "recorded operation does not decode");
-            return None;
-        }
-    };
-    if journals
-        .iter()
-        .any(|journal| journal.state == JournalState::Prepared)
-    {
-        return None;
-    }
-    let present: BTreeSet<&str> = journals.iter().map(|journal| journal.id.as_str()).collect();
-    super::publisher::journal_ids(&bundle)
-        .iter()
-        .all(|id| present.contains(id.as_str()))
-        .then_some(bundle)
-}
-
-/// Whether an earlier unwind found no safe way to put a file back: a
-/// needs-attention row whose set-aside file is still under its hidden
-/// name, with the bytes the journal recorded, while its own name is free.
-/// That unwind moved nothing more, since each further row would lose its
-/// placed copy and not get its original back, and recovery does not
-/// either. A hidden file with other bytes was kept for that reason alone,
-/// and the unwind went on past it.
-fn put_back_refused(sandbox: &Sandbox, journals: &[FileJournal]) -> bool {
-    journals
-        .iter()
-        .filter(|journal| journal.state == JournalState::NeedsAttention)
-        .any(|journal| {
-            let (hidden, sha256, home) = match journal.kind {
-                JournalKind::Delete => (
-                    Some(journal.staged.as_str()),
-                    Some(journal.staged_sha256.as_str()),
-                    sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel),
-                ),
-                JournalKind::Remove => (
-                    Some(journal.staged.as_str()),
-                    Some(journal.staged_sha256.as_str()),
-                    sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel),
-                ),
-                JournalKind::Audio
-                | JournalKind::Sidecar
-                | JournalKind::Artwork
-                | JournalKind::Output
-                | JournalKind::Add
-                | JournalKind::PutBack => (
-                    journal.backup.as_deref(),
-                    journal.backup_sha256(),
-                    paths::backup_home(
-                        sandbox,
-                        journal.source.as_ref(),
-                        &journal.dest_root,
-                        &journal.dest_rel,
-                    ),
-                ),
-            };
-            let (Some(hidden), Ok(home)) = (hidden, home) else {
-                return false;
-            };
-            let expected = sha256.unwrap_or_default();
-            let intact = paths::read_regular_file(Path::new(hidden))
-                .is_ok_and(|bytes| expected.is_empty() || sha256_hex(&bytes) == expected);
-            intact && std::fs::symlink_metadata(&home).is_err()
-        })
-}
-
-/// Filesystem truth for one bundle, by fingerprint comparison only.
-struct ClearEvidence {
-    any_committed: bool,
-    resumeable: bool,
-}
-
-enum BundleEvidence {
-    Clear(ClearEvidence),
-    Ambiguous(String),
-}
-
-/// Inspect every journal path: each must resolve inside the sandbox
-/// with no symlinks, and every present file must match either its
-/// staged or its source fingerprint. Anything else is ambiguous.
-fn inspect_bundle(
-    sandbox: &Sandbox,
-    journals: &[FileJournal],
-) -> Result<BundleEvidence, PublishError> {
-    let mut any_committed = false;
-    let mut resumeable = true;
-    // A file the bundle takes away that is still at its path, not yet set
-    // aside (or under both names, a set-aside stopped between its link and
-    // its unlink): an upgrade's new file may be bound for that same path.
-    let not_yet_removed: Vec<(&str, &str, &str)> = journals
-        .iter()
-        .filter(|journal| {
-            journal.kind == JournalKind::Remove
-                && journal.state == JournalState::Staged
-                && (std::fs::symlink_metadata(&journal.staged).is_err()
-                    || sandbox
-                        .resolve_removal(&journal.dest_root, &journal.dest_rel)
-                        .is_ok_and(|dest| paths::same_file(Path::new(&journal.staged), &dest)))
-        })
-        .map(|journal| {
-            (
-                journal.dest_root.as_str(),
-                journal.dest_rel.as_str(),
-                journal.staged_sha256.as_str(),
-            )
-        })
-        .collect();
-    for journal in journals {
-        if journal.state.is_terminal() {
-            continue;
-        }
-        if matches!(
-            journal.state,
-            JournalState::Committed | JournalState::CleanupPending
-        ) {
-            any_committed = true;
-            continue;
-        }
-        match journal.kind {
-            JournalKind::Remove => {
-                match removal_evidence(sandbox, journal) {
-                    RemovalEvidence::Resume => {}
-                    RemovalEvidence::Unwind => resumeable = false,
-                    RemovalEvidence::Ambiguous(reason) => {
-                        return Ok(BundleEvidence::Ambiguous(reason));
-                    }
-                }
-                continue;
-            }
-            JournalKind::PutBack => {
-                match super::put_back::evidence(sandbox, journal) {
-                    super::put_back::Evidence::Resume => {}
-                    super::put_back::Evidence::Unwind => resumeable = false,
-                    super::put_back::Evidence::Ambiguous(reason) => {
-                        return Ok(BundleEvidence::Ambiguous(reason));
-                    }
-                }
-                continue;
-            }
-            JournalKind::Add => {
-                match super::add::evidence(sandbox, journal) {
-                    super::add::Evidence::Resume => {}
-                    super::add::Evidence::Unwind => resumeable = false,
-                    super::add::Evidence::Ambiguous(reason) => {
-                        return Ok(BundleEvidence::Ambiguous(reason));
-                    }
-                }
-                continue;
-            }
-            JournalKind::Audio
-            | JournalKind::Sidecar
-            | JournalKind::Artwork
-            | JournalKind::Output
-            | JournalKind::Delete => {}
-        }
-        let dest = match sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel) {
-            Ok(path) => path,
-            Err(_) => {
-                return Ok(BundleEvidence::Ambiguous(format!(
-                    "journal {} destination unsafe",
-                    journal.id
-                )));
-            }
-        };
-        sandbox.ensure_under_roots(&dest).map_err(|_| {
-            PublishError::Journal(format!("journal {} escapes sandbox", journal.id))
-        })?;
-        let staged = Path::new(&journal.staged);
-        if sandbox.ensure_under_roots(staged).is_err() {
-            return Ok(BundleEvidence::Ambiguous(format!(
-                "journal {} staged path escapes sandbox",
-                journal.id
-            )));
-        }
-        let generated = match journal.kind {
-            JournalKind::Delete => true,
-            JournalKind::Remove
-            | JournalKind::PutBack
-            | JournalKind::Audio
-            | JournalKind::Sidecar
-            | JournalKind::Artwork
-            | JournalKind::Output
-            | JournalKind::Add => false,
-        };
-        if generated {
-            // A generated file being taken away: it is either still in
-            // place or set aside, never both, and never anything else.
-            let holds = |path: &Path| {
-                paths::read_regular_file(path)
-                    .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256)
-            };
-            let present = |path: &Path| std::fs::symlink_metadata(path).is_ok();
-            let in_place = holds(&dest);
-            let aside = holds(staged);
-            // One file under both names: an unwind linked it home and
-            // stopped, or the link test before a set-aside stopped before
-            // removing its link. The two cannot be told apart, and in both
-            // the file is in place, so the bundle unwinds.
-            if in_place && paths::same_file(staged, &dest) {
-                resumeable = false;
-                continue;
-            }
-            if (in_place && present(staged))
-                || (aside && present(&dest))
-                || (!in_place && present(&dest))
-                || (!aside && present(staged))
-            {
-                return Ok(BundleEvidence::Ambiguous(format!(
-                    "journal {} generated file changed",
-                    journal.id
-                )));
-            }
-            if !in_place && !aside {
-                resumeable = false;
-            }
-            continue;
-        }
-        let staged_bytes = paths::read_regular_file(staged).ok();
-        let dest_bytes = paths::read_regular_file(&dest).ok();
-        let staged_match = staged_bytes
-            .as_deref()
-            .map(|bytes| sha256_hex(bytes) == journal.staged_sha256)
-            .unwrap_or(false);
-        let dest_match = dest_bytes
-            .as_deref()
-            .map(|bytes| sha256_hex(bytes) == journal.staged_sha256)
-            .unwrap_or(false);
-        let dest_holds_source = match (&dest_bytes, journal.source_sha256.as_deref()) {
-            (Some(bytes), Some(source_sha)) => sha256_hex(bytes) == source_sha,
-            _ => false,
-        };
-        // A replacement not yet set aside: the destination still holds
-        // the file it replaces.
-        let dest_holds_replaced = match (&dest_bytes, journal.replaces.as_ref()) {
-            (Some(bytes), Some(replaced)) => sha256_hex(bytes) == replaced.sha256,
-            _ => false,
-        };
-        if staged_bytes.is_some() && !staged_match {
-            return Ok(BundleEvidence::Ambiguous(format!(
-                "journal {} staged bytes changed",
-                journal.id
-            )));
-        }
-        let dest_holds_removed = dest_bytes.as_deref().is_some_and(|bytes| {
-            let sha = sha256_hex(bytes);
-            not_yet_removed.iter().any(|(root, rel, removed)| {
-                *root == journal.dest_root && *rel == journal.dest_rel && *removed == sha
-            })
-        });
-        // A row not placed yet keeps its staged temp as a file of its own.
-        // Whatever holds its destination then is not ours: the bundle
-        // unwinds, which takes only our own checked temp and leaves that
-        // file as it is. For a placed row it may be our file, changed.
-        let unplaced = journal.state == JournalState::Staged
-            && staged_match
-            && !paths::same_file(staged, &dest);
-        if dest_bytes.is_some()
-            && !dest_match
-            && !dest_holds_source
-            && !dest_holds_replaced
-            && !dest_holds_removed
-        {
-            if !unplaced {
-                return Ok(BundleEvidence::Ambiguous(format!(
-                    "journal {} destination holds foreign bytes",
-                    journal.id
-                )));
-            }
-            resumeable = false;
-        }
-        // One file under both names is a link-then-unlink placement that
-        // stopped halfway; resume removes the hidden name. Two files with
-        // the same bytes cannot be told apart from a user's copy, unless
-        // the destination is the unchanged original of a write in place.
-        if staged_match
-            && dest_match
-            && !paths::same_file(staged, &dest)
-            && !unchanged_original(sandbox, journal, &dest)
-        {
-            if !unplaced {
-                return Ok(BundleEvidence::Ambiguous(format!(
-                    "journal {} has duplicate staged locations",
-                    journal.id
-                )));
-            }
-            resumeable = false;
-        }
-        // A placed row whose staged copy is still a file of its own while
-        // its destination does not hold it was being unwound: the unwind
-        // took the placed copy off and stopped before the temp went.
-        if (!staged_match && !dest_match)
-            || (journal.state == JournalState::Published && staged_match && !dest_match)
-        {
-            resumeable = false;
-        }
-        if let Some(backup_text) = journal.backup.as_deref() {
-            let backup = Path::new(backup_text);
-            if sandbox.ensure_under_roots(backup).is_err() {
-                return Ok(BundleEvidence::Ambiguous(format!(
-                    "journal {} backup escapes sandbox",
-                    journal.id
-                )));
-            }
-            if let Ok(bytes) = paths::read_regular_file(backup) {
-                let expected = journal.backup_sha256().unwrap_or_default();
-                if !expected.is_empty() && sha256_hex(&bytes) != expected {
-                    return Ok(BundleEvidence::Ambiguous(format!(
-                        "journal {} backup bytes changed",
-                        journal.id
-                    )));
-                }
-            }
-        }
-        if let Some((root, rel)) = journal.source.as_ref()
-            && sandbox.resolve_no_symlink(root, rel).is_err()
-        {
-            return Ok(BundleEvidence::Ambiguous(format!(
-                "journal {} source unsafe",
-                journal.id
-            )));
-        }
-    }
-    Ok(BundleEvidence::Clear(ClearEvidence {
-        any_committed,
-        resumeable,
-    }))
-}
-
-/// What a removal's pre-commit row shows on disk.
-enum RemovalEvidence {
-    /// Not set aside yet and still in place, or set aside with its bytes:
-    /// a resume may finish it. A resume never touches the file's own name
-    /// once the file is set aside, so whatever sits there now is left.
-    Resume,
-    /// The file never left (one file under both names, an interrupted
-    /// link), it changed or went before it was set aside, or an unwind
-    /// already put it home: the bundle unwinds, which touches nothing that
-    /// is not the removal's.
-    Unwind,
-    /// A hidden copy that is not the removed file.
-    Ambiguous(String),
-}
-
-fn removal_evidence(sandbox: &Sandbox, journal: &FileJournal) -> RemovalEvidence {
-    let Ok(dest) = sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel) else {
-        return RemovalEvidence::Ambiguous(format!("journal {} destination unsafe", journal.id));
-    };
-    let aside = Path::new(&journal.staged);
-    if sandbox.ensure_under_removal_roots(aside).is_err() {
-        return RemovalEvidence::Ambiguous(format!(
-            "journal {} staged path escapes sandbox",
-            journal.id
-        ));
-    }
-    let holds = |path: &Path| {
-        paths::read_regular_file(path)
-            .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256)
-    };
-    if std::fs::symlink_metadata(aside).is_ok() {
-        if paths::same_file(aside, &dest) {
-            return RemovalEvidence::Unwind;
-        }
-        if holds(aside) {
-            return RemovalEvidence::Resume;
-        }
-        return RemovalEvidence::Ambiguous(format!(
-            "journal {} hidden copy is not the removed file",
-            journal.id
-        ));
-    }
-    // Only a row that never set its file aside may resume from it. A
-    // published row with no hidden copy was put home by an unwind that
-    // stopped before it recorded so.
-    if journal.state == JournalState::Staged && holds(&dest) {
-        RemovalEvidence::Resume
-    } else {
-        RemovalEvidence::Unwind
-    }
-}
-
 /// Move every still-active row in the bundle to `needs_attention`, in one
 /// durable write.
-fn flag_attention(db: &Db, journals: &[FileJournal]) -> Result<(), PublishError> {
+pub(super) fn flag_attention(db: &Db, journals: &[FileJournal]) -> Result<(), PublishError> {
     durable(db, "publish.journal_attention", |tx| {
         flag_rows(tx, journals)
     })
 }
 
-fn flag_rows(tx: &Durable<'_>, journals: &[FileJournal]) -> Result<(), PublishError> {
+pub(super) fn flag_rows(tx: &Durable<'_>, journals: &[FileJournal]) -> Result<(), PublishError> {
     let writer = JournalWriter::new(tx);
     for journal in journals {
         if journal.state.is_terminal() {
@@ -893,719 +423,6 @@ fn flag_rows(tx: &Durable<'_>, journals: &[FileJournal]) -> Result<(), PublishEr
         if !writer.transition(&journal.id, journal.state, JournalState::NeedsAttention)? {
             tracing::warn!(journal_id = %journal.id, "needs-attention not recorded: state moved");
         }
-    }
-    Ok(())
-}
-
-/// Record a placement recovery finished, durably.
-fn record_published(db: &Db, journal_id: &str, from: JournalState) -> Result<(), PublishError> {
-    durable(db, "publish.recover_published", |tx| {
-        JournalWriter::new(tx).advance(journal_id, from, JournalState::Published)
-    })
-}
-
-/// Finish a pre-commit bundle: complete any missing renames, then run
-/// the catalog transaction, checked against the seals in the bundle's
-/// recorded operation (`recorded`). A moved track with no seal there (an
-/// operation recorded before seals were) is refused, and the bundle
-/// unwinds. Journals already past their rename (destination holds staged
-/// bytes while the row still says staged) transition forward without a
-/// second rename. `Some(reason)` when a file
-/// was refused: nothing more is placed and the caller unwinds the bundle.
-/// `seams` is the default outside tests.
-fn resume_precommit(
-    db: &Db,
-    sandbox: &Sandbox,
-    jobs: &JobQueue,
-    recorded: &super::planner::PlanBundle,
-    journals: &[FileJournal],
-    seams: Seams,
-) -> Result<Option<String>, PublishError> {
-    let bundle_id = recorded.id.as_str();
-    let mut tracks = Vec::new();
-    for journal in journals {
-        if let (Some(track_id), Some(mgmt)) =
-            (journal.track_id.as_deref(), journal.mgmt_state.as_deref())
-        {
-            let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-            tracks.push(TrackCommit {
-                track_id: track_id.to_string(),
-                root_id: journal.dest_root.clone(),
-                rel_path: journal.dest_rel.clone(),
-                file_path: dest.to_string_lossy().into_owned(),
-                fingerprint: journal.staged_sha256.clone(),
-                source: journal.source.clone(),
-                source_sha256: journal.source_sha256.clone(),
-                mgmt_state: mgmt.to_string(),
-                adopt: mgmt.starts_with(super::publisher::ADOPTED_STATE).then(|| {
-                    let provenance = journal
-                        .source
-                        .as_ref()
-                        .and_then(|(root, rel)| sandbox.resolve_no_symlink(root, rel).ok())
-                        .map(|staged| {
-                            crate::import::recovered_provenance(&staged, bundle_id, track_id)
-                        })
-                        .unwrap_or_default();
-                    super::planner::Adoption::recovered(
-                        recorded
-                            .items
-                            .iter()
-                            .find(|item| item.track_id == track_id)
-                            .and_then(|item| item.adopt.as_ref()),
-                        provenance.task_id,
-                        provenance.source_path,
-                        provenance.ingest_source,
-                        provenance.join,
-                        provenance.track,
-                    )
-                }),
-                replaces: journal.replaces.as_ref().and_then(|replaced| {
-                    replaced
-                        .track_id
-                        .clone()
-                        .map(|track| (track, replaced.recycle_to.clone()))
-                }),
-                indexed: None,
-                sealed: recorded
-                    .items
-                    .iter()
-                    .find(|item| item.track_id == track_id)
-                    .and_then(|item| item.commit_seal()),
-                identity: recorded
-                    .items
-                    .iter()
-                    .find(|item| item.track_id == track_id)
-                    .filter(|_| mgmt.starts_with(super::publisher::ADOPTED_STATE))
-                    .map(|item| item.identity.clone()),
-            });
-        }
-    }
-    // A bundle that cannot commit is refused before any file moves.
-    if let Some(reason) = commit_shape(&tracks, recorded) {
-        return Ok(Some(format!("bundle {bundle_id} cannot commit: {reason}")));
-    }
-    for journal in removals_first(journals) {
-        if journal.state.is_terminal()
-            || matches!(
-                journal.state,
-                JournalState::Committed | JournalState::CleanupPending
-            )
-        {
-            continue;
-        }
-        if let Some(reason) = resume_rename(db, sandbox, journal, seams)? {
-            return Ok(Some(reason));
-        }
-    }
-    let refreshed = long_read(db, "publish.bundle_journals", |conn| {
-        JournalStore::new(conn).bundle(bundle_id)
-    })?;
-    if let Some(journal) = refreshed
-        .iter()
-        .find(|journal| journal.state != JournalState::Published)
-    {
-        return Err(PublishError::Journal(format!(
-            "journal {} is {} at resume commit",
-            journal.id,
-            journal.state.as_str()
-        )));
-    }
-    let mut commit = BundleCommit {
-        bundle_id: bundle_id.to_string(),
-        tracks,
-        removal: recorded.removal.clone(),
-        put_back: None,
-    };
-    let committed = read_adopted(&mut commit.tracks)
-        .and_then(|()| {
-            commit.put_back = recorded
-                .put_back
-                .as_ref()
-                .map(|put_back| super::put_back::read_placed(sandbox, put_back))
-                .transpose()?;
-            Ok(())
-        })
-        .and_then(|()| {
-            durable(db, "publish.recover_commit", |tx| {
-                commit_bundle(tx, &commit)?;
-                super::publisher::enqueue_after_commit(tx, jobs, &commit)?;
-                let writer = JournalWriter::new(tx);
-                for journal in refreshed.iter() {
-                    writer.advance(
-                        &journal.id,
-                        JournalState::Published,
-                        JournalState::Committed,
-                    )?;
-                }
-                Ok(())
-            })
-        });
-    if let Err(err) = committed {
-        // Nothing committed. A database that refused the call would refuse
-        // the unwind's rows too, so the bundle waits for the next pass.
-        if !err.is_interrupted() {
-            if let Some(reason) = compensate_bundle(db, sandbox, &refreshed, seams)? {
-                tracing::warn!(
-                    bundle_id,
-                    reason,
-                    "publish bundle needs attention after its unwind"
-                );
-            }
-            remove_folders(db, sandbox, bundle_id);
-        }
-        return Err(err);
-    }
-    finish_cleanup(db, sandbox, bundle_id)?;
-    Ok(None)
-}
-
-/// Why a resumed bundle could never commit, read from its journal rows
-/// (`tracks`) and its recorded operation alone: it has nothing to commit,
-/// or a track it moves has no seal to check the catalog against.
-fn commit_shape(tracks: &[TrackCommit], recorded: &super::planner::PlanBundle) -> Option<String> {
-    if tracks.is_empty()
-        && recorded.removal.is_none()
-        && recorded.put_back.is_none()
-        && recorded.added.is_none()
-    {
-        return Some("it has no committable track".to_owned());
-    }
-    tracks
-        .iter()
-        .find(|track| track.adopt.is_none() && track.sealed.is_none())
-        .map(|track| format!("track {} has no seal", track.track_id))
-}
-
-/// Complete one journal's placement during resume, honoring the same
-/// rules as publish: occupied foreign destinations block, same-path
-/// originals are retained under a hidden backup first. `Some(reason)`
-/// when the file is refused: another file holds its destination, it has
-/// no safe way onto its name, or its original could not be set aside
-/// safely. Neither it nor the file in its way is touched.
-fn resume_rename(
-    db: &Db,
-    sandbox: &Sandbox,
-    journal: &FileJournal,
-    seams: Seams,
-) -> Result<Option<String>, PublishError> {
-    let occupied = || {
-        Ok(Some(format!(
-            "another file holds the destination of journal {}",
-            journal.id
-        )))
-    };
-    if journal.state == JournalState::Published {
-        return Ok(None);
-    }
-    let staged = Path::new(&journal.staged);
-    let dest = match journal.kind {
-        JournalKind::Remove => {
-            let dest = sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel)?;
-            match super::remove::set_aside(
-                sandbox.placement_mode(&journal.dest_root),
-                (&journal.dest_root, &journal.dest_rel),
-                &dest,
-                staged,
-                &journal.staged_sha256,
-                None,
-                seams,
-                None,
-            ) {
-                Ok(()) => {}
-                Err(
-                    error @ (PublishError::NotLinkable(_)
-                    | PublishError::NoSafePlacement(_)
-                    | PublishError::Collision(_)),
-                ) => {
-                    return Ok(Some(format!(
-                        "journal {} could not set its file aside: {error}",
-                        journal.id
-                    )));
-                }
-                Err(error) => return Err(error),
-            }
-            record_published(db, &journal.id, journal.state)?;
-            return Ok(None);
-        }
-        JournalKind::PutBack => {
-            match super::put_back::place(sandbox, journal, None, seams, None) {
-                Ok(()) => {}
-                Err(
-                    error @ (PublishError::NotLinkable(_)
-                    | PublishError::NoSafePlacement(_)
-                    | PublishError::Collision(_)
-                    | PublishError::Validation(_)),
-                ) => {
-                    return Ok(Some(format!(
-                        "journal {} could not put its file back: {error}",
-                        journal.id
-                    )));
-                }
-                Err(error) => return Err(error),
-            }
-            record_published(db, &journal.id, journal.state)?;
-            return Ok(None);
-        }
-        JournalKind::Delete => {
-            let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-            match super::generated::set_aside(
-                sandbox.placement_mode(&journal.dest_root),
-                (&journal.dest_root, &journal.dest_rel),
-                &dest,
-                staged,
-                &journal.staged_sha256,
-                seams,
-            ) {
-                Ok(()) => {}
-                Err(error @ (PublishError::NotLinkable(_) | PublishError::NoSafePlacement(_))) => {
-                    return Ok(Some(format!(
-                        "journal {} could not set its generated file aside: {error}",
-                        journal.id
-                    )));
-                }
-                Err(error) => return Err(error),
-            }
-            record_published(db, &journal.id, journal.state)?;
-            return Ok(None);
-        }
-        JournalKind::Audio
-        | JournalKind::Sidecar
-        | JournalKind::Artwork
-        | JournalKind::Output
-        | JournalKind::Add => sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?,
-    };
-    if let Ok(bytes) = paths::read_regular_file(&dest) {
-        if sha256_hex(&bytes) == journal.staged_sha256
-            && !unchanged_original(sandbox, journal, &dest)
-        {
-            if paths::read_regular_file(staged).is_err() {
-                record_published(db, &journal.id, journal.state)?;
-                return Ok(None);
-            }
-            // The staged file is also still under its hidden name. As one
-            // file, the placement below finishes it; as two, it is not
-            // ours to pick between.
-            if !paths::same_file(staged, &dest) {
-                return Err(PublishError::Journal(format!(
-                    "journal {} has duplicate staged locations",
-                    journal.id
-                )));
-            }
-        } else {
-            let source_match = journal
-                .source_sha256
-                .as_deref()
-                .map(|sha| sha256_hex(&bytes) == sha)
-                .unwrap_or(false);
-            let replaced_here = journal
-                .replaces
-                .as_ref()
-                .is_some_and(|replaced| sha256_hex(&bytes) == replaced.sha256);
-            if !source_match && !replaced_here {
-                return occupied();
-            }
-            // The original at the destination: a same-path write, or a
-            // case-only rename on a filesystem that folds case. Either way
-            // it is set aside under a journaled backup, as the publisher
-            // does.
-            let same_path = journal
-                .source
-                .as_ref()
-                .map(|(root, rel)| {
-                    sandbox
-                        .resolve_no_symlink(root, rel)
-                        .map(|source| source == dest)
-                        .unwrap_or(false)
-                        || paths::case_alias(
-                            sandbox,
-                            (root, rel),
-                            (&journal.dest_root, &journal.dest_rel),
-                        )
-                })
-                .unwrap_or(false);
-            // A move whose destination holds a separate file with the
-            // source's bytes: a copy the user put there.
-            if !same_path && !replaced_here {
-                return occupied();
-            }
-            // A backup name an earlier attempt journaled is kept: a link
-            // an interrupted put-back left there is then found and removed.
-            let backup = match &journal.backup {
-                Some(journaled) => PathBuf::from(journaled),
-                None => sandbox.backup_path_for(&dest, &journal.id)?,
-            };
-            sandbox.ensure_under_roots(&backup)?;
-            let backup_text = backup.to_string_lossy();
-            durable(db, "publish.recover_backup", |tx| {
-                JournalWriter::new(tx).set_backup(&journal.id, &backup_text)
-            })?;
-            let home = paths::backup_home(
-                sandbox,
-                journal.source.as_ref(),
-                &journal.dest_root,
-                &journal.dest_rel,
-            )?;
-            let original = Original {
-                visible: &dest,
-                hidden: &backup,
-                home: &home,
-                sha256: journal.backup_sha256(),
-            };
-            let mode = sandbox.placement_mode(&journal.dest_root);
-            match set_aside_with(mode, original, seams, None) {
-                Ok(()) => {}
-                Err(SetAsideError::Io(error)) => return Err(PublishError::from(error)),
-                Err(error) => {
-                    return Ok(Some(format!(
-                        "journal {} could not set its original aside: {error}",
-                        journal.id
-                    )));
-                }
-            }
-        }
-    }
-    let mode = super::add::mode_for(sandbox, journal);
-    match place_with(mode, staged, &dest, seams) {
-        Ok(_) => {}
-        Err(PlaceError::Collision) => return occupied(),
-        Err(PlaceError::Unavailable(_) | PlaceError::CrossDevice) => {
-            return Ok(Some(format!(
-                "journal {} has no safe way onto its destination",
-                journal.id
-            )));
-        }
-        Err(error) => return Err(error.into_publish(&journal.dest_root, &journal.dest_rel)),
-    }
-    let current = long_read(db, "publish.journal", |conn| {
-        JournalStore::new(conn).get(&journal.id)
-    })?
-    .ok_or_else(|| PublishError::Journal(format!("missing journal {}", journal.id)))?;
-    if current.state != JournalState::Published {
-        record_published(db, &journal.id, current.state)?;
-    }
-    Ok(None)
-}
-
-/// Whether a row writes its file in place: its source is its destination,
-/// or the destination reaches the source by case alone.
-fn in_place(sandbox: &Sandbox, journal: &FileJournal, dest: &Path) -> bool {
-    journal.source.as_ref().is_some_and(|(root, rel)| {
-        sandbox
-            .resolve_no_symlink(root, rel)
-            .is_ok_and(|source| source == dest)
-            || paths::case_alias(
-                sandbox,
-                (root, rel),
-                (&journal.dest_root, &journal.dest_rel),
-            )
-    })
-}
-
-/// A row written in place with no tag change stages the original's own
-/// bytes. Until the original is set aside, the file at the destination is
-/// that original, not a second staged copy: its temp is still a file of its
-/// own, and no backup holds the original yet (or only a link a stopped link
-/// test left, which is the original itself).
-fn unchanged_original(sandbox: &Sandbox, journal: &FileJournal, dest: &Path) -> bool {
-    let staged = Path::new(&journal.staged);
-    journal.state == JournalState::Staged
-        && journal.source_sha256.as_deref() == Some(journal.staged_sha256.as_str())
-        && std::fs::symlink_metadata(staged).is_ok()
-        && !paths::same_file(staged, dest)
-        && in_place(sandbox, journal, dest)
-        && journal.backup.as_deref().is_none_or(|backup| {
-            let backup = Path::new(backup);
-            std::fs::symlink_metadata(backup).is_err() || paths::same_file(backup, dest)
-        })
-}
-
-/// Reconcile a bundle with committed journals: never roll back.
-/// Verifies the catalog still names each journaled destination with
-/// matching bytes, restores an exact remaining staged copy when the
-/// destination went missing, and retries pinned cleanup. The staged copy
-/// only ever goes onto a free name: a destination holding anything else
-/// keeps it, and the staged copy stays beside it as evidence.
-fn reconcile_committed(
-    db: &Db,
-    sandbox: &Sandbox,
-    bundle_id: &str,
-    journals: &[FileJournal],
-) -> Result<RecoveryAction, PublishError> {
-    for journal in journals {
-        if journal.state.is_terminal() {
-            continue;
-        }
-        if matches!(journal.state, JournalState::Prepared | JournalState::Staged) {
-            flag_attention(db, journals)?;
-            return Ok(RecoveryAction::NeedsAttention(format!(
-                "bundle {bundle_id} has mixed commit states"
-            )));
-        }
-        if journal.state == JournalState::Published {
-            flag_attention(db, journals)?;
-            return Ok(RecoveryAction::NeedsAttention(format!(
-                "bundle {bundle_id} disagrees with its catalog commit"
-            )));
-        }
-        match journal.kind {
-            // Its destination is meant to be gone: cleanup deletes the
-            // set-aside copy of a generated file, and moves a removed
-            // file's copy to its bin. Neither ever goes back.
-            JournalKind::Delete | JournalKind::Remove => continue,
-            // The file put back must be home; its copy is kept until it is.
-            JournalKind::PutBack => {
-                let home = sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel)?;
-                if super::remove::holds(&home, &journal.staged_sha256, None) {
-                    continue;
-                }
-                let staged = Path::new(&journal.staged);
-                let free = matches!(
-                    std::fs::symlink_metadata(&home),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
-                );
-                if free
-                    && sandbox.ensure_under_removal_roots(staged).is_ok()
-                    && super::remove::holds(staged, &journal.staged_sha256, None)
-                    && place_from_hidden(sandbox.placement_mode(&journal.dest_root), staged, &home)
-                        .is_ok()
-                {
-                    continue;
-                }
-                durable(db, "publish.recover_put_back_lost", |tx| {
-                    if let Some(track_id) = journal.track_id.as_deref() {
-                        mark_missing(tx, track_id)?;
-                    }
-                    flag_rows(tx, journals)
-                })?;
-                return Ok(RecoveryAction::NeedsAttention(format!(
-                    "the file put back by journal {} is not home",
-                    journal.id
-                )));
-            }
-            JournalKind::Audio
-            | JournalKind::Sidecar
-            | JournalKind::Artwork
-            | JournalKind::Output
-            | JournalKind::Add => {}
-        }
-        let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-        let staged = Path::new(&journal.staged);
-        let holds = |path: &Path| {
-            paths::read_regular_file(path)
-                .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256)
-        };
-        let staged_holds = sandbox.ensure_under_roots(staged).is_ok() && holds(staged);
-        let mode = super::add::mode_for(sandbox, journal);
-        let dest_free = matches!(
-            std::fs::symlink_metadata(&dest),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound
-        );
-        if holds(&dest) {
-            // Still under its hidden name too, as the same file: a
-            // placement that linked and stopped. The hidden name goes.
-            if staged_holds && paths::same_file(staged, &dest) {
-                place_from_hidden(mode, staged, &dest)
-                    .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
-            }
-        } else if !staged_holds {
-            durable(db, "publish.recover_output_lost", |tx| {
-                if let Some(track_id) = journal.track_id.as_deref() {
-                    mark_missing(tx, track_id)?;
-                }
-                flag_rows(tx, journals)
-            })?;
-            return Ok(RecoveryAction::NeedsAttention(format!(
-                "committed output missing for journal {}",
-                journal.id
-            )));
-        } else if !dest_free {
-            flag_attention(db, journals)?;
-            return Ok(RecoveryAction::NeedsAttention(format!(
-                "another file holds the committed destination of journal {}",
-                journal.id
-            )));
-        } else {
-            match place_from_hidden(mode, staged, &dest) {
-                Ok(_) => {}
-                Err(
-                    PlaceError::Collision | PlaceError::Unavailable(_) | PlaceError::CrossDevice,
-                ) => {
-                    flag_attention(db, journals)?;
-                    return Ok(RecoveryAction::NeedsAttention(format!(
-                        "committed output for journal {} could not be restored without \
-                         risking an overwrite",
-                        journal.id
-                    )));
-                }
-                Err(error) => {
-                    return Err(error.into_publish(&journal.dest_root, &journal.dest_rel));
-                }
-            }
-        }
-        if let Some(track_id) = journal.track_id.as_deref() {
-            match long_read(db, "publish.locate", |conn| locate(conn, track_id))? {
-                Some((root, rel, fingerprint, _)) => {
-                    if root != journal.dest_root
-                        || rel != journal.dest_rel
-                        || fingerprint != journal.staged_sha256
-                    {
-                        flag_attention(db, journals)?;
-                        return Ok(RecoveryAction::NeedsAttention(format!(
-                            "catalog disagrees with journal {}",
-                            journal.id
-                        )));
-                    }
-                }
-                None => {
-                    flag_attention(db, journals)?;
-                    return Ok(RecoveryAction::NeedsAttention(format!(
-                        "catalog lost track {track_id}"
-                    )));
-                }
-            }
-        }
-    }
-    finish_cleanup(db, sandbox, bundle_id)?;
-    Ok(RecoveryAction::CleanupFinished)
-}
-
-/// Retry pinned post-commit cleanup: remove verified sources and
-/// backups, then mark journals cleaned. Failures return journals to
-/// `cleanup_pending` for the next pass.
-fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), PublishError> {
-    let (journals, operation) = long_read(db, "publish.bundle_journals", |conn| {
-        Ok((
-            JournalStore::new(conn).bundle(bundle_id)?,
-            super::operations::operation_json(conn, bundle_id)?,
-        ))
-    })?;
-    // A removal's files as its plan read them: a set-aside file that is
-    // still that file goes to its bin without being read again.
-    let recorded =
-        operation.and_then(|json| serde_json::from_str::<super::planner::PlanBundle>(&json).ok());
-    let put_back = recorded.as_ref().and_then(|bundle| bundle.put_back.clone());
-    let removal = recorded.and_then(|bundle| bundle.removal);
-    let now = std::time::SystemTime::now();
-    let now_ms = now.duration_since(std::time::UNIX_EPOCH).map_or(0, |span| {
-        i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
-    });
-    for journal in journals {
-        if !matches!(
-            journal.state,
-            JournalState::Committed | JournalState::CleanupPending
-        ) {
-            continue;
-        }
-        let mut failed = false;
-        // The file a row sends to the recycle bin (never away), and the
-        // hidden name it waits under meanwhile.
-        let hop = match journal.kind {
-            JournalKind::Delete => {
-                let aside = Path::new(&journal.staged);
-                if sandbox.ensure_under_roots(aside).is_err()
-                    || super::generated::discard(aside, &journal.staged_sha256).is_err()
-                {
-                    failed = true;
-                }
-                None
-            }
-            JournalKind::Remove => match journal.replaces.as_ref() {
-                Some(replaced) => Some((replaced, journal.staged.as_str())),
-                None => {
-                    tracing::warn!(journal_id = %journal.id, "removal row has no bin entry");
-                    failed = true;
-                    None
-                }
-            },
-            JournalKind::PutBack => {
-                let item = put_back
-                    .as_ref()
-                    .and_then(|put_back| super::put_back::item_of(put_back, &journal));
-                if let Err(error) =
-                    super::put_back::drop_copy(db, sandbox, &journal, item, None, now_ms)
-                {
-                    tracing::warn!(journal_id = %journal.id, %error, "removed copy not deleted yet");
-                    failed = true;
-                }
-                None
-            }
-            JournalKind::Audio
-            | JournalKind::Sidecar
-            | JournalKind::Artwork
-            | JournalKind::Output
-            | JournalKind::Add => journal.replaces.as_ref().zip(journal.backup.as_deref()),
-        };
-        if let Some((replaced, hidden)) = hop {
-            let known = removal
-                .as_ref()
-                .and_then(|removal| super::remove::file_of(removal, &journal))
-                .map(|file| file.stat);
-            let moved = super::bin::recycle_replaced(
-                db,
-                sandbox,
-                &journal,
-                replaced,
-                Path::new(hidden),
-                Seams::default(),
-                now,
-                known,
-            );
-            match moved {
-                Ok(true) => {}
-                Ok(false) => {
-                    tracing::warn!(journal_id = %journal.id, "the file to recycle is gone; nothing was moved");
-                }
-                Err(error) if error.wrote_nothing() => return Err(error),
-                // While its bin is unknown the bins' source has logged why,
-                // once; each retry stays quiet.
-                Err(error) if sandbox.bin_for(&journal.dest_root).is_err() => {
-                    tracing::debug!(journal_id = %journal.id, %error, "file waits for a recycle bin");
-                    failed = true;
-                }
-                Err(error) => {
-                    tracing::warn!(journal_id = %journal.id, %error, "file not recycled yet");
-                    failed = true;
-                }
-            }
-        } else if let Some(backup_text) = journal.backup.as_deref()
-            && sandbox.ensure_under_roots(Path::new(backup_text)).is_ok()
-            && let Ok(bytes) = paths::read_regular_file(Path::new(backup_text))
-        {
-            let expected = journal.source_sha256.as_deref().unwrap_or_default();
-            if (expected.is_empty() || sha256_hex(&bytes) == expected)
-                && std::fs::remove_file(Path::new(backup_text)).is_err()
-            {
-                failed = true;
-            }
-        }
-        if let Some((root, rel)) = journal.source.as_ref()
-            && let Ok(source) = sandbox.resolve_no_symlink(root, rel)
-            && let Ok(dest) = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)
-            && source != dest
-            && !paths::same_file(&source, &dest)
-            && let Ok(bytes) = paths::read_regular_file(&source)
-        {
-            let expected = journal.source_sha256.as_deref().unwrap_or_default();
-            if expected.is_empty() || sha256_hex(&bytes) == expected {
-                if std::fs::remove_file(&source).is_ok() {
-                    super::publisher::prune_empty_parents(sandbox, root, &source);
-                } else {
-                    failed = true;
-                }
-            }
-        }
-        durable(db, "publish.journal_cleaned", |tx| {
-            let writer = JournalWriter::new(tx);
-            let cleaned =
-                !failed && writer.transition(&journal.id, journal.state, JournalState::Cleaned)?;
-            if !cleaned
-                && journal.state != JournalState::CleanupPending
-                && !writer.transition(&journal.id, journal.state, JournalState::CleanupPending)?
-            {
-                tracing::warn!(journal_id = %journal.id, "cleanup-pending not recorded: state moved");
-            }
-            Ok(())
-        })?;
     }
     Ok(())
 }

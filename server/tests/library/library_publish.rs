@@ -2499,6 +2499,36 @@ fn a_crash_after_the_first_of_two_removals_unwinds() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// A file that went after its removal was planned fails the removal with
+/// the collision the caller reads as "changed", and the bundle is unwound.
+#[test]
+fn a_removal_whose_file_went_since_its_plan_reports_a_change() {
+    let fix = fixture("remove-file-went");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac")],
+    );
+    std::fs::remove_file(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap();
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    let err = publisher
+        .publish(&sealed, &live, &BTreeMap::new())
+        .unwrap_err();
+    assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
+    let journals = JournalStore::new(&open_db(&fix))
+        .bundle("bundle-r")
+        .unwrap();
+    assert!(
+        journals
+            .iter()
+            .all(|journal| journal.state == JournalState::Compensated)
+    );
+    assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
+}
+
 /// A removed file its recycle bin cannot take waits under its hidden name
 /// with its row pending, and every retry keeps it there. Once the bin can
 /// take it, it moves in. It is never deleted.

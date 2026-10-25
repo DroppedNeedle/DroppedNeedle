@@ -4783,6 +4783,78 @@ async fn a_put_back_stopped_at_any_step_ends_in_the_bin_or_home() {
     }
 }
 
+/// Recycling tracks whose files are all gone already moves no file, but
+/// still takes the tracks out of the library.
+#[tokio::test]
+async fn recycling_tracks_whose_files_are_gone_takes_them_out() {
+    use droppedneedle_library::mutations::Mutations;
+
+    let (scratch, library, music) = bare_library("lib-recycle-all-gone").await;
+    plant(&music, "Gone/01.flac", "flac_no_tags.flac");
+    plant(&music, "Gone/02.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let tracks: Vec<String> = ["01.flac", "02.flac"]
+        .iter()
+        .map(|name| {
+            library
+                .scan_store
+                .track_at("music", &format!("Gone/{name}"))
+                .unwrap()
+                .expect("track indexed")
+        })
+        .collect();
+    let album: String = conn
+        .query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [&tracks[0]],
+            |row| row.get(0),
+        )
+        .expect("album id");
+    for name in ["01.flac", "02.flac"] {
+        std::fs::remove_file(music.join(format!("Gone/{name}"))).expect("file goes");
+    }
+
+    Mutations::new(&library)
+        .recycle_album_files(&album, &tracks, "admin")
+        .expect("the tracks are taken out");
+    for track in &tracks {
+        assert_eq!(availability_of(&conn, track), "missing");
+    }
+}
+
+/// Putting back files that were all moved home by hand already moves no
+/// file, but lists their tracks again and spends the undo.
+#[tokio::test]
+async fn putting_back_files_already_home_lists_them_again() {
+    use droppedneedle_library::mutations::Mutations;
+
+    let (scratch, library, music) = bare_library("lib-put-back-all-home").await;
+    plant(&music, "Home/01.flac", "flac_no_tags.flac");
+    plant(&music, "Home/02.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let (album, tracks, paths, action) = removed_extras(&library, &music, &conn, "Home");
+    for path in &paths {
+        let name = path.file_name().expect("name");
+        let copy = walk_files(&music.join(".recycle"))
+            .into_iter()
+            .find(|copy| copy.file_name() == Some(name))
+            .expect("its copy");
+        std::fs::rename(&copy, path).expect("moved home by hand");
+    }
+
+    Mutations::new(&library)
+        .put_back(&album, &action, "admin")
+        .expect("the files are listed again");
+    for track in &tracks {
+        assert_eq!(availability_of(&conn, track), "indexed");
+    }
+    assert_eq!(restored_actions(&conn, &album), 1, "the undo is spent");
+}
+
 /// A file that turns up where a removed file was, after the put-back
 /// checked the place and before the file lands, is never replaced: the
 /// placing call refuses it, nothing is put back, and the removed copy
