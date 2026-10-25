@@ -758,8 +758,13 @@ fn inspect_bundle(
         }
         // One file under both names is a link-then-unlink placement that
         // stopped halfway; resume removes the hidden name. Two files with
-        // the same bytes cannot be told apart from a user's copy.
-        if staged_match && dest_match && !paths::same_file(staged, &dest) {
+        // the same bytes cannot be told apart from a user's copy, unless
+        // the destination is the unchanged original of a write in place.
+        if staged_match
+            && dest_match
+            && !paths::same_file(staged, &dest)
+            && !unchanged_original(sandbox, journal, &dest)
+        {
             return Ok(BundleEvidence::Ambiguous(format!(
                 "journal {} has duplicate staged locations",
                 journal.id
@@ -1137,7 +1142,9 @@ fn resume_rename(
         | JournalKind::Add => sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?,
     };
     if let Ok(bytes) = paths::read_regular_file(&dest) {
-        if sha256_hex(&bytes) == journal.staged_sha256 {
+        if sha256_hex(&bytes) == journal.staged_sha256
+            && !unchanged_original(sandbox, journal, &dest)
+        {
             if paths::read_regular_file(staged).is_err() {
                 record_published(db, &journal.id, journal.state)?;
                 return Ok(None);
@@ -1244,6 +1251,39 @@ fn resume_rename(
         record_published(db, &journal.id, current.state)?;
     }
     Ok(None)
+}
+
+/// Whether a row writes its file in place: its source is its destination,
+/// or the destination reaches the source by case alone.
+fn in_place(sandbox: &Sandbox, journal: &FileJournal, dest: &Path) -> bool {
+    journal.source.as_ref().is_some_and(|(root, rel)| {
+        sandbox
+            .resolve_no_symlink(root, rel)
+            .is_ok_and(|source| source == dest)
+            || paths::case_alias(
+                sandbox,
+                (root, rel),
+                (&journal.dest_root, &journal.dest_rel),
+            )
+    })
+}
+
+/// A row written in place with no tag change stages the original's own
+/// bytes. Until the original is set aside, the file at the destination is
+/// that original, not a second staged copy: its temp is still a file of its
+/// own, and no backup holds the original yet (or only a link a stopped link
+/// test left, which is the original itself).
+fn unchanged_original(sandbox: &Sandbox, journal: &FileJournal, dest: &Path) -> bool {
+    let staged = Path::new(&journal.staged);
+    journal.state == JournalState::Staged
+        && journal.source_sha256.as_deref() == Some(journal.staged_sha256.as_str())
+        && std::fs::symlink_metadata(staged).is_ok()
+        && !paths::same_file(staged, dest)
+        && in_place(sandbox, journal, dest)
+        && journal.backup.as_deref().is_none_or(|backup| {
+            let backup = Path::new(backup);
+            std::fs::symlink_metadata(backup).is_err() || paths::same_file(backup, dest)
+        })
 }
 
 /// Reconcile a bundle with committed journals: never roll back.

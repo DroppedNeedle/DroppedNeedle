@@ -1690,6 +1690,43 @@ fn unwind_keeps_an_original_that_was_never_set_aside() {
     assert!(std::fs::symlink_metadata(&journals[1].staged).is_err());
 }
 
+/// A write in place with no tag change stages the original's own bytes.
+/// A crash before it is placed leaves the original and its staged copy
+/// side by side, which is not a second copy of ours: recovery finishes the
+/// write, as the publish would have.
+#[test]
+fn a_same_path_write_with_unchanged_tags_resumes_after_a_crash() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("resume-unchanged");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    for item in bundle.items.iter_mut() {
+        item.managed_updates.clear();
+    }
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterStage));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+
+    let db = restart(&fix);
+    let results = reconcile(&db, &fix.sandbox).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
+    for rel in ["staging/a.flac", "staging/b.flac"] {
+        let path = fix.sandbox.resolve("music", rel).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original, "{rel}");
+    }
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let journals = JournalStore::new(&open_db(&fix))
+        .bundle("bundle-1")
+        .unwrap();
+    assert!(
+        journals
+            .iter()
+            .all(|journal| journal.state == JournalState::Cleaned)
+    );
+}
+
 /// The placement probe writes only under a root a bundle targets, and
 /// leaves nothing there.
 #[test]
