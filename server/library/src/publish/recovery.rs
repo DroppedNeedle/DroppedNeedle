@@ -770,7 +770,12 @@ fn inspect_bundle(
                 journal.id
             )));
         }
-        if !staged_match && !dest_match {
+        // A placed row whose staged copy is still a file of its own while
+        // its destination does not hold it was being unwound: the unwind
+        // took the placed copy off and stopped before the temp went.
+        if (!staged_match && !dest_match)
+            || (journal.state == JournalState::Published && staged_match && !dest_match)
+        {
             resumeable = false;
         }
         if let Some(backup_text) = journal.backup.as_deref() {
@@ -904,31 +909,8 @@ fn resume_precommit(
     seams: Seams,
 ) -> Result<Option<String>, PublishError> {
     let bundle_id = recorded.id.as_str();
-    for journal in removals_first(journals) {
-        if journal.state.is_terminal()
-            || matches!(
-                journal.state,
-                JournalState::Committed | JournalState::CleanupPending
-            )
-        {
-            continue;
-        }
-        if let Some(reason) = resume_rename(db, sandbox, journal, seams)? {
-            return Ok(Some(reason));
-        }
-    }
-    let refreshed = long_read(db, "publish.bundle_journals", |conn| {
-        JournalStore::new(conn).bundle(bundle_id)
-    })?;
     let mut tracks = Vec::new();
-    for journal in refreshed.iter() {
-        if journal.state != JournalState::Published {
-            return Err(PublishError::Journal(format!(
-                "journal {} is {} at resume commit",
-                journal.id,
-                journal.state.as_str()
-            )));
-        }
+    for journal in journals {
         if let (Some(track_id), Some(mgmt)) =
             (journal.track_id.as_deref(), journal.mgmt_state.as_deref())
         {
@@ -985,14 +967,35 @@ fn resume_precommit(
             });
         }
     }
-    if tracks.is_empty()
-        && recorded.removal.is_none()
-        && recorded.put_back.is_none()
-        && recorded.added.is_none()
+    // A bundle that cannot commit is refused before any file moves.
+    if let Some(reason) = commit_shape(&tracks, recorded) {
+        return Ok(Some(format!("bundle {bundle_id} cannot commit: {reason}")));
+    }
+    for journal in removals_first(journals) {
+        if journal.state.is_terminal()
+            || matches!(
+                journal.state,
+                JournalState::Committed | JournalState::CleanupPending
+            )
+        {
+            continue;
+        }
+        if let Some(reason) = resume_rename(db, sandbox, journal, seams)? {
+            return Ok(Some(reason));
+        }
+    }
+    let refreshed = long_read(db, "publish.bundle_journals", |conn| {
+        JournalStore::new(conn).bundle(bundle_id)
+    })?;
+    if let Some(journal) = refreshed
+        .iter()
+        .find(|journal| journal.state != JournalState::Published)
     {
-        return Err(PublishError::Journal(
-            "bundle has no committable track".into(),
-        ));
+        return Err(PublishError::Journal(format!(
+            "journal {} is {} at resume commit",
+            journal.id,
+            journal.state.as_str()
+        )));
     }
     let mut commit = BundleCommit {
         bundle_id: bundle_id.to_string(),
@@ -1041,6 +1044,23 @@ fn resume_precommit(
     }
     finish_cleanup(db, sandbox, bundle_id)?;
     Ok(None)
+}
+
+/// Why a resumed bundle could never commit, read from its journal rows
+/// (`tracks`) and its recorded operation alone: it has nothing to commit,
+/// or a track it moves has no seal to check the catalog against.
+fn commit_shape(tracks: &[TrackCommit], recorded: &super::planner::PlanBundle) -> Option<String> {
+    if tracks.is_empty()
+        && recorded.removal.is_none()
+        && recorded.put_back.is_none()
+        && recorded.added.is_none()
+    {
+        return Some("it has no committable track".to_owned());
+    }
+    tracks
+        .iter()
+        .find(|track| track.adopt.is_none() && track.sealed.is_none())
+        .map(|track| format!("track {} has no seal", track.track_id))
 }
 
 /// Complete one journal's placement during resume, honoring the same

@@ -4963,3 +4963,34 @@ fn a_stopped_folder_removal_is_finished_by_recovery() {
     let again = reconcile(&db, &fix.sandbox).unwrap();
     assert!(again.is_empty(), "nothing left to do: {again:?}");
 }
+
+/// A placed row whose copy an unwind took off, while its staged temp is
+/// still there, was half unwound. Recovery finishes the unwind and never
+/// commits a catalog row for a file that is not in place.
+#[test]
+fn a_half_unwound_placed_row_unwinds() {
+    let fix = fixture("half-unwound");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+    let journals = JournalStore::new(&open_db(&fix))
+        .bundle("bundle-1")
+        .unwrap();
+    let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    std::fs::copy(&dest, &journals[0].staged).unwrap();
+    std::fs::remove_file(&dest).unwrap();
+
+    let db = restart(&fix);
+    let results = reconcile(&db, &fix.sandbox).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert_eq!(read_revision(&open_db(&fix)).unwrap(), start_revision());
+    assert_eq!(
+        track_row(&open_db(&fix), "track-a").0,
+        "staging/a.flac",
+        "the catalog still names the file where it is"
+    );
+}
