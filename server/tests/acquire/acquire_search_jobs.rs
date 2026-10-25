@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
-use droppedneedle_acquire::downloads::manifest::ManifestCodec;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskDetails};
 use droppedneedle_acquire::requests::quota::QuotaLedger;
@@ -100,11 +99,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let mut albums = FixedAlbums::default();
     albums.releases.insert(RELEASE.to_owned(), album());
-    let targets = Arc::new(Targets::new(
-        journal.clone(),
-        staging.to_path_buf(),
-        Some(Arc::new(albums)),
-    ));
+    let targets = Arc::new(Targets::new(journal.clone(), Some(Arc::new(albums))));
     let http = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), MOCK_API_KEY);
     let repo = SlskdRepository::new(
         SlskdClient::new(http),
@@ -123,10 +118,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     let mut worker = DownloadWorker::fixed(
         journal.clone(),
         vec![crate::as_source(Arc::new(source))],
-        WorkerConfig {
-            staging_root: staging.to_path_buf(),
-            ..WorkerConfig::default()
-        },
+        WorkerConfig::default(),
         events.clone(),
         Default::default(),
     );
@@ -164,7 +156,7 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
 
     let Rig {
         journal,
-        staging,
+        staging: _staging,
         worker,
         jobs,
         events,
@@ -255,10 +247,13 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     assert_eq!(task.search_job_id.as_deref(), Some(job_id.as_str()));
     assert_eq!(task.candidate_index, Some(1));
     assert_eq!(task.release_group_mbid, GROUP);
-    let bytes = std::fs::read(ManifestCodec::path(&staging, &task_id)).expect("manifest written");
-    let manifest = ManifestCodec.decode(&bytes).expect("manifest decodes");
-    assert_eq!(manifest.release_mbid.as_deref(), Some(RELEASE));
-    assert_eq!(manifest.expected_tracks.len(), 4);
+    let plan_task = task_id.clone();
+    let plan = journal
+        .read("test.plan", move |store| store.task_plan(&plan_task))
+        .await
+        .expect("plan reads");
+    assert_eq!(plan.release_mbid.as_deref(), Some(RELEASE));
+    assert_eq!(plan.expected_tracks.len(), 4);
 
     let view = jobs.get(&owner, &job_id).await.expect("job reads");
     assert_eq!(view.row.status, "matched");

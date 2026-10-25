@@ -107,7 +107,6 @@ impl RequestsState {
                 )),
             )),
             Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-            dir.join("staging"),
             settings.live(),
         ));
         let quota = Arc::new(QuotaLedger::unlimited(db.clone()));

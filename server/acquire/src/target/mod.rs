@@ -2,8 +2,8 @@
 //! positions wanted from it.
 //!
 //! An album task fetches its chosen edition (see [`crate::edition`]);
-//! its tracklist comes from MusicBrainz once and is kept in the task
-//! manifest, so every source ranks candidates against it and the landing
+//! its tracklist comes from MusicBrainz once and is kept in the task's
+//! plan, so every source ranks candidates against it and the landing
 //! verifies against the same release.
 //!
 //! A single-track task is fetched the way a person would search by hand:
@@ -11,9 +11,9 @@
 //! edition of an album that carries it, else the release it was requested
 //! from, else the best official release), the album is searched for, and
 //! only the wanted track is taken from the best album folder. Lone-track
-//! shares are a last resort, with the reason recorded in the manifest.
-//! The resolution is written to the task row and the manifest once, and
-//! every later attempt reuses it.
+//! shares are a last resort, with the reason logged. The resolution is
+//! written to the task row and its plan once, and every later attempt
+//! reuses it.
 
 pub mod choose;
 pub mod lookup;
@@ -22,15 +22,12 @@ pub mod releases;
 pub mod soulseek;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use self::lookup::{AlbumLookup, AlbumRelease};
 use self::reasons::TrackReason;
 use super::downloads::journal::Journal;
-use super::downloads::manifest::{
-    DownloadManifest, ExpectedTrack, ManifestCodec, TrackAlbumContext, TrackPosition,
-};
+use super::downloads::plan::{ExpectedTrack, TaskPlan, TrackAlbum, TrackPosition};
 use super::downloads::store::{TaskDetails, TaskRow, TrackAlbumColumns};
 use super::edition::chosen_edition;
 
@@ -79,14 +76,13 @@ impl SearchTarget {
 pub enum TargetError {
     /// Try later: MusicBrainz is down or not wired.
     Unavailable(TrackReason),
-    /// Our side failed (journal or staging).
+    /// Our side failed: the journal, or a plan that does not read.
     LocalFault(String),
 }
 
 /// Works out and remembers each task's target.
 pub struct Targets {
     journal: Arc<Journal>,
-    staging_root: PathBuf,
     /// MusicBrainz reads; `None` on test bundles, where every lookup
     /// waits as unavailable.
     lookup: Option<Arc<dyn AlbumLookup>>,
@@ -94,35 +90,31 @@ pub struct Targets {
 
 impl Targets {
     /// Targets over the shared journal, reading MusicBrainz through
-    /// `lookup`; manifests live under `staging_root`.
-    pub fn new(
-        journal: Arc<Journal>,
-        staging_root: PathBuf,
-        lookup: Option<Arc<dyn AlbumLookup>>,
-    ) -> Self {
-        Self {
-            journal,
-            staging_root,
-            lookup,
-        }
+    /// `lookup`.
+    pub fn new(journal: Arc<Journal>, lookup: Option<Arc<dyn AlbumLookup>>) -> Self {
+        Self { journal, lookup }
     }
 
-    /// The task's target, resolved now or read back from its manifest.
+    /// The task's target, resolved now or read back from its plan. A plan
+    /// that does not read is a local fault: the task waits, never runs
+    /// without it.
     pub async fn target(&self, task: &TaskRow) -> Result<SearchTarget, TargetError> {
-        let details = {
+        let (details, plan) = {
             let task_id = task.id.clone();
             self.journal
                 .read("downloads.target.details", move |store| {
-                    store.task_details(&task_id)
+                    Ok((store.task_details(&task_id)?, store.task_plan(&task_id)?))
                 })
                 .await
-                .map_err(|error| TargetError::LocalFault(error.to_string()))?
+                .map_err(|error| {
+                    tracing::warn!(task_id = %task.id, %error, "task details or plan unreadable");
+                    TargetError::LocalFault(error.to_string())
+                })?
         };
-        let manifest = self.read_manifest(&task.id).await;
         if task.download_type == "track" {
-            self.track_target(task, &details, manifest).await
+            self.track_target(task, &details, &plan).await
         } else {
-            Ok(self.album_target(task, &details, manifest).await)
+            Ok(self.album_target(task, &details, &plan).await)
         }
     }
 
@@ -149,53 +141,42 @@ impl Targets {
         }
     }
 
-    /// Record that a track came from a lone-track share, and why.
-    pub async fn record_lone_track(&self, task: &TaskRow, reason: TrackReason) {
+    /// Log that a track came from a lone-track share, and why.
+    pub fn record_lone_track(&self, task: &TaskRow, reason: TrackReason) {
         tracing::info!(
             task_id = %task.id,
             code = reason.code(),
             "single track taken from a lone-track share: {}",
             reason.message()
         );
-        let mut manifest = self.manifest_or_new(task).await;
-        let context = manifest
-            .track_album
-            .get_or_insert_with(|| TrackAlbumContext {
-                release_group_mbid: String::new(),
-                release_mbid: String::new(),
-                album_title: String::new(),
-                album_artist: String::new(),
-                year: None,
-                basis: "no_album".to_owned(),
-                wanted: Vec::new(),
-                lone_track_reason: None,
-            });
-        context.lone_track_reason = Some(reason.record());
-        self.write_manifest(manifest).await;
     }
 
     async fn album_target(
         &self,
         task: &TaskRow,
         details: &TaskDetails,
-        manifest: Option<DownloadManifest>,
+        plan: &TaskPlan,
     ) -> SearchTarget {
         let release = details
             .release_mbid
             .clone()
-            .or_else(|| manifest.as_ref().and_then(|m| m.release_mbid.clone()))
+            .or_else(|| plan.release_mbid.clone())
             .map(|mbid| mbid.trim().to_ascii_lowercase())
             .filter(|mbid| !mbid.is_empty());
-        let same_release = manifest
-            .as_ref()
-            .filter(|m| m.release_mbid.as_deref().map(str::to_ascii_lowercase) == release);
-        let mut tracklist = same_release
-            .map(|m| m.expected_tracks.clone())
-            .unwrap_or_default();
+        let same_release = release
+            .as_deref()
+            .is_some_and(|release| plan.is_for(release));
+        let mut tracklist = if same_release {
+            plan.expected_tracks.clone()
+        } else {
+            Vec::new()
+        };
         // "Get missing tracks" asks for some positions of the edition only.
-        let wanted = same_release
-            .map(|m| m.album_wanted.clone())
-            .unwrap_or_default();
+        let wanted = if same_release {
+            plan.album_wanted.clone()
+        } else {
+            Vec::new()
+        };
         if tracklist.is_empty()
             && let Some(release_mbid) = release.as_deref()
             && let Some(lookup) = self.lookup.as_ref()
@@ -205,22 +186,8 @@ impl Targets {
             match lookup.release(release_mbid).await {
                 Ok(Some(found)) => {
                     tracklist = expected_tracks(&found);
-                    let mut manifest = match manifest {
-                        Some(manifest) => manifest,
-                        None => self.manifest_or_new(task).await,
-                    };
-                    // The copy fetched for belongs to the release being
-                    // searched (the one MusicBrainz redirected it to too).
-                    let kept = manifest.release_mbid.as_deref().is_some_and(|held| {
-                        held.eq_ignore_ascii_case(release_mbid)
-                            || held.eq_ignore_ascii_case(&found.id)
-                    });
-                    if !kept {
-                        manifest.planned_album = None;
-                    }
-                    manifest.release_mbid = Some(found.id.clone());
-                    manifest.expected_tracks = tracklist.clone();
-                    self.write_manifest(manifest).await;
+                    self.keep_tracklist(task, release_mbid, &found.id, &tracklist)
+                        .await;
                 }
                 Ok(None) => tracing::warn!(
                     task_id = %task.id,
@@ -245,38 +212,70 @@ impl Targets {
         }
     }
 
+    /// Keep an album's tracklist in its plan, under the release MusicBrainz
+    /// answered for `asked` (the one it redirected to, when it did). The
+    /// copy fetched for stays only while it belongs to that release. A
+    /// failed write is logged: the next attempt reads the tracklist again.
+    async fn keep_tracklist(
+        &self,
+        task: &TaskRow,
+        asked: &str,
+        found: &str,
+        tracklist: &[ExpectedTrack],
+    ) {
+        let task_id = task.id.clone();
+        let (asked, found) = (asked.to_owned(), found.to_owned());
+        let tracklist = tracklist.to_vec();
+        let clock = self.journal.db().clock().clone();
+        let kept = self
+            .journal
+            .run("downloads.target.tracklist", move |store| {
+                let mut plan = store.task_plan(&task_id)?;
+                if !(plan.is_for(&asked) || plan.is_for(&found)) {
+                    plan.planned_album = None;
+                }
+                plan.release_mbid = Some(found);
+                plan.expected_tracks = tracklist;
+                let now = crate::db::unix_secs_f64(clock.as_ref());
+                store.set_task_plan(&task_id, &plan, now)
+            })
+            .await;
+        if let Err(error) = kept {
+            tracing::warn!(task_id = %task.id, %error, "album tracklist not kept in the task plan");
+        }
+    }
+
     async fn track_target(
         &self,
         task: &TaskRow,
         details: &TaskDetails,
-        manifest: Option<DownloadManifest>,
+        plan: &TaskPlan,
     ) -> Result<SearchTarget, TargetError> {
         let title = details
             .track_title
             .clone()
             .unwrap_or_else(|| task.album_title.clone());
-        // Already resolved for this task: reuse it.
-        if let Some(manifest) = manifest.as_ref()
-            && let Some(context) = manifest.track_album.as_ref()
-            && !context.release_mbid.is_empty()
+        // Already resolved for this task: reuse it. The album's title and
+        // year are on the row.
+        if let Some(album) = plan.track_album.as_ref()
+            && let Some(release) = plan.release_mbid.as_deref().filter(|id| !id.is_empty())
             && details
                 .release_mbid
                 .as_deref()
-                .is_some_and(|release| release.eq_ignore_ascii_case(&context.release_mbid))
+                .is_some_and(|asked| asked.eq_ignore_ascii_case(release))
         {
-            let duration = context.wanted.first().and_then(|position| {
-                manifest
-                    .expected_tracks
+            let duration = album.wanted.first().and_then(|position| {
+                plan.expected_tracks
                     .iter()
                     .find(|track| same_position(track, *position))
                     .and_then(|track| track.duration_seconds)
             });
             return Ok(SearchTarget {
-                artist: context.album_artist.clone(),
-                album_title: context.album_title.clone(),
-                year: context.year,
-                tracklist: manifest.expected_tracks.clone(),
-                wanted: context.wanted.clone(),
+                artist: album.album_artist.clone(),
+                album_title: task.album_title.clone(),
+                year: details.year,
+                tracklist: plan.expected_tracks.clone(),
+                wanted: album.wanted.clone(),
                 track: Some(TrackWant {
                     artist: task.artist_name.clone(),
                     title,
@@ -364,8 +363,8 @@ impl Targets {
         Ok(lone(TrackReason::NoAlbumForRecording))
     }
 
-    /// Write a track's album to the task row and the manifest, and answer
-    /// the target it gives.
+    /// Write a track's album to the task row and its plan in one
+    /// transaction, and answer the target it gives.
     async fn remember(
         &self,
         task: &TaskRow,
@@ -395,35 +394,30 @@ impl Targets {
             duration_seconds: wanted_track.and_then(|track| track.duration_seconds),
             year: release.year,
         };
+        let tracklist = expected_tracks(release);
         {
             let task_id = task.id.clone();
             let clock = self.journal.db().clock().clone();
+            let release_mbid = release.id.clone();
+            let track_album = TrackAlbum {
+                album_artist: album_artist.clone(),
+                basis: basis.to_owned(),
+                wanted: wanted.clone(),
+            };
+            let tracks = tracklist.clone();
             self.journal
                 .run("downloads.target.track_album", move |store| {
                     let now = crate::db::unix_secs_f64(clock.as_ref());
-                    store.set_track_album(&task_id, &columns, now)
+                    store.set_track_album(&task_id, &columns, now)?;
+                    let mut plan = store.task_plan(&task_id)?;
+                    plan.release_mbid = Some(release_mbid);
+                    plan.expected_tracks = tracks;
+                    plan.track_album = Some(track_album);
+                    store.set_task_plan(&task_id, &plan, now)
                 })
                 .await
                 .map_err(|error| TargetError::LocalFault(error.to_string()))?;
         }
-        let tracklist = expected_tracks(release);
-        let mut manifest = self.manifest_or_new(task).await;
-        manifest.release_group_mbid = release.release_group_mbid.clone();
-        manifest.release_mbid = Some(release.id.clone());
-        manifest.album_title = release.title.clone();
-        manifest.year = release.year.map(i64::from);
-        manifest.expected_tracks = tracklist.clone();
-        manifest.track_album = Some(TrackAlbumContext {
-            release_group_mbid: release.release_group_mbid.clone(),
-            release_mbid: release.id.clone(),
-            album_title: release.title.clone(),
-            album_artist: album_artist.clone(),
-            year: release.year,
-            basis: basis.to_owned(),
-            wanted: wanted.clone(),
-            lone_track_reason: None,
-        });
-        self.write_manifest(manifest).await;
         tracing::info!(
             task_id = %task.id,
             release_mbid = %release.id,
@@ -444,68 +438,13 @@ impl Targets {
             }),
         })
     }
-
-    async fn read_manifest(&self, task_id: &str) -> Option<DownloadManifest> {
-        let path = ManifestCodec::checked_path(&self.staging_root, task_id)?;
-        let bytes = tokio::fs::read(path).await.ok()?;
-        match ManifestCodec.decode(&bytes) {
-            Ok(manifest) => Some(manifest),
-            Err(error) => {
-                tracing::warn!(task_id, %error, "task manifest unreadable; rebuilding it");
-                None
-            }
-        }
-    }
-
-    async fn manifest_or_new(&self, task: &TaskRow) -> DownloadManifest {
-        match self.read_manifest(&task.id).await {
-            Some(manifest) => manifest,
-            None => DownloadManifest {
-                task_id: task.id.clone(),
-                release_group_mbid: task.release_group_mbid.clone(),
-                artist_name: task.artist_name.clone(),
-                album_title: task.album_title.clone(),
-                target_files: Vec::new(),
-                source_username: None,
-                handle: None,
-                expected_tracks: Vec::new(),
-                release_mbid: None,
-                artist_mbid: None,
-                year: None,
-                is_track: task.download_type == "track",
-                hold_on_wrong_track: false,
-                album_version: false,
-                origin: task.origin.clone(),
-                requested_by_user_id: None,
-                attempt_id: None,
-                track_album: None,
-                album_wanted: Vec::new(),
-                planned_album: None,
-            },
-        }
-    }
-
-    /// Best effort, like the dispatch skeleton: a missing manifest only
-    /// means the next attempt resolves again.
-    async fn write_manifest(&self, manifest: DownloadManifest) {
-        let staging_root = self.staging_root.clone();
-        let task_id = manifest.task_id.clone();
-        let written =
-            tokio::task::spawn_blocking(move || ManifestCodec.write(&staging_root, &manifest))
-                .await;
-        match written {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => tracing::warn!(task_id, %error, "target manifest write failed"),
-            Err(error) => tracing::warn!(task_id, %error, "target manifest write join failed"),
-        }
-    }
 }
 
 fn same_position(track: &ExpectedTrack, position: TrackPosition) -> bool {
     track.disc_number == i64::from(position.disc) && track.track_number == i64::from(position.track)
 }
 
-/// The release's tracks as the manifest's expected map.
+/// The release's tracks as the plan's tracklist.
 pub fn expected_tracks(release: &AlbumRelease) -> Vec<ExpectedTrack> {
     release
         .tracks

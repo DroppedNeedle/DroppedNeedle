@@ -210,7 +210,7 @@ pub trait LandingLibrary: Send + Sync {
     fn version_row<'a>(
         &'a self,
         track_id: &'a str,
-        planned: &'a crate::downloads::manifest::PlannedAlbum,
+        planned: &'a crate::downloads::plan::PlannedAlbum,
         release: &'a Release,
     ) -> BoxFuture<'a, Option<VersionRow>>;
 

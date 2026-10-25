@@ -30,7 +30,7 @@ fn journal_tasks(db_path: &Path) -> Vec<(String, String)> {
 // ---------------------------------------------------------------------------
 // Journey 1: user requests an album → admin approves → download lands.
 // The scan picks the files up later: the journey asserts the staged state
-// (journal row completed, manifest present, ask imported), not the library.
+// (journal row completed, ask imported), not the library.
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -96,8 +96,6 @@ async fn acquire_request_approve_land() {
     let (task_id, status_text) = &tasks[0];
     assert_eq!(status_text, "queued");
     assert_eq!(task_id.len(), 32, "task ids are 32 hex chars");
-    let manifest = app.config.imports_dir().join(task_id).join("manifest.json");
-    assert!(manifest.is_file(), "dispatch writes the manifest skeleton");
 
     // The worker lands the download (simulated through the journal: the
     // loop settles the task the same way, and the scan picks the files up

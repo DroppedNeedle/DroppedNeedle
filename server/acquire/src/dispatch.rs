@@ -10,11 +10,10 @@
 //! orphan reconciler's `job_name_parts` only recognises that shape, so
 //! anything else would make debris invisible to the sweep.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::downloads::journal::Journal;
-use super::downloads::manifest::{DownloadManifest, ManifestCodec, PlannedAlbum, TrackPosition};
+use super::downloads::plan::{PlannedAlbum, TaskPlan, TrackPosition};
 use super::downloads::state::TaskStatus;
 use super::downloads::store::{NewTask, StoreError, TaskDetails, TaskRow};
 use super::downloads::watchdog::RetryPolicy;
@@ -240,24 +239,20 @@ pub struct RetrySchedule {
 pub struct DownloadDispatch {
     journal: Arc<Journal>,
     ids: Arc<dyn IdGenerator>,
-    staging_root: PathBuf,
     policy: Live<DownloadPolicy>,
 }
 
 impl DownloadDispatch {
-    /// Wire dispatch over a shared journal. `staging_root` holds the
-    /// per-task manifest skeletons written at dispatch time; `policy`
-    /// holds the auto-retry policy for the wanted view's retrying rows.
+    /// Wire dispatch over a shared journal. `policy` holds the auto-retry
+    /// policy for the wanted view's retrying rows.
     pub fn new(
         journal: Arc<Journal>,
         ids: Arc<dyn IdGenerator>,
-        staging_root: PathBuf,
         policy: Live<DownloadPolicy>,
     ) -> Self {
         Self {
             journal,
             ids,
-            staging_root,
             policy,
         }
     }
@@ -274,11 +269,11 @@ impl DownloadDispatch {
 
     /// Start one download. Track rows key on the recording MBID; album
     /// rows on the release-group MBID (a pinned release rides in the row
-    /// and the manifest for the library importer). The live-task check,
-    /// the idempotency claim and the insert share one transaction: a
-    /// repeat dispatch either finds the original task or nothing at all,
-    /// never a key without a task, and two asks for one album never both
-    /// queue.
+    /// and its plan for the library importer). The live-task check, the
+    /// idempotency claim and the insert with its plan share one
+    /// transaction: a repeat dispatch either finds the original task or
+    /// nothing at all, never a key without a task, and two asks for one
+    /// album never both queue.
     pub async fn dispatch(
         &self,
         request: &DispatchRequest,
@@ -328,7 +323,7 @@ impl DownloadDispatch {
             user_id: request.user_id.clone(),
             artist_name: request.artist_name.clone(),
             album_title: request.title.clone(),
-            release_group_mbid: release_group_mbid.clone(),
+            release_group_mbid,
             origin: origin.to_owned(),
             retry_count: 0,
         };
@@ -336,6 +331,19 @@ impl DownloadDispatch {
             release_mbid: release_mbid.map(str::to_owned),
             track_title: is_track.then(|| request.title.clone()),
             ..TaskDetails::default()
+        };
+        let plan = TaskPlan {
+            release_mbid: release_mbid.map(str::to_owned),
+            album_wanted: wanted,
+            planned_album,
+            album_version: matches!(
+                request.target,
+                DispatchTarget::Track {
+                    album_version: true,
+                    ..
+                }
+            ),
+            ..TaskPlan::default()
         };
         let namespaced = request
             .idempotency_key
@@ -371,6 +379,7 @@ impl DownloadDispatch {
                     store.insert_task(&task, now)?;
                 }
                 store.set_task_details(&task.id, &details, now)?;
+                store.set_task_plan(&task.id, &plan, now)?;
                 Ok(Inserted::New)
             })
             .await?;
@@ -379,79 +388,7 @@ impl DownloadDispatch {
             Inserted::KeyWithoutTask => Err(DispatchError::Failed(
                 "duplicate dispatch; original task unknown".to_owned(),
             )),
-            Inserted::New => {
-                self.write_manifest_skeleton(
-                    &task_id,
-                    &release_group_mbid,
-                    request,
-                    is_track,
-                    release_mbid,
-                    wanted,
-                    planned_album,
-                )
-                .await;
-                Ok(DispatchOutcome::Dispatched { task_id })
-            }
-        }
-    }
-
-    /// Best-effort manifest skeleton, written atomically (temp file, then
-    /// rename). A staging failure must not fail the dispatch (the task
-    /// still queues and the worker still polls); the missing manifest only
-    /// steers startup recovery toward a clean restart, which is the safe
-    /// direction.
-    #[allow(clippy::too_many_arguments)]
-    async fn write_manifest_skeleton(
-        &self,
-        task_id: &str,
-        release_group_mbid: &str,
-        request: &DispatchRequest,
-        is_track: bool,
-        release_mbid: Option<&str>,
-        album_wanted: Vec<TrackPosition>,
-        planned_album: Option<PlannedAlbum>,
-    ) {
-        let manifest = DownloadManifest {
-            task_id: task_id.to_owned(),
-            release_group_mbid: release_group_mbid.to_owned(),
-            artist_name: request.artist_name.clone(),
-            album_title: request.title.clone(),
-            target_files: Vec::new(),
-            source_username: None,
-            handle: None,
-            expected_tracks: Vec::new(),
-            release_mbid: release_mbid.map(str::to_owned),
-            artist_mbid: None,
-            year: None,
-            is_track,
-            hold_on_wrong_track: false,
-            album_version: matches!(
-                request.target,
-                DispatchTarget::Track {
-                    album_version: true,
-                    ..
-                }
-            ),
-            origin: request.origin.as_str().to_owned(),
-            requested_by_user_id: None,
-            attempt_id: None,
-            track_album: None,
-            album_wanted,
-            planned_album,
-        };
-        let staging_root = self.staging_root.clone();
-        let task_id = task_id.to_owned();
-        let written = tokio::task::spawn_blocking(move || {
-            ManifestCodec
-                .write(&staging_root, &manifest)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
-        .await
-        .map_err(|error| error.to_string())
-        .and_then(|result| result);
-        if let Err(error) = written {
-            tracing::warn!(task_id, %error, "dispatch manifest write failed");
+            Inserted::New => Ok(DispatchOutcome::Dispatched { task_id }),
         }
     }
 

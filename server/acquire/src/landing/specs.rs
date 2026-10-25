@@ -124,8 +124,6 @@ pub struct Target {
     pub track_title: Option<String>,
     /// The task's origin (a `DispatchOrigin` as stored text).
     pub origin: String,
-    /// The last-resort re-pull: hold a wrong track instead of failing over.
-    pub hold_on_wrong_track: bool,
     /// For a track download: the person chose to take the song from its
     /// album, so the album's track stands for the requested recording
     /// when it is the right track.
@@ -144,7 +142,7 @@ pub struct Target {
     /// The library copy the download was fetched for: its release is the
     /// one matched, the library's holdings are read from that copy only,
     /// and the files join it.
-    pub planned_album: Option<crate::downloads::manifest::PlannedAlbum>,
+    pub planned_album: Option<crate::downloads::plan::PlannedAlbum>,
 }
 
 impl Target {
@@ -1336,11 +1334,7 @@ impl ImportSpec for RightTrack {
             return Verdict::accept();
         };
         let wrong = |detail: String| {
-            if target.hold_on_wrong_track {
-                Verdict::hold(Reason::WrongTrack, detail)
-            } else {
-                Verdict::reject(Reason::WrongTrack, Disposition::Permanent, None, detail)
-            }
+            Verdict::reject(Reason::WrongTrack, Disposition::Permanent, None, detail)
         };
         let Some(pair) = found.requested_pair(target) else {
             return wrong("no landed file is the requested track".to_owned());

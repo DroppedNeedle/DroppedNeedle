@@ -13,9 +13,7 @@ use super::queue_rows::{ActivitySummary, ListFilter, QueueTask, TaskFacts, Viewe
 use super::source_tag::SourceTag;
 use super::sources::SourceHandle;
 use super::state::TaskStatus;
-use super::store::{
-    AttemptRow, DownloadStore, QuarantineRow, RetryAnchor, StoreError, TaskDetails, TaskRow,
-};
+use super::store::{AttemptRow, DownloadStore, QuarantineRow, RetryAnchor, StoreError, TaskRow};
 use crate::db::AcquireDb;
 use crate::flows::seams::TickSink;
 use crate::requests::settle::announce_fulfilled;
@@ -130,15 +128,6 @@ impl Journal {
     pub async fn read_retryable(&self, max_retry_count: i64) -> Result<Vec<TaskRow>, StoreError> {
         self.read("downloads.retryable", move |store| {
             store.list_retryable(max_retry_count)
-        })
-        .await
-    }
-
-    /// One task's optional detail columns.
-    pub async fn read_task_details(&self, task_id: &str) -> Result<TaskDetails, StoreError> {
-        let task_id = task_id.to_owned();
-        self.read("downloads.task_details", move |store| {
-            store.task_details(&task_id)
         })
         .await
     }

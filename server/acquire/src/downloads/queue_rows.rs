@@ -203,8 +203,9 @@ impl DownloadStore<'_> {
     }
 
     /// Insert a retry successor of `source` unless it already exists. The
-    /// edition pin and track identity ride along, so a retried edition
-    /// keeps its pinned release, and the requests that followed `source`
+    /// edition pin, track identity and the plan's release, wanted tracks,
+    /// planned copy and "Get it from the album" ride along, so a retry
+    /// fetches and files the same, and the requests that followed `source`
     /// follow the successor and read downloading again. Answers whether a
     /// row was created.
     pub fn spawn_successor(
@@ -217,6 +218,7 @@ impl DownloadStore<'_> {
             return Ok(false);
         }
         let details = self.task_details(&source.id)?;
+        let plan = self.task_plan(&source.id)?.for_successor();
         if source.download_type == "track" {
             let recording = source.recording_mbid.clone().unwrap_or_default();
             self.insert_track_task(successor, &recording, now)?;
@@ -224,6 +226,7 @@ impl DownloadStore<'_> {
             self.insert_task(successor, now)?;
         }
         self.set_task_details(&successor.id, &details, now)?;
+        self.set_task_plan(&successor.id, &plan, now)?;
         relink(self.conn, &source.id, &successor.id)?;
         Ok(true)
     }

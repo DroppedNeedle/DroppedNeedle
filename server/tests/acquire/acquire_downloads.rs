@@ -1,21 +1,22 @@
 //! Durability tests for the downloads module.
 //!
 //! Each test pins one crash-safety behavior against a scratch database
-//! and throwaway directories: restarts resume without a duplicate fetch,
-//! manifest-absent restarts come up clean, failover hands work over only
-//! past the lease, and orphan/quarantine sweeps fail closed. Nothing here
-//! touches the real library.
+//! and throwaway directories: startup recovery classifies tasks from
+//! their rows, failover hands work over only past the lease, and
+//! orphan/quarantine sweeps fail closed. Nothing here touches the real
+//! library.
 
 use droppedneedle_acquire::downloads;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::reason::Reason;
-use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, WorkerConfig};
+use droppedneedle_acquire::worker::{
+    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
+};
 use droppedneedle_providers::health::ServiceHealth;
 
 use crate::common::bundles::quiet_ticks;
@@ -24,15 +25,13 @@ fn mount_gone() -> TaskOutcome<'static> {
     TaskOutcome::new(Reason::DownloadFailed, "mount gone")
 }
 use downloads::quarantine::QuarantineReason;
-use downloads::recovery::{
-    FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx,
-};
+use downloads::recovery::{FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction};
 use downloads::state::{AttemptState, can_transition};
 use downloads::store::{NewTask, TaskOutcome};
 use downloads::{
-    DownloadManifest, DownloadStore, ExpectedFile, ManifestCodec, OrphanDecision, OrphanEvidence,
-    OrphanPolicy, PollSample, QuarantineDir, RetryPolicy, TaskStatus, Watchdog, WatchdogConfig,
-    WatchdogOutcome, canonical_soulseek_identity, classify_startup, is_terminal, plan_retry,
+    DownloadStore, OrphanDecision, OrphanEvidence, OrphanPolicy, PollSample, QuarantineDir,
+    RetryPolicy, TaskStatus, Watchdog, WatchdogConfig, WatchdogOutcome,
+    canonical_soulseek_identity, classify_startup, is_terminal, plan_retry,
 };
 use rusqlite::Connection;
 
@@ -66,142 +65,120 @@ fn new_task(id: &str) -> NewTask {
     }
 }
 
-fn manifest(task_id: &str) -> DownloadManifest {
-    DownloadManifest {
-        task_id: task_id.to_string(),
-        release_group_mbid: "rg-1".to_string(),
-        artist_name: "artist".to_string(),
-        album_title: "album".to_string(),
-        target_files: vec![ExpectedFile {
-            filename: "01.flac".to_string(),
-            size: 10,
-            duration: Some(180.0),
-        }],
-        source_username: Some("peer".to_string()),
-        handle: None,
-        expected_tracks: vec![],
-        release_mbid: None,
-        artist_mbid: None,
-        year: None,
-        is_track: false,
-        hold_on_wrong_track: false,
-        album_version: false,
-        origin: "user".to_string(),
-        requested_by_user_id: None,
-        attempt_id: Some("a1".to_string()),
-        track_album: None,
-        album_wanted: Vec::new(),
-        planned_album: None,
+// Startup recovery reads rows only. Queued tasks re-dispatch; a task
+// that was landing (processing with an acquiring, in-use, preserved or
+// cleanup-pending attempt) resumes its landing and is never fetched
+// again; a downloading or processing task resumes polling while a live
+// attempt journaled its client handle, and restarts clean under its keys
+// otherwise. Settled tasks are left alone.
+#[tokio::test]
+async fn startup_recovery_follows_the_task_rows() {
+    use StartupAction::{Noop, Redispatch, RestartClean, ResumeLanding, ResumePoll};
+    const HANDLE: &str =
+        r#"{"source":"soulseek","username":"peer","filenames":["a.flac"],"job_name":""}"#;
+    let attempts: [(&str, Option<(AttemptState, &str)>); 10] = [
+        ("none", None),
+        ("acquiring", Some((AttemptState::Acquiring, HANDLE))),
+        ("acquiring-bare", Some((AttemptState::Acquiring, ""))),
+        ("in-use", Some((AttemptState::InUse, HANDLE))),
+        ("in-use-bare", Some((AttemptState::InUse, ""))),
+        ("preserved", Some((AttemptState::Preserved, HANDLE))),
+        ("cleanup", Some((AttemptState::CleanupPending, HANDLE))),
+        ("removed", Some((AttemptState::WorkspaceRemoved, HANDLE))),
+        ("complete", Some((AttemptState::Complete, HANDLE))),
+        ("attention", Some((AttemptState::NeedsAttention, HANDLE))),
+    ];
+    let expected: [(TaskStatus, [StartupAction; 10]); 4] = [
+        (TaskStatus::Queued, [Redispatch; 10]),
+        (
+            TaskStatus::Downloading,
+            [
+                RestartClean,
+                ResumePoll,
+                RestartClean,
+                ResumePoll,
+                RestartClean,
+                RestartClean,
+                RestartClean,
+                RestartClean,
+                RestartClean,
+                RestartClean,
+            ],
+        ),
+        (
+            TaskStatus::Processing,
+            [
+                RestartClean,
+                ResumeLanding,
+                ResumeLanding,
+                ResumeLanding,
+                ResumeLanding,
+                ResumeLanding,
+                ResumeLanding,
+                RestartClean,
+                RestartClean,
+                RestartClean,
+            ],
+        ),
+        (TaskStatus::Failed, [Noop; 10]),
+    ];
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u1", "brief", "user").await.unwrap();
+    let journal = Journal::new(db, quiet_ticks());
+    let mut cases = Vec::new();
+    for (status, actions) in expected {
+        for ((attempt, row), action) in attempts.iter().zip(actions) {
+            let id = format!("{}-{attempt}", status.as_str());
+            let (task_id, row) = (id.clone(), *row);
+            journal
+                .run("test.seed", move |store| {
+                    store.insert_task(&new_task(&task_id), 1.0)?;
+                    if status != TaskStatus::Queued {
+                        store.transition_task(&task_id, status, 1.0, None)?;
+                    }
+                    if let Some((state, handle)) = row {
+                        store.insert_attempt(
+                            &format!("{task_id}-a0"),
+                            &task_id,
+                            "soulseek",
+                            0,
+                            "",
+                            handle,
+                            state,
+                            1.0,
+                        )?;
+                    }
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            cases.push((id, status, action));
+        }
     }
-}
+    for (id, status, action) in &cases {
+        let rows = journal.read_attempts(id).await.unwrap();
+        assert_eq!(classify_startup(*status, &rows), *action, "{id}");
+    }
 
-#[test]
-fn restart_mid_download_resumes_without_duplicate_fetch() {
-    let dir = scratch_dir("resume");
-    let conn = scratch_store(&dir);
-    let store = DownloadStore::new(&conn);
-    let now = 1_700_000_000.0;
-
-    store.insert_task(&new_task("t1"), now).unwrap();
-    store
-        .transition_task("t1", TaskStatus::Downloading, now, None)
-        .unwrap();
-    // First enqueue claims the key; the crash happens after the fetch.
-    assert!(
-        store
-            .claim_key("enqueue:t1:0", "t1", "enqueue", now)
-            .unwrap()
-    );
-    ManifestCodec
-        .write(&dir.join("staging"), &manifest("t1"))
-        .unwrap();
-    store
-        .insert_attempt(
-            "a1",
-            "t1",
-            "soulseek",
-            0,
-            "",
-            "{}",
-            AttemptState::InUse,
-            now,
-        )
-        .unwrap();
-
-    // Simulate the restart: a fresh store over the same database.
-    let store = DownloadStore::new(&conn);
-    assert!(
-        !store
-            .claim_key("enqueue:t1:0", "t1", "enqueue", now + 1.0)
-            .unwrap()
-    );
-
-    let task = store.get_task("t1").unwrap().unwrap();
-    assert_eq!(task.status, TaskStatus::Downloading);
-    let action = classify_startup(StartupCtx {
-        status: task.status,
-        manifest_present: ManifestCodec::path(&dir.join("staging"), "t1").exists(),
-        manifest_matches_attempt: Some(true),
-    });
-    assert_eq!(action, StartupAction::ResumePoll);
-}
-
-#[test]
-fn manifest_absent_restart_starts_clean() {
-    let dir = scratch_dir("clean");
-    let conn = scratch_store(&dir);
-    let store = DownloadStore::new(&conn);
-    let now = 1_700_000_000.0;
-
-    // The crash landed before the manifest was ever written.
-    store.insert_task(&new_task("t1"), now).unwrap();
-    store
-        .transition_task("t1", TaskStatus::Downloading, now, None)
-        .unwrap();
-
-    let task = store.get_task("t1").unwrap().unwrap();
-    let action = classify_startup(StartupCtx {
-        status: task.status,
-        manifest_present: ManifestCodec::path(&dir.join("staging"), "t1").exists(),
-        manifest_matches_attempt: None,
-    });
-    assert_eq!(action, StartupAction::RestartClean);
-
-    // A queued task that never started re-dispatches instead of failing.
-    store.insert_task(&new_task("t2"), now).unwrap();
-    let queued = store.get_task("t2").unwrap().unwrap();
-    let action = classify_startup(StartupCtx {
-        status: queued.status,
-        manifest_present: false,
-        manifest_matches_attempt: None,
-    });
-    assert_eq!(action, StartupAction::Redispatch);
-}
-
-#[test]
-fn candidate_mismatch_restart_starts_clean() {
-    let dir = scratch_dir("mismatch");
-    let conn = scratch_store(&dir);
-    let store = DownloadStore::new(&conn);
-    let now = 1_700_000_000.0;
-
-    // The prior candidate was made cleanup-eligible, then the process died
-    // before the next enqueue replaced its manifest.
-    store.insert_task(&new_task("t1"), now).unwrap();
-    store
-        .transition_task("t1", TaskStatus::Processing, now, None)
-        .unwrap();
-    ManifestCodec
-        .write(&dir.join("staging"), &manifest("t1"))
-        .unwrap();
-
-    let task = store.get_task("t1").unwrap().unwrap();
-    let action = classify_startup(StartupCtx {
-        status: task.status,
-        manifest_present: true,
-        manifest_matches_attempt: Some(false),
-    });
-    assert_eq!(action, StartupAction::RestartClean);
+    let report = run_startup_recovery(&journal).await.unwrap();
+    let count = |wanted: &[StartupAction]| {
+        cases
+            .iter()
+            .filter(|(_, _, action)| wanted.contains(action))
+            .count()
+    };
+    assert_eq!(report.redispatched, count(&[Redispatch]));
+    assert_eq!(report.resumed, count(&[ResumeLanding, ResumePoll]));
+    assert_eq!(report.restarted, count(&[RestartClean]));
+    for (id, status, action) in &cases {
+        let now = journal.read_task(id).await.unwrap().unwrap().status;
+        let after = if *action == RestartClean {
+            TaskStatus::Queued
+        } else {
+            *status
+        };
+        assert_eq!(now, after, "{id}");
+    }
 }
 
 #[test]
@@ -741,14 +718,7 @@ fn terminal_tasks_reject_outgoing_transitions() {
         TaskStatus::Failed,
         TaskStatus::Cancelled,
     ] {
-        assert_eq!(
-            classify_startup(StartupCtx {
-                status,
-                manifest_present: true,
-                manifest_matches_attempt: Some(true),
-            }),
-            StartupAction::Noop
-        );
+        assert_eq!(classify_startup(status, &[]), StartupAction::Noop);
     }
 }
 
@@ -787,19 +757,6 @@ fn quarantine_hold_rejects_escaping_stamps() {
     assert!(suspect.exists());
     let held = sandbox.hold_file(&suspect, "20240101T000000").unwrap();
     assert!(held.starts_with(dir.join("quarantine")));
-}
-
-#[test]
-fn manifest_paths_reject_escape() {
-    let staging = PathBuf::from("/tmp/staging");
-    assert!(ManifestCodec::checked_path(&staging, "../evil").is_none());
-    assert!(ManifestCodec::checked_path(&staging, "a/b").is_none());
-    assert!(ManifestCodec::checked_path(&staging, "").is_none());
-    let hex = "0123456789abcdef0123456789abcdef";
-    assert_eq!(
-        ManifestCodec::checked_path(&staging, hex),
-        Some(staging.join(hex).join("manifest.json"))
-    );
 }
 
 // Reimport needs a failed or partial task whose attempt still names its
@@ -899,10 +856,7 @@ async fn failing_cleanup_shows_on_service_health_until_it_clears() {
     let worker = Arc::new(DownloadWorker::fixed(
         journal,
         vec![crate::as_source(source.clone())],
-        WorkerConfig {
-            staging_root: staging,
-            ..WorkerConfig::default()
-        },
+        WorkerConfig::default(),
         droppedneedle_kernel::events::EventHub::new(),
         health.clone(),
     ));

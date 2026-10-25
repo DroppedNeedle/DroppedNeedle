@@ -3,7 +3,6 @@
 
 use std::fmt;
 
-use crate::downloads::manifest::RecordedReason;
 use crate::reason::Reason;
 
 /// One reason from the track-to-album path.
@@ -62,16 +61,6 @@ impl TrackReason {
     /// What happened, in one sentence.
     pub fn message(self) -> &'static str {
         Reason::from(self).message()
-    }
-
-    /// The reason as the manifest records it.
-    pub fn record(self) -> RecordedReason {
-        let reason = Reason::from(self);
-        RecordedReason {
-            code: reason.code().to_owned(),
-            message: reason.message().to_owned(),
-            action: reason.action().to_owned(),
-        }
     }
 }
 

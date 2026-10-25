@@ -12,8 +12,8 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
 };
+use droppedneedle_acquire::downloads::TrackPosition;
 use droppedneedle_acquire::downloads::journal::Journal;
-use droppedneedle_acquire::downloads::manifest::{ManifestCodec, TrackPosition};
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
@@ -127,12 +127,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
         .join("settings");
     let settings =
         droppedneedle_acquire::settings::scratch_settings(&settings_dir).expect("settings open");
-    let dispatch = DownloadDispatch::new(
-        journal.clone(),
-        Arc::new(UuidGenerator),
-        staging.to_path_buf(),
-        settings.live(),
-    );
+    let dispatch = DownloadDispatch::new(journal.clone(), Arc::new(UuidGenerator), settings.live());
     let outcome = dispatch
         .dispatch(&DispatchRequest {
             user_id: "u1".to_owned(),
@@ -176,11 +171,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
         ],
     );
     albums.releases.insert(ALBUM_RELEASE.to_owned(), album());
-    let targets = Arc::new(Targets::new(
-        journal.clone(),
-        staging.to_path_buf(),
-        Some(Arc::new(albums)),
-    ));
+    let targets = Arc::new(Targets::new(journal.clone(), Some(Arc::new(albums))));
 
     let http = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), MOCK_API_KEY);
     let repo = SlskdRepository::new(
@@ -199,10 +190,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
     let worker = Arc::new(DownloadWorker::fixed(
         journal.clone(),
         vec![crate::as_source(Arc::new(source))],
-        WorkerConfig {
-            staging_root: staging.to_path_buf(),
-            ..WorkerConfig::default()
-        },
+        WorkerConfig::default(),
         droppedneedle_kernel::events::EventHub::new(),
         Default::default(),
     ));
@@ -232,7 +220,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
         ["@@music\\Massive Attack\\Blue Lines\\02 One Love.flac"]
     );
 
-    // The task row and the manifest carry the album for the landing.
+    // The task row and its plan carry the album for the landing.
     let task = journal
         .read_task(&task_id)
         .await
@@ -240,17 +228,14 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
         .expect("task exists");
     assert_eq!(task.release_group_mbid, ALBUM_GROUP);
     assert_eq!(task.album_title, "Blue Lines");
-    let bytes = std::fs::read(ManifestCodec::path(&staging, &task_id)).expect("manifest written");
-    let manifest = ManifestCodec.decode(&bytes).expect("manifest decodes");
-    assert_eq!(manifest.release_mbid.as_deref(), Some(ALBUM_RELEASE));
-    assert_eq!(manifest.expected_tracks.len(), 4);
-    let context = manifest.track_album.expect("album context recorded");
-    assert_eq!(context.release_mbid, ALBUM_RELEASE);
+    let plan_task = task_id.clone();
+    let plan = journal
+        .read("test.plan", move |store| store.task_plan(&plan_task))
+        .await
+        .expect("plan reads");
+    assert_eq!(plan.release_mbid.as_deref(), Some(ALBUM_RELEASE));
+    assert_eq!(plan.expected_tracks.len(), 4);
+    let context = plan.track_album.expect("album context recorded");
     assert_eq!(context.basis, "best_official");
     assert_eq!(context.wanted, [TrackPosition { disc: 1, track: 2 }]);
-    assert!(context.lone_track_reason.is_none());
-    assert!(
-        manifest.handle.is_some(),
-        "the worker kept the album context"
-    );
 }

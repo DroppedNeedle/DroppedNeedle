@@ -5819,6 +5819,41 @@ async fn acquire_reasons_are_typed_on_upgrade() {
     assert!(version >= 83, "user_version {version}");
 }
 
+/// Migration 0084 puts a download's plan on its task row. A task queued
+/// before it reads the empty plan of a plain download and stays queued
+/// for the worker to dispatch.
+#[tokio::test]
+async fn queued_downloads_take_an_empty_plan_on_upgrade() {
+    use droppedneedle_acquire::downloads::TaskPlan;
+
+    let pool = scratch_pool().await;
+    migrator_through(83).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
+             album_title, status, created_at, updated_at) \
+         VALUES ('t-queued', 'u1', 'rg', 'A', 'B', 'queued', 1, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let (status, plan): (String, String) =
+        sqlx::query_as("SELECT status, plan_json FROM download_tasks WHERE id = 't-queued'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "queued");
+    assert_eq!(TaskPlan::decode(&plan).unwrap(), TaskPlan::default());
+    assert!(
+        TaskPlan::decode(r#"{"hold_on_wrong_track": true}"#).is_err(),
+        "a field the plan does not have is refused"
+    );
+}
+
 /// Wall time in milliseconds, for checks against "due now".
 fn now_ms() -> i64 {
     let elapsed = std::time::SystemTime::now()

@@ -16,6 +16,7 @@ use std::cell::RefCell;
 
 use rusqlite::{Connection, OptionalExtension, Row};
 
+use super::plan::TaskPlan;
 use super::source_tag::SourceTag;
 use super::sql;
 use super::state::{AttemptState, TaskStatus};
@@ -33,6 +34,14 @@ pub enum StoreError {
     /// Out of a terminal status, or finalizing into a non-terminal one.
     #[error("invalid download transition: {0}")]
     InvalidTransition(String),
+    /// A task's stored plan does not decode, or a plan does not encode.
+    #[error("download plan of task {task_id}: {detail}")]
+    Plan {
+        /// The task the plan belongs to.
+        task_id: String,
+        /// What serde said.
+        detail: String,
+    },
 }
 
 impl From<rusqlite::Error> for StoreError {
@@ -245,6 +254,8 @@ pub struct AttemptRow {
     pub error_code: Option<String>,
     /// Optimistic-concurrency revision; every transition bumps it.
     pub row_revision: i64,
+    /// Whether the client handle was journaled with the attempt.
+    pub handle_journaled: bool,
 }
 
 impl AttemptRow {
@@ -267,6 +278,7 @@ impl AttemptRow {
             lease_expires_at: row.get("lease_expires_at")?,
             error_code: row.get("error_code")?,
             row_revision: row.get("row_revision")?,
+            handle_journaled: !row.get::<_, String>("handle_json")?.is_empty(),
         })
     }
 }
@@ -500,6 +512,42 @@ impl<'conn> DownloadStore<'conn> {
             year,
             track_title,
         })
+    }
+
+    /// One task's plan. A task with no row reads as the empty plan; a
+    /// stored plan that does not decode is an error, never an empty plan.
+    pub fn task_plan(&self, task_id: &str) -> Result<TaskPlan, StoreError> {
+        let stored: Option<String> = self
+            .conn
+            .query_row(sql::TASK_PLAN.text(), rusqlite::params![task_id], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        let Some(json) = stored else {
+            return Ok(TaskPlan::default());
+        };
+        TaskPlan::decode(&json).map_err(|error| StoreError::Plan {
+            task_id: task_id.to_owned(),
+            detail: error.to_string(),
+        })
+    }
+
+    /// Replace one task's plan.
+    pub fn set_task_plan(
+        &self,
+        task_id: &str,
+        plan: &TaskPlan,
+        now: f64,
+    ) -> Result<(), StoreError> {
+        let json = plan.encode().map_err(|error| StoreError::Plan {
+            task_id: task_id.to_owned(),
+            detail: error.to_string(),
+        })?;
+        self.conn.execute(
+            sql::SET_TASK_PLAN.text(),
+            rusqlite::params![json, now, task_id],
+        )?;
+        Ok(())
     }
 
     /// Fetch one task row, if it exists.

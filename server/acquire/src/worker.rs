@@ -2,7 +2,7 @@
 //!
 //! [`run_startup_recovery`] classifies every active task before serving
 //! traffic (queued tasks re-dispatch through the first worker pass,
-//! manifest-backed tasks resume polling, the rest restart clean under the
+//! landings and live attempts resume, the rest restart clean under the
 //! same idempotency keys, so a double resume cannot double-enqueue).
 //! [`DownloadWorker`] then runs the steady-state passes on one cadence:
 //!
@@ -28,12 +28,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use super::downloads::journal::Journal;
-use super::downloads::manifest::{DownloadManifest, ExpectedFile, ManifestCodec};
 use super::downloads::orphans::{OrphanDecision, OrphanEvidence, evaluate_orphan, job_name_parts};
 use super::downloads::quarantine::{QUARANTINE_TTL_SECONDS, QuarantineReason, failover_identities};
 use super::downloads::recovery::{
-    FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx, classify_startup,
-    plan_retry,
+    FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, classify_startup, plan_retry,
 };
 use super::downloads::source_tag::SourceTag;
 use super::downloads::sources::OrphanOwnership;
@@ -108,20 +106,18 @@ fn logged<R>(name: &'static str, result: Result<R, StoreError>) -> Option<R> {
 pub struct RecoveryReport {
     /// Queued rows the first worker pass will dispatch.
     pub redispatched: usize,
-    /// Manifest-backed rows resuming polling.
+    /// Rows resuming their landing or their polling.
     pub resumed: usize,
     /// Rows restarted clean (back to queued, same keys).
     pub restarted: usize,
 }
 
-/// Classify every active task and restart the clean ones. Never fails a
-/// task: queued rows stay queued for the first pass, manifest-backed rows
-/// keep polling, and anything else returns to queued under its existing
-/// idempotency keys. Re-running after a clean shutdown is a no-op.
-pub async fn run_startup_recovery(
-    journal: &Journal,
-    staging_root: &Path,
-) -> Result<RecoveryReport, String> {
+/// Classify every active task from its rows and restart the clean ones.
+/// Never fails a task: queued rows stay queued for the first pass, a
+/// landing or a live attempt resumes, and anything else returns to queued
+/// under its existing idempotency keys. Re-running after a clean shutdown
+/// is a no-op.
+pub async fn run_startup_recovery(journal: &Journal) -> Result<RecoveryReport, String> {
     match journal
         .read("downloads.reason_spellings", |store| {
             store.stored_reason_spellings()
@@ -141,7 +137,6 @@ pub async fn run_startup_recovery(
         .map_err(|error| error.to_string())?;
     let mut report = RecoveryReport::default();
     for task in tasks {
-        let manifest = read_manifest(staging_root, &task.id).await;
         let attempts = match journal.read_attempts(&task.id).await {
             Ok(attempts) => attempts,
             Err(error) => {
@@ -152,34 +147,9 @@ pub async fn run_startup_recovery(
                 continue;
             }
         };
-        let manifest_matches_attempt = manifest
-            .as_ref()
-            .and_then(|m| m.attempt_id.as_deref())
-            .map(|linked| attempts.iter().any(|attempt| attempt.id == linked));
-        if task.status == TaskStatus::Processing
-            && attempts.iter().any(|attempt| {
-                matches!(
-                    attempt.state,
-                    AttemptState::Acquiring
-                        | AttemptState::InUse
-                        | AttemptState::Preserved
-                        | AttemptState::CleanupPending
-                )
-            })
-        {
-            // Processing means a landing was running: it resumes on the
-            // first poll pass from the files its attempt names, whether
-            // or not the manifest survived. Never a fresh download.
-            report.resumed += 1;
-            continue;
-        }
-        match classify_startup(StartupCtx {
-            status: task.status,
-            manifest_present: manifest.is_some(),
-            manifest_matches_attempt,
-        }) {
+        match classify_startup(task.status, &attempts) {
             StartupAction::Redispatch => report.redispatched += 1,
-            StartupAction::ResumePoll => report.resumed += 1,
+            StartupAction::ResumeLanding | StartupAction::ResumePoll => report.resumed += 1,
             StartupAction::RestartClean => {
                 let task_id = task.id.clone();
                 let clock = journal.db().clock().clone();
@@ -196,57 +166,6 @@ pub async fn run_startup_recovery(
         }
     }
     Ok(report)
-}
-
-/// A retry's manifest skeleton, from its source's manifest: the release
-/// it fetches, the tracks it asks for and the library copy it is for, so
-/// the retry fetches and files the same as the first attempt. Nothing
-/// when the source has no manifest. Best effort, like the dispatch
-/// skeleton.
-async fn write_successor_manifest(staging_root: &Path, source_id: &str, successor: &NewTask) {
-    let Some(from) = read_manifest(staging_root, source_id).await else {
-        return;
-    };
-    let task_id = successor.id.clone();
-    let manifest = DownloadManifest {
-        task_id: successor.id.clone(),
-        release_group_mbid: from.release_group_mbid,
-        artist_name: from.artist_name,
-        album_title: from.album_title,
-        target_files: Vec::new(),
-        source_username: None,
-        handle: None,
-        expected_tracks: Vec::new(),
-        release_mbid: from.release_mbid,
-        artist_mbid: None,
-        year: None,
-        is_track: from.is_track,
-        hold_on_wrong_track: false,
-        album_version: from.album_version,
-        origin: successor.origin.clone(),
-        requested_by_user_id: None,
-        attempt_id: None,
-        track_album: None,
-        album_wanted: from.album_wanted,
-        planned_album: from.planned_album,
-    };
-    let root = staging_root.to_path_buf();
-    match tokio::task::spawn_blocking(move || ManifestCodec.write(&root, &manifest)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => {
-            tracing::warn!(%task_id, %error, "retry manifest write failed");
-        }
-        Err(error) => {
-            tracing::warn!(%task_id, %error, "retry manifest write did not run");
-        }
-    }
-}
-
-/// A task's manifest, when present and readable.
-async fn read_manifest(staging_root: &Path, task_id: &str) -> Option<DownloadManifest> {
-    let path = ManifestCodec::checked_path(staging_root, task_id)?;
-    let bytes = tokio::fs::read(path).await.ok()?;
-    ManifestCodec.decode(&bytes).ok()
 }
 
 /// A test source whose every download is finished at once and landed at
@@ -378,8 +297,6 @@ pub struct WorkerConfig {
     pub watchdog: WatchdogConfig,
     /// Sources in try order.
     pub source_order: Vec<SourceTag>,
-    /// Per-task staging root (manifests live beneath it).
-    pub staging_root: PathBuf,
     /// Complete dirs to walk as `(journal source, dir)`.
     pub orphan_roots: Vec<(SourceTag, PathBuf)>,
     /// Lease owner name for cleanup claims.
@@ -396,7 +313,6 @@ impl Default for WorkerConfig {
             retry: RetryPolicy::default(),
             watchdog: WatchdogConfig::default(),
             source_order: vec![SourceTag::Soulseek, SourceTag::Usenet],
-            staging_root: PathBuf::from("staging"),
             orphan_roots: Vec::new(),
             worker_id: "download-worker".to_owned(),
             review: ReviewMode::default(),
@@ -459,13 +375,6 @@ impl Inputs {
         match self {
             Self::Live(settings) => settings.readable(),
             Self::Fixed { .. } => true,
-        }
-    }
-
-    fn staging_root(&self) -> PathBuf {
-        match self {
-            Self::Live(settings) => settings.staging_root().to_owned(),
-            Self::Fixed { config, .. } => config.staging_root.clone(),
         }
     }
 }
@@ -672,11 +581,6 @@ impl DownloadWorker {
     /// and [`Self::sources_now`] is empty.
     pub fn settings_readable(&self) -> bool {
         self.inputs.readable()
-    }
-
-    /// Where landings stage files.
-    pub fn staging_root(&self) -> PathBuf {
-        self.inputs.staging_root()
     }
 
     /// Whether a download source is on: the answer requests, the health
@@ -1080,8 +984,7 @@ impl DownloadWorker {
     }
 
     /// Journal one successful enqueue: the attempt row plus the
-    /// Downloading transition in one write, then the manifest handle and
-    /// fresh poll memory. If the attempt id is already taken (another
+    /// Downloading transition in one write, then fresh poll memory. If the attempt id is already taken (another
     /// writer journaled this slot), the new client job is aborted so it
     /// never runs untracked.
     async fn journal_enqueued(
@@ -1105,11 +1008,10 @@ impl DownloadWorker {
         let task_id = task.id.clone();
         let journal_source = source.tag().to_string();
         let job_name = handle.job_name.clone();
-        let row_id = attempt_id.clone();
         let journaled = self
             .step("downloads.enqueued", move |store| {
                 store.insert_attempt(
-                    &row_id,
+                    &attempt_id,
                     &task_id,
                     &journal_source,
                     source_index,
@@ -1127,8 +1029,6 @@ impl DownloadWorker {
             }
             return;
         }
-        self.write_manifest_handle(pass, task, handle, &attempt_id)
-            .await;
         super::plugin_events::download_event(
             &self.plugins,
             droppedneedle_plugins::runtime::EventKind::DownloadStarted,
@@ -1145,75 +1045,6 @@ impl DownloadWorker {
                     last_move_at: now,
                 },
             );
-        }
-    }
-
-    /// Merge the client handle, target files and attempt link into the
-    /// task manifest. Best-effort: a missing manifest only steers recovery
-    /// toward a clean restart.
-    async fn write_manifest_handle(
-        &self,
-        pass: &Pass,
-        task: &TaskRow,
-        handle: &SourceHandle,
-        attempt_id: &str,
-    ) {
-        let staging_root = pass.config.staging_root.clone();
-        let mut manifest = read_manifest(&staging_root, &task.id)
-            .await
-            .unwrap_or_else(|| DownloadManifest {
-                task_id: task.id.clone(),
-                release_group_mbid: task.release_group_mbid.clone(),
-                artist_name: task.artist_name.clone(),
-                album_title: task.album_title.clone(),
-                target_files: Vec::new(),
-                source_username: None,
-                handle: None,
-                expected_tracks: Vec::new(),
-                release_mbid: None,
-                artist_mbid: None,
-                year: None,
-                is_track: task.download_type == "track",
-                hold_on_wrong_track: false,
-                album_version: false,
-                origin: task.origin.clone(),
-                requested_by_user_id: None,
-                attempt_id: None,
-                track_album: None,
-                album_wanted: Vec::new(),
-                planned_album: None,
-            });
-        manifest.handle = Some(super::downloads::manifest::TaskHandle {
-            source: handle.source.to_string(),
-            username: handle.username.clone(),
-            filenames: handle.filenames.clone(),
-            job_name: handle.job_name.clone(),
-        });
-        manifest.attempt_id = Some(attempt_id.to_owned());
-        // Each attempt's files, with the sizes the chosen candidate
-        // advertised (the import's size check reads them from the handle).
-        manifest.target_files = handle
-            .filenames
-            .iter()
-            .enumerate()
-            .map(|(index, filename)| ExpectedFile {
-                filename: filename.clone(),
-                size: handle.sizes.get(index).copied().unwrap_or(0),
-                duration: None,
-            })
-            .collect();
-        let task_id = task.id.clone();
-        let written =
-            tokio::task::spawn_blocking(move || ManifestCodec.write(&staging_root, &manifest))
-                .await;
-        match written {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(task_id, %error, "manifest handle write failed");
-            }
-            Err(error) => {
-                tracing::warn!(task_id, %error, "manifest handle write join failed");
-            }
         }
     }
 
@@ -1633,7 +1464,6 @@ impl DownloadWorker {
                 continue;
             };
             let successor = row.id.clone();
-            let next = row.clone();
             let source = task.clone();
             let spawned = self
                 .step("downloads.retry", move |store| {
@@ -1647,7 +1477,6 @@ impl DownloadWorker {
                 })
                 .await;
             if spawned == Some(true) {
-                write_successor_manifest(&pass.config.staging_root, &task.id, &next).await;
                 tracing::info!(
                     task_id = %task.id,
                     successor = %successor,

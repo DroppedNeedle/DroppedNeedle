@@ -438,8 +438,6 @@ pub struct AcquireSetup {
     source_notices: SourceNotices,
     /// Asks the probe loop for a pass now.
     probe_wake: Arc<watch::Sender<u64>>,
-    /// Per-task staging root (manifests, drop jobs, quarantine).
-    pub staging_root: PathBuf,
     /// Store-prune deps (request history and wanted rows).
     pub prune: Arc<PruneDeps>,
     /// Live event hub handle shared by the flows and the imports.
@@ -591,7 +589,6 @@ struct Core {
 fn core(
     stores: &AcquireStores,
     ids: Arc<dyn IdGenerator>,
-    staging_root: &Path,
     settings: &ConfigStore,
     quota: Arc<QuotaLedger>,
     sources: SourceList,
@@ -600,12 +597,7 @@ fn core(
 ) -> Core {
     let db = &stores.db;
     let journal = stores.journal.clone();
-    let dispatch = Arc::new(DownloadDispatch::new(
-        journal.clone(),
-        ids,
-        staging_root.to_owned(),
-        settings.live(),
-    ));
+    let dispatch = Arc::new(DownloadDispatch::new(journal.clone(), ids, settings.live()));
     // Album intake as the Weekly Mix builder files it: everything but the
     // builder itself, which intake never reaches.
     let intake = RequestsState {
@@ -678,18 +670,13 @@ impl AcquireSetup {
             stores.journal.clone(),
             Arc::new(Targets::new(
                 stores.journal.clone(),
-                staging_root.clone(),
                 Some(ports.album_lookup),
             )),
             Some(ports.plugins.clone()),
         ));
         let events = platform.events.clone();
         let search_quota = quota.clone();
-        let worker_settings = Arc::new(WorkerSettings::new(
-            &config_store,
-            clients.clone(),
-            staging_root.clone(),
-        ));
+        let worker_settings = Arc::new(WorkerSettings::new(&config_store, clients.clone()));
         let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
         let readiness = SourceReadiness::new(
             SourceList::Live(worker_settings.clone()),
@@ -705,7 +692,6 @@ impl AcquireSetup {
         let core = core(
             &stores,
             ids.clone(),
-            &staging_root,
             &config_store,
             quota,
             SourceList::Live(worker_settings.clone()),
@@ -828,7 +814,6 @@ impl AcquireSetup {
             readiness,
             source_notices,
             probe_wake: Arc::new(watch::Sender::new(0)),
-            staging_root,
             prune,
             events,
             landing,
@@ -871,22 +856,13 @@ impl AcquireSetup {
             ClientLives::new(&settings),
             staging_root.clone(),
             stores.journal.clone(),
-            Arc::new(Targets::new(
-                stores.journal.clone(),
-                staging_root.clone(),
-                None,
-            )),
+            Arc::new(Targets::new(stores.journal.clone(), None)),
             None,
         ));
-        let worker_settings = Arc::new(WorkerSettings::new(
-            &settings,
-            clients.clone(),
-            staging_root.clone(),
-        ));
+        let worker_settings = Arc::new(WorkerSettings::new(&settings, clients.clone()));
         let core = core(
             &stores,
             ids.clone(),
-            &staging_root,
             &settings,
             Arc::new(QuotaLedger::unlimited(db.clone())),
             SourceList::Live(worker_settings.clone()),
@@ -969,10 +945,7 @@ impl AcquireSetup {
             DownloadWorker::fixed(
                 core.journal.clone(),
                 Vec::new(),
-                WorkerConfig {
-                    staging_root: staging_root.clone(),
-                    ..WorkerConfig::default()
-                },
+                WorkerConfig::default(),
                 events.clone(),
                 Default::default(),
             )
@@ -1009,7 +982,6 @@ impl AcquireSetup {
                 plugins: None,
             },
             probe_wake: Arc::new(watch::Sender::new(0)),
-            staging_root,
             prune,
             events,
             landing,
@@ -1047,7 +1019,7 @@ impl AcquireSetup {
     /// keys, and a request's cancel or dispatch reuses its key or relinks.
     pub async fn run_recovery(&self) -> Result<super::worker::RecoveryReport, RecoveryError> {
         self.drops.sweep_stale().await;
-        let report = run_startup_recovery(&self.journal, &self.staging_root)
+        let report = run_startup_recovery(&self.journal)
             .await
             .map_err(RecoveryError::Failed)?;
         let requests = super::requests::service::RequestsService::new(&self.requests)
@@ -1410,12 +1382,11 @@ pub struct WorkerSettings {
     sabnzbd: Live<DownloadClients>,
     library: Live<TypedLibrary>,
     musicbrainz: Live<MusicBrainzSettings>,
-    staging_root: PathBuf,
 }
 
 impl WorkerSettings {
     /// Handles on `store`'s sections, with the sources `clients` build.
-    pub fn new(store: &ConfigStore, clients: Arc<LiveClients>, staging_root: PathBuf) -> Self {
+    pub fn new(store: &ConfigStore, clients: Arc<LiveClients>) -> Self {
         Self {
             clients,
             policy: store.live(),
@@ -1423,7 +1394,6 @@ impl WorkerSettings {
             sabnzbd: store.live(),
             library: store.live(),
             musicbrainz: store.live(),
-            staging_root,
         }
     }
 
@@ -1459,11 +1429,6 @@ impl WorkerSettings {
             && self.musicbrainz.read().is_some()
     }
 
-    /// Where landings stage files. Not a setting, so it never waits.
-    pub(crate) fn staging_root(&self) -> &Path {
-        &self.staging_root
-    }
-
     /// The worker tuning as saved right now, or `None` while a section it
     /// needs does not read. An unreadable SABnzbd section is an
     /// unconfigured one, as in the client set, so slskd keeps working.
@@ -1475,12 +1440,7 @@ impl WorkerSettings {
         let source_priority = self.source_priority.read()?;
         let sab = self.sabnzbd.read().unwrap_or_default();
         let sab_mount = sabnzbd_mount(&sab);
-        Some(worker_config(
-            &policy,
-            &source_priority,
-            &self.staging_root,
-            sab_mount,
-        ))
+        Some(worker_config(&policy, &source_priority, sab_mount))
     }
 }
 
@@ -1516,7 +1476,6 @@ pub fn recycle_guard(store: &ConfigStore, staging_root: PathBuf) -> DownloadTree
 fn worker_config(
     policy: &DownloadPolicy,
     source_priority: &SourcePriority,
-    staging_root: &Path,
     sab_mount: Option<PathBuf>,
 ) -> WorkerConfig {
     let mut source_order: Vec<SourceTag> = source_priority
@@ -1545,7 +1504,6 @@ fn worker_config(
             reap_threshold_seconds: 1800.0,
         },
         source_order,
-        staging_root: staging_root.to_owned(),
         orphan_roots,
         worker_id: "download-worker".to_owned(),
         review: crate::search_jobs::review::ReviewMode::from_setting(&policy.search_review),

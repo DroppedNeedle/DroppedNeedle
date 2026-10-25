@@ -876,7 +876,6 @@ pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<axum::Router, Str
     let dispatch = crate::dispatch::DownloadDispatch::new(
         worker.journal().clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-        worker.staging_root(),
         settings.live(),
     );
     let upgrades = Upgrades::new(

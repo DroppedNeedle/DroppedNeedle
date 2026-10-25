@@ -128,11 +128,9 @@ fn settings(db: &AcquireDb) -> ConfigStore {
 
 /// The production dispatch over the download journal on `db`.
 fn dispatch(db: &AcquireDb, settings: &ConfigStore) -> Arc<DownloadDispatch> {
-    let staging = db.path().parent().expect("scratch dir").join("staging");
     Arc::new(DownloadDispatch::new(
         Arc::new(Journal::new(db.clone(), quiet_ticks())),
         Arc::new(UuidGenerator),
-        staging,
         settings.live(),
     ))
 }
@@ -239,14 +237,10 @@ async fn sources_over(
         ClientLives::new(settings),
         dir.join("slskd"),
         journal.clone(),
-        Arc::new(Targets::new(journal, dir.join("staging"), None)),
+        Arc::new(Targets::new(journal, None)),
         None,
     ));
-    let sources = SourceList::Live(Arc::new(WorkerSettings::new(
-        settings,
-        clients,
-        dir.join("staging"),
-    )));
+    let sources = SourceList::Live(Arc::new(WorkerSettings::new(settings, clients)));
     (sources, slskd)
 }
 

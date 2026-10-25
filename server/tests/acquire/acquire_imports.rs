@@ -163,16 +163,12 @@ fn rig_with(
         ClientLives::new(&platform.settings),
         platform.config.slskd_downloads_path.clone(),
         journal.clone(),
-        Arc::new(Targets::new(journal, platform.config.imports_dir(), None)),
+        Arc::new(Targets::new(journal, None)),
         plugins,
     ));
     let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
     let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
-    let worker_settings = Arc::new(WorkerSettings::new(
-        &platform.settings,
-        clients.clone(),
-        platform.config.imports_dir(),
-    ));
+    let worker_settings = Arc::new(WorkerSettings::new(&platform.settings, clients.clone()));
     let deps = ImportsDeps {
         lidarr: LidarrClient::new(http),
         lidarr_settings,
@@ -1731,11 +1727,7 @@ async fn readiness_answers(setup: SourceSetup) -> (Vec<bool>, Vec<String>) {
     let platform = &auth.platform;
     let db = AcquireDb::new(platform.db.clone(), platform.clock.clone());
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
-    let targets = Arc::new(Targets::new(
-        journal.clone(),
-        platform.config.imports_dir(),
-        None,
-    ));
+    let targets = Arc::new(Targets::new(journal.clone(), None));
     let worker = Arc::new(DownloadWorker::new(
         journal,
         rig.worker_settings.clone(),

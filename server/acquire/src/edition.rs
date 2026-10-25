@@ -25,7 +25,7 @@ pub enum EditionBasis {
 }
 
 impl EditionBasis {
-    /// Stable label, as the manifest records it.
+    /// Stable label, as the task plan records it.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Manual => "manual_identity",

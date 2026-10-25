@@ -3,7 +3,7 @@
 //! Seven areas plus a unification layer:
 //!
 //! - [`requests`] serves the user-facing ask/approval/wanted surface.
-//! - [`downloads`] owns the durable task journal, manifests, watchdog
+//! - [`downloads`] owns the durable task journal, task plans, watchdog
 //!   math, recovery classification, and quarantine.
 //! - [`slskd`] and [`usenet`] own the source clients and indexers, which
 //!   all fail with one [`client_error::ClientError`].

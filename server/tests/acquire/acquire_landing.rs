@@ -10,17 +10,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::downloads::SourceTag;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
-use droppedneedle_acquire::downloads::manifest::DownloadManifest;
-use droppedneedle_acquire::downloads::state::TaskStatus;
+use droppedneedle_acquire::downloads::sources::SourceHandle;
+use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
 use droppedneedle_acquire::downloads::store::{NewTask, TaskOutcome};
+use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion, TaskPlan};
 use droppedneedle_acquire::landing::library::LibraryLanding;
 use droppedneedle_acquire::landing::ports::LandingLibrary;
 use droppedneedle_acquire::landing::specs::{Disposition, Rejection};
 use droppedneedle_acquire::landing::{Landed, LandingReport, LandingResult, Reported};
 use droppedneedle_acquire::reason::{Reason, ReasonKind};
-use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, WorkerConfig};
+use droppedneedle_acquire::worker::{
+    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
+};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::ids::UuidGenerator;
@@ -270,10 +274,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
                     downloads.clone(),
                     paths,
                 )))],
-                WorkerConfig {
-                    staging_root: acquire.staging_root.clone(),
-                    ..WorkerConfig::default()
-                },
+                WorkerConfig::default(),
                 droppedneedle_kernel::events::EventHub::new(),
                 Default::default(),
             )
@@ -549,10 +550,7 @@ async fn land_with_recording(
                 downloads.clone(),
                 files.clone(),
             )))],
-            WorkerConfig {
-                staging_root: acquire.staging_root.clone(),
-                ..WorkerConfig::default()
-            },
+            WorkerConfig::default(),
             droppedneedle_kernel::events::EventHub::new(),
             Default::default(),
         )
@@ -640,7 +638,7 @@ async fn land_for(
 
 /// [`land_for`], where the client reported the files under the remote
 /// names `remote` (as Soulseek does). With names, the landing runs once
-/// directly, with the manifest that records them.
+/// directly, for an attempt whose journaled handle records them.
 async fn land_reported(
     task: NewTask,
     remote: &[&str],
@@ -728,11 +726,28 @@ async fn land_heard(
         .await
         .expect("task");
     if !remote.is_empty() {
-        let manifest: DownloadManifest = serde_json::from_value(serde_json::json!({
-            "task_id": task_id,
-            "handle": {"source": "soulseek", "username": "peer", "filenames": remote},
-        }))
-        .expect("manifest");
+        let handle = serde_json::json!({
+            "source": "soulseek", "username": "peer", "filenames": remote, "job_name": "",
+        })
+        .to_string();
+        let attempt = format!("{task_id}-a0");
+        let (row_task, row_attempt) = (task_id.clone(), attempt.clone());
+        acquire
+            .journal
+            .run("test.attempt", move |store| {
+                store.insert_attempt(
+                    &row_attempt,
+                    &row_task,
+                    "soulseek",
+                    0,
+                    "",
+                    &handle,
+                    AttemptState::InUse,
+                    1.0,
+                )
+            })
+            .await
+            .expect("attempt");
         let row = acquire.journal.read_task(&task_id).await.unwrap().unwrap();
         let landed = Landed {
             mounts: vec![downloads_dir.clone().into()],
@@ -740,7 +755,7 @@ async fn land_heard(
         };
         acquire
             .landing
-            .land(&row, None, Some(&manifest), landed, false)
+            .land(&row, Some(&attempt), landed, false)
             .await;
         return (acquire, music, platform);
     }
@@ -751,10 +766,7 @@ async fn land_heard(
                 downloads_dir,
                 files,
             )))],
-            WorkerConfig {
-                staging_root: acquire.staging_root.clone(),
-                ..WorkerConfig::default()
-            },
+            WorkerConfig::default(),
             droppedneedle_kernel::events::EventHub::new(),
             Default::default(),
         )
@@ -1268,10 +1280,7 @@ async fn held_files_import_as_upgrades_or_discard() {
                     dir.join("downloads"),
                     paths,
                 )))],
-                WorkerConfig {
-                    staging_root: acquire.staging_root.clone(),
-                    ..WorkerConfig::default()
-                },
+                WorkerConfig::default(),
                 droppedneedle_kernel::events::EventHub::new(),
                 Default::default(),
             )
@@ -1463,7 +1472,7 @@ async fn rejection(
     let task = acquire.journal.read_task(task_id).await.unwrap().unwrap();
     match acquire
         .landing
-        .land(&task, None, None, landed, patient)
+        .land(&task, None, landed, patient)
         .await
         .result
     {
@@ -1581,8 +1590,7 @@ async fn a_landing_waits_while_the_download_policy_does_not_read() {
         mounts: vec![mount.into()],
         files: vec![Reported::path(file.clone())],
     };
-    let LandingResult::Rejected(rejection) =
-        landing.land(&task, None, None, landed, false).await.result
+    let LandingResult::Rejected(rejection) = landing.land(&task, None, landed, false).await.result
     else {
         panic!("the landing went ahead under unreadable settings");
     };
@@ -1634,7 +1642,7 @@ async fn a_wait_after_an_import_does_not_hide_it() {
     };
     let report = acquire
         .landing
-        .land(&task, Some("t-again-a0"), None, landed, false)
+        .land(&task, Some("t-again-a0"), landed, false)
         .await;
     assert!(
         matches!(report.result, LandingResult::Imported { complete: true }),
@@ -1874,7 +1882,6 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
             acquire.journal.clone(),
             vec![crate::as_source(Arc::new(source))],
             WorkerConfig {
-                staging_root: acquire.staging_root.clone(),
                 orphan_roots: vec![(
                     droppedneedle_acquire::downloads::SourceTag::Usenet,
                     complete.clone(),
@@ -2103,7 +2110,6 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
     );
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
         acquire.journal.clone(),
-        acquire.staging_root.clone(),
         Some(Arc::new(Lookup(releases))),
     ));
     JoinRig {
@@ -2245,7 +2251,7 @@ impl JoinRig {
 
     /// A queued album download of `group` on `release`, fetched for
     /// `planned` (album id, release) when given, asking for `wanted`. Its
-    /// manifest has no tracklist, so the album target rewrite runs.
+    /// plan has no tracklist, so the album target rewrite runs.
     #[allow(clippy::too_many_arguments)]
     async fn ask(
         &self,
@@ -2284,22 +2290,8 @@ impl JoinRig {
             release_mbid: release.map(str::to_owned),
             ..Default::default()
         };
-        let id = task_id.to_owned();
-        self.acquire
-            .journal
-            .run("test.seed", move |store| {
-                store.insert_task(&task, 1.0)?;
-                store.set_task_details(&id, &details, 1.0)
-            })
-            .await
-            .expect("task");
-        if let Some((album_id, planned_release)) = planned {
-            let manifest = serde_json::json!({
-                "task_id": task_id,
-                "release_group_mbid": group,
-                "artist_name": "Portishead",
-                "album_title": title,
-                "origin": origin,
+        let plan: TaskPlan = match planned {
+            Some((album_id, planned_release)) => serde_json::from_value(serde_json::json!({
                 "release_mbid": release,
                 "album_wanted": wanted
                     .iter()
@@ -2316,13 +2308,21 @@ impl JoinRig {
                         }))
                         .collect::<Vec<_>>(),
                 },
-            });
-            let path = droppedneedle_acquire::downloads::ManifestCodec::path(
-                &self.acquire.staging_root,
-                task_id,
-            );
-            std::fs::create_dir_all(path.parent().expect("task folder")).expect("task folder");
-            std::fs::write(&path, manifest.to_string()).expect("manifest written");
+            }))
+            .expect("plan"),
+            None => TaskPlan::default(),
+        };
+        let id = task_id.to_owned();
+        self.acquire
+            .journal
+            .run("test.seed", move |store| {
+                store.insert_task(&task, 1.0)?;
+                store.set_task_details(&id, &details, 1.0)?;
+                store.set_task_plan(&id, &plan, 1.0)
+            })
+            .await
+            .expect("task");
+        if planned.is_some() {
             let row = self.task(task_id).await;
             self.targets.target(&row).await.expect("album target");
         }
@@ -2337,12 +2337,13 @@ impl JoinRig {
             .expect("task exists")
     }
 
-    fn manifest(&self, task_id: &str) -> serde_json::Value {
-        let path = droppedneedle_acquire::downloads::ManifestCodec::path(
-            &self.acquire.staging_root,
-            task_id,
-        );
-        serde_json::from_slice(&std::fs::read(path).expect("manifest")).expect("manifest json")
+    async fn plan(&self, task_id: &str) -> TaskPlan {
+        let id = task_id.to_owned();
+        self.acquire
+            .journal
+            .read("test.plan", move |store| store.task_plan(&id))
+            .await
+            .expect("plan reads")
     }
 
     /// The finished download of scenario `release`'s "Sour Times" (disc 2,
@@ -2398,7 +2399,6 @@ impl JoinRig {
                     paths,
                 )))],
                 WorkerConfig {
-                    staging_root: self.acquire.staging_root.clone(),
                     retry,
                     ..WorkerConfig::default()
                 },
@@ -2874,9 +2874,6 @@ async fn an_import_stopped_around_its_commit_keeps_its_match() {
         )
         .await;
         let row = rig.task("t-stop").await;
-        let manifest = droppedneedle_acquire::downloads::ManifestCodec
-            .decode(&serde_json::to_vec(&rig.manifest("t-stop")).expect("bytes"))
-            .expect("manifest");
         let landed = rig.landed("t-stop", &e.new, 1, FIXTURES[1]);
         rig.library.arm_publish_crash(Some(point));
         rig.acquire
@@ -2884,7 +2881,6 @@ async fn an_import_stopped_around_its_commit_keeps_its_match() {
             .land(
                 &row,
                 None,
-                Some(&manifest),
                 Landed {
                     files: vec![Reported {
                         path: landed,
@@ -2992,9 +2988,6 @@ async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
         )
         .await;
         let row = rig.task("t-own").await;
-        let manifest = droppedneedle_acquire::downloads::ManifestCodec
-            .decode(&serde_json::to_vec(&rig.manifest("t-own")).expect("bytes"))
-            .expect("manifest");
         let landed = rig.landed("t-own", &e.new, 1, FIXTURES[1]);
         // An album tag the release's tags would change.
         let downloaded_album = e.new.title.to_lowercase();
@@ -3013,7 +3006,6 @@ async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
             .land(
                 &row,
                 None,
-                Some(&manifest),
                 Landed {
                     files: vec![Reported {
                         path: landed,
@@ -3332,9 +3324,6 @@ async fn a_joined_import_recovers_joined() {
         ));
         let landed = rig.landed(task, &eds.new, 1, FIXTURES[1]);
         let row = rig.task(task).await;
-        let manifest = droppedneedle_acquire::downloads::ManifestCodec
-            .decode(&serde_json::to_vec(&rig.manifest(task)).expect("bytes"))
-            .expect("manifest");
         let landing = |paths: Vec<PathBuf>| Landed {
             files: paths
                 .into_iter()
@@ -3344,13 +3333,7 @@ async fn a_joined_import_recovers_joined() {
         };
         rig.acquire
             .landing
-            .land(
-                &row,
-                None,
-                Some(&manifest),
-                landing(vec![landed.clone()]),
-                false,
-            )
+            .land(&row, None, landing(vec![landed.clone()]), false)
             .await;
         rig.library.arm_publish_crash(None);
         let folder = staging.join(task);
@@ -3361,7 +3344,7 @@ async fn a_joined_import_recovers_joined() {
         let report = rig
             .acquire
             .landing
-            .land(&row, None, Some(&manifest), landing(vec![again]), false)
+            .land(&row, None, landing(vec![again]), false)
             .await;
         assert!(
             matches!(report.result, LandingResult::Rejected(_)),
@@ -3530,16 +3513,12 @@ impl VersionCase {
     /// Land `file` for the task through the landing alone.
     async fn land_directly(&self, task_id: &str, file: PathBuf) -> LandingReport {
         let row = self.rig.task(task_id).await;
-        let manifest = droppedneedle_acquire::downloads::ManifestCodec
-            .decode(&serde_json::to_vec(&self.rig.manifest(task_id)).expect("bytes"))
-            .expect("manifest");
         self.rig
             .acquire
             .landing
             .land(
                 &row,
                 None,
-                Some(&manifest),
                 Landed {
                     files: vec![Reported::path(file)],
                     mounts: vec![self.rig.downloads.clone().into()],
@@ -3759,6 +3738,56 @@ async fn a_version_replacement_recovers_after_a_crash() {
     }
 }
 
+// A restart while the download runs: recovery reads the task's rows only,
+// resumes polling the attempt it journaled, and the landing still joins
+// the copy and replaces O from the plan on the row.
+#[tokio::test]
+async fn a_restart_mid_download_lands_from_the_task_row() {
+    let v = VersionCase::new(20, 1, true, "02 Sour Times.flac").await;
+    let rig = &v.rig;
+    v.ask("t-version").await;
+    let sour = v.sour("t-version");
+    let handle = serde_json::to_string(&SourceHandle {
+        filenames: vec![sour.to_string_lossy().into_owned()],
+        job_name: "fixed-t-version-0".to_owned(),
+        ..SourceHandle::new(SourceTag::Plugin("fixed".to_owned()))
+    })
+    .expect("handle");
+    rig.acquire
+        .journal
+        .run("test.enqueued", move |store| {
+            store.insert_attempt(
+                "t-version-a0",
+                "t-version",
+                "plugin:fixed",
+                0,
+                "fixed-t-version-0",
+                &handle,
+                AttemptState::InUse,
+                1.0,
+            )?;
+            store.transition_task("t-version", TaskStatus::Downloading, 1.0, None)
+        })
+        .await
+        .expect("attempt journaled");
+
+    let report = run_startup_recovery(&rig.acquire.journal)
+        .await
+        .expect("recovery runs");
+    assert_eq!((report.resumed, report.restarted), (1, 0), "{report:?}");
+    rig.land(vec![sour]).await;
+
+    let (new, on, _, _, availability) = rig.row_at(&copy_rel(20, SOUR_TIMES)).await;
+    assert_eq!(
+        (on.as_str(), availability.as_str()),
+        (v.album.as_str(), "indexed"),
+        "the download joined the copy"
+    );
+    assert_ne!(new, v.old);
+    assert!(rig.in_recycle_bin(&v.o_name), "O's file is replaced");
+    assert_eq!(rig.alias_of(&v.old).await, Some(new));
+}
+
 // A version swap that stopped before its old copy could leave, unwound by
 // recovery, leaves O where it was: a worse version arriving next is held
 // and O, still in place, is the version that stays.
@@ -3827,7 +3856,7 @@ async fn a_stale_version_plan_replaces_nothing() {
 
 // The album target rewrite, which fills in an edition's tracklist before
 // the search, keeps the copy a download was fetched for while the
-// manifest's release is the one being searched, and drops it otherwise.
+// plan's release is the one being searched, and drops it otherwise.
 #[tokio::test]
 async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
     let lengths = fixture_lengths();
@@ -3845,22 +3874,21 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
         &[(sour, "tr-1")],
     )
     .await;
-    let manifest = rig.manifest("t-same");
+    let plan = rig.plan("t-same").await;
+    assert_eq!(plan.expected_tracks.len(), 2, "the rewrite ran");
     assert_eq!(
-        manifest["expected_tracks"].as_array().map(Vec::len),
-        Some(2),
-        "the rewrite ran"
-    );
-    assert_eq!(
-        manifest["planned_album"],
-        serde_json::json!({
-            "album_id": "al-1",
-            "release_mbid": e.new.id,
-            "replace": [{"release_track_mbid": sour, "local_track_id": "tr-1"}],
+        plan.planned_album,
+        Some(PlannedAlbum {
+            album_id: "al-1".to_owned(),
+            release_mbid: e.new.id.clone(),
+            replace: vec![ReplaceVersion {
+                release_track_mbid: sour.clone(),
+                local_track_id: "tr-1".to_owned(),
+            }],
         })
     );
 
-    // The task now searches another edition than the manifest names.
+    // The task now searches another edition than the plan names.
     rig.ask_replacing(
         "t-other",
         &e.group,
@@ -3876,24 +3904,21 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
         release_mbid: Some(e.new2.id.clone()),
         ..Default::default()
     };
+    let mut stale = rig.plan("t-other").await;
+    stale.expected_tracks.clear();
     rig.acquire
         .journal
         .run("test.details", move |store| {
-            store.set_task_details("t-other", &details, 2.0)
+            store.set_task_details("t-other", &details, 2.0)?;
+            store.set_task_plan("t-other", &stale, 2.0)
         })
         .await
         .expect("details");
-    let manifest = rig.manifest("t-other");
-    let path =
-        droppedneedle_acquire::downloads::ManifestCodec::path(&rig.acquire.staging_root, "t-other");
-    let mut stale = manifest.clone();
-    stale["expected_tracks"] = serde_json::json!([]);
-    std::fs::write(&path, stale.to_string()).expect("manifest written");
     let row = rig.task("t-other").await;
     rig.targets.target(&row).await.expect("album target");
-    let manifest = rig.manifest("t-other");
-    assert_eq!(manifest["release_mbid"], serde_json::json!(e.new2.id));
-    assert!(manifest.get("planned_album").is_none(), "{manifest}");
+    let plan = rig.plan("t-other").await;
+    assert_eq!(plan.release_mbid.as_deref(), Some(e.new2.id.as_str()));
+    assert!(plan.planned_album.is_none(), "{plan:?}");
 }
 
 // A request that failed follows its automatic retry: the successor's
@@ -3992,10 +4017,7 @@ async fn a_failed_request_follows_its_retry_to_imported() {
                 downloads.clone(),
                 good.clone(),
             )))],
-            WorkerConfig {
-                staging_root: acquire.staging_root.clone(),
-                ..WorkerConfig::default()
-            },
+            WorkerConfig::default(),
             droppedneedle_kernel::events::EventHub::new(),
             Default::default(),
         )
@@ -4102,7 +4124,7 @@ async fn land_single(task_id: &'static str, title: &str) -> Vec<(String, Option<
         mounts: vec![downloads.into()],
         files: vec![Reported::path(file)],
     };
-    acquire.landing.land(&row, None, None, landed, false).await;
+    acquire.landing.land(&row, None, landed, false).await;
     decisions(&acquire, task_id).await
 }
 
@@ -4261,7 +4283,6 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     );
     let targets = Arc::new(Targets::new(
         acquire.journal.clone(),
-        acquire.staging_root.clone(),
         Some(Arc::new(albums)),
     ));
     let source = SlskdSource::new(Arc::new(repo), acquire.journal.clone()).with_targets(targets);
@@ -4269,10 +4290,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
         DownloadWorker::fixed(
             acquire.journal.clone(),
             vec![crate::as_source(Arc::new(source))],
-            WorkerConfig {
-                staging_root: acquire.staging_root.clone(),
-                ..WorkerConfig::default()
-            },
+            WorkerConfig::default(),
             droppedneedle_kernel::events::EventHub::new(),
             Default::default(),
         )

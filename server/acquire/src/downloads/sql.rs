@@ -42,6 +42,11 @@ droppedneedle_kernel::sql! {
     /// The optional detail columns of one task (`?1`).
     pub(super) TASK_DETAILS = "SELECT release_mbid, artist_mbid, year, track_title \
              FROM download_tasks WHERE id = ?1";
+    /// One task's stored plan (`?1`).
+    pub(super) TASK_PLAN = "SELECT plan_json FROM download_tasks WHERE id = ?1";
+    /// Replace one task's plan.
+    pub(super) SET_TASK_PLAN = "UPDATE download_tasks SET plan_json = ?1, updated_at = ?2 \
+             WHERE id = ?3";
     /// Tasks in any of the given statuses.
     family TASKS_IN = tasks_in;
     /// Move a live task to a status. Terminal rows never move: the guard is

@@ -9,7 +9,7 @@
 //! the copy is another version of (the same title and artist, not this
 //! edition's recording or length) is asked for only with
 //! `replace_versions`, and never on a copy the app leaves alone: the
-//! manifest names that file, and the landing replaces it when the new one
+//! plan names that file, and the landing replaces it when the new one
 //! is as good or better. Without it the file stays and its track is not
 //! asked for. The best whole-album source is searched for, the way a
 //! person would by hand. Only one such download runs per album, and none
@@ -20,7 +20,7 @@ use super::RequestsService;
 use crate::dispatch::{
     DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget,
 };
-use crate::downloads::manifest::{PlannedAlbum, ReplaceVersion};
+use crate::downloads::plan::{PlannedAlbum, ReplaceVersion};
 use crate::edition::{copy_is_held, local_names};
 use crate::flows::stores::UpgradeWorklist;
 use crate::requests::error::RequestsError;

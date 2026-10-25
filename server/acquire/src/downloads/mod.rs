@@ -10,7 +10,7 @@
 //!   statements in `sql.rs`.
 //! - [`journal`] the one way in: reads on the read pool, writes on the
 //!   writer lane.
-//! - [`manifest`] the per-task staging manifest (`manifest.json`).
+//! - [`plan`] what a task fetches beyond its row's columns (`plan_json`).
 //! - [`watchdog`] stall/queued/deadline evaluation plus retry backoff.
 //! - [`recovery`] startup classification and orchestrator failover.
 //! - [`quarantine`] release blocklist with TTL and prune-on-write.
@@ -34,8 +34,8 @@ pub mod held_rows;
 pub mod http;
 pub mod journal;
 pub mod landing_rows;
-pub mod manifest;
 pub mod orphans;
+pub mod plan;
 pub mod quarantine;
 pub mod queue;
 pub mod queue_rows;
@@ -52,11 +52,8 @@ pub mod watchdog;
 #[cfg(any(test, feature = "test-support"))]
 pub use http::downloads_router;
 pub use http::{DownloadsRoutes, ReimportResponse, routes, search_routes};
-pub use manifest::{
-    DownloadManifest, ExpectedFile, ExpectedTrack, ManifestCodec, RecordedReason, TaskHandle,
-    TrackAlbumContext, TrackPosition,
-};
 pub use orphans::{OrphanDecision, OrphanEvidence, OrphanPolicy, evaluate_orphan, job_name_parts};
+pub use plan::{ExpectedTrack, PlannedAlbum, ReplaceVersion, TaskPlan, TrackAlbum, TrackPosition};
 pub use quarantine::{QUARANTINE_TTL_SECONDS, QuarantineDir, canonical_soulseek_identity};
 pub use recovery::{RetrySpawn, StartupAction, classify_startup, plan_retry};
 pub use source_tag::{SourceTag, UnknownSource};

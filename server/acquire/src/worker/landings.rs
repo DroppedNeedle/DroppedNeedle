@@ -16,7 +16,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::{Attempt, DownloadWorker, Pass, handled_count, read_manifest};
+use super::{Attempt, DownloadWorker, Pass, handled_count};
 use crate::downloads::quarantine::QuarantineReason;
 use crate::downloads::sources::{DownloadSource, SourceHandle};
 use crate::downloads::state::{AttemptState, TaskStatus};
@@ -232,11 +232,7 @@ impl DownloadWorker {
             }
         };
         let patient = origin == Origin::Poll && self.waits(&task.id) + 1 < MAX_LANDING_WAITS;
-        let staging_root = self.inputs.staging_root();
-        let manifest = read_manifest(&staging_root, &task.id).await;
-        let report = landing
-            .land(task, Some(&attempt.id), manifest.as_ref(), landed, patient)
-            .await;
+        let report = landing.land(task, Some(&attempt.id), landed, patient).await;
         self.conclude(task, attempt, source, handle, report, origin, now)
             .await;
     }

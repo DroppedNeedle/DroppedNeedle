@@ -1,32 +1,36 @@
 //! Startup recovery and orchestrator failover.
 //!
-//! Ports `startup_resume` / `_resume_single_task` classification: queued
-//! tasks re-dispatch (they never started, so failing them would be
-//! spurious), tasks with a staging manifest resume polling against the
-//! transfers the client kept across the restart, and tasks without a
-//! manifest - or whose manifest no longer matches the journaled attempt -
-//! restart cleanly from scratch. Recovery never blocks startup and never
-//! repeats a fetch destructively: resume re-correlates before polling,
-//! and restart reuses the idempotency key so a double resume cannot
-//! double-enqueue.
+//! Ports `startup_resume` / `_resume_single_task` classification over the
+//! journal's rows: queued tasks re-dispatch (they never started, so
+//! failing them would be spurious); a task that was landing resumes its
+//! landing from the files its attempt names; a task with a live attempt
+//! whose client handle is journaled resumes polling the transfers the
+//! client kept across the restart; anything else restarts cleanly from
+//! scratch. Recovery never blocks startup and never repeats a fetch
+//! destructively: resume re-correlates before polling, and restart reuses
+//! the idempotency key so a double resume cannot double-enqueue.
 //!
 //! Failover between orchestrator instances rides the attempt-lease
 //! mechanism in [`super::store`]: a successor claims only rows whose
 //! lease lapsed, so the old owner's in-flight work is never disturbed.
 
-use super::state::TaskStatus;
+use super::state::{AttemptState, TaskStatus};
+use super::store::AttemptRow;
 
 /// What startup recovery should do with one active task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupAction {
     /// Created but never enqueued: dispatch it now.
     Redispatch,
-    /// Manifest on disk matches the journal: poll the client's kept
+    /// A landing was running: it resumes on the first poll pass from the
+    /// files its attempt names. Never a fresh download.
+    ResumeLanding,
+    /// A live attempt with a journaled handle: poll the client's kept
     /// transfers instead of failing them (the old "transfer lost during
     /// restart" bug); a genuinely dead transfer ages out via the stall
     /// watchdog and failover re-pulls from another peer.
     ResumePoll,
-    /// No manifest, or the journal moved past it: run the task from
+    /// No live attempt the client can be asked about: run the task from
     /// scratch under the same idempotency key.
     RestartClean,
     /// Already settled: leave the row alone. Terminal tasks never reach
@@ -35,38 +39,39 @@ pub enum StartupAction {
     Noop,
 }
 
-/// Inputs the classifier needs for one task.
-#[derive(Debug, Clone, Copy)]
-pub struct StartupCtx {
-    /// Current persisted status.
-    pub status: TaskStatus,
-    /// Whether `staging/{task_id}/manifest.json` exists.
-    pub manifest_present: bool,
-    /// Whether the manifest's attempt still matches the task's selected
-    /// candidate (`None` when either side is unknown).
-    pub manifest_matches_attempt: Option<bool>,
-}
-
-/// Classify one active task for startup recovery.
+/// Classify one task for startup recovery from its row's status and its
+/// attempt rows.
 ///
 /// The caller only feeds active rows; a terminal row fed by mistake maps
 /// to [`StartupAction::Noop`] so recovery never resurrects a task that
 /// already settled (the store guard would refuse the write anyway).
-pub fn classify_startup(ctx: StartupCtx) -> StartupAction {
-    match ctx.status {
+pub fn classify_startup(status: TaskStatus, attempts: &[AttemptRow]) -> StartupAction {
+    match status {
         TaskStatus::Queued => StartupAction::Redispatch,
+        TaskStatus::Processing
+            if attempts.iter().any(|attempt| {
+                matches!(
+                    attempt.state,
+                    AttemptState::Acquiring
+                        | AttemptState::InUse
+                        | AttemptState::Preserved
+                        | AttemptState::CleanupPending
+                )
+            }) =>
+        {
+            StartupAction::ResumeLanding
+        }
         TaskStatus::Downloading | TaskStatus::Processing => {
-            if !ctx.manifest_present {
-                return StartupAction::RestartClean;
-            }
-            match ctx.manifest_matches_attempt {
-                Some(false) => StartupAction::RestartClean,
-                _ => StartupAction::ResumePoll,
+            let live = attempts.iter().any(|attempt| {
+                attempt.handle_journaled
+                    && matches!(attempt.state, AttemptState::Acquiring | AttemptState::InUse)
+            });
+            if live {
+                StartupAction::ResumePoll
+            } else {
+                StartupAction::RestartClean
             }
         }
-        // A terminal row fed by mistake is left alone; recovery must
-        // never resurrect a task that already settled (the store guard
-        // would refuse the write anyway).
         TaskStatus::Completed
         | TaskStatus::Partial
         | TaskStatus::Failed
@@ -118,48 +123,3 @@ pub const FAILOVER_LEASE_SECONDS: f64 = 300.0;
 
 /// Maximum cleanup rows claimed per worker pass (v2: 25).
 pub const FAILOVER_CLAIM_LIMIT: i64 = 25;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn queued_redispatches() {
-        let ctx = StartupCtx {
-            status: TaskStatus::Queued,
-            manifest_present: false,
-            manifest_matches_attempt: None,
-        };
-        assert_eq!(classify_startup(ctx), StartupAction::Redispatch);
-    }
-
-    #[test]
-    fn manifest_absent_restarts_clean() {
-        let ctx = StartupCtx {
-            status: TaskStatus::Downloading,
-            manifest_present: false,
-            manifest_matches_attempt: None,
-        };
-        assert_eq!(classify_startup(ctx), StartupAction::RestartClean);
-    }
-
-    #[test]
-    fn candidate_mismatch_restarts_clean() {
-        let ctx = StartupCtx {
-            status: TaskStatus::Processing,
-            manifest_present: true,
-            manifest_matches_attempt: Some(false),
-        };
-        assert_eq!(classify_startup(ctx), StartupAction::RestartClean);
-    }
-
-    #[test]
-    fn matching_manifest_resumes_poll() {
-        let ctx = StartupCtx {
-            status: TaskStatus::Downloading,
-            manifest_present: true,
-            manifest_matches_attempt: Some(true),
-        };
-        assert_eq!(classify_startup(ctx), StartupAction::ResumePoll);
-    }
-}

@@ -50,7 +50,8 @@ use self::probe::{LandedFile, Landing};
 use self::specs::{Check, Disposition, QualityPolicy, Rejection, Target, Verdict};
 use super::downloads::journal::Journal;
 use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
-use super::downloads::manifest::DownloadManifest;
+use super::downloads::plan::{PlannedAlbum, TaskPlan};
+use super::downloads::sources::SourceHandle;
 use super::downloads::store::{StoreError, TaskDetails, TaskRow};
 use crate::reason::Reason;
 use droppedneedle_kernel::runtime_config::Live;
@@ -218,7 +219,6 @@ impl LandingService {
         &self,
         task: &TaskRow,
         attempt_id: Option<&str>,
-        manifest: Option<&DownloadManifest>,
         landed: Landed,
         patient: bool,
     ) -> LandingReport {
@@ -248,18 +248,34 @@ impl LandingService {
                 return self.reject_unprobed(task, attempt_id, rejection).await;
             }
         };
-        // Details that do not read are never taken as empty: that would
-        // drop the task's edition pin. The landing waits instead.
-        let details = match self.journal.read_task_details(&task.id).await {
-            Ok(details) => details,
+        // Details or a plan that do not read are never taken as empty: that
+        // would drop the task's edition pin or the copy it joins. The
+        // landing waits instead.
+        let records = {
+            let task_id = task.id.clone();
+            let attempt = attempt_id.map(str::to_owned);
+            self.journal
+                .read("downloads.landing.records", move |store| {
+                    let details = store.task_details(&task_id)?;
+                    let plan = store.task_plan(&task_id)?;
+                    let handle = match &attempt {
+                        Some(attempt) => store.attempt_handle_json(attempt)?,
+                        None => None,
+                    };
+                    Ok((details, plan, handle))
+                })
+                .await
+        };
+        let (details, plan, handle) = match records {
+            Ok(records) => records,
             Err(error) => {
-                tracing::warn!(task_id = %task.id, %error, "task details unreadable");
+                tracing::warn!(task_id = %task.id, %error, "task records unreadable");
                 return self
                     .reject_unprobed(task, attempt_id, journal_unreadable())
                     .await;
             }
         };
-        let mut target = target_for(task, &details, manifest);
+        let mut target = target_for(task, &details, &plan);
         target.wait_for_files = patient;
         // The album's chosen edition (manual identity, pin, best fit) is
         // the only acceptable release: matching, the missing positions and
@@ -302,7 +318,7 @@ impl LandingService {
         let landing = match probed {
             Ok(landing) => Landing {
                 downloads_folders: folders,
-                remote_names: remote_names(manifest),
+                remote_names: remote_names(&task.id, handle.as_deref()),
                 ..landing
             },
             Err(error) => {
@@ -782,7 +798,7 @@ impl LandingService {
 
     /// "Replace tracks you have in another version": each landed file on a
     /// release track the planned copy holds in another version (the
-    /// manifest's `replace` list) replaces that version, whether the plan
+    /// plan's `replace` list) replaces that version, whether the plan
     /// put it under `import` or `owned`. Only while the matched release is
     /// the planned one and the copy still names it. The old track must be
     /// on the copy, on no track of the release, its album not held, and
@@ -1163,12 +1179,8 @@ impl LandingService {
     }
 }
 
-/// What the task asked for, from its row, details, and manifest.
-pub fn target_for(
-    task: &TaskRow,
-    details: &TaskDetails,
-    manifest: Option<&DownloadManifest>,
-) -> Target {
+/// What the task asked for, from its row, details, and plan.
+pub fn target_for(task: &TaskRow, details: &TaskDetails, plan: &TaskPlan) -> Target {
     Target {
         artist_name: task.artist_name.clone(),
         album_title: task.album_title.clone(),
@@ -1176,7 +1188,7 @@ pub fn target_for(
         release_mbid: details
             .release_mbid
             .clone()
-            .or_else(|| manifest.and_then(|manifest| manifest.release_mbid.clone()))
+            .or_else(|| plan.release_mbid.clone())
             .map(|mbid| mbid.trim().to_ascii_lowercase())
             .filter(|mbid| !mbid.is_empty()),
         year: details.year,
@@ -1189,46 +1201,44 @@ pub fn target_for(
             .map(str::to_ascii_lowercase),
         track_title: details.track_title.clone(),
         origin: task.origin.clone(),
-        hold_on_wrong_track: manifest.is_some_and(|manifest| manifest.hold_on_wrong_track),
-        album_version: task.download_type == "track"
-            && manifest.is_some_and(|manifest| manifest.album_version),
-        album_positions: manifest
-            .and_then(|manifest| manifest.track_album.as_ref())
-            .map(|album| {
-                (
-                    album.release_mbid.to_ascii_lowercase(),
-                    album.wanted.clone(),
-                )
-            }),
+        album_version: task.download_type == "track" && plan.album_version,
+        album_positions: plan.track_album.as_ref().map(|album| {
+            (
+                plan.release_mbid
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase(),
+                album.wanted.clone(),
+            )
+        }),
         expected_sizes: HashMap::new(),
         wait_for_files: false,
-        album_wanted: manifest
-            .map(|manifest| {
-                manifest
-                    .album_wanted
-                    .iter()
-                    .map(|at| (at.disc.max(1), at.track))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        // Only while the manifest's release is the one asked for.
-        planned_album: manifest.and_then(|manifest| {
-            let planned = manifest.planned_album.clone()?;
-            let asked = details
-                .release_mbid
-                .as_deref()
-                .or(manifest.release_mbid.as_deref())?
-                .trim();
-            let same = [
-                Some(planned.release_mbid.as_str()),
-                manifest.release_mbid.as_deref(),
-            ]
-            .into_iter()
-            .flatten()
-            .any(|held| held.trim().eq_ignore_ascii_case(asked));
-            same.then_some(planned)
-        }),
+        album_wanted: plan
+            .album_wanted
+            .iter()
+            .map(|at| (at.disc.max(1), at.track))
+            .collect(),
+        planned_album: planned_album(details, plan),
     }
+}
+
+/// The copy the download joins, only while the plan's release is the one
+/// asked for.
+fn planned_album(details: &TaskDetails, plan: &TaskPlan) -> Option<PlannedAlbum> {
+    let planned = plan.planned_album.clone()?;
+    let asked = details
+        .release_mbid
+        .as_deref()
+        .or(plan.release_mbid.as_deref())?
+        .trim();
+    let same = [
+        Some(planned.release_mbid.as_str()),
+        plan.release_mbid.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|held| held.trim().eq_ignore_ascii_case(asked));
+    same.then_some(planned)
 }
 
 /// The reported paths as they sit inside the client's downloads folders,
@@ -1285,25 +1295,24 @@ fn confine(landed: Landed, libraries: &[PathBuf]) -> Result<Vec<Reported>, Rejec
     Ok(kept)
 }
 
-/// The file names the client reported for this attempt, as it named them.
-fn remote_names(manifest: Option<&DownloadManifest>) -> Vec<String> {
-    let Some(manifest) = manifest else {
+/// The file names the client reported for this attempt, as it named them
+/// in the attempt's journaled handle.
+fn remote_names(task_id: &str, handle: Option<&str>) -> Vec<String> {
+    let Some(json) = handle.filter(|json| !json.is_empty()) else {
         return Vec::new();
     };
-    let mut names: Vec<String> = manifest
-        .target_files
-        .iter()
-        .map(|file| file.filename.clone())
-        .chain(
-            manifest
-                .handle
-                .iter()
-                .flat_map(|handle| handle.filenames.iter().cloned()),
-        )
-        .collect();
-    names.sort();
-    names.dedup();
-    names
+    match serde_json::from_str::<SourceHandle>(json) {
+        Ok(handle) => {
+            let mut names = handle.filenames;
+            names.sort();
+            names.dedup();
+            names
+        }
+        Err(error) => {
+            tracing::warn!(task_id, %error, "attempt handle does not decode; no remote names");
+            Vec::new()
+        }
+    }
 }
 
 /// AcoustID's answer for every paired file, asked only when the files are

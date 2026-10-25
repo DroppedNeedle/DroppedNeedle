@@ -125,10 +125,7 @@ fn worker_over(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
         DownloadWorker::fixed(
             journal.clone(),
             Vec::new(),
-            WorkerConfig {
-                staging_root: staging,
-                ..WorkerConfig::default()
-            },
+            WorkerConfig::default(),
             droppedneedle_kernel::events::EventHub::new(),
             Default::default(),
         )
@@ -215,11 +212,10 @@ async fn dispatch_reads_progress_and_guard_from_journal() {
     assert!(!dispatch.reimportable("nope").await.unwrap());
 }
 
-/// Dispatch over `journal`, staging under its scratch database directory.
+/// Dispatch over `journal`, with settings beside its scratch database.
 fn dispatch_over(journal: Arc<Journal>) -> DownloadDispatch {
-    let staging = staging_for(&journal);
     let policy = settings_beside(&journal).live();
-    DownloadDispatch::new(journal, Arc::new(UuidGenerator), staging, policy)
+    DownloadDispatch::new(journal, Arc::new(UuidGenerator), policy)
 }
 
 /// Default settings beside the journal's scratch database.
@@ -349,14 +345,10 @@ async fn failed_retry_insert_retries_next_pass() {
     })
     .await
     .unwrap();
-    let staging = staging_for(&journal);
     let worker = Arc::new(DownloadWorker::fixed(
         journal,
         Vec::new(),
-        WorkerConfig {
-            staging_root: staging,
-            ..WorkerConfig::default()
-        },
+        WorkerConfig::default(),
         droppedneedle_kernel::events::EventHub::new(),
         Default::default(),
     ));
@@ -504,12 +496,8 @@ async fn journal_reads_do_not_wait_for_a_held_write() {
         .unwrap()
         .expect("the held write started");
 
-    let staging = staging_for(&journal);
-    let recovery = tokio::time::timeout(
-        Duration::from_secs(20),
-        run_startup_recovery(&journal, &staging),
-    )
-    .await;
+    let recovery =
+        tokio::time::timeout(Duration::from_secs(20), run_startup_recovery(&journal)).await;
     let _ = release_tx.send(());
     let released = held.await.unwrap().unwrap();
     let report = recovery
@@ -562,10 +550,7 @@ async fn unreadable_history_never_fails_a_partly_imported_task() {
     let worker = Arc::new(DownloadWorker::fixed(
         journal.clone(),
         vec![crate::as_source(source)],
-        WorkerConfig {
-            staging_root: staging,
-            ..WorkerConfig::default()
-        },
+        WorkerConfig::default(),
         droppedneedle_kernel::events::EventHub::new(),
         Default::default(),
     ));

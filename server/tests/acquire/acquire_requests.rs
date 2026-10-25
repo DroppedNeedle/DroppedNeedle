@@ -7,7 +7,6 @@
 //! would.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle_acquire::requests::mix::{
@@ -35,8 +34,8 @@ use axum::{
 };
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::DownloadDispatch;
-use droppedneedle_acquire::downloads::manifest::{ManifestCodec, PlannedAlbum, ReplaceVersion};
 use droppedneedle_acquire::downloads::state::TaskStatus;
+use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion};
 use droppedneedle_acquire::follows::ImportArtist;
 use droppedneedle_acquire::requests::{
     self, RequestsState,
@@ -77,17 +76,15 @@ async fn setup() -> (RequestsState, AcquireDb, Downloads) {
     ] {
         db.add_user(id, name, role).await.expect("user row");
     }
-    let staging = db.path().parent().expect("scratch dir").join("staging");
     let downloads = Downloads {
         dispatch,
-        staging,
         taken: Mutex::new(0),
         cancels: Mutex::new(HashSet::new()),
     };
     (state, db, downloads)
 }
 
-/// One task the dispatch wrote, with what its manifest asks for.
+/// One task the dispatch wrote, with what its plan asks for.
 struct Dispatched {
     id: String,
     user_id: String,
@@ -99,7 +96,6 @@ struct Dispatched {
 /// The download journal behind a state, read the way the worker reads it.
 struct Downloads {
     dispatch: Arc<DownloadDispatch>,
-    staging: PathBuf,
     /// Tasks already handed out by `take_calls`.
     taken: Mutex<usize>,
     /// Cancelled tasks already handed out by `take_cancels`.
@@ -133,18 +129,23 @@ impl Downloads {
                 .await
                 .expect("task reads")
                 .expect("task row");
-            let bytes = std::fs::read(ManifestCodec::path(&self.staging, id)).expect("manifest");
-            let manifest = ManifestCodec.decode(&bytes).expect("manifest decodes");
+            let plan_task = id.clone();
+            let plan = self
+                .dispatch
+                .journal()
+                .read("test.plan", move |store| store.task_plan(&plan_task))
+                .await
+                .expect("plan reads");
             out.push(Dispatched {
                 id: row.id,
                 user_id: row.user_id,
-                release_mbid: manifest.release_mbid,
-                wanted: manifest
+                release_mbid: plan.release_mbid,
+                wanted: plan
                     .album_wanted
                     .iter()
                     .map(|position| (position.disc, position.track))
                     .collect(),
-                planned_album: manifest.planned_album,
+                planned_album: plan.planned_album,
             });
         }
         out

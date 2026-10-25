@@ -331,7 +331,7 @@ impl SlskdSource {
                     }
                 })?;
             if let (Some(reason), Some(targets)) = (choice.lone_reason, self.targets.as_ref()) {
-                targets.record_lone_track(&task, reason).await;
+                targets.record_lone_track(&task, reason);
             }
             choice
                 .pick
@@ -573,7 +573,7 @@ impl SabnzbdSource {
             (None, _) => TrackReason::AlbumReleasesExhausted,
         };
         if let Some(targets) = self.targets.as_ref() {
-            targets.record_lone_track(task, reason).await;
+            targets.record_lone_track(task, reason);
         }
         Some(lone)
     }

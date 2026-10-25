@@ -412,7 +412,7 @@ impl PluginDownloadSource {
                     (None, 0) => TrackReason::NoAlbumRelease,
                     (None, _) => TrackReason::AlbumReleasesExhausted,
                 };
-                targets.record_lone_track(&task, reason).await;
+                targets.record_lone_track(&task, reason);
             }
         }
         let pick = pick.ok_or_else(|| {

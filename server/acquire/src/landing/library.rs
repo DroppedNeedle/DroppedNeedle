@@ -12,7 +12,7 @@ use sqlx::SqlitePool;
 use super::ports::{
     ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, OwnedCopy, OwnedTracks, VersionRow,
 };
-use crate::downloads::manifest::PlannedAlbum;
+use crate::downloads::plan::PlannedAlbum;
 use droppedneedle_library::identify::sources::{
     Prioritised, ReleaseHit, ReleaseSource, SourceError, group_editions,
 };
