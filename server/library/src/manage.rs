@@ -10,9 +10,9 @@ use super::publish::journal::JournalStore;
 use super::publish::paths::{ResolvedRoot, Root, left_out};
 use super::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
-    ReleaseIdentity, SealRecheck, SealedPreview,
+    ReleaseIdentity, STAGED_HEADROOM_BYTES, SealRecheck, SealedPreview,
 };
-use super::publish::publisher::{PublishOutcome, Publisher, SqliteCatalog};
+use super::publish::publisher::{PublishOutcome, Publisher, locate};
 use super::publish::recovery::LeftoverReport;
 use super::publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
 use super::publish::tags_seam::TagDocument;
@@ -27,9 +27,6 @@ use droppedneedle_kernel::jobs::queue::JobQueue;
 
 /// Preview seals live until the next unix day.
 const PREVIEW_TTL_DAYS: i64 = 1;
-
-/// Staged-bytes headroom over the source size for disk preflight.
-const STAGED_HEADROOM_BYTES: u64 = 65_536;
 
 /// Profile/naming/settings revisions while those settings have no store.
 /// All pinned at 1 so seal rechecks compare against constants.
@@ -58,7 +55,7 @@ pub struct PreviewEntry {
 /// Open publisher plus the sandbox it runs under.
 pub(crate) struct OpenPublish {
     pub(crate) sandbox: Sandbox,
-    pub(crate) publisher: Publisher<SqliteCatalog, FsSpaceProbe>,
+    pub(crate) publisher: Publisher<FsSpaceProbe>,
     session: SessionRoots,
 }
 
@@ -174,7 +171,6 @@ impl HeldBundles {
     /// even if whoever asked never heard back. Blocking.
     pub fn committed(&self, bundle_id: &str) -> Result<bool, PublishError> {
         use super::publish::JournalState;
-        use super::publish::publisher::Catalog as _;
         self.db
             .read_long("publish.held_committed", &CancelFlag::never(), |conn| {
                 let journals = JournalStore::new(conn).bundle(bundle_id)?;
@@ -197,7 +193,7 @@ impl HeldBundles {
                     let Some(track_id) = journal.track_id.as_deref() else {
                         continue;
                     };
-                    if let Some((root, rel, published, _)) = SqliteCatalog.locate(conn, track_id)?
+                    if let Some((root, rel, published, _)) = locate(conn, track_id)?
                         && root == journal.dest_root
                         && rel == journal.dest_rel
                         && published == journal.staged_sha256
@@ -343,7 +339,7 @@ impl PublishCell {
         let Some(open) = self.cell.as_ref() else {
             return Ok(Vec::new());
         };
-        super::publish::recovery::reconcile(&self.db, &open.sandbox, &SqliteCatalog, &self.jobs)
+        super::publish::recovery::reconcile(&self.db, &open.sandbox, &self.jobs)
     }
 
     fn root_dirs(registry: &RootRegistry) -> Vec<Root> {
@@ -447,12 +443,10 @@ impl PublishCell {
         // Recovery runs before the new session takes publishes. The
         // journal lives in the application database, so root order never
         // decides where it is.
-        let recoveries =
-            super::publish::recovery::reconcile(&self.db, &sandbox, &SqliteCatalog, &self.jobs)?;
+        let recoveries = super::publish::recovery::reconcile(&self.db, &sandbox, &self.jobs)?;
         let publisher = Publisher::new(
             sandbox.clone(),
             self.db.clone(),
-            SqliteCatalog,
             FsSpaceProbe::new(space_roots.clone()),
             self.jobs.clone(),
             || now_ms() as i64,
@@ -2330,7 +2324,6 @@ impl LibrarySetup {
         bundle_id: &str,
         override_of: &dyn Fn(&str) -> u64,
     ) -> Result<UndoFiles, ServiceError> {
-        use super::publish::publisher::Catalog as _;
         use super::publish::undo::{UndoInput, UndoLive, plan_undo};
 
         // Everything the undo reads from the database, in one read that
@@ -2358,7 +2351,7 @@ impl LibrarySetup {
                         continue;
                     };
                     let bytes = blobs.get(&blob_sha)?;
-                    let located = SqliteCatalog.locate(conn, &track_id)?;
+                    let located = locate(conn, &track_id)?;
                     rows.push((
                         track_id,
                         item.clone(),
@@ -2627,7 +2620,6 @@ impl LibrarySetup {
         track_ids: &[String],
         override_of: &dyn Fn(&str) -> u64,
     ) -> Result<BaselineFiles, ServiceError> {
-        use super::publish::publisher::Catalog as _;
         use super::publish::undo::{BaselineInput, plan_baseline_restore};
 
         // Each track's baseline bytes and catalog place, in one read that
@@ -2644,7 +2636,7 @@ impl LibrarySetup {
                             Some((blob_sha, _, _)) => Some(blobs.get(&blob_sha)?),
                             None => None,
                         };
-                        Ok((bytes, SqliteCatalog.locate(conn, track_id)?))
+                        Ok((bytes, locate(conn, track_id)?))
                     })
                     .collect::<Result<Vec<_>, PublishError>>()
             })

@@ -55,7 +55,10 @@ use super::paths::Sandbox;
 use super::place::{
     Original, PlaceError, Seams, SetAsideError, place_from_hidden, place_with, set_aside_with,
 };
-use super::publisher::{BundleCommit, Catalog, TrackCommit, durable, long_read, read_adopted};
+use super::publisher::{
+    BundleCommit, TrackCommit, commit_bundle, durable, locate, long_read, mark_missing,
+    read_adopted,
+};
 use super::snapshots::sha256_hex;
 use super::{PublishError, paths};
 
@@ -277,32 +280,29 @@ fn gate(db: &Db) -> Result<(), PublishError> {
 /// refuses a call (busy, or shutting down) ends the pass at that bundle,
 /// since every later one would hear the same. Only the startup gate or an
 /// unreadable journal fails the pass.
-pub fn reconcile<C: Catalog>(
+pub fn reconcile(
     db: &Db,
     sandbox: &Sandbox,
-    catalog: &C,
     jobs: &JobQueue,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(db, sandbox, catalog, jobs, Seams::default())
+    reconcile_with(db, sandbox, jobs, Seams::default())
 }
 
 /// [`reconcile`] on a filesystem made to lack a placement step. Tests
 /// only; production never calls this.
 #[cfg(any(test, feature = "test-support"))]
-pub fn reconcile_with_seams<C: Catalog>(
+pub fn reconcile_with_seams(
     db: &Db,
     sandbox: &Sandbox,
-    catalog: &C,
     jobs: &JobQueue,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(db, sandbox, catalog, jobs, seams)
+    reconcile_with(db, sandbox, jobs, seams)
 }
 
-fn reconcile_with<C: Catalog>(
+fn reconcile_with(
     db: &Db,
     sandbox: &Sandbox,
-    catalog: &C,
     jobs: &JobQueue,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
@@ -321,7 +321,7 @@ fn reconcile_with<C: Catalog>(
                 "bundle {bundle_id} names root {root}, which is not a usable library root"
             ))
         } else {
-            match reconcile_bundle(db, sandbox, catalog, jobs, &bundle_id, seams) {
+            match reconcile_bundle(db, sandbox, jobs, &bundle_id, seams) {
                 Ok(action) => action,
                 Err(error) if error.is_interrupted() => {
                     tracing::warn!(bundle_id, %error, "publish recovery stopped: the database refused it");
@@ -374,10 +374,9 @@ fn unusable_root(sandbox: &Sandbox, journals: &[FileJournal]) -> Option<String> 
 }
 
 /// Reconcile one bundle.
-fn reconcile_bundle<C: Catalog>(
+fn reconcile_bundle(
     db: &Db,
     sandbox: &Sandbox,
-    catalog: &C,
     jobs: &JobQueue,
     bundle_id: &str,
     seams: Seams,
@@ -411,7 +410,7 @@ fn reconcile_bundle<C: Catalog>(
         }
     }
     if evidence.any_committed {
-        return reconcile_committed(db, sandbox, catalog, bundle_id, &journals);
+        return reconcile_committed(db, sandbox, bundle_id, &journals);
     }
     // A compensated or needs-attention row means an unwind already began
     // and stopped, between two rows or on an error. Such a bundle can
@@ -441,7 +440,7 @@ fn reconcile_bundle<C: Catalog>(
             "publish bundle stopped before every file staged; unwinding it"
         );
     } else if let Some(recorded) = recorded {
-        match resume_precommit(db, sandbox, catalog, jobs, &recorded, &journals, seams)? {
+        match resume_precommit(db, sandbox, jobs, &recorded, &journals, seams)? {
             None => return Ok(RecoveryAction::ResumedCommitted),
             Some(reason) => {
                 tracing::warn!(bundle_id, reason, "publish bundle unwound after its resume");
@@ -873,10 +872,9 @@ fn record_published(db: &Db, journal_id: &str, from: JournalState) -> Result<(),
 /// second rename. `Some(reason)` when a file
 /// was refused: nothing more is placed and the caller unwinds the bundle.
 /// `seams` is the default outside tests.
-fn resume_precommit<C: Catalog>(
+fn resume_precommit(
     db: &Db,
     sandbox: &Sandbox,
-    catalog: &C,
     jobs: &JobQueue,
     recorded: &super::planner::PlanBundle,
     journals: &[FileJournal],
@@ -990,7 +988,7 @@ fn resume_precommit<C: Catalog>(
         })
         .and_then(|()| {
             durable(db, "publish.recover_commit", |tx| {
-                catalog.commit_bundle(tx, &commit)?;
+                commit_bundle(tx, &commit)?;
                 super::publisher::enqueue_after_commit(tx, jobs, &commit)?;
                 let writer = JournalWriter::new(tx);
                 for journal in refreshed.iter() {
@@ -1235,10 +1233,9 @@ fn resume_rename(
 /// destination went missing, and retries pinned cleanup. The staged copy
 /// only ever goes onto a free name: a destination holding anything else
 /// keeps it, and the staged copy stays beside it as evidence.
-fn reconcile_committed<C: Catalog>(
+fn reconcile_committed(
     db: &Db,
     sandbox: &Sandbox,
-    catalog: &C,
     bundle_id: &str,
     journals: &[FileJournal],
 ) -> Result<RecoveryAction, PublishError> {
@@ -1284,7 +1281,7 @@ fn reconcile_committed<C: Catalog>(
                 }
                 durable(db, "publish.recover_put_back_lost", |tx| {
                     if let Some(track_id) = journal.track_id.as_deref() {
-                        catalog.mark_missing(tx, track_id)?;
+                        mark_missing(tx, track_id)?;
                     }
                     flag_rows(tx, journals)
                 })?;
@@ -1321,7 +1318,7 @@ fn reconcile_committed<C: Catalog>(
         } else if !staged_holds {
             durable(db, "publish.recover_output_lost", |tx| {
                 if let Some(track_id) = journal.track_id.as_deref() {
-                    catalog.mark_missing(tx, track_id)?;
+                    mark_missing(tx, track_id)?;
                 }
                 flag_rows(tx, journals)
             })?;
@@ -1354,7 +1351,7 @@ fn reconcile_committed<C: Catalog>(
             }
         }
         if let Some(track_id) = journal.track_id.as_deref() {
-            match long_read(db, "publish.locate", |conn| catalog.locate(conn, track_id))? {
+            match long_read(db, "publish.locate", |conn| locate(conn, track_id))? {
                 Some((root, rel, fingerprint, _)) => {
                     if root != journal.dest_root
                         || rel != journal.dest_rel

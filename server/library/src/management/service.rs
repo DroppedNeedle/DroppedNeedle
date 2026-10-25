@@ -24,8 +24,8 @@ use crate::clock::{now_unix, today_day};
 use crate::jobs::{self, ManagementPhase, OperationKind, OperationState};
 use crate::manage::SealPins;
 use crate::operations::models::OperationJob;
-use crate::publish::publisher::Catalog as _;
-use crate::publish::{JournalStore, SqliteCatalog, snapshots::sha256_hex};
+use crate::publish::publisher::read_revision;
+use crate::publish::{JournalStore, snapshots::sha256_hex};
 use crate::scan::roots::RootRegistry;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::runtime_config::sections::{
@@ -292,14 +292,12 @@ impl Management {
                 existing: true,
             });
         }
-        let catalog_revision =
-            self.setup
-                .db
-                .read_blocking("management.catalog_revision", |conn| {
-                    SqliteCatalog
-                        .revision(conn)
-                        .map_err(|error| ManagementError::Store(error.to_string()))
-                })?;
+        let catalog_revision = self
+            .setup
+            .db
+            .read_blocking("management.catalog_revision", |conn| {
+                read_revision(conn).map_err(|error| ManagementError::Store(error.to_string()))
+            })?;
         let expires_at = now + spec.retention_hours.max(1) as f64 * 3600.0;
         let job_id = self.setup.ids.new_id();
         let summary = Summary::default();

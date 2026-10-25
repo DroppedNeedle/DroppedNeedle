@@ -98,33 +98,6 @@ pub struct BundleCommit {
     pub put_back: Option<super::put_back::PutBackCommit>,
 }
 
-/// Catalog port: where a managed track lives and what the publisher
-/// last wrote there. Production is [`SqliteCatalog`], the catalog tables
-/// the scan writes and the reads API serves.
-pub trait Catalog {
-    /// Current catalog revision.
-    fn revision(&self, conn: &Connection) -> Result<u64, PublishError>;
-    /// Locate a track: (root id, relative path, last published SHA-256,
-    /// management state). The last two are empty for a track the
-    /// publisher never wrote.
-    fn locate(
-        &self,
-        conn: &Connection,
-        track_id: &str,
-    ) -> Result<Option<(String, String, String, String)>, PublishError>;
-    /// Commit one bundle: check every moved track's rows are still as
-    /// sealed, move every track row (and its album's root) to its
-    /// published location, and bump the catalog revision once. Track and
-    /// album ids stay as they are. Files an import fetched for a library
-    /// album join it, and are placed on its edition in the same
-    /// transaction. An import's match is sealed in it too
-    /// ([`crate::identity::adopt_import`]).
-    fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError>;
-    /// Mark a track missing so streaming and search stay accurate when
-    /// committed bytes cannot be recovered.
-    fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError>;
-}
-
 /// Queue what a committed bundle asks to run after it, on the commit's own
 /// transaction: a removed album's clean-up. A refusal fails the commit, so
 /// the removal and its clean-up land together or not at all.
@@ -164,131 +137,133 @@ fn now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// The application catalog: `local_tracks` holds where a track lives,
-/// `library_track_management_state` what the publisher last wrote, and
-/// `library_catalog_revision` a change counter every commit bumps once
-/// (read caches key on it, so a commit invalidates them).
-#[derive(Debug, Clone, Default)]
-pub struct SqliteCatalog;
+/// The catalog revision: a change counter every commit bumps once. Read
+/// caches key on it, so a commit invalidates them.
+pub fn read_revision(conn: &Connection) -> Result<u64, PublishError> {
+    let rev: i64 = conn.query_row(
+        "SELECT value FROM library_catalog_revision WHERE singleton = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(rev as u64)
+}
 
-impl Catalog for SqliteCatalog {
-    fn revision(&self, conn: &Connection) -> Result<u64, PublishError> {
-        let rev: i64 = conn.query_row(
-            "SELECT value FROM library_catalog_revision WHERE singleton = 1",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(rev as u64)
-    }
-
-    fn locate(
-        &self,
-        conn: &Connection,
-        track_id: &str,
-    ) -> Result<Option<(String, String, String, String)>, PublishError> {
-        conn.query_row(
-            "SELECT t.root_id, t.relative_path, COALESCE(m.applied_projection_hash, ''), \
+/// Locate a track in `local_tracks`: (root id, relative path, last published
+/// SHA-256, management state from `library_track_management_state`). The last
+/// two are empty for a track the publisher never wrote.
+pub fn locate(
+    conn: &Connection,
+    track_id: &str,
+) -> Result<Option<(String, String, String, String)>, PublishError> {
+    conn.query_row(
+        "SELECT t.root_id, t.relative_path, COALESCE(m.applied_projection_hash, ''), \
              COALESCE(m.last_outcome, '') \
              FROM local_tracks t \
              LEFT JOIN library_track_management_state m ON m.local_track_id = t.id \
              WHERE t.id = ?1",
-            rusqlite::params![track_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(PublishError::from)
-    }
+        rusqlite::params![track_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(PublishError::from)
+}
 
-    fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError> {
-        let conn: &Connection = tx;
-        // A file added with no track, or its undo: no catalog row moves.
-        if commit.tracks.is_empty() && commit.removal.is_none() && commit.put_back.is_none() {
-            return Ok(());
+/// Commit one bundle: check every moved track's rows are still as
+/// sealed, move every track row (and its album's root) to its
+/// published location, and bump the catalog revision once. Track and
+/// album ids stay as they are. Files an import fetched for a library
+/// album join it, and are placed on its edition in the same
+/// transaction. An import's match is sealed in it too
+/// ([`crate::identity::adopt_import`]).
+pub(super) fn commit_bundle(tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError> {
+    let conn: &Connection = tx;
+    // A file added with no track, or its undo: no catalog row moves.
+    if commit.tracks.is_empty() && commit.removal.is_none() && commit.put_back.is_none() {
+        return Ok(());
+    }
+    if let Some(removal) = &commit.removal {
+        super::remove::commit(conn, &commit.bundle_id, removal, now_secs())?;
+    }
+    if let Some(put_back) = &commit.put_back {
+        super::put_back::commit(conn, &commit.bundle_id, put_back, now_secs())?;
+    }
+    // The bundle's own rows, read in this transaction: a scan or an
+    // identification that changed one since the seal refuses the
+    // whole bundle before any row moves. Adoptions have no rows yet.
+    let sealed: Vec<(&str, Option<&CommitSeal>)> = commit
+        .tracks
+        .iter()
+        .filter(|track| track.adopt.is_none())
+        .map(|track| (track.track_id.as_str(), track.sealed.as_ref()))
+        .collect();
+    if let Some(moved) = super::planner::first_moved(conn, &sealed)? {
+        return Err(PublishError::Catalog(format!(
+            "track {moved} changed under bundle {}",
+            commit.bundle_id
+        )));
+    }
+    crate::catalog_revision::bump_catalog(conn)?;
+    let now = now_secs();
+    // `written_sha256` is the app's record of the bytes it placed: a
+    // file that no longer has them was changed outside the app. A write
+    // over a file already changed outside (a person's rename, say)
+    // keeps the old record, so the change stays the user's. Judged
+    // before any row of the bundle moves.
+    let mut written = Vec::with_capacity(commit.tracks.len());
+    for track in &commit.tracks {
+        written.push(if track.adopt.is_some() {
+            Some(track.fingerprint.clone())
+        } else {
+            super::record::written_after(
+                conn,
+                &track.track_id,
+                track
+                    .source
+                    .as_ref()
+                    .map(|(root, rel)| (root.as_str(), rel.as_str())),
+                track.source_sha256.as_deref(),
+                &track.fingerprint,
+            )?
+        });
+    }
+    // Joined files to place, by album, with the release they join.
+    let mut placing: BTreeMap<String, (String, Vec<(String, JoinedTrack)>)> = BTreeMap::new();
+    let mut imported = Vec::new();
+    for (track, written) in commit.tracks.iter().zip(&written) {
+        if let Some((replaced, recycle_to)) = &track.replaces {
+            retire_replaced(conn, track, replaced, recycle_to, now)?;
         }
-        if let Some(removal) = &commit.removal {
-            super::remove::commit(conn, &commit.bundle_id, removal, now_secs())?;
-        }
-        if let Some(put_back) = &commit.put_back {
-            super::put_back::commit(conn, &commit.bundle_id, put_back, now_secs())?;
-        }
-        // The bundle's own rows, read in this transaction: a scan or an
-        // identification that changed one since the seal refuses the
-        // whole bundle before any row moves. Adoptions have no rows yet.
-        let sealed: Vec<(&str, Option<&CommitSeal>)> = commit
-            .tracks
-            .iter()
-            .filter(|track| track.adopt.is_none())
-            .map(|track| (track.track_id.as_str(), track.sealed.as_ref()))
-            .collect();
-        if let Some(moved) = super::planner::first_moved(conn, &sealed)? {
-            return Err(PublishError::Catalog(format!(
-                "track {moved} changed under bundle {}",
-                commit.bundle_id
-            )));
-        }
-        crate::catalog_revision::bump_catalog(conn)?;
-        let now = now_secs();
-        // `written_sha256` is the app's record of the bytes it placed: a
-        // file that no longer has them was changed outside the app. A write
-        // over a file already changed outside (a person's rename, say)
-        // keeps the old record, so the change stays the user's. Judged
-        // before any row of the bundle moves.
-        let mut written = Vec::with_capacity(commit.tracks.len());
-        for track in &commit.tracks {
-            written.push(if track.adopt.is_some() {
-                Some(track.fingerprint.clone())
-            } else {
-                super::record::written_after(
-                    conn,
-                    &track.track_id,
-                    track
-                        .source
-                        .as_ref()
-                        .map(|(root, rel)| (root.as_str(), rel.as_str())),
-                    track.source_sha256.as_deref(),
-                    &track.fingerprint,
-                )?
-            });
-        }
-        // Joined files to place, by album, with the release they join.
-        let mut placing: BTreeMap<String, (String, Vec<(String, JoinedTrack)>)> = BTreeMap::new();
-        let mut imported = Vec::new();
-        for (track, written) in commit.tracks.iter().zip(&written) {
-            if let Some((replaced, recycle_to)) = &track.replaces {
-                retire_replaced(conn, track, replaced, recycle_to, now)?;
+        if let Some(adoption) = &track.adopt {
+            let joined = adopt_track(conn, track, adoption)?;
+            if let Some(identity) = &track.identity {
+                imported.push(crate::identity::ImportedFile {
+                    track_id: &track.track_id,
+                    identity,
+                    joined: joined.is_some(),
+                });
             }
-            if let Some(adoption) = &track.adopt {
-                let joined = adopt_track(conn, track, adoption)?;
-                if let Some(identity) = &track.identity {
-                    imported.push(crate::identity::ImportedFile {
-                        track_id: &track.track_id,
-                        identity,
-                        joined: joined.is_some(),
-                    });
-                }
-                if let (Some(joined), Some(join), Some(on)) =
-                    (joined, &adoption.join, &adoption.track)
-                    && joined.placed
-                {
-                    placing
-                        .entry(joined.album_id)
-                        .or_insert_with(|| (join.release_mbid.clone(), Vec::new()))
-                        .1
-                        .push((track.track_id.clone(), on.clone()));
-                }
-            } else {
-                give_up_destination(conn, track)?;
-                move_track(conn, track)?;
+            if let (Some(joined), Some(join), Some(on)) = (joined, &adoption.join, &adoption.track)
+                && joined.placed
+            {
+                placing
+                    .entry(joined.album_id)
+                    .or_insert_with(|| (join.release_mbid.clone(), Vec::new()))
+                    .1
+                    .push((track.track_id.clone(), on.clone()));
             }
-            conn.execute(
-                "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
+        } else {
+            give_up_destination(conn, track)?;
+            move_track(conn, track)?;
+        }
+        conn.execute(
+            "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
                  applied_projection_hash, written_sha256, last_outcome, last_managed_at) \
                  VALUES (?1, ?2, ?3, ?6, ?4, ?5) \
                  ON CONFLICT (local_track_id) DO UPDATE SET \
@@ -298,35 +273,36 @@ impl Catalog for SqliteCatalog {
                  last_outcome = excluded.last_outcome, \
                  last_managed_at = excluded.last_managed_at, \
                  row_revision = library_track_management_state.row_revision + 1",
-                rusqlite::params![
-                    track.track_id,
-                    track.root_id,
-                    track.fingerprint,
-                    track.mgmt_state,
-                    now,
-                    written
-                ],
-            )?;
-        }
-        for (album, (release, files)) in &placing {
-            crate::operations::choice::place_imported(tx, album, release, files, now)?;
-        }
-        // After the placements: a person's edition keeps them, and the
-        // seal never writes over a person's rows.
-        if !imported.is_empty() {
-            crate::identity::adopt_import(tx, &imported, now)?;
-        }
-        Ok(())
-    }
-
-    fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError> {
-        conn.execute(
-            "UPDATE local_tracks SET availability = 'missing', missing_since = ?2 WHERE id = ?1",
-            rusqlite::params![track_id, now_secs()],
+            rusqlite::params![
+                track.track_id,
+                track.root_id,
+                track.fingerprint,
+                track.mgmt_state,
+                now,
+                written
+            ],
         )?;
-        crate::catalog_revision::bump_catalog(conn)?;
-        Ok(())
     }
+    for (album, (release, files)) in &placing {
+        crate::operations::choice::place_imported(tx, album, release, files, now)?;
+    }
+    // After the placements: a person's edition keeps them, and the
+    // seal never writes over a person's rows.
+    if !imported.is_empty() {
+        crate::identity::adopt_import(tx, &imported, now)?;
+    }
+    Ok(())
+}
+
+/// Mark a track missing so streaming and search stay accurate when
+/// committed bytes cannot be recovered.
+pub(super) fn mark_missing(conn: &Connection, track_id: &str) -> Result<(), PublishError> {
+    conn.execute(
+        "UPDATE local_tracks SET availability = 'missing', missing_since = ?2 WHERE id = ?1",
+        rusqlite::params![track_id, now_secs()],
+    )?;
+    crate::catalog_revision::bump_catalog(conn)?;
+    Ok(())
 }
 
 /// Retire the track whose file a commit replaced: it stays in the
@@ -745,10 +721,9 @@ impl PublishOutcome {
 /// every journal row goes through a durable write, so it is on disk before
 /// the file step it describes, and the catalog commit with its journal
 /// transitions is one of them.
-pub struct Publisher<C: Catalog, P: SpaceProbe> {
+pub struct Publisher<P: SpaceProbe> {
     sandbox: Sandbox,
     db: Db,
-    catalog: C,
     space: P,
     /// The jobs table a commit queues its follow-up work on.
     jobs: JobQueue,
@@ -846,13 +821,12 @@ fn keep_pictures(
     Ok(())
 }
 
-impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
+impl<P: SpaceProbe> Publisher<P> {
     /// A publisher over `db`, queueing a commit's follow-up work on `jobs`.
     /// `clock` reads the time in unix milliseconds.
     pub fn new(
         sandbox: Sandbox,
         db: Db,
-        catalog: C,
         space: P,
         jobs: JobQueue,
         clock: impl Fn() -> i64 + Send + 'static,
@@ -861,7 +835,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         Self {
             sandbox,
             db,
-            catalog,
             space,
             jobs,
             gate: CapabilityGate::production(),
@@ -1443,9 +1416,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let (today, expires) = (self.today_day, self.today_day + self.undo_retention_days);
         self.db
             .write_blocking(Lane::Background, "publish.capture_before", |tx| {
-                let prior_mgmt = self
-                    .catalog
-                    .locate(tx, &item.track_id)?
+                let prior_mgmt = locate(tx, &item.track_id)?
                     .map(|(_, _, _, state)| state)
                     .filter(|state| !state.is_empty());
                 let before_state = super::undo::BeforeState {
@@ -2089,7 +2060,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             put_back,
         };
         durable(&self.db, "publish.bundle_commit", |tx| {
-            self.catalog.commit_bundle(tx, &commit)?;
+            commit_bundle(tx, &commit)?;
             enqueue_after_commit(tx, &self.jobs, &commit)?;
             let writer = JournalWriter::new(tx);
             for journal in JournalStore::new(tx).bundle(&bundle.id)? {

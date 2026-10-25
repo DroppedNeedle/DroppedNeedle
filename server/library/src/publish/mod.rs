@@ -120,11 +120,10 @@ pub use journal::{
 pub use paths::{CollisionKey, Sandbox, collision_key};
 pub use place::{PlaceError, Placed, PlacementMode, place_from_hidden};
 pub use planner::{
-    AutomaticEligibility, AutomaticHold, Capability, CapabilityGate, DiskPreflight,
-    FileFingerprint, GeneratedOutput, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Replacement,
-    SealError, SealedPreview, SpaceProbe, TrackMapping,
+    Capability, CapabilityGate, DiskPreflight, FileFingerprint, GeneratedOutput, PlanBundle,
+    PlanItem, PlanKind, ReleaseIdentity, Replacement, SealError, SealedPreview, SpaceProbe,
 };
-pub use publisher::{Catalog, CrashPoint, PublishOutcome, Publisher, SqliteCatalog};
+pub use publisher::{CrashPoint, PublishOutcome, Publisher};
 pub use recovery::{BundleRecovery, RecoveryAction, reconcile, startup_gate};
 pub use snapshots::{BaselineStore, BlobStore, SnapshotStore};
 pub use tags_seam::{PICTURES_KEY, PictureRef, TagDocument};

@@ -24,7 +24,7 @@ use super::{automatic, takeover};
 use crate::matching::model::Release;
 use crate::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
-    ReleaseIdentity,
+    ReleaseIdentity, STAGED_HEADROOM_BYTES,
 };
 use crate::publish::snapshots::sha256_hex;
 use crate::publish::{MAX_PLAN_SUBJECTS, PublishError, Sandbox, collision_key};
@@ -34,9 +34,6 @@ use crate::scan::sqlite_store::holds_new_files;
 use crate::tags::{self, TagField};
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::Lane;
-
-/// Staged-bytes headroom over the source size for disk preflight.
-const STAGED_HEADROOM_BYTES: u64 = 65_536;
 
 /// Why an album's match keeps its files from being managed, if it does.
 /// Only "no row" means confirmed; a read failure refuses, so an unsure

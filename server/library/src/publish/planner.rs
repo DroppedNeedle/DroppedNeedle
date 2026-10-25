@@ -47,20 +47,6 @@ pub struct ReleaseIdentity {
     pub mapping_revision: u64,
 }
 
-/// Per-track mapping evidence: the accepted release-track MBID plus
-/// the medium/track positions automatic work requires.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TrackMapping {
-    /// Stable local track id.
-    pub track_id: String,
-    /// Accepted release-track MBID.
-    pub release_track_mbid: String,
-    /// Medium position on the accepted release.
-    pub medium_position: u32,
-    /// Track position on the accepted release.
-    pub release_position: u32,
-}
-
 /// One independently toggleable management capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Capability {
@@ -1075,6 +1061,9 @@ impl SamePathSelf {
     }
 }
 
+/// Staged-bytes headroom over the source size for disk preflight.
+pub const STAGED_HEADROOM_BYTES: u64 = 65_536;
+
 /// Disk preflight: the summed staged-byte estimate must fit the
 /// reported free space before the first byte is staged.
 pub struct DiskPreflight;
@@ -1227,61 +1216,6 @@ impl SealedPreview {
                         item.track_id
                     )));
                 }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Why automatic work holds a unit in staging.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AutomaticHold {
-    /// The root is not enabled for management.
-    RootDisabled,
-    /// The trigger for this acquisition kind is off.
-    TriggerDisabled(String),
-    /// No accepted exact MusicBrainz release for the unit.
-    NoAcceptedRelease,
-    /// At least one affected file lacks an accepted track mapping.
-    MissingTrackMapping(String),
-}
-
-/// Automatic eligibility: enabled root plus enabled trigger plus an
-/// accepted exact release plus a full track mapping.
-pub struct AutomaticEligibility;
-
-impl AutomaticEligibility {
-    /// Check one acquisition unit. Owning every track from the release
-    /// is not required; mapping every affected file is.
-    ///
-    /// Manual Apply is the only wired trigger, so nothing calls this
-    /// outside the tests yet. The first automatic trigger (root
-    /// watcher, scheduler, or acquisition completion) must gate its
-    /// units through this check before planning.
-    pub fn check(
-        root_enabled: bool,
-        trigger: &str,
-        trigger_enabled: bool,
-        accepted_release: Option<&ReleaseIdentity>,
-        mappings: &BTreeMap<String, TrackMapping>,
-        affected_tracks: &[String],
-    ) -> Result<(), AutomaticHold> {
-        if !root_enabled {
-            return Err(AutomaticHold::RootDisabled);
-        }
-        if !trigger_enabled {
-            return Err(AutomaticHold::TriggerDisabled(trigger.to_string()));
-        }
-        let Some(release) = accepted_release else {
-            return Err(AutomaticHold::NoAcceptedRelease);
-        };
-        if release.release_mbid.is_empty() || release.release_track_mbid.is_empty() {
-            return Err(AutomaticHold::NoAcceptedRelease);
-        }
-        for track in affected_tracks {
-            match mappings.get(track) {
-                Some(mapping) if !mapping.release_track_mbid.is_empty() => {}
-                _ => return Err(AutomaticHold::MissingTrackMapping(track.clone())),
             }
         }
         Ok(())
