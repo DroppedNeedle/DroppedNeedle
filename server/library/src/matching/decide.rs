@@ -73,6 +73,13 @@
 //!   itself. A release outside that group is only ever a guess: it comes
 //!   back as [`Verdict::OutsideNamedGroup`], never identified.
 //!
+//! - A file whose audio names another track of the chosen release than
+//!   the one its title clearly fits (see `ReleaseMatch::disputed`) pairs
+//!   by its description, and the release comes back as
+//!   [`Verdict::AudioDisagrees`], a guess, never identified: AcoustID
+//!   holds user-submitted mistakes, and only a person can tell which side
+//!   is wrong.
+//!
 //! "Library distance" leaves missing tracks out, as Lidarr does for files
 //! already on disk: holding part of an album is normal.
 
@@ -136,6 +143,10 @@ pub enum Verdict {
     /// The best release is outside the release group the files name: a
     /// guess to confirm, never confirmed by itself.
     OutsideNamedGroup(usize),
+    /// The best release, with some file's audio naming another of its
+    /// tracks than the one the file's title clearly fits: a guess to
+    /// confirm, never confirmed by itself.
+    AudioDisagrees(usize),
 }
 
 /// Edition hints: the release the tags name, and the saved edition
@@ -166,6 +177,11 @@ pub fn decide(
             if !same_group(&releases[index], named) =>
         {
             Verdict::OutsideNamedGroup(index)
+        }
+        (Verdict::Identified(index) | Verdict::EditionUncertain(index), _)
+            if !matches[index].disputed.is_empty() =>
+        {
+            Verdict::AudioDisagrees(index)
         }
         _ => verdict,
     }

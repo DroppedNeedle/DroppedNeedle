@@ -25,6 +25,10 @@ use droppedneedle_library::identify::providers::{IdentifyProviders, LiveProvider
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService, Ranking};
 use droppedneedle_library::identify::sources::NoFingerprints;
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
+use droppedneedle_library::matching::decide::COMPLETE_TRACK;
+use droppedneedle_library::matching::score::LENGTH_GRACE_SECS;
+use droppedneedle_library::matching::strings::basic_dist;
+use droppedneedle_library::matching::{LocalTrack, Release, ReleaseTrack};
 use droppedneedle_providers::executor::{Prepared, Wire, WireAnswer, WireError};
 use droppedneedle_providers::musicbrainz::{self, MbSource, MusicBrainzView};
 use droppedneedle_providers::{Providers, RequestPriority};
@@ -515,6 +519,56 @@ fn paired(ranking: &Ranking, release: Option<&str>) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// The lead candidate pairs some file with another track than its own
+/// (the one it pairs with unheard), or leaves it out, while its own track
+/// clearly fits it: the title within [`COMPLETE_TRACK`] by `basic_dist`,
+/// and the track number or the length (within the length grace) too.
+fn moved_off_clear_track(
+    ranking: &Ranking,
+    releases: &[Release],
+    pairs: &[(String, String)],
+) -> bool {
+    let Some(&lead) = ranking.order.first() else {
+        return false;
+    };
+    let release = &releases[lead];
+    let matched = &ranking.matches[lead];
+    ranking
+        .local
+        .tracks
+        .iter()
+        .enumerate()
+        .any(|(index, file)| {
+            let Some((_, own)) = pairs.iter().find(|(id, _)| *id == file.id) else {
+                return false;
+            };
+            let Some(own_track) = release
+                .tracks
+                .iter()
+                .find(|track| track.recording_id.eq_ignore_ascii_case(own))
+            else {
+                return false;
+            };
+            let stays = matched.pair_for(index).is_some_and(|pair| {
+                release.tracks[pair.track]
+                    .recording_id
+                    .eq_ignore_ascii_case(own)
+            });
+            !stays && clearly_fits(file, own_track)
+        })
+}
+
+fn clearly_fits(file: &LocalTrack, track: &ReleaseTrack) -> bool {
+    let number = file.track_number > 0
+        && (file.track_number == track.absolute_position
+            || (file.disc_number.max(1) == track.disc && file.track_number == track.position));
+    let length = match (file.duration_secs, track.length_ms) {
+        (Some(seconds), Some(ms)) => (seconds - ms as f64 / 1000.0).abs() <= LENGTH_GRACE_SECS,
+        _ => false,
+    };
+    basic_dist(&file.title, &track.title) <= COMPLETE_TRACK && (number || length)
+}
+
 fn heard(
     facts: &LocalAlbumFacts,
     pairs: &[(String, String)],
@@ -545,8 +599,10 @@ fn heard(
 /// when what it heard sits on a rival candidate. Heard as a recording no
 /// candidate carries, every row, tagged and stripped, stays as recorded.
 /// Heard as its own recording, a stripped file never comes out worse.
-/// Heard as the next file's recording (a rival track), a file never stays
-/// on its own track in a confirmed match: the audio outranks the title.
+/// Heard as the next file's recording (a rival track), the lead candidate,
+/// confirmed or not, keeps every file on the track it pairs with unheard
+/// when that track clearly fits it: audio alone never moves a file off
+/// such a track, and settles only files whose titles are unclear.
 /// Nothing confirms a wrong release group.
 #[tokio::test(flavor = "multi_thread")]
 async fn fingerprints_confirm_and_never_veto() {
@@ -614,15 +670,7 @@ async fn fingerprints_confirm_and_never_veto() {
                             got.verdict != expected.verdict || got.release != expected.release
                         }
                         Heard::Own => got.verdict > expected.verdict,
-                        Heard::Next => {
-                            got.verdict <= Verdict::Group
-                                && !ranking.candidates[0].track_evidence.iter().all(|track| {
-                                    track.recording_mbid.as_ref()
-                                        == heard
-                                            .get(&track.local_track_id)
-                                            .and_then(|heard| heard.first())
-                                })
-                        }
+                        Heard::Next => moved_off_clear_track(&ranking, &recall.releases, &pairs),
                     };
                 if fails {
                     failures.push(format!(

@@ -561,6 +561,11 @@ pub fn match_reason(code: &str) -> Reason {
             "Fits best, but the files' tags or earlier match name another album.",
             "Confirm it or pick another edition.",
         ),
+        "AUDIO_DISAGREES" => reason(
+            "AUDIO_DISAGREES",
+            "Fits best, but some files' audio matches other tracks.",
+            "Check the tracklist and confirm it.",
+        ),
         "WEAK_MATCH" => reason(
             "WEAK_MATCH",
             "This edition is the closest fit, but some titles, lengths or track counts differ.",

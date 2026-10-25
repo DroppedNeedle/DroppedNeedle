@@ -567,12 +567,14 @@ impl IdentifyService {
             Verdict::Identified(index) => Verdict::Identified(keep(index, true)),
             Verdict::EditionUncertain(index) => Verdict::EditionUncertain(keep(index, false)),
             Verdict::OutsideNamedGroup(index) => Verdict::OutsideNamedGroup(keep(index, false)),
+            Verdict::AudioDisagrees(index) => Verdict::AudioDisagrees(keep(index, false)),
             other => other,
         };
         let lead = match verdict {
             Verdict::Identified(index)
             | Verdict::EditionUncertain(index)
-            | Verdict::OutsideNamedGroup(index) => Some(index),
+            | Verdict::OutsideNamedGroup(index)
+            | Verdict::AudioDisagrees(index) => Some(index),
             _ => None,
         };
         let mut order: Vec<usize> = (0..recall.releases.len()).collect();
@@ -614,6 +616,7 @@ impl IdentifyService {
             Verdict::EditionUncertain(_) => Decision::EditionUncertain,
             Verdict::Review(reason) => Decision::Ambiguous(reason.code().to_owned()),
             Verdict::OutsideNamedGroup(_) => Decision::Ambiguous(NAMED_GROUP_DIFFERS.to_owned()),
+            Verdict::AudioDisagrees(_) => Decision::Ambiguous(AUDIO_DISAGREES.to_owned()),
             Verdict::Contradictory => Decision::Contradictory,
             Verdict::Insufficient => Decision::Terminal(
                 IdentificationOutcome::InsufficientEvidence,
@@ -1006,6 +1009,9 @@ fn moves_to_named_edition(
 
 /// The reason a release outside the group the files name is only a guess.
 pub const NAMED_GROUP_DIFFERS: &str = "NAMED_GROUP_DIFFERS";
+
+/// The reason a release some file's audio disagrees with is only a guess.
+pub const AUDIO_DISAGREES: &str = "AUDIO_DISAGREES";
 
 /// True when the new evidence rules `release` out: it was scored and a
 /// file's own id contradicts it, or its album title or artist do not
