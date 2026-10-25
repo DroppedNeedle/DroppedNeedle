@@ -34,7 +34,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension as _, Transaction, params};
+use rusqlite::{
+    Connection, ErrorCode, OpenFlags, OptionalExtension as _, Transaction, TransactionBehavior,
+    params,
+};
 use tokio::sync::{Semaphore, mpsc, oneshot};
 
 use super::datalock::DataLock;
@@ -712,8 +715,24 @@ fn open_flags(create: bool) -> OpenFlags {
     }
 }
 
+/// Times the writer has waited for the file lock, in test builds, so a
+/// test can tell the writer is waiting without a sleep.
+#[cfg(test)]
+static LOCK_WAITS: AtomicU64 = AtomicU64::new(0);
+
+/// The test builds' busy handler: counts the wait, then waits as
+/// [`BUSY_TIMEOUT`] would, a millisecond a turn.
+#[cfg(test)]
+fn counted_wait(turn: i32) -> bool {
+    LOCK_WAITS.fetch_add(1, Ordering::AcqRel);
+    std::thread::sleep(Duration::from_millis(1));
+    u128::try_from(turn).is_ok_and(|turn| turn < BUSY_TIMEOUT.as_millis())
+}
+
 fn writer_pragmas(connection: &Connection) -> rusqlite::Result<()> {
     connection.busy_timeout(BUSY_TIMEOUT)?;
+    #[cfg(test)]
+    connection.busy_handler(Some(counted_wait))?;
     let _mode: String = connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
     connection.execute_batch(&format!(
         "PRAGMA synchronous = NORMAL; PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT};"
@@ -785,6 +804,15 @@ impl Writer {
         }
     }
 
+    /// Take the write lock at `BEGIN`, where a busy file waits out
+    /// [`BUSY_TIMEOUT`]. A deferred transaction that reads first gets no
+    /// wait: SQLite fails its upgrade to a write at once while another
+    /// connection holds the lock, and the batch's rows would be dropped.
+    fn begin(&mut self) -> rusqlite::Result<Transaction<'_>> {
+        self.connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+    }
+
     fn failed(&self, error: &rusqlite::Error) -> CacheError {
         if is_corrupt(error) {
             self.shared.corrupt(error);
@@ -816,7 +844,7 @@ impl Writer {
             })
             .collect();
         let outcome = (|| {
-            let transaction = self.connection.transaction()?;
+            let transaction = self.begin()?;
             for op in ops {
                 match op {
                     Op::Put(row, _) => put(&transaction, &row, &mut total)?,
@@ -877,7 +905,7 @@ impl Writer {
         loop {
             let mut total = self.total;
             let chunk = (|| {
-                let transaction = self.connection.transaction()?;
+                let transaction = self.begin()?;
                 let gone = take_sizes(
                     &transaction,
                     sql::DELETE_EXPIRED.text(),
@@ -988,6 +1016,31 @@ mod tests {
         let read = cache.get("musicbrainz:queued").await;
         holder.execute_batch("ROLLBACK").unwrap();
         assert_eq!(read.and_then(|row| row.value), Some(b"answer".to_vec()));
+    }
+
+    /// A put made while another connection holds the write lock waits for
+    /// it: the row reads back while the writer waits, and lands once the
+    /// lock is let go instead of being dropped.
+    #[tokio::test]
+    async fn a_put_waits_for_the_write_lock() {
+        let cache = CacheDb::scratch();
+        assert!(cache.is_on());
+        let shared = Arc::clone(&cache.inner.shared);
+        let holder = Connection::open(&shared.path).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let waits = LOCK_WAITS.load(Ordering::Acquire);
+        assert!(cache.put(row("musicbrainz:held", b"answer")));
+        // Until the writer is waiting on the lock, or its batch failed.
+        while LOCK_WAITS.load(Ordering::Acquire) == waits
+            && !shared.write_failing.load(Ordering::Acquire)
+        {
+            tokio::task::yield_now().await;
+        }
+        let read = cache.get("musicbrainz:held").await;
+        assert_eq!(read.and_then(|row| row.value), Some(b"answer".to_vec()));
+        holder.execute_batch("ROLLBACK").unwrap();
+        let landed = settled(&cache, "musicbrainz:held").await;
+        assert_eq!(landed.and_then(|row| row.value), Some(b"answer".to_vec()));
     }
 
     /// A file of another version, one that is not a database, and one
