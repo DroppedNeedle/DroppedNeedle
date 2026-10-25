@@ -650,10 +650,40 @@ impl ReleaseSource for MusicBrainzView {
     }
 }
 
+/// A release source for each kind of caller: background work, and a
+/// person waiting on the answer, who goes ahead of it at the limiter.
+#[derive(Clone)]
+pub struct Prioritised<R> {
+    background: R,
+    waiting: R,
+}
+
+impl<R> Prioritised<R> {
+    pub fn new(background: R, waiting: R) -> Self {
+        Self {
+            background,
+            waiting,
+        }
+    }
+
+    /// The source for a caller at `priority`: a person waiting
+    /// (`UserInitiated`) gets the waiting source, every other priority the
+    /// background one.
+    pub fn at(&self, priority: RequestPriority) -> &R {
+        if priority == RequestPriority::UserInitiated {
+            &self.waiting
+        } else {
+            &self.background
+        }
+    }
+}
+
 /// MusicBrainz for identification and imports: the live source at one
 /// priority, with the id each retired recording id was merged into kept
 /// in the provider cache. An album's files can carry one retired id per
-/// track, and every pass over the album asks the same ones again.
+/// track, and every pass over the album asks the same ones again. Sources
+/// at different priorities share one cache: priority does not change the
+/// answer.
 #[derive(Clone)]
 pub struct CachedMusicBrainz {
     view: MusicBrainzView,

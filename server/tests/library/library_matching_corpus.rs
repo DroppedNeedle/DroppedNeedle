@@ -283,7 +283,10 @@ fn live_providers(replay: &Arc<Replay>) -> (ScratchDir, Arc<SqliteIdentifyStore>
         droppedneedle_kernel::db::Db::open_for_tests(&path).expect("store opens"),
     ));
     let providers = Arc::new(LiveProviders::new(
-        musicbrainz,
+        droppedneedle_library::identify::sources::Prioritised::new(
+            musicbrainz.clone(),
+            musicbrainz,
+        ),
         store.clone(),
         NoFingerprints,
     ));
@@ -313,7 +316,7 @@ async fn recall_groups(
     let (_dir, _store, providers) = live_providers(&replay);
     let named = named_group(&facts, None);
     let recall = providers
-        .recall_candidates(&facts, named.as_deref())
+        .recall_candidates(&facts, named.as_deref(), RequestPriority::BackgroundSync)
         .await
         .result;
     let unrecorded = replay.unrecorded.lock().expect("unrecorded list").clone();
@@ -393,7 +396,7 @@ async fn recorded_albums_match_as_recorded() {
         for (slot, (copy, facts, expected)) in copies.into_iter().enumerate() {
             let named = named_group(&facts, None);
             let recall = providers
-                .recall_candidates(&facts, named.as_deref())
+                .recall_candidates(&facts, named.as_deref(), RequestPriority::BackgroundSync)
                 .await
                 .result;
             if recall.provider_deferred {

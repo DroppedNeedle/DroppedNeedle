@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
+use droppedneedle_providers::RequestPriority;
 use tokio::time::Instant;
 
 use super::evidence::{candidate_evidence, local_album, named_group};
@@ -220,7 +221,7 @@ impl IdentifyService {
         } = self
             .deps
             .providers
-            .recall_candidates(&facts, named.as_deref())
+            .recall_candidates(&facts, named.as_deref(), RequestPriority::BackgroundSync)
             .await;
         // The edition the album already has is always weighed, so a recall
         // that missed it cannot flip it.
@@ -234,7 +235,11 @@ impl IdentifyService {
                 .iter()
                 .any(|release| release.answers_to(held))
         {
-            let extra = self.deps.providers.recall_release(&facts, held).await;
+            let extra = self
+                .deps
+                .providers
+                .recall_release(&facts, held, RequestPriority::BackgroundSync)
+                .await;
             if !extra.result.provider_deferred {
                 recall.releases.extend(extra.result.releases);
             }
@@ -299,22 +304,29 @@ impl IdentifyService {
 
     /// Recall candidates for one album outside the queue: every release
     /// the usual recall finds, or only `exact_release` when an
-    /// administrator named one. Fetched documents stay on file, as for a
-    /// queued attempt, written on the caller's lane.
+    /// administrator named one. MusicBrainz is asked at the caller's
+    /// `priority`. Fetched documents stay on file, as for a queued
+    /// attempt, written on the caller's lane.
     pub async fn recall(
         &self,
         facts: &LocalAlbumFacts,
         exact_release: Option<&str>,
         lane: Lane,
+        priority: RequestPriority,
     ) -> Result<RecallResult, StoreError> {
         let outcome = match exact_release {
-            Some(mbid) => self.deps.providers.recall_release(facts, mbid).await,
+            Some(mbid) => {
+                self.deps
+                    .providers
+                    .recall_release(facts, mbid, priority)
+                    .await
+            }
             None => {
                 let current = self.deps.store.album_identity(&facts.local_album_id)?;
                 let named = named_group(facts, current.as_ref());
                 self.deps
                     .providers
-                    .recall_candidates(facts, named.as_deref())
+                    .recall_candidates(facts, named.as_deref(), priority)
                     .await
             }
         };
@@ -429,9 +441,14 @@ impl IdentifyService {
         Ok(pass)
     }
 
-    /// One page of MusicBrainz releases for a curator choosing an edition.
-    pub async fn search_editions(&self, query: EditionQuery) -> Result<EditionPage, SourceError> {
-        self.deps.providers.search_editions(query).await
+    /// One page of MusicBrainz releases for a curator choosing an edition,
+    /// asked at the caller's `priority`.
+    pub async fn search_editions(
+        &self,
+        query: EditionQuery,
+        priority: RequestPriority,
+    ) -> Result<EditionPage, SourceError> {
+        self.deps.providers.search_editions(query, priority).await
     }
 
     /// Score every recalled release and decide, the way a queued attempt

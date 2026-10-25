@@ -14,12 +14,13 @@ use super::ports::{
 };
 use crate::downloads::manifest::PlannedAlbum;
 use droppedneedle_library::identify::sources::{
-    ReleaseHit, ReleaseSource, SourceError, group_editions,
+    Prioritised, ReleaseHit, ReleaseSource, SourceError, group_editions,
 };
 use droppedneedle_library::import::{DownloadImport, ImportError, ImportSource};
 use droppedneedle_library::management::service::Management;
 use droppedneedle_library::matching::Release;
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_providers::RequestPriority;
 
 /// Indexed library tracks with their album's identity and their own,
 /// the one notion of "the library holds it" the landing and the wanted
@@ -135,14 +136,18 @@ fn tier_of(format: &str, bitrate: Option<i64>, depth: Option<i64>) -> &'static s
 /// The library as the landing sees it in production.
 pub struct LibraryLanding {
     library: LibrarySetup,
-    releases: Arc<dyn ReleaseSource>,
+    releases: Prioritised<Arc<dyn ReleaseSource>>,
     pool: SqlitePool,
 }
 
 impl LibraryLanding {
-    /// Port over the library bundle, its release source, and the reader
+    /// Port over the library bundle, its release sources, and the reader
     /// pool of the application database.
-    pub fn new(library: LibrarySetup, releases: Arc<dyn ReleaseSource>, pool: SqlitePool) -> Self {
+    pub fn new(
+        library: LibrarySetup,
+        releases: Prioritised<Arc<dyn ReleaseSource>>,
+        pool: SqlitePool,
+    ) -> Self {
         Self {
             library,
             releases,
@@ -171,19 +176,25 @@ impl LandingLibrary for LibraryLanding {
         &'a self,
         title: &'a str,
         artist: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
-        self.releases.search(title, artist)
+        self.releases.at(priority).search(title, artist)
     }
 
-    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
-        self.releases.release(mbid)
+    fn release<'a>(
+        &'a self,
+        mbid: &'a str,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        self.releases.at(priority).release(mbid)
     }
 
     fn canonical_recording<'a>(
         &'a self,
         mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
-        self.releases.canonical_recording(mbid)
+        self.releases.at(priority).canonical_recording(mbid)
     }
 
     fn chosen_edition<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>> {
@@ -348,19 +359,22 @@ impl LandingLibrary for LibraryLanding {
     fn group_releases<'a>(
         &'a self,
         release_group_mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
         Box::pin(async move {
-            Ok(group_editions(self.releases.as_ref(), release_group_mbid)
-                .await?
-                .into_iter()
-                .map(|edition| ReleaseHit {
-                    id: edition.release_mbid,
-                    release_group_id: edition.release_group_mbid,
-                    score: edition.score,
-                    track_count: (edition.track_count > 0).then_some(edition.track_count),
-                    title: edition.title,
-                })
-                .collect())
+            Ok(
+                group_editions(self.releases.at(priority).as_ref(), release_group_mbid)
+                    .await?
+                    .into_iter()
+                    .map(|edition| ReleaseHit {
+                        id: edition.release_mbid,
+                        release_group_id: edition.release_group_mbid,
+                        score: edition.score,
+                        track_count: (edition.track_count > 0).then_some(edition.track_count),
+                        title: edition.title,
+                    })
+                    .collect(),
+            )
         })
     }
 

@@ -16,7 +16,8 @@ use droppedneedle_library::contrib::scripted::{ScriptedDiscogs, ScriptedMusicBra
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
 use droppedneedle_library::identify::providers::{FakeProviders, IdentifyProviders, RecallOutcome};
 use droppedneedle_library::identify::sources::{
-    ArtistAnswer, EditionPage, EditionQuery, ReleaseAnswer, SourceError, Unanswered,
+    ArtistAnswer, EditionPage, EditionQuery, Prioritised, ReleaseAnswer, ReleaseSource,
+    SourceError, Unanswered,
 };
 use droppedneedle_library::management::enrich::EnrichmentPort;
 use droppedneedle_library::wiring::{LibraryCore, LibraryPorts, LibrarySetup};
@@ -24,6 +25,11 @@ use droppedneedle_providers::Providers;
 use droppedneedle_providers::musicbrainz::Criticality;
 
 type Recall = Box<dyn Fn(&LocalAlbumFacts) -> RecallResult + Send>;
+
+/// One scripted release source answering at every priority.
+pub fn every_priority(source: Arc<dyn ReleaseSource>) -> Prioritised<Arc<dyn ReleaseSource>> {
+    Prioritised::new(source.clone(), source)
+}
 
 /// The identification port of a [`TestApp`](super::TestApp), answering from
 /// what the journey scripted. Nothing is found until it scripts something.
@@ -114,6 +120,7 @@ impl IdentifyProviders for ScriptedIdentify {
         &self,
         facts: &LocalAlbumFacts,
         _named_group: Option<&str>,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         outcome(self.recall(facts))
     }
@@ -122,6 +129,7 @@ impl IdentifyProviders for ScriptedIdentify {
         &self,
         facts: &LocalAlbumFacts,
         release_mbid: &str,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         let mut result = self.recall(facts);
         result
@@ -133,6 +141,7 @@ impl IdentifyProviders for ScriptedIdentify {
     fn search_editions(
         &self,
         _query: EditionQuery,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
         let page = self.editions.lock().expect("edition script").clone();
         Box::pin(async move { Ok(page) })

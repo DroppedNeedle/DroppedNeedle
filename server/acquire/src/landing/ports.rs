@@ -12,6 +12,7 @@ use futures_util::future::BoxFuture;
 
 use droppedneedle_library::identify::sources::{ReleaseHit, SourceError};
 use droppedneedle_library::matching::Release;
+use droppedneedle_providers::RequestPriority;
 
 /// Tracks the library already holds for one release group.
 #[derive(Debug, Clone, Default)]
@@ -138,23 +139,31 @@ impl ImportFailure {
     }
 }
 
-/// The library as the landing sees it.
+/// The library as the landing sees it. MusicBrainz is asked at the
+/// caller's `priority`: user priority when a person waits on the answer,
+/// background for the landing and other work nobody watches.
 pub trait LandingLibrary: Send + Sync {
     /// Releases matching an album title and (unless blank) an artist.
     fn search<'a>(
         &'a self,
         title: &'a str,
         artist: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>>;
 
     /// One release with its tracklist.
-    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>>;
+    fn release<'a>(
+        &'a self,
+        mbid: &'a str,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<Release>, SourceError>>;
 
     /// The id a recording MBID resolves to after merges; `None` when
     /// MusicBrainz has no such recording.
     fn canonical_recording<'a>(
         &'a self,
         mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Option<String>, SourceError>>;
 
     /// The edition chosen for the library's copy of a release group, if
@@ -218,6 +227,7 @@ pub trait LandingLibrary: Send + Sync {
     fn group_releases<'a>(
         &'a self,
         _release_group_mbid: &'a str,
+        _priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
         Box::pin(async { Ok(Vec::new()) })
     }

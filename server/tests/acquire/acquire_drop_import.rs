@@ -31,7 +31,7 @@ use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
 use crate::common::auth::AuthRig;
-use crate::common::library::library_at;
+use crate::common::library::{every_priority, library_at};
 
 const GROUP: &str = "7d0b7a1e-0000-4000-8000-000000000001";
 const RELEASE: &str = "7d0b7a1e-0000-4000-8000-000000000002";
@@ -218,7 +218,10 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
         &db,
         Arc::new(LibraryLanding::new(
             library.clone(),
-            Arc::new(OneRelease(release(&["Mysterons", "Sour Times"], &lengths))),
+            every_priority(Arc::new(OneRelease(release(
+                &["Mysterons", "Sour Times"],
+                &lengths,
+            )))),
             pool,
         )),
     );
@@ -368,7 +371,7 @@ async fn an_upgrade_the_bin_cannot_take_keeps_the_upload() {
         &db,
         Arc::new(LibraryLanding::new(
             library.clone(),
-            Arc::new(OneRelease(release(&["Mysterons"], &[None]))),
+            every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
             db.pool().clone(),
         )),
     );
@@ -517,7 +520,7 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
         &db,
         Arc::new(LibraryLanding::new(
             library.clone(),
-            Arc::new(LargeGroups(known)),
+            every_priority(Arc::new(LargeGroups(known))),
             pool,
         )),
     );
@@ -643,7 +646,7 @@ async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
         &db,
         Arc::new(LibraryLanding::new(
             library,
-            Arc::new(OneRelease(release(&["Big"], &[None]))),
+            every_priority(Arc::new(OneRelease(release(&["Big"], &[None])))),
             pool,
         )),
     );

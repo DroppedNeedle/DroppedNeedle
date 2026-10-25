@@ -227,8 +227,10 @@ pub struct LibrarySetup {
     /// Identify service.
     pub identify: Arc<IdentifyService>,
     /// MusicBrainz releases for importing finished downloads: search and
-    /// release lookups, identity-critical like identification.
-    pub releases: Arc<dyn super::identify::sources::ReleaseSource>,
+    /// release lookups, identity-critical like identification, one source
+    /// for background work and one for a person waiting.
+    pub releases:
+        super::identify::sources::Prioritised<Arc<dyn super::identify::sources::ReleaseSource>>,
     /// AcoustID for files being imported, keyed per call and keeping
     /// nothing; off while no AcoustID key is set.
     pub fingerprints: Arc<dyn super::identify::sources::FingerprintSource>,
@@ -295,26 +297,37 @@ impl LibrarySetup {
     ) -> Result<Self, String> {
         use droppedneedle_providers::RequestPriority;
 
-        // Identification is background work on the source settings name,
-        // read per request; user page loads go ahead of it at the limiter.
-        // Both clients count their failures toward system health, so an
-        // outage during a background lookup shows on the health dot too.
+        // MusicBrainz on the source the settings name, read per request.
+        // Identification and imports are background work; a person waiting
+        // (an edition plan, a curator's edition choice, a drop matched by
+        // hand) goes ahead of it at the limiter. Both clients count their
+        // failures toward system health, so an outage during a background
+        // lookup shows on the health dot too.
         let mb_client =
             |priority: RequestPriority| providers.musicbrainz.live(mb_source.clone(), priority);
         // Identification and imports keep what MusicBrainz says about
-        // merged recording ids in the provider cache.
-        let cached = || {
+        // merged recording ids in the one provider cache, whatever the
+        // priority.
+        let cached = |priority: RequestPriority| {
             super::identify::sources::CachedMusicBrainz::new(
                 &providers.musicbrainz,
                 mb_source.clone(),
                 providers.cache.clone(),
-                RequestPriority::BackgroundSync,
+                priority,
             )
         };
-        let musicbrainz = cached();
+        let musicbrainz = super::identify::sources::Prioritised::new(
+            cached(RequestPriority::BackgroundSync),
+            cached(RequestPriority::UserInitiated),
+        );
         // Downloads being imported look releases up through their own
-        // client on the same limiter and source setting.
-        let imports: Arc<dyn super::identify::sources::ReleaseSource> = Arc::new(cached());
+        // clients on the same limiter and source setting.
+        let imports: super::identify::sources::Prioritised<
+            Arc<dyn super::identify::sources::ReleaseSource>,
+        > = super::identify::sources::Prioritised::new(
+            Arc::new(cached(RequestPriority::BackgroundSync)),
+            Arc::new(cached(RequestPriority::UserInitiated)),
+        );
         // Contributions read MusicBrainz on both lanes (the curator's page
         // and the verification worker) and Discogs through the one Discogs
         // client.
@@ -369,7 +382,9 @@ impl LibrarySetup {
         contrib_providers: ContribProviders,
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
         ports: LibraryPorts,
-        releases: Arc<dyn super::identify::sources::ReleaseSource>,
+        releases: super::identify::sources::Prioritised<
+            Arc<dyn super::identify::sources::ReleaseSource>,
+        >,
         import_acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
     ) -> Result<Self, String> {
         let db = &platform.db;

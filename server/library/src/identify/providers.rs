@@ -39,8 +39,8 @@ use std::sync::Arc;
 use super::evidence::local_album;
 use super::models::{LocalAlbumFacts, RecallResult};
 use super::sources::{
-    AlbumQuery, ArtistAnswer, Edition, EditionPage, EditionQuery, FingerprintSource, ReleaseAnswer,
-    ReleaseHit, ReleaseSource, SourceError, Unanswered, group_editions,
+    AlbumQuery, ArtistAnswer, Edition, EditionPage, EditionQuery, FingerprintSource, Prioritised,
+    ReleaseAnswer, ReleaseHit, ReleaseSource, SourceError, Unanswered, group_editions,
 };
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::fresh_release;
@@ -48,6 +48,7 @@ use crate::matching::decide::STRONG;
 use crate::matching::score::NAME_GATE;
 use crate::matching::strings::{fold, string_dist, strip_edition_words, without_brackets};
 use crate::matching::{LocalAlbum, Release, match_release, should_fingerprint, unknown_recordings};
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::Criticality;
 
 /// Tracklists fetched per album after a search.
@@ -64,6 +65,8 @@ const COMMON_RELEASE_SHARE: f64 = 0.6;
 
 /// What the identify service needs from providers. The live adapter owns
 /// provider clients; the fake answers from scripts. No live network in tests.
+/// Recall and edition search ask MusicBrainz at the caller's `priority`:
+/// user priority when a person waits on the answer, background otherwise.
 pub trait IdentifyProviders: Send + Sync {
     /// Recall candidate releases for the album facts. `named_group` is
     /// the release group the files name, weighed first.
@@ -71,6 +74,7 @@ pub trait IdentifyProviders: Send + Sync {
         &self,
         facts: &LocalAlbumFacts,
         named_group: Option<&str>,
+        priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>>;
 
     /// Recall the one release an administrator named for the album. The
@@ -80,6 +84,7 @@ pub trait IdentifyProviders: Send + Sync {
         &self,
         _facts: &LocalAlbumFacts,
         _release_mbid: &str,
+        _priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         Box::pin(async { RecallOutcome::default() })
     }
@@ -89,6 +94,7 @@ pub trait IdentifyProviders: Send + Sync {
     fn search_editions(
         &self,
         _query: EditionQuery,
+        _priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
         Box::pin(async { Ok(EditionPage::default()) })
     }
@@ -121,16 +127,16 @@ pub struct RecallOutcome {
     pub recall_criticality: Option<Criticality>,
 }
 
-/// Live recall over a release source, the release store, and a
-/// fingerprint source.
+/// Live recall over a release source for each priority, the release
+/// store, and a fingerprint source.
 pub struct LiveProviders<R, F> {
-    releases: R,
+    releases: Prioritised<R>,
     store: Arc<SqliteIdentifyStore>,
     audio: F,
 }
 
 impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
-    pub fn new(releases: R, store: Arc<SqliteIdentifyStore>, audio: F) -> Self {
+    pub fn new(releases: Prioritised<R>, store: Arc<SqliteIdentifyStore>, audio: F) -> Self {
         Self {
             releases,
             store,
@@ -138,6 +144,25 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
         }
     }
 
+    /// Recall asking MusicBrainz at `priority`.
+    fn at(&self, priority: RequestPriority) -> Recall<'_, R, F> {
+        Recall {
+            releases: self.releases.at(priority),
+            store: &self.store,
+            audio: &self.audio,
+        }
+    }
+}
+
+/// One recall's view of the providers: the release source at the
+/// caller's priority.
+struct Recall<'a, R, F> {
+    releases: &'a R,
+    store: &'a Arc<SqliteIdentifyStore>,
+    audio: &'a F,
+}
+
+impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
     async fn recall(
         &self,
         facts: &LocalAlbumFacts,
@@ -187,7 +212,7 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
         if let Some(group) = best_group(&local, &releases)
             && listed.as_deref() != Some(group.as_str())
         {
-            let editions = group_editions(&self.releases, &group).await?;
+            let editions = group_editions(self.releases, &group).await?;
             self.fetch_editions(&local, &mut releases, &group, &editions)
                 .await?;
         }
@@ -424,7 +449,7 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
     /// cannot be read is logged and the source asked: it answers the same
     /// document.
     async fn release(&self, mbid: &str) -> Result<Option<Release>, SourceError> {
-        match fresh_release(&self.store, mbid).await {
+        match fresh_release(self.store, mbid).await {
             Ok(Some(stored)) => return Ok(Some(stored)),
             Ok(None) => {}
             Err(error) => tracing::warn!(
@@ -462,11 +487,13 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
         &self,
         facts: &LocalAlbumFacts,
         named_group: Option<&str>,
+        priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         let facts = facts.clone();
         let named_group = named_group.map(str::to_owned);
         Box::pin(async move {
-            let result = match self.recall(&facts, named_group.as_deref()).await {
+            let source = self.at(priority);
+            let result = match source.recall(&facts, named_group.as_deref()).await {
                 Ok(result) => result,
                 Err(SourceError(error)) => {
                     tracing::info!(album = facts.local_album_id, %error, "identify recall deferred");
@@ -484,11 +511,13 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
         &self,
         facts: &LocalAlbumFacts,
         release_mbid: &str,
+        priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         let facts = facts.clone();
         let release_mbid = release_mbid.to_owned();
         Box::pin(async move {
-            let result = match self.recall_exact(&facts, &release_mbid).await {
+            let source = self.at(priority);
+            let result = match source.recall_exact(&facts, &release_mbid).await {
                 Ok(result) => result,
                 Err(SourceError(error)) => {
                     tracing::info!(album = facts.local_album_id, %error, "exact release recall deferred");
@@ -505,8 +534,9 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
     fn search_editions(
         &self,
         query: EditionQuery,
+        priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
-        Box::pin(async move { self.releases.search_editions(&query).await })
+        Box::pin(async move { self.releases.at(priority).search_editions(&query).await })
     }
 
     fn canonical_artist(
@@ -514,7 +544,8 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
         mbid: &str,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<ArtistAnswer, Unanswered>> + Send + '_>> {
         let mbid = mbid.to_owned();
-        Box::pin(async move { self.releases.canonical_artist(&mbid).await })
+        let releases = self.releases.at(RequestPriority::BackgroundSync);
+        Box::pin(async move { releases.canonical_artist(&mbid).await })
     }
 
     fn release_document(
@@ -523,7 +554,8 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<ReleaseAnswer, Unanswered>> + Send + '_>>
     {
         let release_mbid = release_mbid.to_owned();
-        Box::pin(async move { self.releases.release_answer(&release_mbid).await })
+        let releases = self.releases.at(RequestPriority::BackgroundSync);
+        Box::pin(async move { releases.release_answer(&release_mbid).await })
     }
 }
 
@@ -719,6 +751,7 @@ impl IdentifyProviders for FakeProviders {
         &self,
         _facts: &LocalAlbumFacts,
         named_group: Option<&str>,
+        _priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         let mut result = self.scripted();
         if result.named_group.is_none() {
@@ -736,6 +769,7 @@ impl IdentifyProviders for FakeProviders {
         &self,
         _facts: &LocalAlbumFacts,
         release_mbid: &str,
+        _priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         let mut result = self.scripted();
         result
@@ -752,6 +786,7 @@ impl IdentifyProviders for FakeProviders {
     fn search_editions(
         &self,
         _query: EditionQuery,
+        _priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
         let page = self
             .editions

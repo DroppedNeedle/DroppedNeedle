@@ -2373,6 +2373,7 @@ impl identify::providers::IdentifyProviders for DuringRecall {
         &self,
         _facts: &LocalAlbumFacts,
         _named_group: Option<&str>,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = identify::providers::RecallOutcome> + Send + '_>,
     > {
@@ -2710,21 +2711,29 @@ async fn a_merged_group_is_followed() {
 
     let rig = rig_with_recall(RecallResult::default());
     let providers = identify::providers::LiveProviders::new(
-        MergedGroups,
+        identify::sources::Prioritised::new(MergedGroups, MergedGroups),
         rig.store.clone(),
         identify::sources::NoFingerprints,
     );
     let facts = album_facts("album-1", &[("t1", None)]);
 
     let merged = providers
-        .recall_candidates(&facts, Some(MERGED_GROUP))
+        .recall_candidates(
+            &facts,
+            Some(MERGED_GROUP),
+            droppedneedle_providers::RequestPriority::BackgroundSync,
+        )
         .await
         .result;
     assert_eq!(merged.named_group.as_deref(), Some(GROUP_B));
     assert!(merged.releases.iter().any(|found| found.id == RELEASE_B1));
 
     let gone = providers
-        .recall_candidates(&facts, Some(GONE_GROUP))
+        .recall_candidates(
+            &facts,
+            Some(GONE_GROUP),
+            droppedneedle_providers::RequestPriority::BackgroundSync,
+        )
         .await
         .result;
     assert_eq!(gone.named_group, None);
@@ -2740,7 +2749,7 @@ async fn a_moved_release_names_its_own_group() {
 
     let rig = rig_with_recall(RecallResult::default());
     let providers = Arc::new(identify::providers::LiveProviders::new(
-        MergedGroups,
+        identify::sources::Prioritised::new(MergedGroups, MergedGroups),
         rig.store.clone(),
         identify::sources::NoFingerprints,
     ));
@@ -2750,7 +2759,11 @@ async fn a_moved_release_names_its_own_group() {
 
     let named = identify::evidence::named_group(&facts, None);
     let recall = providers
-        .recall_candidates(&facts, named.as_deref())
+        .recall_candidates(
+            &facts,
+            named.as_deref(),
+            droppedneedle_providers::RequestPriority::BackgroundSync,
+        )
         .await
         .result;
     assert_eq!(recall.named_group.as_deref(), Some(GROUP_B));

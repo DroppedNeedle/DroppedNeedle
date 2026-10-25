@@ -28,9 +28,14 @@ use crate::landing::probe::Landing;
 use crate::landing::specs::Target;
 use droppedneedle_library::matching::Release;
 use droppedneedle_library::matching::decide::ACCEPT_ALBUM;
+use droppedneedle_providers::RequestPriority;
 
 /// Releases fetched from fingerprint or group lookups.
 const FETCH: usize = 3;
+
+/// A person matching a review item by hand waits on the answer; working
+/// out a dropped folder by itself runs in the background.
+const PERSON: RequestPriority = RequestPriority::UserInitiated;
 
 /// What identification decided.
 #[derive(Debug, Clone)]
@@ -168,7 +173,7 @@ pub async fn assigned(
     let local = local_album(&landing.audio, &target);
     let mut releases: Vec<Release> = Vec::new();
     if let Some(pin) = target.release_mbid.clone() {
-        match library.release(&pin).await {
+        match library.release(&pin, PERSON).await {
             Ok(Some(release)) => releases.push(release),
             Ok(None) => target.release_mbid = None,
             Err(error) => return Outcome::Unavailable(error.0),
@@ -177,7 +182,7 @@ pub async fn assigned(
     if releases.is_empty()
         && let Some(tagged) = local.tagged_release()
     {
-        match library.release(&tagged).await {
+        match library.release(&tagged, PERSON).await {
             Ok(Some(release)) if release.release_group_id.eq_ignore_ascii_case(&group) => {
                 releases.push(release);
             }
@@ -186,7 +191,7 @@ pub async fn assigned(
         }
     }
     if target.release_mbid.is_none() {
-        let mut hits = match library.group_releases(&group).await {
+        let mut hits = match library.group_releases(&group, PERSON).await {
             Ok(hits) => hits,
             Err(error) => return Outcome::Unavailable(error.0),
         };
@@ -197,7 +202,7 @@ pub async fn assigned(
         });
         hits.retain(|hit| !releases.iter().any(|known| known.answers_to(&hit.id)));
         for hit in hits.iter().take(FETCH) {
-            match library.release(&hit.id).await {
+            match library.release(&hit.id, PERSON).await {
                 Ok(Some(release)) if release.release_group_id.eq_ignore_ascii_case(&group) => {
                     releases.push(release);
                 }
@@ -206,7 +211,7 @@ pub async fn assigned(
             }
         }
     }
-    let aliases = match merged_recordings(library, &local, &releases).await {
+    let aliases = match merged_recordings(library, &local, &releases, PERSON).await {
         Ok(aliases) => aliases,
         Err(detail) => return Outcome::Unavailable(detail),
     };
@@ -244,12 +249,17 @@ async fn by_fingerprint(
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     let mut releases = Vec::new();
     for (id, _) in ranked.into_iter().take(FETCH) {
-        if let Some(release) = library.release(&id).await.map_err(|error| error.0)? {
+        if let Some(release) = library
+            .release(&id, RequestPriority::BackgroundSync)
+            .await
+            .map_err(|error| error.0)?
+        {
             releases.push(release);
         }
     }
     let local = local_album(&landing.audio, target);
-    let aliases = merged_recordings(library, &local, &releases).await?;
+    let aliases =
+        merged_recordings(library, &local, &releases, RequestPriority::BackgroundSync).await?;
     let summary = choose(&local, releases, &aliases, target);
     Ok(summary.best().is_some_and(close).then_some(summary))
 }

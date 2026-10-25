@@ -34,6 +34,7 @@ use droppedneedle_kernel::db::{Db, Lane, savepoint};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+use droppedneedle_providers::RequestPriority;
 
 /// Most reviews one "retry all" or bulk action takes on.
 pub const BULK_MAX: u32 = 5_000;
@@ -374,7 +375,12 @@ impl Operations {
     ) -> Result<EditionChoice, OperationError> {
         let release = parse_release(raw_release)?;
         let candidate = self
-            .candidate_for(album_id, &release, Lane::Foreground)
+            .candidate_for(
+                album_id,
+                &release,
+                Lane::Foreground,
+                RequestPriority::UserInitiated,
+            )
             .await?;
         let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.map(str::to_owned));
         tokio::task::spawn_blocking(move || {
@@ -421,7 +427,12 @@ impl Operations {
             return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
         }
         let candidate = self
-            .candidate_for(album_id, &release, Lane::Foreground)
+            .candidate_for(
+                album_id,
+                &release,
+                Lane::Foreground,
+                RequestPriority::UserInitiated,
+            )
             .await?;
         let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.to_owned());
         tokio::task::spawn_blocking(move || {
@@ -454,14 +465,16 @@ impl Operations {
     }
 
     /// The release scored against the album's files, as a candidate.
-    /// Documents the recall fetched are kept on `lane`.
+    /// MusicBrainz is asked at `priority`; documents the recall fetched
+    /// are kept on `lane`.
     async fn candidate_for(
         &self,
         album_id: &str,
         release_mbid: &str,
         lane: Lane,
+        priority: RequestPriority,
     ) -> Result<ReidentificationCandidate, OperationError> {
-        Ok(self.scored(album_id, release_mbid, lane).await?.2)
+        Ok(self.scored(album_id, release_mbid, lane, priority).await?.2)
     }
 
     /// The album's files, the release as MusicBrainz lists it, and the
@@ -471,6 +484,7 @@ impl Operations {
         album_id: &str,
         release_mbid: &str,
         lane: Lane,
+        priority: RequestPriority,
     ) -> Result<(LocalAlbumFacts, Release, ReidentificationCandidate), OperationError> {
         let facts = {
             let store = self.store.clone();
@@ -483,7 +497,7 @@ impl Operations {
         .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
         let recall = self
             .identify
-            .recall(&facts, Some(release_mbid), lane)
+            .recall(&facts, Some(release_mbid), lane, priority)
             .await?;
         if recall.provider_deferred {
             return Err(OperationError::Unavailable(
@@ -601,7 +615,14 @@ impl Operations {
                 .clone()
                 .ok_or(OperationError::Invalid(reasons::NO_EDITION_TO_PLAN))?,
         };
-        let (facts, release, candidate) = self.scored(album_id, &release, Lane::Foreground).await?;
+        let (facts, release, candidate) = self
+            .scored(
+                album_id,
+                &release,
+                Lane::Foreground,
+                RequestPriority::UserInitiated,
+            )
+            .await?;
         let stored = match current.as_deref() {
             Some(current) if release.answers_to(current.trim()) => {
                 hand_match::on_release(stored, &release)
@@ -650,7 +671,14 @@ impl Operations {
             .await
             .map_err(|error| OperationError::Store(error.to_string()))??
         };
-        let (_, release, candidate) = self.scored(album_id, &release, Lane::Foreground).await?;
+        let (_, release, candidate) = self
+            .scored(
+                album_id,
+                &release,
+                Lane::Foreground,
+                RequestPriority::UserInitiated,
+            )
+            .await?;
         let ops = self.clone();
         let (album, track, wanted, actor) = (
             album_id.to_owned(),
@@ -795,6 +823,7 @@ impl Operations {
                 &pending.local_album_id,
                 &pending.release_mbid,
                 Lane::Background,
+                RequestPriority::BackgroundSync,
             )
             .await;
         let place_only = pending.origin == RemapOrigin::PlaceOnly;
@@ -957,13 +986,16 @@ impl Operations {
         };
         let page = self
             .identify
-            .search_editions(EditionQuery {
-                title: title_query.clone(),
-                artist: artist_query.clone(),
-                release_group_mbid: release_group_mbid.clone(),
-                limit,
-                offset,
-            })
+            .search_editions(
+                EditionQuery {
+                    title: title_query.clone(),
+                    artist: artist_query.clone(),
+                    release_group_mbid: release_group_mbid.clone(),
+                    limit,
+                    offset,
+                },
+                RequestPriority::UserInitiated,
+            )
             .await
             .map_err(|error| OperationError::Unavailable(error.0))?;
         Ok(ReleaseSearch {

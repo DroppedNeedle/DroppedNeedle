@@ -39,7 +39,7 @@ use futures_util::future::BoxFuture;
 use crate::common::TestPlatform;
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::library::TestSql as _;
-use crate::common::library::library_at;
+use crate::common::library::{every_priority, library_at};
 
 const GOOD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000001";
 const GOOD_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000002";
@@ -256,7 +256,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         &db,
         Some(Arc::new(LibraryLanding::new(
             library.clone(),
-            releases,
+            every_priority(releases),
             pool,
         ))),
     );
@@ -521,7 +521,7 @@ async fn land_with_recording(
         &db,
         Some(Arc::new(LibraryLanding::new(
             library.clone(),
-            releases,
+            every_priority(releases),
             pool,
         ))),
     );
@@ -689,7 +689,7 @@ async fn land_through(
         &db,
         Some(Arc::new(LibraryLanding::new(
             library.clone(),
-            releases,
+            every_priority(releases),
             pool,
         ))),
     );
@@ -1146,7 +1146,7 @@ async fn held_files_import_as_upgrades_or_discard() {
         &db,
         Some(Arc::new(LibraryLanding::new(
             library.clone(),
-            releases,
+            every_priority(releases),
             pool,
         ))),
     );
@@ -1713,7 +1713,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
 
     let port: Arc<dyn LandingLibrary> = Arc::new(LibraryLanding::new(
         library.clone(),
-        Arc::new(Releases(vec![release.clone()])),
+        every_priority(Arc::new(Releases(vec![release.clone()]))),
         db.pool().clone(),
     ));
     let acquire = acquire_over(&db, Some(port.clone()));
@@ -1987,7 +1987,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         &db,
         Some(Arc::new(LibraryLanding::new(
             library.clone(),
-            Arc::new(Releases(releases.clone())),
+            every_priority(Arc::new(Releases(releases.clone()))),
             db.pool().clone(),
         ))),
     );
@@ -3305,7 +3305,7 @@ async fn a_held_release_track_is_not_given_away() {
     rig.place(&holder, &e.new, 1, "manual");
     let port = LibraryLanding::new(
         rig.library.clone(),
-        Arc::new(Releases(vec![e.new.clone()])),
+        every_priority(Arc::new(Releases(vec![e.new.clone()]))),
         rig.acquire.db.pool().clone(),
     );
     let file = rig.landed("t-held", &e.new, 1, FIXTURES[1]);
@@ -3841,7 +3841,7 @@ async fn a_failed_request_follows_its_retry_to_imported() {
         &db,
         Some(Arc::new(LibraryLanding::new(
             library.clone(),
-            releases,
+            every_priority(releases),
             pool,
         ))),
     );
@@ -3967,7 +3967,7 @@ async fn land_single(task_id: &'static str, title: &str) -> Vec<(String, Option<
         &db,
         Some(Arc::new(LibraryLanding::new(
             library,
-            Arc::new(Releases(vec![single])),
+            every_priority(Arc::new(Releases(vec![single]))),
             db.pool().clone(),
         ))),
     );
@@ -4079,7 +4079,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
         &db,
         Some(Arc::new(LibraryLanding::new(
             library.clone(),
-            releases,
+            every_priority(releases),
             db.pool().clone(),
         ))),
     );

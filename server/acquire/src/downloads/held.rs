@@ -26,6 +26,7 @@ use crate::landing::reasons::explain;
 use crate::landing::{NAMING_SCRIPT_FAILED, is_local_hold, probe, quality, specs};
 use crate::worker::DownloadWorker;
 use droppedneedle_library::matching::Release;
+use droppedneedle_providers::RequestPriority;
 
 /// Fingerprint checks one bulk re-check runs at most (v2
 /// `HELD_REVERIFY_BULK_LIMIT`). Skipped rows do not count.
@@ -511,7 +512,10 @@ impl HeldImports {
             .or_else(|| row.release_mbid.clone())
             .filter(|mbid| !mbid.is_empty())
             .ok_or_else(unmatched)?;
-        let release = match library.release(&release_mbid).await {
+        let release = match library
+            .release(&release_mbid, RequestPriority::UserInitiated)
+            .await
+        {
             Ok(Some(release)) => release,
             Ok(None) => {
                 return Err(HeldError::Refused(

@@ -169,7 +169,10 @@ fn rig_on(routes: HashMap<String, RawResponse>, down: bool, source: Source) -> R
     let service = IdentifyService::new(IdentifyDeps {
         store: store.clone(),
         providers: Arc::new(LiveProviders::new(
-            musicbrainz,
+            droppedneedle_library::identify::sources::Prioritised::new(
+                musicbrainz.clone(),
+                musicbrainz,
+            ),
             store.clone(),
             NoFingerprints,
         )),
@@ -634,6 +637,7 @@ async fn a_merged_release_id_finds_the_document_already_on_file() {
             &standard_facts,
             Some(STANDARD),
             droppedneedle_kernel::db::Lane::Background,
+            RequestPriority::BackgroundSync,
         )
         .await
         .unwrap();
@@ -696,7 +700,12 @@ async fn a_merged_release_id_finds_the_document_already_on_file() {
     assert_eq!(stored.artist_names, Some(names));
     rig.seen.lock().expect("seen").clear();
     rig.service
-        .recall(&facts, None, droppedneedle_kernel::db::Lane::Background)
+        .recall(
+            &facts,
+            None,
+            droppedneedle_kernel::db::Lane::Background,
+            RequestPriority::BackgroundSync,
+        )
         .await
         .unwrap();
     let seen = rig.seen.lock().expect("seen").clone();

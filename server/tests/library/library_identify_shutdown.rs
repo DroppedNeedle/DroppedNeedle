@@ -39,6 +39,7 @@ impl IdentifyProviders for EmptyRecall {
         &self,
         _facts: &LocalAlbumFacts,
         _named_group: Option<&str>,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         Box::pin(async move {
             RecallOutcome {
@@ -70,6 +71,7 @@ impl IdentifyProviders for SignalOnFirstRecall {
         &self,
         _facts: &LocalAlbumFacts,
         _named_group: Option<&str>,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         if !self.signalled.swap(true, Ordering::SeqCst) {
             self.shutdown_tx.cancel();
@@ -102,6 +104,7 @@ impl IdentifyProviders for GateWait {
         &self,
         _facts: &LocalAlbumFacts,
         _named_group: Option<&str>,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         if let Ok(mut slot) = self.entered.lock()
             && let Some(entered) = slot.take()

@@ -25,6 +25,10 @@ use droppedneedle_library::matching::{
     LocalAlbum, LocalTrack, Release, ReleaseMatch, ReleaseTrack,
 };
 use droppedneedle_library::matching::{match_release, unknown_recordings};
+use droppedneedle_providers::RequestPriority;
+
+/// The landing is background work: nobody waits on it.
+const PRIORITY: RequestPriority = RequestPriority::BackgroundSync;
 
 /// Editions of the requested group fetched after a title search, used
 /// when the group's own listing is empty.
@@ -199,7 +203,7 @@ pub async fn find(
     };
     let recalled = async {
         let releases = recall(library, target, &local).await?;
-        let aliases = merged_recordings(library, &local, &releases).await?;
+        let aliases = merged_recordings(library, &local, &releases, PRIORITY).await?;
         Ok::<_, String>((releases, aliases))
     };
     let (releases, aliases) = match recalled.await {
@@ -220,16 +224,17 @@ pub async fn find(
 
 /// The ids MusicBrainz merged the files' recording MBIDs into, for every
 /// one no candidate carries: a single retired id left unresolved vetoes
-/// the release the files are.
+/// the release the files are. MusicBrainz is asked at `priority`.
 pub async fn merged_recordings(
     library: &dyn LandingLibrary,
     local: &LocalAlbum,
     releases: &[Release],
+    priority: RequestPriority,
 ) -> Result<HashMap<String, String>, String> {
     let mut aliases = HashMap::new();
     for mbid in unknown_recordings(local, releases) {
         if let Some(canonical) = library
-            .canonical_recording(&mbid)
+            .canonical_recording(&mbid, priority)
             .await
             .map_err(|error| error.0)?
             && canonical != mbid
@@ -253,14 +258,17 @@ async fn recall(
     let mut releases: Vec<Release> = Vec::new();
     let error = |error: droppedneedle_library::identify::sources::SourceError| error.0;
     if let Some(pinned) = target.release_mbid.as_deref() {
-        fetch(library.release(pinned).await.map_err(error)?, &mut releases);
+        fetch(
+            library.release(pinned, PRIORITY).await.map_err(error)?,
+            &mut releases,
+        );
         return Ok(releases);
     }
     if let Some(tagged) = local.tagged_release()
         && !releases.iter().any(|known| known.answers_to(&tagged))
     {
         fetch(
-            library.release(&tagged).await.map_err(error)?,
+            library.release(&tagged, PRIORITY).await.map_err(error)?,
             &mut releases,
         );
     }
@@ -274,7 +282,7 @@ async fn recall(
     let mut hits = Vec::new();
     if !target.release_group_mbid.is_empty() {
         hits = library
-            .group_releases(&target.release_group_mbid)
+            .group_releases(&target.release_group_mbid, PRIORITY)
             .await
             .map_err(error)?;
     }
@@ -286,12 +294,15 @@ async fn recall(
             target.artist_name.as_str()
         };
         hits = library
-            .search(&target.album_title, artist)
+            .search(&target.album_title, artist, PRIORITY)
             .await
             .map_err(error)?;
     }
     for id in pick_hits(&hits, target, local.tracks.len(), &releases, listed) {
-        fetch(library.release(&id).await.map_err(error)?, &mut releases);
+        fetch(
+            library.release(&id, PRIORITY).await.map_err(error)?,
+            &mut releases,
+        );
     }
     releases.retain(in_group);
     Ok(releases)

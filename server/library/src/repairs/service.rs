@@ -40,6 +40,7 @@ use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+use droppedneedle_providers::RequestPriority;
 
 /// Wait before a job the database was too busy for goes on, plus up to
 /// as much again.
@@ -934,7 +935,12 @@ impl Repairs {
         let release = identity.as_ref().and_then(|id| id.release_mbid.clone());
         let recall = self
             .identify
-            .recall(&facts, release.as_deref(), Lane::Background)
+            .recall(
+                &facts,
+                release.as_deref(),
+                Lane::Background,
+                RequestPriority::BackgroundSync,
+            )
             .await?;
         if recall.provider_deferred {
             return Ok(Checked::Deferred);
