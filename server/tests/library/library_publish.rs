@@ -1005,7 +1005,7 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
 }
 
 #[test]
-fn foreign_bytes_at_dest_flag_attention_without_deleting() {
+fn foreign_bytes_at_an_unplaced_dest_unwind_without_deleting() {
     let fix = fixture("foreign-dest");
     let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
     let (sealed, live) = seal(&bundle);
@@ -1027,10 +1027,7 @@ fn foreign_bytes_at_dest_flag_attention_without_deleting() {
     let results = reconcile(&db, &fix.sandbox).unwrap();
     assert_eq!(results.len(), 1);
     assert!(
-        matches!(
-            results[0].action,
-            publish::RecoveryAction::NeedsAttention(_)
-        ),
+        matches!(results[0].action, publish::RecoveryAction::Compensated),
         "got {:?}",
         results[0].action
     );

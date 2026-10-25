@@ -745,16 +745,26 @@ fn inspect_bundle(
                 *root == journal.dest_root && *rel == journal.dest_rel && *removed == sha
             })
         });
+        // A row not placed yet keeps its staged temp as a file of its own.
+        // Whatever holds its destination then is not ours: the bundle
+        // unwinds, which takes only our own checked temp and leaves that
+        // file as it is. For a placed row it may be our file, changed.
+        let unplaced = journal.state == JournalState::Staged
+            && staged_match
+            && !paths::same_file(staged, &dest);
         if dest_bytes.is_some()
             && !dest_match
             && !dest_holds_source
             && !dest_holds_replaced
             && !dest_holds_removed
         {
-            return Ok(BundleEvidence::Ambiguous(format!(
-                "journal {} destination holds foreign bytes",
-                journal.id
-            )));
+            if !unplaced {
+                return Ok(BundleEvidence::Ambiguous(format!(
+                    "journal {} destination holds foreign bytes",
+                    journal.id
+                )));
+            }
+            resumeable = false;
         }
         // One file under both names is a link-then-unlink placement that
         // stopped halfway; resume removes the hidden name. Two files with
@@ -765,10 +775,13 @@ fn inspect_bundle(
             && !paths::same_file(staged, &dest)
             && !unchanged_original(sandbox, journal, &dest)
         {
-            return Ok(BundleEvidence::Ambiguous(format!(
-                "journal {} has duplicate staged locations",
-                journal.id
-            )));
+            if !unplaced {
+                return Ok(BundleEvidence::Ambiguous(format!(
+                    "journal {} has duplicate staged locations",
+                    journal.id
+                )));
+            }
+            resumeable = false;
         }
         // A placed row whose staged copy is still a file of its own while
         // its destination does not hold it was being unwound: the unwind
