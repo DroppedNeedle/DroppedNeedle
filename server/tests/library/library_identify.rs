@@ -3449,3 +3449,254 @@ async fn person_commands_leave_what_their_rule_says() {
 
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
+
+const RECORDING_3: &str = "0c3f7a52-6f0b-4a58-9e39-4d5f0f6c1a23";
+const RELEASE_A3: &str = "6b2d1c8e-3f4a-4b5c-8d9e-0a1b2c3d4e5f";
+const UNFETCHED: &str = "1f2e3d4c-5b6a-4798-8a7b-6c5d4e3f2a1b";
+const MERGED_A1: &str = "7e6d5c4b-3a29-4180-9f8e-7d6c5b4a3928";
+
+/// One file's release id tag, media, barcode, catalog number and country.
+type FileTags = (
+    Option<&'static str>,
+    &'static str,
+    Option<&'static str>,
+    Option<&'static str>,
+    &'static str,
+);
+
+/// One shape of a confirmed album held on `held`, identified again with
+/// the editions `recall` offers.
+struct EditionIdCase {
+    name: &'static str,
+    held: Release,
+    recall: Vec<Release>,
+    files: [FileTags; 3],
+    source: DecisionSource,
+    live_loose: bool,
+    expected: &'static str,
+}
+
+/// An edition of `GROUP_A` on `media` from `country`, with a barcode and
+/// catalog number when given.
+fn pressing(
+    id: &str,
+    media: &str,
+    country: &str,
+    barcode: Option<&str>,
+    catalog: Option<&str>,
+) -> Release {
+    let mut release = release(GROUP_A, id, &[RECORDING_1, RECORDING_2, RECORDING_3]);
+    release.media = vec![droppedneedle_library::matching::ReleaseMedium {
+        position: 1,
+        format: Some(media.to_owned()),
+        title: None,
+        track_count: 3,
+    }];
+    release.country = Some(country.to_owned());
+    release.barcode = barcode.map(str::to_owned);
+    release.catalog_numbers = catalog.map(str::to_owned).into_iter().collect();
+    release
+}
+
+/// A confirmed album moves to another edition of its group when no file
+/// carries a release ID for the group, the barcode or catalog number most
+/// files carry names that edition while the held one states another, and
+/// the new one fits as any confirmation must and contradicts no more of
+/// the files' media and country. Every other shape keeps its edition.
+#[tokio::test]
+async fn a_confirmed_album_moves_to_the_edition_its_barcode_names() {
+    let vinyl = || {
+        pressing(
+            RELEASE_A1,
+            "12\" Vinyl",
+            "GB",
+            Some("5012345678900"),
+            Some("WS 1768"),
+        )
+    };
+    let cd = || {
+        pressing(
+            RELEASE_A2,
+            "CD",
+            "US",
+            Some("075992717625"),
+            Some("W2 1768"),
+        )
+    };
+    let merged_vinyl = || {
+        let mut held = vinyl();
+        held.old_ids = vec![MERGED_A1.to_owned()];
+        held
+    };
+    let cd_tags: FileTags = (None, "CD", Some("075992717625"), Some("W2 1768"), "US");
+    let plain_cd: FileTags = (None, "CD", None, None, "US");
+    let tagged = |id| -> FileTags { (Some(id), "CD", Some("075992717625"), Some("W2 1768"), "US") };
+    let base = |name| EditionIdCase {
+        name,
+        held: vinyl(),
+        recall: vec![vinyl(), cd()],
+        files: [cd_tags; 3],
+        source: DecisionSource::Automatic,
+        live_loose: false,
+        expected: RELEASE_A1,
+    };
+    let mut in_group_b = release(
+        GROUP_B,
+        RELEASE_B1,
+        &[RECORDING_2, RECORDING_1, RECORDING_3],
+    );
+    in_group_b.title = "Another Album".to_owned();
+    let mut short_cd = cd();
+    short_cd.tracks.truncate(1);
+    let cases = vec![
+        EditionIdCase {
+            expected: RELEASE_A2,
+            ..base("untagged files move to the edition their barcode names")
+        },
+        EditionIdCase {
+            files: [tagged(RELEASE_A1); 3],
+            ..base("a release-ID tag naming the held edition wins")
+        },
+        EditionIdCase {
+            files: [tagged(RELEASE_A1), cd_tags, cd_tags],
+            ..base("so does one on a minority of files")
+        },
+        EditionIdCase {
+            recall: vec![vinyl(), cd(), pressing(RELEASE_A3, "CD", "JP", None, None)],
+            files: [tagged(RELEASE_A3), cd_tags, cd_tags],
+            ..base("a file naming another edition of the group")
+        },
+        EditionIdCase {
+            files: [tagged(UNFETCHED), cd_tags, cd_tags],
+            ..base("a file naming a release recall did not fetch")
+        },
+        EditionIdCase {
+            held: merged_vinyl(),
+            recall: vec![merged_vinyl(), cd()],
+            files: [tagged(MERGED_A1), cd_tags, cd_tags],
+            ..base("a file naming the held edition by a merged id")
+        },
+        EditionIdCase {
+            recall: vec![vinyl(), cd(), in_group_b],
+            files: [tagged(RELEASE_B1), cd_tags, cd_tags],
+            expected: RELEASE_A2,
+            ..base("a file naming a release of another group does not hold it")
+        },
+        EditionIdCase {
+            files: [plain_cd; 3],
+            ..base("media and country alone never move it")
+        },
+        EditionIdCase {
+            files: [(
+                None,
+                "12\" Vinyl",
+                Some("075992717625"),
+                Some("W2 1768"),
+                "GB",
+            ); 3],
+            ..base("the named edition contradicts more of the files' tags")
+        },
+        EditionIdCase {
+            recall: vec![vinyl(), short_cd],
+            ..base("the named edition does not fit the files")
+        },
+        EditionIdCase {
+            held: pressing(RELEASE_A1, "12\" Vinyl", "GB", Some("075992717625"), None),
+            recall: vec![
+                pressing(RELEASE_A1, "12\" Vinyl", "GB", Some("075992717625"), None),
+                cd(),
+            ],
+            ..base("the held edition carries the barcode too")
+        },
+        EditionIdCase {
+            held: pressing(RELEASE_A1, "12\" Vinyl", "GB", None, None),
+            recall: vec![pressing(RELEASE_A1, "12\" Vinyl", "GB", None, None), cd()],
+            ..base("the held edition is silent on both")
+        },
+        EditionIdCase {
+            recall: vec![
+                vinyl(),
+                pressing(RELEASE_A2, "CD", "US", Some("075992717625"), Some("X 9")),
+            ],
+            ..base("the named edition states another catalog number")
+        },
+        EditionIdCase {
+            files: [cd_tags, plain_cd, plain_cd],
+            ..base("a barcode on fewer than half the files")
+        },
+        EditionIdCase {
+            live_loose: true,
+            ..base("a live edition that fits too loosely to confirm")
+        },
+        EditionIdCase {
+            source: DecisionSource::Manual,
+            ..base("a person's choice")
+        },
+        EditionIdCase {
+            source: DecisionSource::LegacyImport,
+            ..base("a choice carried from v2")
+        },
+    ];
+    let mut wrong = Vec::new();
+    for case in cases {
+        let live_loose = case.live_loose;
+        let releases = case
+            .recall
+            .into_iter()
+            .map(|release| if live_loose { live(release) } else { release })
+            .collect();
+        let rig = rig_with_recall(recall(releases));
+        let mut facts = album_facts(
+            "album-1",
+            &[
+                ("t1", Some(RECORDING_1)),
+                ("t2", Some(RECORDING_2)),
+                ("t3", Some(RECORDING_3)),
+            ],
+        );
+        if live_loose {
+            facts.tracks[1].duration_secs = Some(215);
+        }
+        rig.seed_album(&facts);
+        for (track, (release_id, media, barcode, catalog, country)) in
+            facts.tracks.iter().zip(case.files)
+        {
+            rig.db
+                .execute(
+                    "UPDATE local_tracks SET embedded_release_mbid = ?2 WHERE id = ?1",
+                    params![track.local_track_id, release_id],
+                )
+                .expect("release id tagged");
+            rig.db
+                .execute(
+                    "INSERT INTO local_track_edition_tags (local_track_id, media, barcode, \
+                     catalog_number, release_country) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![track.local_track_id, media, barcode, catalog, country],
+                )
+                .expect("edition tags read");
+        }
+        rig.store
+            .save_album_identity(AlbumIdentity {
+                local_album_id: "album-1".to_owned(),
+                provider: "musicbrainz".to_owned(),
+                release_group_mbid: Some(GROUP_A.to_owned()),
+                release_mbid: Some(case.held.id.clone()),
+                decision_source: case.source,
+                row_revision: 1,
+            })
+            .unwrap();
+        rig.attempt(&rig.service, "job-1", "album-1").await;
+        let got = rig
+            .store
+            .album_identity("album-1")
+            .unwrap()
+            .and_then(|identity| identity.release_mbid);
+        if got.as_deref() != Some(case.expected) {
+            wrong.push(format!(
+                "{}: expected {}, got {got:?}",
+                case.name, case.expected
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

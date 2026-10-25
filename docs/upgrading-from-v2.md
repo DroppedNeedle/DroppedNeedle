@@ -162,10 +162,13 @@ Upgrading an existing v3 install does the same with any pins it holds.
 Albums that were waiting on a review question in v2 go back on v3's
 identify queue, so v3 asks again with its own candidates.
 
-Three passes run in the background after an upgrade: an album v2 matched only
+Four passes run in the background after an upgrade: an album v2 matched only
 to a release group is identified once more to find its edition, unless a
 person chose that group; an album matched by itself on a release outside
-the group all its files name is checked once more; and the artist MusicBrainz links v2 made stay in
+the group all its files name is checked once more; an album matched by
+itself on an edition whose barcode or catalog number differs from its
+files', with no MusicBrainz release ID in them, is checked once more after
+its files' edition tags are read; and the artist MusicBrainz links v2 made stay in
 place until each album's release details arrive and are checked. See
 [Your library](library.md#album-organization).
 

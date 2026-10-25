@@ -391,7 +391,10 @@ impl Repairs {
     /// automatic match names a release group but no release (see
     /// [`store::group_only_backfill_albums`]), and every confirmed
     /// automatic match outside the release group its files name (see
-    /// [`store::older_confirmation_albums`]). Each set is looked at once
+    /// [`store::older_confirmation_albums`]), and every confirmed
+    /// automatic match on an edition other than the one its files'
+    /// barcode or catalog number names (see
+    /// [`store::edition_id_albums`]). Each set is looked at once
     /// per server start and after each scan until it first holds an album,
     /// so a library that arrives later (a v2 import, a first scan) still
     /// gets it; then never again.
@@ -432,6 +435,14 @@ impl Repairs {
                     store::OLDER_CONFIRMATIONS_BACKFILL_KEY,
                     store::older_confirmation_albums,
                     "queued confirmed albums outside the release group their files name",
+                ),
+            ),
+            (
+                store::EDITION_IDS_BACKFILL_KEY,
+                self.queue_backfill(
+                    store::EDITION_IDS_BACKFILL_KEY,
+                    store::edition_id_albums,
+                    "queued confirmed albums whose files' barcode or catalog number names another edition",
                 ),
             ),
         ];

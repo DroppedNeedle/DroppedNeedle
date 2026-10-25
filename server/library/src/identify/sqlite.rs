@@ -386,6 +386,29 @@ impl SqliteIdentifyStore {
     }
 
     /// The album's match flag, if identification is unsure of it.
+    /// True when an administrator undid an automatic edition of
+    /// `release_group` on the album and got the earlier edition back: the
+    /// app does not move it to another edition of that group by itself
+    /// again.
+    pub fn edition_change_undone(
+        &self,
+        local_album_id: &str,
+        release_group: &str,
+    ) -> Result<bool, StoreError> {
+        self.db
+            .read_blocking("identify.edition_change_undone", |conn| {
+                Ok(conn.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM library_catalog_actions \
+                 WHERE local_album_id = ?1 AND action_kind = 'undo_automatic_edition' \
+                 AND json_extract(after_json, '$.outcome') = 'restored' \
+                 AND lower(json_extract(before_json, '$.identity.release_group_mbid')) \
+                     = lower(?2))",
+                    params![local_album_id, release_group],
+                    |row| row.get(0),
+                )?)
+            })
+    }
+
     pub fn match_flag(&self, local_album_id: &str) -> Result<Option<MatchFlag>, StoreError> {
         self.db.read_blocking("identify.match_flag", |conn| {
             Ok(conn

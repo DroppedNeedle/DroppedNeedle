@@ -18383,6 +18383,204 @@ async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
     assert!(queued().is_empty());
 }
 
+/// An album the app confirmed on a vinyl edition while its files' barcode,
+/// catalog number, media and country are the CD's, and no file carries a
+/// MusicBrainz release ID (A), is identified once more after the upgrade,
+/// but only once its files' edition tags have been read, and moves to the
+/// CD. The move can be undone, and the undone album is not moved again.
+/// The same files carrying the vinyl's release ID (B) keep the vinyl: the
+/// release ID outranks the barcode.
+#[tokio::test]
+async fn an_album_moves_to_the_edition_its_barcode_names_once() {
+    use droppedneedle_library::identify::models::IdentifyKind;
+    use droppedneedle_library::matching::ReleaseMedium;
+    use droppedneedle_library::operations::decisions::{
+        live_automatic_edition_undo, undo_automatic_edition,
+    };
+    use droppedneedle_library::repairs::service::Repairs;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let (scratch, library, music) = bare_library("lib-edition-ids").await;
+    let (mut vinyl, mut cd) = sibling_editions(4, "Astral Weeks");
+    for (release, media, country, barcode, catalog) in [
+        (&mut vinyl, "12\" Vinyl", "GB", "5012345678900", "WS 1768"),
+        (&mut cd, "CD", "US", "075992717625", "W2 1768"),
+    ] {
+        release.media = vec![ReleaseMedium {
+            position: 1,
+            format: Some(media.to_owned()),
+            title: None,
+            track_count: 3,
+        }];
+        release.country = Some(country.to_owned());
+        release.barcode = Some(barcode.to_owned());
+        release.catalog_numbers = vec![catalog.to_owned()];
+    }
+    for (folder, release_id) in [("album-a", ""), ("album-b", vinyl.id.as_str())] {
+        for (number, track) in vinyl.tracks.iter().enumerate() {
+            let file = plant(
+                &music,
+                &format!("{folder}/{:02}.flac", number + 1),
+                "flac_full_01.flac",
+            );
+            let tag = |field, value: &str| TagEdit::verbatim(field, vec![value.to_owned()]);
+            save_tags(
+                &file,
+                &[
+                    tag(TagField::Title, &track.title),
+                    tag(TagField::Album, "Astral Weeks"),
+                    tag(TagField::Artist, "Radiohead"),
+                    tag(TagField::AlbumArtist, "Radiohead"),
+                    tag(TagField::TrackNumber, &(number + 1).to_string()),
+                    tag(TagField::MusicBrainzRecordingId, &track.recording_id),
+                    tag(TagField::MusicBrainzReleaseGroupId, &vinyl.release_group_id),
+                    TagEdit::verbatim(
+                        TagField::MusicBrainzReleaseId,
+                        [release_id]
+                            .into_iter()
+                            .filter(|id| !id.is_empty())
+                            .map(str::to_owned)
+                            .collect(),
+                    ),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+                    tag(TagField::Media, "CD"),
+                    tag(TagField::ReleaseCountry, "US"),
+                    tag(TagField::Barcode, "075992717625"),
+                    tag(TagField::CatalogNumber, "W2 1768"),
+                ],
+            )
+            .expect("file tagged");
+        }
+    }
+    add_music_root(&library, &music).await;
+    let album = |folder: &str| {
+        let track = library
+            .scan_store
+            .track_at("music", &format!("{folder}/01.flac"))
+            .unwrap()
+            .expect("track indexed");
+        library
+            .scan_store
+            .album_for_track(&track)
+            .unwrap()
+            .expect("album")
+    };
+    let (a, b) = (album("album-a"), album("album-b"));
+    // What an older matcher left: both confirmed on the vinyl.
+    scratch.identify.set_recall(RecallResult {
+        releases: vec![vinyl.clone()],
+        ..RecallResult::default()
+    });
+    assert_eq!(library.identify_tick().await, 2);
+    scratch.identify.set_recall(RecallResult {
+        releases: vec![vinyl.clone(), cd.clone()],
+        ..RecallResult::default()
+    });
+    let release_of = |album: &str| {
+        library
+            .identify_store
+            .album_identity(album)
+            .unwrap()
+            .and_then(|identity| identity.release_mbid)
+    };
+    assert_eq!(release_of(&a), Some(vinyl.id.clone()));
+    assert_eq!(release_of(&b), Some(vinyl.id.clone()));
+
+    let mut db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let queued = |db: &rusqlite::Connection| -> Vec<String> {
+        let mut stmt = db
+            .prepare(
+                "SELECT local_album_id FROM library_identify_jobs \
+                 WHERE state = 'queued' ORDER BY local_album_id",
+            )
+            .expect("queue reads");
+        stmt.query_map([], |row| row.get(0))
+            .expect("queue reads")
+            .collect::<Result<_, _>>()
+            .expect("queue reads")
+    };
+    let marked = |db: &rusqlite::Connection| -> bool {
+        db.query_row(
+            "SELECT EXISTS (SELECT 1 FROM library_operation_jobs \
+             WHERE idempotency_key = 'edition-ids:v1:backfill')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("marker reads")
+    };
+
+    // A file whose edition tags the scan has not read yet holds the pass.
+    let first_track = library
+        .scan_store
+        .track_at("music", "album-a/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let unread: (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = db
+        .query_row(
+            "DELETE FROM local_track_edition_tags WHERE local_track_id = ?1 \
+             RETURNING media, barcode, catalog_number, release_country",
+            [&first_track],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("edition tags unread");
+    droppedneedle_library::repairs::tick(&library, &Repairs::new(&library), "worker").await;
+    assert!(queued(&db).is_empty());
+    assert!(!marked(&db), "the pass waits for the edition tags");
+
+    db.execute(
+        "INSERT INTO local_track_edition_tags (local_track_id, media, barcode, \
+         catalog_number, release_country) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![first_track, unread.0, unread.1, unread.2, unread.3],
+    )
+    .expect("edition tags read");
+    droppedneedle_library::repairs::tick(&library, &Repairs::new(&library), "worker").await;
+    assert_eq!(queued(&db), vec![a.clone()]);
+    assert!(marked(&db));
+    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(release_of(&a), Some(cd.id.clone()));
+    assert_eq!(release_of(&b), Some(vinyl.id.clone()));
+    assert_eq!(
+        library.identify_store.match_flag(&a).unwrap(),
+        None,
+        "the move is a confirmed edition"
+    );
+
+    // An administrator undoes it; identified again, it keeps the vinyl.
+    let (album_revision, identity_revision) = live_automatic_edition_undo(&db, &a)
+        .expect("undo reads")
+        .expect("the move can be undone");
+    let tx = db.transaction().expect("transaction opens");
+    undo_automatic_edition(&tx, &a, album_revision, identity_revision, "admin", 1.0)
+        .expect("undone");
+    tx.commit().expect("undo lands");
+    assert_eq!(release_of(&a), Some(vinyl.id.clone()));
+    library
+        .identify
+        .enqueue_album(
+            "again",
+            &a,
+            IdentifyKind::Automatic,
+            "rev-again",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .expect("queued");
+    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(release_of(&a), Some(vinyl.id.clone()));
+
+    // The next start looks no more.
+    droppedneedle_library::repairs::tick(&library, &Repairs::new(&library), "worker").await;
+    assert!(queued(&db).is_empty());
+}
+
 /// An album row an earlier version left on its own "Unknown Artist" row
 /// (not the catalog's sentinel) while every file names the artist keeps
 /// it through scans, because its files never change. After an upgrade it

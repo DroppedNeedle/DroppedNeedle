@@ -24,7 +24,7 @@
 //! 5. List every edition of the release group the files fit best (unless
 //!    step 2 listed it) and
 //!    fetch the ones that could hold the files, best agreeing with the
-//!    tags' barcode, disc count, track count and media first, at most
+//!    tags' barcode and catalog number, disc count, track count and media first, at most
 //!    [`GROUP_FETCH`]. Search alone often misses the edition that fits.
 //! 6. Resolve file recording MBIDs no candidate carries, in case
 //!    MusicBrainz merged them: every one, up to one per file.
@@ -369,7 +369,7 @@ impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
     /// per group): the edition that fits the files is often not among
     /// them. Of `editions`, the group's editions as the release index
     /// lists them, those big enough to hold the files are fetched, the
-    /// ones whose barcode, disc count, track count and format agree with
+    /// ones whose barcode, catalog number, disc count, track count and format agree with
     /// the files first, at most [`GROUP_FETCH`]. Returns the group each
     /// fetched release reports, lowercase.
     async fn fetch_editions(
@@ -399,6 +399,13 @@ impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
                     .and_then(crate::matching::EditionHints::barcode_key)
                     .is_some_and(|key| key == wanted)
             });
+            let catalog = hints.catalog_number.as_deref().is_some_and(|wanted| {
+                edition
+                    .catalogue_number
+                    .as_deref()
+                    .and_then(crate::matching::EditionHints::catalog_key)
+                    .is_some_and(|key| key == wanted)
+            });
             let discs = hints
                 .total_discs
                 .is_some_and(|total| total == edition.disc_count);
@@ -410,7 +417,8 @@ impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
                     .any(|format| format.to_lowercase().contains(&media))
             });
             (
-                !barcode,
+                !(barcode && catalog),
+                !(barcode || catalog),
                 !discs,
                 (edition.track_count as usize).abs_diff(files),
                 !media,

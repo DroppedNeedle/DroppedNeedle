@@ -14,7 +14,7 @@ use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_providers::RequestPriority;
 use tokio::time::Instant;
 
-use super::evidence::{candidate_evidence, local_album, named_group};
+use super::evidence::{candidate_evidence, edition_ids, local_album, named_group};
 use super::models::{
     AlbumIdentity, AutomaticSeal, CandidateEvidence, DecisionSource, EvidenceClass,
     IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief, JobState, LocalAlbumFacts,
@@ -29,10 +29,13 @@ use super::sqlite::SqliteIdentifyStore;
 use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
 use crate::edition_prefs::{LivePreferences, Preferences};
 use crate::identity::AutomaticOutcome;
-use crate::matching::decide::{EDITION_COHORT, candidate_order, eligible, named_in_tie};
+use crate::matching::decide::{
+    EDITION_COHORT, IdStance, candidate_order, eligible, hint_misses, id_stance, named_in_tie,
+};
 use crate::matching::score::heard_on_candidates;
 use crate::matching::{
-    EditionPrefs, LocalAlbum, ReleaseMatch, ReviewReason, Verdict, decide, match_release,
+    EditionHints, EditionPrefs, LocalAlbum, Release, ReleaseMatch, ReviewReason, Verdict, decide,
+    match_release,
 };
 
 /// Every dependency the identify service needs, injected by constructor.
@@ -272,12 +275,25 @@ impl IdentifyService {
                 .and(row.release_group_mbid.clone()),
             _ => None,
         };
+        // An administrator who undid an automatic edition of the album's
+        // group got the edition they wanted back: it is not moved again.
+        let may_move = match current.as_ref() {
+            Some(row) if held.is_some() => match row.release_group_mbid.as_deref() {
+                Some(group) => !self
+                    .deps
+                    .store
+                    .edition_change_undone(&facts.local_album_id, group)?,
+                None => false,
+            },
+            _ => false,
+        };
         let (ranking, decision) = self.ranked(
             &facts,
             &recall,
             Held {
                 release: held.as_deref(),
                 doubted_group: doubted.as_deref(),
+                may_move,
             },
             &preferences,
         );
@@ -475,7 +491,9 @@ impl IdentifyService {
     /// `candidate_order`), so of two equally close guesses the one the
     /// files complete comes first. `held.release` is the edition the album
     /// already has: it stays unless another edition of its group fits the
-    /// files better by more than the edition cohort.
+    /// files better by more than the edition cohort, or is confirmed as the
+    /// edition the files' barcode or catalog number names (see
+    /// [`moves_to_named_edition`]).
     fn ranked(
         &self,
         facts: &LocalAlbumFacts,
@@ -505,15 +523,16 @@ impl IdentifyService {
                 .eq_ignore_ascii_case(group)
         };
         let verdict = decide(&local, &recall.releases, &matches, prefs);
-        let keep = |index: usize| -> usize {
-            let Some(held) = held.release else {
+        let ids = edition_ids(facts);
+        let keep = |index: usize, confirmed: bool| -> usize {
+            let Some(held_release) = held.release else {
                 return index;
             };
             let chosen = &recall.releases[index];
-            recall
+            let Some(kept) = recall
                 .releases
                 .iter()
-                .position(|release| release.answers_to(held))
+                .position(|release| release.answers_to(held_release))
                 .filter(|kept| {
                     let release = &recall.releases[*kept];
                     let matched = &matches[*kept];
@@ -525,12 +544,29 @@ impl IdentifyService {
                         && matched.library_distance()
                             <= matches[index].library_distance() + EDITION_COHORT
                 })
-                .unwrap_or(index)
+            else {
+                return index;
+            };
+            let moves = confirmed
+                && held.may_move
+                && kept != index
+                && moves_to_named_edition(&local, &ids, &recall.releases, kept, index);
+            if moves {
+                tracing::info!(
+                    album = facts.local_album_id,
+                    from = recall.releases[kept].id,
+                    to = chosen.id,
+                    "the files' barcode or catalog number name another edition; the album moves to it"
+                );
+                index
+            } else {
+                kept
+            }
         };
         let verdict = match verdict {
-            Verdict::Identified(index) => Verdict::Identified(keep(index)),
-            Verdict::EditionUncertain(index) => Verdict::EditionUncertain(keep(index)),
-            Verdict::OutsideNamedGroup(index) => Verdict::OutsideNamedGroup(keep(index)),
+            Verdict::Identified(index) => Verdict::Identified(keep(index, true)),
+            Verdict::EditionUncertain(index) => Verdict::EditionUncertain(keep(index, false)),
+            Verdict::OutsideNamedGroup(index) => Verdict::OutsideNamedGroup(keep(index, false)),
             other => other,
         };
         let lead = match verdict {
@@ -921,6 +957,51 @@ struct Held<'a> {
     /// another group: a pick in it stays that guess while nothing names a
     /// group.
     doubted_group: Option<&'a str>,
+    /// The album may move to the edition its files' barcode or catalog
+    /// number names: false once an administrator undid an automatic
+    /// edition of its group.
+    may_move: bool,
+}
+
+/// True when a confirmation of `releases[chosen]` takes the album off
+/// `releases[held]`, another edition of the same group: no file carries a
+/// release ID that could be of that group (the release-ID tag outranks
+/// the barcode and catalog number), the chosen edition states a barcode or
+/// catalog number most files carry and contradicts neither, the held one
+/// states another value and agrees with neither, and the chosen one
+/// contradicts no more of the files' media, country and disc count. A
+/// file's ID blocks when it is the held release's, a recalled release of
+/// the group, or a release recall did not fetch.
+fn moves_to_named_edition(
+    local: &LocalAlbum,
+    ids: &EditionHints,
+    releases: &[Release],
+    held: usize,
+    chosen: usize,
+) -> bool {
+    let (from, to) = (&releases[held], &releases[chosen]);
+    let tag_names_group = local
+        .tracks
+        .iter()
+        .filter_map(|track| track.release_mbid.as_deref())
+        .any(|mbid| {
+            from.answers_to(mbid)
+                || releases
+                    .iter()
+                    .find(|release| release.answers_to(mbid))
+                    .is_none_or(|release| {
+                        release
+                            .release_group_id
+                            .eq_ignore_ascii_case(&from.release_group_id)
+                    })
+        });
+    !tag_names_group
+        && to
+            .release_group_id
+            .eq_ignore_ascii_case(&from.release_group_id)
+        && id_stance(to, ids) == IdStance::Names
+        && id_stance(from, ids) == IdStance::Contradicts
+        && hint_misses(to, &local.hints) <= hint_misses(from, &local.hints)
 }
 
 /// The reason a release outside the group the files name is only a guess.

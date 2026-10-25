@@ -555,26 +555,60 @@ fn edition_order(
 /// The tags' barcode or catalog number names this release: as strong as
 /// a release id for telling pressings apart.
 fn same_id(release: &Release, hints: &EditionHints) -> bool {
-    let barcode = hints.barcode.as_deref().is_some_and(|wanted| {
-        release
-            .barcode
-            .as_deref()
-            .and_then(EditionHints::barcode_key)
-            .is_some_and(|key| key == wanted)
-    });
-    let catalog = hints.catalog_number.as_deref().is_some_and(|wanted| {
-        release
-            .catalog_numbers
-            .iter()
-            .filter_map(|raw| EditionHints::catalog_key(raw))
-            .any(|key| key == wanted)
-    });
-    barcode || catalog
+    barcode_agrees(release, hints) == Some(true) || catalog_agrees(release, hints) == Some(true)
+}
+
+/// Whether the release's barcode is the one the hints hold; `None` when
+/// either side has none.
+fn barcode_agrees(release: &Release, hints: &EditionHints) -> Option<bool> {
+    let wanted = hints.barcode.as_deref()?;
+    let own = release
+        .barcode
+        .as_deref()
+        .and_then(EditionHints::barcode_key)?;
+    Some(own == wanted)
+}
+
+/// Whether one of the release's catalog numbers is the one the hints
+/// hold; `None` when either side has none.
+fn catalog_agrees(release: &Release, hints: &EditionHints) -> Option<bool> {
+    let wanted = hints.catalog_number.as_deref()?;
+    let own: Vec<String> = release
+        .catalog_numbers
+        .iter()
+        .filter_map(|raw| EditionHints::catalog_key(raw))
+        .collect();
+    (!own.is_empty()).then(|| own.iter().any(|key| key == wanted))
+}
+
+/// How a release's barcode and catalog numbers stand to the ones the files
+/// carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdStance {
+    /// It states one the files carry and contradicts neither.
+    Names,
+    /// It states another value for one the files carry and agrees with
+    /// neither.
+    Contradicts,
+    /// It is silent on both, or agrees on one and differs on the other.
+    Neither,
+}
+
+/// How `release` stands to the barcode and catalog number in `ids`.
+pub fn id_stance(release: &Release, ids: &EditionHints) -> IdStance {
+    let answers = [barcode_agrees(release, ids), catalog_agrees(release, ids)];
+    let agrees = answers.contains(&Some(true));
+    let differs = answers.contains(&Some(false));
+    match (agrees, differs) {
+        (true, false) => IdStance::Names,
+        (false, true) => IdStance::Contradicts,
+        _ => IdStance::Neither,
+    }
 }
 
 /// Soft tag hints the release contradicts: media format, country, and the
 /// number of discs (which tells a partial two-disc set from one disc).
-fn hint_misses(release: &Release, hints: &EditionHints) -> usize {
+pub fn hint_misses(release: &Release, hints: &EditionHints) -> usize {
     let media = hints.media.as_deref().is_some_and(|media| {
         let media = media.to_lowercase();
         !release.media.iter().any(|medium| {

@@ -20,9 +20,13 @@ use super::models::{
     Purpose, RepairEstimate, Scope, Summary, Verdict,
 };
 use super::reasons;
+use crate::identify::artist_links::RELEASE_DOCUMENT_MISSING;
+use crate::identify::evidence::edition_ids_of;
 use crate::identity::DecisionSource;
+use crate::identity::reads::stored_release;
 use crate::identity::sql::REVISABLE;
 use crate::jobs::{self, NewJob, OperationState, Tally, WorkState};
+use crate::matching::decide::{IdStance, id_stance};
 use crate::operations::decisions::live_automatic_edition_undo;
 use crate::operations::models::{OperationError, OperationJob, OperationKind};
 use crate::operations::store::{album_revisions, job_after};
@@ -527,6 +531,94 @@ pub fn older_confirmation_albums(conn: &Connection) -> rusqlite::Result<Vec<Stri
         if outside_named_group(&tagged, &group) {
             albums.push(album);
         }
+    }
+    Ok(albums)
+}
+
+/// Marks the one-time identification of automatic matches confirmed
+/// before matching moved an album to the edition its files' barcode or
+/// catalog number names.
+pub const EDITION_IDS_BACKFILL_KEY: &str = "edition-ids:v1:backfill";
+
+/// Albums whose automatic match is confirmed on a release that states
+/// another barcode or catalog number than the one most of their files
+/// carry, while no file carries a MusicBrainz release ID. Identified again,
+/// such an album moves to the edition the files name when one fits. A
+/// person's or imported match, a custom edition, a detached album, a
+/// settled review and folders that keep their own tags are left alone,
+/// as in [`older_confirmation_albums`]. None while one of them is not
+/// ready to tell: a file whose edition tags the scan has not read yet, or
+/// a release whose document is still being fetched; the next look (at
+/// start or after a scan) asks again.
+pub fn edition_id_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT a.id, i.release_mbid, EXISTS (SELECT 1 FROM library_artist_reconciliation_state s \
+             WHERE s.local_album_id = a.id AND s.state = 'waiting_for_identity' \
+             AND s.reason_code = ?2) \
+         FROM local_albums a \
+         JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         WHERE a.retired_into_album_id IS NULL \
+         AND i.release_mbid IS NOT NULL AND i.decision_source IN {REVISABLE} \
+         AND NOT EXISTS (SELECT 1 FROM library_album_match_state m \
+             WHERE m.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND (t.applied_policy != 'automatic' \
+                 OR trim(COALESCE(t.embedded_release_mbid, '')) != '')) \
+         ORDER BY a.id"
+    ))?;
+    let confirmed: Vec<(String, String, bool)> = stmt
+        .query_map(params![PROVIDER, RELEASE_DOCUMENT_MISSING], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut files = conn.prepare(
+        "SELECT h.local_track_id IS NOT NULL, h.barcode, h.catalog_number \
+         FROM local_tracks t LEFT JOIN local_track_edition_tags h ON h.local_track_id = t.id \
+         WHERE t.local_album_id = ?1 AND t.availability = 'indexed'",
+    )?;
+    let mut albums = Vec::new();
+    let mut waiting = 0usize;
+    for (album, release, fetching) in confirmed {
+        let tags: Vec<(bool, Option<String>, Option<String>)> = files
+            .query_map(params![album], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        if tags.iter().any(|(read, _, _)| !read) {
+            waiting += 1;
+            continue;
+        }
+        let ids = edition_ids_of(
+            tags.iter()
+                .map(|(_, barcode, catalog)| (barcode.as_deref(), catalog.as_deref())),
+        );
+        if ids.barcode.is_none() && ids.catalog_number.is_none() {
+            continue;
+        }
+        let Some(held) = stored_release(conn, &release, 0.0)? else {
+            if fetching {
+                waiting += 1;
+            }
+            continue;
+        };
+        if id_stance(&held, &ids) == IdStance::Contradicts {
+            albums.push(album);
+        }
+    }
+    if waiting > 0 {
+        tracing::debug!(
+            waiting,
+            "edition re-check waits for edition tags or release documents"
+        );
+        return Ok(Vec::new());
     }
     Ok(albums)
 }
