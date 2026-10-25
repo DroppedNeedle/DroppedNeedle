@@ -42,6 +42,7 @@ pub fn check(dest: &Path, sha256: &str) -> Result<(), PublishError> {
 /// and stopped, is cleared first; any other file there refuses the move.
 pub fn set_aside(
     mode: PlacementMode,
+    root_dev: Option<u64>,
     (root, rel): (&str, &str),
     dest: &Path,
     staged: &Path,
@@ -61,6 +62,7 @@ pub fn set_aside(
         hidden: staged,
         home: dest,
         sha256: Some(sha256),
+        root_dev,
     };
     place::set_aside_with(mode, original, seams, None)
         .map_err(|error| error.into_publish(root, rel))

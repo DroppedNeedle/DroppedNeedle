@@ -683,6 +683,13 @@ impl Run<'_> {
         })
     }
 
+    /// The device of a root's folder, when it can be read.
+    fn root_dev(&self, root: &str) -> Option<u64> {
+        use std::os::unix::fs::MetadataExt as _;
+        let dir = self.sandbox.removal_root_dir(root).ok()?;
+        std::fs::metadata(dir).ok().map(|meta| meta.dev())
+    }
+
     fn crash(&self, point: CrashPoint) -> Result<(), PublishError> {
         if self.hooks.crash == Some(point) {
             return Err(PublishError::InjectedCrash(point.as_str().to_string()));
@@ -988,6 +995,7 @@ impl Run<'_> {
                     .flatten();
                 let set_aside = super::remove::set_aside(
                     self.sandbox.placement_mode(root),
+                    self.root_dev(root),
                     (root, rel),
                     &dest,
                     aside,
@@ -1023,6 +1031,7 @@ impl Run<'_> {
                 self.sandbox.ensure_under_roots(aside)?;
                 let set_aside = super::generated::set_aside(
                     self.sandbox.placement_mode(root),
+                    self.root_dev(root),
                     (root, rel),
                     &dest,
                     aside,
@@ -1076,6 +1085,7 @@ impl Run<'_> {
             hidden: &backup,
             home: &home,
             sha256: journal.backup_sha256(),
+            root_dev: self.root_dev(root),
         };
         let mode = self.sandbox.placement_mode(root);
         match set_aside_with(mode, original, self.seams, self.hooks.before_set_aside) {

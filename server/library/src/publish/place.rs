@@ -237,6 +237,11 @@ pub struct Original<'a> {
     pub home: &'a Path,
     /// The bytes it held when it was last read. `None` skips the check.
     pub sha256: Option<&'a str>,
+    /// The device of the library folder it is under, when known. On a
+    /// folder whose probe found hard links work, a file on that same
+    /// device that refuses a link is not the server's to change, or is
+    /// locked; anywhere else the refusal can also mean no hard links.
+    pub root_dev: Option<u64>,
 }
 
 /// Why a user's file was not set aside.
@@ -244,8 +249,13 @@ pub struct Original<'a> {
 pub enum SetAsideError {
     /// The file cannot be hard-linked, so it could be set aside but never
     /// put back by a safe step. Nothing was moved.
-    #[error("the file cannot be hard-linked (os error {0})")]
-    NotLinkable(i32),
+    #[error("the file cannot be hard-linked (os error {errno})")]
+    NotLinkable {
+        errno: i32,
+        /// Hard links are known to work where the file is, so the refusal
+        /// is about the file itself.
+        links_work: bool,
+    },
     /// The folder has no safe step to put the file back with. Nothing was
     /// moved.
     #[error("no safe way to put the file back (os error {0})")]
@@ -272,7 +282,15 @@ impl SetAsideError {
     pub(super) fn into_publish(self, root: &str, rel: &str) -> super::PublishError {
         use super::PublishError;
         match self {
-            Self::NotLinkable(_) => PublishError::NotLinkable(format!(
+            Self::NotLinkable {
+                links_work: true, ..
+            } => PublishError::NotLinkable(format!(
+                "DroppedNeedle can't safely change \"{rel}\": it does not own the file and \
+                 cannot write to it, or the file is locked against changes."
+            )),
+            Self::NotLinkable {
+                links_work: false, ..
+            } => PublishError::NotLinkable(format!(
                 "DroppedNeedle can't safely change \"{rel}\": it does not own the file and \
                  cannot write to it, the file is locked against changes, or the disk it is on \
                  does not support hard links."
@@ -314,9 +332,15 @@ pub(super) fn set_aside_with(
         hidden,
         home,
         sha256,
+        root_dev,
     } = original;
     if matches!(mode, PlacementMode::Link | PlacementMode::Unknown) {
-        link_test(visible, hidden, seams)?;
+        let links_work = mode == PlacementMode::Link
+            && root_dev.is_some_and(|root_dev| {
+                use std::os::unix::fs::MetadataExt as _;
+                std::fs::symlink_metadata(visible).is_ok_and(|meta| meta.dev() == root_dev)
+            });
+        link_test(visible, hidden, seams, links_work)?;
     }
     if let Some(hook) = before_move {
         hook(visible);
@@ -394,7 +418,7 @@ fn set_aside_to_hidden(
         }
     }
     if link_test_before_plain_rename {
-        link_test(from, hidden_to, seams)?;
+        link_test(from, hidden_to, seams, false)?;
     }
     match std::fs::symlink_metadata(hidden_to) {
         Ok(_) => Err(SetAsideError::HiddenTaken),
@@ -424,7 +448,13 @@ fn free_hidden_name(visible: &Path, hidden: &Path) -> Result<(), SetAsideError> 
 /// is ever removed. Linux refuses to link a file the caller neither owns
 /// nor can write (`fs.protected_hardlinks`), and an immutable one, with
 /// EPERM. So does a disk with no hard links at all, such as FAT.
-fn link_test(visible: &Path, hidden: &Path, seams: Seams) -> Result<(), SetAsideError> {
+/// `links_work` says hard links are known to work where the file is.
+fn link_test(
+    visible: &Path,
+    hidden: &Path,
+    seams: Seams,
+    links_work: bool,
+) -> Result<(), SetAsideError> {
     free_hidden_name(visible, hidden)?;
     let linked = match seams.link_errno {
         _ if seams.lost_link_reply => std::fs::hard_link(visible, hidden)
@@ -443,7 +473,10 @@ fn link_test(visible: &Path, hidden: &Path, seams: Seams) -> Result<(), SetAside
             return Ok(remove_hidden(hidden)?);
         }
         Some(libc::EEXIST) => SetAsideError::HiddenTaken,
-        Some(libc::EPERM) => SetAsideError::NotLinkable(libc::EPERM),
+        Some(libc::EPERM) => SetAsideError::NotLinkable {
+            errno: libc::EPERM,
+            links_work,
+        },
         Some(code) if no_link_support(code) || code == libc::EMLINK || code == libc::EXDEV => {
             SetAsideError::Unavailable(code)
         }
@@ -752,6 +785,7 @@ mod tests {
             hidden,
             home,
             sha256: Some("not-checked-here"),
+            root_dev: None,
         }
     }
 
@@ -784,7 +818,7 @@ mod tests {
         ] {
             let refused = set_aside_with(mode, aside(&visible, &hidden, &visible), seams, None);
             assert!(
-                matches!(refused, Err(SetAsideError::NotLinkable(_))),
+                matches!(refused, Err(SetAsideError::NotLinkable { .. })),
                 "{mode:?}: got {refused:?}"
             );
             untouched();
@@ -864,6 +898,7 @@ mod tests {
                 hidden: &hidden,
                 home: &visible,
                 sha256: Some(&sha),
+                root_dev: None,
             };
             std::fs::write(&visible, b"original").expect("writes");
             std::fs::hard_link(&visible, &hidden).expect("links");

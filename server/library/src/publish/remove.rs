@@ -288,6 +288,7 @@ pub(super) fn holds(path: &Path, sha256: &str, known: Option<FileStat>) -> bool 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn set_aside(
     mode: PlacementMode,
+    root_dev: Option<u64>,
     (root, rel): (&str, &str),
     dest: &Path,
     aside: &Path,
@@ -314,6 +315,7 @@ pub(super) fn set_aside(
         hidden: aside,
         home: dest,
         sha256: known.is_none().then_some(sha256),
+        root_dev,
     };
     place::set_aside_with(mode, original, seams, before_move)
         .map_err(|error| error.into_publish(root, rel))?;
