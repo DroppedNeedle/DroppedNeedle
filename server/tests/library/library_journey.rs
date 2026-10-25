@@ -11,7 +11,8 @@
 //! The tests on `bare_library` are component tests: they step a worker or a
 //! store by hand, on a library bundle with no app around it.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -46,8 +47,9 @@ struct Rig {
     contrib: ScriptedContrib,
     scan_store: SqliteScanStore,
     identify_store: SqliteIdentifyStore,
-    /// When the last identification job the journey accounted for ended.
-    settled_at: Cell<i64>,
+    /// Per album, when the last identification job the journey accounted
+    /// for ended.
+    settled_at: RefCell<HashMap<String, i64>>,
 }
 
 impl Rig {
@@ -66,7 +68,7 @@ impl Rig {
             app,
             identify,
             contrib,
-            settled_at: Cell::new(0),
+            settled_at: RefCell::default(),
         }
     }
 
@@ -139,20 +141,22 @@ impl Rig {
         assert_eq!(status, StatusCode::OK, "{body}");
     }
 
-    /// Wait until the identification queue is idle, and check that exactly
-    /// `jobs` jobs ended since the journey last asked.
-    async fn identified(&self, jobs: i64) {
-        let since = self.settled_at.get();
+    /// Wait until the album has no identification job open, and check that
+    /// exactly `jobs` of its jobs ended since the journey last asked. Jobs
+    /// of other albums are not counted.
+    async fn identified(&self, album: &str, jobs: i64) {
+        let since = self.settled_at.borrow().get(album).copied().unwrap_or(0);
         let db = self.app.db();
         let (ended, latest) = self
             .app
-            .until("identification settles", || {
+            .until("the album's identification settles", || {
                 let (open, ended, latest): (i64, i64, i64) = db
                     .query_row(
                         "SELECT COALESCE(SUM(state IN ('queued', 'running')), 0), \
                          COALESCE(SUM(state NOT IN ('queued', 'running') AND updated_ms > ?1), 0), \
-                         COALESCE(MAX(updated_ms), 0) FROM library_identify_jobs",
-                        [since],
+                         COALESCE(MAX(updated_ms), 0) FROM library_identify_jobs \
+                         WHERE local_album_id = ?2",
+                        rusqlite::params![since, album],
                         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                     )
                     .expect("identify queue reads");
@@ -160,7 +164,27 @@ impl Rig {
             })
             .await;
         assert_eq!(ended, jobs, "identification jobs that ran");
-        self.settled_at.set(latest);
+        self.settled_at
+            .borrow_mut()
+            .insert(album.to_owned(), latest);
+    }
+
+    /// Wait until the album has no identification job open.
+    async fn identification_idle(&self, album: &str) {
+        let db = self.app.db();
+        self.app
+            .until("the album's identification is idle", || {
+                let open: i64 = db
+                    .query_row(
+                        "SELECT COUNT(*) FROM library_identify_jobs \
+                         WHERE local_album_id = ?1 AND state IN ('queued', 'running')",
+                        [album],
+                        |row| row.get(0),
+                    )
+                    .expect("identify queue reads");
+                async move { (open == 0).then_some(()) }
+            })
+            .await;
     }
 
     /// Wait until the app is done with the edition a person chose for the
@@ -422,7 +446,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
 
     // The scan-enqueued job runs once. On a tie it still picks a best
     // guess (always pick) and files no review.
-    rig.identified(1).await;
+    rig.identified(album_key, 1).await;
     // Purity extends past identify: tag reads and probes wrote zero
     // media bytes too.
     assert_eq!(
@@ -482,7 +506,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    rig.identified(1).await;
+    rig.identified(album_key, 1).await;
 
     // Curator approval seals a manual identity. The candidate names only
     // the release, so the app goes on to ask MusicBrainz for it. The script
@@ -552,7 +576,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
     // queues the album for identification again; Undo checks the identity,
     // so that job ends first.
     app.scan_library().await;
-    rig.identified(1).await;
+    rig.identified(album_key, 1).await;
     {
         for track in [&track_a, &track_b] {
             assert_eq!(
@@ -624,7 +648,7 @@ async fn library_journey_retag_apply_baseline_restore() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let album_id = body["album_id"].as_str().expect("album id").to_owned();
     let album_key = album_id.as_str();
-    rig.identified(1).await;
+    rig.identified(album_key, 1).await;
     file_edition_review(&rig.identify_store, album_key);
     let (status, body) = app
         .call(
@@ -845,7 +869,7 @@ async fn retag_preview_lists_the_tags_that_change() {
         .album_for_track(&track)
         .unwrap()
         .expect("album");
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     rig.choose_first_edition(&album).await;
     rig.edition_settled(&album).await;
 
@@ -972,7 +996,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
         .album_for_track(&track)
         .unwrap()
         .expect("album");
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     rig.choose_first_edition(&album).await;
     rig.edition_settled(&album).await;
 
@@ -1145,7 +1169,7 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
         .album_for_track(&track)
         .unwrap()
         .expect("album");
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     rig.choose_first_edition(&album).await;
     let fields_before = read_fields(&file).expect("fields read");
 
@@ -1164,7 +1188,7 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
         .unwrap()
         .expect("album");
     assert_ne!(other_album, album);
-    rig.identified(1).await;
+    rig.identified(&other_album, 1).await;
     rig.choose_first_edition(&other_album).await;
     for headers in [&tris_headers, &admin_headers] {
         let (status, body) = app
@@ -2064,7 +2088,17 @@ async fn library_journey_scan_controls_and_activity() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], json!("running"));
-    rig.identified(1).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album-a/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    rig.identified(&album, 1).await;
     rig.stop().await;
 }
 
@@ -2712,7 +2746,7 @@ async fn identification_survives_restarts() {
         .expect("queue reads");
     assert_eq!(waiting, 1, "queued job survives");
     rig.resume_identification(paused_at).await;
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     rig.choose_first_edition(&album).await;
 
     let rig = rig.restart().await;
@@ -3452,7 +3486,7 @@ async fn library_journey_undo_automatic_edition() {
 
     // The scan-queued attempt seals the exact edition automatically.
     rig.resume_identification(paused_at).await;
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     let sealed = rig
         .identify_store
         .album_identity(&album)
@@ -3525,7 +3559,7 @@ async fn library_journey_undo_automatic_edition() {
         .await;
     assert_eq!(status, StatusCode::OK, "{job}");
     assert_eq!(job["kind"], json!("explicit_reidentification"));
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     let db = app.db();
     let identity: (Option<String>, String) = db
         .query_row(
@@ -5369,7 +5403,7 @@ async fn library_journey_choose_edition() {
         ..RecallResult::default()
     });
     rig.resume_identification(paused_at).await;
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     let edition = format!("/api/v3/library/albums/{album}/edition");
     let (_, body) = app.call("GET", &edition, &headers, None).await;
     assert_eq!(body["state"], json!("confirmed"), "{body}");
@@ -5443,7 +5477,7 @@ async fn library_journey_choose_edition() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     let kept = rig
         .identify_store
         .album_identity(&album)
@@ -5471,7 +5505,7 @@ async fn library_journey_choose_edition() {
     assert_eq!(status, StatusCode::OK);
     let (status, body) = app.call("DELETE", &edition, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     let back = rig
         .identify_store
         .album_identity(&album)
@@ -5852,7 +5886,7 @@ async fn identified_album(rig: &Rig, music: &Path, folder: &str) -> (String, Rel
         ..RecallResult::default()
     });
     let control = rig.resume_identification(paused_at).await;
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     (album, fit, control)
 }
 
@@ -5928,7 +5962,7 @@ async fn edition_status_says_what_happens_next() {
     assert_eq!(body["identifying"], json!(true), "{body}");
     assert_eq!(status().await["identifying"], json!(true));
     rig.resume_identification(paused_at).await;
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     assert_eq!(status().await["identifying"], json!(false));
     rig.stop().await;
 }
@@ -7724,7 +7758,7 @@ async fn library_journey_identity_repair_and_preparation() {
         ..RecallResult::default()
     });
     rig.resume_identification(paused_at).await;
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
 
     // Scan diagnostics: a redacted download, never a full path.
     let (status, body) = app
@@ -13222,7 +13256,7 @@ async fn manage_preview_waits_while_the_chosen_edition_is_placed() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let album = body["album_id"].as_str().expect("album id").to_owned();
     let album_key = album.as_str();
-    rig.identified(1).await;
+    rig.identified(album_key, 1).await;
     file_edition_review(&rig.identify_store, album_key);
     let (status, body) = app
         .call(
@@ -17908,6 +17942,18 @@ async fn a_track_id_from_another_edition_is_corrected() {
     assert_eq!(file.note.map(|note| note.code), Some("TRACK_ID_ELSEWHERE"));
 }
 
+/// What the migration tool leaves after committing a v2 import. The
+/// one-time re-checks run only on such a database.
+fn carried_from_v2(db: &rusqlite::Connection) {
+    db.execute(
+        "INSERT INTO import_runs (id, instance_id, exported_at, exit_code, \
+         entity_counts, applied_at) VALUES ('import-1', 'v2-instance', \
+         '2026-01-01T00:00:00Z', 'OK', '{}', '2026-01-01T00:00:01Z')",
+        [],
+    )
+    .expect("import recorded");
+}
+
 /// After an upgrade, albums the old rule may have left on the wrong
 /// edition because one file's track id named another are identified once
 /// more, by themselves: an automatic identity on another edition (A)
@@ -18057,6 +18103,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     };
     assert!(queued().is_empty());
 
+    carried_from_v2(&db);
     let repairs = Repairs::new(&library);
     droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
@@ -18214,6 +18261,19 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
     };
     assert!(queued().is_empty());
 
+    // A database no v2 import was committed into has nothing to re-check.
+    droppedneedle_library::repairs::tick(&library, &Repairs::new(&library), "worker").await;
+    assert!(queued().is_empty());
+    let marked: bool = db
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM library_operation_jobs \
+             WHERE idempotency_key = 'group-only-edition:v1:backfill')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("marker reads");
+    assert!(!marked, "nothing is marked done");
+    carried_from_v2(&db);
     let repairs = Repairs::new(&library);
     droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
@@ -18350,6 +18410,7 @@ async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
     };
     assert!(queued().is_empty());
 
+    carried_from_v2(&db);
     let repairs = Repairs::new(&library);
     droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
@@ -18511,6 +18572,7 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
         .expect("marker reads")
     };
 
+    carried_from_v2(&db);
     // A file whose edition tags the scan has not read yet holds the pass.
     let first_track = library
         .scan_store
@@ -20422,7 +20484,9 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
     assert_eq!(text(rows), [format!("{artist} {CURRENT}")]);
     assert_eq!(text(&revision), before, "the rescan changes nothing");
 
-    // A run that writes MusicBrainz's ids into First's files.
+    // A run that writes MusicBrainz's ids into First's files, once any
+    // identification the rescan queued for it has ended.
+    rig.identification_idle(&album).await;
     let retag =
         |rel_path: &str| json!({"root_id": "music", "rel_path": rel_path, "managed_updates": {}});
     let (status, body) = app
@@ -21039,7 +21103,7 @@ async fn hand_match_album(rig: &Rig, folder: &str) -> HandMatchAlbum {
         ..RecallResult::default()
     });
     rig.resume_identification(paused_at).await;
-    rig.identified(1).await;
+    rig.identified(&album, 1).await;
     let auth = app.login_admin().await;
     let (status, body) = app
         .call(

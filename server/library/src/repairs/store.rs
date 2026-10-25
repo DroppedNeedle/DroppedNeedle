@@ -403,6 +403,14 @@ pub fn hygiene_scan_key(run_id: &str) -> String {
     format!("catalog-identity-hygiene:v1:scan:{run_id}")
 }
 
+/// True once a v2 import has been committed into this database: the
+/// migration tool writes one `import_runs` row per committed import.
+pub fn carried_from_v2(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM import_runs)", [], |row| {
+        row.get(0)
+    })
+}
+
 /// Marks the one-time identification of albums an older matcher left on
 /// another edition, or unmatched, because one file's track id named
 /// another edition.

@@ -394,13 +394,17 @@ impl Repairs {
     /// [`store::older_confirmation_albums`]), and every confirmed
     /// automatic match on an edition other than the one its files'
     /// barcode or catalog number names (see
-    /// [`store::edition_id_albums`]). Each set is looked at once
-    /// per server start and after each scan until it first holds an album,
-    /// so a library that arrives later (a v2 import, a first scan) still
-    /// gets it; then never again.
+    /// [`store::edition_id_albums`]). Only a database a v2 import was
+    /// committed into has such albums; any other is never looked at. Each
+    /// set is looked at once per server start and after each scan until it
+    /// first holds an album, so a library that arrives later (a first scan
+    /// after the import) still gets it; then never again.
     fn queue_backfills_once(&self) -> Result<(), OperationError> {
-        let run = self.db.read_blocking("repairs.latest_ended_scan", |conn| {
-            Ok::<_, OperationError>(store::latest_ended_scan(conn)?)
+        let (run, carried) = self.db.read_blocking("repairs.latest_ended_scan", |conn| {
+            Ok::<_, OperationError>((
+                store::latest_ended_scan(conn)?,
+                store::carried_from_v2(conn)?,
+            ))
         })?;
         // A busy database leaves the run unseen, so the next turn queues
         // its albums again.
@@ -409,6 +413,10 @@ impl Repairs {
             .lock()
             .map_err(|_| OperationError::Store("backfill marker poisoned".to_owned()))?;
         if seen.as_ref() == Some(&run) {
+            return Ok(());
+        }
+        if !carried {
+            *seen = Some(run);
             return Ok(());
         }
         // Each pass runs on its own: one that fails leaves the other be.
