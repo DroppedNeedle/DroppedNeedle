@@ -114,6 +114,32 @@ impl RpcError {
             data: None,
         }
     }
+
+    /// The fault the plugin named in `data.fault`; `Unknown` when it named
+    /// none or one this host does not know.
+    pub fn fault(&self) -> Fault {
+        self.data
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("fault"))
+            .and_then(|fault| serde_json::from_value::<Fault>(fault.clone()).ok())
+            .unwrap_or_default()
+    }
+}
+
+/// Whose fault a failed plugin call was, as the plugin says it in its
+/// error's `data.fault`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fault {
+    /// This machine: a full disk, a folder it cannot write, a lost mount.
+    Local,
+    /// The release, the peer or the service it came from.
+    Source,
+    /// The plugin did not say.
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 /// Request and response ids. The host only issues integers; a plugin may

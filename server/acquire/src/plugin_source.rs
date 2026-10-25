@@ -35,6 +35,7 @@ use droppedneedle_plugins::capabilities::acquisition::{
     PluginEnqueue, PluginSearchResult, PluginTaskHandle,
 };
 use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_plugins::protocol::Fault;
 use droppedneedle_plugins::runtime::CallError;
 use futures_util::future::BoxFuture;
 
@@ -277,13 +278,31 @@ impl PluginDownloadSource {
 }
 
 /// Map a plugin failure onto the fetch seam: a plugin that is down is an
-/// outage (retry later), a plugin that refused is a rejected candidate.
+/// outage (retry later), a failure the plugin calls local is a local fault
+/// (retry later, never blocklisted), any other failure is a rejected
+/// candidate.
 fn source_error(error: CallError) -> SourceError {
     match error {
-        CallError::Failed(detail) | CallError::Malformed(detail) => {
-            SourceError::rejected(Reason::DownloadFailed, detail)
+        CallError::Failed {
+            message,
+            fault: Fault::Local,
+        } => SourceError::LocalFault(message),
+        CallError::Failed { message, .. } | CallError::Malformed(message) => {
+            SourceError::rejected(Reason::DownloadFailed, message)
         }
         other => SourceError::Unavailable(other.to_string()),
+    }
+}
+
+/// A poll failure: one the plugin calls local fails over without blaming
+/// the release, so a client that keeps failing locally still ends.
+fn poll_error(error: CallError) -> SourceError {
+    match error {
+        CallError::Failed {
+            message,
+            fault: Fault::Local,
+        } => SourceError::rejected(Reason::LocalFault, message),
+        other => source_error(other),
     }
 }
 
@@ -432,7 +451,7 @@ impl PluginDownloadSource {
             .host
             .download_status(&Self::plugin_handle(handle))
             .await
-            .map_err(source_error)?;
+            .map_err(poll_error)?;
         let state = status.status.to_ascii_lowercase();
         Ok(TransferProgress {
             all_terminal: matches!(state.as_str(), "completed" | "failed"),

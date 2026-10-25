@@ -459,9 +459,52 @@ class UsenetFeed:
         return []
 "#;
 
-/// The example plugin client and its paired indexer, plus a plugin
-/// indexer feeding Usenet, running, with one file for "Test Artist -
-/// Fixtures" in the example's source folder.
+/// A plugin client whose every poll fails with the same text, saying the
+/// fault its handle's token names (`local`, `source`), or saying nothing.
+const FAULT_CLIENT_MANIFEST: &str = r#"[plugin]
+name = "fault-client"
+display_name = "Fault client"
+version = "1.0.0"
+api_version = 1
+entrypoint = "plugin:FaultClient"
+capabilities = ["download_client"]
+description = "Fails every poll."
+author = "DroppedNeedle tests"
+
+[[capability]]
+id = "download_client"
+source = "fault-client"
+display_name = "Fault client"
+"#;
+
+const FAULT_CLIENT_PLUGIN: &str = r#"from droppedneedle_plugin import DownloadFailure, ServiceStatus, TaskHandle
+
+
+class FaultClient:
+    def __init__(self, context):
+        self.ctx = context
+
+    def is_configured(self) -> bool:
+        return True
+
+    async def health_check(self) -> ServiceStatus:
+        return ServiceStatus(status="ok")
+
+    async def enqueue(self, request) -> TaskHandle:
+        return TaskHandle(plugin_token=request.payload)
+
+    async def get_status(self, handle):
+        if handle.plugin_token in ("local", "source"):
+            raise DownloadFailure("disk full", fault=handle.plugin_token)
+        raise RuntimeError("disk full")
+
+    async def discard_client_artifacts(self, handle) -> bool:
+        return True
+"#;
+
+/// The example plugin client and its paired indexer, a plugin indexer
+/// feeding Usenet and a client that fails every poll, running, with one
+/// file for "Test Artist - Fixtures" in the example's source folder.
 struct PluginRig {
     _dir: ScratchDir,
     host: Arc<PluginHost>,
@@ -489,6 +532,10 @@ async fn plugin_rig(tag: &str) -> PluginRig {
     std::fs::create_dir_all(&feed).expect("plugin folder");
     std::fs::write(feed.join("plugin.toml"), USENET_FEED_MANIFEST).expect("manifest");
     std::fs::write(feed.join("plugin.py"), USENET_FEED_PLUGIN).expect("plugin");
+    let faulty = dir.join("plugins").join("fault-client");
+    std::fs::create_dir_all(&faulty).expect("plugin folder");
+    std::fs::write(faulty.join("plugin.toml"), FAULT_CLIENT_MANIFEST).expect("manifest");
+    std::fs::write(faulty.join("plugin.py"), FAULT_CLIENT_PLUGIN).expect("plugin");
     let config = Arc::new(
         ConfigStore::scratch(
             &dir.join("plugin-config"),
@@ -538,6 +585,7 @@ async fn plugin_rig(tag: &str) -> PluginRig {
             ],
         ),
         ("usenet-feed", Vec::new()),
+        ("fault-client", Vec::new()),
     ] {
         let settings: HashMap<String, String> = settings
             .into_iter()
@@ -572,9 +620,14 @@ async fn running(host: &PluginHost, name: &str) {
 
 /// The example client as a download source over `journal`.
 fn plugin_source(rig: &PluginRig, journal: Arc<Journal>) -> PluginDownloadSource {
+    plugin_client(rig, "local-folder-client", journal)
+}
+
+/// One running plugin client as a download source over `journal`.
+fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDownloadSource {
     PluginDownloadSource::new(
         rig.host.clone(),
-        "plugin:local-folder-client".to_owned(),
+        format!("plugin:{name}"),
         journal,
         ReleasePolicy {
             usenet: UsenetPolicy::v2_defaults(),
@@ -609,6 +662,86 @@ async fn plugins_conform() {
     let target = album("Radiohead", "In Rainbows");
     let hits = indexers.search(&IndexerQuery::Album(&target)).await;
     assert_eq!(hits.len(), 1, "a release without an NZB link is dropped");
+}
+
+/// A plugin client says whose fault a failed download was, and the
+/// worker believes it, never the text (all three say "disk full"): a
+/// local failure moves to the next result with its release unblamed;
+/// the source's, or one that says nothing, blocklists the release.
+#[tokio::test]
+async fn a_plugin_says_whose_fault_a_failed_download_was() {
+    use droppedneedle_acquire::downloads::{AttemptState, TaskStatus};
+    use droppedneedle_acquire::reason::Reason;
+    use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
+    use droppedneedle_providers::health::ServiceHealth;
+
+    let rig = plugin_rig("fault").await;
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u1", "U", "user").await.expect("user seeds");
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
+    for fault in ["local", "source", "unknown"] {
+        let task = NewTask {
+            id: format!("t-{fault}"),
+            user_id: "u1".to_owned(),
+            artist_name: "Test Artist".to_owned(),
+            album_title: "Fixtures".to_owned(),
+            release_group_mbid: "rg-1".to_owned(),
+            origin: "user".to_owned(),
+            retry_count: 0,
+        };
+        let mut handle = SourceHandle::new(SourceTag::plugin("fault-client"));
+        handle.plugin_token = fault.to_owned();
+        handle.release_identity = format!("release-{fault}");
+        let handle = serde_json::to_string(&handle).expect("handle encodes");
+        journal
+            .run("test.seed", move |store| {
+                store.insert_task(&task, 1_700_000_000.0)?;
+                store.transition_task(&task.id, TaskStatus::Downloading, 1_700_000_000.0, None)?;
+                store.insert_attempt(
+                    &format!("{}-a0", task.id),
+                    &task.id,
+                    "plugin:fault-client",
+                    0,
+                    "",
+                    &handle,
+                    AttemptState::InUse,
+                    1_700_000_000.0,
+                )
+            })
+            .await
+            .expect("download seeds");
+    }
+    let source: Arc<dyn DownloadSource> =
+        Arc::new(plugin_client(&rig, "fault-client", journal.clone()));
+    let worker = Arc::new(DownloadWorker::fixed(
+        journal.clone(),
+        vec![source],
+        WorkerConfig::default(),
+        droppedneedle_kernel::events::EventHub::new(),
+        Arc::new(ServiceHealth::new()),
+    ));
+
+    worker.run_once(1).await;
+
+    let mut blocked: Vec<String> = journal
+        .read("test.quarantine", |store| store.list_quarantine())
+        .await
+        .expect("blocklist reads")
+        .into_iter()
+        .map(|row| row.identity)
+        .collect();
+    blocked.sort();
+    assert_eq!(blocked, ["release-source", "release-unknown"]);
+    let local = journal
+        .read_task("t-local")
+        .await
+        .expect("task reads")
+        .expect("task exists");
+    assert_eq!(
+        (local.status, local.outcome_code),
+        (TaskStatus::Queued, Some(Reason::LocalFault)),
+        "a local failure moves on, saying why"
+    );
 }
 
 /// Files under `dir`, recursively.

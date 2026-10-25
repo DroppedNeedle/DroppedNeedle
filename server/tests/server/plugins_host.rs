@@ -829,9 +829,10 @@ async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
     // A plugin failure is a fixed 502, never the plugin's text.
     runtime.answer(
         methods::ROUTE,
-        Err(droppedneedle_plugins::runtime::CallError::Failed(
-            "Traceback: secret".to_owned(),
-        )),
+        Err(droppedneedle_plugins::runtime::CallError::Failed {
+            message: "Traceback: secret".to_owned(),
+            fault: droppedneedle_plugins::protocol::Fault::Unknown,
+        }),
     );
     let (status, body) = send(
         router_as(&rig, "user-1"),

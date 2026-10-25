@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::manifest::PluginManifest;
+use super::protocol::Fault;
 
 /// Boxed future for trait methods. The host holds modules behind
 /// `Arc<dyn ...>`, so every async trait method returns this instead of
@@ -305,8 +306,13 @@ pub enum CallError {
     #[error("plugin does not implement {0}")]
     Unsupported(String),
     /// The plugin's own code raised or refused.
-    #[error("plugin failed: {0}")]
-    Failed(String),
+    #[error("plugin failed: {message}")]
+    Failed {
+        /// The plugin's message.
+        message: String,
+        /// Whose fault the plugin says it was.
+        fault: Fault,
+    },
     /// The answer did not have the expected shape.
     #[error("plugin answer was malformed: {0}")]
     Malformed(String),

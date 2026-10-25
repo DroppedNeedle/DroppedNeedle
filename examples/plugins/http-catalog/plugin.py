@@ -14,6 +14,7 @@ import asyncio
 from pathlib import Path
 
 from droppedneedle_plugin import (
+    DownloadFailure,
     DownloadFileRef,
     DownloadMaterialization,
     DownloadTaskStatus,
@@ -160,7 +161,10 @@ class HttpCatalog:
                 urls = {name: url for name, url, _ in self._file_entries(album)}
                 break
         job_dir = self._downloads_dir() / task_id
-        job_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            job_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise DownloadFailure(f"could not create {job_dir}: {exc}", fault="local") from exc
         staged: list[str] = []
         for ref in request.files:
             url = urls.get(ref.filename)
@@ -169,9 +173,12 @@ class HttpCatalog:
                 continue
             response = await self.ctx.http.get(url, timeout=60.0)
             if response.status_code >= 400:
-                raise RuntimeError(f"download HTTP {response.status_code} for {ref.filename}")
+                raise DownloadFailure(f"download HTTP {response.status_code} for {ref.filename}", fault="source")
             dest = job_dir / Path(ref.filename).name
-            dest.write_bytes(response.content)
+            try:
+                dest.write_bytes(response.content)
+            except OSError as exc:
+                raise DownloadFailure(f"could not write {dest}: {exc}", fault="local") from exc
             staged.append(dest.name)
         job = {
             "task_id": task_id,

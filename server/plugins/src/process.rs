@@ -460,7 +460,10 @@ impl PluginConnection for ProcessConnection {
                     self.shared.timeouts_in_row.store(0, Ordering::Relaxed);
                     answer.map_err(|error| match error.code {
                         codes::METHOD_NOT_FOUND => CallError::Unsupported(method.to_owned()),
-                        _ => CallError::Failed(error.message),
+                        _ => CallError::Failed {
+                            fault: error.fault(),
+                            message: error.message,
+                        },
                     })
                 }
                 Ok(Err(_)) => {

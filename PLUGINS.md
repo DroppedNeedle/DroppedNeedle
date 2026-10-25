@@ -433,6 +433,23 @@ later call (`get_status`, `inspect_materialization`, `discard_client_artifacts`,
 `downloading`, `completed` or `failed`); `inspect_materialization` returns a
 `DownloadMaterialization` with the finished files in `file_paths`.
 
+When `enqueue` or `get_status` fails, say whose fault it was by raising
+`DownloadFailure(message, fault=...)`:
+
+| `fault` | Means | Failed `enqueue` | Failed `get_status` |
+|---|---|---|---|
+| `local` | this machine: a full disk, a folder it cannot write, a lost mount | tried again later | the download moves to the next result; this release is not blamed |
+| `source` | the release, the peer or the service it came from | the next source is tried; with none left, the download ends with nothing found | the release is blamed: the next result is tried and this one is skipped for 7 days |
+| `unknown` | you can't tell | the same as `source` | the same as `source` |
+
+Any other exception counts as `unknown`. Don't guess `local`: a release
+that really is broken would be tried again and again. For a local problem
+in `get_status`, raise `DownloadFailure(..., fault="local")`; don't return
+`status: "failed"`, which always blames the release. A failed
+`inspect_materialization` is handled the same way whatever the fault: the
+import waits a few passes for the files to be listed, then fails with the
+files kept.
+
 Finished files must be inside the plugin's data folder (`ctx.data_dir`) or
 the folder in the plugin's `downloads_dir` setting, if its manifest declares
 one. Report absolute paths. If any reported path is outside those folders, or
@@ -580,7 +597,11 @@ Notifications (no answer): `settings.update` with `{settings}` when the admin
 saves, and `$/cancel` with `{id}` when the server stops waiting for a request.
 
 Answer an unknown method with error code `-32601`; the server treats that as
-"not implemented". Use `-32000` for your own failures.
+"not implemented". Use `-32000` for your own failures. Any error except
+`-32601` may say whose fault it was in its `data`:
+`{"fault": "local" | "source" | "unknown"}`. Only `download_client.enqueue`
+and `download_client.status` act on it. A missing `data`, or a value the
+server does not know, reads as `unknown`.
 
 ### Plugin to server
 

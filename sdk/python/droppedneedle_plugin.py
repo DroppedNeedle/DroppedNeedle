@@ -56,6 +56,8 @@ from typing import Any, Optional
 __all__ = [
     "MAX_LIBRARY_FILE_BYTES",
     "PROTOCOL_VERSION",
+    "DOWNLOAD_FAULTS",
+    "DownloadFailure",
     "DownloadFileRef",
     "DownloadMaterialization",
     "DownloadTaskStatus",
@@ -179,6 +181,23 @@ class DownloadTaskStatus:
     matched_transfers: int = 0
     queue_position_start: Optional[int] = None
     queue_position_end: Optional[int] = None
+
+
+DOWNLOAD_FAULTS = ("local", "source", "unknown")
+
+
+class DownloadFailure(Exception):
+    """Raise from ``enqueue`` or ``get_status`` to say whose fault a failure
+    was. ``"local"`` is this machine (a full disk, a folder it cannot write)
+    and never blames the release. ``"source"`` is the release or the
+    service it came from; it and ``"unknown"`` act like any other
+    exception. PLUGINS.md says what each one does."""
+
+    def __init__(self, message: str, fault: str = "unknown") -> None:
+        if fault not in DOWNLOAD_FAULTS:
+            raise ValueError(f"fault must be one of {', '.join(DOWNLOAD_FAULTS)}, not {fault!r}")
+        super().__init__(message)
+        self.fault = fault
 
 
 @dataclass
@@ -474,9 +493,10 @@ _CAPABILITY_METHODS = {
 
 
 class RpcFailure(Exception):
-    def __init__(self, code: int, message: str) -> None:
+    def __init__(self, code: int, message: str, data: Optional[dict] = None) -> None:
         super().__init__(message)
         self.code = code
+        self.data = data
 
 
 async def _call(function: Any, *args: Any, **kwargs: Any) -> Any:
@@ -530,7 +550,10 @@ class _Server:
 
     def _reply(self, request_id: Any, result: Any = None, error: Optional[RpcFailure] = None) -> None:
         if error is not None:
-            self._send({"id": request_id, "error": {"code": error.code, "message": str(error)}})
+            body = {"code": error.code, "message": str(error)}
+            if error.data is not None:
+                body["data"] = error.data
+            self._send({"id": request_id, "error": body})
         else:
             self._send({"id": request_id, "result": _to_json(result)})
 
@@ -604,6 +627,9 @@ class _Server:
             return
         except RpcFailure as failure:
             self._reply(request_id, error=failure)
+            return
+        except DownloadFailure as failure:
+            self._reply(request_id, error=RpcFailure(PLUGIN_ERROR, str(failure), {"fault": failure.fault}))
             return
         except Exception as exc:  # noqa: BLE001 - report any plugin failure to the host
             logging.getLogger("droppedneedle_plugin").error(

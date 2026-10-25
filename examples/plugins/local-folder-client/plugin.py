@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 from droppedneedle_plugin import (
+    DownloadFailure,
     DownloadMaterialization,
     DownloadTaskStatus,
     EnqueueRequest,
@@ -57,15 +58,20 @@ class LocalFolderClient:
             raise RuntimeError("local-folder-client needs payload=<source path> from its paired indexer")
         src = Path(payload)
         if not src.exists():
-            raise RuntimeError(f"source path not found: {payload}")
+            raise DownloadFailure(f"source path not found: {payload}", fault="source")
         targets = [src] if src.is_file() else sorted(p for p in src.rglob("*") if p.is_file())
         job_dir = self._downloads_dir() / request.task_id
-        job_dir.mkdir(parents=True, exist_ok=True)
         staged: list[str] = []
-        for path in targets:
-            dest = job_dir / path.name
-            shutil.copyfile(path, dest)
-            staged.append(dest.name)
+        try:
+            job_dir.mkdir(parents=True, exist_ok=True)
+            for path in targets:
+                dest = job_dir / path.name
+                shutil.copyfile(path, dest)
+                staged.append(dest.name)
+        except OSError as exc:
+            # The downloads folder is full or cannot be written: our side,
+            # so the release is not held against the source.
+            raise DownloadFailure(f"could not stage into {job_dir}: {exc}", fault="local") from exc
         job = {
             "task_id": request.task_id,
             "job_name": f"droppedneedle-{request.task_id}",
