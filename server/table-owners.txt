@@ -194,6 +194,7 @@ library_operation_work
 library_publish_baselines
 library_publish_blob_refs
 library_publish_blobs
+library_publish_created_folders
 library_publish_journal
 library_publish_operations
 library_publish_replacements

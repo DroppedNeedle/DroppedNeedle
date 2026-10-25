@@ -45,13 +45,14 @@
 //!   commit resumes the commit only when every destination still holds
 //!   the exact staged bytes.
 //! - **Cleanup** removes verified old sources and backups, then prunes
-//!   newly empty source directories. Journal: `committed -> cleaned`.
+//!   newly empty source directories, whether publish or recovery runs it. Journal: `committed -> cleaned`.
 //!   Cleanup failure is durable `cleanup_pending` and retryable; it never
 //!   rolls back the commit.
 //!
 //! Failure before commit compensates: published destinations whose bytes
 //! still match the staged copy are removed, same-path backups are
-//! restored, and unpublished temps are deleted. A backup that cannot go
+//! restored, unpublished temps are deleted, and the folders the bundle
+//! made go once they are empty. A backup that cannot go
 //! home (its name was taken meanwhile, or its bytes changed) is kept, and
 //! its row needs attention instead. Committed journals are never rolled
 //! back. Anything ambiguous (duplicate staged locations,
@@ -94,6 +95,7 @@ pub mod archive;
 pub mod bin;
 pub mod bin_contents;
 pub mod expiry;
+mod folders;
 pub mod generated;
 pub mod journal;
 pub mod operations;

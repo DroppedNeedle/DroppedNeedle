@@ -184,6 +184,9 @@ pub fn locate(
 /// ([`crate::identity::adopt_import`]).
 pub(super) fn commit_bundle(tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError> {
     let conn: &Connection = tx;
+    // The folders the bundle made hold its files now: no unwind removes
+    // them.
+    super::folders::forget(conn, &commit.bundle_id)?;
     // A file added with no track, or its undo: no catalog row moves.
     if commit.tracks.is_empty() && commit.removal.is_none() && commit.put_back.is_none() {
         return Ok(());
@@ -659,6 +662,10 @@ pub enum CrashPoint {
     /// After the unwind of a failed publish settled its first row. Needs
     /// a publish that fails by itself, so not in [`CrashPoint::all`].
     AfterFirstUnwind,
+    /// After the unwind of a failed publish finished, before the folders
+    /// it made are removed. Needs a publish that fails by itself, so not
+    /// in [`CrashPoint::all`].
+    BeforeFolderRemoval,
     /// After the first file of a bundle of several staged, before the
     /// next one. Recovery must unwind such a bundle, so not in
     /// [`CrashPoint::all`].
@@ -680,6 +687,7 @@ impl CrashPoint {
             Self::AfterCatalogCommit => "after-catalog-commit",
             Self::DuringCleanup => "during-cleanup",
             Self::AfterFirstUnwind => "after-first-unwind",
+            Self::BeforeFolderRemoval => "before-folder-removal",
             Self::AfterFirstFileStaged => "after-first-file-staged",
             Self::AfterTempWritten => "after-temp-written",
         }
@@ -1263,7 +1271,7 @@ impl<P: SpaceProbe> Publisher<P> {
                 .resolve_no_symlink(&item.dest_root, &item.dest_rel)?;
             self.sandbox.ensure_under_roots(&dest)?;
             if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+                super::folders::make(&self.db, &self.sandbox, &bundle.id, &item.dest_root, parent)?;
             }
             if let Some(replaced) = &item.replaces {
                 let holds = paths::read_regular_file(&dest)
@@ -1487,7 +1495,13 @@ impl<P: SpaceProbe> Publisher<P> {
             .resolve_no_symlink(&sidecar.dest_root, &sidecar.dest_rel)?;
         self.sandbox.ensure_under_roots(&dest)?;
         if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+            super::folders::make(
+                &self.db,
+                &self.sandbox,
+                &bundle.id,
+                &sidecar.dest_root,
+                parent,
+            )?;
         }
         let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
         self.sandbox.ensure_under_roots(&temp)?;
@@ -1536,7 +1550,13 @@ impl<P: SpaceProbe> Publisher<P> {
             .resolve_no_symlink(&output.dest_root, &output.dest_rel)?;
         self.sandbox.ensure_under_roots(&dest)?;
         if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+            super::folders::make(
+                &self.db,
+                &self.sandbox,
+                &bundle.id,
+                &output.dest_root,
+                parent,
+            )?;
         }
         let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
         self.sandbox.ensure_under_roots(&temp)?;
@@ -1701,7 +1721,7 @@ impl<P: SpaceProbe> Publisher<P> {
             ));
         }
         if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+            super::folders::make(&self.db, &self.sandbox, &bundle.id, &file.root_id, parent)?;
             // A folder swapped for a link while it was being made.
             paths::ensure_no_symlink_below(self.sandbox.root_dir(&file.root_id)?, parent)?;
         }
@@ -1726,7 +1746,7 @@ impl<P: SpaceProbe> Publisher<P> {
             .sandbox
             .resolve_removal(&item.root_id, &item.relative_path)?;
         if let Some(parent) = home.parent() {
-            std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+            super::folders::make(&self.db, &self.sandbox, &bundle.id, &item.root_id, parent)?;
         }
         let temp = self.sandbox.temp_path_for(&home, &journal_id)?;
         self.sandbox.ensure_under_removal_roots(&temp)?;
@@ -2265,7 +2285,7 @@ impl<P: SpaceProbe> Publisher<P> {
                     let expected = journal.source_sha256.as_deref().unwrap_or_default();
                     if expected.is_empty() || sha256_hex(&bytes) == expected {
                         std::fs::remove_file(&source).map_err(PublishError::from)?;
-                        prune_empty_parents(&self.sandbox, root, &source)?;
+                        prune_empty_parents(&self.sandbox, root, &source);
                     }
                 }
             }
@@ -2295,6 +2315,8 @@ impl<P: SpaceProbe> Publisher<P> {
         let kept =
             super::recovery::compensate_bundle(&self.db, &self.sandbox, rows, self.place_seams)?;
         self.maybe_crash(CrashPoint::AfterFirstUnwind)?;
+        self.maybe_crash(CrashPoint::BeforeFolderRemoval)?;
+        super::recovery::remove_folders(&self.db, &self.sandbox, &bundle.id);
         Ok(kept.is_some())
     }
 
@@ -2481,26 +2503,37 @@ fn lend_mode(file: std::io::Result<std::fs::File>, mode: Option<u32>, temp: &Pat
     }
 }
 
-/// Prune newly empty source parents up to (not including) the root.
-/// Stops at the first non-empty directory; unknown files are never
-/// deleted.
-fn prune_empty_parents(
-    sandbox: &Sandbox,
-    root_id: &str,
-    source: &Path,
-) -> Result<(), PublishError> {
-    let root = sandbox.root_dir(root_id)?.to_path_buf();
-    let mut cursor = source.parent().map(Path::to_path_buf);
+/// Prune newly empty source parents up to (not including) the root,
+/// after a moved file's source went. Each folder goes only while empty and
+/// never through a link below the root. An empty folder left behind is not
+/// worth a stuck write, so a failure is logged and the cleanup stands.
+pub(super) fn prune_empty_parents(sandbox: &Sandbox, root_id: &str, source: &Path) {
+    let Ok(root) = sandbox.root_dir(root_id) else {
+        return;
+    };
+    let mut cursor = source.parent();
     while let Some(dir) = cursor {
-        if dir == root || !dir.starts_with(&root) {
+        if dir == root || !dir.starts_with(root) {
             break;
         }
-        let mut entries = std::fs::read_dir(&dir).map_err(PublishError::from)?;
-        if entries.next().is_some() {
+        if let Err(error) = paths::ensure_no_symlink_below(root, dir) {
+            tracing::warn!(dir = %dir.display(), %error, "an emptied source folder was left");
             break;
         }
-        std::fs::remove_dir(&dir).map_err(PublishError::from)?;
-        cursor = dir.parent().map(Path::to_path_buf);
+        match std::fs::remove_dir(dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error)
+                if error.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                    || error.raw_os_error() == Some(libc::EEXIST) =>
+            {
+                break;
+            }
+            Err(error) => {
+                tracing::warn!(dir = %dir.display(), %error, "an emptied source folder was left");
+                break;
+            }
+        }
+        cursor = dir.parent();
     }
-    Ok(())
 }

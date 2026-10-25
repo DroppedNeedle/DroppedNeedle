@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 166);
+    assert_eq!(table_names(&pool).await.len(), 167);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -3767,6 +3767,75 @@ async fn foreign_key_indexes_arrive_on_upgrade() {
     .await
     .unwrap();
     assert_eq!(kept.as_deref(), Some("t1"));
+}
+
+/// Migration 0082 adds the table of folders a publish made to a database
+/// at 81, keeps its publish rows, and a folder row goes with its publish.
+#[tokio::test]
+async fn created_folders_arrive_on_upgrade() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 82)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_operations (bundle_id, bundle_json, created_day) \
+         VALUES ('b1', '{}', 1); \
+         INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+         staged, staged_sha256, state) \
+         VALUES ('j1', 'b1', 'audio', 'music', 'a/b.flac', '/t', 'sha', 'staged');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 82 && stamped == latest_version(), "{stamped}");
+    let sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' \
+         AND name = 'library_publish_created_folders'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
+    let journal: Option<String> =
+        sqlx::query_scalar("SELECT state FROM library_publish_journal WHERE id = 'j1'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(journal.as_deref(), Some("staged"));
+
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = ON; \
+         INSERT INTO library_publish_created_folders (bundle_id, root_id, folder_rel) \
+         VALUES ('b1', 'music', 'a'); \
+         DELETE FROM library_publish_operations WHERE bundle_id = 'b1';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_publish_created_folders")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "a folder row goes with its publish");
 }
 
 /// Each migration stamps its own number, so applying them in order on an

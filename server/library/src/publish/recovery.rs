@@ -389,11 +389,20 @@ fn reconcile_bundle(
         ))
     })?;
     if journals.iter().all(|journal| journal.state.is_terminal()) {
-        return Ok(RecoveryAction::Noop);
+        // An unwind, or a flag for attention, that stopped before the
+        // folders the bundle made were removed.
+        return Ok(if super::folders::remove(db, sandbox, bundle_id)? {
+            RecoveryAction::Noop
+        } else {
+            RecoveryAction::Deferred(format!(
+                "bundle {bundle_id} has folders waiting for their library folder"
+            ))
+        });
     }
     let evidence = match inspect_bundle(sandbox, &journals)? {
         BundleEvidence::Ambiguous(reason) => {
             flag_attention(db, &journals)?;
+            remove_folders(db, sandbox, bundle_id);
             return Ok(RecoveryAction::NeedsAttention(reason));
         }
         BundleEvidence::Clear(clear) => clear,
@@ -423,6 +432,7 @@ fn reconcile_bundle(
     });
     if unwinding && put_back_refused(sandbox, &journals) {
         flag_attention(db, &journals)?;
+        remove_folders(db, sandbox, bundle_id);
         return Ok(RecoveryAction::NeedsAttention(format!(
             "bundle {bundle_id} has a file with no safe way back onto its name"
         )));
@@ -451,15 +461,23 @@ fn reconcile_bundle(
     let journals = long_read(db, "publish.bundle_journals", |conn| {
         JournalStore::new(conn).bundle(bundle_id)
     })?;
-    Ok(
-        match (compensate_bundle(db, sandbox, &journals, seams)?, refused) {
-            (None, _) => RecoveryAction::Compensated,
-            (Some(kept), None) => RecoveryAction::NeedsAttention(kept),
-            (Some(kept), Some(refused)) => {
-                RecoveryAction::NeedsAttention(format!("{refused}; then {kept}"))
-            }
-        },
-    )
+    let unwound = compensate_bundle(db, sandbox, &journals, seams)?;
+    remove_folders(db, sandbox, bundle_id);
+    Ok(match (unwound, refused) {
+        (None, _) => RecoveryAction::Compensated,
+        (Some(kept), None) => RecoveryAction::NeedsAttention(kept),
+        (Some(kept), Some(refused)) => {
+            RecoveryAction::NeedsAttention(format!("{refused}; then {kept}"))
+        }
+    })
+}
+
+/// Remove the folders a bundle made, once its unwind finished. A failure
+/// leaves them recorded, and a later pass removes them.
+pub(super) fn remove_folders(db: &Db, sandbox: &Sandbox, bundle_id: &str) {
+    if let Err(error) = super::folders::remove(db, sandbox, bundle_id) {
+        tracing::warn!(bundle_id, %error, "folders a write made wait for a later pass");
+    }
 }
 
 /// The recorded bundle, when every row `prepare` writes for it exists and
@@ -1004,14 +1022,15 @@ fn resume_precommit(
     if let Err(err) = committed {
         // Nothing committed. A database that refused the call would refuse
         // the unwind's rows too, so the bundle waits for the next pass.
-        if !err.is_interrupted()
-            && let Some(reason) = compensate_bundle(db, sandbox, &refreshed, seams)?
-        {
-            tracing::warn!(
-                bundle_id,
-                reason,
-                "publish bundle needs attention after its unwind"
-            );
+        if !err.is_interrupted() {
+            if let Some(reason) = compensate_bundle(db, sandbox, &refreshed, seams)? {
+                tracing::warn!(
+                    bundle_id,
+                    reason,
+                    "publish bundle needs attention after its unwind"
+                );
+            }
+            remove_folders(db, sandbox, bundle_id);
         }
         return Err(err);
     }
@@ -1494,10 +1513,12 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
             && let Ok(bytes) = paths::read_regular_file(&source)
         {
             let expected = journal.source_sha256.as_deref().unwrap_or_default();
-            if (expected.is_empty() || sha256_hex(&bytes) == expected)
-                && std::fs::remove_file(&source).is_err()
-            {
-                failed = true;
+            if expected.is_empty() || sha256_hex(&bytes) == expected {
+                if std::fs::remove_file(&source).is_ok() {
+                    super::publisher::prune_empty_parents(sandbox, root, &source);
+                } else {
+                    failed = true;
+                }
             }
         }
         durable(db, "publish.journal_cleaned", |tx| {

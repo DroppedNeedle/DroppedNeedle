@@ -73,9 +73,20 @@ droppedneedle_kernel::sql! {
              JOIN library_publish_replacements r ON r.journal_id = j.id \
              WHERE r.replaced_track_id = ?1 AND j.bundle_id <> ?2 \
              AND j.state IN ('prepared', 'staged', 'published') LIMIT 1";
-    /// Bundles with unsettled rows, in order.
-    pub(super) ACTIVE_BUNDLES = "SELECT DISTINCT bundle_id FROM library_publish_journal \
-             WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention') ORDER BY bundle_id";
+    /// Bundles with unsettled rows, or with folders an unwind has not
+    /// removed yet, in order.
+    pub(super) ACTIVE_BUNDLES = "SELECT bundle_id FROM library_publish_journal \
+             WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention') \
+             UNION SELECT bundle_id FROM library_publish_created_folders ORDER BY bundle_id";
+    /// Record a folder a bundle (`?1`) made under root `?2` at `?3`.
+    pub(super) CREATED_FOLDER_INSERT = "INSERT OR IGNORE INTO library_publish_created_folders \
+             (bundle_id, root_id, folder_rel) VALUES (?1, ?2, ?3)";
+    /// The folders a bundle (`?1`) made.
+    pub(super) CREATED_FOLDERS = "SELECT root_id, folder_rel FROM library_publish_created_folders \
+             WHERE bundle_id = ?1";
+    /// Forget the folders a bundle (`?1`) made.
+    pub(super) CREATED_FOLDERS_DELETE = "DELETE FROM library_publish_created_folders \
+             WHERE bundle_id = ?1";
     /// How many bundles have a row that has not committed yet.
     pub(super) PRECOMMIT_BUNDLE_COUNT = "SELECT COUNT(DISTINCT bundle_id) \
              FROM library_publish_journal WHERE state IN ('prepared', 'staged', 'published')";
@@ -239,9 +250,11 @@ droppedneedle_kernel::sql! {
     /// Move a track (`?1`) to path `?2` (absolute `?3`, hash `?4`).
     pub(super) TRACK_SET_PATH = "UPDATE local_tracks SET relative_path = ?2, file_path = ?3, \
              path_hash = ?4, row_revision = row_revision + 1 WHERE id = ?1";
-    /// Whether any bundle has unsettled rows.
+    /// Whether any bundle has unsettled rows, or folders an unwind has not
+    /// removed yet.
     pub(crate) ANY_ACTIVE = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
-             WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention'))";
+             WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention')) \
+             OR EXISTS (SELECT 1 FROM library_publish_created_folders)";
     /// Every hidden name the journal records.
     pub(super) JOURNAL_NAMES = "SELECT staged, backup FROM library_publish_journal";
     /// The catalog rows a publish is checked against, for the track ids in

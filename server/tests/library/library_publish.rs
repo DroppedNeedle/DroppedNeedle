@@ -4778,3 +4778,151 @@ fn undo_takes_a_plugin_file_only_while_unchanged() {
     );
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
+
+// --- Folders: a write removes only the folders it made, and prunes the
+// sources it moved away from. ---
+
+/// A move whose cleanup a crash interrupted is finished by recovery, and
+/// recovery prunes the source folders the move left empty, as a publish
+/// that finishes by itself does. The library folder itself stays.
+#[test]
+fn recovery_of_an_interrupted_move_prunes_its_empty_source_folders() {
+    for point in [CrashPoint::AfterCatalogCommit, CrashPoint::DuringCleanup] {
+        let fix = fixture(&format!("prune-{}", point.as_str()));
+        let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(point));
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+        drop(publisher);
+
+        let db = restart(&fix);
+        reconcile(&db, &fix.sandbox).unwrap();
+        let staging = fix.dir.join("music/staging");
+        assert!(
+            staging.symlink_metadata().is_err(),
+            "{point:?}: staging/ pruned"
+        );
+        assert!(
+            fix.dir.join("music/organized/a.flac").is_file(),
+            "{point:?}"
+        );
+        assert!(fix.dir.join("music").is_dir(), "{point:?}");
+    }
+}
+
+/// A move bound for a new folder, `new/artist/`, and for `kept/`, which
+/// was there before, empty.
+fn folder_bundle(fix: &Fixture) -> (PlanBundle, BTreeMap<String, TagDocument>) {
+    let (mut bundle, docs) = two_track_bundle(fix, PlanKind::Move);
+    bundle.items[0].dest_rel = "new/artist/a.flac".to_string();
+    bundle.items[0].sidecars[0].dest_rel = "new/artist/cover.jpg".to_string();
+    bundle.items[1].dest_rel = "kept/b.flac".to_string();
+    std::fs::create_dir_all(fix.dir.join("music/kept")).unwrap();
+    (bundle, docs)
+}
+
+fn no_safe_step() -> Seams {
+    Seams {
+        skip_rename: true,
+        link_errno: Some(libc::EPERM),
+        ..Seams::default()
+    }
+}
+
+fn assert_sources_home(fix: &Fixture) {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    for rel in ["staging/a.flac", "staging/b.flac"] {
+        let source = fix.sandbox.resolve("music", rel).unwrap();
+        assert_eq!(std::fs::read(source).unwrap(), original, "{rel} is home");
+    }
+}
+
+/// A publish that unwinds removes the folders it made for its files, and
+/// never a folder that was there before, even an empty one.
+#[test]
+fn an_unwound_move_removes_only_the_folders_it_made() {
+    let fix = fixture("unwind-folders");
+    let (bundle, docs) = folder_bundle(&fix);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_place_seams(no_safe_step());
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(
+        matches!(err, PublishError::NoSafePlacement(_)),
+        "got {err:?}"
+    );
+
+    assert!(fix.dir.join("music/new").symlink_metadata().is_err());
+    assert!(fix.dir.join("music/kept").is_dir());
+    assert_sources_home(&fix);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A crash while a bundle stages leaves the folders its files were going
+/// to. Recovery unwinds the bundle and removes those folders, and keeps a
+/// folder that was there before.
+#[test]
+fn a_crash_while_staging_leaves_no_folder_it_made() {
+    for point in [
+        CrashPoint::AfterFirstFileStaged,
+        CrashPoint::AfterTempWritten,
+    ] {
+        let fix = fixture(&format!("staging-folders-{}", point.as_str()));
+        let (bundle, docs) = folder_bundle(&fix);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(point));
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+        drop(publisher);
+        assert!(fix.dir.join("music/new/artist").is_dir(), "{point:?}");
+
+        let db = restart(&fix);
+        let results = reconcile(&db, &fix.sandbox).unwrap();
+        assert_eq!(
+            results[0].action,
+            publish::RecoveryAction::Compensated,
+            "{point:?}"
+        );
+        assert!(
+            fix.dir.join("music/new").symlink_metadata().is_err(),
+            "{point:?}: new/ removed"
+        );
+        assert!(fix.dir.join("music/kept").is_dir(), "{point:?}");
+        assert_sources_home(&fix);
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{point:?}");
+        let again = reconcile(&db, &fix.sandbox).unwrap();
+        assert!(again.is_empty(), "{point:?}: nothing left to do");
+    }
+}
+
+/// An unwind that stopped before the folders it made were removed is
+/// finished by recovery: the empty ones go, one that now holds another
+/// program's file stays, and nothing is left for a later pass.
+#[test]
+fn a_stopped_folder_removal_is_finished_by_recovery() {
+    let fix = fixture("stopped-folder-removal");
+    let (mut bundle, docs) = folder_bundle(&fix);
+    bundle.items[1].dest_rel = "other/b.flac".to_string();
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_place_seams(no_safe_step());
+    publisher.set_crash_point(Some(CrashPoint::BeforeFolderRemoval));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+    assert!(fix.dir.join("music/new/artist").is_dir());
+    let stray = fix.dir.join("music/other/notes.txt");
+    std::fs::write(&stray, b"someone else's").unwrap();
+
+    let db = restart(&fix);
+    let results = reconcile(&db, &fix.sandbox).unwrap();
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert!(fix.dir.join("music/new").symlink_metadata().is_err());
+    assert_eq!(std::fs::read(&stray).unwrap(), b"someone else's");
+    assert_sources_home(&fix);
+    let again = reconcile(&db, &fix.sandbox).unwrap();
+    assert!(again.is_empty(), "nothing left to do: {again:?}");
+}
