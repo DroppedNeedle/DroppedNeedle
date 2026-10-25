@@ -36,6 +36,7 @@ use super::downloads::sources::{
 };
 use super::downloads::store::TaskRow;
 use super::landing::ports::LandingLibrary;
+use super::reason::Reason;
 use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
 use super::search_jobs::pinned;
 use super::slskd::folders::{RankRequest, rank_folders};
@@ -55,7 +56,7 @@ use super::usenet::sabnzbd::{SabnzbdError, SabnzbdQueue};
 fn client_error(error: ClientError) -> SourceError {
     match &error {
         ClientError::BadRequest { .. } | ClientError::Decode { .. } => {
-            SourceError::Rejected(error.to_string())
+            SourceError::rejected(Reason::DownloadFailed, error.to_string())
         }
         ClientError::Auth { .. }
         | ClientError::NotFound { .. }
@@ -70,7 +71,9 @@ fn sab_error(error: SabnzbdError) -> SourceError {
         SabnzbdError::RejectedNzb
         | SabnzbdError::RejectedNzbUrl
         | SabnzbdError::MissingNzbUrl
-        | SabnzbdError::NzbTooLarge => SourceError::Rejected(error.to_string()),
+        | SabnzbdError::NzbTooLarge => {
+            SourceError::rejected(Reason::DownloadFailed, error.to_string())
+        }
         SabnzbdError::Api(_)
         | SabnzbdError::NzbRefused { .. }
         | SabnzbdError::AmbiguousIdentity => SourceError::Unavailable(error.to_string()),
@@ -110,7 +113,9 @@ async fn task_row(journal: &Arc<Journal>, task_id: &str) -> Result<TaskRow, Sour
         .read_task(&lookup)
         .await
         .map_err(|error| SourceError::LocalFault(error.to_string()))?
-        .ok_or_else(|| SourceError::Rejected(format!("unknown download task {owned}")))
+        .ok_or_else(|| {
+            SourceError::rejected(Reason::NoSource, format!("unknown download task {owned}"))
+        })
 }
 
 /// The task's search target, or why it cannot be worked out yet. Without
@@ -321,7 +326,9 @@ impl SlskdSource {
                 .await
                 .map_err(|miss| match miss {
                     SoulseekMiss::Search(error) => client_error(error),
-                    SoulseekMiss::Nothing(reason) => SourceError::Rejected(reason),
+                    SoulseekMiss::Nothing { reason, detail } => {
+                        SourceError::rejected(reason, detail)
+                    }
                 })?;
             if let (Some(reason), Some(targets)) = (choice.lone_reason, self.targets.as_ref()) {
                 targets.record_lone_track(&task, reason).await;
@@ -345,8 +352,9 @@ impl SlskdSource {
             picked
         };
         if payload.is_empty() {
-            return Err(SourceError::Rejected(
-                "slskd's best remaining peer has none of the missing tracks".to_owned(),
+            return Err(SourceError::rejected(
+                Reason::NoSource,
+                "slskd's best remaining peer has none of the missing tracks",
             ));
         }
         let advertised: HashMap<&str, i64> = payload
@@ -673,9 +681,10 @@ impl SabnzbdSource {
             }
             Ok(_) => {}
             Err(SabnzbdError::AmbiguousIdentity) => {
-                return Err(SourceError::Rejected(format!(
-                    "usenet job {job_name} is ambiguous; refusing a duplicate add"
-                )));
+                return Err(SourceError::rejected(
+                    Reason::DownloadFailed,
+                    format!("usenet job {job_name} is ambiguous; refusing a duplicate add"),
+                ));
             }
             Err(error) => return Err(sab_error(error)),
         }
@@ -690,9 +699,9 @@ impl SabnzbdSource {
                 .into_iter()
                 .find(|hit| usenet_identity(&hit.usenet.title, hit.usenet.size_bytes) == identity)
                 .ok_or_else(|| {
-                    SourceError::Rejected(
-                        "The Usenet release you picked is no longer listed by your indexers."
-                            .to_owned(),
+                    SourceError::rejected(
+                        Reason::NoSource,
+                        "The Usenet release you picked is no longer listed by your indexers.",
                     )
                 })?,
             _ => {
@@ -700,9 +709,10 @@ impl SabnzbdSource {
                 self.pick(&task, &target, &blocked, &tried)
                     .await
                     .ok_or_else(|| {
-                        SourceError::Rejected(format!(
-                            "usenet has no candidate {candidate_index} for {task_id}"
-                        ))
+                        SourceError::rejected(
+                            Reason::NoSource,
+                            format!("usenet has no candidate {candidate_index} for {task_id}"),
+                        )
                     })?
             }
         };

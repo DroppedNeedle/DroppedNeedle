@@ -9,6 +9,7 @@
 use super::SearchTarget;
 use super::reasons::TrackReason;
 use crate::client_error::ClientError;
+use crate::reason::Reason;
 use crate::slskd::folders::{FolderPick, RankRequest, rank_folders};
 use crate::slskd::{SearchResult, SlskdHttp, SlskdRepository};
 
@@ -26,8 +27,8 @@ pub struct SoulseekChoice {
 pub enum SoulseekMiss {
     /// slskd failed.
     Search(ClientError),
-    /// Nothing usable was found.
-    Nothing(String),
+    /// Nothing usable was found: why, and the text the log keeps.
+    Nothing { reason: Reason, detail: String },
 }
 
 /// Search and pick. `keep` drops hits that may not be tried again
@@ -61,9 +62,10 @@ pub async fn choose<H: SlskdHttp>(
                 });
             }
             (None, None) => {
-                return Err(SoulseekMiss::Nothing(
-                    "slskd has no untried folder for this album".to_owned(),
-                ));
+                return Err(SoulseekMiss::Nothing {
+                    reason: Reason::NoSource,
+                    detail: "slskd has no untried folder for this album".to_owned(),
+                });
             }
             (Some(_), Some(pick)) if !pick.lone_track => {
                 return Ok(SoulseekChoice {
@@ -75,9 +77,10 @@ pub async fn choose<H: SlskdHttp>(
         }
     }
     let Some(track) = target.track.as_ref() else {
-        return Err(SoulseekMiss::Nothing(
-            "slskd has no untried folder for this album".to_owned(),
-        ));
+        return Err(SoulseekMiss::Nothing {
+            reason: Reason::NoSource,
+            detail: "slskd has no untried folder for this album".to_owned(),
+        });
     };
     // No album folder holds the track: search for the track itself. Its
     // results can still turn up an album folder, which wins as usual.
@@ -95,9 +98,10 @@ pub async fn choose<H: SlskdHttp>(
         }
     }
     let Some(pick) = rank_folders(&hits, request, policy).into_iter().next() else {
-        return Err(SoulseekMiss::Nothing(
-            TrackReason::TrackNotFound.to_string(),
-        ));
+        return Err(SoulseekMiss::Nothing {
+            reason: TrackReason::TrackNotFound.into(),
+            detail: TrackReason::TrackNotFound.to_string(),
+        });
     };
     let lone_reason = if pick.lone_track || !target.has_album() {
         Some(track.no_album.unwrap_or(TrackReason::NoAlbumFolder))

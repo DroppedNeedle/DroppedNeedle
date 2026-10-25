@@ -1,11 +1,10 @@
-//! Why a single-track acquisition skipped a step or failed, in words a
-//! person can act on. Every reason has a stable code, one plain sentence,
-//! and an action. The text rides on the source error the worker logs and,
-//! for the lone-track fallback, in the task manifest.
+//! Why a single-track acquisition skipped a step or failed. Each reason is
+//! one of the crate's [`Reason`]s; its sentence and action come from there.
 
 use std::fmt;
 
 use crate::downloads::manifest::RecordedReason;
+use crate::reason::Reason;
 
 /// One reason from the track-to-album path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,91 +25,65 @@ pub enum TrackReason {
     TrackNotFound,
 }
 
+impl From<TrackReason> for Reason {
+    fn from(reason: TrackReason) -> Self {
+        match reason {
+            TrackReason::AlbumLookupUnavailable => Reason::AlbumLookupUnavailable,
+            TrackReason::RecordingUnknown => Reason::RecordingUnknown,
+            TrackReason::NoAlbumForRecording => Reason::NoAlbumForRecording,
+            TrackReason::NoAlbumFolder => Reason::NoAlbumFolder,
+            TrackReason::NoAlbumRelease => Reason::NoAlbumRelease,
+            TrackReason::AlbumReleasesExhausted => Reason::AlbumReleasesExhausted,
+            TrackReason::TrackNotFound => Reason::TrackNotFound,
+        }
+    }
+}
+
 impl TrackReason {
+    /// The track reason `reason` is, when it is one.
+    pub fn from_reason(reason: Reason) -> Option<Self> {
+        Some(match reason {
+            Reason::AlbumLookupUnavailable => Self::AlbumLookupUnavailable,
+            Reason::RecordingUnknown => Self::RecordingUnknown,
+            Reason::NoAlbumForRecording => Self::NoAlbumForRecording,
+            Reason::NoAlbumFolder => Self::NoAlbumFolder,
+            Reason::NoAlbumRelease => Self::NoAlbumRelease,
+            Reason::AlbumReleasesExhausted => Self::AlbumReleasesExhausted,
+            Reason::TrackNotFound => Self::TrackNotFound,
+            _ => return None,
+        })
+    }
+
     /// Stable machine code.
     pub fn code(self) -> &'static str {
-        match self {
-            Self::AlbumLookupUnavailable => "album_lookup_unavailable",
-            Self::RecordingUnknown => "recording_unknown",
-            Self::NoAlbumForRecording => "no_album_for_recording",
-            Self::NoAlbumFolder => "no_album_folder",
-            Self::NoAlbumRelease => "no_album_release",
-            Self::AlbumReleasesExhausted => "album_releases_exhausted",
-            Self::TrackNotFound => "track_not_found",
-        }
+        Reason::from(self).code()
     }
 
     /// What happened, in one sentence.
     pub fn message(self) -> &'static str {
-        match self {
-            Self::AlbumLookupUnavailable => {
-                "MusicBrainz could not be reached to find the album this track is on."
-            }
-            Self::RecordingUnknown => "MusicBrainz does not know this recording any more.",
-            Self::NoAlbumForRecording => "MusicBrainz lists no album or single with this track.",
-            Self::NoAlbumFolder => "Nobody on Soulseek shares the album with this track in it.",
-            Self::NoAlbumRelease => "No release of the album was found for this track.",
-            Self::AlbumReleasesExhausted => {
-                "Every release of the album was tried and none delivered this track."
-            }
-            Self::TrackNotFound => {
-                "Nobody shares this track, either as part of its album or on its own."
-            }
-        }
-    }
-
-    /// What the person can do about it.
-    pub fn action(self) -> &'static str {
-        match self {
-            Self::AlbumLookupUnavailable => {
-                "It tries again on its own. If it keeps happening, check the MusicBrainz settings."
-            }
-            Self::RecordingUnknown => {
-                "Request the track again from its album page so it uses the current recording."
-            }
-            Self::NoAlbumForRecording | Self::NoAlbumFolder | Self::NoAlbumRelease => {
-                "A single shared copy was used instead; check the result in the held list if it looks wrong."
-            }
-            Self::AlbumReleasesExhausted => {
-                "A single shared copy was tried instead; request the whole album if this keeps failing."
-            }
-            Self::TrackNotFound => {
-                "It retries later on its own. You can also request the whole album, or pick another edition."
-            }
-        }
-    }
-
-    /// The reason a source error's text starts with, if any (the text is
-    /// this reason's `Display` form).
-    pub fn in_text(text: &str) -> Option<Self> {
-        [
-            Self::AlbumLookupUnavailable,
-            Self::RecordingUnknown,
-            Self::NoAlbumForRecording,
-            Self::NoAlbumFolder,
-            Self::NoAlbumRelease,
-            Self::AlbumReleasesExhausted,
-            Self::TrackNotFound,
-        ]
-        .into_iter()
-        .find(|reason| {
-            text.strip_prefix(reason.code())
-                .is_some_and(|rest| rest.starts_with(':'))
-        })
+        Reason::from(self).message()
     }
 
     /// The reason as the manifest records it.
     pub fn record(self) -> RecordedReason {
+        let reason = Reason::from(self);
         RecordedReason {
-            code: self.code().to_owned(),
-            message: self.message().to_owned(),
-            action: self.action().to_owned(),
+            code: reason.code().to_owned(),
+            message: reason.message().to_owned(),
+            action: reason.action().to_owned(),
         }
     }
 }
 
 impl fmt::Display for TrackReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} {}", self.code(), self.message(), self.action())
+        let reason = Reason::from(*self);
+        write!(
+            f,
+            "{}: {} {}",
+            reason.code(),
+            reason.message(),
+            reason.action()
+        )
     }
 }

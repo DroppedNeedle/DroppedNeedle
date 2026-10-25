@@ -22,8 +22,8 @@ use super::journal::Journal;
 use super::queue_rows::Viewer;
 use super::state::TaskStatus;
 use crate::landing::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary};
-use crate::landing::reasons::explain;
-use crate::landing::{NAMING_SCRIPT_FAILED, is_local_hold, probe, quality, specs};
+use crate::landing::{probe, quality, specs};
+use crate::reason::{Reason, ReasonKind};
 use crate::worker::DownloadWorker;
 use droppedneedle_library::matching::Release;
 use droppedneedle_providers::RequestPriority;
@@ -202,7 +202,7 @@ impl HeldImports {
     ) -> Result<Reverified, HeldError> {
         let _claim = self.claim(id)?;
         let row = self.get(viewer, id).await?;
-        if row.reason != "fingerprint_mismatch" {
+        if row.reason != Reason::FingerprintMismatch {
             return Err(HeldError::Refused(
                 "Only files held because AcoustID heard a different recording can be re-checked."
                     .to_owned(),
@@ -239,7 +239,7 @@ impl HeldImports {
         let mut results = Vec::new();
         let mut checked = 0;
         for row in candidates {
-            if row.reason != "fingerprint_mismatch" {
+            if row.reason != Reason::FingerprintMismatch {
                 results.push(BulkItem {
                     held_id: row.id,
                     release_group_mbid: row.release_group_mbid,
@@ -321,7 +321,7 @@ impl HeldImports {
     }
 
     /// A download's held files of one kind: held by the library side
-    /// (`local`) or by the checks.
+    /// (`local`, the Library kind) or by the checks.
     async fn task_rows(
         &self,
         viewer: &Viewer,
@@ -334,7 +334,7 @@ impl HeldImports {
             .await
             .map_err(unavailable)?
             .into_iter()
-            .filter(|row| is_local_hold(&row.reason) == local)
+            .filter(|row| (row.reason.kind() == ReasonKind::Library) == local)
             .collect();
         if rows.is_empty() {
             return Err(HeldError::NotFound(if local {
@@ -449,18 +449,18 @@ impl HeldImports {
             Ok(receipt) => receipt
                 .blocked
                 .first()
-                .map(|(_, detail)| (explain("upgrade_blocked"), detail.clone()))
+                .map(|(_, detail)| (Reason::UpgradeBlocked, detail.clone()))
                 .or_else(|| {
                     receipt
                         .skipped
                         .first()
-                        .map(|(_, detail)| (explain("target_occupied"), detail.clone()))
+                        .map(|(_, detail)| (Reason::TargetOccupied, detail.clone()))
                 }),
             Err(failure) => Some((
                 match failure {
-                    ImportFailure::Occupied(_) => explain("target_occupied"),
-                    ImportFailure::LocalFault(_) => explain("local_fault"),
-                    ImportFailure::NamingScript(_) => explain(NAMING_SCRIPT_FAILED),
+                    ImportFailure::Occupied(_) => Reason::TargetOccupied,
+                    ImportFailure::LocalFault(_) => Reason::LocalFault,
+                    ImportFailure::NamingScript(_) => Reason::NamingScriptFailed,
                 },
                 failure.detail().to_owned(),
             )),
@@ -469,12 +469,13 @@ impl HeldImports {
             tracing::warn!(
                 held_id = row.id,
                 detail,
-                code = reason.code,
+                code = reason.code(),
                 "held import refused"
             );
             return Err(HeldError::Refused(format!(
                 "{} {}",
-                reason.message, reason.action
+                reason.message(),
+                reason.action()
             )));
         }
         let placed = outcome

@@ -34,7 +34,6 @@ pub mod matching;
 pub mod ports;
 pub mod probe;
 pub mod quality;
-pub mod reasons;
 pub mod specs;
 
 use std::collections::{HashMap, HashSet};
@@ -53,65 +52,20 @@ use super::downloads::journal::Journal;
 use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
 use super::downloads::manifest::DownloadManifest;
 use super::downloads::store::{StoreError, TaskDetails, TaskRow};
+use crate::reason::Reason;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_library::import::ImportJoin;
 
-/// Hold code for better files of an album the library already holds.
-/// Landings no longer write it (an upgrade replaces the old file at
-/// once); rows from earlier versions still carry it.
-pub const UPGRADE_PENDING: &str = "upgrade_pending";
-
-/// Hold code for a better file whose old copy could not be moved to the
-/// recycle bin, so the old file stays and the new one waits.
-pub const UPGRADE_BLOCKED: &str = "upgrade_blocked";
-
-/// Hold code earlier versions wrote for a better file that could not be
-/// placed after its old copy was recycled. Landings no longer write it;
-/// stored holds still carry it.
-pub const UPGRADE_RESTORE_FAILED: &str = "upgrade_restore_failed";
-
-/// Rejection code for a landing whose publish met a library that changed
-/// under it (a file appeared at a destination, an old copy changed): it
-/// waits for the next pass, which decides file by file again.
-pub const LIBRARY_CHANGED: &str = "library_changed";
-
-/// Rejection code for a landing whose download settings cannot be read:
-/// it waits for them to be saved again, and the source is not blamed.
-pub const SETTINGS_UNREADABLE: &str = "settings_unreadable";
-
-/// Rejection code for a landing whose task records cannot be read right
-/// now (the database is busy): it waits for the next pass, the files stay
-/// and the source is not blamed.
-pub const JOURNAL_UNREADABLE: &str = "journal_unreadable";
-
 /// The rejection a landing answers when its task records cannot be read.
 fn journal_unreadable() -> Rejection {
     Rejection {
-        code: JOURNAL_UNREADABLE,
+        code: Reason::JournalUnreadable,
         disposition: Disposition::Temporary,
         quarantine: None,
         detail: "the download's records cannot be read".to_owned(),
     }
 }
-
-/// Rejection code for a landing the import naming script gave no usable
-/// path: the files wait for the script to be fixed, and the source is not
-/// blamed.
-pub const NAMING_SCRIPT_FAILED: &str = "naming_script_failed";
-
-/// Hold code for a single whose only copy found is its album's track. The
-/// task stops at the first such landing; the request offers to take the
-/// song from the album.
-pub const ALBUM_VERSION_ONLY: &str = "album_version_only";
-
-/// Hold code for this edition's version of a track that came in lower
-/// quality than the person's own version, which stays.
-pub const VERSION_LOWER_QUALITY: &str = "version_lower_quality";
-
-/// Rejection code for a download whose client named a path outside its
-/// downloads folder, or one reached through a link.
-pub const OUTSIDE_DOWNLOADS: &str = "outside_downloads_folder";
 
 /// One file or folder a download client reported, with the byte size it
 /// advertised for that exact file when it did (Soulseek does).
@@ -160,7 +114,7 @@ pub enum LandingResult {
     /// there now; otherwise the download landed short.
     Imported { complete: bool },
     /// Nothing imported; the files are held for a person.
-    Held { code: String, detail: String },
+    Held { code: Reason, detail: String },
     /// Not importable; the disposition says what the worker does next.
     Rejected(Rejection),
 }
@@ -175,19 +129,6 @@ pub struct LandingReport {
     /// already taken, an upgrade waiting): another source would not help,
     /// so the task settles without blocklisting this one.
     pub local_only: bool,
-}
-
-/// Hold codes that say nothing against the source: the files were fine,
-/// the library side could not take them yet.
-pub fn is_local_hold(code: &str) -> bool {
-    matches!(
-        code,
-        "target_occupied"
-            | UPGRADE_PENDING
-            | UPGRADE_BLOCKED
-            | UPGRADE_RESTORE_FAILED
-            | VERSION_LOWER_QUALITY
-    )
 }
 
 /// What "Replace tracks you have in another version" made of a landing.
@@ -244,7 +185,7 @@ impl Acted {
 struct Held<'a> {
     file: &'a LandedFile,
     track: Option<usize>,
-    code: &'static str,
+    code: Reason,
     detail: String,
 }
 
@@ -349,7 +290,7 @@ impl LandingService {
         // waits, the files stay and the source is not blamed.
         let Some(settings) = self.policy.read() else {
             let rejection = Rejection {
-                code: SETTINGS_UNREADABLE,
+                code: Reason::SettingsUnreadable,
                 disposition: Disposition::Temporary,
                 quarantine: None,
                 detail: "the download settings cannot be read".to_owned(),
@@ -455,8 +396,12 @@ impl LandingService {
         let discarded = self
             .journal
             .run("downloads.album_version_discard", move |store| {
-                let rows =
-                    store.held_for_recording(ALBUM_VERSION_ONLY, &user_id, &recording, &task_id)?;
+                let rows = store.held_for_recording(
+                    Reason::AlbumVersionOnly,
+                    &user_id,
+                    &recording,
+                    &task_id,
+                )?;
                 let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
                 store.resolve_held(&ids, "discarded", now)?;
                 Ok(rows)
@@ -513,7 +458,7 @@ impl LandingService {
             .map(|file| Held {
                 file,
                 track: None,
-                code,
+                code: *code,
                 detail: detail.clone(),
             })
             .collect();
@@ -584,7 +529,7 @@ impl LandingService {
             held.push(Held {
                 file: &landing.audio[*file],
                 track: Some(*track),
-                code: "tag_mismatch",
+                code: Reason::TagMismatch,
                 detail,
             });
         }
@@ -694,8 +639,8 @@ impl LandingService {
                     let blocked: HashMap<usize, String> = receipt.blocked.into_iter().collect();
                     for (index, (file, track)) in plan.import.iter().enumerate() {
                         let refused = match (skipped.get(&index), blocked.get(&index)) {
-                            (Some(detail), _) => Some(("target_occupied", detail)),
-                            (None, Some(detail)) => Some((UPGRADE_BLOCKED, detail)),
+                            (Some(detail), _) => Some((Reason::TargetOccupied, detail)),
+                            (None, Some(detail)) => Some((Reason::UpgradeBlocked, detail)),
                             (None, None) => None,
                         };
                         match refused {
@@ -723,7 +668,7 @@ impl LandingService {
                     let detail = failure.detail().to_owned();
                     decision.outcome = Outcome::Reject(match failure {
                         ImportFailure::NamingScript(_) => Rejection {
-                            code: NAMING_SCRIPT_FAILED,
+                            code: Reason::NamingScriptFailed,
                             ..local_fault(detail)
                         },
                         _ => local_fault(detail),
@@ -735,7 +680,7 @@ impl LandingService {
                     // and the publish, which put everything back. The next
                     // pass decides file by file again.
                     decision.outcome = Outcome::Reject(Rejection {
-                        code: LIBRARY_CHANGED,
+                        code: Reason::LibraryChanged,
                         disposition: Disposition::Temporary,
                         quarantine: None,
                         detail,
@@ -750,10 +695,10 @@ impl LandingService {
         // asked for again.
         let locally_held: HashSet<usize> = held
             .iter()
-            .filter(|item| is_local_hold(item.code))
+            .filter(|item| !item.code.against_source())
             .filter_map(|item| item.track)
             .collect();
-        let any_local = held.iter().any(|item| is_local_hold(item.code));
+        let any_local = held.iter().any(|item| !item.code.against_source());
         self.record_wrong_product(task, target, &held, imported_tracks.len())
             .await;
         let held_count = self.hold(task, target, landing, Some(found), held).await;
@@ -814,14 +759,14 @@ impl LandingService {
             Outcome::Hold { code, detail }
         } else if upgrade {
             Outcome::Reject(Rejection {
-                code: "not_an_upgrade",
+                code: Reason::NotAnUpgrade,
                 disposition: Disposition::Permanent,
                 quarantine: None,
                 detail: "no file beats the copy the library holds".to_owned(),
             })
         } else {
             Outcome::Hold {
-                code: "no_tracks",
+                code: Reason::NoTracks,
                 detail: "no file could be imported".to_owned(),
             }
         };
@@ -899,7 +844,7 @@ impl LandingService {
                 held.push(Held {
                     file: &landing.audio[file],
                     track: Some(track),
-                    code: VERSION_LOWER_QUALITY,
+                    code: Reason::VersionLowerQuality,
                     detail: format!(
                         "the new file is {}, your version is {}",
                         landing.audio[file].tier(),
@@ -971,7 +916,7 @@ impl LandingService {
                 held.push(Held {
                     file: &landing.audio[file],
                     track: Some(track),
-                    code: "fingerprint_mismatch",
+                    code: Reason::FingerprintMismatch,
                     detail: "AcoustID identified a different recording".to_owned(),
                 });
             } else {
@@ -1006,7 +951,7 @@ impl LandingService {
         if target.is_track
             || imported > 0
             || held.len() < 2
-            || held.iter().any(|item| item.code != "tag_mismatch")
+            || held.iter().any(|item| item.code != Reason::TagMismatch)
         {
             return;
         }
@@ -1073,7 +1018,7 @@ impl LandingService {
         file: &LandedFile,
         paired: Option<(&FoundRelease, usize)>,
         root: &Path,
-        code: &str,
+        code: Reason,
         detail: &str,
     ) -> HoldItem {
         let track = paired.map(|(found, index)| (&found.release, &found.release.tracks[index]));
@@ -1089,9 +1034,7 @@ impl LandingService {
                 user_id: task.user_id.clone(),
                 held_path: String::new(),
                 original_filename: relative,
-                reason: code.to_owned(),
-                reason_text: Some(reasons::explain(code).message.to_owned()),
-                reason_action: Some(reasons::explain(code).action.to_owned()),
+                reason: code,
                 reason_detail: Some(detail.to_owned()),
                 source: task.source.clone(),
                 source_task_id: task.id.clone(),
@@ -1151,7 +1094,7 @@ impl LandingService {
                 complete: plan.complete,
             },
             Outcome::Hold { code, detail } => LandingResult::Held {
-                code: (*code).to_owned(),
+                code: *code,
                 detail: detail.clone(),
             },
             Outcome::Reject(rejection) => LandingResult::Rejected(rejection.clone()),
@@ -1159,28 +1102,23 @@ impl LandingService {
         let (outcome, reason_code, detail) = match &result {
             LandingResult::Imported { complete: true } => ("imported", None, None),
             LandingResult::Imported { complete: false } => {
-                ("partial", Some("tracks_missing".to_owned()), None)
+                ("partial", Some(Reason::TracksMissing), None)
             }
-            LandingResult::Held { code, detail } => {
-                ("held", Some(code.clone()), Some(detail.clone()))
-            }
+            LandingResult::Held { code, detail } => ("held", Some(*code), Some(detail.clone())),
             LandingResult::Rejected(rejection) => (
                 if rejection.disposition == Disposition::Temporary {
                     "deferred"
                 } else {
                     "rejected"
                 },
-                Some(rejection.code.to_owned()),
+                Some(rejection.code),
                 Some(rejection.detail.clone()),
             ),
         };
-        let explained = reason_code.as_deref().map(reasons::explain);
         let row = ImportDecisionRow {
             task_id: task.id.clone(),
             attempt_id: attempt_id.map(str::to_owned),
             outcome: outcome.to_owned(),
-            reason_text: explained.map(|reason| reason.message.to_owned()),
-            reason_action: explained.map(|reason| reason.action.to_owned()),
             reason_code,
             detail,
             release_mbid: decision.release_mbid.clone(),
@@ -1336,7 +1274,7 @@ fn confine(landed: Landed, libraries: &[PathBuf]) -> Result<Vec<Reported>, Rejec
     }
     if refused > 0 {
         return Err(Rejection {
-            code: OUTSIDE_DOWNLOADS,
+            code: Reason::OutsideDownloadsFolder,
             disposition: Disposition::LocalFault,
             quarantine: None,
             detail: format!(
@@ -1427,7 +1365,7 @@ fn common_parent(files: &[LandedFile]) -> PathBuf {
 
 fn local_fault(detail: String) -> Rejection {
     Rejection {
-        code: "local_fault",
+        code: Reason::LocalFault,
         disposition: Disposition::LocalFault,
         quarantine: None,
         detail,
@@ -1435,7 +1373,7 @@ fn local_fault(detail: String) -> Rejection {
 }
 
 /// Every check's verdict as JSON; a hold or reject also carries its plain
-/// sentence (`message`) and suggested `action` from the reason catalog.
+/// sentence (`message`) and suggested `action` from its reason.
 fn checks_json(checks: &[Check]) -> String {
     let explained: Vec<serde_json::Value> = checks
         .iter()
@@ -1447,9 +1385,8 @@ fn checks_json(checks: &[Check]) -> String {
                 Verdict::Accept { .. } => None,
             };
             if let (Some(code), Some(fields)) = (code, value.as_object_mut()) {
-                let reason = reasons::explain(code);
-                fields.insert("message".into(), reason.message.into());
-                fields.insert("action".into(), reason.action.into());
+                fields.insert("message".into(), code.message().into());
+                fields.insert("action".into(), code.action().into());
             }
             value
         })

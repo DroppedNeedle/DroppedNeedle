@@ -11,7 +11,8 @@ const h = vi.hoisted(() => ({
 	reset: vi.fn(),
 	retryPending: false,
 	isAdmin: true,
-	invalidate: vi.fn()
+	invalidate: vi.fn(),
+	importMut: vi.fn()
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -32,7 +33,10 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 			return h.retryPending;
 		}
 	}),
-	discardHeldManagementUnit: () => ({ mutate: h.discard, isPending: false })
+	discardHeldManagementUnit: () => ({ mutate: h.discard, isPending: false }),
+	importHeldTrack: () => ({ mutate: h.importMut, isPending: false, error: null }),
+	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+	reverifyHeldTrack: () => ({ mutate: vi.fn(), isPending: false, error: null })
 }));
 
 vi.mock('$lib/queries/QueryClient', () => {
@@ -140,7 +144,7 @@ function held(track: number): HeldImport {
 		file_format: 'flac',
 		duration_seconds: 180,
 		expected_duration_seconds: null,
-		reason: 'management:PROFILE_CHANGED',
+		reason: 'target_occupied',
 		reason_detail: 'The selected profile changed while this album was being prepared.',
 		source: 'soulseek',
 		source_task_id: 'task-1',
@@ -150,8 +154,9 @@ function held(track: number): HeldImport {
 		evidence_score: null,
 		management_retry_count: 0,
 		management_next_retry_at: null,
-		reason_text: null,
-		reason_action: null,
+		reason_text: 'Another file already sits where this would go in your library.',
+		reason_action: 'Compare it with the one in your library.',
+		reason_kind: 'library',
 		origin: 'user'
 	};
 }
@@ -164,6 +169,7 @@ describe('ManagementHoldCard.svelte', () => {
 		h.retryPending = false;
 		h.isAdmin = true;
 		h.invalidate = vi.fn().mockResolvedValue(undefined);
+		h.importMut = vi.fn();
 		mux.reset();
 		// The organizerRetry store is module-level: clear the shared task id so no
 		// snapshot leaks between tests.
@@ -190,7 +196,7 @@ describe('ManagementHoldCard.svelte', () => {
 		);
 	});
 
-	it('keeps destructive organizer controls admin-only', async () => {
+	it("gives the owner the reason and each file's own actions", async () => {
 		h.isAdmin = false;
 		await render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
 			typeof render<typeof ManagementHoldCard>
@@ -198,8 +204,24 @@ describe('ManagementHoldCard.svelte', () => {
 
 		await expect
 			.element(
-				page.getByText('An administrator can retry, discard, or review this organizer hold.')
+				page.getByText('Another file already sits where this would go in your library.').first()
 			)
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Import anyway' }).click();
+		expect(h.importMut).toHaveBeenCalledWith(
+			{ id: 1, release_group_mbid: null },
+			expect.objectContaining({ onSuccess: expect.any(Function) })
+		);
+	});
+
+	it('keeps destructive organizer controls admin-only', async () => {
+		h.isAdmin = false;
+		await render(ManagementHoldCard, { props: { items: [held(1)] } } as Parameters<
+			typeof render<typeof ManagementHoldCard>
+		>[1]);
+
+		await expect
+			.element(page.getByText('An administrator can retry or discard the whole download.'))
 			.toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: 'Retry organizer' }))

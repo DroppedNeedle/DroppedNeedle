@@ -13179,14 +13179,26 @@ export interface components {
             task_id: string;
         };
         /**
-         * @description Why a download sits where it does: one stable code, one plain sentence
-         *     and what to do about it.
+         * @description Why a manual search failed or found nothing: one stable code, one
+         *     plain sentence and what to do about it.
          */
         DownloadReason: {
             /** @description What the person can do about it. */
             action: string;
-            /** @description Stable machine code (`stalled`, `weak_match`, `no_source`, ...). */
+            /** @description Stable machine code. */
             code: string;
+            /** @description What happened, in one sentence. */
+            text: string;
+        };
+        /**
+         * @description Why a download task sits where it does: the reason, its kind, one
+         *     plain sentence and what to do about it.
+         */
+        DownloadTaskReason: {
+            /** @description What the person can do about it. */
+            action: string;
+            code: components["schemas"]["Reason"];
+            kind: components["schemas"]["ReasonKind"];
             /** @description What happened, in one sentence. */
             text: string;
         };
@@ -13226,8 +13238,6 @@ export interface components {
             download_type: string;
             /** Format: int64 */
             downloaded_bytes: number;
-            /** @description The worker's last outcome as recorded. Show `reason` instead. */
-            error_message?: string | null;
             /** Format: int64 */
             files_completed: number;
             /** Format: int64 */
@@ -13250,6 +13260,7 @@ export interface components {
              *     `upgrade`, `edition` or `follow`.
              */
             origin: string;
+            outcome_code?: null | components["schemas"]["Reason"];
             /** Format: int64 */
             progress_percent: number;
             /** Format: int64 */
@@ -13263,7 +13274,7 @@ export interface components {
             queue_position_end?: number | null;
             /** Format: int64 */
             queue_position_start?: number | null;
-            reason?: null | components["schemas"]["DownloadReason"];
+            reason?: null | components["schemas"]["DownloadTaskReason"];
             recording_mbid?: string | null;
             release_group_mbid: string;
             release_mbid?: string | null;
@@ -13343,8 +13354,7 @@ export interface components {
             id: number;
             /** @description What to do about it. */
             reason_action?: string | null;
-            /** @description Stable reason code when the item stopped short. */
-            reason_code?: string | null;
+            reason_code?: null | components["schemas"]["Reason"];
             release_group_mbid?: string | null;
             /**
              * @description `processing`, `imported`, `skipped`, `needs_review`, `failed` or
@@ -14663,14 +14673,18 @@ export interface components {
              */
             origin: string;
             original_filename?: string | null;
-            /** @description Stable reason code (`fingerprint_mismatch`, `target_occupied`, ...). */
-            reason: string;
+            reason: components["schemas"]["Reason"];
             /** @description What the person can do about it. */
-            reason_action?: string | null;
+            reason_action: string;
             /** @description Specifics: which file, which marker. */
             reason_detail?: string | null;
+            /**
+             * @description `library` when our side held the file and it can be retried as it
+             *     is; `hold` when a person decides.
+             */
+            reason_kind: components["schemas"]["ReasonKind"];
             /** @description The reason as one plain sentence. */
-            reason_text?: string | null;
+            reason_text: string;
             recording_mbid?: string | null;
             release_group_mbid?: string | null;
             release_mbid?: string | null;
@@ -14961,8 +14975,7 @@ export interface components {
             outcome: string;
             /** @description What to do about it. */
             reason_action?: string | null;
-            /** @description Stable reason code, when the landing was not a clean import. */
-            reason_code?: string | null;
+            reason_code?: null | components["schemas"]["Reason"];
             /** @description The reason as a plain sentence. */
             reason_text?: string | null;
         };
@@ -19728,6 +19741,11 @@ export interface components {
          * @enum {string}
          */
         RawAacTagPolicy: "save_apev2" | "do_not_write" | "remove_apev2";
+        /**
+         * @description One reason, stored and sent by its snake_case spelling.
+         * @enum {string}
+         */
+        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on";
         /** @description How many reviews one reason holds. */
         ReasonCount: {
             /** Format: int64 */
@@ -19736,6 +19754,11 @@ export interface components {
             /** @description The reason code as filed (filter by this). */
             reason_code: string;
         };
+        /**
+         * @description Where a reason shows and what it offers.
+         * @enum {string}
+         */
+        ReasonKind: "hold" | "library" | "source" | "wait" | "settled";
         /**
          * @description Why a job or work item ended where it did: a stable code, a plain
          *     sentence, and what to do about it.
@@ -19852,8 +19875,7 @@ export interface components {
         };
         /** @description Reimport outcome: the task as the import left it. */
         ReimportResponse: {
-            /** @description Why the import did not complete, when it did not. */
-            error_message?: string | null;
+            reason?: null | components["schemas"]["DownloadTaskReason"];
             /** @description Task status after the import. */
             status: components["schemas"]["TaskStatus"];
             /** @description Whether the files reached the library (`completed` or `partial`). */

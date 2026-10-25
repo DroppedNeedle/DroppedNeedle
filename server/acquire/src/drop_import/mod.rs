@@ -22,7 +22,6 @@
 pub mod extract;
 pub mod http;
 pub mod identify;
-pub mod reasons;
 pub mod store;
 
 use std::collections::{HashMap, HashSet};
@@ -30,7 +29,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use self::identify::Outcome;
-use self::reasons::Reason;
 use self::store::{DropStore, ItemRecord, JobRecord, item_status, job_status};
 use crate::flows::seams::{FlowEvent, TickSink};
 use crate::landing::canonical_dirs;
@@ -41,6 +39,7 @@ use crate::landing::ports::{
 use crate::landing::probe::{Landing, probe};
 use crate::landing::specs::Target;
 use crate::landing::{quality, specs};
+use crate::reason::Reason;
 use crate::requests::models::RequestKind;
 use crate::requests::settle::announce_fulfilled;
 use crate::requests::sqlite::RequestStore;
@@ -272,12 +271,12 @@ impl DropImports {
                 let reason = match other {
                     Outcome::Unavailable(detail) => {
                         tracing::warn!(item_id, %detail, "drop match: MusicBrainz unavailable");
-                        reasons::MUSICBRAINZ_UNAVAILABLE
+                        Reason::MusicbrainzUnavailable
                     }
                     Outcome::Review { reason, .. } => reason,
-                    Outcome::Matched(_) => reasons::IMPORT_FAILED,
+                    Outcome::Matched(_) => Reason::ImportFailed,
                 };
-                let message = format!("{} {}", reason.message, reason.action);
+                let message = format!("{} {}", reason.message(), reason.action());
                 let mut back = item.clone();
                 back.status = item_status::NEEDS_REVIEW.to_owned();
                 self.store.save_item(&back, item_status::PROCESSING).await?;
@@ -313,7 +312,6 @@ impl DropImports {
         discarded.staging_paths = Vec::new();
         discarded.detail = Some("Discarded.".to_owned());
         discarded.reason_code = None;
-        discarded.reason_action = None;
         if !self
             .store
             .save_item(&discarded, item_status::NEEDS_REVIEW)
@@ -381,12 +379,7 @@ impl DropImports {
                 return;
             }
         }
-        let reason = reasons::INTERRUPTED;
-        match self
-            .store
-            .fail_stale_processing(reason.message, reason.code, reason.action)
-            .await
-        {
+        match self.store.fail_stale_processing(Reason::Interrupted).await {
             Ok(0) => {}
             Ok(failed) => tracing::info!(jobs = failed, "drop imports cut off by a restart failed"),
             Err(error) => tracing::warn!(%error, "drop import restart sweep failed"),
@@ -515,7 +508,7 @@ impl DropImports {
             {
                 tracing::error!(item_id = id, %cause, "drop import item failed");
                 if let Ok(Some(item)) = self.store.get_item(id).await {
-                    let failed = settled(item, item_status::FAILED, reasons::IMPORT_FAILED, None);
+                    let failed = settled(item, item_status::FAILED, Reason::ImportFailed, None);
                     if let Err(error) = self.store.save_item(&failed, item_status::PROCESSING).await
                     {
                         tracing::warn!(item_id = id, %error, "drop item failure not recorded");
@@ -555,7 +548,7 @@ impl DropImports {
         let landing = self.probe(library.as_ref(), paths).await;
         let unreadable = landing.unreadable.len();
         if landing.audio.is_empty() {
-            let mut failed = settled(item, item_status::FAILED, reasons::UNREADABLE, None);
+            let mut failed = settled(item, item_status::FAILED, Reason::Corrupt, None);
             failed.staging_paths = Vec::new();
             self.save(&failed).await;
             return Ok(());
@@ -565,7 +558,7 @@ impl DropImports {
             let review = settled(
                 item,
                 item_status::NEEDS_REVIEW,
-                reasons::TOO_MANY_FILES,
+                Reason::TooManyFiles,
                 Some(specifics),
             );
             self.save(&review).await;
@@ -587,7 +580,7 @@ impl DropImports {
                 self.save(&settled(
                     item,
                     item_status::NEEDS_REVIEW,
-                    reasons::MUSICBRAINZ_UNAVAILABLE,
+                    Reason::MusicbrainzUnavailable,
                     None,
                 ))
                 .await;
@@ -611,7 +604,7 @@ impl DropImports {
             self.save(&settled(
                 item,
                 item_status::NEEDS_REVIEW,
-                reasons::NO_ALBUM_MATCH,
+                Reason::NoAlbumMatch,
                 None,
             ))
             .await;
@@ -856,9 +849,9 @@ impl DropImports {
                     ImportFailure::LocalFault(detail) | ImportFailure::NamingScript(detail) => {
                         tracing::warn!(item_id = item.id, %detail, "library could not take a drop import");
                         let reason = if matches!(failure, ImportFailure::NamingScript(_)) {
-                            reasons::NAMING_SCRIPT_FAILED
+                            Reason::NamingScriptFailed
                         } else {
-                            reasons::LIBRARY_UNAVAILABLE
+                            Reason::LibraryUnavailable
                         };
                         self.save(&settled(item, item_status::NEEDS_REVIEW, reason, None))
                             .await;
@@ -891,11 +884,11 @@ impl DropImports {
                 .collect()
         };
         for (reason, files) in [
-            (reasons::LEFTOVER_FILES, paths(&held)),
-            (reasons::FINGERPRINT_MISMATCH, paths(&misheard)),
-            (reasons::SAMPLES, landing.samples.clone()),
-            (reasons::UPGRADE_BLOCKED, blocked),
-            (reasons::TARGET_OCCUPIED, occupied),
+            (Reason::TagMismatch, paths(&held)),
+            (Reason::FingerprintMismatch, paths(&misheard)),
+            (Reason::Samples, landing.samples.clone()),
+            (Reason::UpgradeBlocked, blocked),
+            (Reason::TargetOccupied, occupied),
         ] {
             let files: Vec<PathBuf> = files
                 .into_iter()
@@ -925,31 +918,24 @@ impl DropImports {
                 status: item_status::IMPORTED.to_owned(),
                 detail: Some(summary_text),
                 reason_code: None,
-                reason_action: None,
                 ..item
             }
         } else if done.occupied > 0 || done.blocked > 0 || done.owned > 0 {
             let reason = if done.occupied > 0 {
-                reasons::TARGET_OCCUPIED
+                Reason::TargetOccupied
             } else if done.blocked > 0 {
-                reasons::UPGRADE_BLOCKED
+                Reason::UpgradeBlocked
             } else {
-                reasons::ALREADY_OWNED
+                Reason::AlreadyOwned
             };
             ItemRecord {
                 status: item_status::SKIPPED.to_owned(),
-                detail: Some(format!("{} {summary_text}", reason.message)),
-                reason_code: Some(reason.code.to_owned()),
-                reason_action: Some(reason.action.to_owned()),
+                detail: Some(format!("{} {summary_text}", reason.message())),
+                reason_code: Some(reason),
                 ..item
             }
         } else {
-            let mut review = settled(
-                item,
-                item_status::NEEDS_REVIEW,
-                reasons::NO_ALBUM_MATCH,
-                None,
-            );
+            let mut review = settled(item, item_status::NEEDS_REVIEW, Reason::NoAlbumMatch, None);
             review.staging_paths = landing
                 .audio
                 .iter()
@@ -1004,7 +990,6 @@ impl DropImports {
             files_imported: 0,
             detail: None,
             reason_code: None,
-            reason_action: None,
             staging_paths: paths,
         };
         let album = parent.album_title.clone().unwrap_or_default();
@@ -1124,7 +1109,7 @@ impl DropImports {
 }
 
 /// An item settled with one reason: the sentence (plus specifics) as the
-/// detail, the code and action beside it.
+/// detail, the reason beside it.
 fn settled(
     item: ItemRecord,
     status: &str,
@@ -1132,14 +1117,13 @@ fn settled(
     specifics: Option<String>,
 ) -> ItemRecord {
     let detail = match specifics {
-        Some(more) => format!("{} {more}", reason.message),
-        None => reason.message.to_owned(),
+        Some(more) => format!("{} {more}", reason.message()),
+        None => reason.message().to_owned(),
     };
     ItemRecord {
         status: status.to_owned(),
         detail: Some(detail),
-        reason_code: Some(reason.code.to_owned()),
-        reason_action: Some(reason.action.to_owned()),
+        reason_code: Some(reason),
         ..item
     }
 }
@@ -1322,7 +1306,7 @@ mod tests {
         let done = Organised {
             imported: 9,
             owned: 1,
-            leftovers: vec![(reasons::LEFTOVER_FILES, vec![PathBuf::from("x.flac")])],
+            leftovers: vec![(Reason::TagMismatch, vec![PathBuf::from("x.flac")])],
             covered: 10,
             expected: 12,
             ..Organised::default()

@@ -10,6 +10,8 @@
  * - Lossless says bit depth / sample rate words, never "lossless bitrate".
  */
 
+import type { Reason } from '$lib/types';
+
 // ---------------------------------------------------------------------------
 // Preference-step labels
 // ---------------------------------------------------------------------------
@@ -190,11 +192,11 @@ export function batchRequestCopy(requested: number, skipped: number, overflow: n
 // ---------------------------------------------------------------------------
 
 export type AcquisitionEmptyState =
-	'probe-mismatch' | 'unknown-only' | 'all-outside-policy' | 'nothing-found' | 'source-failure';
+	'probe-mismatch' | 'unknown-only' | 'nothing-found' | 'source-failure';
 
 export interface EmptyStateSource {
 	status?: string;
-	error_message?: string | null;
+	outcome_code?: Reason | null;
 	manual_quality_override?: boolean;
 	quality_certainty?: string | null;
 	quality_snapshot_summary?: string | null;
@@ -204,10 +206,6 @@ export const EMPTY_STATE_COPY: Record<AcquisitionEmptyState, { title: string; de
 	'nothing-found': {
 		title: 'Nothing found yet',
 		detail: 'The search finished without matching copies. Try again later.'
-	},
-	'all-outside-policy': {
-		title: 'Copies were outside your quality policy',
-		detail: 'Matches existed, but none met the accepted quality range.'
 	},
 	'unknown-only': {
 		title: 'Only unknown-resolution copies were found',
@@ -223,31 +221,32 @@ export const EMPTY_STATE_COPY: Record<AcquisitionEmptyState, { title: string; de
 	}
 };
 
+/** Outcomes that mean no source had the release or the track. */
+const NOTHING_FOUND: ReadonlySet<Reason> = new Set<Reason>([
+	'no_source',
+	'track_not_found',
+	'no_album_for_recording',
+	'no_album_folder',
+	'no_album_release',
+	'album_releases_exhausted'
+]);
+
 /**
  * Classifies a non-productive task purely from persisted fields. Precedence:
- * manual override / any "quality" failure -> probe mismatch; family-unknown
- * evidence -> unknown-only; explicit outside-policy wording -> all-outside-policy;
- * a message naming no results -> nothing-found; any other message ->
- * source-failure; otherwise null (healthy/active task, no extra UI).
+ * manual override / a quality refusal -> probe mismatch; family-unknown
+ * evidence -> unknown-only; no source had it -> nothing-found; any other
+ * outcome -> source-failure; otherwise null (healthy/active task, no extra UI).
  */
 export function classifyEmptyState(task: EmptyStateSource): AcquisitionEmptyState | null {
-	const message = task.error_message ?? '';
-	if (task.manual_quality_override || /quality/i.test(message)) return 'probe-mismatch';
+	const outcome = task.outcome_code ?? null;
+	if (task.manual_quality_override || outcome === 'quality_rejected') return 'probe-mismatch';
 	if (
 		task.quality_certainty === 'unknown' ||
 		/unknown-resolution/i.test(task.quality_snapshot_summary ?? '')
 	) {
 		return 'unknown-only';
 	}
-	const lower = message.toLowerCase();
-	if (/outside polic|outside the accepted/.test(lower)) return 'all-outside-policy';
-	if (
-		/\bno (usable|acceptable|matching|suitable)\b|\bno \w*(results|candidates|copies)\b|not found/.test(
-			lower
-		)
-	) {
-		return 'nothing-found';
-	}
-	if (lower.trim()) return 'source-failure';
-	return null;
+	if (outcome === null) return null;
+	if (NOTHING_FOUND.has(outcome)) return 'nothing-found';
+	return 'source-failure';
 }

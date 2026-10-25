@@ -15,6 +15,7 @@ use rusqlite::{OptionalExtension as _, Row, params};
 use super::sql;
 use super::state::TaskStatus;
 use super::store::{DownloadStore, NewTask, StoreError, TaskRow};
+use crate::reason::Reason;
 use crate::requests::settle::relink;
 
 /// Who is looking at the queue.
@@ -337,9 +338,7 @@ pub struct TaskFacts {
 #[derive(Debug, Clone, Default)]
 pub struct DecisionFacts {
     pub outcome: String,
-    pub reason_code: Option<String>,
-    pub reason_text: Option<String>,
-    pub reason_action: Option<String>,
+    pub reason_code: Option<Reason>,
     pub detail: Option<String>,
     pub files_total: i64,
     pub files_imported: i64,
@@ -433,14 +432,14 @@ impl DownloadStore<'_> {
             if let Some(entry) = facts.get_mut(&task_id) {
                 entry.decision = Some(DecisionFacts {
                     outcome: row.get(1)?,
-                    reason_code: row.get(2)?,
-                    reason_text: row.get(3)?,
-                    reason_action: row.get(4)?,
-                    detail: row.get(5)?,
-                    files_total: row.get(6)?,
-                    files_imported: row.get(7)?,
-                    files_held: row.get(8)?,
-                    decided_at: row.get(9)?,
+                    reason_code: row
+                        .get::<_, Option<String>>(2)?
+                        .map(|code| Reason::from_stored(&code)),
+                    detail: row.get(3)?,
+                    files_total: row.get(4)?,
+                    files_imported: row.get(5)?,
+                    files_held: row.get(6)?,
+                    decided_at: row.get(7)?,
                 });
             }
         }

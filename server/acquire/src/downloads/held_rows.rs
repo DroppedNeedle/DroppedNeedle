@@ -8,9 +8,10 @@ use super::queue_rows::Viewer;
 use super::sql;
 use super::state::TaskStatus;
 use super::store::{DownloadStore, StoreError};
+use crate::reason::Reason;
 
 /// One held file as the review shows it.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HeldRow {
     pub id: i64,
     pub user_id: String,
@@ -29,9 +30,7 @@ pub struct HeldRow {
     pub file_format: Option<String>,
     pub duration_seconds: Option<f64>,
     pub expected_duration_seconds: Option<f64>,
-    pub reason: String,
-    pub reason_text: Option<String>,
-    pub reason_action: Option<String>,
+    pub reason: Reason,
     pub reason_detail: Option<String>,
     pub evidence_title: Option<String>,
     pub evidence_artist: Option<String>,
@@ -65,9 +64,7 @@ impl HeldRow {
             file_format: row.get("file_format")?,
             duration_seconds: row.get("duration_seconds")?,
             expected_duration_seconds: row.get("expected_duration_seconds")?,
-            reason: row.get("reason")?,
-            reason_text: row.get("reason_text")?,
-            reason_action: row.get("reason_action")?,
+            reason: Reason::from_stored(&row.get::<_, String>("reason")?),
             reason_detail: row.get("reason_detail")?,
             evidence_title: row.get("evidence_title")?,
             evidence_artist: row.get("evidence_artist")?,
@@ -103,14 +100,14 @@ impl DownloadStore<'_> {
     /// one recording than `task_id`.
     pub fn held_for_recording(
         &self,
-        reason: &str,
+        reason: Reason,
         user_id: &str,
         recording_mbid: &str,
         task_id: &str,
     ) -> Result<Vec<HeldRow>, StoreError> {
         let mut stmt = self.conn.prepare_cached(sql::HELD_FOR_RECORDING.text())?;
         let rows = stmt.query_map(
-            params![reason, user_id, recording_mbid, task_id],
+            params![reason.code(), user_id, recording_mbid, task_id],
             HeldRow::from_row,
         )?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -161,7 +158,7 @@ impl DownloadStore<'_> {
     ) -> Result<bool, StoreError> {
         let changed = self.conn.execute(
             "UPDATE download_tasks SET status = 'completed', error_message = NULL, \
-                 completed_at = ?1, updated_at = ?1 \
+                 outcome_code = NULL, completed_at = ?1, updated_at = ?1 \
              WHERE id = ?2 AND status IN ('failed', 'partial')",
             params![now, task_id],
         )?;

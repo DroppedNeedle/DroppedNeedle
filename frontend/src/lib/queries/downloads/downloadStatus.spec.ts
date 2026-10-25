@@ -42,7 +42,6 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 		search_job_id: null,
 		candidate_index: null,
 		final_path: null,
-		error_message: null,
 		retry_count: 0,
 		created_at: 0,
 		updated_at: 0,

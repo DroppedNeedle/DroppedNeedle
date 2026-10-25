@@ -1652,7 +1652,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
         .enqueue(missing, 0)
         .await
         .expect_err("unknown task rejects");
-    assert!(matches!(err, SourceError::Rejected(_)));
+    assert!(matches!(err, SourceError::Rejected { .. }));
 }
 
 // ---------------------------------------------------------------------------

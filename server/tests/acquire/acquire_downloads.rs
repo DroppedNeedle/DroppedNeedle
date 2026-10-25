@@ -14,16 +14,21 @@ use std::time::{Instant, SystemTime};
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
+use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, WorkerConfig};
 use droppedneedle_providers::health::ServiceHealth;
 
 use crate::common::bundles::quiet_ticks;
-use downloads::quarantine::{QuarantineReason, is_local_fault};
+
+fn mount_gone() -> TaskOutcome<'static> {
+    TaskOutcome::new(Reason::DownloadFailed, "mount gone")
+}
+use downloads::quarantine::QuarantineReason;
 use downloads::recovery::{
     FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx,
 };
 use downloads::state::{AttemptState, can_transition};
-use downloads::store::NewTask;
+use downloads::store::{NewTask, TaskOutcome};
 use downloads::{
     DownloadManifest, DownloadStore, ExpectedFile, ManifestCodec, OrphanDecision, OrphanEvidence,
     OrphanPolicy, PollSample, QuarantineDir, RetryPolicy, TaskStatus, Watchdog, WatchdogConfig,
@@ -314,7 +319,10 @@ fn stale_tasks_reap_failed_but_keep_their_attempts() {
             "dead",
             TaskStatus::Failed,
             now,
-            Some("Download interrupted - no progress after a restart"),
+            Some(TaskOutcome::new(
+                Reason::DownloadFailed,
+                "Download interrupted - no progress after a restart",
+            )),
             Some("a-dead"),
             true,
         )
@@ -348,7 +356,7 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
             "orig",
             TaskStatus::Failed,
             now - 9000.0,
-            Some("peer vanished"),
+            Some(TaskOutcome::new(Reason::DownloadFailed, "peer vanished")),
         )
         .unwrap();
     let mut second = new_task("orig-r1");
@@ -361,7 +369,7 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
             "orig-r1",
             TaskStatus::Failed,
             now - 7000.0,
-            Some("peer vanished"),
+            Some(TaskOutcome::new(Reason::DownloadFailed, "peer vanished")),
         )
         .unwrap();
 
@@ -402,7 +410,7 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
 }
 
 #[test]
-fn management_held_retry_sweep_fires_only_when_due() {
+fn library_held_retry_sweep_fires_only_when_due() {
     let dir = scratch_dir("held");
     let conn = scratch_store(&dir);
     let store = DownloadStore::new(&conn);
@@ -412,7 +420,7 @@ fn management_held_retry_sweep_fires_only_when_due() {
         .insert_held(
             "u1",
             "/held/a.flac",
-            "management:rename",
+            "target_occupied",
             Some("t1"),
             None,
             now,
@@ -422,7 +430,7 @@ fn management_held_retry_sweep_fires_only_when_due() {
         .insert_held(
             "u1",
             "/held/b.flac",
-            "management:rename",
+            "target_occupied",
             Some("t2"),
             None,
             now,
@@ -437,7 +445,7 @@ fn management_held_retry_sweep_fires_only_when_due() {
     store
         .schedule_held_retry(&[waiting], 1, Some(now + 3600.0))
         .unwrap();
-    // Non-management reasons never take a scheduled retry.
+    // Reasons a person decides on never take a scheduled retry.
     store
         .schedule_held_retry(&[other], 1, Some(now - 5.0))
         .unwrap();
@@ -453,9 +461,6 @@ fn quarantine_blocks_expires_and_clears_on_manual_retry() {
     let store = DownloadStore::new(&conn);
     let now = 1_700_000_000.0;
     let ttl = 7.0 * 24.0 * 3600.0;
-
-    assert!(!is_local_fault(Some("CRC mismatch in segment 4")));
-    assert!(is_local_fault(Some("SABnzbd: disk is full, pausing")));
 
     let identity = canonical_soulseek_identity("Peer\\Music\\Album");
     store
@@ -838,10 +843,10 @@ fn reimport_starts_tasks_whose_files_remain() {
         )
         .unwrap();
     store
-        .transition_task("kept", TaskStatus::Failed, now, Some("mount gone"))
+        .transition_task("kept", TaskStatus::Failed, now, Some(mount_gone()))
         .unwrap();
     store
-        .transition_task("bare", TaskStatus::Failed, now, Some("mount gone"))
+        .transition_task("bare", TaskStatus::Failed, now, Some(mount_gone()))
         .unwrap();
 
     assert!(store.is_reimportable("kept").unwrap());

@@ -7,10 +7,8 @@
 
 	let { task }: Props = $props();
 
-	// One reason per task: what happened and what to do. Older servers sent only the
-	// raw error_message, so that stays as the fallback.
+	// One reason per task: what happened and what to do.
 	const reason = $derived(task.reason ?? null);
-	const fallback = $derived(reason ? null : task.error_message);
 	// A queued task waiting for a download source is not a failure: it starts by itself.
 	const waiting = $derived(reason?.code === 'no_download_source');
 	const tone = $derived(
@@ -38,6 +36,4 @@
 			<p class="text-base-content/50">{tally}</p>
 		{/if}
 	</div>
-{:else if fallback}
-	<p class="mt-1 line-clamp-2 text-xs {tone}">{fallback}</p>
 {/if}

@@ -24,6 +24,7 @@ use super::held_rows::HeldRow;
 use super::queue_rows::Viewer;
 use super::upgrades::{UpgradeAsk, UpgradeError, UpgradeOutcome, Upgrades};
 use crate::dispatch::DispatchTarget;
+use crate::reason::{Reason, ReasonKind};
 use crate::requests::error::RequestsError;
 use droppedneedle_auth::{Admin, Curator, Principal, User};
 use droppedneedle_kernel::error::ApiError;
@@ -48,12 +49,14 @@ pub struct HeldImportResponse {
     pub file_format: Option<String>,
     pub duration_seconds: Option<f64>,
     pub expected_duration_seconds: Option<f64>,
-    /// Stable reason code (`fingerprint_mismatch`, `target_occupied`, ...).
-    pub reason: String,
+    pub reason: Reason,
     /// The reason as one plain sentence.
-    pub reason_text: Option<String>,
+    pub reason_text: String,
     /// What the person can do about it.
-    pub reason_action: Option<String>,
+    pub reason_action: String,
+    /// `library` when our side held the file and it can be retried as it
+    /// is; `hold` when a person decides.
+    pub reason_kind: ReasonKind,
     /// Specifics: which file, which marker.
     pub reason_detail: Option<String>,
     /// `soulseek`, `usenet` or `plugin:<key>`.
@@ -91,8 +94,9 @@ impl From<HeldRow> for HeldImportResponse {
             duration_seconds: row.duration_seconds,
             expected_duration_seconds: row.expected_duration_seconds,
             reason: row.reason,
-            reason_text: row.reason_text,
-            reason_action: row.reason_action,
+            reason_text: row.reason.message().to_owned(),
+            reason_action: row.reason.action().to_owned(),
+            reason_kind: row.reason.kind(),
             reason_detail: row.reason_detail,
             source: row.source,
             source_task_id: row.source_task_id,

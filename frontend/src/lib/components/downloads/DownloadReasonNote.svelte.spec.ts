@@ -32,7 +32,6 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 		search_job_id: null,
 		candidate_index: null,
 		final_path: null,
-		error_message: null,
 		retry_count: 0,
 		created_at: 0,
 		updated_at: 0,
@@ -63,6 +62,7 @@ describe('DownloadReasonNote', () => {
 			task: task({
 				reason: {
 					code: 'no_download_source',
+					kind: 'wait',
 					text: 'Waiting: no download source configured.',
 					action: 'Turn on slskd, SABnzbd or a plugin source in Settings, Downloads.'
 				}

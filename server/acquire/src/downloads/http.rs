@@ -30,6 +30,7 @@ use super::source_tag::SourceTag;
 use super::state::TaskStatus;
 use super::store::QuarantineRow;
 use super::upgrades::Upgrades;
+use crate::reason::{Reason, ReasonKind};
 use crate::requests::error::RequestsError;
 use crate::search_jobs::candidates::SearchCandidateView;
 use crate::search_jobs::{AlbumSearch, JobView, SearchJobError, SearchJobs, StartOutcome};
@@ -48,14 +49,14 @@ pub struct ReimportResponse {
     pub status: TaskStatus,
     /// Why the import did not complete, when it did not.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_message: Option<String>,
+    pub reason: Option<DownloadTaskReason>,
 }
 
-/// Why a download sits where it does: one stable code, one plain sentence
-/// and what to do about it.
+/// Why a manual search failed or found nothing: one stable code, one
+/// plain sentence and what to do about it.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DownloadReason {
-    /// Stable machine code (`stalled`, `weak_match`, `no_source`, ...).
+    /// Stable machine code.
     pub code: String,
     /// What happened, in one sentence.
     pub text: String,
@@ -63,13 +64,36 @@ pub struct DownloadReason {
     pub action: String,
 }
 
+/// Why a download task sits where it does: the reason, its kind, one
+/// plain sentence and what to do about it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DownloadTaskReason {
+    pub code: Reason,
+    pub kind: ReasonKind,
+    /// What happened, in one sentence.
+    pub text: String,
+    /// What the person can do about it.
+    pub action: String,
+}
+
+impl From<Reason> for DownloadTaskReason {
+    fn from(reason: Reason) -> Self {
+        Self {
+            code: reason,
+            kind: reason.kind(),
+            text: reason.message().to_owned(),
+            action: reason.action().to_owned(),
+        }
+    }
+}
+
 /// What the import decided about the task's newest landing.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ImportDecisionView {
     /// `imported`, `partial`, `held`, `rejected` or `deferred`.
     pub outcome: String,
-    /// Stable reason code, when the landing was not a clean import.
-    pub reason_code: Option<String>,
+    /// Why, when the landing was not a clean import.
+    pub reason_code: Option<Reason>,
     /// The reason as a plain sentence.
     pub reason_text: Option<String>,
     /// What to do about it.
@@ -116,8 +140,8 @@ pub struct DownloadTaskResponse {
     pub search_job_id: Option<String>,
     pub candidate_index: Option<i64>,
     pub final_path: Option<String>,
-    /// The worker's last outcome as recorded. Show `reason` instead.
-    pub error_message: Option<String>,
+    /// The worker's last outcome. Show `reason` instead.
+    pub outcome_code: Option<Reason>,
     pub retry_count: i64,
     pub created_at: f64,
     pub updated_at: f64,
@@ -151,7 +175,7 @@ pub struct DownloadTaskResponse {
     pub wrong_product_verdict_at: Option<f64>,
     pub wrong_product_detail: Option<String>,
     /// Why the task sits where it does, when that needs saying.
-    pub reason: Option<DownloadReason>,
+    pub reason: Option<DownloadTaskReason>,
     /// The import's decision on the newest landing.
     pub decision: Option<ImportDecisionView>,
 }
@@ -194,7 +218,7 @@ impl From<TaskView> for DownloadTaskResponse {
             search_job_id: task.search_job_id,
             candidate_index: task.candidate_index,
             final_path: extras.final_path,
-            error_message: task.error_message,
+            outcome_code: task.outcome_code,
             retry_count: task.retry_count,
             created_at: task.created_at,
             updated_at: task.updated_at,
@@ -219,16 +243,16 @@ impl From<TaskView> for DownloadTaskResponse {
             held_for_review: facts.held_for_review,
             wrong_product_verdict_at: extras.wrong_product_verdict_at,
             wrong_product_detail: extras.wrong_product_detail,
-            reason: reason.map(|reason| DownloadReason {
-                code: reason.code,
-                text: reason.text,
-                action: reason.action,
-            }),
+            reason: reason.map(DownloadTaskReason::from),
             decision: facts.decision.map(|decision| ImportDecisionView {
                 outcome: decision.outcome,
                 reason_code: decision.reason_code,
-                reason_text: decision.reason_text,
-                reason_action: decision.reason_action,
+                reason_text: decision
+                    .reason_code
+                    .map(|reason| reason.message().to_owned()),
+                reason_action: decision
+                    .reason_code
+                    .map(|reason| reason.action().to_owned()),
                 detail: decision.detail,
                 files_total: decision.files_total,
                 files_imported: decision.files_imported,
@@ -759,10 +783,14 @@ pub async fn reimport_task_handler(
     let Some(row) = row else {
         return Err(RequestsError::NotFound.into());
     };
+    let success = matches!(row.status, TaskStatus::Completed | TaskStatus::Partial);
     Ok(Json(ReimportResponse {
-        success: matches!(row.status, TaskStatus::Completed | TaskStatus::Partial),
+        success,
         status: row.status,
-        error_message: row.error_message,
+        reason: (!success)
+            .then_some(row.outcome_code)
+            .flatten()
+            .map(DownloadTaskReason::from),
     }))
 }
 

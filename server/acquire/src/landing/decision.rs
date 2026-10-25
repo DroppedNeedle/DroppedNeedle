@@ -20,7 +20,10 @@ pub enum Outcome {
     /// Publish the planned files (and hold the planned holds).
     Import(FilePlan),
     /// Keep every audio file for a person.
-    Hold { code: &'static str, detail: String },
+    Hold {
+        code: crate::reason::Reason,
+        detail: String,
+    },
     /// Not importable.
     Reject(Rejection),
 }
@@ -99,7 +102,7 @@ fn outcome_of(verdict: &Verdict) -> Outcome {
     match verdict {
         Verdict::Reject(rejection) => Outcome::Reject(rejection.clone()),
         Verdict::Hold { code, detail } => Outcome::Hold {
-            code,
+            code: *code,
             detail: detail.clone(),
         },
         // `worst` only returns holds and rejections.

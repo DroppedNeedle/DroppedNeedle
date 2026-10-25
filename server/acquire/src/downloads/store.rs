@@ -19,6 +19,7 @@ use rusqlite::{Connection, OptionalExtension, Row};
 use super::source_tag::SourceTag;
 use super::sql;
 use super::state::{AttemptState, TaskStatus};
+use crate::reason::Reason;
 use crate::requests::settle::{Fulfilled, on_task_settled};
 
 /// Journal failures: the database's own, or a lifecycle write the journal
@@ -82,8 +83,10 @@ pub struct TaskRow {
     pub source_username: Option<String>,
     /// Search job id that produced the picked candidate, once linked.
     pub search_job_id: Option<String>,
-    /// Last outcome text.
+    /// Last outcome, as the worker logged it.
     pub error_message: Option<String>,
+    /// Last outcome, typed: what the queue explains.
+    pub outcome_code: Option<Reason>,
     /// Creation time (unix seconds).
     pub created_at: f64,
     /// First enqueue time, once started.
@@ -94,6 +97,20 @@ pub struct TaskRow {
     pub completed_at: Option<f64>,
     /// Last write time.
     pub updated_at: f64,
+}
+
+/// What the worker records when a task moves for a reason: the typed
+/// reason the queue explains, and the text its log keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskOutcome<'a> {
+    pub reason: Reason,
+    pub text: &'a str,
+}
+
+impl<'a> TaskOutcome<'a> {
+    pub fn new(reason: Reason, text: &'a str) -> Self {
+        Self { reason, text }
+    }
 }
 
 fn unknown_value(column: &str, value: String) -> rusqlite::Error {
@@ -131,6 +148,9 @@ impl TaskRow {
             source_username: row.get("source_username")?,
             search_job_id: row.get("search_job_id")?,
             error_message: row.get("error_message")?,
+            outcome_code: row
+                .get::<_, Option<String>>("outcome_code")?
+                .map(|code| Reason::from_stored(&code)),
             created_at: row.get("created_at")?,
             started_at: row.get("started_at")?,
             last_polled_at: row.get("last_polled_at")?,
@@ -513,13 +533,20 @@ impl<'conn> DownloadStore<'conn> {
         task_id: &str,
         status: TaskStatus,
         now: f64,
-        error: Option<&str>,
+        outcome: Option<TaskOutcome<'_>>,
     ) -> Result<(), StoreError> {
         // Terminal rows never move: a retry spawns a successor task while
         // the original stays settled for audit.
         let changed = self.conn.execute(
             sql::TRANSITION_TASK.text(),
-            rusqlite::params![status.as_str(), error, now, status.is_terminal(), task_id,],
+            rusqlite::params![
+                status.as_str(),
+                outcome.map(|outcome| outcome.text),
+                now,
+                status.is_terminal(),
+                task_id,
+                outcome.map(|outcome| outcome.reason.code()),
+            ],
         )?;
         if changed > 0 && status.is_terminal() {
             self.settle_requests(task_id, status, now)?;
@@ -851,7 +878,7 @@ impl<'conn> DownloadStore<'conn> {
         task_id: &str,
         status: TaskStatus,
         now: f64,
-        error: Option<&str>,
+        outcome: Option<TaskOutcome<'_>>,
         attempt_id: Option<&str>,
         preserve_attempt: bool,
     ) -> Result<(), StoreError> {
@@ -861,7 +888,7 @@ impl<'conn> DownloadStore<'conn> {
                 status.as_str()
             )));
         }
-        self.transition_task(task_id, status, now, error)?;
+        self.transition_task(task_id, status, now, outcome)?;
         if let Some(id) = attempt_id
             && let Some(row) = self.get_attempt(id)?
         {
@@ -1007,6 +1034,11 @@ impl<'conn> DownloadStore<'conn> {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Every distinct reason spelling the journal stores.
+    pub fn stored_reason_spellings(&self) -> Result<Vec<String>, StoreError> {
+        self.rows(sql::STORED_REASONS.text(), [], |row| row.get(0))
+    }
+
     /// True when the task left a track held for review. Auto-retry pauses
     /// while this holds: re-downloading a held track would loop, and
     /// discarding the held track clears the gate.
@@ -1019,9 +1051,9 @@ impl<'conn> DownloadStore<'conn> {
         Ok(count > 0)
     }
 
-    /// Due management-hold units: `(task_id, user_id)` pairs whose
-    /// `management:*` rows have a retry time at or before now, oldest
-    /// first. Ports `list_due_management_hold_units`.
+    /// Due library-hold units: `(task_id, user_id)` pairs whose held
+    /// rows of the Library kind have a retry time at or before now,
+    /// oldest first.
     pub fn list_due_held_units(
         &self,
         now: f64,
@@ -1034,8 +1066,8 @@ impl<'conn> DownloadStore<'conn> {
         )
     }
 
-    /// Schedule the next management retry for held rows. Only `held`
-    /// `management:*` rows move; anything else keeps its values.
+    /// Schedule the next library retry for held rows. Only `held` rows
+    /// of the Library kind move; anything else keeps its values.
     pub fn schedule_held_retry(
         &self,
         held_ids: &[i64],

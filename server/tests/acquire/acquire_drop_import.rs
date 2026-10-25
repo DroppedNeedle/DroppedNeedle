@@ -18,6 +18,7 @@ use droppedneedle_acquire::drop_import::Viewer;
 use droppedneedle_acquire::drop_import::store::JobRecord;
 use droppedneedle_acquire::landing::library::LibraryLanding;
 use droppedneedle_acquire::landing::ports::LandingLibrary;
+use droppedneedle_acquire::reason::Reason;
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::sources::{
@@ -300,8 +301,8 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
         .find(|item| item.folder_name == "Odds")
         .expect("review item");
     assert_eq!(odd.status, "needs_review");
-    assert_eq!(odd.reason_code.as_deref(), Some("no_album_match"));
-    assert!(odd.detail.is_some() && odd.reason_action.is_some());
+    assert_eq!(odd.reason_code, Some(Reason::NoAlbumMatch));
+    assert!(odd.detail.is_some());
     let staged: Vec<PathBuf> = odd.staging_paths.iter().map(PathBuf::from).collect();
     assert!(staged.iter().all(|path| path.is_file()));
     let discarded = acquire
@@ -406,7 +407,7 @@ async fn an_upgrade_the_bin_cannot_take_keeps_the_upload() {
         .items
         .iter()
         .find(|item| {
-            item.reason_code.as_deref() == Some("upgrade_blocked") && !item.staging_paths.is_empty()
+            item.reason_code == Some(Reason::UpgradeBlocked) && !item.staging_paths.is_empty()
         })
         .unwrap_or_else(|| panic!("a review item keeps the upload: {:?}", job.items));
     assert_eq!(kept.status, "needs_review", "{:?}", kept.detail);

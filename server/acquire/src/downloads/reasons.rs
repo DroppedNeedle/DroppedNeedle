@@ -1,172 +1,55 @@
-//! Why a download sits where it does, in words a person can act on.
+//! Why a download sits where it does.
 //!
-//! Each task in the queue view carries at most one reason: a stable code,
-//! one plain sentence and one suggested action. The import's own decision
-//! comes first (it already stores its sentence and action, see
-//! `landing::reasons`); otherwise the worker's last outcome on the task is
-//! translated here, so the queue never shows internal error text.
+//! Each task in the queue view carries at most one reason. The import's own
+//! decision comes first; otherwise the worker's last outcome on the task,
+//! stored as a typed code beside its log text, says it. The queue never
+//! shows internal error text.
 
 use super::state::TaskStatus;
-use crate::landing::reasons::explain;
-use crate::target::reasons::TrackReason;
+use crate::reason::Reason;
 
-/// What a task that was moved on to its next source by hand records as
-/// its last outcome.
+/// What a task that was moved on to its next source by hand logs as its
+/// last outcome.
 pub const NEXT_SOURCE_NOTE: &str = "moved to the next source at your request";
-
-/// A reason as the queue view shows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueueReason {
-    pub code: String,
-    pub text: String,
-    pub action: String,
-}
-
-impl QueueReason {
-    fn of(code: &str, text: &str, action: &str) -> Self {
-        Self {
-            code: code.to_owned(),
-            text: text.to_owned(),
-            action: action.to_owned(),
-        }
-    }
-}
-
-/// Why a queued task has not started: no download source is on. It starts
-/// by itself once one is saved.
-pub fn waiting_for_source() -> QueueReason {
-    QueueReason::of(
-        "no_download_source",
-        "Waiting: no download source configured.",
-        "Turn on slskd, SABnzbd or a plugin source in Settings, Downloads. It starts by itself.",
-    )
-}
 
 /// The newest import decision, as far as the reason needs it.
 #[derive(Debug, Clone, Default)]
 pub struct DecisionReason<'a> {
     pub outcome: &'a str,
-    pub code: Option<&'a str>,
-    pub text: Option<&'a str>,
-    pub action: Option<&'a str>,
+    pub code: Option<Reason>,
 }
-
-/// Worker outcomes the queue explains, matched on the start of the
-/// task's last message.
-const WORKER_OUTCOMES: &[(&str, &str, &str, &str)] = &[
-    (
-        "transfer stalled",
-        "stalled",
-        "The transfer stopped moving and timed out.",
-        "Nothing to do: DroppedNeedle retries later, or retry it now.",
-    ),
-    (
-        "stuck in the remote queue",
-        "queue_timeout",
-        "The peer kept the files in its upload queue for too long.",
-        "Nothing to do: DroppedNeedle retries later, or retry it now.",
-    ),
-    (
-        "no transfer materialized after enqueue",
-        "never_started",
-        "The download client accepted the files but never started the transfer.",
-        "Check that the download client is running, then retry.",
-    ),
-    (
-        "poll deadline hit",
-        "deadline",
-        "The download took longer than the time allowed for one source.",
-        "Nothing to do: DroppedNeedle retries later, or retry it now.",
-    ),
-    (
-        "source batch terminal",
-        "source_failed",
-        "The source stopped sending before every file arrived.",
-        "Nothing to do: DroppedNeedle retries later, or retry it now.",
-    ),
-    (
-        "no source could serve this release",
-        "no_source",
-        "No download source had this release.",
-        "DroppedNeedle retries later. You can also search by hand or pick another edition.",
-    ),
-    (
-        "imported what was found; no source had the rest",
-        "tracks_missing",
-        "Some tracks were imported, but no source had the rest.",
-        "DroppedNeedle retries the missing tracks later. You can also search for them yourself.",
-    ),
-    (
-        NEXT_SOURCE_NOTE,
-        "moved_on",
-        "You moved this download on from a slow source.",
-        "Nothing to do: it starts on the next source shortly.",
-    ),
-];
 
 /// The one reason to show for a task, if it needs one. Live tasks have
 /// none (their progress speaks), except a task moved on by hand.
 pub fn task_reason(
     status: TaskStatus,
-    error_message: Option<&str>,
+    outcome: Option<Reason>,
     held_for_review: bool,
     decision: Option<&DecisionReason<'_>>,
-) -> Option<QueueReason> {
+) -> Option<Reason> {
     if status == TaskStatus::Completed {
         return None;
     }
     if status == TaskStatus::Cancelled {
-        return Some(QueueReason::of(
-            "cancelled",
-            "This download was stopped, so it will not be retried.",
-            "Retry it to start again.",
-        ));
+        return Some(Reason::Cancelled);
     }
     let settled = status.is_terminal();
     if let Some(decision) = decision
         && (held_for_review || (settled && decision.outcome != "imported"))
         && let Some(code) = decision.code
     {
-        let known = explain(code);
-        return Some(QueueReason {
-            code: code.to_owned(),
-            text: decision.text.unwrap_or(known.message).to_owned(),
-            action: decision.action.unwrap_or(known.action).to_owned(),
-        });
+        return Some(code);
     }
     if held_for_review {
-        return Some(QueueReason::of(
-            "held_for_review",
-            "Some files of this download are held for you to check before they reach the library.",
-            "Open the held list and import or discard them.",
-        ));
+        return Some(Reason::HeldForReview);
     }
-    let message = error_message.unwrap_or_default().trim();
-    // The note stays on the row after the next source starts; it only
+    // The outcome stays on the row after the next source starts; it only
     // explains the wait before that.
-    if !(settled || (status == TaskStatus::Queued && message.starts_with(NEXT_SOURCE_NOTE))) {
+    let moved_on = status == TaskStatus::Queued && outcome == Some(Reason::MovedOn);
+    if !(settled || moved_on) {
         return None;
     }
-    if let Some(reason) = TrackReason::in_text(message) {
-        return Some(QueueReason::of(
-            reason.code(),
-            reason.message(),
-            reason.action(),
-        ));
-    }
-    if let Some((_, code, text, action)) = WORKER_OUTCOMES
-        .iter()
-        .find(|(prefix, ..)| message.starts_with(prefix))
-    {
-        return Some(QueueReason::of(code, text, action));
-    }
-    settled.then(|| {
-        QueueReason::of(
-            "download_failed",
-            "The download did not finish.",
-            "Nothing to do: DroppedNeedle retries later, or retry it now.",
-        )
-    })
+    Some(outcome.unwrap_or(Reason::DownloadFailed))
 }
 
 #[cfg(test)]
@@ -174,38 +57,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn worker_text_never_reaches_the_view() {
-        let stalled = task_reason(TaskStatus::Failed, Some("transfer stalled"), false, None);
-        assert_eq!(stalled.map(|r| r.code), Some("stalled".to_owned()));
-        let odd = task_reason(TaskStatus::Failed, Some("sqlite busy at 0x12"), false, None);
-        assert_eq!(odd.map(|r| r.code), Some("download_failed".to_owned()));
-        assert!(
-            task_reason(
-                TaskStatus::Downloading,
-                Some("transfer stalled"),
-                false,
-                None
-            )
-            .is_none()
-        );
+    fn the_worker_outcome_explains_a_settled_task() {
+        let stalled = task_reason(TaskStatus::Failed, Some(Reason::Stalled), false, None);
+        assert_eq!(stalled, Some(Reason::Stalled));
+        let unknown = task_reason(TaskStatus::Failed, None, false, None);
+        assert_eq!(unknown, Some(Reason::DownloadFailed));
+        assert!(task_reason(TaskStatus::Downloading, Some(Reason::Stalled), false, None).is_none());
+        let moved = task_reason(TaskStatus::Queued, Some(Reason::MovedOn), false, None);
+        assert_eq!(moved, Some(Reason::MovedOn));
     }
 
     #[test]
     fn the_import_decision_wins() {
         let decision = DecisionReason {
             outcome: "held",
-            code: Some("weak_match"),
-            text: None,
-            action: None,
+            code: Some(Reason::WeakMatch),
         };
         let reason = task_reason(
             TaskStatus::Failed,
-            Some("Held for review: x"),
+            Some(Reason::WeakMatch),
             true,
             Some(&decision),
         );
-        let reason = reason.unwrap_or_else(|| QueueReason::of("", "", ""));
-        assert_eq!(reason.code, "weak_match");
-        assert_eq!(reason.text, explain("weak_match").message);
+        assert_eq!(reason, Some(Reason::WeakMatch));
     }
 }

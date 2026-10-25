@@ -2052,6 +2052,13 @@ export type DownloadTask = components['schemas']['DownloadTaskResponse'] & {
 
 export type DownloadReason = components['schemas']['DownloadReason'];
 
+/** Why a download, held file or upload sits where it does. */
+export type Reason = components['schemas']['Reason'];
+
+export type ReasonKind = components['schemas']['ReasonKind'];
+
+export type DownloadTaskReason = components['schemas']['DownloadTaskReason'];
+
 export type DownloadImportDecision = components['schemas']['ImportDecisionView'];
 
 export type DownloadListResponse = components['schemas']['DownloadListResponse'];

@@ -46,6 +46,7 @@ pub mod plugin_events;
 pub mod plugin_source;
 pub mod probes;
 pub mod readiness;
+pub mod reason;
 pub mod requests;
 pub mod search;
 pub mod search_jobs;

@@ -48,6 +48,7 @@ droppedneedle_kernel::sql! {
     /// in the WHERE clause so a concurrent settle cannot slip in between.
     pub(super) TRANSITION_TASK = "UPDATE download_tasks \
              SET status = ?1, error_message = COALESCE(?2, error_message), \
+                 outcome_code = CASE WHEN ?2 IS NULL THEN outcome_code ELSE ?6 END, \
                  last_polled_at = ?3, \
                  completed_at = CASE WHEN ?4 THEN ?3 ELSE completed_at END, \
                  updated_at = ?3 \
@@ -67,8 +68,8 @@ droppedneedle_kernel::sql! {
                  AND a.state IN ('preserved', 'cleanup_pending')))";
     /// A failed or partial task back to processing for a reimport.
     pub(super) BEGIN_REIMPORT = "UPDATE download_tasks SET status = 'processing', \
-             error_message = NULL, completed_at = NULL, last_polled_at = ?1, updated_at = ?1 \
-             WHERE id = ?2 AND status IN ('failed', 'partial')";
+             error_message = NULL, outcome_code = NULL, completed_at = NULL, last_polled_at = ?1, \
+             updated_at = ?1 WHERE id = ?2 AND status IN ('failed', 'partial')";
     /// Claim an idempotency key; nothing when it is taken.
     pub(super) CLAIM_KEY = "INSERT OR IGNORE INTO download_idempotency_keys \
              (key, task_id, operation, created_at) VALUES (?1, ?2, ?3, ?4)";
@@ -258,7 +259,7 @@ droppedneedle_kernel::sql! {
     /// reads them.
     pub(super) fragment DECISION_ROW = "SELECT task_id, attempt_id, outcome, reason_code, \
              detail, release_mbid, distance, files_total, files_imported, files_held, \
-             checks_json, missing_positions, decided_at, reason_text, reason_action \
+             checks_json, missing_positions, decided_at \
              FROM download_import_decisions";
     /// The newest decision of a task (`?1`).
     pub(super) LATEST_DECISION = DECISION_ROW + " WHERE task_id = ?1 \
@@ -268,6 +269,13 @@ droppedneedle_kernel::sql! {
     pub(super) LAST_LANDING_OF_ATTEMPT = DECISION_ROW + " WHERE task_id = ?1 \
              AND attempt_id IS ?2 AND outcome != 'deferred' \
              ORDER BY decided_at DESC, id DESC LIMIT 1";
+    /// Every distinct reason spelling stored on open holds, decisions,
+    /// task outcomes and drop items.
+    pub(super) STORED_REASONS = "SELECT reason FROM held_imports WHERE status = 'held' \
+             UNION SELECT reason_code FROM download_import_decisions \
+               WHERE reason_code IS NOT NULL \
+             UNION SELECT outcome_code FROM download_tasks WHERE outcome_code IS NOT NULL \
+             UNION SELECT reason_code FROM drop_import_items WHERE reason_code IS NOT NULL";
     /// A new held-import row.
     pub(super) INSERT_HELD = "INSERT INTO held_imports \
              (user_id, held_path, reason, source_task_id, release_group_mbid, \
@@ -276,11 +284,16 @@ droppedneedle_kernel::sql! {
     /// Whether a task (`?1`) still has a file held for review.
     pub(super) UNRESOLVED_HELD_FOR_TASK = "SELECT COUNT(*) FROM held_imports \
              WHERE source_task_id = ?1 AND status = 'held'";
-    /// `(task_id, user_id)` management holds due at `?1`, oldest first, at
+    /// The stored spellings of every reason of the Library kind: holds
+    /// our side caused, which can be retried as they are.
+    pub(super) fragment LIBRARY_REASONS = "('target_occupied', 'upgrade_blocked', \
+             'library_changed', 'library_unavailable', 'naming_script_failed', \
+             'library_folder_missing', 'local_fault')";
+    /// `(task_id, user_id)` library holds due at `?1`, oldest first, at
     /// most `?2`.
     pub(super) DUE_HELD_UNITS = "SELECT source_task_id, user_id FROM held_imports \
              WHERE status = 'held' AND source_task_id IS NOT NULL \
-               AND reason LIKE 'management:%' \
+               AND reason IN " + LIBRARY_REASONS + " \
                AND management_next_retry_at IS NOT NULL \
                AND management_next_retry_at <= ?1 \
              GROUP BY source_task_id, user_id \
@@ -291,7 +304,7 @@ droppedneedle_kernel::sql! {
     pub(super) fragment HELD_ROW = "SELECT id, user_id, release_group_mbid, release_mbid, \
              release_track_mbid, recording_mbid, track_number, disc_number, track_title, \
              artist_name, album_title, year, held_path, original_filename, file_format, \
-             duration_seconds, expected_duration_seconds, reason, reason_text, reason_action, \
+             duration_seconds, expected_duration_seconds, reason, \
              reason_detail, evidence_title, evidence_artist, evidence_score, source, \
              source_task_id, origin, management_retry_count, management_next_retry_at, \
              created_at FROM held_imports";
@@ -323,12 +336,12 @@ pub(super) fn tasks_in(statuses: ListLen) -> String {
 }
 
 /// Set the retry count and time (the first two values) on the held
-/// management rows among a list of ids.
+/// library rows among a list of ids.
 pub(super) fn schedule_held_retry(ids: ListLen) -> String {
     format!(
         "UPDATE held_imports SET management_retry_count = ?, \
          management_next_retry_at = ? WHERE id IN ({}) \
-         AND status = 'held' AND reason LIKE 'management:%'",
+         AND status = 'held' AND reason IN {LIBRARY_REASONS}",
         marks(ids)
     )
 }
@@ -362,7 +375,7 @@ pub(super) fn held_facts(tasks: ListLen) -> String {
 /// The newest import decision of each task in the list.
 pub(super) fn decision_facts(tasks: ListLen) -> String {
     format!(
-        "SELECT d.task_id, d.outcome, d.reason_code, d.reason_text, d.reason_action, d.detail, \
+        "SELECT d.task_id, d.outcome, d.reason_code, d.detail, \
                 d.files_total, d.files_imported, d.files_held, d.decided_at \
          FROM download_import_decisions d \
          WHERE d.task_id IN ({}) AND d.id = ( \
@@ -370,4 +383,24 @@ pub(super) fn decision_facts(tasks: ListLen) -> String {
            ORDER BY n.decided_at DESC, n.id DESC LIMIT 1)",
         marks(tasks)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::reason::{Reason, ReasonKind};
+
+    #[test]
+    fn library_reasons_list_exactly_the_library_kind() {
+        let listed = Reason::ALL
+            .into_iter()
+            .filter(|reason| reason.kind() == ReasonKind::Library)
+            .map(|reason| format!("'{}'", reason.code()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let text = super::LIBRARY_REASONS
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(text, format!("({listed})"));
+    }
 }

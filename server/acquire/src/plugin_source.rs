@@ -25,6 +25,7 @@ use super::downloads::sources::{
     DownloadSource, Materialization, SourceError, SourceHandle, TransferProgress,
 };
 use super::downloads::store::TaskRow;
+use super::reason::Reason;
 use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
 use super::search_jobs::pinned;
 use super::target::reasons::TrackReason;
@@ -279,7 +280,9 @@ impl PluginDownloadSource {
 /// outage (retry later), a plugin that refused is a rejected candidate.
 fn source_error(error: CallError) -> SourceError {
     match error {
-        CallError::Failed(reason) | CallError::Malformed(reason) => SourceError::Rejected(reason),
+        CallError::Failed(detail) | CallError::Malformed(detail) => {
+            SourceError::rejected(Reason::DownloadFailed, detail)
+        }
         other => SourceError::Unavailable(other.to_string()),
     }
 }
@@ -347,7 +350,9 @@ impl PluginDownloadSource {
             .read_task(task_id)
             .await
             .map_err(|error| SourceError::LocalFault(error.to_string()))?
-            .ok_or_else(|| SourceError::Rejected(format!("unknown download task {task_id}")))?;
+            .ok_or_else(|| {
+                SourceError::rejected(Reason::NoSource, format!("unknown download task {task_id}"))
+            })?;
         let target = super::sources::resolve_target(self.targets.as_ref(), &task).await?;
         let blocked = super::sources::blocklist(&self.journal, &self.tag).await?;
         let index = candidate_index.max(0) as usize;
@@ -361,10 +366,13 @@ impl PluginDownloadSource {
                     .into_iter()
                     .find(|scored| release_identity(&scored.release) == identity)
                     .ok_or_else(|| {
-                        SourceError::Rejected(format!(
-                            "The release you picked is no longer offered by {}.",
-                            self.key
-                        ))
+                        SourceError::rejected(
+                            Reason::NoSource,
+                            format!(
+                                "The release you picked is no longer offered by {}.",
+                                self.key
+                            ),
+                        )
                     })?;
             return self.enqueue_release(&task, &release.release, index).await;
         }
@@ -408,10 +416,13 @@ impl PluginDownloadSource {
             }
         }
         let pick = pick.ok_or_else(|| {
-            SourceError::Rejected(format!(
-                "{} has no automatic candidate {candidate_index} for {task_id}",
-                self.key
-            ))
+            SourceError::rejected(
+                Reason::NoSource,
+                format!(
+                    "{} has no automatic candidate {candidate_index} for {task_id}",
+                    self.key
+                ),
+            )
         })?;
         self.enqueue_release(&task, &pick.release, index).await
     }

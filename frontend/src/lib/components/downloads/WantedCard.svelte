@@ -111,8 +111,8 @@
 					Last tried {lastTried}
 				{/if}
 			</p>
-			{#if task.error_message}
-				<p class="mt-0.5 line-clamp-2 text-xs text-base-content/45">{task.error_message}</p>
+			{#if task.reason}
+				<p class="mt-0.5 line-clamp-2 text-xs text-base-content/45">{task.reason.text}</p>
 			{/if}
 		</div>
 

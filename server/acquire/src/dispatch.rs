@@ -499,7 +499,7 @@ impl DownloadDispatch {
     /// album's track was found.
     pub async fn album_version_only(&self, task_id: &str) -> Result<bool, DispatchError> {
         let code = self.journal.read_hold_code(task_id).await?;
-        Ok(code.as_deref() == Some(crate::landing::ALBUM_VERSION_ONLY))
+        Ok(code == Some(crate::reason::Reason::AlbumVersionOnly))
     }
 
     /// The pending auto-retry for one failed task, or `None` when no retry

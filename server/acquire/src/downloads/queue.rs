@@ -13,11 +13,12 @@ use std::sync::Arc;
 
 use super::journal::Journal;
 use super::queue_rows::{ActivitySummary, ListFilter, QueueTask, Stopped, TaskFacts, Viewer};
-use super::reasons::{DecisionReason, QueueReason, task_reason, waiting_for_source};
+use super::reasons::{DecisionReason, task_reason};
 use super::sources::SourceHandle;
 use super::state::TaskStatus;
 use super::store::{QuarantineRow, TaskRow};
 use super::watchdog::RetryPolicy;
+use crate::reason::Reason;
 use crate::worker::{DownloadWorker, NextSourceError, RetryError};
 
 /// Queue failures, mapped to HTTP statuses by the handlers.
@@ -59,7 +60,7 @@ pub struct TaskView {
     /// Sources a task may try in all.
     pub attempt_total: i64,
     /// Why the task sits where it does, when it needs saying.
-    pub reason: Option<QueueReason>,
+    pub reason: Option<Reason>,
 }
 
 /// One file of a task's current source.
@@ -388,18 +389,17 @@ impl DownloadQueue {
                 let facts = facts.remove(&row.task.id).unwrap_or_default();
                 let decision = facts.decision.as_ref().map(|decision| DecisionReason {
                     outcome: decision.outcome.as_str(),
-                    code: decision.reason_code.as_deref(),
-                    text: decision.reason_text.as_deref(),
-                    action: decision.reason_action.as_deref(),
+                    code: decision.reason_code,
                 });
                 let reason = task_reason(
                     row.task.status,
-                    row.task.error_message.as_deref(),
+                    row.task.outcome_code,
                     facts.held_for_review,
                     decision.as_ref(),
                 )
                 .or_else(|| {
-                    (no_source && row.task.status == TaskStatus::Queued).then(waiting_for_source)
+                    (no_source && row.task.status == TaskStatus::Queued)
+                        .then_some(Reason::NoDownloadSource)
                 });
                 // Tasks paused on a held-file review show no countdown: it
                 // would never fire.

@@ -48,7 +48,6 @@ function task(): DownloadTask {
 		search_job_id: null,
 		candidate_index: 3,
 		final_path: null,
-		error_message: null,
 		retry_count: 0,
 		created_at: 1,
 		updated_at: 2,
@@ -101,8 +100,9 @@ function held(track: number): HeldImport {
 		evidence_score: null,
 		management_retry_count: 0,
 		management_next_retry_at: null,
-		reason_text: null,
-		reason_action: null,
+		reason_text: 'The files do not match.',
+		reason_action: 'Review the held files.',
+		reason_kind: 'hold',
 		origin: 'user'
 	};
 }

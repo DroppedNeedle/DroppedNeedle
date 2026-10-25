@@ -245,7 +245,10 @@ impl Journal {
     }
 
     /// The reason the task's newest landing held its files, when it held.
-    pub async fn read_hold_code(&self, task_id: &str) -> Result<Option<String>, StoreError> {
+    pub async fn read_hold_code(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<crate::reason::Reason>, StoreError> {
         let task_id = task_id.to_owned();
         self.read("downloads.hold_code", move |store| {
             Ok(store

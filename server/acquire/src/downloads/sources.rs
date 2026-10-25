@@ -13,6 +13,7 @@ use futures_util::future::BoxFuture;
 
 use super::source_tag::SourceTag;
 use crate::landing::Landed;
+use crate::reason::Reason;
 use crate::search_jobs::candidates::Candidate;
 use crate::target::SearchTarget;
 
@@ -116,9 +117,20 @@ pub enum SourceError {
     /// A local/environment fault: disk, mount, or permissions.
     #[error("local fault: {0}")]
     LocalFault(String),
-    /// The client rejected the request itself.
-    #[error("client rejected request: {0}")]
-    Rejected(String),
+    /// The source refused or failed the request itself: `reason` says
+    /// why, `detail` is the text the log keeps.
+    #[error("client rejected request: {detail}")]
+    Rejected { reason: Reason, detail: String },
+}
+
+impl SourceError {
+    /// The source refused for `reason`, with `detail` for the log.
+    pub fn rejected(reason: impl Into<Reason>, detail: impl Into<String>) -> Self {
+        Self::Rejected {
+            reason: reason.into(),
+            detail: detail.into(),
+        }
+    }
 }
 
 /// One download source: a client that searches, fetches and reports.

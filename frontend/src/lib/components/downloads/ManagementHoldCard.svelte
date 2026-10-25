@@ -1,13 +1,5 @@
 <script lang="ts">
-	import {
-		ArchiveRestore,
-		ChevronDown,
-		FolderLock,
-		RefreshCw,
-		Settings2,
-		Trash2,
-		X
-	} from 'lucide-svelte';
+	import { ArchiveRestore, FolderLock, RefreshCw, Settings2, Trash2, X } from 'lucide-svelte';
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import {
@@ -30,6 +22,8 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+
+	import HeldTrackCard from './HeldTrackCard.svelte';
 
 	interface Props {
 		items: HeldImport[];
@@ -76,7 +70,6 @@
 				a.id - b.id
 		)
 	);
-	const reasonCode = $derived(first?.reason.replace(/^management:/, '') ?? 'UNKNOWN');
 	const detail = $derived(first?.reason_detail?.trim() || null);
 	const nextRetryAt = $derived(first?.management_next_retry_at ?? null);
 	const nextRetryLabel = $derived.by(() => {
@@ -86,7 +79,6 @@
 			minute: '2-digit'
 		});
 	});
-	let filesOpen = $state(false);
 	let discardDialog = $state<HTMLDialogElement | null>(null);
 	let discardHeading = $state<HTMLHeadingElement | null>(null);
 	let discardOpener = $state<HTMLButtonElement | null>(null);
@@ -169,44 +161,9 @@
 		}
 	});
 
-	const reason = $derived.by(() => {
-		switch (reasonCode) {
-			case 'METADATA_UNAVAILABLE':
-				return 'Required metadata was temporarily unavailable. Your download is intact and can be retried without fetching it again.';
-			case 'FORMAT_UNSUPPORTED':
-				return 'This audio format does not have a tested write adapter. The original download was left untouched.';
-			case 'FIELD_UNSUPPORTED_BY_FORMAT':
-				return 'The active profile asked this audio format to make a change its adapter could not represent safely.';
-			case 'SCRIPT_VALIDATION_FAILED':
-				return "The active profile's tagging or naming rules could not process this file safely.";
-			case 'PROFILE_CHANGED':
-			case 'POLICY_CHANGED':
-				return 'The file organization configuration changed while this album was being prepared. Review it, then retry.';
-			case 'PATH_COLLISION_DIFFERENT':
-			case 'POSITION_COLLISION':
-			case 'SIDECAR_COLLISION':
-				return 'A planned destination conflicts with a different file. Nothing was overwritten.';
-			case 'ROOT_UNAVAILABLE':
-			case 'ROOT_READ_ONLY':
-				return 'The library destination was unavailable or read-only when DroppedNeedle tried to publish the album.';
-			case 'INSUFFICIENT_SPACE':
-				return 'There was not enough temporary or destination space to publish this album safely.';
-			case 'OUT_OF_ROOT':
-			case 'PATH_TOO_LONG':
-			case 'SYMLINK_UNSUPPORTED':
-				return 'A path or sidecar did not pass the organizer’s filesystem safety rules.';
-			case 'BUNDLE_TOO_LARGE':
-				return 'This acquisition contains too many files or sidecars to organize automatically as one safe unit.';
-			case 'BUNDLE_BLOCKED':
-			case 'RECOVERY_NEEDS_ATTENTION':
-			case 'RECYCLE_UNAVAILABLE':
-				return 'The durable writer could not safely commit or recover this album. Review file organization, then retry.';
-			case 'TRACK_NOT_MAPPED':
-				return 'The exact release-track identity was no longer available when publication began.';
-			default:
-				return 'File organization stopped before writing because one of its safety checks needs attention.';
-		}
-	});
+	// The server words every reason: what happened and what to do.
+	const reason = $derived(first?.reason_text ?? '');
+	const action = $derived(first?.reason_action ?? '');
 
 	function retryUnit(): void {
 		if (!taskId) return;
@@ -307,7 +264,7 @@
 					class="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-warning ring-1 ring-warning/20 ring-inset"
 				>
 					<FolderLock class="size-3.5" aria-hidden="true" />
-					Download secured · organizer paused
+					Download kept · waiting on the library
 				</p>
 				<h3 class="mt-1 truncate text-lg font-black tracking-tight">
 					{#if releaseGroupMbid}
@@ -326,6 +283,9 @@
 					{items.length === 1 ? 'file' : 'files'} safely held
 				</p>
 				<p class="mt-3 max-w-3xl text-sm leading-relaxed text-base-content/70">{reason}</p>
+				{#if action}
+					<p class="mt-1 max-w-3xl text-sm text-base-content/60">{action}</p>
+				{/if}
 				{#if nextRetryLabel && !retry.isPending && !retryRunning}
 					<p class="mt-2 text-xs font-semibold text-info" role="status">
 						Automatic organizer retry scheduled for {nextRetryLabel}. You can retry now instead.
@@ -368,7 +328,7 @@
 						</Button>
 					{:else}
 						<span class="px-2 text-xs text-base-content/50">
-							An administrator can retry, discard, or review this organizer hold.
+							An administrator can retry or discard the whole download.
 						</span>
 					{/if}
 				</div>
@@ -401,46 +361,10 @@
 					</div>
 				{/if}
 
-				<div class="mt-4 border-t border-base-content/8 pt-3">
-					<button
-						type="button"
-						class="flex w-full items-center justify-between gap-3 text-left text-xs font-semibold text-base-content/60 hover:text-base-content"
-						onclick={() => (filesOpen = !filesOpen)}
-						aria-expanded={filesOpen}
-					>
-						<span
-							>{filesOpen ? 'Hide secured files' : 'Show secured files and technical detail'}</span
-						>
-						<ChevronDown
-							class="size-4 transition-transform motion-reduce:transition-none {filesOpen
-								? 'rotate-180'
-								: ''}"
-							aria-hidden="true"
-						/>
-					</button>
-					{#if filesOpen}
-						<div class="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(14rem,0.55fr)]">
-							<ol class="max-h-52 space-y-1 overflow-y-auto pr-2 text-xs text-base-content/65">
-								{#each sorted as item (item.id)}
-									<li class="flex gap-2 rounded-lg bg-base-300/35 px-2.5 py-2">
-										<span class="w-7 shrink-0 text-right font-mono text-base-content/35"
-											>{item.track_number ?? '-'}</span
-										>
-										<span class="min-w-0 truncate"
-											>{item.track_title ?? item.original_filename ?? 'Unknown file'}</span
-										>
-									</li>
-								{/each}
-							</ol>
-							<div class="rounded-xl bg-base-300/35 p-3 text-xs text-base-content/60">
-								<p class="font-bold uppercase tracking-[0.12em] text-base-content/40">
-									Safety gate
-								</p>
-								<p class="mt-1 font-mono text-[11px] break-all">{reasonCode}</p>
-								{#if detail}<p class="mt-2 leading-relaxed">{detail}</p>{/if}
-							</div>
-						</div>
-					{/if}
+				<div class="mt-4 space-y-3 border-t border-base-content/8 pt-3">
+					{#each sorted as item (item.id)}
+						<HeldTrackCard held={item} />
+					{/each}
 				</div>
 			</div>
 		</div>

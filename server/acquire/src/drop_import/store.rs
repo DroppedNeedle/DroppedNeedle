@@ -9,6 +9,7 @@ use rusqlite::params;
 use sqlx::Row as _;
 
 use crate::db::AcquireDb;
+use crate::reason::Reason;
 
 /// Job lifecycle (v2 `JobStatus`).
 pub mod job_status {
@@ -56,10 +57,8 @@ pub struct ItemRecord {
     pub files_imported: i64,
     /// The reason or summary, as one plain sentence.
     pub detail: Option<String>,
-    /// Stable reason code, when the item stopped short.
-    pub reason_code: Option<String>,
-    /// What to do about it.
-    pub reason_action: Option<String>,
+    /// Why the item stopped short, when it did.
+    pub reason_code: Option<Reason>,
     /// Staged files still waiting (review items); empty once settled.
     pub staging_paths: Vec<String>,
 }
@@ -86,7 +85,7 @@ const JOB_SELECT: &str = "SELECT id, user_id, user_name, status, created_at, upl
      staging_dir, error FROM drop_import_jobs";
 const ITEM_SELECT: &str = "SELECT id, job_id, folder_name, status, updated_at, \
      release_group_mbid, album_title, artist_name, files_total, files_imported, detail, \
-     reason_code, reason_action, staging_paths FROM drop_import_items";
+     reason_code, staging_paths FROM drop_import_items";
 
 fn job_from(row: &sqlx::sqlite::SqliteRow) -> Result<JobRecord, sqlx::Error> {
     Ok(JobRecord {
@@ -103,7 +102,7 @@ fn job_from(row: &sqlx::sqlite::SqliteRow) -> Result<JobRecord, sqlx::Error> {
 }
 
 fn item_from(row: &sqlx::sqlite::SqliteRow) -> Result<ItemRecord, sqlx::Error> {
-    let paths: String = row.try_get(13)?;
+    let paths: String = row.try_get(12)?;
     Ok(ItemRecord {
         id: row.try_get(0)?,
         job_id: row.try_get(1)?,
@@ -116,8 +115,9 @@ fn item_from(row: &sqlx::sqlite::SqliteRow) -> Result<ItemRecord, sqlx::Error> {
         files_total: row.try_get(8)?,
         files_imported: row.try_get(9)?,
         detail: row.try_get(10)?,
-        reason_code: row.try_get(11)?,
-        reason_action: row.try_get(12)?,
+        reason_code: row
+            .try_get::<Option<String>, _>(11)?
+            .map(|code| Reason::from_stored(&code)),
         staging_paths: serde_json::from_str(&paths).unwrap_or_default(),
     })
 }
@@ -231,8 +231,8 @@ impl DropStore {
                 let changed = tx.execute(
                     "UPDATE drop_import_items SET status = ?3, release_group_mbid = ?4, \
                      album_title = ?5, artist_name = ?6, files_total = ?7, files_imported = ?8, \
-                     detail = ?9, reason_code = ?10, reason_action = ?11, staging_paths = ?12, \
-                     updated_at = ?13 WHERE id = ?1 AND status = ?2",
+                     detail = ?9, reason_code = ?10, staging_paths = ?11, \
+                     updated_at = ?12 WHERE id = ?1 AND status = ?2",
                     params![
                         item.id,
                         expected,
@@ -243,8 +243,7 @@ impl DropStore {
                         item.files_total,
                         item.files_imported,
                         item.detail,
-                        item.reason_code,
-                        item.reason_action,
+                        item.reason_code.map(Reason::code),
                         serde_json::to_string(&item.staging_paths)
                             .unwrap_or_else(|_| "[]".to_owned()),
                         crate::db::unix_secs_f64(clock.as_ref()),
@@ -337,14 +336,10 @@ impl DropStore {
     /// Startup: undo what a restart cut off. A hand match that was
     /// running (an item with a reason, or of a finished job) goes back to
     /// review with its files; items of a job that was still being
-    /// worked on fail with `detail`, and so does the job. Answers how many
+    /// worked on fail with `reason`, and so does the job. Answers how many
     /// jobs failed.
-    pub async fn fail_stale_processing(
-        &self,
-        detail: &'static str,
-        code: &'static str,
-        action: &'static str,
-    ) -> Result<usize, StoreError> {
+    pub async fn fail_stale_processing(&self, reason: Reason) -> Result<usize, StoreError> {
+        let (detail, code) = (reason.message(), reason.code());
         let clock = self.db.clock().clone();
         self.db
             .write_background("drop_import.fail_stale", move |tx| {
@@ -352,19 +347,19 @@ impl DropStore {
                 tx.execute(
                     "UPDATE drop_import_items SET status = 'needs_review', \
                      detail = COALESCE(detail, ?1), reason_code = COALESCE(reason_code, ?2), \
-                     reason_action = COALESCE(reason_action, ?3), updated_at = ?4 \
+                     updated_at = ?3 \
                      WHERE status = 'processing' AND (reason_code IS NOT NULL \
                        OR job_id NOT IN (SELECT id FROM drop_import_jobs \
                                          WHERE status = 'processing'))",
-                    params![detail, code, action, at],
+                    params![detail, code, at],
                 )?;
                 // Items of a job still being worked on keep their files
                 // for review too: an upload is never lost to a restart.
                 tx.execute(
                     "UPDATE drop_import_items SET status = 'needs_review', detail = ?1, \
-                     reason_code = ?2, reason_action = ?3, updated_at = ?4 \
+                     reason_code = ?2, updated_at = ?3 \
                      WHERE status = 'processing'",
-                    params![detail, code, action, at],
+                    params![detail, code, at],
                 )?;
                 let jobs = tx.execute(
                     "UPDATE drop_import_jobs SET status = 'failed', error = ?1 \

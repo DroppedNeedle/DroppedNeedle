@@ -24,6 +24,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::store::{ItemRecord, JobRecord};
 use super::{DropError, DropImports, MAX_FILES_PER_DROP, Viewer, extract};
+use crate::reason::Reason;
 use crate::requests::error::RequestsError;
 use droppedneedle_auth::Curator;
 use droppedneedle_kernel::error::{ApiError, PAYLOAD_TOO_LARGE};
@@ -50,8 +51,8 @@ pub struct DropImportItemResponse {
     pub files_imported: i64,
     /// What happened, as one plain sentence.
     pub detail: Option<String>,
-    /// Stable reason code when the item stopped short.
-    pub reason_code: Option<String>,
+    /// Why the item stopped short, when it did.
+    pub reason_code: Option<Reason>,
     /// What to do about it.
     pub reason_action: Option<String>,
 }
@@ -113,7 +114,7 @@ impl From<ItemRecord> for DropImportItemResponse {
             files_imported: item.files_imported,
             detail: item.detail,
             reason_code: item.reason_code,
-            reason_action: item.reason_action,
+            reason_action: item.reason_code.map(|reason| reason.action().to_owned()),
         }
     }
 }

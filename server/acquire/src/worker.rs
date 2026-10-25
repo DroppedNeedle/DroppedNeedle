@@ -30,9 +30,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use super::downloads::journal::Journal;
 use super::downloads::manifest::{DownloadManifest, ExpectedFile, ManifestCodec};
 use super::downloads::orphans::{OrphanDecision, OrphanEvidence, evaluate_orphan, job_name_parts};
-use super::downloads::quarantine::{
-    QUARANTINE_TTL_SECONDS, QuarantineReason, failover_identities, is_local_fault,
-};
+use super::downloads::quarantine::{QUARANTINE_TTL_SECONDS, QuarantineReason, failover_identities};
 use super::downloads::recovery::{
     FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx, classify_startup,
     plan_retry,
@@ -41,10 +39,11 @@ use super::downloads::source_tag::SourceTag;
 use super::downloads::sources::OrphanOwnership;
 use super::downloads::sources::{DownloadSource, SourceError, SourceHandle};
 use super::downloads::state::{AttemptState, TaskStatus};
-use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskRow};
+use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskOutcome, TaskRow};
 use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
 use super::landing::LandingService;
 use super::readiness::SourceReadiness;
+use super::reason::{Reason, log_unknown_spellings};
 use super::search_jobs::review::ReviewMode;
 use super::sources::JournalOwnership;
 use super::target::Targets;
@@ -123,6 +122,15 @@ pub async fn run_startup_recovery(
     journal: &Journal,
     staging_root: &Path,
 ) -> Result<RecoveryReport, String> {
+    match journal
+        .read("downloads.reason_spellings", |store| {
+            store.stored_reason_spellings()
+        })
+        .await
+    {
+        Ok(spellings) => log_unknown_spellings(&spellings),
+        Err(error) => tracing::warn!(%error, "stored reasons could not be read"),
+    }
     let tasks = journal
         .read_tasks_in(&[
             TaskStatus::Queued,
@@ -940,9 +948,9 @@ impl DownloadWorker {
             tracing::info!(task_id = %task.id, attempt = handled, "resuming an interrupted enqueue");
         }
         let mut every_source_refused = true;
-        // A source's reason (code, sentence, action) becomes the task's
-        // message when nothing can serve it.
-        let mut reason: Option<String> = None;
+        // A track's reason from the album path becomes the task's outcome
+        // when nothing can serve it.
+        let mut reason: Option<Reason> = None;
         let mut sources = pass.ordered_sources();
         // A task started from a manual pick tries the picked source first.
         if handled == 0
@@ -975,9 +983,11 @@ impl DownloadWorker {
                 }
                 Err(error) => {
                     match &error {
-                        SourceError::Rejected(text) => {
-                            if let Some(found) = TrackReason::in_text(text) {
-                                reason = Some(found.to_string());
+                        SourceError::Rejected {
+                            reason: refused, ..
+                        } => {
+                            if TrackReason::from_reason(*refused).is_some() {
+                                reason = Some(*refused);
                             }
                         }
                         _ => every_source_refused = false,
@@ -994,8 +1004,7 @@ impl DownloadWorker {
         if every_source_refused && !pass.sources.is_empty() {
             // Every configured source answered that it has nothing for
             // this release: the candidate lists are spent.
-            self.fail_unserved(task, &attempts, now, reason.as_deref())
-                .await;
+            self.fail_unserved(task, &attempts, now, reason).await;
             return false;
         }
         self.backoff(&task.id, now);
@@ -1005,42 +1014,48 @@ impl DownloadWorker {
     /// Settle a task no source can serve any more, keeping its last
     /// attempt. Earlier landings decide how: tracks imported along the way
     /// make it partial, held files make it a failure held for review
-    /// (v2 `_settle_incomplete`), else the last source's reason (code,
-    /// sentence, action) or no source could serve it.
+    /// (v2 `_settle_incomplete`), else the track's reason from the album
+    /// path or no source could serve it.
     async fn fail_unserved(
         &self,
         task: &TaskRow,
         attempts: &[Attempt],
         now: f64,
-        reason: Option<&str>,
+        reason: Option<Reason>,
     ) {
         let task_id = task.id.clone();
         let last_attempt = attempts.last().map(|attempt| attempt.row.id.clone());
-        let reason = reason.map(str::to_owned);
         // The history and the settle share one transaction: a history that
         // cannot be read settles nothing and the next pass tries again, so
         // imported tracks never end as a plain failure.
         let settled = self
             .step("downloads.fail_unserved", move |store| {
                 let history = store.landing_history(&task_id)?;
-                let (status, error) = if history.files_imported > 0 {
+                let (status, outcome, text) = if history.files_imported > 0 {
                     (
                         TaskStatus::Partial,
+                        Reason::TracksMissing,
                         "imported what was found; no source had the rest".to_owned(),
                     )
-                } else if let Some(detail) = history.held_detail {
-                    (TaskStatus::Failed, format!("Held for review: {detail}"))
-                } else {
+                } else if let Some(held) = history.held_reason {
                     (
                         TaskStatus::Failed,
-                        reason.unwrap_or_else(|| "no source could serve this release".to_owned()),
+                        held,
+                        format!("Held for review: {}", held.message()),
                     )
+                } else {
+                    let reason = reason.unwrap_or(Reason::NoSource);
+                    let text = match reason {
+                        Reason::NoSource => "no source could serve this release".to_owned(),
+                        other => format!("{other}: {} {}", other.message(), other.action()),
+                    };
+                    (TaskStatus::Failed, reason, text)
                 };
                 store.finalize_task_and_attempt(
                     &task_id,
                     status,
                     now,
-                    Some(&error),
+                    Some(TaskOutcome::new(outcome, &text)),
                     last_attempt.as_deref(),
                     true,
                 )?;
@@ -1356,14 +1371,14 @@ impl DownloadWorker {
                 self.clear_backoff(&attempt.row.source);
                 Polled::Answered
             }
-            Err(SourceError::Rejected(detail)) => {
+            Err(SourceError::Rejected { reason, detail }) => {
                 self.fail_over(
                     now,
                     task,
                     &attempt.row,
                     source,
                     &handle,
-                    &detail,
+                    TaskOutcome::new(reason, &detail),
                     Some(QuarantineReason::DownloadFailed),
                 )
                 .await;
@@ -1431,7 +1446,7 @@ impl DownloadWorker {
     ) {
         use super::downloads::watchdog::WatchdogOutcome;
         let now = pass.now;
-        let reason = match pass.watchdog.evaluate(&sample) {
+        let (reason, text) = match pass.watchdog.evaluate(&sample) {
             WatchdogOutcome::Continue => {
                 self.record_progress(pass, task, &progress).await;
                 return;
@@ -1466,16 +1481,22 @@ impl DownloadWorker {
                 );
                 return;
             }
-            WatchdogOutcome::Terminal => format!(
-                "source batch terminal ({} files succeeded)",
-                progress.succeeded_filenames.len()
+            WatchdogOutcome::Terminal => (
+                Reason::SourceFailed,
+                format!(
+                    "source batch terminal ({} files succeeded)",
+                    progress.succeeded_filenames.len()
+                ),
             ),
-            WatchdogOutcome::Stalled => "transfer stalled".to_owned(),
-            WatchdogOutcome::QueuedTimeout => "stuck in the remote queue".to_owned(),
-            WatchdogOutcome::MaterializeTimeout => {
-                "no transfer materialized after enqueue".to_owned()
+            WatchdogOutcome::Stalled => (Reason::Stalled, "transfer stalled".to_owned()),
+            WatchdogOutcome::QueuedTimeout => {
+                (Reason::QueueTimeout, "stuck in the remote queue".to_owned())
             }
-            WatchdogOutcome::Deadline => "poll deadline hit".to_owned(),
+            WatchdogOutcome::MaterializeTimeout => (
+                Reason::NeverStarted,
+                "no transfer materialized after enqueue".to_owned(),
+            ),
+            WatchdogOutcome::Deadline => (Reason::Deadline, "poll deadline hit".to_owned()),
         };
         self.fail_over(
             now,
@@ -1483,16 +1504,17 @@ impl DownloadWorker {
             attempt,
             source,
             handle,
-            &reason,
+            TaskOutcome::new(reason, &text),
             Some(QuarantineReason::DownloadFailed),
         )
         .await;
     }
 
     /// Fail one attempt over to the next candidate: blocklist the failed
-    /// release under `quarantine` (never on a local fault), discard client
-    /// records, then settle the attempt and requeue the task in one write
-    /// so the next pass enqueues the following candidate.
+    /// release under `quarantine` (never for a reason that says nothing
+    /// against the source), discard client records, then settle the attempt
+    /// and requeue the task in one write so the next pass enqueues the
+    /// following candidate.
     #[allow(clippy::too_many_arguments)]
     async fn fail_over(
         &self,
@@ -1501,11 +1523,13 @@ impl DownloadWorker {
         attempt: &AttemptRow,
         source: &Arc<dyn DownloadSource>,
         handle: &SourceHandle,
-        reason: &str,
+        outcome: TaskOutcome<'_>,
         quarantine: Option<QuarantineReason>,
     ) {
-        if let Some(quarantine) = quarantine {
-            self.quarantine_failed(task, attempt, handle, reason, quarantine, now)
+        if let Some(quarantine) = quarantine
+            && outcome.reason.against_source()
+        {
+            self.quarantine_failed(task, attempt, handle, quarantine, now)
                 .await;
         }
         let settled_state = match source.discard(handle).await {
@@ -1518,7 +1542,7 @@ impl DownloadWorker {
         let attempt_id = attempt.id.clone();
         let revision = attempt.row_revision;
         let task_id = task.id.clone();
-        let reason = reason.to_owned();
+        let (reason, text) = (outcome.reason, outcome.text.to_owned());
         self.step("downloads.fail_over", move |store| {
             store.transition_attempt(
                 &attempt_id,
@@ -1529,7 +1553,12 @@ impl DownloadWorker {
                 None,
                 true,
             )?;
-            store.transition_task(&task_id, TaskStatus::Queued, now, Some(&reason))
+            store.transition_task(
+                &task_id,
+                TaskStatus::Queued,
+                now,
+                Some(TaskOutcome::new(reason, &text)),
+            )
         })
         .await;
         if let Ok(mut cache) = self.poll_cache.lock() {
@@ -1538,21 +1567,15 @@ impl DownloadWorker {
     }
 
     /// Blocklist a failed release by source identity, scoped to the album
-    /// for retry-clearing. Local faults (disk, mount) are never
-    /// quarantined: the backoff'd retry re-grabs once the environment
-    /// recovers.
+    /// for retry-clearing.
     async fn quarantine_failed(
         &self,
         task: &TaskRow,
         attempt: &AttemptRow,
         handle: &SourceHandle,
-        reason: &str,
         quarantine: QuarantineReason,
         now: f64,
     ) {
-        if is_local_fault(Some(reason)) {
-            return;
-        }
         let identities = failover_identities(handle);
         if identities.is_empty() {
             return;

@@ -18,9 +18,10 @@ use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::{
     http::downloads_router,
     state::{AttemptState, TaskStatus},
-    store::NewTask,
+    store::{NewTask, TaskOutcome},
 };
 use droppedneedle_acquire::landing::LandingService;
+use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::worker::{
     DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
 };
@@ -82,8 +83,18 @@ async fn journal() -> Arc<Journal> {
                 AttemptState::Preserved,
                 now,
             )?;
-            store.transition_task("t-linked", TaskStatus::Failed, now, Some("mount gone"))?;
-            store.transition_task("t-bare", TaskStatus::Failed, now, Some("mount gone"))?;
+            store.transition_task(
+                "t-linked",
+                TaskStatus::Failed,
+                now,
+                Some(TaskOutcome::new(Reason::DownloadFailed, "mount gone")),
+            )?;
+            store.transition_task(
+                "t-bare",
+                TaskStatus::Failed,
+                now,
+                Some(TaskOutcome::new(Reason::DownloadFailed, "mount gone")),
+            )?;
             Ok(())
         })
         .await
@@ -320,7 +331,12 @@ async fn failed_retry_insert_retries_next_pass() {
     journal
         .run("test.seed", |store| {
             store.insert_task(&task("t-failed"), 1_000.0)?;
-            store.transition_task("t-failed", TaskStatus::Failed, 1_000.0, Some("no peers"))
+            store.transition_task(
+                "t-failed",
+                TaskStatus::Failed,
+                1_000.0,
+                Some(TaskOutcome::new(Reason::NoSource, "no peers")),
+            )
         })
         .await
         .unwrap();
@@ -400,12 +416,17 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
                 },
                 now,
             )?;
-            store.transition_task("q-failed", TaskStatus::Failed, now, Some("x"))?;
+            store.transition_task(
+                "q-failed",
+                TaskStatus::Failed,
+                now,
+                Some(TaskOutcome::new(Reason::DownloadFailed, "x")),
+            )?;
             store.transition_task("q-done", TaskStatus::Completed, now, None)?;
             store.record_import_decision(&ImportDecisionRow {
                 task_id: "q-failed".to_owned(),
                 outcome: "rejected".to_owned(),
-                reason_code: Some("wrong_album".to_owned()),
+                reason_code: Some(Reason::WrongAlbum),
                 checks_json: "[]".to_owned(),
                 missing_positions: "[]".to_owned(),
                 decided_at: now,

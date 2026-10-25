@@ -30,8 +30,9 @@
 	const quarantineQuery = getQuarantineQuery(() => isAdmin);
 	const heldQuery = getHeldImportsQuery();
 	const held = $derived(heldQuery.data?.items ?? []);
-	const managementHeld = $derived(held.filter((item) => item.reason.startsWith('management:')));
-	const verificationHeld = $derived(held.filter((item) => !item.reason.startsWith('management:')));
+	// Files our side could not take yet wait on the library; the rest wait on a person.
+	const managementHeld = $derived(held.filter((item) => item.reason_kind === 'library'));
+	const verificationHeld = $derived(held.filter((item) => item.reason_kind !== 'library'));
 	const verificationHeldIds = $derived(verificationHeld.map((item) => item.id));
 	const managementGroups = $derived.by(() => {
 		const groups = new SvelteMap<string, typeof managementHeld>();
@@ -97,7 +98,7 @@
 			{ n: sections.now_spinning.length, label: 'spinning', cls: 'text-primary' },
 			{ n: sections.wanted.length, label: 'still hunting', cls: 'text-warning' },
 			{ n: sections.needs_you.length, label: 'needs you', cls: 'text-info' },
-			{ n: managementGroups.length, label: 'organizer paused', cls: 'text-warning' },
+			{ n: managementGroups.length, label: 'waiting on the library', cls: 'text-warning' },
 			{ n: verificationHeld.length, label: 'to verify', cls: 'text-warning' },
 			{ n: sections.cueing.length, label: 'cueing up', cls: 'text-base-content/70' },
 			{ n: crateCount, label: 'in your crate', cls: 'text-success' }
@@ -191,7 +192,7 @@
 		{#if managementGroups.length > 0}
 			<section class="space-y-3">
 				<h2 class="dl-eyebrow">
-					Organizer needs attention <span class="text-base-content/35">· files secured</span>
+					Waiting on the library <span class="text-base-content/35">· files kept</span>
 					<span class="dl-count">{managementGroups.length}</span>
 				</h2>
 				<div class="space-y-3">

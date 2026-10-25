@@ -22,7 +22,11 @@ use std::collections::HashMap;
 
 use axum::http::StatusCode;
 use droppedneedle::docs::ApiDoc;
-use droppedneedle_acquire::downloads::{state::TaskStatus, store::NewTask};
+use droppedneedle_acquire::downloads::{
+    state::TaskStatus,
+    store::{NewTask, TaskOutcome},
+};
+use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::requests::ledger::{RequestStatus, WantedWatch, WatchState};
 use droppedneedle_acquire::requests::models::RequestKind;
 use droppedneedle_acquire::search_jobs::store::{COMPLETED, JobPayload, JobStore, NewJob};
@@ -1191,7 +1195,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
                         &task.id,
                         TaskStatus::Failed,
                         1_700_000_000.0,
-                        Some("seeded"),
+                        Some(TaskOutcome::new(Reason::DownloadFailed, "seeded")),
                     )?;
                     if held {
                         return store

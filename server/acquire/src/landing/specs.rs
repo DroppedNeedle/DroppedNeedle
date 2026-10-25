@@ -23,10 +23,10 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use super::ALBUM_VERSION_ONLY;
 use super::matching::{FoundRelease, MatchState, MatchSummary, file_name_parts, is_various};
 use super::probe::Landing;
 use crate::downloads::quarantine::QuarantineReason;
+use crate::reason::Reason;
 use droppedneedle_library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
 use droppedneedle_library::matching::model::credit_text;
 use droppedneedle_library::matching::score::{NAME_GATE, Support, TrackPair};
@@ -50,7 +50,7 @@ pub enum Disposition {
 /// when the source itself is at fault.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Rejection {
-    pub code: &'static str,
+    pub code: Reason,
     pub disposition: Disposition,
     #[serde(skip)]
     pub quarantine: Option<QuarantineReason>,
@@ -64,7 +64,7 @@ pub enum Verdict {
     /// Passed; the note says what was left out along the way, if anything.
     Accept { note: Option<String> },
     /// Not confident enough to import: keep the files for a person.
-    Hold { code: &'static str, detail: String },
+    Hold { code: Reason, detail: String },
     /// Not importable.
     Reject(Rejection),
 }
@@ -78,7 +78,7 @@ impl Verdict {
         Verdict::Accept { note: Some(text) }
     }
 
-    fn hold(code: &'static str, detail: impl Into<String>) -> Self {
+    fn hold(code: Reason, detail: impl Into<String>) -> Self {
         Verdict::Hold {
             code,
             detail: detail.into(),
@@ -86,7 +86,7 @@ impl Verdict {
     }
 
     fn reject(
-        code: &'static str,
+        code: Reason,
         disposition: Disposition,
         quarantine: Option<QuarantineReason>,
         detail: impl Into<String>,
@@ -267,7 +267,7 @@ impl ImportSpec for FilesPresent {
         let patient = subject.target.wait_for_files;
         if landing.nothing_found() {
             return Verdict::reject(
-                "files_missing",
+                Reason::FilesMissing,
                 if patient {
                     Disposition::Temporary
                 } else {
@@ -280,7 +280,7 @@ impl ImportSpec for FilesPresent {
         if !landing.missing.is_empty() {
             if patient {
                 return Verdict::reject(
-                    "files_missing",
+                    Reason::FilesMissing,
                     Disposition::Temporary,
                     None,
                     format!(
@@ -320,7 +320,7 @@ impl ImportSpec for SizesMatch {
         });
         match wrong {
             Some(file) => Verdict::reject(
-                "size_mismatch",
+                Reason::SizeMismatch,
                 Disposition::LocalFault,
                 None,
                 format!(
@@ -349,7 +349,7 @@ impl ImportSpec for WalkFinished {
     fn check(&self, subject: &Subject<'_>) -> Verdict {
         if subject.landing.truncated {
             return Verdict::reject(
-                "too_many_files",
+                Reason::TooManyFiles,
                 Disposition::LocalFault,
                 None,
                 "the download holds more files than one release can; left in place for review",
@@ -373,7 +373,7 @@ impl ImportSpec for HasAudio {
         if landing.audio.is_empty() {
             if !landing.unreadable.is_empty() {
                 return Verdict::reject(
-                    "corrupt",
+                    Reason::Corrupt,
                     Disposition::Permanent,
                     Some(QuarantineReason::Corrupt),
                     "no audio file could be read",
@@ -383,7 +383,7 @@ impl ImportSpec for HasAudio {
                 return Verdict::accept();
             }
             return Verdict::reject(
-                "no_audio",
+                Reason::NoAudio,
                 Disposition::Permanent,
                 Some(QuarantineReason::VerifyFailed),
                 "the download holds no audio tracks",
@@ -415,7 +415,7 @@ impl ImportSpec for NotSample {
         }
         if subject.landing.audio.is_empty() && subject.landing.unreadable.is_empty() {
             return Verdict::reject(
-                "sample",
+                Reason::Sample,
                 Disposition::Permanent,
                 Some(QuarantineReason::VerifyFailed),
                 "the download is a sample, not the release",
@@ -497,7 +497,7 @@ impl ImportSpec for WrongEdition {
         }
         if marked * 2 > audio.len() {
             return Verdict::reject(
-                "wrong_edition",
+                Reason::WrongEdition,
                 Disposition::Permanent,
                 Some(QuarantineReason::VerifyFailed),
                 format!(
@@ -591,7 +591,7 @@ impl ImportSpec for WrongAlbum {
             .count();
         if wrong * 2 > tagged.len() {
             return Verdict::reject(
-                "wrong_album",
+                Reason::WrongAlbum,
                 Disposition::Permanent,
                 Some(QuarantineReason::VerifyFailed),
                 format!(
@@ -624,7 +624,7 @@ impl ImportSpec for QualityAllowed {
             return Verdict::accept();
         }
         Verdict::reject(
-            "quality_rejected",
+            Reason::QualityRejected,
             Disposition::Permanent,
             None,
             format!(
@@ -658,7 +658,7 @@ impl ImportSpec for UpgradeFloor {
             return Verdict::accept();
         }
         Verdict::reject(
-            "not_an_upgrade",
+            Reason::NotAnUpgrade,
             Disposition::Permanent,
             None,
             format!("files are {tier}, which does not beat the held {held}"),
@@ -682,11 +682,11 @@ impl ImportSpec for ReleaseFound {
         match subject.matched.map(|matched| &matched.state) {
             None | Some(MatchState::Matched) | Some(MatchState::Contradictory) => Verdict::accept(),
             Some(MatchState::NoCandidate) => Verdict::hold(
-                "no_release",
+                Reason::NoRelease,
                 "MusicBrainz has no release of the requested album to check the files against",
             ),
             Some(MatchState::Unavailable(detail)) => Verdict::reject(
-                "musicbrainz_unavailable",
+                Reason::MusicbrainzUnavailable,
                 Disposition::Temporary,
                 None,
                 format!("MusicBrainz could not be reached: {detail}"),
@@ -728,7 +728,7 @@ impl ImportSpec for PinnedEdition {
         let other: Vec<&str> = tagged.iter().copied().filter(|id| !is_pin(id)).collect();
         if !tagged.is_empty() && other.len() * 2 > tagged.len() {
             return Verdict::reject(
-                "not_pinned_edition",
+                Reason::NotPinnedEdition,
                 Disposition::Permanent,
                 Some(QuarantineReason::VerifyFailed),
                 format!(
@@ -753,7 +753,7 @@ impl ImportSpec for IdsAgree {
     fn check(&self, subject: &Subject<'_>) -> Verdict {
         match subject.matched.map(|matched| &matched.state) {
             Some(MatchState::Contradictory) => Verdict::hold(
-                "tag_mismatch",
+                Reason::TagMismatch,
                 "the files' MusicBrainz ids name a different release",
             ),
             _ => Verdict::accept(),
@@ -777,7 +777,10 @@ impl ImportSpec for CloseAlbumMatch {
             return Verdict::accept();
         };
         if found.scored.pairs.is_empty() {
-            return Verdict::hold("weak_match", "no file pairs with a track of the release");
+            return Verdict::hold(
+                Reason::WeakMatch,
+                "no file pairs with a track of the release",
+            );
         }
         let distance = found.scored.library_distance();
         let weak = if !found.scored.names_agree {
@@ -794,11 +797,11 @@ impl ImportSpec for CloseAlbumMatch {
                 return Verdict::note(format!("the track from '{album}', taken as this song"));
             }
             return Verdict::hold(
-                ALBUM_VERSION_ONLY,
+                Reason::AlbumVersionOnly,
                 format!("the only copy found is the track on '{album}'"),
             );
         }
-        Verdict::hold("weak_match", weak)
+        Verdict::hold(Reason::WeakMatch, weak)
     }
 }
 
@@ -1130,7 +1133,7 @@ impl ImportSpec for ArtistEvidence {
             Some(ArtistProof::Tags) => Verdict::accept(),
             Some(proof) => Verdict::note(proof.note().to_owned()),
             None => Verdict::hold(
-                "no_artist_evidence",
+                Reason::NoArtistEvidence,
                 format!(
                     "no artist tags, no '{}' in the folder names, no AcoustID match, \
                      and too few tracks fit closely",
@@ -1162,7 +1165,10 @@ impl ImportSpec for OwnArtist {
             return Verdict::accept();
         }
         if conflicting == found.scored.pairs.len() {
-            return Verdict::hold("tag_mismatch", "every file's artist tag names someone else");
+            return Verdict::hold(
+                Reason::TagMismatch,
+                "every file's artist tag names someone else",
+            );
         }
         Verdict::note(format!(
             "{conflicting} file(s) held: their artist tag names someone else"
@@ -1278,7 +1284,7 @@ impl ImportSpec for CloseTrackMatch {
             return Verdict::accept();
         }
         if far == found.scored.pairs.len() {
-            return Verdict::hold("tag_mismatch", "no file is close to its track");
+            return Verdict::hold(Reason::TagMismatch, "no file is close to its track");
         }
         Verdict::note(format!("{far} file(s) held: their tags name other tracks"))
     }
@@ -1304,7 +1310,7 @@ impl ImportSpec for FilesAccountedFor {
         }
         if extra > found.scored.pairs.len() {
             return Verdict::hold(
-                "mostly_unmatched",
+                Reason::MostlyUnmatched,
                 format!("{extra} of the files match no track of the release"),
             );
         }
@@ -1331,9 +1337,9 @@ impl ImportSpec for RightTrack {
         };
         let wrong = |detail: String| {
             if target.hold_on_wrong_track {
-                Verdict::hold("wrong_track", detail)
+                Verdict::hold(Reason::WrongTrack, detail)
             } else {
-                Verdict::reject("wrong_track", Disposition::Permanent, None, detail)
+                Verdict::reject(Reason::WrongTrack, Disposition::Permanent, None, detail)
             }
         };
         let Some(pair) = found.requested_pair(target) else {

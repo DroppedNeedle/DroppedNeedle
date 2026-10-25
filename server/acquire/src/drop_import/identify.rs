@@ -19,13 +19,13 @@
 use std::collections::HashMap;
 
 use super::extract::LOOSE_UNIT_NAME;
-use super::reasons::{self, Reason};
 use crate::landing::matching::{
     FoundRelease, MatchState, MatchSummary, choose, find, local_album, merged_recordings,
 };
 use crate::landing::ports::LandingLibrary;
 use crate::landing::probe::Landing;
 use crate::landing::specs::Target;
+use crate::reason::Reason;
 use droppedneedle_library::matching::Release;
 use droppedneedle_library::matching::decide::ACCEPT_ALBUM;
 use droppedneedle_providers::RequestPriority;
@@ -141,7 +141,7 @@ pub async fn identify(library: &dyn LandingLibrary, landing: &Landing, folder: &
     }
     if tagged.is_some() {
         return Outcome::Review {
-            reason: reasons::TAGS_DISAGREE,
+            reason: Reason::TagsDisagree,
             detail: summary
                 .best()
                 .map(|found| format!("The tags name {}.", found.release.title)),
@@ -149,7 +149,7 @@ pub async fn identify(library: &dyn LandingLibrary, landing: &Landing, folder: &
     }
     match by_fingerprint(library, landing, &target).await {
         Ok(Some(summary)) => chosen_edition(library, landing, summary, &target).await,
-        Ok(None) => review(reasons::NO_ALBUM_MATCH),
+        Ok(None) => review(Reason::NoAlbumMatch),
         Err(detail) => Outcome::Unavailable(detail),
     }
 }
@@ -217,7 +217,7 @@ pub async fn assigned(
     };
     let mut summary = choose(&local, releases, &aliases, &target);
     if summary.best().is_none() {
-        return review(reasons::ALBUM_NOT_FOUND);
+        return review(Reason::AlbumNotFound);
     }
     summary.owned = library.owned(&group, None).await;
     Outcome::Matched(Box::new(summary))
@@ -273,7 +273,7 @@ async fn chosen_edition(
     target: &Target,
 ) -> Outcome {
     let Some(found) = summary.best() else {
-        return review(reasons::NO_ALBUM_MATCH);
+        return review(Reason::NoAlbumMatch);
     };
     let group = found.release.release_group_id.to_ascii_lowercase();
     if let Some(pin) = library.chosen_edition(&group).await
@@ -290,7 +290,7 @@ async fn chosen_edition(
         }
         if !again.best().is_some_and(close) {
             return Outcome::Review {
-                reason: reasons::NOT_CHOSEN_EDITION,
+                reason: Reason::NotChosenEdition,
                 detail: Some(format!(
                     "They look like {} by {}.",
                     found.release.title,

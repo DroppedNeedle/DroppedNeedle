@@ -4,7 +4,7 @@
 //! A release that fails verification is blocklisted by source identity so
 //! failover and future searches skip it; entries expire after 7 days and
 //! every write prunes the expired rows so the TTL self-heal lands on disk.
-//! Local faults (disk full, mount gone) are never quarantined: the
+//! A reason that says nothing against the source is never quarantined: the
 //! backoff'd auto-retry re-grabs once the environment recovers.
 //!
 //! Suspect files themselves move into a quarantine directory only under
@@ -53,30 +53,6 @@ impl QuarantineReason {
             QuarantineReason::Manual => "manual",
         }
     }
-}
-
-/// SABnzbd failure substrings that mean a local/environment fault, not a
-/// bad release. Never blocklist these; auto-retry re-grabs once the
-/// environment recovers. Ported from `_LOCAL_FAULT_MARKERS`.
-pub const LOCAL_FAULT_MARKERS: &[&str] = &[
-    "disk is full",
-    "disk full",
-    "no space",
-    "not enough disk",
-    "write error",
-    "failed moving",
-    "moving failed",
-    "permission denied",
-    "cannot write",
-    "could not create",
-    "read-only file system",
-];
-
-/// True when a client failure message describes the local environment
-/// rather than the release.
-pub fn is_local_fault(message: Option<&str>) -> bool {
-    let low = message.unwrap_or_default().to_lowercase();
-    LOCAL_FAULT_MARKERS.iter().any(|mark| low.contains(mark))
 }
 
 /// Canonicalize a soulseek identity for blocklist matching.
@@ -255,16 +231,6 @@ pub enum QuarantineFileError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn local_faults_never_quarantine() {
-        assert!(is_local_fault(Some("SABnzbd: Disk is Full, pausing")));
-        assert!(is_local_fault(Some(
-            "failed moving to library: permission denied"
-        )));
-        assert!(!is_local_fault(Some("CRC mismatch in segment 4")));
-        assert!(!is_local_fault(None));
-    }
 
     #[test]
     fn soulseek_identity_canonicalizes() {

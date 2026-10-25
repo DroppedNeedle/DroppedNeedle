@@ -5709,6 +5709,116 @@ async fn request_state_checks_list_exactly_the_code_values() {
     assert_eq!(WatchState::parse("dormant"), None);
 }
 
+/// Migration 0083 types the acquire reasons. A task's outcome code comes
+/// from the start of the worker's text, else from its newest decision
+/// (whose retired codes read as held by an earlier version); text that
+/// names nothing leaves it empty. The merged drop spellings are rewritten,
+/// and the stored sentence and action columns go.
+#[tokio::test]
+async fn acquire_reasons_are_typed_on_upgrade() {
+    let pool = scratch_pool().await;
+    migrator_through(82).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
+             album_title, status, error_message, created_at, updated_at) VALUES \
+         ('t-stalled', 'u1', 'rg', 'A', 'B', 'queued', 'transfer stalled', 1, 1), \
+         ('t-track', 'u1', 'rg', 'A', 'B', 'failed', \
+             'track_not_found: Nobody shares this track.', 1, 1), \
+         ('t-moved', 'u1', 'rg', 'A', 'B', 'queued', \
+             'moved to the next source at your request', 1, 1), \
+         ('t-held', 'u1', 'rg', 'A', 'B', 'failed', 'Held for review: no match', 1, 1), \
+         ('t-retired', 'u1', 'rg', 'A', 'B', 'failed', 'Held for review: better', 1, 1), \
+         ('t-held-bare', 'u1', 'rg', 'A', 'B', 'failed', 'Held for review: gone', 1, 1), \
+         ('t-sentence', 'u1', 'rg', 'A', 'B', 'failed', \
+             'Something on this server stopped the import.', 1, 1), \
+         ('t-imported', 'u1', 'rg', 'A', 'B', 'partial', 'sqlite busy', 1, 1), \
+         ('t-odd', 'u1', 'rg', 'A', 'B', 'failed', 'sqlite busy', 1, 1), \
+         ('t-quiet', 'u1', 'rg', 'A', 'B', 'completed', NULL, 1, 1); \
+         INSERT INTO download_import_decisions (task_id, outcome, reason_code, reason_text, \
+             reason_action, decided_at) VALUES \
+         ('t-held', 'rejected', 'wrong_album', 's', 'a', 1), \
+         ('t-held', 'held', 'weak_match', 's', 'a', 2), \
+         ('t-retired', 'held', 'upgrade_pending', 's', 'a', 1), \
+         ('t-sentence', 'rejected', 'local_fault', 's', 'a', 1), \
+         ('t-imported', 'imported', NULL, NULL, NULL, 1); \
+         INSERT INTO drop_import_items (job_id, folder_name, status, reason_code, \
+             reason_action, updated_at) VALUES \
+         ('j', 'left', 'needs_review', 'leftover_files', 'a', 1), \
+         ('j', 'broken', 'failed', 'unreadable', 'a', 1), \
+         ('j', 'unknown', 'needs_review', 'no_album_match', 'a', 1), \
+         ('j', 'done', 'imported', NULL, NULL, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let outcomes: BTreeMap<String, Option<String>> = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, outcome_code FROM download_tasks",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .collect();
+    let expected: BTreeMap<String, Option<String>> = [
+        ("t-stalled", Some("stalled")),
+        ("t-track", Some("track_not_found")),
+        ("t-moved", Some("moved_on")),
+        ("t-held", Some("weak_match")),
+        ("t-retired", Some("held_by_earlier_version")),
+        ("t-held-bare", Some("held_for_review")),
+        ("t-sentence", Some("local_fault")),
+        ("t-imported", None),
+        ("t-odd", None),
+        ("t-quiet", None),
+    ]
+    .into_iter()
+    .map(|(id, code)| (id.to_owned(), code.map(str::to_owned)))
+    .collect();
+    assert_eq!(outcomes, expected);
+    let decisions: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT reason_code FROM download_import_decisions WHERE task_id = 't-retired'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(decisions, vec![Some("held_by_earlier_version".to_owned())]);
+    let drops: BTreeMap<String, Option<String>> = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT folder_name, reason_code FROM drop_import_items",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .collect();
+    let expected: BTreeMap<String, Option<String>> = [
+        ("left", Some("tag_mismatch")),
+        ("broken", Some("corrupt")),
+        ("unknown", Some("no_album_match")),
+        ("done", None),
+    ]
+    .into_iter()
+    .map(|(name, code)| (name.to_owned(), code.map(str::to_owned)))
+    .collect();
+    assert_eq!(drops, expected);
+    let gone = |columns: Vec<String>| {
+        !columns
+            .iter()
+            .any(|column| column == "reason_text" || column == "reason_action")
+    };
+    assert!(gone(column_names(&pool, "drop_import_items").await));
+    assert!(gone(column_names(&pool, "download_import_decisions").await));
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(version >= 83, "user_version {version}");
+}
+
 /// Wall time in milliseconds, for checks against "due now".
 fn now_ms() -> i64 {
     let elapsed = std::time::SystemTime::now()

@@ -11,8 +11,10 @@ use crate::downloads::reasons::NEXT_SOURCE_NOTE;
 use crate::downloads::source_tag::SourceTag;
 use crate::downloads::sources::TransferProgress;
 use crate::downloads::state::TaskStatus;
+use crate::downloads::store::TaskOutcome;
 use crate::downloads::store::TaskRow;
 use crate::downloads::watchdog::Watchdog;
+use crate::reason::Reason;
 use droppedneedle_kernel::events::{DownloadProgress, UserNotice};
 
 /// Why the next-source action was refused. The sentences are shown to
@@ -254,7 +256,7 @@ impl DownloadWorker {
             &attempt.row,
             source,
             &handle,
-            NEXT_SOURCE_NOTE,
+            TaskOutcome::new(Reason::MovedOn, NEXT_SOURCE_NOTE),
             None,
         )
         .await;

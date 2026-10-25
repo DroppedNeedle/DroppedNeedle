@@ -13,13 +13,12 @@ use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
 use droppedneedle_acquire::downloads::manifest::DownloadManifest;
 use droppedneedle_acquire::downloads::state::TaskStatus;
-use droppedneedle_acquire::downloads::store::NewTask;
+use droppedneedle_acquire::downloads::store::{NewTask, TaskOutcome};
 use droppedneedle_acquire::landing::library::LibraryLanding;
 use droppedneedle_acquire::landing::ports::LandingLibrary;
 use droppedneedle_acquire::landing::specs::{Disposition, Rejection};
-use droppedneedle_acquire::landing::{
-    Landed, LandingReport, LandingResult, OUTSIDE_DOWNLOADS, Reported,
-};
+use droppedneedle_acquire::landing::{Landed, LandingReport, LandingResult, Reported};
+use droppedneedle_acquire::reason::{Reason, ReasonKind};
 use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, WorkerConfig};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
@@ -394,17 +393,25 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
             .expect("decisions");
     assert!(outcomes.len() > 1, "failed over: {outcomes:?}");
     assert!(outcomes.iter().all(|outcome| outcome == "held"));
-    // Every hold reads as a sentence with an action, never a bare code.
-    let unexplained: i64 = sqlx::query_scalar(
-        "SELECT (SELECT COUNT(*) FROM held_imports WHERE source_task_id = 't-bad' \
-           AND (reason_text IS NULL OR reason_action IS NULL)) \
-         + (SELECT COUNT(*) FROM download_import_decisions WHERE task_id = 't-bad' \
-           AND (reason_text IS NULL OR reason_action IS NULL))",
+    // Every hold and decision stores a reason this version knows, and the
+    // task's outcome is that hold, typed: the sentence comes from it.
+    let codes: Vec<String> = sqlx::query_scalar(
+        "SELECT reason FROM held_imports WHERE source_task_id = 't-bad' \
+         UNION ALL SELECT reason_code FROM download_import_decisions WHERE task_id = 't-bad'",
     )
-    .fetch_one(acquire.db.pool())
+    .fetch_all(acquire.db.pool())
     .await
-    .expect("reason text");
-    assert_eq!(unexplained, 0);
+    .expect("reason codes");
+    assert!(
+        codes.iter().all(|code| Reason::from_code(code).is_some()),
+        "{codes:?}"
+    );
+    assert!(
+        task.outcome_code
+            .is_some_and(|reason| reason.kind() == ReasonKind::Hold),
+        "{:?}",
+        task.outcome_code
+    );
     assert!(!acquire.flows.library.contains(BAD_GROUP).await);
 }
 
@@ -1330,7 +1337,7 @@ async fn rejection_code(
     acquire: &droppedneedle_acquire::AcquireSetup,
     task_id: &'static str,
     landed: Landed,
-) -> Option<&'static str> {
+) -> Option<Reason> {
     rejection(acquire, task_id, landed, false)
         .await
         .map(|rejection| rejection.code)
@@ -1393,7 +1400,7 @@ async fn a_download_outside_its_clients_folder_is_refused() {
         };
         assert_eq!(
             rejection_code(&acquire, task_id, landed).await,
-            Some(OUTSIDE_DOWNLOADS),
+            Some(Reason::OutsideDownloadsFolder),
             "{task_id}"
         );
     }
@@ -1411,7 +1418,7 @@ async fn a_download_outside_its_clients_folder_is_refused() {
         .expect("rejected");
     assert_eq!(
         (waiting.code, waiting.disposition),
-        ("files_missing", Disposition::Temporary)
+        (Reason::FilesMissing, Disposition::Temporary)
     );
 
     // The same file inside the folder gets past the path check (and stops
@@ -1429,7 +1436,7 @@ async fn a_download_outside_its_clients_folder_is_refused() {
     };
     assert_eq!(
         rejection_code(&acquire, "t-inside", landed).await,
-        Some("local_fault")
+        Some(Reason::LocalFault)
     );
 }
 
@@ -1478,7 +1485,7 @@ async fn a_landing_waits_while_the_download_policy_does_not_read() {
     };
     assert_eq!(
         (rejection.code, rejection.disposition),
-        ("settings_unreadable", Disposition::Temporary)
+        (Reason::SettingsUnreadable, Disposition::Temporary)
     );
     assert!(file.exists());
     let quarantined: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_quarantine")
@@ -1633,7 +1640,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
     let landed = source.landed(&handle).await.expect("inspect");
     assert_eq!(
         rejection_code(&acquire, "t-plugin-out", landed).await,
-        Some(OUTSIDE_DOWNLOADS)
+        Some(Reason::OutsideDownloadsFolder)
     );
 
     // A file in the folder the admin set gets past the path check.
@@ -1655,7 +1662,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
     let landed = source.landed(&handle).await.expect("inspect");
     assert_eq!(
         rejection_code(&acquire, "t-plugin-in", landed).await,
-        Some("local_fault")
+        Some(Reason::LocalFault)
     );
 }
 
@@ -3571,7 +3578,7 @@ async fn a_worse_version_is_held_and_yours_stays() {
     let landed = rig.landed("t-version", &v.e.new, 0, "mp3_full_01.mp3");
     let report = v.land_directly("t-version", landed).await;
     assert!(
-        matches!(&report.result, LandingResult::Held { code, .. } if code == "version_lower_quality"),
+        matches!(&report.result, LandingResult::Held { code, .. } if *code == Reason::VersionLowerQuality),
         "{:?}",
         report.result
     );
@@ -3673,7 +3680,7 @@ async fn a_worse_version_after_a_stopped_swap_finds_yours_in_place() {
     let worse = rig.landed("t-version", &v.e.new, 0, "mp3_full_01.mp3");
     let report = v.land_directly("t-version", worse).await;
     assert!(
-        matches!(&report.result, LandingResult::Held { code, .. } if code == "version_lower_quality"),
+        matches!(&report.result, LandingResult::Held { code, .. } if *code == Reason::VersionLowerQuality),
         "{:?}",
         report.result
     );
@@ -3850,7 +3857,12 @@ async fn a_failed_request_follows_its_retry_to_imported() {
         .journal
         .run("test.seed", |store| {
             store.insert_task(&new_task("t-first", GOOD_GROUP), 1.0)?;
-            store.transition_task("t-first", TaskStatus::Failed, 1.0, Some("no peers"))
+            store.transition_task(
+                "t-first",
+                TaskStatus::Failed,
+                1.0,
+                Some(TaskOutcome::new(Reason::NoSource, "no peers")),
+            )
         })
         .await
         .expect("task");

@@ -575,7 +575,7 @@ export function reimportDownload() {
 				});
 			} else {
 				toastStore.show({
-					message: data.error_message ?? "Couldn't find the files on the downloads mount yet",
+					message: data.reason?.text ?? "Couldn't find the files on the downloads mount yet",
 					type: 'error'
 				});
 			}

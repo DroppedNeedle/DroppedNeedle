@@ -10,19 +10,16 @@ use rusqlite::{OptionalExtension, params};
 
 use super::sql;
 use super::store::{DownloadStore, StoreError};
+use crate::reason::Reason;
 
 /// One held file, as `held_imports` stores it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct HeldFile {
     pub user_id: String,
     /// Where the held copy lives.
     pub held_path: String,
     pub original_filename: String,
-    /// Machine reason (`tag_mismatch`, `weak_match`, ...).
-    pub reason: String,
-    /// The reason as a plain sentence, and what to do about it.
-    pub reason_text: Option<String>,
-    pub reason_action: Option<String>,
+    pub reason: Reason,
     pub reason_detail: Option<String>,
     /// `soulseek`, `usenet`, or `plugin:<key>`.
     pub source: String,
@@ -55,10 +52,7 @@ pub struct ImportDecisionRow {
     pub attempt_id: Option<String>,
     /// `imported`, `partial`, `held`, `rejected`, or `deferred`.
     pub outcome: String,
-    pub reason_code: Option<String>,
-    /// The reason as a plain sentence, and what to do about it.
-    pub reason_text: Option<String>,
-    pub reason_action: Option<String>,
+    pub reason_code: Option<Reason>,
     pub detail: Option<String>,
     pub release_mbid: Option<String>,
     pub distance: Option<f64>,
@@ -77,9 +71,8 @@ pub struct ImportDecisionRow {
 pub struct LandingHistory {
     /// Files imported over every landing of the task.
     pub files_imported: i64,
-    /// The newest hold's reason as a plain sentence, when the newest
-    /// landing held files.
-    pub held_detail: Option<String>,
+    /// The newest hold's reason, when the newest landing held files.
+    pub held_reason: Option<Reason>,
 }
 
 impl DownloadStore<'_> {
@@ -117,9 +110,9 @@ impl DownloadStore<'_> {
              artist_name, artist_mbid, album_title, year, held_path, original_filename, \
              file_format, duration_seconds, expected_duration_seconds, reason, reason_detail, \
              evidence_title, evidence_artist, evidence_score, source, source_task_id, origin, \
-             reason_text, reason_action, status, created_at) \
+             status, created_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             ?, ?, 'held', ?)",
+             'held', ?)",
             params![
                 held.user_id,
                 held.release_group_mbid,
@@ -138,7 +131,7 @@ impl DownloadStore<'_> {
                 held.file_format,
                 held.duration_seconds,
                 held.expected_duration_seconds,
-                held.reason,
+                held.reason.code(),
                 held.reason_detail,
                 held.evidence_title,
                 held.evidence_artist,
@@ -146,8 +139,6 @@ impl DownloadStore<'_> {
                 held.source,
                 held.source_task_id,
                 held.origin,
-                held.reason_text,
-                held.reason_action,
                 now,
             ],
         )?;
@@ -158,16 +149,14 @@ impl DownloadStore<'_> {
     pub fn record_import_decision(&self, row: &ImportDecisionRow) -> Result<(), StoreError> {
         self.conn.execute(
             "INSERT INTO download_import_decisions (task_id, attempt_id, outcome, reason_code, \
-             reason_text, reason_action, detail, release_mbid, distance, files_total, \
-             files_imported, files_held, checks_json, missing_positions, decided_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             detail, release_mbid, distance, files_total, files_imported, files_held, \
+             checks_json, missing_positions, decided_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 row.task_id,
                 row.attempt_id,
                 row.outcome,
-                row.reason_code,
-                row.reason_text,
-                row.reason_action,
+                row.reason_code.map(Reason::code),
                 row.detail,
                 row.release_mbid,
                 row.distance,
@@ -189,13 +178,13 @@ impl DownloadStore<'_> {
                 .query_row(sql::FILES_IMPORTED.text(), params![task_id], |row| {
                     row.get(0)
                 })?;
-        let held_detail = self
+        let held_reason = self
             .latest_import_decision(task_id)?
             .filter(|row| row.outcome == "held")
-            .map(|row| row.reason_text.or(row.detail).unwrap_or_default());
+            .and_then(|row| row.reason_code);
         Ok(LandingHistory {
             files_imported,
-            held_detail,
+            held_reason,
         })
     }
 
@@ -269,7 +258,9 @@ impl ImportDecisionRow {
             task_id: row.get(0)?,
             attempt_id: row.get(1)?,
             outcome: row.get(2)?,
-            reason_code: row.get(3)?,
+            reason_code: row
+                .get::<_, Option<String>>(3)?
+                .map(|code| Reason::from_stored(&code)),
             detail: row.get(4)?,
             release_mbid: row.get(5)?,
             distance: row.get(6)?,
@@ -279,8 +270,6 @@ impl ImportDecisionRow {
             checks_json: row.get(10)?,
             missing_positions: row.get(11)?,
             decided_at: row.get(12)?,
-            reason_text: row.get(13)?,
-            reason_action: row.get(14)?,
         })
     }
 }
