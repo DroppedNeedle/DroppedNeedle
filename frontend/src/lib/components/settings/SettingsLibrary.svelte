@@ -383,7 +383,7 @@
 							label="AcoustID API key"
 							mask={SECRET_MASK}
 							placeholder="Enter AcoustID API key"
-							help="Used to identify files that do not contain MusicBrainz tags."
+							help="Identifies untagged music by its audio and checks downloads."
 							bind:value={draft.acoustid_api_key}
 						/>
 

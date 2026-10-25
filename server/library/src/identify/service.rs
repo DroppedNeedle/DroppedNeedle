@@ -30,6 +30,7 @@ use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_jo
 use crate::edition_prefs::{LivePreferences, Preferences};
 use crate::identity::AutomaticOutcome;
 use crate::matching::decide::{EDITION_COHORT, candidate_order, eligible, named_in_tie};
+use crate::matching::score::heard_on_candidates;
 use crate::matching::{
     EditionPrefs, LocalAlbum, ReleaseMatch, ReviewReason, Verdict, decide, match_release,
 };
@@ -482,7 +483,10 @@ impl IdentifyService {
         held: Held<'_>,
         preferences: &Preferences,
     ) -> (Ranking, Decision) {
-        let local = local_album(facts, &recall.fingerprint_support);
+        let local = local_album(
+            facts,
+            &heard_on_candidates(&recall.fingerprint_support, &recall.releases),
+        );
         let matches: Vec<_> = recall
             .releases
             .iter()

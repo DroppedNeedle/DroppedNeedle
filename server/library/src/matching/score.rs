@@ -12,7 +12,9 @@
 //! aside as a tagging mistake (the file pairs as it would with no track
 //! id, see [`Support::TrackIdElsewhere`]). A length more than 40 s off
 //! vetoes a pair when nothing but the description ties it (v2's duration
-//! conflict).
+//! conflict). A fingerprint helps a pair whose recording AcoustID heard,
+//! and counts against one only when what it heard sits on a rival
+//! candidate ([`heard_on_candidates`]).
 //!
 //! The album title and artist also pass v2's 0.20 gate: a release whose
 //! title (edition words aside) or artist is further off than that never
@@ -346,6 +348,37 @@ pub fn unknown_recordings(local: &LocalAlbum, releases: &[Release]) -> Vec<Strin
     unknown
 }
 
+/// The AcoustID recordings heard per file (`heard`, keyed by local track
+/// id) that some release in `releases` carries. A fingerprint confirms a
+/// pair when it names the pair's recording, and counts against a pair only
+/// when it names a recording a rival track carries. A recording no
+/// candidate has says nothing: AcoustID links many reissues and remasters
+/// to no recording, or to an older one.
+pub fn heard_on_candidates(
+    heard: &HashMap<String, Vec<String>>,
+    releases: &[Release],
+) -> HashMap<String, Vec<String>> {
+    let carried = |recording: &str| {
+        releases.iter().any(|release| {
+            release
+                .tracks
+                .iter()
+                .any(|track| track.recording_id.eq_ignore_ascii_case(recording))
+        })
+    };
+    heard
+        .iter()
+        .filter_map(|(file, recordings)| {
+            let placed: Vec<String> = recordings
+                .iter()
+                .filter(|recording| carried(recording))
+                .cloned()
+                .collect();
+            (!placed.is_empty()).then(|| (file.clone(), placed))
+        })
+        .collect()
+}
+
 fn canonical_recording(track: &LocalTrack, aliases: &HashMap<String, String>) -> Option<String> {
     let mbid = track.recording_mbid.as_deref()?.trim().to_ascii_lowercase();
     if mbid.is_empty() {
@@ -417,6 +450,8 @@ fn track_distance(
             Support::EmbeddedId
         };
     } else if !local.fingerprint_recordings.is_empty() {
+        // Every heard recording sits on some candidate: one that is not
+        // this track's is a rival's, and counts against the pair.
         let heard = local
             .fingerprint_recordings
             .iter()

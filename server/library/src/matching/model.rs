@@ -21,7 +21,9 @@ pub struct LocalTrack {
     pub recording_mbid: Option<String>,
     pub release_track_mbid: Option<String>,
     pub release_mbid: Option<String>,
-    /// AcoustID recordings for this file's audio (empty: not printed).
+    /// AcoustID recordings heard in this file's audio that some candidate
+    /// release carries (see [`super::score::heard_on_candidates`]); empty
+    /// when not printed or when no candidate carries any of them.
     pub fingerprint_recordings: Vec<String>,
 }
 

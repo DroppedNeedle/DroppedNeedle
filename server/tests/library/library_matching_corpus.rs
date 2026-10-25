@@ -470,3 +470,175 @@ async fn recorded_albums_match_as_recorded() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert!(elapsed < BUDGET, "the corpus took {elapsed:?}");
 }
+
+/// The recording AcoustID heard in its recorded answer
+/// (`fixtures/acoustid/batch_lookup.json`: 10cc, "Sand in My Face"),
+/// which no release in the corpus carries.
+const UNPLACED: &str = "fe000616-c72c-43d4-8cba-a4083e99636b";
+
+/// What AcoustID is made to hear in each file of one copy.
+#[derive(Clone, Copy, Debug)]
+enum Heard {
+    /// A recording no candidate carries, as AcoustID often answers for a
+    /// reissue it links to no recording or to an older one.
+    Unplaced,
+    /// The recording the file pairs with on its release.
+    Own,
+    /// The recording the next file pairs with: a rival track's.
+    Next,
+}
+
+/// The recording each file pairs with on `release` in `ranking`, in file
+/// order.
+fn paired(ranking: &Ranking, release: Option<&str>) -> Vec<(String, String)> {
+    let Some(release) = release else {
+        return Vec::new();
+    };
+    ranking
+        .candidates
+        .iter()
+        .find(|candidate| {
+            candidate
+                .release_mbid
+                .as_deref()
+                .is_some_and(|id| id.eq_ignore_ascii_case(release))
+        })
+        .map(|candidate| {
+            candidate
+                .track_evidence
+                .iter()
+                .filter_map(|track| {
+                    Some((track.local_track_id.clone(), track.recording_mbid.clone()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn heard(
+    facts: &LocalAlbumFacts,
+    pairs: &[(String, String)],
+    heard: Heard,
+) -> HashMap<String, Vec<String>> {
+    match heard {
+        Heard::Unplaced => facts
+            .tracks
+            .iter()
+            .map(|track| (track.local_track_id.clone(), vec![UNPLACED.to_owned()]))
+            .collect(),
+        Heard::Own => pairs
+            .iter()
+            .map(|(file, recording)| (file.clone(), vec![recording.clone()]))
+            .collect(),
+        Heard::Next => pairs
+            .iter()
+            .enumerate()
+            .map(|(index, (file, _))| {
+                let next = &pairs[(index + 1) % pairs.len()].1;
+                (file.clone(), vec![next.clone()])
+            })
+            .collect(),
+    }
+}
+
+/// A fingerprint helps a pair it confirms and counts against one only
+/// when what it heard sits on a rival candidate. Heard as a recording no
+/// candidate carries, every row, tagged and stripped, stays as recorded.
+/// Heard as its own recording, a stripped file never comes out worse.
+/// Heard as the next file's recording (a rival track), a file never stays
+/// on its own track in a confirmed match: the audio outranks the title.
+/// Nothing confirms a wrong release group.
+#[tokio::test(flavor = "multi_thread")]
+async fn fingerprints_confirm_and_never_veto() {
+    let albums = load_albums();
+    let replay = Arc::new(Replay::load());
+    let (_dir, store, providers) = live_providers(&replay);
+    let service = IdentifyService::new(IdentifyDeps {
+        store,
+        providers: providers.clone(),
+    });
+    let mut failures = Vec::new();
+    let mut tallies: Vec<(String, Tally)> = Vec::new();
+    for album in &albums {
+        let copies = [
+            ("tagged", album.facts.clone(), &album.tagged),
+            ("stripped", stripped(&album.facts), &album.stripped),
+        ];
+        for (copy, facts, expected) in copies {
+            let named = named_group(&facts, None);
+            let recall = providers
+                .recall_candidates(&facts, named.as_deref(), RequestPriority::BackgroundSync)
+                .await
+                .result;
+            let unheard = service.rank(&facts, &recall).expect("default preferences");
+            // The true release, or where the truth names no edition, the
+            // one this copy was recorded as confirming in the true group.
+            let release = album.truth.release.as_deref().or(expected
+                .release
+                .as_deref()
+                .filter(|_| expected.verdict == Verdict::Group));
+            let pairs = paired(&unheard, release);
+            let scenarios: &[Heard] = if copy == "tagged" || pairs.is_empty() {
+                &[Heard::Unplaced]
+            } else if pairs.len() < 2 {
+                &[Heard::Unplaced, Heard::Own]
+            } else {
+                &[Heard::Unplaced, Heard::Own, Heard::Next]
+            };
+            for scenario in scenarios {
+                let mut recall = recall.clone();
+                let heard = heard(&facts, &pairs, *scenario);
+                recall.fingerprint_support = heard.clone();
+                let ranking = service.rank(&facts, &recall).expect("default preferences");
+                let (got, reason) = outcome(&ranking, &album.truth);
+                let label = format!("{copy} heard {scenario:?}");
+                match tallies.iter_mut().find(|(name, _)| *name == label) {
+                    Some((_, tally)) => tally.add(got.verdict),
+                    None => {
+                        let mut tally = Tally::default();
+                        tally.add(got.verdict);
+                        tallies.push((label.clone(), tally));
+                    }
+                }
+                println!(
+                    "{:<28} {label:<24} expected {:<10} {:<8}  got {:<10} {:<8} {reason}",
+                    album.key,
+                    expected.verdict.label(),
+                    short(expected.release.as_deref()),
+                    got.verdict.label(),
+                    short(got.release.as_deref()),
+                );
+                let fails = got.verdict == Verdict::Wrong
+                    || match scenario {
+                        Heard::Unplaced => {
+                            got.verdict != expected.verdict || got.release != expected.release
+                        }
+                        Heard::Own => got.verdict > expected.verdict,
+                        Heard::Next => {
+                            got.verdict <= Verdict::Group
+                                && !ranking.candidates[0].track_evidence.iter().all(|track| {
+                                    track.recording_mbid.as_ref()
+                                        == heard
+                                            .get(&track.local_track_id)
+                                            .and_then(|heard| heard.first())
+                                })
+                        }
+                    };
+                if fails {
+                    failures.push(format!(
+                        "{} ({label}): expected {} {}, got {} {} ({reason})",
+                        album.key,
+                        expected.verdict.label(),
+                        expected.release.as_deref().unwrap_or("-"),
+                        got.verdict.label(),
+                        got.release.as_deref().unwrap_or("-"),
+                    ));
+                }
+            }
+        }
+    }
+    for (label, tally) in &tallies {
+        println!("{}", tally.line(label));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

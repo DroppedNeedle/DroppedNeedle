@@ -5,6 +5,7 @@
 //! candidates run out. Real worker, landing, publisher and catalog over
 //! one scratch database; MusicBrainz is a scripted release source.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,8 +25,10 @@ use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_library::identify::models::LocalTrackFacts;
 use droppedneedle_library::identify::sources::{
-    Edition, EditionPage, EditionQuery, ReleaseHit, ReleaseSource, SourceError,
+    AudioMatches, Edition, EditionPage, EditionQuery, FingerprintSource, ReleaseHit, ReleaseSource,
+    SourceError,
 };
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
 use droppedneedle_library::scan::EffectivePolicy;
@@ -666,6 +669,21 @@ async fn land_through(
     PathBuf,
     droppedneedle_kernel::platform::Platform,
 ) {
+    land_heard(task, remote, downloads, source, None).await
+}
+
+/// [`land_through`], with AcoustID answering from `heard` when given.
+async fn land_heard(
+    task: NewTask,
+    remote: &[&str],
+    downloads: impl FnOnce(&Path) -> Vec<PathBuf>,
+    source: impl FnOnce(&[Option<u64>]) -> Arc<dyn ReleaseSource>,
+    heard: Option<Arc<dyn FingerprintSource>>,
+) -> (
+    droppedneedle_acquire::AcquireSetup,
+    PathBuf,
+    droppedneedle_kernel::platform::Platform,
+) {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u-ada", "Ada", "user").await.expect("user");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
@@ -677,7 +695,10 @@ async fn land_through(
         .settings(config)
         .build()
         .await;
-    let (library, _) = library_at(&platform);
+    let (mut library, _) = library_at(&platform);
+    if let Some(heard) = heard {
+        library.fingerprints = heard;
+    }
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -1070,6 +1091,88 @@ async fn a_file_whose_artist_tag_names_someone_else_is_held() {
     assert_eq!(held.len(), 1, "{held:?}");
     assert_eq!(held[0].0, "tag_mismatch");
     assert!(held[0].1.contains("Dan Romer"), "{held:?}");
+}
+
+/// AcoustID hearing one recording in every file, as a landing test
+/// scripts it.
+struct HearsEverywhere(&'static str);
+
+impl FingerprintSource for HearsEverywhere {
+    fn identify<'a>(&'a self, _tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
+        Box::pin(async { AudioMatches::default() })
+    }
+
+    fn identify_files<'a>(
+        &'a self,
+        files: &'a [(String, PathBuf)],
+    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        Box::pin(async move {
+            files
+                .iter()
+                .map(|(id, _)| (id.clone(), vec![self.0.to_owned()]))
+                .collect()
+        })
+    }
+}
+
+/// A file AcoustID hears as another recording imports only when its
+/// length is within 3 s of the track's, as copies of one master are: 2 s
+/// off imports, 5 s off is held.
+#[tokio::test]
+async fn a_file_heard_as_another_recording_needs_the_tracks_length() {
+    let (acquire, music, _platform) = land_heard(
+        new_task("t-heard", GOOD_GROUP),
+        &[],
+        |downloads| {
+            let folder = downloads.join("dummy");
+            vec![
+                land_file(
+                    &folder,
+                    "01 - Mysterons.flac",
+                    "flac_full_01.flac",
+                    "Mysterons",
+                    1,
+                ),
+                land_file(
+                    &folder,
+                    "02 - Sour Times.flac",
+                    "flac_full_02.flac",
+                    "Sour Times",
+                    2,
+                ),
+            ]
+        },
+        |lengths| {
+            let lengths = [
+                lengths[0].map(|ms| ms + 5_000),
+                lengths[1].map(|ms| ms + 2_000),
+            ];
+            Arc::new(Releases(vec![release(
+                GOOD_RELEASE,
+                GOOD_GROUP,
+                &["Mysterons", "Sour Times"],
+                &lengths,
+            )]))
+        },
+        // The recording in the recorded AcoustID answer
+        // (fixtures/acoustid/batch_lookup.json).
+        Some(Arc::new(HearsEverywhere(
+            "fe000616-c72c-43d4-8cba-a4083e99636b",
+        ))),
+    )
+    .await;
+    assert!(!music.join("Portishead/Dummy/0101 Mysterons.flac").exists());
+    assert!(
+        music
+            .join("Portishead/Dummy/0102 Sour Times.flac")
+            .is_file()
+    );
+    let held: Vec<(String,)> =
+        sqlx::query_as("SELECT reason FROM held_imports WHERE source_task_id = 't-heard'")
+            .fetch_all(acquire.db.pool())
+            .await
+            .expect("held rows");
+    assert_eq!(held, vec![("fingerprint_mismatch".to_owned(),)]);
 }
 
 /// POST or GET one held-import route as `principal`.

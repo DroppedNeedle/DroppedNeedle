@@ -1398,11 +1398,19 @@ impl ImportSpec for NotAlreadyImported {
 // Fingerprints.
 // ---------------------------------------------------------------------------
 
+/// How far a file's length may be off its track and still vouch for it
+/// against a fingerprint that names another recording. Copies of one
+/// master differ by a second or two (pregap, encoder padding, MusicBrainz
+/// rounding to the second), while another recording of a song is rarely
+/// within 3 s of it: v2's `max(15 s, 10%)` let most same-length pop songs
+/// through whatever AcoustID heard.
+pub const SAME_MASTER_SECS: f64 = 3.0;
+
 /// v2's `_fingerprint_disagrees`, for the ids our lookup returns: AcoustID
 /// confidently heard recordings, none of them the expected one, and the
-/// file's length does not vouch for the expected track (within
-/// `max(15 s, 10%)`). A length that agrees outranks a conflicting
-/// fingerprint, and no answer never holds anything.
+/// file's length is not within [`SAME_MASTER_SECS`] of the expected
+/// track's. A length that agrees outranks a conflicting fingerprint, and
+/// no answer never holds anything.
 pub fn fingerprint_disagrees(
     heard: &[String],
     expected_recording: &str,
@@ -1420,7 +1428,7 @@ pub fn fingerprint_disagrees(
     }
     let length_agrees = match (file_seconds, expected_seconds) {
         (Some(file), Some(expected)) if expected > 0.0 => {
-            (file - expected).abs() <= (0.10 * expected).max(15.0)
+            (file - expected).abs() <= SAME_MASTER_SECS
         }
         _ => false,
     };
@@ -1477,10 +1485,11 @@ mod tests {
     fn fingerprints_hold_only_a_confident_other_recording() {
         let other = vec!["b".to_owned()];
         assert!(fingerprint_disagrees(&other, "a", Some(200.0), Some(260.0)));
+        assert!(fingerprint_disagrees(&other, "a", Some(255.0), Some(260.0)));
         assert!(!fingerprint_disagrees(
             &other,
             "a",
-            Some(255.0),
+            Some(258.0),
             Some(260.0)
         ));
         assert!(!fingerprint_disagrees(&["A".to_owned()], "a", None, None));
