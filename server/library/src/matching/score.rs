@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use super::assign::assign;
 use super::distance::Distance;
 use super::model::{LocalAlbum, LocalTrack, Release, ReleaseTrack, credit_text};
-use super::strings::{artist_subset, string_dist, strip_edition_words};
+use super::strings::{artist_dist, artist_subset, string_dist, strip_edition_words};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// A pair worse than this is better left unmatched (v2's dummy cost).
@@ -251,7 +251,7 @@ pub fn match_release(
 
     let mut distance = Distance::default();
     if !various && !local.artist.trim().is_empty() {
-        distance.add_string("artist", &local.artist, &release.artist_text());
+        distance.add("artist", artist_dist(&local.artist, &release.artist_text()));
     }
     if !local.title.trim().is_empty() {
         distance.add_string("album", &local.title, &release.title);
@@ -308,7 +308,7 @@ fn names_agree(local: &LocalAlbum, release: &Release, various: bool, pairs: &[Tr
     let release_artist = release.artist_text();
     let artist_ok = various
         || local.artist.trim().is_empty()
-        || string_dist(&local.artist, &release_artist) <= NAME_GATE
+        || artist_dist(&local.artist, &release_artist) <= NAME_GATE
         || (proven && artist_subset(&local.artist, &release_artist));
     title_ok && artist_ok
 }
@@ -367,6 +367,27 @@ enum TrackId {
     Ignored,
 }
 
+/// What the movements a release names after its work's title cost, as a
+/// share of their plain distance: the weight beets gives a bracketed
+/// suffix.
+const MOVEMENT_WEIGHT: f64 = 0.3;
+
+/// A file's title against a release track's. MusicBrainz writes a
+/// multi-part piece as "Work: I. Movement / II. Movement" ("Close to the
+/// Edge: I. The Solid Time of Change / ..."), where a file often names the
+/// work alone: the part before the colon is compared too, and the
+/// movements cost [`MOVEMENT_WEIGHT`] of what they would.
+fn title_dist(file: &str, track: &str) -> f64 {
+    let full = string_dist(file, track);
+    match track.split_once(':') {
+        Some((work, _)) if !file.contains(':') && !work.trim().is_empty() => {
+            let work_only = string_dist(file, work);
+            full.min(work_only + MOVEMENT_WEIGHT * (full - work_only).max(0.0))
+        }
+        _ => full,
+    }
+}
+
 /// One pair's normalized distance, or `None` when ids rule it out.
 fn track_distance(
     local: &LocalTrack,
@@ -405,12 +426,11 @@ fn track_distance(
             support = Support::Fingerprint;
         }
     }
-    distance.add_string("track_title", &local.title, &candidate.title);
+    distance.add("track_title", title_dist(&local.title, &candidate.title));
     if various && !local.artist.trim().is_empty() {
-        distance.add_string(
+        distance.add(
             "track_artist",
-            &local.artist,
-            &credit_text(&candidate.artists),
+            artist_dist(&local.artist, &credit_text(&candidate.artists)),
         );
     }
     if local.track_number > 0 {

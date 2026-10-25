@@ -86,6 +86,8 @@ pub struct EditionFill {
     /// since is left to the scan that reads it in full.
     pub stat_revision: String,
     pub edition: crate::tags::read::EditionTags,
+    /// The file's disc number, which a disc total must not fall below.
+    pub disc_number: u32,
     pub effective_policy: EffectivePolicy,
 }
 

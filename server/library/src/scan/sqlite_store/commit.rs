@@ -2878,19 +2878,15 @@ fn fill_edition_tags(
         filled += stored;
         // Only what edition matching reads counts: it takes no release
         // date, and a disc total only when there is more than one disc.
-        let hinted = media.is_some()
-            || barcode
-                .as_deref()
-                .and_then(EditionHints::barcode_key)
-                .is_some()
-            || catalog_number
-                .as_deref()
-                .and_then(EditionHints::catalog_key)
-                .is_some()
-            || release_country
-                .as_deref()
-                .is_some_and(|code| code.len() == 2)
-            || edition.total_discs.is_some_and(|total| total >= 2);
+        let hinted = !EditionHints::of_file(
+            media.as_deref(),
+            barcode.as_deref(),
+            catalog_number.as_deref(),
+            release_country.as_deref(),
+            edition.total_discs,
+            fill.disc_number,
+        )
+        .is_empty();
         if stored == 0 || !hinted || fill.effective_policy != EffectivePolicy::Automatic {
             continue;
         }

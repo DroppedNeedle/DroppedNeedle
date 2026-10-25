@@ -1391,8 +1391,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 // A file that cannot be read gets an empty row, so it is not
                 // tried on every scan; changing it brings a full read. A busy
                 // file is tried again next scan.
-                let edition = match outcome {
-                    Ok(tags) => tags.tag.edition,
+                let (edition, disc_number) = match outcome {
+                    Ok(tags) => (tags.tag.edition, tags.tag.disc_number),
                     Err(TagReadError::Fatal) => {
                         tracing::warn!(
                             path = item.relative_path,
@@ -1414,6 +1414,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     track_id,
                     stat_revision: item.stat_revision.clone(),
                     edition,
+                    disc_number,
                     effective_policy: item.effective_policy,
                 });
             }

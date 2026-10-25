@@ -42,6 +42,15 @@
 //!   little to go on and the verdict is insufficient evidence.
 //! - A release that fails the album title or artist gate (see `score`)
 //!   goes to review however close its tracks are.
+//! - Files the accepted release leaves unpaired send it to review past
+//!   one (two from 21 files on). There is no outside source for that
+//!   count: beets lets no unpaired file through automatically (`max_rec`
+//!   caps `unmatched_tracks` at medium), and Lidarr's weight table counts
+//!   them in the distance. When every track of the release is paired, the extra
+//!   files are bonus files the edition lacks, and one per
+//!   [`BONUS_SHARE`] (4) paired files is allowed: two bonus files on an
+//!   eight-track album pass, two extra files around a two-track single do
+//!   not. Each one still counts in the distance.
 //! - Live releases, and compilations the tags do not call compilations,
 //!   need confirmation (v2): unless every file carries its release-track
 //!   id, only the release group is pinned. A track id set aside as
@@ -86,6 +95,9 @@ pub const COMPLETE_TRACK: f64 = 0.10;
 pub const CONFIRM_ALBUM: f64 = 0.05;
 /// How far each file's length may be off its track for that confirmation.
 pub const CONFIRM_LENGTH_SECS: f64 = 3.0;
+/// A release the files complete may leave one unpaired file per this
+/// many paired ones.
+pub const BONUS_SHARE: usize = 4;
 /// A tagged release this close needs no search (beets' "strong" match).
 pub const STRONG: f64 = 0.04;
 /// Weak tags past this distance call for fingerprints (Lidarr).
@@ -239,12 +251,11 @@ fn decide_group(
     {
         return Verdict::Insufficient;
     }
-    let unmatched_limit = if local.tracks.len() <= 20 { 1 } else { 2 };
     if matched.pairs.is_empty()
         || !matched.names_agree
         || matched.library_distance() > ACCEPT_ALBUM
         || matched.worst_track() > ACCEPT_TRACK
-        || matched.unmatched.len() > unmatched_limit
+        || matched.unmatched.len() > unmatched_limit(local, matched)
     {
         return Verdict::Review(ReviewReason::WeakMatch);
     }
@@ -255,6 +266,16 @@ fn decide_group(
         return Verdict::EditionUncertain(chosen);
     }
     Verdict::Identified(chosen)
+}
+
+/// Files the accepted release may leave unpaired (see the module notes).
+fn unmatched_limit(local: &LocalAlbum, matched: &ReleaseMatch) -> usize {
+    let base = if local.tracks.len() <= 20 { 1 } else { 2 };
+    if matched.missing.is_empty() {
+        base.max(matched.pairs.len() / BONUS_SHARE)
+    } else {
+        base
+    }
 }
 
 /// Lidarr's rule for when fingerprints are worth taking: nothing close,
@@ -659,7 +680,16 @@ mod tests {
     use crate::matching::model::{CreditedArtist, LocalTrack, ReleaseTrack};
     use crate::matching::score::{ConflictKind, Support, match_release};
 
-    const TITLES: [&str; 4] = ["Lamplight", "Blue Hour", "Night Shift", "Last Train Home"];
+    const TITLES: [&str; 8] = [
+        "Lamplight",
+        "Blue Hour",
+        "Night Shift",
+        "Last Train Home",
+        "Harbour Lights",
+        "Slow Fade",
+        "Paper Moon",
+        "Morning Line",
+    ];
 
     fn release(group: &str, title: &str, count: usize) -> Release {
         Release {
@@ -765,6 +795,18 @@ mod tests {
                 "two unmatched files are not",
                 local(2, 2, false),
                 vec![night(4)],
+                weak,
+            ),
+            (
+                "two bonus files on a complete eight-track release are allowed",
+                local(8, 2, false),
+                vec![night(8)],
+                Verdict::Identified(0),
+            ),
+            (
+                "two extra files around a complete two-track single are not",
+                local(2, 2, false),
+                vec![night(2)],
                 weak,
             ),
             (
@@ -1323,5 +1365,19 @@ mod tests {
             scored(&files("Blue Hour"), &releases).0,
             Verdict::Identified(1)
         );
+    }
+
+    /// "[none]", Picard's and MusicBrainz's catalog number for a release
+    /// without one, names no release: files saying it do not pick the
+    /// edition that says it over a closer one.
+    #[test]
+    fn a_none_catalog_number_names_no_edition() {
+        let mut far = edition("g", "far", "Night Shift");
+        far.catalog_numbers = vec!["[none]".to_owned()];
+        far.tracks[0].length_ms = Some(230_000);
+        let near = edition("g", "near", "Night Shift");
+        let mut files = local(4, 0, false);
+        files.hints.catalog_number = EditionHints::catalog_key("[none]");
+        assert_eq!(scored(&files, &[far, near]).0, Verdict::Identified(1));
     }
 }

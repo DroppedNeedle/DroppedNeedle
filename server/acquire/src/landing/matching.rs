@@ -3,8 +3,9 @@
 //! The library's matching engine does the scoring; this module feeds it
 //! the way Lidarr's import does for a grabbed album: candidates restricted
 //! to the requested release group (the pinned edition first, then the
-//! release the files' tags name, then the group's editions from a
-//! search), and the closest conflict-free edition wins. Recording ids on
+//! release the files' tags name, then the group's editions from its
+//! listing, or from a title search when the group cannot be listed), and
+//! the closest conflict-free edition wins. Recording ids on
 //! the files that no candidate carries are looked up first, in case
 //! MusicBrainz merged them. Then it plans the files: what imports, what is
 //! already in the library, what is held because its tags name another
@@ -15,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 use super::ports::{LandingLibrary, OwnedTracks};
 use super::probe::{LandedFile, Landing};
 use super::specs::Target;
+use droppedneedle_library::identify::providers::GROUP_FETCH;
 use droppedneedle_library::identify::sources::ReleaseHit;
 use droppedneedle_library::matching::decide::{ACCEPT_TRACK, EDITION_COHORT};
 use droppedneedle_library::matching::score::TrackPair;
@@ -24,7 +26,8 @@ use droppedneedle_library::matching::{
 };
 use droppedneedle_library::matching::{match_release, unknown_recordings};
 
-/// Editions of the requested group fetched after a search.
+/// Editions of the requested group fetched after a title search, used
+/// when the group's own listing is empty.
 const PER_GROUP: usize = 3;
 
 /// How the lookup went.
@@ -240,7 +243,8 @@ pub async fn merged_recordings(
 /// Candidate releases of the requested group. A pinned edition is the
 /// only candidate: the files are judged against its tracklist and nothing
 /// else (owner rule, the pin is honoured end to end). Without a pin: the
-/// tagged release, then the group's editions from a search.
+/// tagged release, then the group's editions from its listing (closest
+/// track count first), else from a title search.
 async fn recall(
     library: &dyn LandingLibrary,
     target: &Target,
@@ -267,21 +271,29 @@ async fn recall(
                 .eq_ignore_ascii_case(&target.release_group_mbid)
     };
     releases.retain(in_group);
-    if !target.album_title.trim().is_empty() {
+    let mut hits = Vec::new();
+    if !target.release_group_mbid.is_empty() {
+        hits = library
+            .group_releases(&target.release_group_mbid)
+            .await
+            .map_err(error)?;
+    }
+    let listed = !hits.is_empty();
+    if !listed && !target.album_title.trim().is_empty() {
         let artist = if is_various(&target.artist_name) {
             ""
         } else {
             target.artist_name.as_str()
         };
-        let hits = library
+        hits = library
             .search(&target.album_title, artist)
             .await
             .map_err(error)?;
-        for id in pick_hits(&hits, target, local.tracks.len(), &releases) {
-            fetch(library.release(&id).await.map_err(error)?, &mut releases);
-        }
-        releases.retain(in_group);
     }
+    for id in pick_hits(&hits, target, local.tracks.len(), &releases, listed) {
+        fetch(library.release(&id).await.map_err(error)?, &mut releases);
+    }
+    releases.retain(in_group);
     Ok(releases)
 }
 
@@ -294,13 +306,15 @@ fn fetch(found: Option<Release>, releases: &mut Vec<Release>) {
     }
 }
 
-/// Group editions worth a tracklist fetch: best search score first, then
-/// the closest track count.
+/// Group editions worth a tracklist fetch. From the group's listing
+/// (`listed`), the closest track count first, then the best score; from a
+/// title search, the best score first.
 fn pick_hits(
     hits: &[ReleaseHit],
     target: &Target,
     local_tracks: usize,
     known: &[Release],
+    listed: bool,
 ) -> Vec<String> {
     let mut ranked: Vec<&ReleaseHit> = hits
         .iter()
@@ -312,18 +326,21 @@ fn pick_hits(
         })
         .filter(|hit| !known.iter().any(|release| release.answers_to(&hit.id)))
         .collect();
+    let gap = |hit: &ReleaseHit| {
+        hit.track_count
+            .map_or(usize::MAX, |count| (count as usize).abs_diff(local_tracks))
+    };
     ranked.sort_by(|a, b| {
-        b.score.cmp(&a.score).then_with(|| {
-            let gap = |hit: &ReleaseHit| {
-                hit.track_count
-                    .map_or(usize::MAX, |count| (count as usize).abs_diff(local_tracks))
-            };
-            gap(a).cmp(&gap(b))
-        })
+        let score = b.score.cmp(&a.score);
+        if listed {
+            gap(a).cmp(&gap(b)).then(score)
+        } else {
+            score.then_with(|| gap(a).cmp(&gap(b)))
+        }
     });
     ranked
         .into_iter()
-        .take(PER_GROUP)
+        .take(if listed { GROUP_FETCH } else { PER_GROUP })
         .map(|hit| hit.id.clone())
         .collect()
 }

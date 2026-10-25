@@ -90,31 +90,30 @@ fn hints(facts: &LocalAlbumFacts) -> EditionHints {
             .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
             .map(|(value, _)| value)
     }
-    let tracks = &facts.tracks;
+    let files: Vec<EditionHints> = facts
+        .tracks
+        .iter()
+        .map(|track| {
+            EditionHints::of_file(
+                track.media.as_deref(),
+                track.barcode.as_deref(),
+                track.catalog_number.as_deref(),
+                track.release_country.as_deref(),
+                track.total_discs,
+                track.disc_number,
+            )
+        })
+        .collect();
     EditionHints {
-        media: common(tracks.iter().map(|track| non_blank(track.media.as_deref()))),
-        barcode: common(
-            tracks
+        media: common(files.iter().map(|file| file.media.clone())),
+        barcode: common(files.iter().map(|file| file.barcode.clone())),
+        catalog_number: common(files.iter().map(|file| file.catalog_number.clone())),
+        country: common(files.iter().map(|file| file.country.clone())),
+        total_discs: common(
+            files
                 .iter()
-                .map(|track| track.barcode.as_deref().and_then(EditionHints::barcode_key)),
-        ),
-        catalog_number: common(tracks.iter().map(|track| {
-            track
-                .catalog_number
-                .as_deref()
-                .and_then(EditionHints::catalog_key)
-        })),
-        country: common(tracks.iter().map(|track| {
-            non_blank(track.release_country.as_deref())
-                .filter(|code| code.len() == 2)
-                .map(|code| code.to_ascii_uppercase())
-        })),
-        total_discs: common(tracks.iter().map(|track| {
-            track
-                .total_discs
-                .filter(|total| *total >= 2 && *total >= track.disc_number)
-                .map(|total| total.to_string())
-        }))
+                .map(|file| file.total_discs.map(|total| total.to_string())),
+        )
         .and_then(|total| total.parse().ok()),
     }
 }

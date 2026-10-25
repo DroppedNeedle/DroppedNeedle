@@ -25,7 +25,9 @@ use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
-use droppedneedle_library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
+use droppedneedle_library::identify::sources::{
+    Edition, EditionPage, EditionQuery, ReleaseHit, ReleaseSource, SourceError,
+};
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
 use droppedneedle_library::scan::EffectivePolicy;
 use droppedneedle_library::tags::TagField;
@@ -639,6 +641,24 @@ async fn land_reported(
     PathBuf,
     droppedneedle_kernel::platform::Platform,
 ) {
+    land_through(task, remote, downloads, |lengths| {
+        Arc::new(Releases(vec![release(lengths)]))
+    })
+    .await
+}
+
+/// [`land_reported`] over the MusicBrainz `source` builds from the files'
+/// lengths.
+async fn land_through(
+    task: NewTask,
+    remote: &[&str],
+    downloads: impl FnOnce(&Path) -> Vec<PathBuf>,
+    source: impl FnOnce(&[Option<u64>]) -> Arc<dyn ReleaseSource>,
+) -> (
+    droppedneedle_acquire::AcquireSetup,
+    PathBuf,
+    droppedneedle_kernel::platform::Platform,
+) {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u-ada", "Ada", "user").await.expect("user");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
@@ -663,7 +683,7 @@ async fn land_reported(
     let downloads_dir = dir.join("downloads");
     let files = downloads(&downloads_dir);
     let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
-    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release(&lengths)]));
+    let releases = source(&lengths);
     let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
@@ -810,6 +830,149 @@ async fn an_untagged_album_in_its_artists_folder_imports() {
     .await;
     assert_eq!(
         decisions(&acquire, "t-untagged-right").await,
+        vec![("imported".to_owned(), None)]
+    );
+    assert!(
+        music
+            .join("Portishead/Dummy/0102 Sour Times.flac")
+            .is_file()
+    );
+}
+
+/// MusicBrainz where a title search ranks other editions of the group
+/// first, and the group's listing holds them all.
+struct Listed {
+    releases: Releases,
+    /// What the title search answers: every release but the last.
+    searched: usize,
+}
+
+impl ReleaseSource for Listed {
+    fn search<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        let searched = self.searched;
+        Box::pin(async move {
+            let mut hits = self.releases.search(title, artist).await?;
+            hits.truncate(searched);
+            Ok(hits)
+        })
+    }
+
+    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        self.releases.release(mbid)
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        self.releases.canonical_recording(mbid)
+    }
+
+    fn search_editions<'a>(
+        &'a self,
+        query: &'a EditionQuery,
+    ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
+        let items: Vec<Edition> = self
+            .releases
+            .0
+            .iter()
+            .filter(|release| {
+                query
+                    .release_group_mbid
+                    .as_deref()
+                    .is_some_and(|group| release.release_group_id == group)
+            })
+            .map(|release| Edition {
+                release_mbid: release.id.clone(),
+                release_group_mbid: release.release_group_id.clone(),
+                title: release.title.clone(),
+                track_count: release.tracks.len() as u32,
+                score: 100,
+                ..Edition::default()
+            })
+            .skip(query.offset as usize)
+            .collect();
+        let total = items.len() as u64;
+        Box::pin(async move {
+            Ok(EditionPage {
+                items,
+                total,
+                offset: 0,
+            })
+        })
+    }
+}
+
+/// Without a pinned edition, the landing reads the requested group's
+/// editions from its listing, closest track count first: the edition the
+/// files are is found even when a title search ranks three others above
+/// it.
+#[tokio::test]
+async fn the_landing_finds_the_edition_in_the_groups_listing() {
+    let (acquire, music, _platform) = land_through(
+        new_task("t-listed", GOOD_GROUP),
+        &[],
+        |downloads| {
+            let folder = downloads.join("Portishead - Dummy");
+            vec![
+                land_file(
+                    &folder,
+                    "01 - Mysterons.flac",
+                    "flac_full_01.flac",
+                    "Mysterons",
+                    1,
+                ),
+                land_file(
+                    &folder,
+                    "02 - Sour Times.flac",
+                    "flac_full_02.flac",
+                    "Sour Times",
+                    2,
+                ),
+            ]
+        },
+        |lengths| {
+            let others = [
+                "Strangers",
+                "It Could Be Sweet",
+                "Wandering Star",
+                "Numb",
+                "Roads",
+                "Pedestal",
+                "Biscuit",
+                "Glory Box",
+                "Undenied",
+                "Elysium",
+            ];
+            let mut releases: Vec<Release> = (0..3)
+                .map(|index| {
+                    release(
+                        &format!("6d0b7a1e-0000-4000-8000-0000000001{index}0"),
+                        GOOD_GROUP,
+                        &others,
+                        &[None; 10],
+                    )
+                })
+                .collect();
+            releases.push(release(
+                GOOD_RELEASE,
+                GOOD_GROUP,
+                &["Mysterons", "Sour Times"],
+                lengths,
+            ));
+            Arc::new(Listed {
+                releases: Releases(releases),
+                searched: 3,
+            })
+        },
+    )
+    .await;
+    assert_eq!(
+        decisions(&acquire, "t-listed").await,
         vec![("imported".to_owned(), None)]
     );
     assert!(

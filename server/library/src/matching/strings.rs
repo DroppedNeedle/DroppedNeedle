@@ -345,6 +345,17 @@ fn artist_tokens(credit: &str) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// Distance between two artist credits: none when both name the same
+/// artists, whatever joins them ("A; B" and "A & B"), else
+/// [`string_dist`].
+pub fn artist_dist(left: &str, right: &str) -> f64 {
+    let tokens = artist_tokens(left);
+    if !tokens.is_empty() && tokens == artist_tokens(right) {
+        return 0.0;
+    }
+    string_dist(left, right)
+}
+
 /// True when one credit's artists contain the other's ("Iron Coast;
 /// Vela" and "Iron Coast"), never for disjoint credits (a tribute band
 /// and the band it covers). v2's `_artist_subset_match`.
@@ -401,6 +412,8 @@ mod tests {
         assert_eq!(strip_edition_words("Rumours [CD2]"), "rumours");
         assert_eq!(strip_edition_words("Discovery"), "discovery");
         assert_eq!(strip_edition_words("Album 2"), "album 2");
+        assert_eq!(artist_dist("Iron Coast; Vela", "Vela & Iron Coast"), 0.0);
+        assert!(artist_dist("Iron Coast; Vela", "Iron Coast") > 0.2);
         assert!(artist_subset("Iron Coast feat. Vela", "Iron Coast"));
         assert!(!artist_subset("The Tribute Band", "Michael Jackson"));
     }

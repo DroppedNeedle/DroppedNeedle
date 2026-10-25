@@ -104,8 +104,8 @@
     "key": "close-to-the-edge",
     "why": "untagged, album row once left on Unknown Artist",
     "truth": {"release_group": "5a59b948-1961-32ff-80d9-e970c7d4ebe9", "release": null},
-    "tagged": {"verdict": "review", "release": "137d649d-9bd1-4a6a-beb9-1f4cadbfcde6", "known_miss": "MusicBrainz titles two of the three tracks with their movement names, so too few titles fit closely to confirm"},
-    "stripped": {"verdict": "review", "release": "137d649d-9bd1-4a6a-beb9-1f4cadbfcde6", "known_miss": "MusicBrainz titles two of the three tracks with their movement names, so too few titles fit closely to confirm"},
+    "tagged": {"verdict": "group", "release": "137d649d-9bd1-4a6a-beb9-1f4cadbfcde6"},
+    "stripped": {"verdict": "group", "release": "137d649d-9bd1-4a6a-beb9-1f4cadbfcde6"},
     "facts": {
       "local_album_id": "close-to-the-edge",
       "title": "Close To The Edge",
@@ -546,7 +546,7 @@
     "why": "single, two artists joined by x",
     "truth": {"release_group": "ef44c81b-a090-4a9f-9ce1-16db5918b8a6", "release": "a78b8e60-d7b3-4c37-9380-9fb64569d18f"},
     "tagged": {"verdict": "exact", "release": "a78b8e60-d7b3-4c37-9380-9fb64569d18f"},
-    "stripped": {"verdict": "group", "release": "445bc3cd-1431-4ae3-b802-689b817f4047", "known_miss": "the files' edition tags disagree: they say 12\" Vinyl, their barcode names a digital release, and their catalog number is Picard's \"[none]\""},
+    "stripped": {"verdict": "group", "release": "445bc3cd-1431-4ae3-b802-689b817f4047", "known_miss": "the files' edition tags disagree: they say 12\" Vinyl and their barcode names a digital release"},
     "facts": {
       "local_album_id": "violence-against-nature",
       "title": "Violence Against Nature",

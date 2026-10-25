@@ -54,6 +54,38 @@ pub struct EditionHints {
 }
 
 impl EditionHints {
+    /// What one file's edition tags give matching: media, the barcode and
+    /// catalog number keys, a two-letter country, and a disc total of more
+    /// than one disc that is not below the file's own disc number. Blank
+    /// tags give nothing. The scan uses the same rule to tell when a file
+    /// gains a hint.
+    pub fn of_file(
+        media: Option<&str>,
+        barcode: Option<&str>,
+        catalog_number: Option<&str>,
+        country: Option<&str>,
+        total_discs: Option<u32>,
+        disc_number: u32,
+    ) -> Self {
+        fn present(value: Option<&str>) -> Option<&str> {
+            value.map(str::trim).filter(|value| !value.is_empty())
+        }
+        Self {
+            media: present(media).map(str::to_owned),
+            barcode: barcode.and_then(Self::barcode_key),
+            catalog_number: catalog_number.and_then(Self::catalog_key),
+            country: present(country)
+                .filter(|code| code.len() == 2)
+                .map(str::to_ascii_uppercase),
+            total_discs: total_discs.filter(|total| *total >= 2 && *total >= disc_number),
+        }
+    }
+
+    /// True when no hint is set.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// Digits of a barcode without leading zeros (UPC and EAN agree).
     pub fn barcode_key(raw: &str) -> Option<String> {
         let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
@@ -61,14 +93,16 @@ impl EditionHints {
         (!trimmed.is_empty()).then(|| trimmed.to_owned())
     }
 
-    /// A catalog number without spaces, dashes or case.
+    /// A catalog number without spaces, dashes or case. `[none]`, which
+    /// MusicBrainz label info and Picard's tags use for "no catalog
+    /// number", is none: it would name every release that says it.
     pub fn catalog_key(raw: &str) -> Option<String> {
         let key: String = raw
             .chars()
             .filter(char::is_ascii_alphanumeric)
             .flat_map(char::to_lowercase)
             .collect();
-        (!key.is_empty()).then_some(key)
+        (!key.is_empty() && key != "none").then_some(key)
     }
 }
 
