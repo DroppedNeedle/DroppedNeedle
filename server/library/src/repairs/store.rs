@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_from_iter};
 
@@ -482,9 +483,74 @@ pub fn group_only_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<Str
         .collect()
 }
 
+/// Marks the one-time identification of automatic matches confirmed
+/// before matching read the release group the files' tags name.
+pub const OLDER_CONFIRMATIONS_BACKFILL_KEY: &str = "older-confirmations:v1:backfill";
+
+/// Albums whose automatic match is confirmed on a release outside the one
+/// release group every indexed file's tag names. Matching now keeps such
+/// a match as a guess, but only when the album is identified again. Never
+/// an album a person decided, detached or settled a review of, a custom
+/// edition, or one with a file in a folder not identified automatically.
+pub fn older_confirmation_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT a.id, i.release_group_mbid FROM local_albums a \
+         JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         WHERE a.retired_into_album_id IS NULL \
+         AND i.release_mbid IS NOT NULL AND i.decision_source IN {REVISABLE} \
+         AND NOT EXISTS (SELECT 1 FROM library_album_match_state m \
+             WHERE m.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND t.applied_policy != 'automatic') \
+         ORDER BY a.id"
+    ))?;
+    let confirmed: Vec<(String, String)> = stmt
+        .query_map(params![PROVIDER], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut files = conn.prepare(
+        "SELECT embedded_release_group_mbid FROM local_tracks \
+         WHERE local_album_id = ?1 AND availability = 'indexed'",
+    )?;
+    let mut albums = Vec::new();
+    for (album, group) in confirmed {
+        let tagged: Vec<Option<String>> = files
+            .query_map(params![album], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        if outside_named_group(&tagged, &group) {
+            albums.push(album);
+        }
+    }
+    Ok(albums)
+}
+
+/// Every file names the same valid release group, and it is not `group`.
+fn outside_named_group(files: &[Option<String>], group: &str) -> bool {
+    let named: Option<Vec<String>> = files
+        .iter()
+        .map(|tagged| {
+            let tagged = tagged.as_deref()?.trim().to_ascii_lowercase();
+            is_valid_mbid(&tagged).then_some(tagged)
+        })
+        .collect();
+    named.is_some_and(|named| {
+        named.first().is_some_and(|first| {
+            named.iter().all(|other| other == first) && !first.eq_ignore_ascii_case(group.trim())
+        })
+    })
+}
+
 /// Record that a one-time identification was queued: a finished repair
 /// job under its key ([`TRACK_ID_BACKFILL_KEY`],
-/// [`GROUP_ONLY_BACKFILL_KEY`]), so it never runs again on this database.
+/// [`GROUP_ONLY_BACKFILL_KEY`], [`OLDER_CONFIRMATIONS_BACKFILL_KEY`]), so
+/// it never runs again on this database.
 pub fn mark_backfill(
     tx: &Transaction<'_>,
     job_id: &str,

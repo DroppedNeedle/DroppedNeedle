@@ -65,6 +65,8 @@ After an upgrade from v2, a one-time cleanup tidies album rows the old version l
 
 v2 matched some albums to a release group without choosing an edition in it. Tagging and organizing need an exact edition, so the album page shows "Edition not chosen yet" for these. After the upgrade, each one v2 matched by itself is identified once more, in the background and only once: it gets the edition its files fit, or a best guess marked unconfirmed, and the automatic choice can be undone from the album page like any other. If nothing fits, it keeps its release group and still reads "Edition not chosen yet". An album whose release group a person chose, in v3 or in v2, keeps it as it is, and albums in folders that keep their own tags are skipped.
 
+Matching now reads the release group your files' tags name. After the upgrade, an album the app matched by itself before that, on a release outside the one group all its files name, is identified once more, in the background and only once. It usually comes back as a best guess marked unconfirmed: "Fits best, but the files' tags or earlier match name another album." Albums a person matched or detached, or whose suggestions they turned down, custom editions, and albums in folders that keep their own tags are left alone.
+
 ## Duplicate artists
 
 Duplicate artists can be merged from the artist identity page (admins). The preview counts what moves to the artist you keep: album and track credits, favorites, play history, playlist entries and app IDs. The merged artist's old links lead to the one you keep. As in earlier versions, merging artists can't be undone.

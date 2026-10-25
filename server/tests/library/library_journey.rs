@@ -18183,6 +18183,134 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
     assert!(queued().is_empty());
 }
 
+/// Before matching read the release group the files' tags name, an album
+/// whose files all name one group could be confirmed on a release of
+/// another. After the upgrade such a match the app made (A) is identified
+/// once more, by itself, and comes back as a guess saying the files name
+/// another group. The same shape a person chose, now (B) or in v2 (C), is
+/// left alone. It happens once per database.
+#[tokio::test]
+async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
+    use droppedneedle_library::repairs::service::Repairs;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    const NAMED_GROUP: &str = "5e1a0000-0009-4000-8000-0000000000ee";
+    let (scratch, library, music) = bare_library("lib-older-confirmations").await;
+    let editions: Vec<Release> = (1..=3)
+        .map(|n| sibling_editions(n, &format!("Older {n}")).0)
+        .collect();
+    for (index, release) in editions.iter().enumerate() {
+        for (number, track) in release.tracks.iter().enumerate() {
+            let file = plant(
+                &music,
+                &format!("album-{index}/{:02}.flac", number + 1),
+                "flac_full_01.flac",
+            );
+            save_tags(
+                &file,
+                &[
+                    TagEdit::verbatim(TagField::Title, vec![track.title.clone()]),
+                    TagEdit::verbatim(TagField::Album, vec![release.title.clone()]),
+                    TagEdit::verbatim(TagField::Artist, vec!["Radiohead".to_owned()]),
+                    TagEdit::verbatim(TagField::AlbumArtist, vec!["Radiohead".to_owned()]),
+                    TagEdit::verbatim(TagField::TrackNumber, vec![(number + 1).to_string()]),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+                    TagEdit::verbatim(
+                        TagField::MusicBrainzReleaseGroupId,
+                        vec![NAMED_GROUP.to_owned()],
+                    ),
+                    TagEdit::verbatim(
+                        TagField::MusicBrainzRecordingId,
+                        vec![track.recording_id.clone()],
+                    ),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+                ],
+            )
+            .expect("file tagged");
+        }
+    }
+    add_music_root(&library, &music).await;
+    let album = |index: usize| {
+        let track = library
+            .scan_store
+            .track_at("music", &format!("album-{index}/01.flac"))
+            .unwrap()
+            .expect("track indexed");
+        library
+            .scan_store
+            .album_for_track(&track)
+            .unwrap()
+            .expect("album")
+    };
+    let (a, b, c) = (album(0), album(1), album(2));
+    scratch.identify.set_recall(RecallResult {
+        releases: editions.clone(),
+        ..RecallResult::default()
+    });
+    assert_eq!(library.identify_tick().await, 3);
+
+    // What an older matcher left: every match confirmed outside the group
+    // the files name, B chosen by a person and C carried from v2.
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    db.execute("DELETE FROM library_album_match_state", [])
+        .expect("older confirmation planted");
+    for (album, source) in [(&b, "manual"), (&c, "legacy_import")] {
+        db.execute(
+            "UPDATE local_album_external_identities SET decision_source = ?2 \
+             WHERE local_album_id = ?1",
+            rusqlite::params![album, source],
+        )
+        .expect("person's match planted");
+    }
+    let queued = || -> Vec<String> {
+        let mut stmt = db
+            .prepare(
+                "SELECT local_album_id FROM library_identify_jobs \
+                 WHERE state = 'queued' ORDER BY local_album_id",
+            )
+            .expect("queue reads");
+        stmt.query_map([], |row| row.get(0))
+            .expect("queue reads")
+            .collect::<Result<_, _>>()
+            .expect("queue reads")
+    };
+    assert!(queued().is_empty());
+
+    let repairs = Repairs::new(&library);
+    droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
+    assert_eq!(queued(), vec![a.clone()]);
+    assert_eq!(library.identify_tick().await, 1);
+
+    let flag = |album: &str| {
+        library
+            .identify_store
+            .match_flag(album)
+            .unwrap()
+            .map(|flag| flag.reason_code)
+    };
+    assert_eq!(flag(&a), Some("NAMED_GROUP_DIFFERS".to_owned()));
+    let identity = library
+        .identify_store
+        .album_identity(&a)
+        .unwrap()
+        .expect("guess kept");
+    assert_eq!(
+        (identity.release_mbid, identity.decision_source.as_str()),
+        (Some(editions[0].id.clone()), "automatic")
+    );
+    assert_eq!(flag(&b), None);
+    assert_eq!(flag(&c), None);
+
+    // The next start looks no more.
+    db.execute("DELETE FROM library_album_match_state", [])
+        .expect("older confirmation planted");
+    let restarted = Repairs::new(&library);
+    droppedneedle_library::repairs::tick(&library, &restarted, "worker").await;
+    assert!(queued().is_empty());
+}
+
 /// An album row an earlier version left on its own "Unknown Artist" row
 /// (not the catalog's sentinel) while every file names the artist keeps
 /// it through scans, because its files never change. After an upgrade it
