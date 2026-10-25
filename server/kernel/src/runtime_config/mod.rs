@@ -9,9 +9,8 @@
 //! exact-match mask-sentinel rule ([`mask`]) and are encrypted at rest by
 //! [`Crypto`](crypto::Crypto); they are never logged (a test enforces it).
 //!
-//! No HTTP surface lives here: `settings` owns the settings routes,
-//! `import` the v2 importer (which re-encrypts under this key), and
-//! `providers::youtube` the client around [`QuotaStore`](quota::QuotaStore).
+//! No HTTP surface lives here: `settings` owns the settings routes and
+//! `import` the v2 importer (which re-encrypts under this key).
 
 pub mod crypto;
 pub mod effects;
@@ -21,7 +20,6 @@ pub mod key_check;
 pub mod mask;
 pub mod origin;
 pub mod plain;
-pub mod quota;
 pub mod registry;
 pub mod secret;
 pub mod secret_sections;
@@ -35,7 +33,6 @@ pub use error::ConfigError;
 pub use ingest::LegacyConfig;
 pub use mask::{Masked, SECRET_MASK};
 pub use plain::{Plain, PluginValues};
-pub use quota::{QuotaStatus, QuotaStore};
 pub use registry::{KNOWN_TOP_LEVEL_KEYS, Listed};
 pub use secret::Secret;
 pub use secret_sections::SecretSection;

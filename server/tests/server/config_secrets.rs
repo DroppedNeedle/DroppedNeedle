@@ -1,16 +1,13 @@
 //! Runtime config secrets: the mask that keeps the stored value,
 //! ciphertext at rest, fail-closed decryption, no secret in Debug output
-//! or logs, typed errors instead of panics on bad sections, and the
-//! YouTube quota file.
+//! or logs, typed errors instead of panics on bad sections.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
 
 use crate::common::ScratchDir;
 use crate::common::logs::capture_logs;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::mask::SECRET_MASK;
-use droppedneedle_kernel::runtime_config::quota::{QuotaError, QuotaStore};
 use droppedneedle_kernel::runtime_config::secret::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, EventsSettings, JellyfinConnection, LidarrImportConnection,
@@ -472,62 +469,6 @@ fn dropped_and_unknown_keys_left_behind_never_read() {
     let prefs: droppedneedle_kernel::runtime_config::sections::UserPreferences =
         store.get().unwrap();
     assert_eq!(prefs.primary_types, vec!["album", "ep", "single"]);
-}
-
-#[test]
-fn quota_reserve_refund_and_limit() {
-    let dir = test_dir("quota_basic");
-    let path = dir.join("youtube_quota.json");
-    let today = Arc::new(Mutex::new("2026-09-28".to_owned()));
-    let clock = {
-        let today = today.clone();
-        Arc::new(move || Ok::<String, QuotaError>(today.lock().unwrap().clone()))
-    };
-    let store = QuotaStore::open_with_clock(&path, clock).unwrap();
-    assert_eq!(store.count().unwrap(), 0);
-    let status = store.status(2).unwrap();
-    assert_eq!((status.used, status.remaining), (0, 2));
-    let date = store.reserve(2).unwrap();
-    assert_eq!(date, "2026-09-28");
-    assert_eq!(store.count().unwrap(), 1);
-    store.reserve(2).unwrap();
-    assert_eq!(store.count().unwrap(), 2);
-    assert_eq!(store.reserve(2), Err(QuotaError::RateLimited));
-    let file: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(
-        file["date"],
-        serde_json::Value::String("2026-09-28".to_owned())
-    );
-    assert_eq!(file["count"], serde_json::Value::Number(2.into()));
-    assert!(std::fs::read_dir(&dir).unwrap().count() == 1);
-    store.refund("2026-09-28").unwrap();
-    assert_eq!(store.count().unwrap(), 1);
-    store.refund("2026-09-27").unwrap();
-    assert_eq!(store.count().unwrap(), 1);
-}
-
-#[test]
-fn quota_stale_date_reads_zero_and_rolls_over() {
-    let dir = test_dir("quota_rollover");
-    let path = dir.join("youtube_quota.json");
-    std::fs::write(&path, r#"{"date": "2026-09-27", "count": 9}"#).unwrap();
-    let today = Arc::new(Mutex::new("2026-09-28".to_owned()));
-    let clock = {
-        let today = today.clone();
-        Arc::new(move || Ok::<String, QuotaError>(today.lock().unwrap().clone()))
-    };
-    let store = QuotaStore::open_with_clock(&path, clock).unwrap();
-    assert_eq!(store.count().unwrap(), 0);
-    store.reserve(80).unwrap();
-    assert_eq!(store.count().unwrap(), 1);
-    let file: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(
-        file["date"],
-        serde_json::Value::String("2026-09-28".to_owned())
-    );
-    assert_eq!(file["count"], serde_json::Value::Number(1.into()));
 }
 
 /// Debug output of every secret section, plugin settings included, hides

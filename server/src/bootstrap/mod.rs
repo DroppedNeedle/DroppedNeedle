@@ -71,7 +71,7 @@ use droppedneedle_kernel::{
     db::{BOOT_WAIT, BackupService, datalock::DataLockError, error::DbError},
     http_client::HttpClientError,
     platform::Platform,
-    runtime_config::{crypto::CryptoError, quota::QUOTA_FILE_NAME},
+    runtime_config::crypto::CryptoError,
 };
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::playback::listening::ListeningStore;
@@ -88,6 +88,7 @@ use droppedneedle_media::{
 };
 use droppedneedle_plugins::wiring::PluginsSetup;
 use droppedneedle_providers::Providers;
+use droppedneedle_providers::youtube::QUOTA_FILE_NAME;
 
 /// Why the server could not boot.
 #[derive(Debug, Error)]

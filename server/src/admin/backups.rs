@@ -1,4 +1,4 @@
-//! Backup UX: list, run, pre-restore reports, pre-upgrade safety nets.
+//! Backup UX: list, run, pre-restore reports.
 //!
 //! The mechanism lives in [`droppedneedle_kernel::db::backup`]; this module is the admin
 //! face over it. Rotation stays at five (`BACKUP_KEEP`): verification
@@ -85,49 +85,6 @@ pub async fn run_backup(service: &BackupService) -> Result<BackupRunResponse, Ad
         .await
         .map_err(|error| AdminError::internal(&format_args!("backup run failed: {error}")))?;
     Ok(run_response(&report))
-}
-
-/// Take a safety backup before a schema upgrade. Reads the live stamp: when
-/// it already matches the binary, there is nothing to protect and this
-/// returns `None` without touching the backups directory. A fresh database
-/// (stamp 0 with no tables yet) also skips: there is nothing to lose.
-/// Otherwise it runs one verified backup (rotating at five) and returns its
-/// report. Boot treats a failure here as fatal: migrating without a safety
-/// net risks the catalog.
-///
-/// The stamp alone does not prove freshness: a legacy database could carry
-/// stamp 0 with real tables, and that still gets its backup. Only the
-/// stamp-0-plus-no-tables shape skips.
-pub async fn ensure_pre_upgrade_backup(
-    db_path: &Path,
-    backup_dir: &Path,
-) -> Result<Option<BackupReport>, droppedneedle_kernel::db::error::DbError> {
-    let found = read_user_version(db_path)?;
-    let expected = droppedneedle_kernel::schema::latest_version();
-    if found >= expected {
-        return Ok(None);
-    }
-    if found == 0 && !has_user_tables(db_path)? {
-        tracing::info!("fresh database; skipping the pre-upgrade backup");
-        return Ok(None);
-    }
-    tracing::info!(
-        found,
-        expected,
-        "schema upgrade pending; taking a pre-upgrade backup"
-    );
-    let service = BackupService::new(
-        db_path,
-        backup_dir,
-        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
-    );
-    let cancel = droppedneedle_kernel::db::writer::CancelFlag::never();
-    let report = service.backup(None, &cancel).await?;
-    tracing::info!(
-        backup = report.path.display().to_string(),
-        "pre-upgrade backup complete"
-    );
-    Ok(Some(report))
 }
 
 /// Verify a backup read-only and report whether an offline restore should
@@ -313,23 +270,6 @@ fn integrity_clean(path: &Path) -> bool {
             row.get(0)
         });
     violations == Ok(0)
-}
-
-/// Whether a database file holds any user tables yet. Opens read-only; a
-/// file that cannot be read counts as non-empty, so the safety net stays.
-fn has_user_tables(path: &Path) -> Result<bool, droppedneedle_kernel::db::error::DbError> {
-    let connection = match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
-        Ok(connection) => connection,
-        // Unreadable after a successful stamp read is bizarre; take the
-        // backup rather than trust the emptiness.
-        Err(_) => return Ok(true),
-    };
-    let tables: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-        [],
-        |row| row.get(0),
-    )?;
-    Ok(tables > 0)
 }
 
 /// `user_version` stamped in a database file.

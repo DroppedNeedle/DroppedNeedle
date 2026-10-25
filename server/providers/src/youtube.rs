@@ -291,6 +291,10 @@ pub enum YoutubeError {
     Provider(#[from] ProviderError),
 }
 
+/// Quota file name inside the cache directory. It keeps the day's count
+/// across restarts.
+pub const QUOTA_FILE_NAME: &str = "youtube_quota.json";
+
 /// Durable quota state: the UTC date it belongs to plus units spent.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct QuotaState {
