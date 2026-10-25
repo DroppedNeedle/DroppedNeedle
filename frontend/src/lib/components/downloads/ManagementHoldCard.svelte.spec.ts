@@ -207,6 +207,7 @@ describe('ManagementHoldCard.svelte', () => {
 				page.getByText('Another file already sits where this would go in your library.').first()
 			)
 			.toBeVisible();
+		await expect.element(page.getByText('Waiting on the library', { exact: true })).toBeVisible();
 		await page.getByRole('button', { name: 'Import anyway' }).click();
 		expect(h.importMut).toHaveBeenCalledWith(
 			{ id: 1, release_group_mbid: null },

@@ -142,7 +142,7 @@
 		else expandedRows.add(idx);
 	}
 
-	// rows whose "held · couldn't verify" review panel is open
+	// rows whose held review panel is open
 	const heldOpen = new SvelteSet<number>();
 	function toggleHeld(idx: number) {
 		if (heldOpen.has(idx)) heldOpen.delete(idx);
@@ -338,7 +338,9 @@
 										size="xs"
 										onclick={() => toggleHeld(row.globalIndex)}
 										aria-expanded={heldOpen.has(row.globalIndex)}
-										title="Downloaded but couldn't verify - review it"
+										title={heldMeta.reason_kind === 'library'
+											? 'Waiting on the library'
+											: "Downloaded but couldn't verify - review it"}
 									>
 										<TriangleAlert class="size-3.5 text-warning" aria-hidden="true" /> held
 									</Button>

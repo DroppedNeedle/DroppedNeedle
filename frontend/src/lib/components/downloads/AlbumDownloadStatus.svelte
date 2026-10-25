@@ -49,8 +49,8 @@
 	const isReview = $derived(derivedStatus === 'awaiting_review');
 	const isManagementHold = $derived(managementHeld.length > 0);
 	const managementDetail = $derived(managementHeld[0]?.reason_detail?.trim() || null);
-	const securedFileLabel = $derived(
-		`${managementHeld.length} ${managementHeld.length === 1 ? 'file' : 'files'} secured`
+	const keptFileLabel = $derived(
+		`${managementHeld.length} ${managementHeld.length === 1 ? 'file' : 'files'} kept`
 	);
 	const isQueued = $derived(derivedStatus === 'queued');
 	const isDownloading = $derived(task.status === 'downloading');
@@ -95,7 +95,7 @@
 
 		<div class="min-w-0 flex-1">
 			{#if isManagementHold}
-				<p class="text-xs font-bold text-warning">Organizer paused · {securedFileLabel}</p>
+				<p class="text-xs font-bold text-warning">Waiting on the library · {keptFileLabel}</p>
 				{#if managementDetail}
 					<p class="mt-1 line-clamp-2 text-xs leading-relaxed text-base-content/65">
 						{managementDetail}

@@ -250,6 +250,61 @@ describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () =
 	});
 });
 
+function heldImport(over: Partial<HeldImport>): HeldImport {
+	return {
+		id: 1,
+		release_group_mbid: 'rg-1',
+		release_mbid: null,
+		release_track_mbid: null,
+		recording_mbid: null,
+		track_number: 3,
+		disc_number: 1,
+		track_title: 'Genuinely Missing',
+		artist_name: 'Artist',
+		album_title: 'Album',
+		year: 2020,
+		original_filename: '03 Genuinely Missing.flac',
+		file_format: 'flac',
+		duration_seconds: 180,
+		expected_duration_seconds: null,
+		reason: 'fingerprint_mismatch',
+		reason_detail: null,
+		source: 'soulseek',
+		source_task_id: 'task-1',
+		created_at: 1,
+		evidence_title: null,
+		evidence_artist: null,
+		evidence_score: null,
+		management_retry_count: 0,
+		management_next_retry_at: null,
+		reason_text: 'The fingerprint did not match this track.',
+		reason_action: 'Listen to it and import it if it is right.',
+		reason_kind: 'hold',
+		origin: 'user',
+		...over
+	};
+}
+
+describe('AlbumTrackList held toggle', () => {
+	it('titles a held row by why it is held', async () => {
+		await renderList({
+			tracks: [
+				...TRACKS,
+				{ position: 4, disc_number: 1, title: 'Unverified', length: 100000, recording_id: 'rec-4' }
+			],
+			heldByRecording: new Map([
+				['rec-3', heldImport({ id: 3, reason: 'target_occupied', reason_kind: 'library' })],
+				['rec-4', heldImport({ id: 4, reason_kind: 'hold' })]
+			])
+		});
+
+		await expect.element(page.getByTitle('Waiting on the library')).toBeVisible();
+		await expect
+			.element(page.getByTitle("Downloaded but couldn't verify - review it"))
+			.toBeVisible();
+	});
+});
+
 describe('AlbumTrackList exact-track request release propagation', () => {
 	it('sends the displayed selected edition to the track request mutation', async () => {
 		downloadMutations.requestMutate.mockClear();

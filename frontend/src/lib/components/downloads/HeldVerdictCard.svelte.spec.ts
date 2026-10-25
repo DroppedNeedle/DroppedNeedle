@@ -133,6 +133,15 @@ describe('HeldVerdictCard.svelte', () => {
 		expect(h.retry).toHaveBeenCalledWith('task-1');
 	});
 
+	it('marks a track a person must decide on as unverified', async () => {
+		await render(HeldVerdictCard, { props: { task: task(), items: [held(1)] } } as Parameters<
+			typeof render<typeof HeldVerdictCard>
+		>[1]);
+
+		await page.getByRole('button', { name: 'Review tracks one by one' }).click();
+		await expect.element(page.getByText("Couldn't verify", { exact: true })).toBeVisible();
+	});
+
 	it('requires confirmation before discarding every held file', async () => {
 		await render(HeldVerdictCard, {
 			props: { task: task(), items: [held(1), held(2)] }

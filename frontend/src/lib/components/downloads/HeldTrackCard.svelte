@@ -9,6 +9,8 @@
 	import HeldTrackReview from './HeldTrackReview.svelte';
 
 	let { held }: { held: HeldImport } = $props();
+	// a library hold retries by itself; any other hold needs a person to decide
+	const waitingOnLibrary = $derived(held.reason_kind === 'library');
 </script>
 
 <Card as="article" variant="bordered" padding="sm" class="border-warning/20">
@@ -45,7 +47,7 @@
 						>{:else}{held.album_title}{/if}{/if}
 			</p>
 			<p class="mt-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-warning">
-				Couldn't verify
+				{waitingOnLibrary ? 'Waiting on the library' : "Couldn't verify"}
 			</p>
 			<div class="mt-1.5"><HeldTrackReview {held} /></div>
 		</div>
