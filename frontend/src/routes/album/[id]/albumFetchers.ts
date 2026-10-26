@@ -82,19 +82,22 @@ export async function fetchLocalMatch(
 
 export async function fetchNavidromeMatch(
 	albumId: string,
-	_opts: { albumTitle?: string; artistName?: string },
+	opts: { albumTitle?: string; artistName?: string },
 	signal?: AbortSignal
 ): Promise<NavidromeAlbumMatch | null> {
-	// v3 matches by MusicBrainz id only; the title and artist hints are unused.
-	return fetchNavidromeAlbumMatch(albumId, signal);
+	return fetchNavidromeAlbumMatch(
+		albumId,
+		{ title: opts.albumTitle, artist: opts.artistName },
+		signal
+	);
 }
 
 export async function fetchPlexMatch(
 	albumId: string,
-	_opts: { albumTitle?: string; artistName?: string },
+	opts: { albumTitle?: string; artistName?: string },
 	signal?: AbortSignal
 ): Promise<PlexAlbumMatch | null> {
-	return fetchPlexAlbumMatch(albumId, signal);
+	return fetchPlexAlbumMatch(albumId, { title: opts.albumTitle, artist: opts.artistName }, signal);
 }
 
 export async function fetchLastFm(

@@ -12,9 +12,10 @@
 //! registered kind's handler gets a supervised runner at boot.
 //!
 //! Loop backends are real where they exist (checkpoint passes, the
-//! now-playing feed and its upstream session pollers, the Navidrome playlist
-//! export, events settings reads, the concerts sweep, the personal mix);
-//! a backend a state does not wire runs as a no-op.
+//! now-playing feed and its upstream session pollers, the media servers'
+//! MBID warmups, the Navidrome playlist export, events settings reads, the
+//! concerts sweep, the personal mix); a backend a state does not wire runs
+//! as a no-op.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,6 +47,7 @@ use droppedneedle_media::remotes::playlist_sync::{
     NavidromeSyncSettings, PlaylistSyncState, ProdPlaylistSync,
 };
 use droppedneedle_media::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
+use droppedneedle_media::remotes::warmup::{self, Warmups};
 use droppedneedle_providers::ProviderCacheStore;
 
 /// Checkpoint passes over the runtime's service.
@@ -253,6 +255,7 @@ pub struct JobsSetup {
     checkpoint: CheckpointInput,
     playlist: ProdPlaylistSync,
     presence: (RegistryFeed, RemoteSessionPollers),
+    warmups: Warmups,
     poll_time: EventsPollTime,
     watcher: Option<ConcertsSweep>,
     mixer: Arc<dyn PersonalMixer>,
@@ -320,10 +323,10 @@ impl QueueSetup {
 
 impl JobsSetup {
     /// Bind the backends over the platform's supervisor, settings and
-    /// event hub: live checkpoint passes, the media feeds (presence,
-    /// playlist export), the concerts sweep (`None` only on states without
-    /// concerts) and the count of ended scans the after-scan refresh waits
-    /// on.
+    /// event hub: live checkpoint passes, the media feeds (presence, MBID
+    /// warmups, playlist export), the concerts sweep (`None` only on states
+    /// without concerts) and the count of ended scans the after-scan refresh
+    /// waits on.
     pub fn build(
         platform: &Platform,
         checkpoint: CheckpointService,
@@ -342,6 +345,7 @@ impl JobsSetup {
                 exporter: media.exporter(),
             },
             presence: (media.feed(), media.pollers()),
+            warmups: media.warmups(),
             poll_time: EventsPollTime {
                 events: config.live(),
             },
@@ -485,9 +489,10 @@ impl JobsSetup {
         })
     }
 
-    /// Start the always-on loops ([`droppedneedle_kernel::jobs::BOOT_JOBS`]),
-    /// and the post-scan precache wait when precache is wired. Boot is the
-    /// only caller, so a name collision fails the boot loudly instead of
+    /// Start the always-on loops ([`droppedneedle_kernel::jobs::BOOT_JOBS`]
+    /// and the media servers' MBID warmups), and the post-scan precache
+    /// wait when precache is wired. Boot is the only caller, so a name
+    /// collision fails the boot loudly instead of
     /// running half the loops, and so do job kinds registered without a
     /// jobs table, which would otherwise never run.
     pub fn spawn_loops(&self) -> Result<(), String> {
@@ -533,6 +538,8 @@ impl JobsSetup {
             discovery_demand::default_schedule(),
         )
         .map_err(already_running(discovery_demand::JOB_NAME))?;
+        warmup::start_all(&self.supervisor, &self.warmups)
+            .map_err(|_| "a remotes warmup is already running".to_owned())?;
         if self.precache_sources.is_some() {
             self.precache_trigger()
                 .spawn_after_scan()

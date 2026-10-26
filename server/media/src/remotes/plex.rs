@@ -36,10 +36,11 @@ use super::adapter::{
 use super::connections::{PlexServerTokens, ServerSettings};
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, DiscoveryHubView, DiscoveryView, FavoritesView,
-    HistoryEntry, HistoryPage, HubView, InfoView, LyricsView, MatchView, PlaylistDetail,
-    PlaylistSummary, SearchResults, SessionView, SessionsView, SourceName, StatsView, TrackView,
+    HistoryEntry, HistoryPage, HubView, InfoView, LyricsView, PlaylistDetail, PlaylistSummary,
+    SearchResults, SessionView, SessionsView, SourceName, StatsView, TrackView,
 };
 use super::plex_models::{Container, Envelope, Metadata};
+use super::warmup::{INDEX_MAX_PAGES, INDEX_PAGE, IndexedAlbum, indexed};
 use droppedneedle_auth::federated::FederatedError;
 use droppedneedle_auth::federated::plex::PlexServerIdentity;
 use droppedneedle_auth::federated::settings::InstallIds;
@@ -871,28 +872,76 @@ impl PlexAdapter {
         .await
     }
 
-    /// Resolve an MBID by searching for it per section and comparing
-    /// `mbid://` guids.
-    pub async fn match_album(&self, mbid: &str) -> Result<MatchView, AdapterError> {
+    /// The first album in the per-section search for `mbid` whose `mbid://`
+    /// guid carries it.
+    pub async fn mbid_search(&self, mbid: &str) -> Result<Option<String>, AdapterError> {
         let results = self.search(mbid, 50).await?;
-        let Some(album) = results.albums.iter().find(|album| {
-            album.release_mbid.as_deref() == Some(mbid)
-                || album.release_group_mbid.as_deref() == Some(mbid)
-        }) else {
-            return Ok(MatchView {
-                source: SourceName::Plex,
-                found: false,
-                remote_album_id: None,
-                tracks: Vec::new(),
-            });
+        Ok(results
+            .albums
+            .into_iter()
+            .find(|album| {
+                album.release_mbid.as_deref() == Some(mbid)
+                    || album.release_group_mbid.as_deref() == Some(mbid)
+            })
+            .map(|album| album.id))
+    }
+
+    /// Every album with an `mbid://` guid, section by section, at most `cap`
+    /// entries, each recording its section.
+    pub async fn album_index(&self, cap: usize) -> Result<Vec<IndexedAlbum>, AdapterError> {
+        let size = INDEX_PAGE.to_string();
+        let mut index = Vec::new();
+        let mut pages = 0;
+        for section in self.resolve_sections().await? {
+            let mut offset = 0;
+            while index.len() < cap && pages < INDEX_MAX_PAGES {
+                pages += 1;
+                let start = offset.to_string();
+                // List answers leave out the `Guid` children unless asked
+                // for them with `includeGuids=1`, as python-plexapi does. Not
+                // verified against a live server: none was reachable here.
+                let container = self
+                    .request(
+                        &format!("/library/sections/{section}/all"),
+                        &params(&[
+                            ("type", "9"),
+                            ("X-Plex-Container-Start", &start),
+                            ("X-Plex-Container-Size", &size),
+                            ("sort", "titleSort"),
+                            ("includeGuids", "1"),
+                        ]),
+                    )
+                    .await?;
+                for album in &container.metadata {
+                    let (Some(mbid), Ok(id)) = (album.mbid(), album.rating_key()) else {
+                        continue;
+                    };
+                    if let Some(entry) = indexed(&mbid, id, Some(&section)) {
+                        index.push(entry);
+                    }
+                }
+                offset += INDEX_PAGE;
+                let total = container.total_size.unwrap_or(0);
+                if (container.metadata.len() as i64) < INDEX_PAGE || offset >= total {
+                    break;
+                }
+            }
+        }
+        index.truncate(cap);
+        Ok(index)
+    }
+
+    /// Whether an album listed under section `scope` is inside the pinned
+    /// sections, or any music section when nothing is pinned.
+    pub async fn holds(&self, scope: Option<&str>) -> Result<bool, AdapterError> {
+        let Some(section) = scope else {
+            return Ok(false);
         };
-        let tracks = self.album_tracks(&album.id).await?;
-        Ok(MatchView {
-            source: SourceName::Plex,
-            found: true,
-            remote_album_id: Some(album.id.clone()),
-            tracks,
-        })
+        Ok(self
+            .resolve_sections()
+            .await?
+            .iter()
+            .any(|key| key == section))
     }
 
     fn require_configured(&self) -> Result<(), AdapterError> {

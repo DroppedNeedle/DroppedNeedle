@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use axum::{
-    Json,
+    Extension, Json,
     body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
@@ -132,6 +132,45 @@ impl Drop for MockServer {
     }
 }
 
+/// How a Navidrome or Plex mock differs from the canned catalog.
+#[derive(Debug, Clone)]
+pub struct MockOptions {
+    /// Whether searching for a MusicBrainz id finds the album carrying it,
+    /// on by default. Not verified: no live Plex `/hubs/search` or
+    /// Navidrome `search3` was reachable to probe.
+    pub mbid_search: bool,
+    /// Albums added to the canned catalog, one track each.
+    pub extra_albums: Vec<MockAlbum>,
+    /// Navidrome album ids whose `getAlbum` answers HTTP 500.
+    pub failing_albums: Vec<String>,
+}
+
+impl Default for MockOptions {
+    fn default() -> Self {
+        Self {
+            mbid_search: true,
+            extra_albums: Vec::new(),
+            failing_albums: Vec::new(),
+        }
+    }
+}
+
+/// One album added to a mock's catalog.
+#[derive(Debug, Clone)]
+pub struct MockAlbum {
+    /// Album id; its one track is `{id}-t`.
+    pub id: String,
+    /// Album title.
+    pub title: String,
+    /// Album artist.
+    pub artist: String,
+    /// Release id it carries.
+    pub mbid: Option<String>,
+    /// Navidrome folder id or Plex section key it is listed under. A
+    /// Navidrome folder other than `folder-1` is listed as a music folder.
+    pub folder: String,
+}
+
 /// Start the mock Jellyfin 10.11 server.
 pub async fn serve_jellyfin() -> Result<MockServer, std::io::Error> {
     let recorder = MockRecorder::default();
@@ -141,15 +180,25 @@ pub async fn serve_jellyfin() -> Result<MockServer, std::io::Error> {
 
 /// Start the mock Navidrome 0.62.0 server.
 pub async fn serve_navidrome() -> Result<MockServer, std::io::Error> {
+    serve_navidrome_with(MockOptions::default()).await
+}
+
+/// Start the mock Navidrome 0.62.0 server with `options`.
+pub async fn serve_navidrome_with(options: MockOptions) -> Result<MockServer, std::io::Error> {
     let recorder = MockRecorder::default();
-    let router = navidrome_router(recorder.clone());
+    let router = navidrome_router(recorder.clone()).layer(Extension(Arc::new(options)));
     MockServer::serve(router, recorder).await
 }
 
 /// Start the mock Plex server.
 pub async fn serve_plex() -> Result<MockServer, std::io::Error> {
+    serve_plex_with(MockOptions::default()).await
+}
+
+/// Start the mock Plex server with `options`.
+pub async fn serve_plex_with(options: MockOptions) -> Result<MockServer, std::io::Error> {
     let recorder = MockRecorder::default();
-    let router = plex_router(recorder.clone());
+    let router = plex_router(recorder.clone()).layer(Extension(Arc::new(options)));
     MockServer::serve(router, recorder).await
 }
 
@@ -465,6 +514,8 @@ async fn jf_search_hints(
     for album in jf_albums() {
         let name = album.get("Name").and_then(Value::as_str).unwrap_or("");
         let providers = album.get("ProviderIds").cloned().unwrap_or(Value::Null);
+        // Whether live `/Search/Hints` matches a provider id is not verified:
+        // no live server was reachable to probe.
         let mbid_hit = providers
             .as_object()
             .map(|map| map.values().any(|value| value.as_str() == Some(term)))
@@ -708,6 +759,53 @@ fn nd_albums() -> Vec<Value> {
     ]
 }
 
+/// The canned albums, all in `folder-1`, then the extra ones.
+fn nd_catalog(options: &MockOptions) -> Vec<(String, Value)> {
+    nd_albums()
+        .into_iter()
+        .map(|album| ("folder-1".to_owned(), album))
+        .chain(options.extra_albums.iter().map(|extra| {
+            (
+                extra.folder.clone(),
+                json!({
+                    "id": extra.id, "name": extra.title, "artist": extra.artist,
+                    "artistId": format!("{}-ar", extra.id), "songCount": 1, "duration": 180,
+                    "musicBrainzId": extra.mbid.clone().unwrap_or_default(),
+                }),
+            )
+        }))
+        .collect()
+}
+
+/// Canned songs plus one per extra album.
+fn nd_all_songs(options: &MockOptions) -> Vec<Value> {
+    nd_songs()
+        .into_iter()
+        .chain(options.extra_albums.iter().map(|extra| {
+            json!({
+                "id": format!("{}-t", extra.id), "title": format!("{} One", extra.title),
+                "album": extra.title, "albumId": extra.id, "artist": extra.artist,
+                "track": 1, "discNumber": 1, "duration": 180, "suffix": "mp3",
+            })
+        }))
+        .collect()
+}
+
+/// The 0.62.0 folder rule: known folder ids narrow the catalog, unknown
+/// ones are ignored, and none at all means every folder.
+fn nd_in_folders(
+    catalog: Vec<(String, Value)>,
+    requested: &[String],
+    known: &[String],
+) -> Vec<Value> {
+    let wanted: Vec<&String> = requested.iter().filter(|id| known.contains(id)).collect();
+    catalog
+        .into_iter()
+        .filter(|(folder, _)| wanted.is_empty() || wanted.contains(&folder))
+        .map(|(_, album)| album)
+        .collect()
+}
+
 fn nd_songs() -> Vec<Value> {
     vec![
         json!({
@@ -746,6 +844,7 @@ fn nd_artists() -> Vec<Value> {
 
 async fn nd_handle(
     State(recorder): State<MockRecorder>,
+    Extension(options): Extension<Arc<MockOptions>>,
     Path(endpoint): Path<String>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
@@ -759,7 +858,7 @@ async fn nd_handle(
             .navidrome_folder_params
             .entry(endpoint.clone())
             .or_default()
-            .push(folders);
+            .push(folders.clone());
         calls
             .navidrome_queries
             .push((endpoint.clone(), params.clone()));
@@ -778,12 +877,29 @@ async fn nd_handle(
         return nd_failure(41, "Wrong username or password");
     }
     // The 0.62.0 probe shape: one folder, repeated ids accepted, unknown
-    // ids ignored for catalog endpoints.
+    // ids ignored for catalog endpoints. Extra albums may add folders.
+    let mut known = vec!["folder-1".to_owned()];
+    for extra in &options.extra_albums {
+        if !known.contains(&extra.folder) {
+            known.push(extra.folder.clone());
+        }
+    }
     match endpoint.as_str() {
         "ping" => nd_envelope(json!({})),
-        "getMusicFolders" => nd_envelope(json!({
-            "musicFolders": {"musicFolder": [{"id": "folder-1", "name": "Library"}]}
-        })),
+        "getMusicFolders" => {
+            let listed: Vec<Value> = known
+                .iter()
+                .map(|id| {
+                    let name = if id == "folder-1" {
+                        "Library"
+                    } else {
+                        id.as_str()
+                    };
+                    json!({"id": id, "name": name})
+                })
+                .collect();
+            nd_envelope(json!({"musicFolders": {"musicFolder": listed}}))
+        }
         "getArtists" => nd_envelope(json!({
             "artists": {"index": [
                 {"name": "A", "artist": [nd_artists()[0].clone()]},
@@ -792,7 +908,7 @@ async fn nd_handle(
         })),
         "getAlbumList2" => {
             let list_type = query.get("type").unwrap_or(&"alphabeticalByName");
-            let mut albums = nd_albums();
+            let mut albums = nd_in_folders(nd_catalog(&options), &folders, &known);
             match *list_type {
                 "byGenre" => {
                     let genre = query.get("genre").copied().unwrap_or("");
@@ -835,12 +951,16 @@ async fn nd_handle(
         }
         "getAlbum" => {
             let id = query.get("id").copied().unwrap_or("");
-            match nd_albums()
+            if options.failing_albums.iter().any(|failing| failing == id) {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            match nd_catalog(&options)
                 .into_iter()
+                .map(|(_, album)| album)
                 .find(|album| album.get("id").and_then(Value::as_str) == Some(id))
             {
                 Some(mut album) => {
-                    let songs: Vec<Value> = nd_songs()
+                    let songs: Vec<Value> = nd_all_songs(&options)
                         .into_iter()
                         .filter(|song| song.get("albumId").and_then(Value::as_str) == Some(id))
                         .collect();
@@ -906,7 +1026,7 @@ async fn nd_handle(
                 })
                 .take(artist_count)
                 .collect();
-            let albums: Vec<Value> = nd_albums()
+            let albums: Vec<Value> = nd_in_folders(nd_catalog(&options), &folders, &known)
                 .into_iter()
                 .filter(|album| {
                     lowered.is_empty()
@@ -916,7 +1036,9 @@ async fn nd_handle(
                             .unwrap_or("")
                             .to_lowercase()
                             .contains(&lowered)
-                        || album.get("musicBrainzId").and_then(Value::as_str) == Some(text.as_str())
+                        || (options.mbid_search
+                            && album.get("musicBrainzId").and_then(Value::as_str)
+                                == Some(text.as_str()))
                 })
                 .take(album_count)
                 .collect();
@@ -1202,6 +1324,32 @@ fn px_albums(section: &str) -> Vec<Value> {
     }
 }
 
+/// A section's canned albums plus the extra ones listed under it.
+fn px_section_albums(section: &str, options: &MockOptions) -> Vec<Value> {
+    px_albums(section)
+        .into_iter()
+        .chain(
+            options
+                .extra_albums
+                .iter()
+                .filter(|extra| extra.folder == section)
+                .map(|extra| {
+                    px_album(
+                        &extra.id,
+                        &extra.title,
+                        &extra.artist,
+                        &format!("{}-ar", extra.id),
+                        2021,
+                        1,
+                        extra.mbid.as_deref(),
+                        50,
+                        5,
+                    )
+                }),
+        )
+        .collect()
+}
+
 fn px_artists(section: &str) -> Vec<Value> {
     match section {
         "2" => vec![json!({
@@ -1308,6 +1456,7 @@ async fn px_sections(State(recorder): State<MockRecorder>, headers: HeaderMap) -
 
 async fn px_section_all(
     State(recorder): State<MockRecorder>,
+    Extension(options): Extension<Arc<MockOptions>>,
     headers: HeaderMap,
     Path(id): Path<String>,
     Query(params): Query<Vec<(String, String)>>,
@@ -1327,8 +1476,17 @@ async fn px_section_all(
     let mut items = match query.get("type") {
         Some(&"8") => px_artists(&id),
         Some(&"10") => px_tracks(&id),
-        _ => px_albums(&id),
+        _ => px_section_albums(&id, &options),
     };
+    // List answers carry `Guid` children only when asked with
+    // `includeGuids=1`.
+    if query.get("includeGuids") != Some(&"1") {
+        for item in &mut items {
+            if let Some(map) = item.as_object_mut() {
+                map.remove("Guid");
+            }
+        }
+    }
     if let Some(title) = query.get("title") {
         items.retain(|item| {
             item.get("title")
@@ -1428,15 +1586,27 @@ async fn px_metadata(
 
 async fn px_children(
     State(recorder): State<MockRecorder>,
+    Extension(options): Extension<Arc<MockOptions>>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
     if !px_authorized(&headers, &recorder) {
         return px_unauthorized();
     }
+    let extra_tracks = options.extra_albums.iter().map(|extra| {
+        px_track(
+            &format!("{}-t", extra.id),
+            &format!("{} One", extra.title),
+            &extra.title,
+            &extra.id,
+            &extra.artist,
+            1,
+        )
+    });
     let tracks: Vec<Value> = ["1", "2"]
         .into_iter()
         .flat_map(px_tracks)
+        .chain(extra_tracks)
         .filter(|track| track.get("parentRatingKey").and_then(Value::as_str) == Some(id.as_str()))
         .collect();
     px_container(json!({"Metadata": tracks}))
@@ -1524,6 +1694,7 @@ async fn px_custom_composite(State(recorder): State<MockRecorder>, headers: Head
 
 async fn px_search(
     State(recorder): State<MockRecorder>,
+    Extension(options): Extension<Arc<MockOptions>>,
     headers: HeaderMap,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
@@ -1544,23 +1715,24 @@ async fn px_search(
     let mut tracks = Vec::new();
     let mut artists = Vec::new();
     for section in sections {
-        for album in px_albums(section) {
+        for album in px_section_albums(section, &options) {
             let title_hit = album
                 .get("title")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_lowercase()
                 .contains(&lowered);
-            let mbid_hit = album
-                .get("Guid")
-                .and_then(Value::as_array)
-                .map(|guids| {
-                    guids.iter().any(|guid| {
-                        guid.get("id").and_then(Value::as_str)
-                            == Some(format!("mbid://{text}").as_str())
+            let mbid_hit = options.mbid_search
+                && album
+                    .get("Guid")
+                    .and_then(Value::as_array)
+                    .map(|guids| {
+                        guids.iter().any(|guid| {
+                            guid.get("id").and_then(Value::as_str)
+                                == Some(format!("mbid://{text}").as_str())
+                        })
                     })
-                })
-                .unwrap_or(false);
+                    .unwrap_or(false);
             if title_hit || mbid_hit {
                 albums.push(album);
             }

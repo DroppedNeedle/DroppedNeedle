@@ -20,12 +20,14 @@ use super::jellyfin::{JellyfinAdapter, MixSeed};
 use super::models::{
     AlbumPage, AlbumView, AnalyticsView, ArtistIndexEntry, ArtistPage, ArtistView,
     ConnectionStatus, DiscoveryView, FavoritesView, FilterFacetsView, FolderResolutionView,
-    HistoryPage, HubView, ImportResult, InfoView, LyricsView, MatchView, MusicFolderView,
-    PlaylistCollection, PlaylistDetail, SearchResults, SessionsView, SourceName, StatsView,
-    TrackPage, TrackView,
+    HistoryPage, HubView, ImportResult, InfoView, LyricsView, MatchQuery, MatchView,
+    MusicFolderView, PlaylistCollection, PlaylistDetail, SearchResults, SessionsView, SourceName,
+    StatsView, TrackPage, TrackView,
 };
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
+use super::warmup::MbidIndex;
+use droppedneedle_kernel::db::fold::fold_text;
 
 /// Every way a remotes call can fail. Detail strings are log-only unless
 /// the variant says otherwise.
@@ -120,6 +122,26 @@ pub struct AccountLogin {
     pub password: String,
 }
 
+/// Albums one name search reads, as in v2.
+const NAME_SEARCH_LIMIT: i64 = 50;
+/// The folded compilation credit the name step never matches on: a title
+/// like "Greatest Hits" under it names no one album.
+const VARIOUS_ARTISTS: &str = "various artists";
+
+/// A query value with something in it.
+fn present(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+/// The album's tracks, when it has any.
+async fn playable(
+    handle: &RemoteHandle,
+    id: String,
+) -> Result<Option<(String, Vec<TrackView>)>, AdapterError> {
+    let tracks = handle.album_tracks(&id).await?;
+    Ok((!tracks.is_empty()).then_some((id, tracks)))
+}
+
 /// Plex listening analytics over the history feed.
 pub const ANALYTICS_MAX_ENTRIES: i64 = 5_000;
 const ANALYTICS_BATCH: i64 = 500;
@@ -133,18 +155,21 @@ pub struct RemotesService {
     resolver: Arc<ConnectionResolver>,
     folders: Arc<dyn FolderStore>,
     imports: Arc<dyn ImportSink>,
+    index: MbidIndex,
     clock: Arc<dyn Clock>,
 }
 
 impl RemotesService {
     /// Build the service over the shared HTTP client, the connection
-    /// resolver, the folder preferences, the playlist import target and
-    /// the clock listening analytics count back from.
+    /// resolver, the folder preferences, the playlist import target, the
+    /// MBID index the warmups fill and the clock listening analytics count
+    /// back from.
     pub fn new(
         http: reqwest::Client,
         resolver: Arc<ConnectionResolver>,
         folders: Arc<dyn FolderStore>,
         imports: Arc<dyn ImportSink>,
+        index: MbidIndex,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -152,6 +177,7 @@ impl RemotesService {
             resolver,
             folders,
             imports,
+            index,
             clock,
         }
     }
@@ -159,6 +185,11 @@ impl RemotesService {
     /// The resolver behind this service.
     pub fn resolver(&self) -> &Arc<ConnectionResolver> {
         &self.resolver
+    }
+
+    /// The MBID index the match reads.
+    pub fn index(&self) -> &MbidIndex {
+        &self.index
     }
 
     // -- handles -----------------------------------------------------------
@@ -807,22 +838,106 @@ impl RemotesService {
         .await
     }
 
-    /// The remote album behind a MusicBrainz id.
+    /// The caller's copy of an album on one source.
+    ///
+    /// A remote album matches when it carries the album's release or
+    /// release-group id, from the index or the server's MBID search, taking
+    /// the first in the server's order. Otherwise, on Plex and Navidrome
+    /// only, it matches by name: when the query has a title and an artist
+    /// that is not Various Artists, and exactly one album in the title
+    /// search's answer has that title and album artist once folded. Two or
+    /// more mean no match, since a wrong match plays the wrong album. Every
+    /// candidate counts only when the caller's own connection can open it.
     pub async fn match_album(
         &self,
         user_id: &str,
         source: SourceName,
-        mbid: String,
+        query: MatchQuery,
     ) -> RemotesResult<MatchView> {
-        if mbid.trim().is_empty() {
+        let mbid = query.mbid.trim();
+        if mbid.is_empty() {
             return Err(RemotesFailure::InvalidInput(
                 "Match mbid must not be empty".to_owned(),
             ));
         }
-        self.call(user_id, source, move |handle| async move {
-            handle.match_album(&mbid).await
+        let handle = self.handle(user_id, source).await?;
+        // The index is used only for the server it was read from: after the
+        // admin points the source elsewhere, its ids name other albums.
+        let server = self
+            .resolver
+            .server(source)
+            .map_err(|error| resolve_failure(source, error))?
+            .map(|server| server.base_url)
+            .unwrap_or_default();
+        let found = self
+            .find_album(&handle, source, &server, mbid, &query)
+            .await
+            .map_err(|error| adapter_failure(source, error))?;
+        Ok(match found {
+            Some((id, tracks)) => MatchView {
+                source,
+                found: true,
+                remote_album_id: Some(id),
+                tracks,
+            },
+            None => MatchView {
+                source,
+                found: false,
+                remote_album_id: None,
+                tracks: Vec::new(),
+            },
         })
-        .await
+    }
+
+    async fn find_album(
+        &self,
+        handle: &RemoteHandle,
+        source: SourceName,
+        server: &str,
+        mbid: &str,
+        query: &MatchQuery,
+    ) -> Result<Option<(String, Vec<TrackView>)>, AdapterError> {
+        for album in self.index.lookup(source, server, mbid) {
+            if !handle.holds(album.scope.as_deref()).await? {
+                continue;
+            }
+            match handle.album_tracks(&album.id).await {
+                Ok(tracks) if !tracks.is_empty() => return Ok(Some((album.id, tracks))),
+                // The server no longer has it: the next pass drops it. Any
+                // other failure stops the match, so an outage never falls
+                // through to a guess by name.
+                Ok(_) | Err(AdapterError::NotFound) => {
+                    tracing::debug!(source = source.as_str(), "indexed album is gone");
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if let Some(id) = handle.mbid_search(mbid).await?
+            && let Some(found) = playable(handle, id).await?
+        {
+            return Ok(Some(found));
+        }
+        if source == SourceName::Jellyfin {
+            return Ok(None);
+        }
+        let (Some(title), Some(artist)) = (
+            present(query.title.as_deref()),
+            present(query.artist.as_deref()),
+        ) else {
+            return Ok(None);
+        };
+        let (title_key, artist_key) = (fold_text(title), fold_text(artist));
+        if artist_key == VARIOUS_ARTISTS {
+            return Ok(None);
+        }
+        let results = handle.search(title, NAME_SEARCH_LIMIT).await?;
+        let mut named = results.albums.into_iter().filter(|album| {
+            fold_text(&album.title) == title_key && fold_text(&album.artist_name) == artist_key
+        });
+        match (named.next(), named.next()) {
+            (Some(album), None) => playable(handle, album.id).await,
+            _ => Ok(None),
+        }
     }
 
     // -- connections -------------------------------------------------------

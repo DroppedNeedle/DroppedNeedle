@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 /// Which remote source a view or id belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceName {
     /// Jellyfin media server.
@@ -720,12 +720,17 @@ impl ImageQuery {
     }
 }
 
-/// MBID match query.
+/// Album match query. Title and artist let Plex and Navidrome find an
+/// album whose tags carry no MusicBrainz id.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct MatchQuery {
     /// MusicBrainz release or release-group id.
     pub mbid: String,
+    /// Album title.
+    pub title: Option<String>,
+    /// Album artist.
+    pub artist: Option<String>,
 }
 
 /// Lyrics query: plain id lookup, with artist/title fallback for Navidrome.

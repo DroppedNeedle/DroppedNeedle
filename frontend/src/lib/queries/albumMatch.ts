@@ -9,6 +9,7 @@ import type {
 } from '$lib/types';
 import { toJellyfinTrack, toNavidromeTrack, toPlexTrack } from './remotes/remoteAdapters';
 import { remoteApi } from './remotes/remoteApi';
+import type { RemoteMatchHints } from './remotes/endpoints';
 import type { components } from '$lib/api/v3/openapi';
 
 // "Which copy of this MusicBrainz album does each source hold": the local
@@ -67,7 +68,7 @@ export async function fetchJellyfinAlbumMatch(
 	mbid: string,
 	signal?: AbortSignal
 ): Promise<JellyfinAlbumMatch> {
-	const match = await remoteApi.match('jellyfin', mbid, signal);
+	const match = await remoteApi.match('jellyfin', mbid, {}, signal);
 	return {
 		found: match.found,
 		jellyfin_album_id: match.remote_album_id ?? null,
@@ -77,9 +78,10 @@ export async function fetchJellyfinAlbumMatch(
 
 export async function fetchNavidromeAlbumMatch(
 	mbid: string,
+	hints: RemoteMatchHints,
 	signal?: AbortSignal
 ): Promise<NavidromeAlbumMatch> {
-	const match = await remoteApi.match('navidrome', mbid, signal);
+	const match = await remoteApi.match('navidrome', mbid, hints, signal);
 	return {
 		found: match.found,
 		navidrome_album_id: match.remote_album_id ?? null,
@@ -89,9 +91,10 @@ export async function fetchNavidromeAlbumMatch(
 
 export async function fetchPlexAlbumMatch(
 	mbid: string,
+	hints: RemoteMatchHints,
 	signal?: AbortSignal
 ): Promise<PlexAlbumMatch> {
-	const match = await remoteApi.match('plex', mbid, signal);
+	const match = await remoteApi.match('plex', mbid, hints, signal);
 	return {
 		found: match.found,
 		plex_album_id: match.remote_album_id ?? null,

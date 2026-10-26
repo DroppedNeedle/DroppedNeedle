@@ -6993,7 +6993,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The remote album behind a MusicBrainz id. */
+        /**
+         * The caller's copy of an album on one source.
+         * @description Found by MusicBrainz id, or on Plex and Navidrome by title and artist
+         *     when no album there carries the id.
+         */
         get: operations["remotes_match_album"];
         put?: never;
         post?: never;
@@ -42478,6 +42482,10 @@ export interface operations {
             query: {
                 /** @description MusicBrainz release or release-group id. */
                 mbid: string;
+                /** @description Album title. */
+                title?: string;
+                /** @description Album artist. */
+                artist?: string;
             };
             header?: never;
             path: {

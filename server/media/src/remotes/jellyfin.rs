@@ -18,7 +18,6 @@
 //! Payloads decode into the typed shapes in [`super::jellyfin_models`]; a
 //! payload missing an item id is an upstream error, not an empty item.
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -33,9 +32,10 @@ use super::jellyfin_models::{
 };
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, FilterFacetsView, HistoryPage, HubView,
-    InfoView, LyricLine, LyricsView, MatchView, PlaylistDetail, PlaylistSummary, SearchResults,
-    SessionView, SessionsView, SourceName, StatsView, TrackView,
+    InfoView, LyricLine, LyricsView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
+    SessionsView, SourceName, StatsView, TrackView,
 };
+use super::warmup::{INDEX_MAX_PAGES, IndexedAlbum, indexed};
 
 /// Request timeout per upstream call, matching the v2 repository.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -140,13 +140,16 @@ impl JellyfinAdapter {
         ))
     }
 
-    /// Full MBID-to-item index over the album catalog, 500 rows per page.
-    /// `match_album` prefers the cheap search fallback and only scans when
-    /// search misses.
-    pub async fn mbid_index(&self) -> Result<HashMap<String, String>, AdapterError> {
-        let mut index = HashMap::new();
+    /// Every album that carries a release-group or release id, 500 rows per
+    /// page, at most `cap` entries. Jellyfin has no folder scope here: the
+    /// caller's account is checked by reading the album with it.
+    pub async fn album_index(&self, cap: usize) -> Result<Vec<IndexedAlbum>, AdapterError> {
+        let mut index = Vec::new();
         let mut offset: i64 = 0;
-        loop {
+        for _ in 0..INDEX_MAX_PAGES {
+            if index.len() >= cap {
+                break;
+            }
             let mut query = params(&[
                 ("includeItemTypes", "MusicAlbum"),
                 ("recursive", "true"),
@@ -159,8 +162,11 @@ impl JellyfinAdapter {
             }
             for item in &page.items {
                 for key in ["MusicBrainzReleaseGroup", "MusicBrainzAlbum"] {
-                    if let Some(mbid) = item.provider(key) {
-                        index.insert(mbid, item.id.clone());
+                    if let Some(entry) = item
+                        .provider(key)
+                        .and_then(|mbid| indexed(&mbid, &item.id, None))
+                    {
+                        index.push(entry);
                     }
                 }
             }
@@ -169,6 +175,7 @@ impl JellyfinAdapter {
                 break;
             }
         }
+        index.truncate(cap);
         Ok(index)
     }
 
@@ -989,10 +996,9 @@ impl JellyfinAdapter {
         self.image_bytes(&first.id, size).await
     }
 
-    /// Resolve an MBID via the cheap `/Search/Hints` fallback first
-    /// (comparing `MusicBrainzReleaseGroup`/`MusicBrainzAlbum`), then the
-    /// full paged index scan when search misses.
-    pub async fn match_album(&self, mbid: &str) -> Result<MatchView, AdapterError> {
+    /// The first `/Search/Hints` album carrying `mbid` as its
+    /// `MusicBrainzReleaseGroup` or `MusicBrainzAlbum` id.
+    pub async fn mbid_search(&self, mbid: &str) -> Result<Option<String>, AdapterError> {
         self.require_configured()?;
         let query = params(&[
             ("searchTerm", mbid),
@@ -1001,29 +1007,13 @@ impl JellyfinAdapter {
             ("Fields", "ProviderIds"),
         ]);
         let hints = self.hints(&query).await?;
-        let hit = hints.iter().find(|hint| {
-            hint.provider("MusicBrainzReleaseGroup").as_deref() == Some(mbid)
-                || hint.provider("MusicBrainzAlbum").as_deref() == Some(mbid)
-        });
-        let album_id = match hit {
-            Some(hint) => Some(hint.id.clone()),
-            None => self.mbid_index().await?.get(mbid).cloned(),
-        };
-        let Some(album_id) = album_id else {
-            return Ok(MatchView {
-                source: SourceName::Jellyfin,
-                found: false,
-                remote_album_id: None,
-                tracks: Vec::new(),
-            });
-        };
-        let tracks = self.album_tracks(&album_id).await?;
-        Ok(MatchView {
-            source: SourceName::Jellyfin,
-            found: true,
-            remote_album_id: Some(album_id),
-            tracks,
-        })
+        Ok(hints
+            .iter()
+            .find(|hint| {
+                hint.provider("MusicBrainzReleaseGroup").as_deref() == Some(mbid)
+                    || hint.provider("MusicBrainzAlbum").as_deref() == Some(mbid)
+            })
+            .map(|hint| hint.id.clone()))
     }
 
     fn require_configured(&self) -> Result<(), AdapterError> {

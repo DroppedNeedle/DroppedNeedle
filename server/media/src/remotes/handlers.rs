@@ -845,7 +845,10 @@ fn bytes_response(
         .into_response())
 }
 
-/// The remote album behind a MusicBrainz id.
+/// The caller's copy of an album on one source.
+///
+/// Found by MusicBrainz id, or on Plex and Navidrome by title and artist
+/// when no album there carries the id.
 #[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/match", operation_id = "remotes_match_album",
     params(("source" = SourceName, Path, description = "Remote source"), MatchQuery),
     responses((status = 200, description = "Match result", body = MatchView)))]
@@ -858,7 +861,7 @@ pub async fn match_album(
     let source = parse_source(&source)?;
     reply(
         deps.service
-            .match_album(user.user_id(), source, query.mbid)
+            .match_album(user.user_id(), source, query)
             .await,
     )
 }

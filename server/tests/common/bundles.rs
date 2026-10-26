@@ -270,5 +270,6 @@ pub fn media_jobs(platform: &Platform) -> droppedneedle_media::remotes::presence
         platform.http.shared().clone(),
         platform.db.sqlx().clone(),
         platform.clock.clone(),
+        droppedneedle_media::remotes::warmup::MbidIndex::default(),
     )
 }

@@ -40,6 +40,7 @@ use crate::remotes::plex::PlexTokenProbe;
 use crate::remotes::presence_feed::MediaJobs;
 use crate::remotes::reader::RemotesRemoteReader;
 use crate::remotes::service::RemotesService;
+use crate::remotes::warmup::{self, MbidIndex};
 use crate::stream::download::DownloadState;
 use crate::stream::gateway::Gateway;
 use crate::stream::leases::TranscodeGate;
@@ -82,7 +83,12 @@ pub struct MediaSetup {
 pub const MEDIA_WORKERS: &str = "media-workers";
 
 /// Every always-on media loop, by name.
-pub const LOOPS: &[&str] = &[MEDIA_WORKERS];
+pub const LOOPS: &[&str] = &[
+    MEDIA_WORKERS,
+    warmup::JELLYFIN_JOB,
+    warmup::NAVIDROME_JOB,
+    warmup::PLEX_JOB,
+];
 
 /// The media background drains: remote attribution and now-playing
 /// reports, one [`MEDIA_WORKERS`] job on the supervisor. Attribution ends
@@ -175,6 +181,7 @@ impl MediaSetup {
             resolver.clone(),
             Arc::new(SqliteFolderStore::new(db.clone(), platform.clock.clone())),
             imports,
+            MbidIndex::default(),
             platform.clock.clone(),
         );
         let remotes = RemotesDeps { service };
@@ -263,8 +270,8 @@ impl MediaSetup {
     }
 
     /// What the jobs bundle reads from media: the presence registry the
-    /// playback routes write, the bundle's connection resolver, and the
-    /// platform's outbound client, database and clock.
+    /// playback routes write, the bundle's connection resolver and MBID
+    /// index, and the platform's outbound client, database and clock.
     pub fn jobs(&self, platform: &Platform) -> MediaJobs {
         MediaJobs::new(
             self.playback.presence.clone(),
@@ -272,6 +279,7 @@ impl MediaSetup {
             platform.http.shared().clone(),
             platform.db.sqlx().clone(),
             platform.clock.clone(),
+            self.remotes.service.index().clone(),
         )
     }
 }

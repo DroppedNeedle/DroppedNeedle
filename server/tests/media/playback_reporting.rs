@@ -22,7 +22,8 @@ use droppedneedle_auth::Principal;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_kernel::clock::{Clock, ManualClock};
-use droppedneedle_media::remotes::warmup::{self, WarmupScope, WarmupStats};
+use droppedneedle_media::remotes::models::SourceName;
+use droppedneedle_media::remotes::warmup::{self, WarmupStats};
 use playback::PlaybackDeps;
 use playback::ports::{
     ProviderFailure, RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets,
@@ -705,8 +706,8 @@ async fn reporting_requires_session() {
 // Warmup loops (paused time on the loop supervisor)
 // ---------------------------------------------------------------------------
 
-/// Each scope waits its startup delay, warms, and the rebuilding scopes
-/// warm again every four hours; Jellyfin's loop ends after its one pass.
+/// Each source waits its startup delay, warms, and warms again every four
+/// hours, give or take the jitter.
 #[tokio::test(start_paused = true)]
 async fn warmup_loops_use_honest_cadences() {
     use droppedneedle_kernel::jobs::{CancellationToken, Supervisor};
@@ -722,53 +723,45 @@ async fn warmup_loops_use_honest_cadences() {
     )
     .await
     .expect("supervisor starts");
-    for (scope, delay) in [
-        (WarmupScope::Jellyfin, Duration::from_secs(8)),
-        (WarmupScope::Navidrome, Duration::from_secs(12)),
-        (WarmupScope::Plex, Duration::from_secs(15)),
+    for (source, delay) in [
+        (SourceName::Jellyfin, Duration::from_secs(8)),
+        (SourceName::Navidrome, Duration::from_secs(12)),
+        (SourceName::Plex, Duration::from_secs(15)),
     ] {
         let passes: Arc<Mutex<Vec<Instant>>> = Arc::default();
         let started = Instant::now();
         let work_passes = passes.clone();
-        warmup::start(&supervisor, scope, move || {
+        warmup::start(&supervisor, source, move || {
             let passes = work_passes.clone();
             async move {
                 passes.lock().expect("lock").push(Instant::now());
                 Ok::<_, String>(WarmupStats {
-                    scope: scope.key(),
+                    source,
                     warmed: 2,
                     pruned: 1,
                 })
             }
         })
         .expect("warmup starts");
-        let wanted = if scope == WarmupScope::Jellyfin { 1 } else { 2 };
         // Row writes run on blocking threads while the paused clock jumps,
         // so the bound is wall-clock time.
         let bound = std::time::Instant::now() + Duration::from_secs(30);
-        while passes.lock().expect("lock").len() < wanted {
-            assert!(std::time::Instant::now() < bound, "{scope:?} warms");
+        while passes.lock().expect("lock").len() < 2 {
+            assert!(std::time::Instant::now() < bound, "{source:?} warms");
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
         let at = passes.lock().expect("lock").clone();
         let first = at[0].duration_since(started);
         assert!(
             first >= delay && first < delay + Duration::from_secs(1),
-            "{scope:?} first pass after {first:?}"
+            "{source:?} first pass after {first:?}"
         );
-        if scope == WarmupScope::Jellyfin {
-            while supervisor.is_running(scope.job_name()) {
-                assert!(std::time::Instant::now() < bound, "Jellyfin warms once");
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            assert_eq!(passes.lock().expect("lock").len(), 1);
-        } else {
-            let gap = at[1].duration_since(at[0]);
-            assert!(
-                gap >= Duration::from_secs(14_400) && gap < Duration::from_secs(14_401),
-                "{scope:?} rebuilds after {gap:?}"
-            );
-        }
+        let gap = at[1].duration_since(at[0]);
+        assert!(
+            gap >= warmup::WARMUP_INTERVAL
+                && gap <= warmup::WARMUP_INTERVAL + warmup::WARMUP_JITTER + Duration::from_secs(1),
+            "{source:?} rebuilds after {gap:?}"
+        );
     }
     supervisor.shutdown(Duration::from_secs(5)).await;
 }

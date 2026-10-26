@@ -20,8 +20,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, NavidromeConnection, PlexConnection,
 };
 use droppedneedle_testkit::remotes::{
-    JELLYFIN_KEY, MATCH_MBID, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin, serve_navidrome,
-    serve_plex,
+    JELLYFIN_KEY, MATCH_MBID, MockAlbum, MockOptions, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin,
+    serve_navidrome, serve_navidrome_with, serve_plex, serve_plex_with,
 };
 use remotes::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemoteHandle, TrackBrowse};
 use remotes::connections::{ConnectionResolver, ResolveError, UserLink};
@@ -32,6 +32,7 @@ use remotes::models::SourceName;
 use remotes::navidrome::NavidromeAdapter;
 use remotes::plex::PlexAdapter;
 use remotes::service::RemotesService;
+use remotes::warmup::{MbidIndex, Warmups};
 use serde_json::Value;
 use tower::ServiceExt as _;
 
@@ -48,6 +49,7 @@ const USER_ID: &str = "user-ada";
 struct Rig {
     platform: Platform,
     runtime: droppedneedle_kernel::db::DbRuntime,
+    index: MbidIndex,
     _dir: crate::common::ScratchDir,
 }
 
@@ -73,6 +75,7 @@ impl Rig {
         Self {
             platform,
             runtime,
+            index: MbidIndex::default(),
             _dir: dir,
         }
     }
@@ -126,6 +129,14 @@ impl Rig {
         crate::common::bundles::remotes_resolver(&self.platform)
     }
 
+    /// One warmup pass for `source`, filling the index the routes read.
+    async fn warm(&self, source: SourceName) {
+        Warmups::new(http_client(), Arc::new(self.resolver()), self.index.clone())
+            .pass(source)
+            .await
+            .expect("warmup passes");
+    }
+
     fn folders(&self) -> SqliteFolderStore {
         SqliteFolderStore::new(self.platform.db.clone(), self.platform.clock.clone())
     }
@@ -141,6 +152,7 @@ impl Rig {
                 Arc::new(PlaylistImportSink::new(
                     crate::common::bundles::collections_at(&self.platform).wired(),
                 )),
+                self.index.clone(),
                 self.platform.clock.clone(),
             ),
         }
@@ -764,6 +776,7 @@ async fn linked_connections_survive_a_restart() {
         platform,
         runtime,
         _dir: dir,
+        ..
     } = rig;
     drop(platform);
     runtime.shutdown().await;
@@ -776,6 +789,7 @@ async fn linked_connections_survive_a_restart() {
     let rig = Rig {
         platform,
         runtime,
+        index: MbidIndex::default(),
         _dir: dir,
     };
     let resolved = rig
@@ -1025,6 +1039,179 @@ async fn routes_browse_albums_reports_stats_totals() {
     }
 }
 
+/// The album match rule against the Plex and Navidrome mocks, whose search
+/// here cannot find an album by its MBID: an indexed album matches by MBID;
+/// one without an id matches by title and artist once folded; two albums
+/// sharing that title and artist match nothing; and an indexed album
+/// outside the caller's Navidrome folders does not match. On Jellyfin an
+/// MBID miss reads no album pages.
+#[tokio::test]
+async fn albums_match_by_index_then_by_name() {
+    const UNKNOWN: &str = "99999999-9999-9999-9999-999999999999";
+    const FAR_MBID: &str = "44444444-4444-4444-4444-444444444444";
+    let extra = |id: &str, title: &str, artist: &str, mbid: Option<&str>, folder: &str| MockAlbum {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        artist: artist.to_owned(),
+        mbid: mbid.map(str::to_owned),
+        folder: folder.to_owned(),
+    };
+    let navidrome = serve_navidrome_with(MockOptions {
+        mbid_search: false,
+        extra_albums: vec![
+            extra("nd-al-8", "GLASS TIDES", "AURORA CURRENT", None, "folder-1"),
+            extra(
+                "nd-al-9",
+                "Far Shore",
+                "Boreal Static",
+                Some(FAR_MBID),
+                "folder-2",
+            ),
+        ],
+        ..MockOptions::default()
+    })
+    .await
+    .expect("mock serves");
+    let plex = serve_plex_with(MockOptions {
+        mbid_search: false,
+        extra_albums: vec![extra("px-al-8", "GLASS TIDES", "AURORA CURRENT", None, "1")],
+        ..MockOptions::default()
+    })
+    .await
+    .expect("mock serves");
+    let jellyfin = serve_jellyfin().await.expect("mock serves");
+    let rig = Rig::open("remotes-match").await;
+    rig.navidrome(&navidrome.base_url, NAVIDROME_USER, "nd-pass")
+        .await;
+    rig.plex(&plex.base_url, PLEX_TOKEN).await;
+    rig.jellyfin(&jellyfin.base_url, JELLYFIN_KEY, "jf-user-1")
+        .await;
+    for source in [
+        SourceName::Navidrome,
+        SourceName::Plex,
+        SourceName::Jellyfin,
+    ] {
+        rig.warm(source).await;
+    }
+    let app = rig.app();
+    let scoped = serde_json::json!({"mode": "selected", "selected_folder_ids": ["folder-1"]});
+    let (status, _) = put_json(app.clone(), "/api/v3/remotes/navidrome/folders", scoped).await;
+    assert_eq!(status, StatusCode::OK);
+    let album_pages = || {
+        jellyfin
+            .recorder
+            .snapshot()
+            .jellyfin_items_queries
+            .iter()
+            .filter(|query| {
+                query
+                    .iter()
+                    .any(|(key, value)| key == "includeItemTypes" && value == "MusicAlbum")
+            })
+            .count()
+    };
+    let pages_before = album_pages();
+
+    let by_name = format!("mbid={UNKNOWN}&title=paper%20satellites&artist=BOREAL%20STATIC");
+    let shared = format!("mbid={UNKNOWN}&title=Glass%20Tides&artist=Aurora%20Current");
+    let index = format!("mbid={MATCH_MBID}");
+    let far = format!("mbid={FAR_MBID}");
+    let unknown = format!("mbid={UNKNOWN}");
+    let rows: [(&str, &str, &str, Option<&str>); 8] = [
+        ("by index", "navidrome", &index, Some("nd-al-1")),
+        ("by index", "plex", &index, Some("px-al-1")),
+        (
+            "by title and artist",
+            "navidrome",
+            &by_name,
+            Some("nd-al-3"),
+        ),
+        ("by title and artist", "plex", &by_name, Some("px-al-3")),
+        ("two share title and artist", "navidrome", &shared, None),
+        ("two share title and artist", "plex", &shared, None),
+        ("indexed outside the folders", "navidrome", &far, None),
+        ("unknown id", "jellyfin", &unknown, None),
+    ];
+    let mut wrong = Vec::new();
+    for (case, source, query, want) in rows {
+        let (status, body) = get_json(
+            app.clone(),
+            &format!("/api/v3/remotes/{source}/match?{query}"),
+        )
+        .await;
+        let got = body
+            .get("remote_album_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let found = body.get("found").and_then(Value::as_bool);
+        if status != StatusCode::OK || got.as_deref() != want || found != Some(want.is_some()) {
+            wrong.push(format!("{source} {case}: {status} {body}"));
+        }
+    }
+    if album_pages() != pages_before {
+        wrong.push("jellyfin: an MBID miss read album pages".to_owned());
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// An index read from one Plex server is not used once the admin points
+/// Plex at another: the old ids would open other albums there.
+#[tokio::test]
+async fn an_index_from_another_server_is_not_used() {
+    let no_mbid_search = || MockOptions {
+        mbid_search: false,
+        ..MockOptions::default()
+    };
+    let first = serve_plex_with(no_mbid_search())
+        .await
+        .expect("mock serves");
+    let second = serve_plex_with(no_mbid_search())
+        .await
+        .expect("mock serves");
+    let rig = Rig::open("remotes-match-moved").await;
+    rig.plex(&first.base_url, PLEX_TOKEN).await;
+    rig.warm(SourceName::Plex).await;
+    let path = format!("/api/v3/remotes/plex/match?mbid={MATCH_MBID}");
+    let (_, body) = get_json(rig.app(), &path).await;
+    assert_eq!(body["remote_album_id"], "px-al-1", "{body}");
+
+    rig.plex(&second.base_url, PLEX_TOKEN).await;
+    let (status, body) = get_json(rig.app(), &path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["found"], false, "{body}");
+}
+
+/// An indexed album the server fails to open stops the match with the
+/// outage instead of falling through to a same-name album without an id.
+#[tokio::test]
+async fn an_outage_on_an_indexed_album_is_not_guessed_past() {
+    const BROKEN_MBID: &str = "55555555-5555-5555-5555-555555555555";
+    let navidrome = serve_navidrome_with(MockOptions {
+        mbid_search: false,
+        extra_albums: vec![MockAlbum {
+            id: "nd-al-7".to_owned(),
+            title: "Broken Record".to_owned(),
+            artist: "Aurora Current".to_owned(),
+            mbid: Some(BROKEN_MBID.to_owned()),
+            folder: "folder-1".to_owned(),
+        }],
+        failing_albums: vec!["nd-al-7".to_owned()],
+    })
+    .await
+    .expect("mock serves");
+    let rig = Rig::open("remotes-match-outage").await;
+    rig.navidrome(&navidrome.base_url, NAVIDROME_USER, "nd-pass")
+        .await;
+    rig.warm(SourceName::Navidrome).await;
+    let (status, body) = get_json(
+        rig.app(),
+        &format!("/api/v3/remotes/navidrome/match?mbid={BROKEN_MBID}&title=Glass%20Tides&artist=Aurora%20Current"),
+    )
+    .await;
+    assert!(status.is_server_error(), "{status} {body}");
+    assert_eq!(error_code(&body), "REMOTE_UNAVAILABLE", "{body}");
+}
+
 #[tokio::test]
 async fn routes_import_playlists_idempotently() {
     let (app, _rig) = connected_testbed().await;
@@ -1259,6 +1446,7 @@ async fn presence_poll_merges_a_remote_session() {
         http_client(),
         rig.platform.db.sqlx().clone(),
         rig.platform.clock.clone(),
+        MbidIndex::default(),
     );
     droppedneedle_kernel::jobs::presence::run_once(&media.feed(), &media.pollers())
         .await

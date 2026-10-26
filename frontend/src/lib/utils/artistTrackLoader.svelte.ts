@@ -53,6 +53,7 @@ async function fetchAlbumTracksForSource(
 		artistName,
 		coverUrl: getCoverUrl(null, mbid)
 	};
+	const hints = { title: release.title, artist: artistName };
 
 	try {
 		switch (source) {
@@ -62,7 +63,7 @@ async function fetchAlbumTracksForSource(
 				return buildQueueItemsFromLocal(match.tracks, meta);
 			}
 			case 'navidrome': {
-				const match = await fetchNavidromeAlbumMatch(mbid, signal);
+				const match = await fetchNavidromeAlbumMatch(mbid, hints, signal);
 				if (!match?.found || !match.tracks.length) return [];
 				return buildQueueItemsFromNavidrome(match.tracks, meta);
 			}
@@ -72,7 +73,7 @@ async function fetchAlbumTracksForSource(
 				return buildQueueItemsFromJellyfin(match.tracks, meta);
 			}
 			case 'plex': {
-				const match = await fetchPlexAlbumMatch(mbid, signal);
+				const match = await fetchPlexAlbumMatch(mbid, hints, signal);
 				if (!match?.found || !match.tracks.length) return [];
 				return buildQueueItemsFromPlex(match.tracks, meta);
 			}

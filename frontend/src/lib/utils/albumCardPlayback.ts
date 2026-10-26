@@ -110,6 +110,7 @@ export async function fetchAlbumQueueItems(
 	signal?: AbortSignal
 ): Promise<QueueItem[]> {
 	const status = get(integrationStore);
+	const hints = { title: meta.albumName, artist: meta.artistName };
 	const probes: Promise<SourceResult | null>[] = [];
 
 	if (status.localfiles) {
@@ -125,7 +126,7 @@ export async function fetchAlbumQueueItems(
 
 	if (status.navidrome) {
 		probes.push(
-			fetchNavidromeAlbumMatch(meta.mbid, signal)
+			fetchNavidromeAlbumMatch(meta.mbid, hints, signal)
 				.then((data) => {
 					if (!data?.found || data.tracks.length === 0) return null;
 					return {
@@ -153,7 +154,7 @@ export async function fetchAlbumQueueItems(
 
 	if (status.plex) {
 		probes.push(
-			fetchPlexAlbumMatch(meta.mbid, signal)
+			fetchPlexAlbumMatch(meta.mbid, hints, signal)
 				.then((data) => {
 					if (!data?.found || data.tracks.length === 0) return null;
 					return {

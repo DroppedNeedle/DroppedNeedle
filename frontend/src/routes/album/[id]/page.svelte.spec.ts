@@ -238,6 +238,20 @@ beforeEach(() => {
 	api = routes();
 });
 
+describe('album detail page remote match', () => {
+	it('sends the album title and artist so Navidrome can match by name', async () => {
+		await renderPage();
+		const matchRoute = 'GET /api/v3/remotes/{source}/match' as const;
+		await vi.waitFor(() => expect(api.calls(matchRoute).length).toBeGreaterThan(0));
+		const query = api.calls(matchRoute)[0].url.searchParams;
+		expect([query.get('mbid'), query.get('title'), query.get('artist')]).toEqual([
+			albumId,
+			'Daylight Hours',
+			'Lumen'
+		]);
+	});
+});
+
 describe('album detail page track removal', () => {
 	const removeRoute = 'DELETE /api/v3/library/tracks/{id}' as const;
 	const matchRoute = 'GET /api/v3/library/albums/match/{mbid}' as const;

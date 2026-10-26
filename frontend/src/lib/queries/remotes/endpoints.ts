@@ -44,6 +44,12 @@ export interface RemoteSearchParams {
 	limit?: number;
 }
 
+/** The album's title and artist, so Plex and Navidrome can match by name. */
+export interface RemoteMatchHints {
+	title?: string;
+	artist?: string;
+}
+
 export interface RemoteLyricsParams {
 	artist?: string;
 	title?: string;
@@ -124,8 +130,8 @@ export const REMOTE_ENDPOINTS = {
 			path: { source, id },
 			query: query(params)
 		}),
-	match: (source: RemoteSource, mbid: string) =>
-		v3('/api/v3/remotes/{source}/match', { path: { source }, query: query({ mbid }) }),
+	match: (source: RemoteSource, mbid: string, hints: RemoteMatchHints = {}) =>
+		v3('/api/v3/remotes/{source}/match', { path: { source }, query: query({ mbid, ...hints }) }),
 	mix: (source: RemoteSource, id: string, params: RemoteMixParams = {}) =>
 		v3('/api/v3/remotes/{source}/mix/{id}', {
 			path: { source, id },

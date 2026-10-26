@@ -20,7 +20,8 @@
 //! `jellyfin`/`navidrome`/`plex` hold the source clients; `analytics`
 //! summarizes listening history; `reader` serves the stream gateway;
 //! `presence_feed` feeds the jobs presence loop from the live registry and
-//! the upstream sessions; and `playlist_sync` is the admin route that forces
+//! the upstream sessions; `warmup` keeps the MBID album index the album
+//! match reads first; and `playlist_sync` is the admin route that forces
 //! one Navidrome playlist sync.
 //! The loopback mock servers the tests run against live in the testkit
 //! crate.

@@ -14,11 +14,12 @@ use std::pin::Pin;
 use super::jellyfin::JellyfinAdapter;
 use super::models::{
     AlbumPage, AlbumView, ArtistIndexEntry, ArtistPage, ArtistView, FavoritesView, HistoryPage,
-    HubView, ImportResult, InfoView, LyricsView, MatchView, PlaylistDetail, SearchResults,
-    SessionsView, SourceName, StatsView, TrackPage, TrackView,
+    HubView, ImportResult, InfoView, LyricsView, PlaylistDetail, SearchResults, SessionsView,
+    SourceName, StatsView, TrackPage, TrackView,
 };
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
+use super::warmup::IndexedAlbum;
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Boxed future for object-safe async ports. Hand-boxed because `async fn`
@@ -651,12 +652,36 @@ impl RemoteHandle {
         }
     }
 
-    /// Resolve a MusicBrainz release or release-group id to a remote album.
-    pub async fn match_album(&self, mbid: &str) -> Result<MatchView, AdapterError> {
+    /// The first album in the server's answer to a search for `mbid` that
+    /// carries it as its release or release-group id, inside this handle's
+    /// scope.
+    pub async fn mbid_search(&self, mbid: &str) -> Result<Option<String>, AdapterError> {
         match self {
-            Self::Jellyfin(inner) => inner.match_album(mbid).await,
-            Self::Navidrome(inner) => inner.match_album(mbid).await,
-            Self::Plex(inner) => inner.match_album(mbid).await,
+            Self::Jellyfin(inner) => inner.mbid_search(mbid).await,
+            Self::Navidrome(inner) => inner.mbid_search(mbid).await,
+            Self::Plex(inner) => inner.mbid_search(mbid).await,
+        }
+    }
+
+    /// Every album that carries a MusicBrainz id, in the server's order and
+    /// at most `cap` of them, each with the Navidrome folder or Plex section
+    /// it was listed under.
+    pub async fn album_index(&self, cap: usize) -> Result<Vec<IndexedAlbum>, AdapterError> {
+        match self {
+            Self::Jellyfin(inner) => inner.album_index(cap).await,
+            Self::Navidrome(inner) => inner.album_index(cap).await,
+            Self::Plex(inner) => inner.album_index(cap).await,
+        }
+    }
+
+    /// Whether an album listed under `scope` lies inside this handle's
+    /// Navidrome folders or Plex sections. Jellyfin has no such scope: what
+    /// the account can read is checked by reading it.
+    pub async fn holds(&self, scope: Option<&str>) -> Result<bool, AdapterError> {
+        match self {
+            Self::Jellyfin(_) => Ok(true),
+            Self::Navidrome(inner) => Ok(inner.holds(scope)),
+            Self::Plex(inner) => inner.holds(scope).await,
         }
     }
 }

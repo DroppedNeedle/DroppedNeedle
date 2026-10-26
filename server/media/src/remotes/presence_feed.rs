@@ -1,5 +1,6 @@
 //! Media-backed inputs for the jobs loops: the now-playing feed over the
-//! live presence registry and the Jellyfin/Navidrome/Plex session pollers.
+//! live presence registry, the Jellyfin/Navidrome/Plex session pollers and
+//! the MBID warmups.
 //! The Navidrome playlist exporter lives in
 //! [`droppedneedle_kernel::jobs::playlist_export`].
 //!
@@ -16,6 +17,7 @@ use super::jellyfin::JellyfinAdapter;
 use super::models::{SessionView, SourceName};
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
+use super::warmup::{MbidIndex, Warmups};
 use crate::playback::presence::{ExternalSession, PresenceRegistry};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::jobs::BoxFuture;
@@ -32,19 +34,22 @@ pub struct MediaJobs {
     http: reqwest::Client,
     pool: sqlx::SqlitePool,
     clock: Arc<dyn Clock>,
+    index: MbidIndex,
 }
 
 impl MediaJobs {
     /// Inputs over the live presence registry the playback routes write,
     /// the shared connection resolver (admin servers and their shared
     /// accounts), the outbound client, the database the playlist export
-    /// reads and the clock the presence sweep measures against.
+    /// reads, the clock the presence sweep measures against and the MBID
+    /// index the warmups fill.
     pub fn new(
         presence: PresenceRegistry,
         resolver: Arc<ConnectionResolver>,
         http: reqwest::Client,
         pool: sqlx::SqlitePool,
         clock: Arc<dyn Clock>,
+        index: MbidIndex,
     ) -> Self {
         Self {
             presence,
@@ -52,7 +57,13 @@ impl MediaJobs {
             http,
             pool,
             clock,
+            index,
         }
+    }
+
+    /// The MBID warmup passes over the shared accounts.
+    pub fn warmups(&self) -> Warmups {
+        Warmups::new(self.http.clone(), self.resolver.clone(), self.index.clone())
     }
 
     /// The now-playing feed over the registry.

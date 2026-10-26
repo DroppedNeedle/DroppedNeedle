@@ -26920,7 +26920,8 @@
         "tags": [
           "remotes"
         ],
-        "summary": "The remote album behind a MusicBrainz id.",
+        "summary": "The caller's copy of an album on one source.",
+        "description": "Found by MusicBrainz id, or on Plex and Navidrome by title and artist\nwhen no album there carries the id.",
         "operationId": "remotes_match_album",
         "parameters": [
           {
@@ -26937,6 +26938,24 @@
             "in": "query",
             "description": "MusicBrainz release or release-group id.",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "description": "Album title.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist",
+            "in": "query",
+            "description": "Album artist.",
+            "required": false,
             "schema": {
               "type": "string"
             }

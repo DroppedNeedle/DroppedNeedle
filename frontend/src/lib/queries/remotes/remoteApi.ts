@@ -4,6 +4,7 @@ import {
 	type RemoteAlbumParams,
 	type RemoteArtistParams,
 	type RemoteLyricsParams,
+	type RemoteMatchHints,
 	type RemotePageParams,
 	type RemoteTrackParams
 } from './endpoints';
@@ -26,8 +27,8 @@ export const remoteApi = {
 		api.global.v3.GET(REMOTE_ENDPOINTS.genres(source), { signal }),
 	lyrics: (source: RemoteSource, id: string, params: RemoteLyricsParams, signal?: Signal) =>
 		api.global.v3.GET(REMOTE_ENDPOINTS.lyrics(source, id, params), { signal }),
-	match: (source: RemoteSource, mbid: string, signal?: Signal) =>
-		api.global.v3.GET(REMOTE_ENDPOINTS.match(source, mbid), { signal }),
+	match: (source: RemoteSource, mbid: string, hints: RemoteMatchHints, signal?: Signal) =>
+		api.global.v3.GET(REMOTE_ENDPOINTS.match(source, mbid, hints), { signal }),
 	recent: (source: RemoteSource, params: RemotePageParams, signal?: Signal) =>
 		api.global.v3.GET(REMOTE_ENDPOINTS.recent(source, params), { signal })
 } as const;

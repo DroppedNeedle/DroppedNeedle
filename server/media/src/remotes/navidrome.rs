@@ -28,10 +28,11 @@ use super::adapter::{
 };
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryPage, HubView, InfoView,
-    LyricLine, LyricsView, MatchView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
+    LyricLine, LyricsView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
     SessionsView, SourceName, StatsView, TrackView,
 };
 use super::navidrome_models::{Album, Artist, Body, Envelope, Playlist, Song};
+use super::warmup::{INDEX_MAX_PAGES, INDEX_PAGE, IndexedAlbum, indexed};
 
 /// Request timeout per upstream call, matching the v2 repository.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -801,12 +802,12 @@ impl NavidromeAdapter {
         self.image_bytes(&cover_art, size).await
     }
 
-    /// Resolve an MBID by searching for it and comparing `musicBrainzId`,
-    /// the v2 album-match rule.
-    pub async fn match_album(&self, mbid: &str) -> Result<MatchView, AdapterError> {
+    /// The first `search3` album carrying `mbid` as its `musicBrainzId`,
+    /// inside the folder scope.
+    pub async fn mbid_search(&self, mbid: &str) -> Result<Option<String>, AdapterError> {
         self.require_configured()?;
         if self.scope_is_empty() {
-            return Ok(no_match());
+            return Ok(None);
         }
         let pairs = params(&[
             ("query", mbid),
@@ -819,20 +820,66 @@ impl NavidromeAdapter {
             .await?
             .search_result3
             .unwrap_or_default();
-        let Some(album) = result
+        Ok(result
             .album
             .iter()
             .find(|album| album.music_brainz_id.as_deref() == Some(mbid))
-        else {
-            return Ok(no_match());
-        };
-        let tracks = self.album_tracks(&album.id).await?;
-        Ok(MatchView {
-            source: SourceName::Navidrome,
-            found: true,
-            remote_album_id: Some(album.id.clone()),
-            tracks,
-        })
+            .map(|album| album.id.clone()))
+    }
+
+    /// Every album that carries a `musicBrainzId`, listed folder by folder
+    /// with `getAlbumList2` so each entry records its folder, at most `cap`
+    /// entries.
+    pub async fn album_index(&self, cap: usize) -> Result<Vec<IndexedAlbum>, AdapterError> {
+        let mut index = Vec::new();
+        let mut pages = 0;
+        for (folder, _) in self.music_folders().await? {
+            let lister = self.in_folder(&folder);
+            let mut offset = 0;
+            while index.len() < cap && pages < INDEX_MAX_PAGES {
+                pages += 1;
+                let page = lister
+                    .album_list("alphabeticalByName", INDEX_PAGE, offset, None, None)
+                    .await?;
+                for album in &page {
+                    if let Some(entry) = album
+                        .music_brainz_id
+                        .as_deref()
+                        .and_then(|mbid| indexed(mbid, &album.id, Some(&folder)))
+                    {
+                        index.push(entry);
+                    }
+                }
+                if (page.len() as i64) < INDEX_PAGE {
+                    break;
+                }
+                offset += INDEX_PAGE;
+            }
+        }
+        index.truncate(cap);
+        Ok(index)
+    }
+
+    /// The same account scoped to one folder.
+    fn in_folder(&self, folder: &str) -> Self {
+        Self {
+            client: self.client.clone(),
+            base_url: self.base_url.clone(),
+            username: self.username.clone(),
+            password: self.password.clone(),
+            folder_ids: Some(vec![folder.to_owned()]),
+        }
+    }
+
+    /// Whether an album listed under folder `scope` is inside the folder
+    /// scope. An album with no recorded folder is inside only the
+    /// all-folders scope.
+    pub fn holds(&self, scope: Option<&str>) -> bool {
+        match (&self.folder_ids, scope) {
+            (None, _) => true,
+            (Some(ids), Some(folder)) => ids.iter().any(|id| id == folder),
+            (Some(_), None) => false,
+        }
     }
 
     fn require_configured(&self) -> Result<(), AdapterError> {
@@ -869,10 +916,14 @@ impl NavidromeAdapter {
 
     /// `getAlbum`, unscoped. None is absence.
     async fn get_album(&self, id: &str) -> Result<Option<Album>, AdapterError> {
-        let body = self
+        match self
             .unscoped_request("/rest/getAlbum", &params(&[("id", id)]))
-            .await?;
-        Ok(body.album)
+            .await
+        {
+            Ok(body) => Ok(body.album),
+            Err(AdapterError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Scoped `getAlbumList2` with the genre/year parameter rules.
@@ -952,6 +1003,7 @@ impl NavidromeAdapter {
                 tracing::debug!(endpoint, %detail, "navidrome declined the call");
                 Ok(None)
             }
+            Err(AdapterError::NotFound) => Ok(None),
             Err(other) => Err(other),
         }
     }
@@ -1011,6 +1063,10 @@ impl NavidromeAdapter {
             let error = body.error.unwrap_or_default();
             if error.code == 40 || error.code == 41 {
                 return Err(AdapterError::Auth);
+            }
+            // Subsonic API error 70: "The requested data was not found."
+            if error.code == 70 {
+                return Err(AdapterError::NotFound);
             }
             return Err(AdapterError::Api(format!(
                 "Subsonic error {}: {}",
@@ -1230,15 +1286,6 @@ fn zero_stats() -> StatsView {
         total_albums: 0,
         total_artists: 0,
         total_tracks: 0,
-    }
-}
-
-fn no_match() -> MatchView {
-    MatchView {
-        source: SourceName::Navidrome,
-        found: false,
-        remote_album_id: None,
-        tracks: Vec::new(),
     }
 }
 
