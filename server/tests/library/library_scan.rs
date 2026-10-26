@@ -1876,14 +1876,13 @@ async fn a_folded_v2_split_comes_back_on_undo() {
     use droppedneedle_library::http::history::album_history_view;
     use droppedneedle_library::identity::FOLD_REASON;
     use droppedneedle_library::operations::models::OperationError;
-    use droppedneedle_library::operations::service::Operations;
 
     const SPLIT_GROUP: &str = "1d1b2a6e-8e1a-4c4f-9b7e-0f4f8c3b2a10";
     const TAGGED_GROUP: &str = "2e2c3b7f-9f2b-4d5a-8c8f-1a5a9d4c3b21";
     let dir = ScratchDir::new("fold-undo");
     std::fs::create_dir_all(dir.join("music")).expect("music folder");
     let library = bundle(&dir).await;
-    let ops = Operations::new(&library);
+    let ops = crate::common::library::operations(&library);
     let path = dir.join("app.db");
     let mut conn = droppedneedle_kernel::db::open_connection(&path).expect("connection opens");
     let mut seed = String::from(
@@ -4443,7 +4442,6 @@ async fn returned_track_is_off_the_record() {
 /// of: there is nothing left to join.
 #[tokio::test]
 async fn hand_merge_removes_an_open_pair() {
-    use droppedneedle_library::corrections::Corrections;
     use droppedneedle_library::corrections::models::{
         ApplyMeta, MembershipKind, MembershipRequest,
     };
@@ -4470,7 +4468,7 @@ async fn hand_merge_removes_an_open_pair() {
         ))
         .expect("pair recorded");
 
-    let corrections = Corrections::new(&library);
+    let corrections = crate::common::library::services(&library).corrections;
     let request = MembershipRequest {
         kind: MembershipKind::Merge,
         album_id: None,
@@ -5738,7 +5736,6 @@ async fn a_join_waits_for_the_rest_of_the_old_album() {
 /// by the app: each pair is recorded once for a person, who merges one.
 #[tokio::test]
 async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
-    use droppedneedle_library::corrections::Corrections;
     use droppedneedle_library::corrections::models::PairJoinRequest;
 
     let (mut rig, old, old_rows) = mapped_album("join-split", 2).await;
@@ -5786,7 +5783,7 @@ async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
         .build()
         .await;
     let (library, _) = library_at(&platform);
-    let corrections = Corrections::new(&library);
+    let corrections = crate::common::library::services(&library).corrections;
     let listed = corrections.retag_pairs().expect("pairs listed");
     assert_eq!(listed.total, 2);
     let revision = |album: &str| {

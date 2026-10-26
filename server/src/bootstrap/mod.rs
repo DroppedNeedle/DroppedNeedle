@@ -72,7 +72,7 @@ use droppedneedle_kernel::{
     platform::Platform,
     runtime_config::crypto::CryptoError,
 };
-use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_library::wiring::{LibraryServices, LibrarySetup};
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::{
     MediaSetup,
@@ -314,13 +314,14 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         library_ports(p, &providers, &auth, &artwork, &scans, library_core),
     )
     .map_err(stage("library setup"))?;
+    let library_services = LibraryServices::build(&library);
     let acquire = AcquireSetup::build(
         p,
         auth.users.clone(),
         acquire_stores,
         acquire_ports(
             p,
-            &library,
+            &library_services,
             &providers,
             mb_source,
             &plugin_host,
@@ -528,7 +529,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         reads,
         media,
         acquire,
-        library,
+        library_services,
         compat,
         admin,
         settings,
@@ -542,7 +543,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .spawn_loops(supervisor)
         .map_err(|error| stage("acquire loops")(error.to_string()))?;
     state
-        .library
+        .library_services
         .start_loops(supervisor)
         .map_err(|error| stage("library loops")(error.to_string()))?;
     // `activity.changed` and `downloads.changed` for every open stream.
@@ -609,7 +610,7 @@ fn library_ports(
 /// usenet and hear acquisition events.
 fn acquire_ports(
     p: &Platform,
-    library: &LibrarySetup,
+    library: &LibraryServices,
     providers: &Arc<Providers>,
     mb_source: droppedneedle_providers::musicbrainz::LiveSource,
     plugin_host: &Arc<droppedneedle_plugins::host::PluginHost>,
@@ -618,14 +619,12 @@ fn acquire_ports(
     AcquirePorts {
         library: Arc::new(
             droppedneedle_acquire::landing::library::LibraryLanding::new(
-                library.clone(),
-                library.releases.clone(),
+                library.setup.clone(),
+                library.setup.releases.clone(),
                 p.db.sqlx().clone(),
             ),
         ),
-        edition_plans: Arc::new(droppedneedle_library::operations::service::Operations::new(
-            library,
-        )),
+        edition_plans: Arc::new(library.operations.clone()),
         album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(
             providers,
             mb_source.clone(),

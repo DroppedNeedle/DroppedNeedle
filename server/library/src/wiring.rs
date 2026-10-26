@@ -5,7 +5,9 @@
 //! cell, plus the HTTP state (preview seals) and the background
 //! loops. `build` binds everything over the production provider
 //! clients, or over the provider ports a test gives in [`Endpoints`].
-//! [`routes`] lists the library's routes for the app to mount.
+//! [`LibraryServices`] builds the services over it once; it is the state
+//! of the routes [`routes`] lists for the app to mount, and it starts the
+//! background loops.
 //!
 //! Store durability: roots, scan state, identification, contributions,
 //! and the publish journal live in the application database.
@@ -14,15 +16,23 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::FromRef;
+
 use super::adapters::LoftyTagReader;
 use super::contrib::ContribProviders;
 use super::contrib::service::ContributionService;
 use super::contrib::worker::VerificationWorker;
+use super::corrections::service::Corrections;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
 use super::manage::{PreviewEntry, PublishCell};
 use super::management::enrich::EnrichmentPort;
+use super::management::service::Management;
 use super::management::settings::service::LibraryManagementService;
+use super::mutations::Mutations;
+use super::operations::service::Operations;
+use super::reconcile::service::Reconcile;
+use super::repairs::service::{RepairWorker, Repairs};
 use super::scan::coordinator::{
     LibraryScanCoordinator, ResolverSource, ScanEventPublisher, SharedResolver,
 };
@@ -66,7 +76,7 @@ type ProviderFactory =
     Box<dyn FnOnce(ProviderParts) -> Arc<dyn super::identify::providers::IdentifyProviders>>;
 
 /// Every library route, grouped by who may call it.
-pub fn routes() -> droppedneedle_kernel::mount::Routes<LibrarySetup> {
+pub fn routes() -> droppedneedle_kernel::mount::Routes<LibraryServices> {
     super::http::routes::library_routes()
 }
 
@@ -597,6 +607,62 @@ impl LibrarySetup {
                 .collect(),
         }
     }
+}
+
+/// The library's services, built once over the setup. This is the library
+/// router's state: a handler takes the service it calls as its state.
+#[derive(Clone)]
+pub struct LibraryServices {
+    /// Roots, scans, identification and publishing, which still live on
+    /// the setup.
+    pub setup: LibrarySetup,
+    pub operations: Operations,
+    pub repairs: Repairs,
+    pub corrections: Corrections,
+    pub reconcile: Reconcile,
+    pub management: Management,
+    pub mutations: Mutations,
+    pub contrib: Arc<ContributionService>,
+}
+
+impl LibraryServices {
+    /// Build every service once over `setup`.
+    pub fn build(setup: &LibrarySetup) -> Self {
+        let operations = operations(setup);
+        Self {
+            repairs: Repairs::new(
+                setup.db.clone(),
+                operations.clone(),
+                setup.ids.clone(),
+                setup.wakeups.clone(),
+                setup.clock.clone(),
+            ),
+            corrections: Corrections::new(
+                setup.db.clone(),
+                setup.settings.clone(),
+                setup.clock.clone(),
+            ),
+            reconcile: Reconcile::new(setup.db.clone(), setup.clock.clone()),
+            management: Management::new(setup),
+            mutations: Mutations::new(setup),
+            contrib: setup.contrib.clone(),
+            operations,
+            setup: setup.clone(),
+        }
+    }
+
+    /// A repairs worker that has followed nothing up yet. The repairs loop
+    /// builds one at start and keeps it.
+    pub fn repair_worker(&self) -> RepairWorker {
+        let setup = &self.setup;
+        RepairWorker::new(
+            &self.repairs,
+            setup.identify_store.clone(),
+            setup.identify.clone(),
+            setup.coordinator.clone(),
+            setup.settings.management.clone(),
+        )
+    }
 
     /// Start the library background loops on `supervisor`. Called after
     /// startup recovery, from inside the runtime.
@@ -607,3 +673,39 @@ impl LibrarySetup {
         super::loops::start_loops(self, supervisor)
     }
 }
+
+/// The operations service over the setup's identify store and service.
+pub(crate) fn operations(setup: &LibrarySetup) -> Operations {
+    Operations::new(
+        setup.db.clone(),
+        setup.identify_store.clone(),
+        setup.identify.clone(),
+        setup.ids.clone(),
+        setup.settings.management.clone(),
+        setup.wakeups.clone(),
+        setup.clock.clone(),
+    )
+}
+
+/// Each service is a sub-state of [`LibraryServices`], so a handler takes
+/// `State<Service>` for the one it calls.
+macro_rules! substate {
+    ($($field:ident: $service:ty),* $(,)?) => {
+        $(impl FromRef<LibraryServices> for $service {
+            fn from_ref(services: &LibraryServices) -> Self {
+                services.$field.clone()
+            }
+        })*
+    };
+}
+
+substate!(
+    setup: LibrarySetup,
+    operations: Operations,
+    repairs: Repairs,
+    corrections: Corrections,
+    reconcile: Reconcile,
+    management: Management,
+    mutations: Mutations,
+    contrib: Arc<ContributionService>,
+);

@@ -3,10 +3,10 @@
 use droppedneedle_kernel::mount::{Routes, routes};
 
 use super::handlers::*;
-use crate::wiring::LibrarySetup;
+use crate::wiring::LibraryServices;
 
 /// Every library route, grouped by who may call it.
-pub fn library_routes() -> Routes<LibrarySetup> {
+pub fn library_routes() -> Routes<LibraryServices> {
     Routes::new()
         .user(routes!(list_roots))
         .admin(routes!(add_root))

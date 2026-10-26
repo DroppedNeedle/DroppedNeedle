@@ -20,11 +20,11 @@ use super::error::refused;
 use super::models::snake;
 use crate::mutations::{MutationError, Mutations, RemovalKind};
 use crate::scan::models::ScanState;
-use crate::wiring::LibrarySetup;
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator};
 
 /// Mutation routes.
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .admin(routes!(remove_album))
         .curator(routes!(remove_track))
@@ -82,11 +82,11 @@ pub struct PutBackView {
     )
 )]
 pub async fn list_album_removals(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     _caller: Curator,
     Path(album_id): Path<String>,
 ) -> Result<Json<AlbumRemovalsView>, ApiError> {
-    let listed = blocking(move || Mutations::new(&state).album_removals(&album_id)).await?;
+    let listed = blocking(move || mutations.album_removals(&album_id)).await?;
     Ok(Json(AlbumRemovalsView {
         items: listed
             .into_iter()
@@ -124,13 +124,12 @@ pub async fn list_album_removals(
     )
 )]
 pub async fn put_back_removal(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     caller: Curator,
     Path((album_id, removal_id)): Path<(String, String)>,
 ) -> Result<Json<PutBackView>, ApiError> {
     let actor = caller.user_id().to_owned();
-    let missing =
-        blocking(move || Mutations::new(&state).put_back(&album_id, &removal_id, &actor)).await?;
+    let missing = blocking(move || mutations.put_back(&album_id, &removal_id, &actor)).await?;
     Ok(Json(PutBackView { missing }))
 }
 
@@ -257,19 +256,14 @@ async fn blocking<T: Send + 'static>(
     )
 )]
 pub async fn remove_album(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<RemoveAlbumQuery>,
 ) -> Result<Json<RemovalResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
     let removed = blocking(move || {
-        Mutations::new(&state).remove_album_now(
-            &album_id,
-            query.delete_files,
-            query.stop_wanted,
-            &actor,
-        )
+        mutations.remove_album_now(&album_id, query.delete_files, query.stop_wanted, &actor)
     })
     .await?;
     Ok(Json(RemovalResponse {
@@ -299,16 +293,14 @@ pub async fn remove_album(
     )
 )]
 pub async fn remove_track(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     caller: Curator,
     Path(track_id): Path<String>,
     ValidQuery(query): ValidQuery<RemoveTrackQuery>,
 ) -> Result<Json<RemovalResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
-    let removed = blocking(move || {
-        Mutations::new(&state).remove_track_now(&track_id, query.delete_file, &actor)
-    })
-    .await?;
+    let removed =
+        blocking(move || mutations.remove_track_now(&track_id, query.delete_file, &actor)).await?;
     Ok(Json(RemovalResponse {
         success: true,
         id: removed.id,
@@ -331,12 +323,12 @@ pub async fn remove_track(
     )
 )]
 pub async fn rescan_album(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     caller: Admin,
     Path(album_id): Path<String>,
 ) -> Result<(StatusCode, Json<AlbumRescanResponse>), ApiError> {
     let actor = caller.user_id().to_owned();
-    let result = blocking(move || Mutations::new(&state).rescan_album(&album_id, &actor)).await?;
+    let result = blocking(move || mutations.rescan_album(&album_id, &actor)).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AlbumRescanResponse {
@@ -364,18 +356,14 @@ pub async fn rescan_album(
     )
 )]
 pub async fn reenable_management(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<ReenableBody>,
 ) -> Result<Json<ReenableResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
     let reenabled = blocking(move || {
-        Mutations::new(&state).reenable_management(
-            &album_id,
-            body.expected_exclusion_revision,
-            &actor,
-        )
+        mutations.reenable_management(&album_id, body.expected_exclusion_revision, &actor)
     })
     .await?;
     Ok(Json(ReenableResponse { reenabled }))
@@ -398,13 +386,12 @@ pub async fn reenable_management(
     )
 )]
 pub async fn hand_back_management(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     caller: Admin,
     Path(album_id): Path<String>,
 ) -> Result<Json<HandBackResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
-    let handed_back =
-        blocking(move || Mutations::new(&state).hand_back_management(&album_id, &actor)).await?;
+    let handed_back = blocking(move || mutations.hand_back_management(&album_id, &actor)).await?;
     Ok(Json(HandBackResponse { handed_back }))
 }
 
@@ -422,10 +409,10 @@ pub async fn hand_back_management(
     )
 )]
 pub async fn hand_back_all(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     caller: Admin,
 ) -> Result<Json<HandBackAllResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
-    let albums = blocking(move || Mutations::new(&state).hand_back_all(&actor)).await?;
+    let albums = blocking(move || mutations.hand_back_all(&actor)).await?;
     Ok(Json(HandBackAllResponse { albums }))
 }

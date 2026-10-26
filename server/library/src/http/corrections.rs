@@ -28,11 +28,11 @@ use crate::corrections::models::{
     MembershipKind, MembershipOutcome, MembershipRequest, PairEdition, PairJoinRequest, PairReason,
     PairSide, ProviderChoice, RetagPair,
 };
-use crate::wiring::LibrarySetup;
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::Admin;
 
 /// Correction routes.
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .admin(routes!(preview_album_split))
         .admin(routes!(apply_album_split))
@@ -372,21 +372,19 @@ fn apply_request(
 }
 
 async fn preview_membership(
-    state: LibrarySetup,
+    corrections: Corrections,
     actor: String,
     request: MembershipRequest,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
-    let corrections = Corrections::new(&state);
     let previewed = blocking(move || corrections.preview_membership(&request, &actor)).await?;
     Ok(Json(membership_view(previewed.token, previewed.outcome)))
 }
 
 async fn apply_membership(
-    state: LibrarySetup,
+    corrections: Corrections,
     request: MembershipRequest,
     meta: ApplyMeta,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
-    let corrections = Corrections::new(&state);
     let applied = blocking(move || corrections.apply_membership(&request, &meta)).await?;
     Ok(Json(applied.into()))
 }
@@ -412,13 +410,13 @@ async fn apply_membership(
     )
 )]
 pub async fn preview_album_split(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Split, Some(album_id), body);
-    preview_membership(state, caller.user_id().to_owned(), request).await
+    preview_membership(corrections, caller.user_id().to_owned(), request).await
 }
 
 /// Split selected tracks off an album into a new album (or into the target).
@@ -438,7 +436,7 @@ pub async fn preview_album_split(
     )
 )]
 pub async fn apply_album_split(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipApplyBody>,
@@ -449,7 +447,7 @@ pub async fn apply_album_split(
         body,
         caller.user_id().to_owned(),
     );
-    apply_membership(state, request, meta).await
+    apply_membership(corrections, request, meta).await
 }
 
 /// Preview folding whole albums into the target album.
@@ -468,12 +466,12 @@ pub async fn apply_album_split(
     )
 )]
 pub async fn preview_album_merge(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Merge, None, body);
-    preview_membership(state, caller.user_id().to_owned(), request).await
+    preview_membership(corrections, caller.user_id().to_owned(), request).await
 }
 
 /// Fold whole albums into the target album.
@@ -492,7 +490,7 @@ pub async fn preview_album_merge(
     )
 )]
 pub async fn apply_album_merge(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<MembershipApplyBody>,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
@@ -502,7 +500,7 @@ pub async fn apply_album_merge(
         body,
         caller.user_id().to_owned(),
     );
-    apply_membership(state, request, meta).await
+    apply_membership(corrections, request, meta).await
 }
 
 /// Preview moving selected tracks onto the target album.
@@ -521,12 +519,12 @@ pub async fn apply_album_merge(
     )
 )]
 pub async fn preview_track_move(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Move, None, body);
-    preview_membership(state, caller.user_id().to_owned(), request).await
+    preview_membership(corrections, caller.user_id().to_owned(), request).await
 }
 
 /// Move selected tracks onto the target album.
@@ -545,7 +543,7 @@ pub async fn preview_track_move(
     )
 )]
 pub async fn apply_track_move(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<MembershipApplyBody>,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
@@ -555,7 +553,7 @@ pub async fn apply_track_move(
         body,
         caller.user_id().to_owned(),
     );
-    apply_membership(state, request, meta).await
+    apply_membership(corrections, request, meta).await
 }
 
 /// Preview handing an album's tracks back to automatic grouping.
@@ -575,13 +573,13 @@ pub async fn apply_track_move(
     )
 )]
 pub async fn preview_grouping_reset(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Reset, Some(album_id), body);
-    preview_membership(state, caller.user_id().to_owned(), request).await
+    preview_membership(corrections, caller.user_id().to_owned(), request).await
 }
 
 /// Hand an album's tracks back to automatic grouping.
@@ -601,7 +599,7 @@ pub async fn preview_grouping_reset(
     )
 )]
 pub async fn apply_grouping_reset(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipApplyBody>,
@@ -612,7 +610,7 @@ pub async fn apply_grouping_reset(
         body,
         caller.user_id().to_owned(),
     );
-    apply_membership(state, request, meta).await
+    apply_membership(corrections, request, meta).await
 }
 
 fn artist_request(
@@ -645,11 +643,10 @@ fn artist_request(
     )
 )]
 pub async fn preview_artist_merge(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<ArtistMergePreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
-    let corrections = Corrections::new(&state);
     let request = artist_request(
         body.source_artist_ids,
         body.surviving_artist_id,
@@ -677,11 +674,10 @@ pub async fn preview_artist_merge(
     )
 )]
 pub async fn apply_artist_merge(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<ArtistMergeApplyBody>,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
-    let corrections = Corrections::new(&state);
     let request = artist_request(
         body.source_artist_ids,
         body.surviving_artist_id,
@@ -840,10 +836,9 @@ fn pair_view(pair: RetagPair) -> RetagPairView {
     )
 )]
 pub async fn list_retag_pairs(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     _caller: Admin,
 ) -> Result<Json<RetagPairListResponse>, ApiError> {
-    let corrections = Corrections::new(&state);
     let list = blocking(move || corrections.retag_pairs()).await?;
     Ok(Json(RetagPairListResponse {
         pairs: list.pairs.into_iter().map(pair_view).collect(),
@@ -874,12 +869,11 @@ pub async fn list_retag_pairs(
     )
 )]
 pub async fn join_retag_pair(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     caller: Admin,
     Path((old_album_id, new_album_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<RetagPairJoinBody>,
 ) -> Result<Json<RetagPairJoinResponse>, ApiError> {
-    let corrections = Corrections::new(&state);
     let request = PairJoinRequest {
         old_album_id,
         new_album_id,
@@ -908,11 +902,10 @@ pub async fn join_retag_pair(
     )
 )]
 pub async fn dismiss_retag_pair(
-    State(state): State<LibrarySetup>,
+    State(corrections): State<Corrections>,
     _caller: Admin,
     Path((old_album_id, new_album_id)): Path<(String, String)>,
 ) -> Result<Json<RetagPairDismissResponse>, ApiError> {
-    let corrections = Corrections::new(&state);
     let dismissed =
         blocking(move || corrections.dismiss_retag_pair(&old_album_id, &new_album_id)).await?;
     Ok(Json(RetagPairDismissResponse { dismissed }))

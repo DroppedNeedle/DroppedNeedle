@@ -22,10 +22,10 @@ use crate::reconcile::models::{
     CreditEvidence, Group, GroupDetail, GroupState, Member, OwnedReference, ReconcileError,
 };
 use crate::reconcile::service::Reconcile;
-use crate::wiring::LibrarySetup;
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::Admin;
 
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .admin(routes!(artist_reconciliation))
         .admin(routes!(list_artist_duplicate_groups))
@@ -393,10 +393,9 @@ pub struct ArtistDuplicateGroupDismissResponse {
     )
 )]
 pub async fn artist_reconciliation(
-    State(state): State<LibrarySetup>,
+    State(service): State<Reconcile>,
     _caller: Admin,
 ) -> Result<Json<ArtistReconciliationProgress>, ApiError> {
-    let service = Reconcile::new(&state);
     let p = blocking(move || service.progress()).await?;
     Ok(Json(ArtistReconciliationProgress {
         state: p.state,
@@ -426,11 +425,10 @@ pub async fn artist_reconciliation(
     )
 )]
 pub async fn list_artist_duplicate_groups(
-    State(state): State<LibrarySetup>,
+    State(service): State<Reconcile>,
     _caller: Admin,
     ValidQuery(query): ValidQuery<ArtistGroupListQuery>,
 ) -> Result<Json<ArtistDuplicateGroupListResponse>, ApiError> {
-    let service = Reconcile::new(&state);
     let page = blocking(move || {
         service.list(
             query.limit.unwrap_or(50),
@@ -467,11 +465,10 @@ pub async fn list_artist_duplicate_groups(
     )
 )]
 pub async fn get_artist_duplicate_group(
-    State(state): State<LibrarySetup>,
+    State(service): State<Reconcile>,
     _caller: Admin,
     Path(group_id): Path<String>,
 ) -> Result<Json<ArtistDuplicateGroupDetail>, ApiError> {
-    let service = Reconcile::new(&state);
     let detail = blocking(move || service.detail(&group_id)).await?;
     Ok(Json(detail.into()))
 }
@@ -494,12 +491,11 @@ pub async fn get_artist_duplicate_group(
     )
 )]
 pub async fn dismiss_artist_duplicate_group(
-    State(state): State<LibrarySetup>,
+    State(service): State<Reconcile>,
     caller: Admin,
     Path(group_id): Path<String>,
     ValidJson(body): ValidJson<ArtistDuplicateGroupDismissRequest>,
 ) -> Result<Json<ArtistDuplicateGroupDismissResponse>, ApiError> {
-    let service = Reconcile::new(&state);
     let user_id = caller.user_id().to_owned();
     let id = group_id.clone();
     let pairs =

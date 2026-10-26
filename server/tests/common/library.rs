@@ -20,7 +20,9 @@ use droppedneedle_library::identify::sources::{
     SourceError, Unanswered,
 };
 use droppedneedle_library::management::enrich::EnrichmentPort;
-use droppedneedle_library::wiring::{LibraryCore, LibraryPorts, LibrarySetup};
+use droppedneedle_library::operations::service::Operations;
+use droppedneedle_library::repairs::service::RepairWorker;
+use droppedneedle_library::wiring::{LibraryCore, LibraryPorts, LibraryServices, LibrarySetup};
 use droppedneedle_providers::Providers;
 use droppedneedle_providers::musicbrainz::Criticality;
 
@@ -198,6 +200,22 @@ impl ScriptedContrib {
             musicbrainz: self.musicbrainz.clone(),
         }
     }
+}
+
+/// The library's services over `library`, built as the server builds them.
+pub fn services(library: &LibrarySetup) -> LibraryServices {
+    LibraryServices::build(library)
+}
+
+/// The operations service over `library`.
+pub fn operations(library: &LibrarySetup) -> Operations {
+    services(library).operations
+}
+
+/// A repairs worker that has followed nothing up yet, as the repairs loop
+/// starts with.
+pub fn repair_worker(library: &LibrarySetup) -> RepairWorker {
+    services(library).repair_worker()
 }
 
 /// A library bundle built the way the app builds it, over the platform's

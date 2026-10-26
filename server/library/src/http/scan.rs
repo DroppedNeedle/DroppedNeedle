@@ -25,11 +25,11 @@ use crate::activity::feed::LibraryActivity;
 use crate::scan::models::{Disposition, FailureCode, ScanKind, ScanPhase, ScanState};
 use crate::scan::reasons::scan_reason;
 use crate::scans::{MAX_FAILURE_PAGE, MAX_PAGE, RunControl};
-use crate::wiring::LibrarySetup;
+use crate::wiring::{LibraryServices, LibrarySetup};
 use droppedneedle_auth::{Admin, User};
 
 /// Scan control and activity routes.
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .admin(routes!(request_scan_run))
         .admin(routes!(current_scan_runs))

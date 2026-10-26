@@ -12,7 +12,7 @@ use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_catalog::{concerts::ConcertsSetup, reads::ReadsSetup};
 use droppedneedle_compat::CompatSetup;
 use droppedneedle_kernel::{config::AppConfig, events::EventHub, ids::IdGenerator};
-use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_library::wiring::{LibraryServices, LibrarySetup};
 use droppedneedle_media::MediaSetup;
 use droppedneedle_plugins::wiring::PluginsSetup;
 
@@ -34,6 +34,9 @@ pub struct AppState {
     pub acquire: AcquireSetup,
     /// Library: scan, identify, publish, contrib.
     pub library: LibrarySetup,
+    /// The library's services, built once over `library`: the library
+    /// router's state.
+    pub library_services: LibraryServices,
     /// Subsonic/Jellyfin compat (outside the `/api` gate).
     pub compat: CompatSetup,
     /// Admin routes, the latest checkpoint pass among them.
@@ -63,7 +66,7 @@ impl AppState {
         reads: ReadsSetup,
         media: MediaSetup,
         acquire: AcquireSetup,
-        library: LibrarySetup,
+        library: LibraryServices,
         compat: CompatSetup,
         admin: AdminSetup,
         settings: SettingsSetup,
@@ -79,7 +82,8 @@ impl AppState {
             reads,
             media,
             acquire,
-            library,
+            library: library.setup.clone(),
+            library_services: library,
             compat,
             admin,
             settings,

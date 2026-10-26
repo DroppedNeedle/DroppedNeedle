@@ -30,7 +30,6 @@ use crate::identity::reads::album_identity_row;
 use crate::jobs::{self, OperationKind};
 use crate::matching::model::Release;
 use crate::scan::watcher::WorkWakeups;
-use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::Live;
@@ -56,15 +55,23 @@ pub struct Operations {
 }
 
 impl Operations {
-    pub fn new(setup: &LibrarySetup) -> Self {
+    pub fn new(
+        db: Db,
+        store: Arc<SqliteIdentifyStore>,
+        identify: Arc<IdentifyService>,
+        ids: Arc<dyn IdGenerator>,
+        management: Live<LibraryManagement>,
+        wakeups: WorkWakeups,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
         Self {
-            db: setup.db.clone(),
-            store: setup.identify_store.clone(),
-            identify: setup.identify.clone(),
-            ids: setup.ids.clone(),
-            management: setup.settings.management.clone(),
-            wakeups: setup.wakeups.clone(),
-            clock: setup.clock.clone(),
+            db,
+            store,
+            identify,
+            ids,
+            management,
+            wakeups,
+            clock,
         }
     }
 
@@ -76,6 +83,18 @@ impl Operations {
         self.db.read_blocking("operations.edition_status", |conn| {
             Ok::<_, OperationError>(super::status::edition_status(conn, album_id)?)
         })
+    }
+
+    /// The live automatic-edition undo for one album: the revisions to
+    /// echo. Blocking.
+    pub fn automatic_edition_undo(
+        &self,
+        album_id: &str,
+    ) -> Result<Option<(i64, i64)>, OperationError> {
+        self.db
+            .read_blocking("operations.automatic_edition_undo", |conn| {
+                Ok::<_, OperationError>(decisions::live_automatic_edition_undo(conn, album_id)?)
+            })
     }
 
     /// One page of the albums whose match waits for a person. Blocking.
@@ -1135,17 +1154,4 @@ fn parse_release(raw: &str) -> Result<String, OperationError> {
     uuid::Uuid::parse_str(raw.trim())
         .map(|id| id.hyphenated().to_string())
         .map_err(|_| OperationError::Invalid(reasons::RELEASE_MBID_INVALID))
-}
-
-/// The live automatic-edition undo for one album: the revisions to echo.
-/// Blocking.
-pub fn automatic_edition_undo(
-    setup: &LibrarySetup,
-    album_id: &str,
-) -> Result<Option<(i64, i64)>, OperationError> {
-    setup
-        .db
-        .read_blocking("operations.automatic_edition_undo", |conn| {
-            Ok::<_, OperationError>(decisions::live_automatic_edition_undo(conn, album_id)?)
-        })
 }

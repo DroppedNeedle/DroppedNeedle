@@ -266,15 +266,21 @@ struct TrackFile {
     relative_path: String,
 }
 
-/// Library mutations over the setup's store, roots and scan coordinator.
-pub struct Mutations<'a> {
-    setup: &'a LibrarySetup,
+/// Library mutations over the setup's store, roots and scan coordinator,
+/// with the operations service that plans an album's edition.
+#[derive(Clone)]
+pub struct Mutations {
+    setup: LibrarySetup,
+    operations: super::operations::service::Operations,
 }
 
-impl<'a> Mutations<'a> {
-    /// Mutations over one library setup.
-    pub fn new(setup: &'a LibrarySetup) -> Self {
-        Self { setup }
+impl Mutations {
+    /// Mutations over the setup's publisher, roots and store.
+    pub fn new(setup: &LibrarySetup) -> Self {
+        Self {
+            setup: setup.clone(),
+            operations: super::wiring::operations(setup),
+        }
     }
 
     /// Remove an album from the catalog, moving its files into the
@@ -468,7 +474,8 @@ impl<'a> Mutations<'a> {
                 reasons::NOTHING_PICKED,
             )));
         }
-        let plan = super::operations::service::Operations::new(self.setup)
+        let plan = self
+            .operations
             .edition_plan(album_id, None)
             .await
             .map_err(ExtrasError::Plan)?;
@@ -482,14 +489,12 @@ impl<'a> Mutations<'a> {
                 reasons::FILE_KEEPS_ITS_PLACE,
             )));
         }
-        let setup = self.setup.clone();
+        let mutations = self.clone();
         let (album_id, actor) = (album_id.to_owned(), actor.to_owned());
-        tokio::task::spawn_blocking(move || {
-            Mutations::new(&setup).recycle_extras(&album_id, &track_ids, &actor)
-        })
-        .await
-        .map_err(|error| ExtrasError::Remove(MutationError::Store(error.to_string())))?
-        .map_err(ExtrasError::Remove)
+        tokio::task::spawn_blocking(move || mutations.recycle_extras(&album_id, &track_ids, &actor))
+            .await
+            .map_err(|error| ExtrasError::Remove(MutationError::Store(error.to_string())))?
+            .map_err(ExtrasError::Remove)
     }
 
     /// [`Self::remove_extras`] without its edition check, for a test that
@@ -719,7 +724,7 @@ impl<'a> Mutations<'a> {
         let canonical = self
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
-        takeover::hand_back(self.setup, &canonical, Some(actor)).map_err(|error| match error {
+        takeover::hand_back(&self.setup, &canonical, Some(actor)).map_err(|error| match error {
             super::management::models::ManagementError::Conflict(_) => {
                 MutationError::Conflict(HAND_BACK_UNREADABLE)
             }

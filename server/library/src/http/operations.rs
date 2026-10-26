@@ -26,14 +26,15 @@ use crate::operations::models::{
 };
 use crate::operations::reasons::{self, Reason};
 use crate::operations::service::{Operations, RELEASE_PAGE_MAX};
-use crate::wiring::LibrarySetup;
+use crate::repairs::service::Repairs;
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator};
 
 /// Matcher version reported on candidates scored by the matching engine.
 const MATCHER_VERSION: &str = "library-matching-v1";
 
 /// Operation routes.
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .admin(routes!(get_operation))
         .admin(routes!(pause_operation))
@@ -451,18 +452,14 @@ pub(super) fn detail_view(detail: &OperationDetail) -> OperationView {
     )
 )]
 pub async fn get_operation(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<OperationView>, ApiError> {
-    let ops = Operations::new(&state);
     let (detail, summary) = blocking(move || {
         let detail = ops.get(&job_id)?;
-        let summary = if detail.job.kind == "repair" {
-            crate::repairs::service::repair_summary(&state, &job_id)?
-        } else {
-            None
-        };
+        let summary = repairs.summary_of(&detail.job)?;
         Ok::<_, OperationError>((detail, summary))
     })
     .await?;
@@ -473,12 +470,11 @@ pub async fn get_operation(
 }
 
 async fn control(
-    state: LibrarySetup,
+    ops: Operations,
     job_id: String,
     control: Control,
     body: OperationControlBody,
 ) -> Result<Json<OperationView>, ApiError> {
-    let ops = Operations::new(&state);
     let job = blocking(move || {
         ops.control(
             &job_id,
@@ -508,12 +504,12 @@ async fn control(
     )
 )]
 pub async fn pause_operation(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    control(state, job_id, Control::Pause, body).await
+    control(ops, job_id, Control::Pause, body).await
 }
 
 /// Resume a paused or stopped job, or one that failed while MusicBrainz
@@ -534,12 +530,12 @@ pub async fn pause_operation(
     )
 )]
 pub async fn resume_operation(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    control(state, job_id, Control::Resume, body).await
+    control(ops, job_id, Control::Resume, body).await
 }
 
 /// Stop a job. A running job stops at its next checkpoint.
@@ -559,12 +555,12 @@ pub async fn resume_operation(
     )
 )]
 pub async fn stop_operation(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    control(state, job_id, Control::Stop, body).await
+    control(ops, job_id, Control::Stop, body).await
 }
 
 /// Search MusicBrainz releases for an album's edition finder.
@@ -583,7 +579,7 @@ pub async fn stop_operation(
     )
 )]
 pub async fn search_reidentification_releases(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     _caller: Curator,
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<ReleaseSearchQuery>,
@@ -599,7 +595,7 @@ pub async fn search_reidentification_releases(
         .release_group_mbid
         .as_deref()
         .filter(|group| !group.trim().is_empty());
-    let search = Operations::new(&state)
+    let search = ops
         .search_releases(
             &album_id,
             &query.title,
@@ -670,12 +666,11 @@ pub async fn search_reidentification_releases(
     )
 )]
 pub async fn undo_automatic_edition(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<AutomaticEditionUndoBody>,
 ) -> Result<Json<AutomaticEditionUndoResponse>, ApiError> {
-    let ops = Operations::new(&state);
     let user_id = caller.user_id().to_owned();
     let undone = blocking(move || {
         ops.undo_automatic_edition(

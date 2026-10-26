@@ -19,7 +19,6 @@ use super::retag_pairs;
 use super::token::{self, TokenFault};
 use crate::clock::LibraryClock as _;
 use crate::settings::LibrarySettings;
-use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
 
 /// Catalog corrections over the library's store. Preview tokens are signed
@@ -32,12 +31,12 @@ pub struct Corrections {
 }
 
 impl Corrections {
-    pub fn new(setup: &LibrarySetup) -> Self {
-        Self {
-            db: setup.db.clone(),
-            signer: setup.settings.clone(),
-            clock: setup.clock.clone(),
-        }
+    pub fn new(
+        db: Db,
+        signer: LibrarySettings,
+        clock: std::sync::Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
+        Self { db, signer, clock }
     }
 
     /// What a split, merge, move or reset would do, and its token.

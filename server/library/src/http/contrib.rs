@@ -29,8 +29,10 @@ use crate::contrib::models::{
     ContributionRecord, DiscogsReleaseCandidate, LEGACY_CALLBACK_PATH, MusicBrainzSeed,
     ReleaseDraft,
 };
-use crate::wiring::LibrarySetup;
+use crate::contrib::service::ContributionService;
+use crate::wiring::{LibraryServices, LibrarySetup};
 use droppedneedle_auth::{Curator, User};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // DTOs (v2 `api/v1/schemas/library_contributions.py`)
@@ -168,7 +170,7 @@ type Answer<T> = Result<Json<T>, ApiError>;
 
 /// The contribution routes. The callback is public: the one-time token
 /// identifies the contribution, as in v2's public route.
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .curator(routes!(create_contribution))
         .user(routes!(get_contribution))
@@ -192,7 +194,7 @@ impl LibrarySetup {
     pub fn legacy_contrib_callback_router(&self) -> Router {
         Router::new()
             .route(LEGACY_CALLBACK_PATH, get(musicbrainz_callback))
-            .with_state(self.clone())
+            .with_state(self.contrib.clone())
     }
 }
 
@@ -211,13 +213,11 @@ impl LibrarySetup {
     )
 )]
 pub async fn create_contribution(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(album_id): Path<String>,
 ) -> Answer<ContributionRecord> {
-    Ok(Json(
-        state.contrib.create(&album_id, caller.user_id()).await?,
-    ))
+    Ok(Json(contrib.create(&album_id, caller.user_id()).await?))
 }
 
 /// Read one contribution.
@@ -233,11 +233,11 @@ pub async fn create_contribution(
     )
 )]
 pub async fn get_contribution(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     _caller: User,
     Path(id): Path<String>,
 ) -> Answer<ContributionRecord> {
-    Ok(Json(state.contrib.get(&id).await?))
+    Ok(Json(contrib.get(&id).await?))
 }
 
 /// Save the edited draft.
@@ -257,14 +257,13 @@ pub async fn get_contribution(
     )
 )]
 pub async fn update_draft(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionDraftBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .update(
                 &id,
                 body.expected_row_revision,
@@ -291,14 +290,13 @@ pub async fn update_draft(
     )
 )]
 pub async fn rebuild(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .rebuild(&id, body.expected_row_revision, caller.user_id())
             .await?,
     ))
@@ -320,14 +318,13 @@ pub async fn rebuild(
     )
 )]
 pub async fn cancel(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .cancel(&id, body.expected_row_revision, caller.user_id())
             .await?,
     ))
@@ -351,15 +348,12 @@ pub async fn cancel(
     )
 )]
 pub async fn search_discogs(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     _caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<DiscogsSearchBody>,
 ) -> Answer<DiscogsSearchResponse> {
-    let results = state
-        .contrib
-        .search_discogs(&id, body.query.as_deref())
-        .await?;
+    let results = contrib.search_discogs(&id, body.query.as_deref()).await?;
     Ok(Json(DiscogsSearchResponse { results }))
 }
 
@@ -381,14 +375,13 @@ pub async fn search_discogs(
     )
 )]
 pub async fn select_discogs(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<DiscogsSelectBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .select_discogs(
                 &id,
                 &body.release_id_or_url,
@@ -415,14 +408,13 @@ pub async fn select_discogs(
     )
 )]
 pub async fn remove_discogs(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .remove_discogs(&id, body.expected_row_revision, caller.user_id())
             .await?,
     ))
@@ -445,14 +437,13 @@ pub async fn remove_discogs(
     )
 )]
 pub async fn check_duplicates(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<DuplicateCheckBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .check_duplicates(
                 &id,
                 body.expected_row_revision,
@@ -480,14 +471,13 @@ pub async fn check_duplicates(
     )
 )]
 pub async fn attach_existing(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<AttachExistingBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .attach_existing(
                 &id,
                 &body.release_mbid,
@@ -517,7 +507,7 @@ pub async fn attach_existing(
     )
 )]
 pub async fn create_seed(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     OriginalUri(original): OriginalUri,
     headers: HeaderMap,
@@ -530,8 +520,7 @@ pub async fn create_seed(
         base_path(original.path(), "/api/v3/")
     );
     Ok(Json(
-        state
-            .contrib
+        contrib
             .create_seed(&id, body.expected_row_revision, caller.user_id(), &base_url)
             .await?,
     ))
@@ -554,14 +543,13 @@ pub async fn create_seed(
     )
 )]
 pub async fn record_result(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<MusicBrainzResultBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .record_manual_result(
                 &id,
                 &body.release_id_or_url,
@@ -589,14 +577,13 @@ pub async fn record_result(
     )
 )]
 pub async fn retry_verification(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state
-            .contrib
+        contrib
             .retry_verification(&id, body.expected_row_revision, caller.user_id())
             .await?,
     ))
@@ -614,7 +601,7 @@ pub async fn retry_verification(
     responses((status = 303, description = "Redirect to the contribution or library page"))
 )]
 pub async fn musicbrainz_callback(
-    State(state): State<LibrarySetup>,
+    State(contrib): State<Arc<ContributionService>>,
     OriginalUri(original): OriginalUri,
     ValidQuery(query): ValidQuery<MusicBrainzCallbackQuery>,
 ) -> Response {
@@ -625,8 +612,7 @@ pub async fn musicbrainz_callback(
         "/api/v3/"
     };
     let base = base_path(path, api);
-    let target = match state
-        .contrib
+    let target = match contrib
         .consume_callback(query.token.as_deref(), query.release_mbid.as_deref())
         .await
     {

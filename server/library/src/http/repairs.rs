@@ -26,10 +26,10 @@ use crate::repairs::models::{
 };
 use crate::repairs::reasons;
 use crate::repairs::service::{RepairDetail, Repairs};
-use crate::wiring::LibrarySetup;
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::Admin;
 
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .admin(routes!(list_repairs, create_repair))
         .admin(routes!(estimate_repair))
@@ -324,22 +324,20 @@ fn root_ids(pairs: Vec<(String, String)>) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 async fn get_job(
-    state: LibrarySetup,
+    repairs: Repairs,
     job_id: String,
     purpose: Purpose,
 ) -> Result<Json<OperationView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let detail = blocking(move || repairs.get(&job_id, purpose)).await?;
     Ok(Json(repair_view(&detail)))
 }
 
 async fn list_jobs(
-    state: LibrarySetup,
+    repairs: Repairs,
     query: HistoryQuery,
     purpose: Purpose,
     default_limit: usize,
 ) -> Result<Json<OperationListView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let (items, next_cursor) = blocking(move || {
         repairs.history(
             purpose,
@@ -355,12 +353,11 @@ async fn list_jobs(
 }
 
 async fn findings(
-    state: LibrarySetup,
+    repairs: Repairs,
     job_id: String,
     query: FindingsQuery,
     purpose: Purpose,
 ) -> Result<Json<RepairFindingListView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let page = blocking(move || {
         repairs.findings(
             &job_id,
@@ -381,12 +378,11 @@ async fn findings(
 }
 
 async fn apply(
-    state: LibrarySetup,
+    repairs: Repairs,
     job_id: String,
     body: RepairApplyBody,
     purpose: Purpose,
 ) -> Result<Json<OperationView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let job = blocking(move || {
         repairs.begin_apply(
             &job_id,
@@ -400,12 +396,11 @@ async fn apply(
 }
 
 async fn control(
-    state: LibrarySetup,
+    repairs: Repairs,
     job_id: String,
     control: Control,
     body: OperationControlBody,
 ) -> Result<Json<OperationView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let job = blocking(move || {
         repairs.control(
             &job_id,
@@ -441,11 +436,10 @@ fn created(job: &OperationJob) -> Json<OperationView> {
     )
 )]
 pub async fn create_repair(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     caller: Admin,
     ValidJson(body): ValidJson<RepairCreateBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let user = caller.user_id().to_owned();
     let job = blocking(move || {
         repairs.create(
@@ -474,11 +468,11 @@ pub async fn create_repair(
     )
 )]
 pub async fn list_repairs(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     ValidQuery(query): ValidQuery<HistoryQuery>,
 ) -> Result<Json<OperationListView>, ApiError> {
-    list_jobs(state, query, Purpose::ExistingMatches, 50).await
+    list_jobs(repairs, query, Purpose::ExistingMatches, 50).await
 }
 
 #[utoipa::path(
@@ -493,11 +487,10 @@ pub async fn list_repairs(
     )
 )]
 pub async fn estimate_repair(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     ValidQuery(pairs): ValidQuery<Vec<(String, String)>>,
 ) -> Result<Json<RepairEstimateView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let roots = root_ids(pairs);
     let selected_root_count = roots.len();
     let estimate = blocking(move || repairs.estimate_repair(roots)).await?;
@@ -521,11 +514,11 @@ pub async fn estimate_repair(
     )
 )]
 pub async fn get_repair(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<OperationView>, ApiError> {
-    get_job(state, job_id, Purpose::ExistingMatches).await
+    get_job(repairs, job_id, Purpose::ExistingMatches).await
 }
 
 #[utoipa::path(
@@ -542,12 +535,12 @@ pub async fn get_repair(
     )
 )]
 pub async fn repair_findings(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidQuery(query): ValidQuery<FindingsQuery>,
 ) -> Result<Json<RepairFindingListView>, ApiError> {
-    findings(state, job_id, query, Purpose::ExistingMatches).await
+    findings(repairs, job_id, query, Purpose::ExistingMatches).await
 }
 
 #[utoipa::path(
@@ -566,12 +559,12 @@ pub async fn repair_findings(
     )
 )]
 pub async fn apply_repair(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<RepairApplyBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    apply(state, job_id, body, Purpose::ExistingMatches).await
+    apply(repairs, job_id, body, Purpose::ExistingMatches).await
 }
 
 #[utoipa::path(
@@ -589,12 +582,12 @@ pub async fn apply_repair(
     )
 )]
 pub async fn pause_repair(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    control(state, job_id, Control::Pause, body).await
+    control(repairs, job_id, Control::Pause, body).await
 }
 
 #[utoipa::path(
@@ -612,12 +605,12 @@ pub async fn pause_repair(
     )
 )]
 pub async fn resume_repair(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    control(state, job_id, Control::Resume, body).await
+    control(repairs, job_id, Control::Resume, body).await
 }
 
 #[utoipa::path(
@@ -635,12 +628,12 @@ pub async fn resume_repair(
     )
 )]
 pub async fn stop_repair(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    control(state, job_id, Control::Stop, body).await
+    control(repairs, job_id, Control::Stop, body).await
 }
 
 // ---------------------------------------------------------------------------
@@ -661,11 +654,10 @@ pub async fn stop_repair(
     )
 )]
 pub async fn create_preparation(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     caller: Admin,
     ValidJson(body): ValidJson<PreparationCreateBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let user = caller.user_id().to_owned();
     let job = blocking(move || {
         repairs.create(
@@ -694,11 +686,11 @@ pub async fn create_preparation(
     )
 )]
 pub async fn list_preparations(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     ValidQuery(query): ValidQuery<HistoryQuery>,
 ) -> Result<Json<OperationListView>, ApiError> {
-    list_jobs(state, query, Purpose::ManagementReadiness, 20).await
+    list_jobs(repairs, query, Purpose::ManagementReadiness, 20).await
 }
 
 #[utoipa::path(
@@ -713,11 +705,10 @@ pub async fn list_preparations(
     )
 )]
 pub async fn estimate_preparation(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     ValidQuery(pairs): ValidQuery<Vec<(String, String)>>,
 ) -> Result<Json<PreparationEstimateView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let roots = root_ids(pairs);
     let selected_root_count = roots.len();
     let estimate = blocking(move || repairs.estimate_preparation(roots)).await?;
@@ -744,11 +735,11 @@ pub async fn estimate_preparation(
     )
 )]
 pub async fn get_preparation(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<OperationView>, ApiError> {
-    get_job(state, job_id, Purpose::ManagementReadiness).await
+    get_job(repairs, job_id, Purpose::ManagementReadiness).await
 }
 
 #[utoipa::path(
@@ -765,12 +756,12 @@ pub async fn get_preparation(
     )
 )]
 pub async fn preparation_findings(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidQuery(query): ValidQuery<FindingsQuery>,
 ) -> Result<Json<RepairFindingListView>, ApiError> {
-    findings(state, job_id, query, Purpose::ManagementReadiness).await
+    findings(repairs, job_id, query, Purpose::ManagementReadiness).await
 }
 
 #[utoipa::path(
@@ -789,12 +780,12 @@ pub async fn preparation_findings(
     )
 )]
 pub async fn apply_preparation(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<RepairApplyBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    apply(state, job_id, body, Purpose::ManagementReadiness).await
+    apply(repairs, job_id, body, Purpose::ManagementReadiness).await
 }
 
 #[utoipa::path(
@@ -812,12 +803,11 @@ pub async fn apply_preparation(
     )
 )]
 pub async fn discard_preparation(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
-    let repairs = Repairs::new(&state);
     let job = blocking(move || repairs.discard(&job_id, body.expected_row_revision)).await?;
     Ok(Json(job_view(&job)))
 }
@@ -840,20 +830,15 @@ pub async fn discard_preparation(
     )
 )]
 pub async fn scan_diagnostics(
-    State(state): State<LibrarySetup>,
+    State(repairs): State<Repairs>,
     _caller: Admin,
     Path(run_id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let store = state.scan_store.clone();
     // One pooled read; a database too busy to hand out a connection
     // answers the server-busy 503.
-    let exported = tokio::task::spawn_blocking(move || {
-        store.db().read_blocking("scan_diagnostics", |conn| {
-            Ok::<_, DbError>(crate::repairs::diagnostics::export(conn, &run_id))
-        })
-    })
-    .await
-    .map_err(ApiError::internal)?;
+    let exported = tokio::task::spawn_blocking(move || repairs.scan_diagnostics(&run_id))
+        .await
+        .map_err(ApiError::internal)?;
     let (filename, bytes) = match exported {
         Ok(report) => report.map_err(ApiError::from)?,
         Err(error @ (DbError::Busy { .. } | DbError::LaneClosed)) => {

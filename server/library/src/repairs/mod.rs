@@ -52,8 +52,7 @@ use droppedneedle_kernel::jobs::{
 
 use crate::jobs::REPAIRS_WAKEUP;
 use crate::operations::models::OperationError;
-use crate::wiring::LibrarySetup;
-use service::Repairs;
+use service::RepairWorker;
 
 /// How long the worker waits for a wakeup before it looks anyway: a
 /// queued or resumed job wakes it, while the cleanups and play filings
@@ -67,16 +66,15 @@ pub const JOB_NAME: &str = "library-repairs";
 /// up re-identifications. Its first turn runs at once and requeues the
 /// repair jobs an earlier process left running; after that a queued job
 /// wakes it.
-pub fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
-    let mut wake = setup.wakeups.subscribe(REPAIRS_WAKEUP);
+pub fn start(worker: RepairWorker, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+    let mut wake = worker.wakeups().subscribe(REPAIRS_WAKEUP);
     wake.mark_changed();
     supervisor.on_wakeup(
         JOB_NAME,
         wake,
         Schedule::new(IDLE_CEILING),
         RepairsTick {
-            setup: setup.clone(),
-            repairs: Repairs::new(setup),
+            worker,
             owners: Owner::new(),
             recovered: false,
         },
@@ -85,9 +83,8 @@ pub fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), Alread
 
 /// One turn: work jobs until none is due.
 struct RepairsTick {
-    setup: LibrarySetup,
     /// Kept across turns: it remembers which scans it already followed up.
-    repairs: Repairs,
+    worker: RepairWorker,
     /// Each job is claimed under an owner never used before.
     owners: Owner,
     /// Whether start recovery ran.
@@ -96,12 +93,12 @@ struct RepairsTick {
 
 impl Tick for RepairsTick {
     async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
-        let repairs = self.repairs.stopping_with(ctx.token().clone());
+        let worker = self.worker.stopping_with(ctx.token().clone());
         if !self.recovered {
-            self.recovered = recover_at_start(&repairs).await;
+            self.recovered = recover_at_start(&worker).await;
         }
         while !ctx.token().is_cancelled() {
-            if !tick(&self.setup, &repairs, &self.owners.mint()).await {
+            if !tick(&worker, &self.owners.mint()).await {
                 break;
             }
         }
@@ -111,9 +108,9 @@ impl Tick for RepairsTick {
 
 /// Requeue the repair jobs an earlier process left running. False when it
 /// did not run; the next turn tries again.
-async fn recover_at_start(repairs: &Repairs) -> bool {
-    let repairs = repairs.clone();
-    match blocking(move || Ok(Some(repairs.recover_at_start()?))).await {
+async fn recover_at_start(worker: &RepairWorker) -> bool {
+    let worker = worker.clone();
+    match blocking(move || Ok(Some(worker.recover_at_start()?))).await {
         Some(requeued) => {
             if requeued > 0 {
                 tracing::info!(requeued, "repair jobs from the previous run requeued");
@@ -126,11 +123,11 @@ async fn recover_at_start(repairs: &Repairs) -> bool {
 
 /// Claim the next due repair job and work on it until it is done, waits,
 /// or is halted. True when a job was worked on. Never runs during a scan.
-pub async fn tick(setup: &LibrarySetup, repairs: &Repairs, worker: &str) -> bool {
-    let (setup, repairs, worker) = (setup.clone(), repairs.clone(), worker.to_owned());
+pub async fn tick(repairs: &RepairWorker, worker: &str) -> bool {
+    let (repairs, worker) = (repairs.clone(), worker.to_owned());
     let handle = tokio::runtime::Handle::current();
     let worked = blocking(move || {
-        if !setup.coordinator.current().is_empty() {
+        if repairs.scanning() {
             return Ok(None);
         }
         droppedneedle_kernel::db::block_on(&handle, "repairs_turn", repairs.run_next(&worker))?

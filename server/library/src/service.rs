@@ -153,6 +153,22 @@ impl LibrarySetup {
         Ok(result)
     }
 
+    /// Every current run and the latest finished ones. Blocking.
+    pub fn recent_scan_runs(
+        &self,
+        finished: usize,
+    ) -> Result<(Vec<ScanRun>, Vec<ScanRun>), ServiceError> {
+        let current = self
+            .coordinator
+            .current_runs()
+            .map_err(super::scans::store_error)?;
+        let history = self
+            .coordinator
+            .history(finished)
+            .map_err(super::scans::store_error)?;
+        Ok((current, history))
+    }
+
     /// Run detail plus discovered files (bounded to the latest 500).
     pub fn run_detail(
         &self,

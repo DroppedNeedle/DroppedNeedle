@@ -23,11 +23,11 @@ use super::operations::blocking;
 use crate::operations::history::{HistoryActor, HistoryEntry, HistoryKind};
 use crate::operations::models::OperationError;
 use crate::operations::service::Operations;
-use crate::wiring::LibrarySetup;
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Curator, User};
 
 /// Album history routes.
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .user(routes!(get_album_history))
         .curator(routes!(undo_album_fold))
@@ -150,11 +150,10 @@ pub fn album_history_view(
     )
 )]
 pub async fn get_album_history(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     User(caller): User,
     Path(album_id): Path<String>,
 ) -> Result<Json<AlbumHistoryView>, ApiError> {
-    let ops = Operations::new(&state);
     let view = blocking(move || album_history_view(&ops, &album_id, caller.user_id())).await?;
     Ok(Json(view))
 }
@@ -176,11 +175,10 @@ pub async fn get_album_history(
     )
 )]
 pub async fn undo_album_fold(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     caller: Curator,
     Path(fold_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let ops = Operations::new(&state);
     let user = caller.user_id().to_owned();
     blocking(move || ops.undo_fold(&fold_id, &user)).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -203,11 +201,10 @@ pub async fn undo_album_fold(
     )
 )]
 pub async fn undo_artist_repair(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     caller: Curator,
     Path(repair_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let ops = Operations::new(&state);
     let user = caller.user_id().to_owned();
     blocking(move || ops.undo_artist_repair(&repair_id, &user)).await?;
     Ok(StatusCode::NO_CONTENT)

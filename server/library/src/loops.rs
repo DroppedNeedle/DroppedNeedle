@@ -26,7 +26,7 @@ use super::scan::supervisor::{
 use super::scan::watcher::{
     WatcherAction, WatcherSettings, WatcherState, clear_pending, watcher_request,
 };
-use super::wiring::LibrarySetup;
+use super::wiring::{LibraryServices, LibrarySetup};
 
 /// The library's always-on loops on the supervisor.
 pub const SCAN_JOB: &str = "library-scan";
@@ -623,9 +623,10 @@ impl LibrarySetup {
 /// the one [`LEFTOVERS_JOB`] look. Called from inside the runtime, after
 /// startup recovery.
 pub(crate) fn start_loops(
-    setup: &LibrarySetup,
+    services: &LibraryServices,
     supervisor: &Supervisor,
 ) -> Result<(), AlreadyRunning> {
+    let setup = &services.setup;
     let handle = Handle::current();
     let mut scans = setup.wakeups.subscribe("scan");
     // The first turn runs at once: startup recovery, then any work queued.
@@ -656,9 +657,9 @@ pub(crate) fn start_loops(
         identify_tick(setup.clone(), handle),
     )?;
     super::contrib::worker::start_upkeep(supervisor, setup.contrib_worker.clone())?;
-    super::operations::start(setup, supervisor)?;
-    super::management::start(setup, supervisor)?;
-    super::repairs::start(setup, supervisor)?;
+    super::operations::start(setup, services.operations.clone(), supervisor)?;
+    super::management::start(services.management.clone(), supervisor)?;
+    super::repairs::start(services.repair_worker(), supervisor)?;
     let leftovers = setup.clone();
     supervisor.one_shot(LEFTOVERS_JOB, move |ctx| leftover_pass(leftovers, ctx))?;
     let publish = setup.clone();

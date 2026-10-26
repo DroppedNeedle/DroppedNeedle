@@ -332,7 +332,8 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         ..RecallResult::default()
     });
     assert!(
-        droppedneedle_library::operations::service::Operations::new(&library)
+        droppedneedle_library::wiring::LibraryServices::build(&library)
+            .operations
             .remap_next()
             .await
             .expect("remap step")

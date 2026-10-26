@@ -1851,7 +1851,7 @@ async fn an_edition_tag_write_planned_after_another_choice_writes_nothing() {
             &test_principal("admin", Role::Admin, "session-1", SessionKind::Standard),
         )
         .expect("tag write queued");
-    droppedneedle_library::operations::service::Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .choose_edition(&album, other, Some("admin"))
         .await
         .expect("another edition chosen");
@@ -2880,7 +2880,7 @@ async fn approve_first_candidate(library: &LibrarySetup, identify: &FakeProvider
 
 /// A person chooses `rel-1` as the album's edition.
 async fn choose_first_edition(library: &LibrarySetup, album: &str) {
-    droppedneedle_library::operations::service::Operations::new(library)
+    crate::common::library::operations(library)
         .choose_edition(album, REL_1, Some("curator"))
         .await
         .expect("edition chosen");
@@ -5371,7 +5371,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
         .expect("admin row");
-    droppedneedle_library::operations::service::Operations::new(&library)
+    crate::common::library::operations(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
     let mut settings = lm::initial_settings("");
@@ -7436,8 +7436,11 @@ async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
     ))
     .expect("job held by a stopped process");
 
-    droppedneedle_library::management::start(&library, &platform.supervisor)
-        .expect("management loop starts");
+    droppedneedle_library::management::start(
+        droppedneedle_library::management::service::Management::new(&library),
+        &platform.supervisor,
+    )
+    .expect("management loop starts");
     settled(interrupted).await;
 
     let woken_at = library.wakeups.revision(MANAGEMENT_WAKEUP);
@@ -7467,7 +7470,6 @@ async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
 async fn the_repairs_loop_recovers_at_start_and_wakes_on_enqueue() {
     use droppedneedle_library::jobs::REPAIRS_WAKEUP;
     use droppedneedle_library::repairs::models::Purpose;
-    use droppedneedle_library::repairs::service::Repairs;
 
     let scratch = Scratch {
         dir: ScratchDir::new("lib-repairs-loop"),
@@ -7488,7 +7490,7 @@ async fn the_repairs_loop_recovers_at_start_and_wakes_on_enqueue() {
         .build()
         .await;
     let library = library_with(&platform, scratch.identify.clone(), None);
-    let repairs = Repairs::new(&library);
+    let repairs = crate::common::library::services(&library).repairs;
     // A recheck of an empty library: its report is ready once it runs.
     let check = |key: &str| {
         repairs
@@ -7542,8 +7544,11 @@ async fn the_repairs_loop_recovers_at_start_and_wakes_on_enqueue() {
     ))
     .expect("job held by a stopped process");
 
-    droppedneedle_library::repairs::start(&library, &platform.supervisor)
-        .expect("repairs loop starts");
+    droppedneedle_library::repairs::start(
+        crate::common::library::repair_worker(&library),
+        &platform.supervisor,
+    )
+    .expect("repairs loop starts");
     settled(interrupted).await;
 
     let woken_at = library.wakeups.revision(REPAIRS_WAKEUP);
@@ -7686,7 +7691,7 @@ async fn library_management_preview_apply_undo() {
     let reason = page.items[0].facts.reason.clone().expect("a reason");
     assert_eq!(reason.code, "UNCONFIRMED_MATCH");
     assert!(!reason.action.is_empty());
-    droppedneedle_library::operations::service::Operations::new(&library)
+    crate::common::library::operations(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
 
@@ -8315,7 +8320,7 @@ async fn library_management_tools_journey() {
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
         .expect("admin row");
-    droppedneedle_library::operations::service::Operations::new(&library)
+    crate::common::library::operations(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
     // No MusicBrainz credits are scripted here, so the profile writes none.
@@ -8796,7 +8801,7 @@ async fn library_management_tools_journey() {
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &second_album));
     library.identify_tick().await;
-    droppedneedle_library::operations::service::Operations::new(&library)
+    crate::common::library::operations(&library)
         .confirm_match(&second_album, "admin")
         .expect("second match confirmed");
     let settings_now = revision();
@@ -8860,7 +8865,7 @@ async fn library_management_tools_journey() {
         }
     };
     let stop = |job_id: &str| {
-        droppedneedle_library::operations::service::Operations::new(&library)
+        crate::common::library::operations(&library)
             .control(
                 job_id,
                 droppedneedle_library::operations::models::Control::Stop,
@@ -9035,7 +9040,7 @@ async fn library_management_custom_edition_journey() {
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
         .expect("admin row");
-    droppedneedle_library::operations::service::Operations::new(&library)
+    crate::common::library::operations(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
     library
@@ -9223,7 +9228,7 @@ async fn library_management_artwork_journey() {
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
         .expect("admin row");
-    droppedneedle_library::operations::service::Operations::new(&library)
+    crate::common::library::operations(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
     let mut settings = lm::initial_settings("");
@@ -9620,7 +9625,7 @@ impl ManagedLibrary {
         recall.releases.iter_mut().for_each(&edition);
         self.scratch.identify.set_recall(recall);
         assert_eq!(self.library.identify_tick().await, 1);
-        droppedneedle_library::operations::service::Operations::new(&self.library)
+        crate::common::library::operations(&self.library)
             .confirm_match(&album, "admin")
             .expect("match confirmed");
         (album, ids)
@@ -10059,7 +10064,7 @@ async fn management_leaves_a_folder_that_keeps_its_own_tags() {
             _ if current.contains("-0000-") => current.replacen("-0000-", "-0001-", 1),
             _ => current.replacen("-0001-", "-0000-", 1),
         };
-        droppedneedle_library::operations::service::Operations::new(&managed.library)
+        crate::common::library::operations(&managed.library)
             .choose_edition(&album, &other, Some("admin"))
             .await
             .expect("edition chosen");
@@ -10343,7 +10348,7 @@ async fn unmanaged_changes_do_not_take_the_album_over() {
         )
         .expect("edition");
     let other = if chosen == REL_1 { REL_2 } else { REL_1 };
-    droppedneedle_library::operations::service::Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .choose_edition(&album, other, Some("admin"))
         .await
         .expect("edition chosen");
@@ -12151,7 +12156,7 @@ async fn a_persons_profile_run_takes_the_files_back() {
         )
         .expect("edition");
     let other = if chosen == REL_1 { REL_2 } else { REL_1 };
-    droppedneedle_library::operations::service::Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .choose_edition(&album, other, Some("admin"))
         .await
         .expect("edition chosen");
@@ -12214,7 +12219,7 @@ async fn an_unmanaged_change_stays_accepted_through_every_write() {
     } else {
         chosen.replacen("-0001-", "-0000-", 1)
     };
-    droppedneedle_library::operations::service::Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .choose_edition(&album, &other, Some("admin"))
         .await
         .expect("edition chosen");
@@ -12925,7 +12930,7 @@ async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
     } else {
         chosen.replacen("-0001-", "-0000-", 1)
     };
-    droppedneedle_library::operations::service::Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .choose_edition(&album, &edition, Some("admin"))
         .await
         .expect("edition chosen");
@@ -12994,7 +12999,7 @@ async fn an_undone_profile_run_gives_the_hand_edit_back() {
     } else {
         chosen.replacen("-0001-", "-0000-", 1)
     };
-    droppedneedle_library::operations::service::Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .choose_edition(&album, &edition, Some("admin"))
         .await
         .expect("edition chosen");
@@ -13951,7 +13956,7 @@ fn queue_remap_row(library: &LibrarySetup, album: &str, origin: &str) {
 async fn remap_once(library: &LibrarySetup, identify: &FakeProviders, recall: RecallResult) {
     identify.set_recall(recall);
     assert!(
-        droppedneedle_library::operations::service::Operations::new(library)
+        crate::common::library::operations(library)
             .remap_next()
             .await
             .expect("remap step"),
@@ -14284,7 +14289,7 @@ async fn an_approved_release_is_placed_and_its_undo_survives() {
         );
     }
 
-    droppedneedle_library::operations::service::Operations::new(&library)
+    crate::common::library::operations(&library)
         .undo_edition_choice(&album, "curator")
         .expect("the approval's undo still applies");
     let undone = choice_row(&db, &album);
@@ -14368,7 +14373,7 @@ async fn a_joined_album_gets_its_files_placed_and_stays_the_users() {
     assert_eq!(chosen.0, "manual");
 
     assert!(
-        droppedneedle_library::operations::service::Operations::new(&managed.library)
+        crate::common::library::operations(&managed.library)
             .remap_next()
             .await
             .expect("remap step"),
@@ -15073,8 +15078,8 @@ fn history_kinds(history: &Value) -> Vec<String> {
 /// An album's history as the route sends it to `caller`.
 fn album_history(library: &LibrarySetup, album: &str, caller: &str) -> Value {
     use droppedneedle_library::http::history::album_history_view;
-    use droppedneedle_library::operations::service::Operations;
-    let view = album_history_view(&Operations::new(library), album, caller).expect("history reads");
+    let view = album_history_view(&crate::common::library::operations(library), album, caller)
+        .expect("history reads");
     serde_json::to_value(view).expect("history serialises")
 }
 
@@ -15270,7 +15275,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     assert_eq!(retired_into(&db, &album), None);
     both.releases.push(sibling);
     providers.set_recall(both);
-    droppedneedle_library::operations::service::Operations::new(&library)
+    crate::common::library::operations(&library)
         .choose_edition(&own_row, REL_1, Some("curator"))
         .await
         .expect("edition chosen");
@@ -15911,7 +15916,7 @@ async fn a_retag_that_deleted_a_file_is_left_alone_while_its_folder_stays_held()
     assert_ne!(replacement, album);
     // The match is a weak one, so a person confirms it.
     managed.identify_as(&replacement, &album).await;
-    droppedneedle_library::operations::service::Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .confirm_match(&replacement, "admin")
         .expect("match confirmed");
     managed.look(&replacement).await;
@@ -16202,7 +16207,7 @@ async fn a_best_guess_confirmed_after_its_folder_is_let_go_is_left_alone() {
             .contains(&(replacement.clone(), "UNCONFIRMED_MATCH".to_owned()))
     );
 
-    droppedneedle_library::operations::service::Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .confirm_match(&replacement, "admin")
         .expect("match confirmed");
     managed.worker_looks().await;
@@ -18302,7 +18307,6 @@ fn stray_second(release: &Release, other: &Release) -> Vec<String> {
 async fn a_track_id_from_another_edition_is_corrected() {
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::operations::plan::EditionPlan;
-    use droppedneedle_library::operations::service::Operations;
     use droppedneedle_library::tags::TagField;
 
     let managed = ManagedLibrary::start("lib-stray-track-id", |_| {}).await;
@@ -18344,7 +18348,7 @@ async fn a_track_id_from_another_edition_is_corrected() {
         .expect("identity");
     assert_eq!(identity.release_mbid.as_deref(), Some(r.id.as_str()));
 
-    let ops = Operations::new(library);
+    let ops = crate::common::library::operations(library);
     let notes = |plan: &EditionPlan| -> Vec<(String, &'static str, Option<&'static str>)> {
         let mut notes: Vec<_> = plan
             .files
@@ -18460,8 +18464,6 @@ fn carried_from_v2(db: &rusqlite::Connection) {
 /// are left alone. It happens once.
 #[tokio::test]
 async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
-    use droppedneedle_library::repairs::service::Repairs;
-
     let (scratch, library, music) = bare_library("lib-track-id-relook").await;
     let editions: Vec<(Release, Release)> = (1..=4)
         .map(|n| sibling_editions(n, &format!("Relook {n}")))
@@ -18601,8 +18603,8 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     assert!(queued().is_empty());
 
     carried_from_v2(&db);
-    let repairs = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
+    let repairs = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
     assert_eq!(library.identify_tick().await, 1);
 
@@ -18639,8 +18641,8 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     assert_eq!(undo, 1, "the replaced edition can be undone");
 
     // The next start looks no more.
-    let restarted = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &restarted, "worker").await;
+    let restarted = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&restarted, "worker").await;
     assert!(queued().is_empty());
 }
 
@@ -18653,7 +18655,6 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
 #[tokio::test]
 async fn albums_matched_to_a_group_only_get_an_edition_once() {
     use droppedneedle_library::operations::status::edition_status;
-    use droppedneedle_library::repairs::service::Repairs;
 
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
@@ -18759,7 +18760,11 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
     assert!(queued().is_empty());
 
     // A database no v2 import was committed into has nothing to re-check.
-    droppedneedle_library::repairs::tick(&library, &Repairs::new(&library), "worker").await;
+    droppedneedle_library::repairs::tick(
+        &crate::common::library::repair_worker(&library),
+        "worker",
+    )
+    .await;
     assert!(queued().is_empty());
     let marked: bool = db
         .query_row(
@@ -18771,8 +18776,8 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
         .expect("marker reads");
     assert!(!marked, "nothing is marked done");
     carried_from_v2(&db);
-    let repairs = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
+    let repairs = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
     assert_eq!(library.identify_tick().await, 1);
 
@@ -18807,8 +18812,8 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
 
     // The next start looks no more, even at a group-only match.
     group_only(&a, "embedded");
-    let restarted = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &restarted, "worker").await;
+    let restarted = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&restarted, "worker").await;
     assert!(queued().is_empty());
 }
 
@@ -18820,7 +18825,6 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
 /// left alone. It happens once per database.
 #[tokio::test]
 async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
-    use droppedneedle_library::repairs::service::Repairs;
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
@@ -18908,8 +18912,8 @@ async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
     assert!(queued().is_empty());
 
     carried_from_v2(&db);
-    let repairs = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
+    let repairs = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
     assert_eq!(library.identify_tick().await, 1);
 
@@ -18936,8 +18940,8 @@ async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
     // The next start looks no more.
     db.execute("DELETE FROM library_album_match_state", [])
         .expect("older confirmation planted");
-    let restarted = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &restarted, "worker").await;
+    let restarted = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&restarted, "worker").await;
     assert!(queued().is_empty());
 }
 
@@ -18955,7 +18959,6 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
     use droppedneedle_library::operations::decisions::{
         live_automatic_edition_undo, undo_automatic_edition,
     };
-    use droppedneedle_library::repairs::service::Repairs;
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
@@ -19089,7 +19092,11 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("edition tags unread");
-    droppedneedle_library::repairs::tick(&library, &Repairs::new(&library), "worker").await;
+    droppedneedle_library::repairs::tick(
+        &crate::common::library::repair_worker(&library),
+        "worker",
+    )
+    .await;
     assert!(queued(&db).is_empty());
     assert!(!marked(&db), "the pass waits for the edition tags");
 
@@ -19099,7 +19106,11 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
         rusqlite::params![first_track, unread.0, unread.1, unread.2, unread.3],
     )
     .expect("edition tags read");
-    droppedneedle_library::repairs::tick(&library, &Repairs::new(&library), "worker").await;
+    droppedneedle_library::repairs::tick(
+        &crate::common::library::repair_worker(&library),
+        "worker",
+    )
+    .await;
     assert_eq!(queued(&db), vec![a.clone()]);
     assert!(marked(&db));
     assert_eq!(library.identify_tick().await, 1);
@@ -19136,7 +19147,11 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
     assert_eq!(release_of(&a), Some(vinyl.id.clone()));
 
     // The next start looks no more.
-    droppedneedle_library::repairs::tick(&library, &Repairs::new(&library), "worker").await;
+    droppedneedle_library::repairs::tick(
+        &crate::common::library::repair_worker(&library),
+        "worker",
+    )
+    .await;
     assert!(queued(&db).is_empty());
 }
 
@@ -19154,8 +19169,6 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
 async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
     use droppedneedle_library::http::history::album_history_view;
     use droppedneedle_library::operations::models::OperationError;
-    use droppedneedle_library::operations::service::Operations;
-    use droppedneedle_library::repairs::service::Repairs;
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
@@ -19226,8 +19239,8 @@ async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
         .expect("lock set");
     };
     lock(true);
-    let locked = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &locked, "worker").await;
+    let locked = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&locked, "worker").await;
     assert_eq!(
         read("SELECT album_artist_name FROM local_albums"),
         ["Unknown Artist"],
@@ -19235,8 +19248,8 @@ async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
     );
     lock(false);
 
-    let repairs = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
+    let repairs = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&repairs, "worker").await;
     assert_eq!(
         read("SELECT album_artist_name || ' ' || album_artist_id FROM local_albums"),
         [format!("Yes {}", yes.split(' ').next().expect("artist id"))]
@@ -19264,8 +19277,8 @@ async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
     );
 
     // The next start finds nothing to do.
-    let restarted = Repairs::new(&library);
-    droppedneedle_library::repairs::tick(&library, &restarted, "worker").await;
+    let restarted = crate::common::library::repair_worker(&library);
+    droppedneedle_library::repairs::tick(&restarted, "worker").await;
     assert_eq!(
         read(
             "SELECT CAST(COUNT(*) AS TEXT) FROM library_catalog_actions \
@@ -19282,7 +19295,7 @@ async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
     );
 
     // The album's history lists the change, with Undo while it applies.
-    let ops = Operations::new(&library);
+    let ops = crate::common::library::operations(&library);
     let history = || -> Value {
         let view = album_history_view(&ops, &album, "curator").expect("history reads");
         serde_json::to_value(view).expect("history serializes")["items"].clone()
@@ -21031,7 +21044,6 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
 /// link is the app's own, which a person has no other way to correct.
 #[tokio::test]
 async fn a_custom_edition_passes_over_the_apps_artist_link() {
-    use droppedneedle_library::operations::service::Operations;
     const GROUP: &str = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
     const OTHER_GROUP: &str = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
     const OTHER: &str = "0f6e7a1c-2b3d-4e5f-8a9b-1c2d3e4f5a6b";
@@ -21079,7 +21091,7 @@ async fn a_custom_edition_passes_over_the_apps_artist_link() {
         ))
         .expect("link set");
     };
-    let operations = Operations::new(&managed.library);
+    let operations = crate::common::library::operations(&managed.library);
 
     link("manual");
     let refused = operations
@@ -21291,7 +21303,7 @@ impl ManagedLibrary {
         }
         self.scratch.identify.set_recall(recall);
         while self.library.identify_tick().await > 0 {}
-        droppedneedle_library::operations::service::Operations::new(&self.library)
+        crate::common::library::operations(&self.library)
             .confirm_match(album, "admin")
             .expect("match confirmed");
     }
@@ -21313,10 +21325,8 @@ impl ManagedLibrary {
 /// does not hold it again.
 #[tokio::test]
 async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
-    use droppedneedle_library::corrections::Corrections;
     use droppedneedle_library::corrections::models::PairReason;
     use droppedneedle_library::mutations::Mutations;
-    use droppedneedle_library::operations::service::Operations;
 
     let managed = ManagedLibrary::start("lib-hands-off-replaced", |_| {}).await;
     let (album, old) = managed.add_album("first", 2).await;
@@ -21329,7 +21339,7 @@ async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
         managed.recorded(&old[0]).is_some(),
         "the app wrote the files"
     );
-    Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .leave_unmanaged(&album, managed.edition_revision(&album), "admin")
         .expect("left unmanaged");
     let db = managed.db();
@@ -21362,7 +21372,7 @@ async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
         1,
         "parked"
     );
-    let corrections = Corrections::new(&managed.library);
+    let corrections = crate::common::library::services(&managed.library).corrections;
     let listed = corrections.retag_pairs().expect("pairs listed");
     let pairs: Vec<_> = listed
         .pairs
@@ -21434,9 +21444,7 @@ async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
 /// edition with a review on the new album, and leaves it held.
 #[tokio::test]
 async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
-    use droppedneedle_library::corrections::Corrections;
     use droppedneedle_library::corrections::models::{PairJoinRequest, PairReason};
-    use droppedneedle_library::operations::service::Operations;
 
     let managed = ManagedLibrary::start("lib-hands-off-custom", |_| {}).await;
     // One file: the fixture's own track number would repeat on a second.
@@ -21458,7 +21466,7 @@ async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
         release.release_group_id = group.to_owned();
     }
     managed.scratch.identify.set_recall(recall);
-    Operations::new(&managed.library)
+    crate::common::library::operations(&managed.library)
         .seal_custom_edition(&album, REL_1, managed.edition_revision(&album), "admin")
         .await
         .expect("custom edition sealed");
@@ -21471,7 +21479,7 @@ async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
         managed.mark(&replacement).as_deref(),
         Some("replaced_hands_off")
     );
-    let corrections = Corrections::new(&managed.library);
+    let corrections = crate::common::library::services(&managed.library).corrections;
     let listed = corrections.retag_pairs().expect("pairs listed");
     assert_eq!(listed.pairs.len(), 1);
     let pair = &listed.pairs[0];

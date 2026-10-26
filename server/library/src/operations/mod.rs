@@ -51,7 +51,11 @@ pub const JOB_NAME: &str = "library-operations";
 /// may be changing the very files a job reads). Its first turn runs at
 /// once and requeues the re-identifications an earlier process left
 /// running.
-pub(crate) fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+pub(crate) fn start(
+    setup: &LibrarySetup,
+    ops: Operations,
+    supervisor: &Supervisor,
+) -> Result<(), AlreadyRunning> {
     let mut wake = setup.wakeups.subscribe(OPERATIONS_WAKEUP);
     wake.mark_changed();
     supervisor.on_wakeup(
@@ -59,7 +63,7 @@ pub(crate) fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(),
         wake,
         Schedule::new(IDLE_CEILING),
         OperationsTick {
-            ops: Operations::new(setup),
+            ops,
             owners: Owner::new(),
             setup: setup.clone(),
             recovered: false,

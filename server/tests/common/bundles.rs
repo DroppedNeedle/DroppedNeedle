@@ -104,9 +104,7 @@ pub fn acquire_at(
                 library.releases.clone(),
                 platform.db.sqlx().clone(),
             )),
-            edition_plans: Arc::new(droppedneedle_library::operations::service::Operations::new(
-                library,
-            )),
+            edition_plans: Arc::new(crate::common::library::operations(library)),
             album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(
                 &providers,
                 mb_source.clone(),

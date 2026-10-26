@@ -55,7 +55,6 @@ use droppedneedle_kernel::jobs::{
 };
 
 use crate::jobs::MANAGEMENT_WAKEUP;
-use crate::wiring::LibrarySetup;
 use models::ManagementError;
 use service::Management;
 
@@ -85,15 +84,15 @@ pub const JOB_NAME: &str = "library-management";
 /// a long preview never holds up re-identification jobs. Its first turn
 /// runs at once and requeues the jobs an earlier process left running;
 /// after that a queued job wakes it.
-pub fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
-    let mut wake = setup.wakeups.subscribe(MANAGEMENT_WAKEUP);
+pub fn start(management: Management, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+    let mut wake = management.setup.wakeups.subscribe(MANAGEMENT_WAKEUP);
     wake.mark_changed();
     supervisor.on_wakeup(
         JOB_NAME,
         wake,
         Schedule::new(IDLE_CEILING),
         ManagementTick {
-            setup: setup.clone(),
+            management,
             owners: Owner::new(),
             recovered: false,
             settle: automatic::Settle::default(),
@@ -105,7 +104,7 @@ pub fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), Alread
 /// One turn: work steps until none is due. A busy database waits a few
 /// seconds and is not a failed turn.
 struct ManagementTick {
-    setup: LibrarySetup,
+    management: Management,
     /// Each step claims under an owner never used before.
     owners: Owner,
     /// Whether start recovery ran.
@@ -117,15 +116,15 @@ struct ManagementTick {
 impl Tick for ManagementTick {
     async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
         if !self.recovered {
-            self.recovered = recover_at_start(&self.setup).await;
+            self.recovered = recover_at_start(&self.management).await;
         }
         while !ctx.token().is_cancelled() {
-            let mut step = tick(&self.setup, &self.owners.mint(), ctx.token()).await;
+            let mut step = tick(&self.management, &self.owners.mint(), ctx.token()).await;
             if step == Step::Idle {
-                step = automatic_tick(&self.setup, &mut self.settle).await;
+                step = automatic_tick(&self.management, &mut self.settle).await;
             }
             if step == Step::Idle {
-                step = refresh_tick(&self.setup, &self.owners.mint()).await;
+                step = refresh_tick(&self.management, &self.owners.mint()).await;
             }
             match step {
                 Step::Worked => {}
@@ -143,8 +142,8 @@ impl Tick for ManagementTick {
 
 /// Requeue the jobs an earlier process left running. False when it did
 /// not run; the next turn tries again.
-async fn recover_at_start(setup: &LibrarySetup) -> bool {
-    let management = Management::new(setup);
+async fn recover_at_start(management: &Management) -> bool {
+    let management = management.clone();
     let step = blocking("management start recovery", move || {
         let requeued = management.recover_at_start()?;
         if requeued > 0 {
@@ -159,8 +158,8 @@ async fn recover_at_start(setup: &LibrarySetup) -> bool {
 /// One worker step on a blocking thread: plan or apply the next queued
 /// management job. A shutdown hands the job back to the queue between
 /// albums, so the next start picks it up.
-async fn tick(setup: &LibrarySetup, worker: &str, shutdown: &CancellationToken) -> Step {
-    let management = Management::new(setup).stopping_with(shutdown.clone());
+async fn tick(management: &Management, worker: &str, shutdown: &CancellationToken) -> Step {
+    let management = management.clone().stopping_with(shutdown.clone());
     let worker = worker.to_owned();
     blocking("library management step", move || {
         management.run_next(&worker)
@@ -170,8 +169,8 @@ async fn tick(setup: &LibrarySetup, worker: &str, shutdown: &CancellationToken) 
 
 /// Start automatic management for the next album that waits for it, once
 /// the catalog has settled.
-async fn automatic_tick(setup: &LibrarySetup, settle: &mut automatic::Settle) -> Step {
-    let management = Management::new(setup);
+async fn automatic_tick(management: &Management, settle: &mut automatic::Settle) -> Step {
+    let management = management.clone();
     let mut state = std::mem::take(settle);
     let outcome = tokio::task::spawn_blocking(move || {
         let result = management.automatic_step(&mut state);
@@ -191,8 +190,8 @@ async fn automatic_tick(setup: &LibrarySetup, settle: &mut automatic::Settle) ->
 }
 
 /// Send one due media-server refresh.
-async fn refresh_tick(setup: &LibrarySetup, worker: &str) -> Step {
-    let management = Management::new(setup);
+async fn refresh_tick(management: &Management, worker: &str) -> Step {
+    let management = management.clone();
     let worker = worker.to_owned();
     blocking("media server refresh", move || {
         management.deliver_refresh(&worker)

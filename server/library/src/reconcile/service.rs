@@ -7,7 +7,6 @@ use super::groups::{self, build};
 use super::models::{Group, GroupDetail, GroupPage, GroupState, Progress, ReconcileError};
 use super::{reasons, store};
 use crate::clock::LibraryClock as _;
-use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::{Db, Lane};
 
 #[derive(Clone)]
@@ -17,11 +16,8 @@ pub struct Reconcile {
 }
 
 impl Reconcile {
-    pub fn new(setup: &LibrarySetup) -> Self {
-        Self {
-            db: setup.db.clone(),
-            clock: setup.clock.clone(),
-        }
+    pub fn new(db: Db, clock: std::sync::Arc<dyn droppedneedle_kernel::clock::Clock>) -> Self {
+        Self { db, clock }
     }
 
     fn groups(&self) -> Result<Vec<Group>, ReconcileError> {

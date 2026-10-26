@@ -53,14 +53,14 @@ use crate::operations::plan::{FileFate, PlanReading};
 use crate::operations::reasons;
 use crate::operations::service::Operations;
 use crate::operations::status::{EditionKind, EditionState, EditionStatus, WaitingAlbum};
-use crate::wiring::LibrarySetup;
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator, User};
 
 /// Largest page of the unconfirmed list.
 const PAGE_MAX: u32 = 200;
 
 /// Edition routes.
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .user(routes!(get_edition))
         .curator(routes!(choose_edition, hand_back_edition))
@@ -472,9 +472,12 @@ fn read_status(
     Ok(EditionStatusView::of(status, writes, keeps_own_tags))
 }
 
-async fn status_of(state: &LibrarySetup, album_id: &str) -> Result<EditionStatusView, ApiError> {
-    let ops = Operations::new(state);
-    let management = Management::new(state);
+async fn status_of(
+    services: &LibraryServices,
+    album_id: &str,
+) -> Result<EditionStatusView, ApiError> {
+    let ops = services.operations.clone();
+    let management = services.management.clone();
     let album_id = album_id.to_owned();
     blocking(move || read_status(&ops, &management, &album_id)).await
 }
@@ -492,11 +495,11 @@ async fn status_of(state: &LibrarySetup, album_id: &str) -> Result<EditionStatus
     )
 )]
 pub async fn get_edition(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     _caller: User,
     Path(album_id): Path<String>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    Ok(Json(status_of(&state, &album_id).await?))
+    Ok(Json(status_of(&services, &album_id).await?))
 }
 
 /// Choose the album's edition: any release, from this album's release
@@ -518,16 +521,16 @@ pub async fn get_edition(
     )
 )]
 pub async fn choose_edition(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     caller: Curator,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<ChooseEditionBody>,
 ) -> Result<Json<EditionChoiceView>, ApiError> {
-    let ops = Operations::new(&state);
+    let ops = services.operations.clone();
     let choice: EditionChoice = ops
         .choose_edition(&album_id, &body.release_mbid, Some(caller.user_id()))
         .await?;
-    let status = status_of(&state, &album_id).await?;
+    let status = status_of(&services, &album_id).await?;
     Ok(Json(EditionChoiceView {
         album_id: choice.local_album_id,
         release_group_mbid: choice.release_group_mbid,
@@ -562,14 +565,14 @@ pub async fn choose_edition(
     )
 )]
 pub async fn hand_back_edition(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     caller: Curator,
     Path(album_id): Path<String>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    let ops = Operations::new(&state);
+    let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     blocking(move || ops.hand_back_edition(&album, &user)).await?;
-    Ok(Json(status_of(&state, &album_id).await?))
+    Ok(Json(status_of(&services, &album_id).await?))
 }
 
 /// "Looks right": confirm the album's unconfirmed best guess.
@@ -587,14 +590,14 @@ pub async fn hand_back_edition(
     )
 )]
 pub async fn confirm_edition(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     caller: Curator,
     Path(album_id): Path<String>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    let ops = Operations::new(&state);
+    let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     blocking(move || ops.confirm_match(&album, &user)).await?;
-    Ok(Json(status_of(&state, &album_id).await?))
+    Ok(Json(status_of(&services, &album_id).await?))
 }
 
 /// Take back the album's last edition change.
@@ -612,14 +615,14 @@ pub async fn confirm_edition(
     )
 )]
 pub async fn undo_edition(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     caller: Curator,
     Path(album_id): Path<String>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    let ops = Operations::new(&state);
+    let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     blocking(move || ops.undo_edition_choice(&album, &user)).await?;
-    Ok(Json(status_of(&state, &album_id).await?))
+    Ok(Json(status_of(&services, &album_id).await?))
 }
 
 /// Seal a custom edition.
@@ -659,12 +662,13 @@ pub struct LeaveUnmanagedBody {
     )
 )]
 pub async fn seal_custom_edition(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<CustomEditionBody>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    Operations::new(&state)
+    services
+        .operations
         .seal_custom_edition(
             &album_id,
             &body.release_mbid,
@@ -672,7 +676,7 @@ pub async fn seal_custom_edition(
             caller.user_id(),
         )
         .await?;
-    Ok(Json(status_of(&state, &album_id).await?))
+    Ok(Json(status_of(&services, &album_id).await?))
 }
 
 /// Leave the album unmanaged: its exact edition goes (the release group
@@ -693,15 +697,15 @@ pub async fn seal_custom_edition(
     )
 )]
 pub async fn leave_unmanaged(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<LeaveUnmanagedBody>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    let ops = Operations::new(&state);
+    let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     blocking(move || ops.leave_unmanaged(&album, body.expected_identity_revision, &user)).await?;
-    Ok(Json(status_of(&state, &album_id).await?))
+    Ok(Json(status_of(&services, &album_id).await?))
 }
 
 /// What taking an edition would do: which files keep their place, which
@@ -724,7 +728,7 @@ pub async fn leave_unmanaged(
     )
 )]
 pub async fn plan_edition(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     User(caller): User,
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<EditionPlanQuery>,
@@ -732,7 +736,7 @@ pub async fn plan_edition(
     if query.release_mbid.is_some() {
         Curator::try_from(caller)?;
     }
-    let plan = Operations::new(&state)
+    let plan = ops
         .read_edition_plan(&album_id, query.release_mbid.as_deref())
         .await?;
     Ok(Json(plan.into()))
@@ -773,12 +777,13 @@ pub struct MatchFileBody {
     )
 )]
 pub async fn match_edition_file(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     caller: Curator,
     Path((album_id, track_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<MatchFileBody>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    Operations::new(&state)
+    services
+        .operations
         .match_file(
             &album_id,
             &track_id,
@@ -787,7 +792,7 @@ pub async fn match_edition_file(
             caller.user_id(),
         )
         .await?;
-    Ok(Json(status_of(&state, &album_id).await?))
+    Ok(Json(status_of(&services, &album_id).await?))
 }
 
 /// Undo a file's match by hand.
@@ -811,14 +816,14 @@ pub async fn match_edition_file(
     )
 )]
 pub async fn unmatch_edition_file(
-    State(state): State<LibrarySetup>,
+    State(services): State<LibraryServices>,
     caller: Curator,
     Path((album_id, track_id)): Path<(String, String)>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    let ops = Operations::new(&state);
+    let ops = services.operations.clone();
     let (album, track, user) = (album_id.clone(), track_id, caller.user_id().to_owned());
     blocking(move || ops.unmatch_file(&album, &track, &user)).await?;
-    Ok(Json(status_of(&state, &album_id).await?))
+    Ok(Json(status_of(&services, &album_id).await?))
 }
 
 /// Extra files to move to the recycle bin.
@@ -856,12 +861,12 @@ pub struct RemoveExtrasView {
     )
 )]
 pub async fn remove_extras(
-    State(state): State<LibrarySetup>,
+    State(mutations): State<Mutations>,
     caller: Curator,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<RemoveExtrasBody>,
 ) -> Result<Json<RemoveExtrasView>, ApiError> {
-    let removed = Mutations::new(&state)
+    let removed = mutations
         .remove_extras(&album_id, body.track_ids, caller.user_id())
         .await
         .map_err(|error| match error {
@@ -887,7 +892,7 @@ pub async fn remove_extras(
     )
 )]
 pub async fn list_unconfirmed(
-    State(state): State<LibrarySetup>,
+    State(ops): State<Operations>,
     _caller: User,
     ValidQuery(query): ValidQuery<UnconfirmedQuery>,
 ) -> Result<Json<WaitingAlbumsResponse>, ApiError> {
@@ -902,7 +907,6 @@ pub async fn list_unconfirmed(
     };
     let limit = query.limit.unwrap_or(50).clamp(1, PAGE_MAX);
     let offset = query.offset.unwrap_or(0);
-    let ops = Operations::new(&state);
     let (items, total) = blocking(move || ops.waiting_albums(unmatched, limit, offset)).await?;
     Ok(Json(WaitingAlbumsResponse {
         items: items.into_iter().map(Into::into).collect(),
@@ -1192,12 +1196,11 @@ pub struct EditionTagsUndoBody {
     )
 )]
 pub async fn create_edition_tags(
-    State(state): State<LibrarySetup>,
+    State(management): State<Management>,
     caller: Curator,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<EditionTagsBody>,
 ) -> Result<Json<EditionTagsQueuedView>, ApiError> {
-    let management = Management::new(&state);
     let caller = caller.into_principal();
     let handle = blocking(move || {
         management.create_edition_tags(
@@ -1229,11 +1232,10 @@ pub async fn create_edition_tags(
     )
 )]
 pub async fn get_edition_tags(
-    State(state): State<LibrarySetup>,
+    State(management): State<Management>,
     caller: Curator,
     Path((album_id, job_id)): Path<(String, String)>,
 ) -> Result<Json<EditionTagsJobView>, ApiError> {
-    let management = Management::new(&state);
     let caller = caller.into_principal();
     let found = blocking(move || management.edition_tags(&album_id, &job_id, &caller)).await?;
     Ok(Json(found.into()))
@@ -1260,12 +1262,11 @@ pub async fn get_edition_tags(
     )
 )]
 pub async fn apply_edition_tags(
-    State(state): State<LibrarySetup>,
+    State(management): State<Management>,
     caller: Curator,
     Path((album_id, job_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<EditionTagsApplyBody>,
 ) -> Result<Json<EditionTagsJobView>, ApiError> {
-    let management = Management::new(&state);
     let caller = caller.into_principal();
     let request = ApplyRequest {
         preview_token: body.preview_token,
@@ -1300,12 +1301,11 @@ pub async fn apply_edition_tags(
     )
 )]
 pub async fn undo_edition_tags(
-    State(state): State<LibrarySetup>,
+    State(management): State<Management>,
     caller: Curator,
     Path((album_id, job_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<EditionTagsUndoBody>,
 ) -> Result<Json<EditionTagsQueuedView>, ApiError> {
-    let management = Management::new(&state);
     let caller = caller.into_principal();
     let handle = blocking(move || {
         management.undo_edition_tags(

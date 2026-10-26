@@ -279,7 +279,7 @@ impl E2e {
             reads,
             media,
             acquire,
-            library,
+            droppedneedle_library::wiring::LibraryServices::build(&library),
             compat,
             admin,
             settings,

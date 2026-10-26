@@ -33,8 +33,8 @@ use crate::operations::models::{
 use crate::operations::reidentify::evaluation;
 use crate::operations::service::{Operations, job_detail};
 use crate::scan::watcher::WorkWakeups;
-use crate::wiring::{LibrarySetup, ScanCoordinator};
-use droppedneedle_kernel::db::{Db, Lane};
+use crate::wiring::ScanCoordinator;
+use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
@@ -66,118 +66,55 @@ enum Checked {
     Deferred,
 }
 
-/// Identity repairs, identity preparations and catalog cleanup.
+/// Identity repairs, identity preparations and catalog cleanup: the
+/// requests the HTTP handlers make.
 #[derive(Clone)]
 pub struct Repairs {
     db: Db,
     ops: Operations,
-    store: Arc<SqliteIdentifyStore>,
-    identify: Arc<IdentifyService>,
     ids: Arc<dyn IdGenerator>,
-    coordinator: Arc<ScanCoordinator>,
-    hygiene_checked: Arc<AtomicBool>,
-    /// The scan run whose cleanup this worker already queued or skipped.
-    hygiene_scan: Arc<Mutex<Option<String>>>,
-    /// Identification results up to this time (ms) have had their cleanup
-    /// queued. Starts at the worker's start: earlier ones are covered by
-    /// the one-time cleanup.
-    hygiene_identified: Arc<Mutex<i64>>,
-    /// The latest ended scan when play filing was last queued or skipped.
-    /// `None` until the first look after a server start.
-    plays_scan: Arc<Mutex<Option<Option<String>>>>,
-    /// The latest ended scan when the one-time re-identifications were last
-    /// checked; `None` until the first look after a server start.
-    backfill_scan: Arc<Mutex<Option<Option<String>>>>,
-    management: Live<LibraryManagement>,
     wakeups: WorkWakeups,
-    /// The worker hands its job back between albums once this is
-    /// cancelled, so a stopping server never waits out a whole job.
-    shutdown: Option<CancellationToken>,
     clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl Repairs {
-    pub fn new(setup: &LibrarySetup) -> Self {
+    pub fn new(
+        db: Db,
+        ops: Operations,
+        ids: Arc<dyn IdGenerator>,
+        wakeups: WorkWakeups,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
         Self {
-            db: setup.db.clone(),
-            ops: Operations::new(setup),
-            store: setup.identify_store.clone(),
-            identify: setup.identify.clone(),
-            ids: setup.ids.clone(),
-            coordinator: setup.coordinator.clone(),
-            hygiene_checked: Arc::new(AtomicBool::new(false)),
-            hygiene_scan: Arc::new(Mutex::new(None)),
-            hygiene_identified: Arc::new(Mutex::new(setup.clock.now_ms())),
-            plays_scan: Arc::new(Mutex::new(None)),
-            backfill_scan: Arc::new(Mutex::new(None)),
-            management: setup.settings.management.clone(),
-            wakeups: setup.wakeups.clone(),
-            shutdown: None,
-            clock: setup.clock.clone(),
+            db,
+            ops,
+            ids,
+            wakeups,
+            clock,
         }
     }
 
-    /// The same service, handing its job back between albums once
-    /// `shutdown` is cancelled.
-    pub fn stopping_with(&self, shutdown: CancellationToken) -> Self {
-        Self {
-            shutdown: Some(shutdown),
-            ..self.clone()
+    /// A repair job's report summary for the generic operation view, or
+    /// `None` when `job` is not a repair. Blocking.
+    pub fn summary_of(&self, job: &OperationJob) -> Result<Option<Summary>, OperationError> {
+        if OperationKind::parse(&job.kind) != Some(OperationKind::Repair) {
+            return Ok(None);
         }
+        self.db.read_blocking("repairs.summary", |conn| {
+            Ok::<_, OperationError>(store::snapshot(conn, &job.id)?.and_then(|snap| snap.summary))
+        })
     }
 
-    /// Whether the worker must hand its job back: a scan started, or the
-    /// server is stopping.
-    fn must_yield(&self) -> bool {
-        !self.coordinator.current().is_empty()
-            || self
-                .shutdown
-                .as_ref()
-                .is_some_and(CancellationToken::is_cancelled)
-    }
-
-    /// Queue a cleanup of albums identification just finished with (v2's
-    /// per-album hygiene after identification), at most 200 per job.
-    fn queue_hygiene_after_identification(&self) -> Result<(), OperationError> {
-        let mut seen = self
-            .hygiene_identified
-            .lock()
-            .map_err(|_| OperationError::Store("hygiene marker poisoned".to_owned()))?;
-        let after = *seen;
-        let (albums, newest) = self.db.read_blocking("repairs.identified_since", |conn| {
-            Ok::<_, OperationError>(store::identified_since(conn, after)?)
-        })?;
-        let Some(newest) = newest else {
-            return Ok(());
-        };
-        if albums.is_empty() {
-            *seen = newest;
-            return Ok(());
-        }
-        // A busy database leaves the marker where it was, so the next turn
-        // queues the cleanup again.
-        let queued =
-            self.db
-                .write_blocking(Lane::Background, "repairs.queue_hygiene_identified", |tx| {
-                    let new = NewRepair {
-                        job_id: self.ids.new_id(),
-                        purpose: Purpose::CatalogIdentityHygiene,
-                        requested_by_user_id: None,
-                        idempotency_key: format!(
-                            "catalog-identity-hygiene:v1:identified:{after}:{newest}"
-                        ),
-                        root_ids: Vec::new(),
-                        album_ids: albums,
-                        scan_run_id: None,
-                        source_matcher_version: None,
-                        target_matcher_version: HYGIENE_VERSION.to_owned(),
-                    };
-                    store::create(tx, &new, self.clock.now_secs()).map(|_| ())
-                });
-        if settled(&queued) {
-            *seen = newest;
-        }
-        queued
+    /// A scan run's redacted diagnostic report: its file name and bytes.
+    /// The outer error is the database's, the inner one the report's.
+    /// Blocking.
+    pub fn scan_diagnostics(
+        &self,
+        run_id: &str,
+    ) -> Result<Result<(String, Vec<u8>), OperationError>, DbError> {
+        self.db.read_blocking("scan_diagnostics", |conn| {
+            Ok::<_, DbError>(super::diagnostics::export(conn, run_id))
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -353,10 +290,140 @@ impl Repairs {
         self.ops
             .control(job_id, control, expected_row_revision, idempotency_key)
     }
+}
 
-    // -----------------------------------------------------------------------
-    // The worker.
-    // -----------------------------------------------------------------------
+/// The repairs worker the loop runs: it claims and works repair jobs and
+/// queues the cleanups, re-checks and play filings that follow scans and
+/// identifications. It remembers what it already followed up, so the loop
+/// keeps one for its whole life.
+#[derive(Clone)]
+pub struct RepairWorker {
+    db: Db,
+    store: Arc<SqliteIdentifyStore>,
+    identify: Arc<IdentifyService>,
+    ids: Arc<dyn IdGenerator>,
+    coordinator: Arc<ScanCoordinator>,
+    hygiene_checked: Arc<AtomicBool>,
+    /// The scan run whose cleanup this worker already queued or skipped.
+    hygiene_scan: Arc<Mutex<Option<String>>>,
+    /// Identification results up to this time (ms) have had their cleanup
+    /// queued. Starts at the worker's start: earlier ones are covered by
+    /// the one-time cleanup.
+    hygiene_identified: Arc<Mutex<i64>>,
+    /// The latest ended scan when play filing was last queued or skipped.
+    /// `None` until the first look after a server start.
+    plays_scan: Arc<Mutex<Option<Option<String>>>>,
+    /// The latest ended scan when the one-time re-identifications were last
+    /// checked; `None` until the first look after a server start.
+    backfill_scan: Arc<Mutex<Option<Option<String>>>>,
+    management: Live<LibraryManagement>,
+    wakeups: WorkWakeups,
+    /// The worker hands its job back between albums once this is
+    /// cancelled, so a stopping server never waits out a whole job.
+    shutdown: Option<CancellationToken>,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+}
+
+impl RepairWorker {
+    /// A worker for the jobs `repairs` queues, over the same database,
+    /// ids, wakeups and clock.
+    pub fn new(
+        repairs: &Repairs,
+        store: Arc<SqliteIdentifyStore>,
+        identify: Arc<IdentifyService>,
+        coordinator: Arc<ScanCoordinator>,
+        management: Live<LibraryManagement>,
+    ) -> Self {
+        Self {
+            db: repairs.db.clone(),
+            store,
+            identify,
+            ids: repairs.ids.clone(),
+            coordinator,
+            hygiene_checked: Arc::new(AtomicBool::new(false)),
+            hygiene_scan: Arc::new(Mutex::new(None)),
+            hygiene_identified: Arc::new(Mutex::new(repairs.clock.now_ms())),
+            plays_scan: Arc::new(Mutex::new(None)),
+            backfill_scan: Arc::new(Mutex::new(None)),
+            management,
+            wakeups: repairs.wakeups.clone(),
+            shutdown: None,
+            clock: repairs.clock.clone(),
+        }
+    }
+
+    /// Wakes the worker when a repair job is queued or resumed.
+    pub(super) fn wakeups(&self) -> &WorkWakeups {
+        &self.wakeups
+    }
+
+    /// Whether a scan is running; the worker claims nothing meanwhile.
+    pub(super) fn scanning(&self) -> bool {
+        !self.coordinator.current().is_empty()
+    }
+
+    /// The same service, handing its job back between albums once
+    /// `shutdown` is cancelled.
+    pub fn stopping_with(&self, shutdown: CancellationToken) -> Self {
+        Self {
+            shutdown: Some(shutdown),
+            ..self.clone()
+        }
+    }
+
+    /// Whether the worker must hand its job back: a scan started, or the
+    /// server is stopping.
+    fn must_yield(&self) -> bool {
+        !self.coordinator.current().is_empty()
+            || self
+                .shutdown
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+    }
+
+    /// Queue a cleanup of albums identification just finished with (v2's
+    /// per-album hygiene after identification), at most 200 per job.
+    fn queue_hygiene_after_identification(&self) -> Result<(), OperationError> {
+        let mut seen = self
+            .hygiene_identified
+            .lock()
+            .map_err(|_| OperationError::Store("hygiene marker poisoned".to_owned()))?;
+        let after = *seen;
+        let (albums, newest) = self.db.read_blocking("repairs.identified_since", |conn| {
+            Ok::<_, OperationError>(store::identified_since(conn, after)?)
+        })?;
+        let Some(newest) = newest else {
+            return Ok(());
+        };
+        if albums.is_empty() {
+            *seen = newest;
+            return Ok(());
+        }
+        // A busy database leaves the marker where it was, so the next turn
+        // queues the cleanup again.
+        let queued =
+            self.db
+                .write_blocking(Lane::Background, "repairs.queue_hygiene_identified", |tx| {
+                    let new = NewRepair {
+                        job_id: self.ids.new_id(),
+                        purpose: Purpose::CatalogIdentityHygiene,
+                        requested_by_user_id: None,
+                        idempotency_key: format!(
+                            "catalog-identity-hygiene:v1:identified:{after}:{newest}"
+                        ),
+                        root_ids: Vec::new(),
+                        album_ids: albums,
+                        scan_run_id: None,
+                        source_matcher_version: None,
+                        target_matcher_version: HYGIENE_VERSION.to_owned(),
+                    };
+                    store::create(tx, &new, self.clock.now_secs()).map(|_| ())
+                });
+        if settled(&queued) {
+            *seen = newest;
+        }
+        queued
+    }
 
     /// Queue the one-time catalog cleanup when this database has albums
     /// it could apply to (imported groupings, empty shells, albums on the
@@ -1106,14 +1173,4 @@ fn parse_cursor(raw: &str) -> Result<(f64, String), OperationError> {
         .and_then(|(at, id)| Some((at.parse::<f64>().ok()?, id.to_owned())))
         .filter(|(at, id)| at.is_finite() && !id.is_empty())
         .ok_or(OperationError::Invalid(reasons::CURSOR_INVALID))
-}
-
-/// A repair job's report summary, for the generic operation view. Blocking.
-pub fn repair_summary(
-    setup: &LibrarySetup,
-    job_id: &str,
-) -> Result<Option<Summary>, OperationError> {
-    setup.db.read_blocking("repairs.summary", |conn| {
-        Ok::<_, OperationError>(store::snapshot(conn, job_id)?.and_then(|snap| snap.summary))
-    })
 }

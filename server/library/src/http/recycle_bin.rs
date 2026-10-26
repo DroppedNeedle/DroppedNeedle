@@ -15,10 +15,10 @@ use utoipa::{IntoParams, ToSchema};
 use crate::publish::PublishError;
 use crate::publish::bin_contents::{self, BinGroup, BinKind};
 use crate::recycle_bin::{self, Emptied, EmptyingState};
-use crate::wiring::LibrarySetup;
+use crate::wiring::{LibraryServices, LibrarySetup};
 
 /// Recycle bin routes.
-pub fn routes() -> Routes<LibrarySetup> {
+pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .admin(routes!(list_recycle_bin))
         .admin(routes!(recycle_bin_summary))
