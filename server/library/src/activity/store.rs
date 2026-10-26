@@ -280,10 +280,16 @@ pub fn identification_snapshot(
          AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
              WHERE r.local_album_id = j.local_album_id AND r.state = 'pending')",
     )?;
+    // A failure the album's own later success settled (a retry after its
+    // files moved mid-attempt) needs nobody's attention.
     snapshot.failure = conn
         .query_row(
-            "SELECT id, updated_ms FROM library_identify_jobs \
-             WHERE state IN ('failed','attention') ORDER BY updated_ms DESC, id DESC LIMIT 1",
+            "SELECT j.id, j.updated_ms FROM library_identify_jobs j \
+             WHERE j.state IN ('failed','attention') \
+             AND NOT EXISTS (SELECT 1 FROM library_identify_jobs later \
+                 WHERE later.local_album_id = j.local_album_id \
+                 AND later.state = 'succeeded' AND later.updated_ms > j.updated_ms) \
+             ORDER BY j.updated_ms DESC, j.id DESC LIMIT 1",
             [],
             |row| Ok((row.get::<_, String>(0)?, seconds(row.get::<_, i64>(1)?))),
         )
