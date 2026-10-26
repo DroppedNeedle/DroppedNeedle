@@ -32,9 +32,7 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, secret_sections::AdvancedSettings};
 use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
-use droppedneedle_media::remotes::connections::{
-    ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
-};
+use droppedneedle_media::remotes::connections::ConnectionResolver;
 use droppedneedle_providers::{
     Providers,
     youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
@@ -66,6 +64,8 @@ pub struct DiscoverInputs {
     /// Whether a download source is on, for the "set up a download
     /// client" prompts.
     pub download_readiness: Arc<dyn content::DownloadReadiness>,
+    /// The app's connection resolver, for the user's Jellyfin reads.
+    pub remotes: Arc<ConnectionResolver>,
 }
 
 /// Build the production discover deps, each holding live handles from
@@ -104,7 +104,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         }
     };
     let upstream = live_upstream(&inputs, config);
-    let sources = Arc::new(live_sources(&inputs, config, upstream.clone()));
+    let sources = Arc::new(live_sources(&inputs, upstream.clone()));
     let settings = config.live();
     let queues = live_queue(&inputs, sources.clone(), youtube.clone(), settings.clone());
     let radio = radio::LiveRadio::new(radio::RadioInputs {
@@ -172,25 +172,13 @@ fn live_upstream(inputs: &DiscoverInputs, config: &ConfigStore) -> Upstream {
 }
 
 /// The live provider reads the queue, the page and radio share.
-fn live_sources(
-    inputs: &DiscoverInputs,
-    config: &ConfigStore,
-    upstream: Upstream,
-) -> queue::live_sources::LiveSources {
-    let jellyfin = Arc::new(ConnectionResolver::new(
-        Arc::new(SqliteConnectionStore::new(
-            inputs.db.clone(),
-            Arc::clone(&inputs.clock),
-        )),
-        Arc::new(CredentialCoder::new(inputs.users.crypto.clone())),
-        Arc::new(ConfigServers::new(config)),
-    ));
+fn live_sources(inputs: &DiscoverInputs, upstream: Upstream) -> queue::live_sources::LiveSources {
     queue::live_sources::LiveSources::new(
         upstream,
         inputs.providers.clone(),
         inputs.http.clone(),
         inputs.listenbrainz_links.clone(),
-        jellyfin,
+        inputs.remotes.clone(),
         ListeningStore::new(
             inputs.db.clone(),
             inputs.users.crypto.clone(),

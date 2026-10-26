@@ -167,6 +167,7 @@ pub fn reads_at(
         inputs,
         None,
         ReadsPorts {
+            remotes: Arc::new(remotes_resolver(platform)),
             collections,
             catalog,
             artwork,

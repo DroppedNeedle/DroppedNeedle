@@ -22,9 +22,6 @@ use crate::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistRow, QueueSources, SourceResult, StatsRange,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
-use droppedneedle_media::remotes::connections::ResolveError;
-use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
-use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_providers::musicbrainz::Criticality;
 use droppedneedle_providers::{CacheKey, RequestPriority, Source};
 
@@ -574,18 +571,12 @@ impl PageSources for LiveSources {
         limit: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<PlayedArtist>>> {
         Box::pin(async move {
-            let resolved = match self.jellyfin.resolve(user_id, SourceName::Jellyfin).await {
-                Ok(resolved) => resolved,
-                Err(ResolveError::NotConfigured) => return Ok(Vec::new()),
-                Err(error) => return Err(ProviderFailure::failed(error.to_string())),
+            let Some(handle) = self.jellyfin_client(user_id).await? else {
+                return Ok(Vec::new());
             };
-            let adapter = JellyfinAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.user_id,
-            );
-            let rows = adapter
+            let rows = handle
+                .jellyfin("play counts")
+                .map_err(|error| ProviderFailure::failed(error.to_string()))?
                 .most_played_artist_plays(i64::from(limit))
                 .await
                 .map_err(|error| ProviderFailure::failed(error.to_string()))?;

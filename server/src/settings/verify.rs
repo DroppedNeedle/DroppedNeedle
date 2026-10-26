@@ -19,8 +19,12 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
+use droppedneedle_auth::federated::settings::InstallIds;
 use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_media::remotes::adapter::RemoteHandle;
+use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolvedConnection};
+use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzClient};
 use droppedneedle_providers::skiddle::SkiddleClient;
@@ -252,6 +256,9 @@ pub struct LiveProbes {
     pub ticketmaster: TicketmasterClient,
     /// The Skiddle client.
     pub skiddle: SkiddleClient,
+    /// The install ids presented to Plex. Without them the Plex checks
+    /// present no client id.
+    install: Option<InstallIds>,
 }
 
 impl LiveProbes {
@@ -264,7 +271,38 @@ impl LiveProbes {
             youtube: providers.youtube.clone(),
             ticketmaster: providers.ticketmaster.clone(),
             skiddle: providers.skiddle.clone(),
+            install: None,
         }
+    }
+
+    /// Present this install's stored Plex client id from `ids`, as every
+    /// other Plex call does.
+    pub fn presenting(mut self, ids: InstallIds) -> Self {
+        self.install = Some(ids);
+        self
+    }
+
+    /// A client for submitted values, outside any user's read bound.
+    fn client(&self, source: SourceName, url: &str, credential: &str) -> RemoteHandle {
+        ConnectionResolver::unsaved_client(
+            &self.http,
+            ResolvedConnection::unsaved(source, url.to_owned(), credential.to_owned()),
+        )
+    }
+
+    /// A Plex client for submitted values, presenting the stored client id.
+    fn plex_client(&self, url: &str, token: &str) -> RemoteHandle {
+        ConnectionResolver::unsaved_client(
+            &self.http,
+            ResolvedConnection {
+                client_id: self
+                    .install
+                    .as_ref()
+                    .map(InstallIds::plex_client_id)
+                    .unwrap_or_default(),
+                ..ResolvedConnection::unsaved(SourceName::Plex, url.to_owned(), token.to_owned())
+            },
+        )
     }
 }
 
@@ -377,7 +415,6 @@ fn adapter_message(
 impl VerifyProbes for LiveProbes {
     fn jellyfin<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, JellyfinVerdict> {
         Box::pin(async move {
-            use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
             if url.trim().is_empty() || key.is_empty() {
                 return JellyfinVerdict {
                     valid: false,
@@ -385,13 +422,8 @@ impl VerifyProbes for LiveProbes {
                     users: Vec::new(),
                 };
             }
-            let adapter = JellyfinAdapter::new(
-                self.http.clone(),
-                url.to_owned(),
-                key.to_owned(),
-                String::new(),
-            );
-            let message = match adapter.validate_connection().await {
+            let handle = self.client(SourceName::Jellyfin, url, key);
+            let message = match handle.validate_connection().await {
                 Ok(message) => message,
                 Err(error) => {
                     return JellyfinVerdict {
@@ -406,7 +438,10 @@ impl VerifyProbes for LiveProbes {
                 }
             };
             // The user list fails open: the connection verdict stands.
-            let users = jellyfin_users(&self.http, url, key).await;
+            let users = match handle.jellyfin("user list") {
+                Ok(adapter) => adapter.users().await.unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
             JellyfinVerdict {
                 valid: true,
                 message,
@@ -422,14 +457,18 @@ impl VerifyProbes for LiveProbes {
         password: &'a str,
     ) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
-            use droppedneedle_media::remotes::navidrome::NavidromeAdapter;
-            let adapter = NavidromeAdapter::new(
-                self.http.clone(),
-                url.to_owned(),
-                username.to_owned(),
-                password.to_owned(),
+            let handle = ConnectionResolver::unsaved_client(
+                &self.http,
+                ResolvedConnection {
+                    username: username.to_owned(),
+                    ..ResolvedConnection::unsaved(
+                        SourceName::Navidrome,
+                        url.to_owned(),
+                        password.to_owned(),
+                    )
+                },
             );
-            match adapter.validate_connection().await {
+            match handle.validate_connection().await {
                 Ok(message) => ProbeVerdict::ok(message),
                 Err(error) => ProbeVerdict::failed(adapter_message(
                     &error,
@@ -442,15 +481,8 @@ impl VerifyProbes for LiveProbes {
 
     fn plex<'a>(&'a self, url: &'a str, token: &'a str) -> BoxFuture<'a, PlexVerdict> {
         Box::pin(async move {
-            use droppedneedle_media::remotes::plex::PlexAdapter;
-            let adapter = PlexAdapter::new(
-                self.http.clone(),
-                url.to_owned(),
-                token.to_owned(),
-                String::new(),
-                Vec::new(),
-            );
-            let message = match adapter.validate_connection().await {
+            let handle = self.plex_client(url, token);
+            let message = match handle.validate_connection().await {
                 Ok(message) => message,
                 Err(error) => {
                     return PlexVerdict {
@@ -465,7 +497,10 @@ impl VerifyProbes for LiveProbes {
                 }
             };
             // The library list fails open: the connection verdict stands.
-            let libraries = adapter.music_libraries().await.unwrap_or_default();
+            let libraries = match handle.plex("music libraries") {
+                Ok(adapter) => adapter.music_libraries().await.unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
             PlexVerdict {
                 valid: true,
                 message,
@@ -480,21 +515,15 @@ impl VerifyProbes for LiveProbes {
         token: &'a str,
     ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>> {
         Box::pin(async move {
-            use droppedneedle_media::remotes::plex::PlexAdapter;
             if url.trim().is_empty() || token.is_empty() {
                 return Err("Plex is not configured.".to_owned());
             }
-            let adapter = PlexAdapter::new(
-                self.http.clone(),
-                url.to_owned(),
-                token.to_owned(),
-                String::new(),
-                Vec::new(),
-            );
-            adapter
-                .music_libraries()
-                .await
-                .map_err(|_| "Could not fetch libraries from Plex.".to_owned())
+            let handle = self.plex_client(url, token);
+            let libraries = match handle.plex("music libraries") {
+                Ok(adapter) => adapter.music_libraries().await,
+                Err(error) => Err(error),
+            };
+            libraries.map_err(|_| "Could not fetch libraries from Plex.".to_owned())
         })
     }
 
@@ -908,40 +937,6 @@ fn prowlarr_failure(error: &droppedneedle_acquire::client_error::ClientError) ->
 async fn decode_body(response: reqwest::Response) -> Option<serde_json::Value> {
     let bytes = read_capped(response, MAX_PROBE_BODY_BYTES).await.ok()?;
     serde_json::from_slice(&bytes).ok()
-}
-
-/// Jellyfin `/Users` as `(id, name)` pairs. Fails open to empty: the
-/// connection verdict stands without the picker.
-async fn jellyfin_users(http: &reqwest::Client, url: &str, key: &str) -> Vec<(String, String)> {
-    let response = http
-        .get(format!("{}/Users", url.trim_end_matches('/')))
-        .header(
-            reqwest::header::AUTHORIZATION,
-            format!("MediaBrowser Token=\"{key}\""),
-        )
-        .timeout(PROBE_TIMEOUT)
-        .send()
-        .await;
-    let body: serde_json::Value = match response {
-        Ok(response) if response.status().is_success() => match decode_body(response).await {
-            Some(body) => body,
-            None => return Vec::new(),
-        },
-        _ => return Vec::new(),
-    };
-    body.as_array()
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|user| {
-            let id = user.get("Id")?.as_str()?;
-            let name = user.get("Name")?.as_str().unwrap_or("");
-            if id.is_empty() {
-                return None;
-            }
-            Some((id.to_owned(), name.to_owned()))
-        })
-        .collect()
 }
 
 /// A bare site URL (no path) is almost never the Newznab endpoint: the

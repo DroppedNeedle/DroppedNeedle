@@ -20,12 +20,9 @@ use droppedneedle_kernel::jobs::{
     AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
 };
 
-use super::adapter::{RemoteHandle, request_id};
-use super::connections::{ConnectionResolver, ResolveError, ResolvedConnection};
-use super::jellyfin::JellyfinAdapter;
+use super::adapter::request_id;
+use super::connections::{ConnectionResolver, Reads, ResolveError};
 use super::models::SourceName;
-use super::navidrome::NavidromeAdapter;
-use super::plex::PlexAdapter;
 
 /// Jellyfin startup delay (v2 `warm_jellyfin_mbid_index`).
 pub const JELLYFIN_STARTUP_DELAY: Duration = Duration::from_secs(8);
@@ -211,7 +208,9 @@ impl Warmups {
             Err(error) => return Err(error.to_string()),
         };
         let server = resolved.base_url.clone();
-        let albums = shared_handle(self.http.clone(), resolved)
+        let albums = self
+            .resolver
+            .client(&self.http, resolved, Reads::Background)
             .album_index(INDEX_CAP)
             .await
             .map_err(|error| error.to_string())?;
@@ -229,31 +228,6 @@ impl Warmups {
             warmed,
             pruned,
         })
-    }
-}
-
-/// The admin's shared account on `resolved`'s source, unscoped.
-fn shared_handle(http: reqwest::Client, resolved: ResolvedConnection) -> RemoteHandle {
-    match resolved.source {
-        SourceName::Jellyfin => RemoteHandle::Jellyfin(JellyfinAdapter::new(
-            http,
-            resolved.base_url,
-            resolved.credential,
-            resolved.user_id,
-        )),
-        SourceName::Navidrome => RemoteHandle::Navidrome(NavidromeAdapter::new(
-            http,
-            resolved.base_url,
-            resolved.username,
-            resolved.credential,
-        )),
-        SourceName::Plex => RemoteHandle::Plex(PlexAdapter::new(
-            http,
-            resolved.base_url,
-            resolved.credential,
-            resolved.client_id,
-            resolved.section_ids,
-        )),
     }
 }
 

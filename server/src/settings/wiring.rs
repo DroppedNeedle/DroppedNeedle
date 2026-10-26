@@ -87,7 +87,13 @@ impl SettingsSetup {
             platform.settings.clone(),
             effects,
             platform.ids.clone(),
-            Arc::new(LiveProbes::new(platform.http.shared().clone(), providers)),
+            Arc::new(
+                LiveProbes::new(platform.http.shared().clone(), providers).presenting(
+                    droppedneedle_auth::federated::settings::InstallIds::new(
+                        platform.settings.clone(),
+                    ),
+                ),
+            ),
             platform.config.timezone.clone(),
             outbound.clone(),
             management,

@@ -211,7 +211,10 @@ impl E2e {
                 ),
             ),
             crate::common::bundles::idle_host(p, library.core.clone()),
-            droppedneedle::bootstrap::Outbound::live().plex_tv,
+            droppedneedle_media::MediaSetup::remotes(
+                p,
+                droppedneedle::bootstrap::Outbound::live().plex_tv,
+            ),
             None,
             &providers,
             Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(

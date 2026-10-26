@@ -76,6 +76,11 @@ const RULES: &[Rule] = &[
                 "slskd runs one search and one enqueue at a time; a LAN service is never paced",
             ),
             ("library/src/scan/pool.rs", LOCAL),
+            (
+                "media/src/remotes/connections.rs",
+                "how many reads people trigger run at once against one media server, a memory \
+                 bound on capped answers, not a rate",
+            ),
             ("kernel/src/db/cache/mod.rs", LOCAL),
         ],
     },

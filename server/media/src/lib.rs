@@ -31,9 +31,7 @@ use crate::playback::reports::{ReportQueue, run_report_worker};
 use crate::playback::sessions::SessionStore;
 use crate::playback::sqlite::PlaybackStore;
 use crate::remotes::adapter::ImportSink;
-use crate::remotes::connections::{
-    ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
-};
+use crate::remotes::connections::ConnectionResolver;
 use crate::remotes::folders::SqliteFolderStore;
 use crate::remotes::handlers::RemotesDeps;
 use crate::remotes::plex::PlexTokenProbe;
@@ -120,6 +118,17 @@ impl MediaWorkers {
 }
 
 impl MediaSetup {
+    /// The app's one connection resolver, over `platform`, looking up
+    /// missing Plex server tokens on the plex.tv root `plex_tv`. Every
+    /// remote read shares it, so they share its per-source read bound.
+    pub fn remotes(platform: &Platform, plex_tv: String) -> Arc<ConnectionResolver> {
+        Arc::new(
+            ConnectionResolver::over(platform).with_plex_tokens(Arc::new(
+                PlexTokenProbe::with_plex_tv(platform.http.shared().clone(), plex_tv),
+            )),
+        )
+    }
+
     /// Build the production bundle over `platform`. Its database backs the
     /// connection and folder rows, and the playback stores open their own
     /// connections on its file; its settings hand out live handles on the
@@ -130,7 +139,8 @@ impl MediaSetup {
     /// download ids (track ids) into files under the live library roots;
     /// `imports` is where remote playlist imports land; `plugins` hears
     /// accepted plays and serves `streaming_source` plugin streams;
-    /// `plex_tv` is the plex.tv root; `ffmpeg` is the program transcodes
+    /// `remotes` is the app's one connection resolver (see
+    /// [`MediaSetup::remotes`]); `ffmpeg` is the program transcodes
     /// run, and with none the server streams every file as it is;
     /// scrobbles and now-playing reports go through the one ListenBrainz
     /// client and the one Last.fm client of `providers`, and that
@@ -145,7 +155,7 @@ impl MediaSetup {
         library_roots: droppedneedle_library::scan::coordinator::SharedResolver,
         imports: Arc<dyn ImportSink>,
         plugins: Arc<droppedneedle_plugins::host::PluginHost>,
-        plex_tv: String,
+        remotes: Arc<ConnectionResolver>,
         ffmpeg: Option<PathBuf>,
         providers: &droppedneedle_providers::Providers,
         mix: Arc<dyn MixGrants>,
@@ -162,20 +172,7 @@ impl MediaSetup {
         crate::stream::plugin_url::sweep_stale_spools();
         let library = LibraryFiles::new(db.sqlx().clone(), library_roots);
         let download = DownloadState::new(Some(library.clone()), config.live());
-        let resolver = Arc::new(
-            ConnectionResolver::new(
-                Arc::new(SqliteConnectionStore::new(
-                    db.clone(),
-                    platform.clock.clone(),
-                )),
-                Arc::new(CredentialCoder::new(crypto.clone())),
-                Arc::new(ConfigServers::new(config)),
-            )
-            .with_plex_tokens(Arc::new(PlexTokenProbe::with_plex_tv(
-                http.clone(),
-                plex_tv,
-            ))),
-        );
+        let resolver = remotes;
         let service = RemotesService::new(
             http.clone(),
             resolver.clone(),

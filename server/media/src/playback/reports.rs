@@ -13,8 +13,8 @@ use std::sync::Arc;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::jobs::CancellationToken;
 
-use crate::remotes::adapter::AdapterError;
-use crate::remotes::connections::{ConnectionResolver, ResolveError};
+use crate::remotes::adapter::{AdapterError, RemoteHandle};
+use crate::remotes::connections::{ConnectionResolver, Reads, ResolveError};
 use crate::remotes::jellyfin::JellyfinAdapter;
 use crate::remotes::models::SourceName;
 use crate::remotes::navidrome::NavidromeAdapter;
@@ -174,35 +174,14 @@ async fn deliver(
             return;
         }
     };
-    let outcome = match source {
-        SourceName::Jellyfin => {
-            let adapter = JellyfinAdapter::new(
-                http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.user_id,
-            );
-            deliver_jellyfin(&adapter, queued.op, &queued.report).await
+    let outcome = match &resolver.client(http, resolved, Reads::Background) {
+        RemoteHandle::Jellyfin(adapter) => {
+            deliver_jellyfin(adapter, queued.op, &queued.report).await
         }
-        SourceName::Navidrome => {
-            let adapter = NavidromeAdapter::new(
-                http.clone(),
-                resolved.base_url,
-                resolved.username,
-                resolved.credential,
-            );
-            deliver_navidrome(&adapter, queued.op, &queued.report, clock.now_ms()).await
+        RemoteHandle::Navidrome(adapter) => {
+            deliver_navidrome(adapter, queued.op, &queued.report, clock.now_ms()).await
         }
-        SourceName::Plex => {
-            let adapter = PlexAdapter::new(
-                http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.client_id,
-                resolved.section_ids,
-            );
-            deliver_plex(&adapter, queued.op, &queued.report).await
-        }
+        RemoteHandle::Plex(adapter) => deliver_plex(adapter, queued.op, &queued.report).await,
     };
     if let Err(error) = outcome {
         tracing::warn!(source = source.as_str(), %error, "remote attribution failed; continuing");

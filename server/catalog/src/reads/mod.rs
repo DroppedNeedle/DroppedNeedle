@@ -47,6 +47,9 @@ pub struct ReadsSetup {
 
 /// What the reads take from the other areas, built before them.
 pub struct ReadsPorts {
+    /// The app's connection resolver, for the Jellyfin reads discover
+    /// makes.
+    pub remotes: Arc<droppedneedle_media::remotes::connections::ConnectionResolver>,
     /// Collections over the database, with acquisition's approvals.
     pub collections: collections::CollectionsState,
     /// Artist and album pages, and the MusicBrainz half of unified search.
@@ -109,6 +112,7 @@ impl ReadsSetup {
         let (db, settings, ids) = (&platform.db, &*platform.settings, platform.ids.clone());
         let pool = db.sqlx();
         let ReadsPorts {
+            remotes,
             collections,
             catalog,
             artwork,
@@ -130,6 +134,7 @@ impl ReadsSetup {
                 batch_requests,
                 download_readiness,
                 warm: cover_warm,
+                remotes,
             },
             settings,
         );

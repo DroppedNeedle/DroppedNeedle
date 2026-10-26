@@ -78,9 +78,7 @@ use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::{
     MediaSetup,
     remotes::{
-        connections::{
-            ConfigServers, ConnectionResolver, CredentialCoder, SignInLinks, SqliteConnectionStore,
-        },
+        connections::{ConnectionResolver, SignInLinks},
         plex::ConfiguredPlexServer,
     },
     stream::local_files::LibraryFiles,
@@ -177,17 +175,10 @@ where
 
 /// The media links a Plex or Jellyfin sign-in saves, written to the
 /// per-user connections table (the rows the remotes routes read) in the
-/// platform's database.
+/// platform's database. It only stores links and reads no remote server.
 pub fn sign_in_links(platform: &Platform) -> MediaLinks {
     MediaLinks::new(Arc::new(SignInLinks::new(Arc::new(
-        ConnectionResolver::new(
-            Arc::new(SqliteConnectionStore::new(
-                platform.db.clone(),
-                platform.clock.clone(),
-            )),
-            Arc::new(CredentialCoder::new(platform.crypto.clone())),
-            Arc::new(ConfigServers::new(&platform.settings)),
-        ),
+        ConnectionResolver::over(platform),
     ))))
 }
 
@@ -340,12 +331,16 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         queues.queue().clone(),
     )
     .map_err(stage("acquire setup"))?;
+    // The one connection resolver every remote read goes through, so the
+    // reads people trigger share one bound per source.
+    let remotes = MediaSetup::remotes(p, outbound.plex_tv.clone());
     let reads = ReadsSetup::build(
         p,
         auth.users.clone(),
         reads_inputs,
         Some(enrichment),
         ReadsPorts {
+            remotes: remotes.clone(),
             collections: CollectionsState::over(collections_db, collections),
             catalog,
             artwork,
@@ -372,7 +367,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         // Remote playlist imports land in the user's playlists.
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
         plugin_host.clone(),
-        outbound.plex_tv.clone(),
+        remotes,
         outbound.ffmpeg.clone(),
         &providers,
         mix_hooks.clone(),

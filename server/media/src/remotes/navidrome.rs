@@ -21,10 +21,8 @@
 //! Payloads decode into the typed shapes in [`super::navidrome_models`]; a
 //! payload missing an item id is an upstream error, not an empty item.
 
-use std::time::Duration;
-
 use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_api_body, read_image,
+    AdapterError, AlbumBrowse, ArtistBrowse, RemoteHttp, RemotePage, TrackBrowse,
 };
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryPage, HubView, InfoView,
@@ -33,9 +31,6 @@ use super::models::{
 };
 use super::navidrome_models::{Album, Artist, Body, Envelope, Playlist, Song};
 use super::warmup::{INDEX_MAX_PAGES, INDEX_PAGE, IndexedAlbum, indexed};
-
-/// Request timeout per upstream call, matching the v2 repository.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Subsonic API version pinned by the v2 repository.
 const SUBSONIC_VERSION: &str = "1.16.1";
@@ -59,7 +54,7 @@ fn params(pairs: &[(&str, &str)]) -> Params {
 /// Navidrome browse client. Built per request from the caller's resolved
 /// connection plus their folder scope; holds no cache.
 pub struct NavidromeAdapter {
-    client: reqwest::Client,
+    http: RemoteHttp,
     base_url: String,
     username: String,
     password: String,
@@ -78,15 +73,32 @@ impl std::fmt::Debug for NavidromeAdapter {
 
 impl NavidromeAdapter {
     /// Build a client for one server. Empty URL, username, or password reads
-    /// as unconfigured. The folder scope defaults to all folders.
+    /// as unconfigured. The folder scope defaults to all folders. Kept for
+    /// the adapter tests; the app builds clients through
+    /// [`ConnectionResolver::client`](super::connections::ConnectionResolver::client).
     pub fn new(
         client: reqwest::Client,
         base_url: String,
         username: String,
         password: String,
     ) -> Self {
+        Self::over(
+            RemoteHttp::new(client, SourceName::Navidrome, None),
+            base_url,
+            username,
+            password,
+        )
+    }
+
+    /// The same, over a configured HTTP layer.
+    pub(crate) fn over(
+        http: RemoteHttp,
+        base_url: String,
+        username: String,
+        password: String,
+    ) -> Self {
         Self {
-            client,
+            http,
             base_url: base_url.trim_end_matches('/').to_owned(),
             username,
             password,
@@ -740,7 +752,7 @@ impl NavidromeAdapter {
     ) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
         let size = size.to_string();
-        self.get_bytes(
+        self.image(
             "/rest/getCoverArt",
             &params(&[("id", id), ("size", &size)]),
             "image/jpeg",
@@ -755,11 +767,12 @@ impl NavidromeAdapter {
         self.require_configured()?;
         let mut query = auth_params(&self.username, &self.password);
         query.extend(params(&[("id", id)]));
-        self.client
-            .get(format!("{}/rest/stream", self.base_url))
+        self.http
+            .client()
+            .get(RemoteHttp::url(&self.base_url, "/rest/stream")?)
             .query(&query)
             .build()
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))
+            .map_err(super::adapter::transport)
     }
 
     /// Now-playing report via `/rest/scrobble` with `submission=false`
@@ -863,7 +876,7 @@ impl NavidromeAdapter {
     /// The same account scoped to one folder.
     fn in_folder(&self, folder: &str) -> Self {
         Self {
-            client: self.client.clone(),
+            http: self.http.clone(),
             base_url: self.base_url.clone(),
             username: self.username.clone(),
             password: self.password.clone(),
@@ -1035,29 +1048,12 @@ impl NavidromeAdapter {
         }
         let mut query = auth_params(&self.username, &self.password);
         query.extend(pairs.iter().cloned());
-        let response = self
-            .client
-            .get(format!("{}{endpoint}", self.base_url))
-            .query(&query)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AdapterError::Auth);
-        }
-        if !status.is_success() {
-            return Err(AdapterError::Api(format!(
-                "GET {endpoint} failed ({status})"
-            )));
-        }
-        let bytes = read_api_body(SourceName::Navidrome, endpoint, response).await?;
-        let envelope: Envelope = serde_json::from_slice(&bytes).map_err(|error| {
-            AdapterError::Api(format!(
-                "Navidrome returned an unreadable {endpoint} payload: {error}"
-            ))
-        })?;
+        let request = self
+            .http
+            .client()
+            .get(RemoteHttp::url(&self.base_url, endpoint)?)
+            .query(&query);
+        let envelope: Envelope = self.http.send(endpoint, request).await?.json().await?;
         let body = envelope.response;
         if body.status != "ok" {
             let error = body.error.unwrap_or_default();
@@ -1083,7 +1079,7 @@ impl NavidromeAdapter {
     /// Cover-art bytes, read under the image size cap. Auth rides the same
     /// token params; a missing content type falls back to
     /// `fallback_content_type`.
-    async fn get_bytes(
+    async fn image(
         &self,
         endpoint: &str,
         pairs: &[(String, String)],
@@ -1094,31 +1090,16 @@ impl NavidromeAdapter {
         }
         let mut query = auth_params(&self.username, &self.password);
         query.extend(pairs.iter().cloned());
-        let response = self
-            .client
-            .get(format!("{}{endpoint}", self.base_url))
-            .query(&query)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
+        let request = self
+            .http
+            .client()
+            .get(RemoteHttp::url(&self.base_url, endpoint)?)
+            .query(&query);
+        self.http
+            .send(endpoint, request)
+            .await?
+            .image(fallback_content_type)
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AdapterError::Auth);
-        }
-        if !status.is_success() {
-            return Err(AdapterError::Api(format!(
-                "GET {endpoint} failed ({status})"
-            )));
-        }
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or(fallback_content_type)
-            .to_owned();
-        let bytes = read_image(SourceName::Navidrome, endpoint, response).await?;
-        Ok((bytes, content_type))
     }
 }
 
@@ -1295,10 +1276,4 @@ fn non_empty(value: Option<&str>) -> Option<String> {
 
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// Transport cause for logs and errors. The URL is stripped first: it can
-/// carry credentials (Subsonic `u`/`t`/`s`, Plex and Jellyfin tokens).
-fn trim_cause(cause: reqwest::Error) -> String {
-    cause.without_url().to_string().chars().take(200).collect()
 }

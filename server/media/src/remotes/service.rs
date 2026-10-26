@@ -12,9 +12,11 @@ use droppedneedle_kernel::clock::Clock;
 
 use super::adapter::{
     AdapterError, AlbumBrowse, ArtistBrowse, ImportSink, RemoteHandle, TrackBrowse, album_page,
-    artist_page, track_page,
+    artist_page, track_page, unsupported,
 };
-use super::connections::{ConnectionResolver, LinkSummary, ResolveError, SaveError, UserLink};
+use super::connections::{
+    ConnectionResolver, LinkSummary, Reads, ResolveError, ResolvedConnection, SaveError, UserLink,
+};
 use super::folders::{FolderSaveError, FolderStore, checked_preference, resolve_scope};
 use super::jellyfin::{JellyfinAdapter, MixSeed};
 use super::models::{
@@ -24,8 +26,6 @@ use super::models::{
     MusicFolderView, PlaylistCollection, PlaylistDetail, SearchResults, SessionsView, SourceName,
     StatsView, TrackPage, TrackView,
 };
-use super::navidrome::NavidromeAdapter;
-use super::plex::PlexAdapter;
 use super::warmup::MbidIndex;
 use droppedneedle_kernel::db::fold::fold_text;
 
@@ -196,52 +196,56 @@ impl RemotesService {
 
     /// The caller's handle for one source, folder-scoped for Navidrome.
     pub async fn handle(&self, user_id: &str, source: SourceName) -> RemotesResult<RemoteHandle> {
+        self.handle_for(user_id, source, Reads::User).await
+    }
+
+    /// [`Self::handle`] whose calls, the folder lookup included, count as
+    /// `reads`.
+    async fn handle_for(
+        &self,
+        user_id: &str,
+        source: SourceName,
+        reads: Reads,
+    ) -> RemotesResult<RemoteHandle> {
+        let handle = self.unscoped(user_id, source, reads).await?;
+        let RemoteHandle::Navidrome(adapter) = handle else {
+            return Ok(handle);
+        };
+        let preference = self
+            .folders
+            .get(user_id)
+            .await
+            .map_err(RemotesFailure::Internal)?;
+        let identity = adapter.server_identity();
+        let folders = match adapter.music_folders().await {
+            Ok(folders) => Some(folders),
+            Err(AdapterError::Auth) => {
+                return Err(RemotesFailure::AuthFailed(SourceName::Navidrome));
+            }
+            Err(error) => {
+                tracing::warn!(%error, "navidrome folders unavailable; using the stored scope");
+                None
+            }
+        };
+        let resolution = resolve_scope(&preference, folders.as_deref(), &identity);
+        Ok(RemoteHandle::Navidrome(
+            adapter.with_folders(resolution.scope.folder_ids),
+        ))
+    }
+
+    /// The caller's handle for one source, with no folder scope.
+    async fn unscoped(
+        &self,
+        user_id: &str,
+        source: SourceName,
+        reads: Reads,
+    ) -> RemotesResult<RemoteHandle> {
         let resolved = self
             .resolver
             .resolve(user_id, source)
             .await
             .map_err(|error| resolve_failure(source, error))?;
-        Ok(match source {
-            SourceName::Jellyfin => RemoteHandle::Jellyfin(JellyfinAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.user_id,
-            )),
-            SourceName::Navidrome => {
-                let adapter = NavidromeAdapter::new(
-                    self.http.clone(),
-                    resolved.base_url,
-                    resolved.username,
-                    resolved.credential,
-                );
-                let preference = self
-                    .folders
-                    .get(user_id)
-                    .await
-                    .map_err(RemotesFailure::Internal)?;
-                let identity = adapter.server_identity();
-                let folders = match adapter.music_folders().await {
-                    Ok(folders) => Some(folders),
-                    Err(AdapterError::Auth) => {
-                        return Err(RemotesFailure::AuthFailed(SourceName::Navidrome));
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "navidrome folders unavailable; using the stored scope");
-                        None
-                    }
-                };
-                let resolution = resolve_scope(&preference, folders.as_deref(), &identity);
-                RemoteHandle::Navidrome(adapter.with_folders(resolution.scope.folder_ids))
-            }
-            SourceName::Plex => RemoteHandle::Plex(PlexAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.client_id,
-                resolved.section_ids,
-            )),
-        })
+        Ok(self.resolver.client(&self.http, resolved, reads))
     }
 
     /// Resolve a handle and run one adapter call on it.
@@ -250,39 +254,45 @@ impl RemotesService {
         F: FnOnce(RemoteHandle) -> Fut,
         Fut: Future<Output = Result<T, AdapterError>>,
     {
-        let handle = self.handle(user_id, source).await?;
+        self.call_for(user_id, source, Reads::User, call).await
+    }
+
+    /// [`Self::call`] with its reads counted as `reads`.
+    async fn call_for<T, F, Fut>(
+        &self,
+        user_id: &str,
+        source: SourceName,
+        reads: Reads,
+        call: F,
+    ) -> RemotesResult<T>
+    where
+        F: FnOnce(RemoteHandle) -> Fut,
+        Fut: Future<Output = Result<T, AdapterError>>,
+    {
+        let handle = self.handle_for(user_id, source, reads).await?;
         call(handle)
             .await
             .map_err(|error| adapter_failure(source, error))
     }
 
-    async fn jellyfin(&self, user_id: &str) -> RemotesResult<JellyfinAdapter> {
-        match self.handle(user_id, SourceName::Jellyfin).await? {
-            RemoteHandle::Jellyfin(adapter) => Ok(adapter),
-            _ => Err(RemotesFailure::Internal(
-                "jellyfin resolved another source".to_owned(),
-            )),
+    /// [`Self::call`] for `what` only `wanted` has. Any other source
+    /// answers `Unsupported` before anything is resolved.
+    async fn call_only<T, F, Fut>(
+        &self,
+        user_id: &str,
+        source: SourceName,
+        wanted: SourceName,
+        what: &str,
+        call: F,
+    ) -> RemotesResult<T>
+    where
+        F: FnOnce(RemoteHandle) -> Fut,
+        Fut: Future<Output = Result<T, AdapterError>>,
+    {
+        if source != wanted {
+            return Err(adapter_failure(source, unsupported(source, what)));
         }
-    }
-
-    async fn plex(&self, user_id: &str) -> RemotesResult<PlexAdapter> {
-        match self.handle(user_id, SourceName::Plex).await? {
-            RemoteHandle::Plex(adapter) => Ok(adapter),
-            _ => Err(RemotesFailure::Internal(
-                "plex resolved another source".to_owned(),
-            )),
-        }
-    }
-
-    fn only(source: SourceName, wanted: SourceName, what: &str) -> RemotesResult<()> {
-        if source == wanted {
-            Ok(())
-        } else {
-            Err(RemotesFailure::Unsupported(format!(
-                "{} has no {what}",
-                source.display()
-            )))
-        }
+        self.call(user_id, source, call).await
     }
 
     // -- browse ------------------------------------------------------------
@@ -507,12 +517,15 @@ impl RemotesService {
 
     /// Plex mood labels.
     pub async fn moods(&self, user_id: &str, source: SourceName) -> RemotesResult<Vec<String>> {
-        Self::only(source, SourceName::Plex, "mood labels")?;
-        self.plex(user_id)
-            .await?
-            .moods()
-            .await
-            .map_err(|error| adapter_failure(source, error))
+        let what = "mood labels";
+        self.call_only(
+            user_id,
+            source,
+            SourceName::Plex,
+            what,
+            |handle| async move { handle.plex(what)?.moods().await },
+        )
+        .await
     }
 
     /// Jellyfin filter facets (years, tags, studios).
@@ -521,12 +534,15 @@ impl RemotesService {
         user_id: &str,
         source: SourceName,
     ) -> RemotesResult<FilterFacetsView> {
-        Self::only(source, SourceName::Jellyfin, "filter facets")?;
-        self.jellyfin(user_id)
-            .await?
-            .filter_facets()
-            .await
-            .map_err(|error| adapter_failure(source, error))
+        let what = "filter facets";
+        self.call_only(
+            user_id,
+            source,
+            SourceName::Jellyfin,
+            what,
+            |handle| async move { handle.jellyfin(what)?.filter_facets().await },
+        )
+        .await
     }
 
     /// Most-played albums (Jellyfin play counts).
@@ -536,12 +552,15 @@ impl RemotesService {
         source: SourceName,
         limit: i64,
     ) -> RemotesResult<Vec<AlbumView>> {
-        Self::only(source, SourceName::Jellyfin, "play counts")?;
-        self.jellyfin(user_id)
-            .await?
-            .most_played_albums(limit)
-            .await
-            .map_err(|error| adapter_failure(source, error))
+        let what = "play counts";
+        self.call_only(
+            user_id,
+            source,
+            SourceName::Jellyfin,
+            what,
+            |handle| async move { handle.jellyfin(what)?.most_played_albums(limit).await },
+        )
+        .await
     }
 
     /// Most-played artists (Jellyfin play counts).
@@ -551,12 +570,15 @@ impl RemotesService {
         source: SourceName,
         limit: i64,
     ) -> RemotesResult<Vec<ArtistView>> {
-        Self::only(source, SourceName::Jellyfin, "play counts")?;
-        self.jellyfin(user_id)
-            .await?
-            .most_played_artists(limit)
-            .await
-            .map_err(|error| adapter_failure(source, error))
+        let what = "play counts";
+        self.call_only(
+            user_id,
+            source,
+            SourceName::Jellyfin,
+            what,
+            |handle| async move { handle.jellyfin(what)?.most_played_artists(limit).await },
+        )
+        .await
     }
 
     // -- playlists ---------------------------------------------------------
@@ -723,12 +745,15 @@ impl RemotesService {
         source: SourceName,
         count: i64,
     ) -> RemotesResult<DiscoveryView> {
-        Self::only(source, SourceName::Plex, "discovery shelves")?;
-        self.plex(user_id)
-            .await?
-            .discovery(count)
-            .await
-            .map_err(|error| adapter_failure(source, error))
+        let what = "discovery shelves";
+        self.call_only(
+            user_id,
+            source,
+            SourceName::Plex,
+            what,
+            |handle| async move { handle.plex(what)?.discovery(count).await },
+        )
+        .await
     }
 
     /// Jellyfin instant mix.
@@ -739,13 +764,16 @@ impl RemotesService {
         seed: MixSeed,
         limit: i64,
     ) -> RemotesResult<TrackPage> {
-        Self::only(source, SourceName::Jellyfin, "instant-mix endpoint")?;
+        let what = "instant-mix endpoint";
         let items = self
-            .jellyfin(user_id)
-            .await?
-            .mix(&seed, limit)
-            .await
-            .map_err(|error| adapter_failure(source, error))?;
+            .call_only(
+                user_id,
+                source,
+                SourceName::Jellyfin,
+                what,
+                |handle| async move { handle.jellyfin(what)?.mix(&seed, limit).await },
+            )
+            .await?;
         Ok(capped_page(items, limit))
     }
 
@@ -781,8 +809,14 @@ impl RemotesService {
         source: SourceName,
     ) -> RemotesResult<AnalyticsView> {
         let now_unix = self.clock.now_unix();
-        Self::only(source, SourceName::Plex, "listening analytics")?;
-        let plex = self.plex(user_id).await?;
+        let what = "listening analytics";
+        if source != SourceName::Plex {
+            return Err(adapter_failure(source, unsupported(source, what)));
+        }
+        let handle = self.handle(user_id, source).await?;
+        let plex = handle
+            .plex(what)
+            .map_err(|error| adapter_failure(source, error))?;
         let mut entries = Vec::new();
         let mut offset = 0;
         let mut total_available = 0;
@@ -810,7 +844,9 @@ impl RemotesService {
         ))
     }
 
-    /// Image bytes for one item.
+    /// Image bytes for one item. Images stay outside the per-source read
+    /// bound: a grid asks for dozens at once, and a click must not queue
+    /// behind them. Each is read under the image size cap.
     pub async fn image(
         &self,
         user_id: &str,
@@ -818,13 +854,16 @@ impl RemotesService {
         id: String,
         size: i64,
     ) -> RemotesResult<(Vec<u8>, String)> {
-        self.call(user_id, source, move |handle| async move {
-            handle.image_bytes(&id, size).await
-        })
+        self.call_for(
+            user_id,
+            source,
+            Reads::Background,
+            move |handle| async move { handle.image_bytes(&id, size).await },
+        )
         .await
     }
 
-    /// Playlist cover bytes.
+    /// Playlist cover bytes, outside the read bound as images are.
     pub async fn playlist_cover(
         &self,
         user_id: &str,
@@ -832,9 +871,12 @@ impl RemotesService {
         id: String,
         size: i64,
     ) -> RemotesResult<(Vec<u8>, String)> {
-        self.call(user_id, source, move |handle| async move {
-            handle.playlist_cover_bytes(&id, size).await
-        })
+        self.call_for(
+            user_id,
+            source,
+            Reads::Background,
+            move |handle| async move { handle.playlist_cover_bytes(&id, size).await },
+        )
         .await
     }
 
@@ -1012,13 +1054,19 @@ impl RemotesService {
         }
         let link = match source {
             SourceName::Navidrome => {
-                let adapter = NavidromeAdapter::new(
-                    self.http.clone(),
-                    server.base_url.clone(),
-                    login.username.clone(),
-                    login.password.clone(),
+                let handle = self.resolver.client(
+                    &self.http,
+                    ResolvedConnection {
+                        username: login.username.clone(),
+                        ..ResolvedConnection::unsaved(
+                            SourceName::Navidrome,
+                            server.base_url.clone(),
+                            login.password.clone(),
+                        )
+                    },
+                    Reads::User,
                 );
-                adapter.validate_connection().await.map_err(|error| {
+                handle.validate_connection().await.map_err(|error| {
                     rejected_login(SourceName::Navidrome, error, "username or password")
                 })?;
                 UserLink::Navidrome {
@@ -1089,7 +1137,12 @@ impl RemotesService {
             .get(user_id)
             .await
             .map_err(RemotesFailure::Internal)?;
-        let adapter = self.navidrome_unscoped(user_id).await?;
+        let handle = self
+            .unscoped(user_id, SourceName::Navidrome, Reads::User)
+            .await?;
+        let adapter = handle
+            .navidrome("music folders")
+            .map_err(|error| adapter_failure(SourceName::Navidrome, error))?;
         let identity = adapter.server_identity();
         let resolution = match adapter.music_folders().await {
             Ok(folders) => resolve_scope(&preference, Some(&folders), &identity),
@@ -1118,7 +1171,12 @@ impl RemotesService {
         mode: &str,
         selected_folder_ids: &[String],
     ) -> RemotesResult<FolderResolutionView> {
-        let adapter = self.navidrome_unscoped(user_id).await?;
+        let handle = self
+            .unscoped(user_id, SourceName::Navidrome, Reads::User)
+            .await?;
+        let adapter = handle
+            .navidrome("music folders")
+            .map_err(|error| adapter_failure(SourceName::Navidrome, error))?;
         let identity = adapter.server_identity();
         let folders = adapter
             .music_folders()
@@ -1137,20 +1195,6 @@ impl RemotesService {
             .await
             .map_err(RemotesFailure::Internal)?;
         self.folders(user_id).await
-    }
-
-    async fn navidrome_unscoped(&self, user_id: &str) -> RemotesResult<NavidromeAdapter> {
-        let resolved = self
-            .resolver
-            .resolve(user_id, SourceName::Navidrome)
-            .await
-            .map_err(|error| resolve_failure(SourceName::Navidrome, error))?;
-        Ok(NavidromeAdapter::new(
-            self.http.clone(),
-            resolved.base_url,
-            resolved.username,
-            resolved.credential,
-        ))
     }
 }
 

@@ -12,11 +12,8 @@
 use std::sync::Arc;
 
 use super::adapter::RemoteHandle;
-use super::connections::{ConnectionResolver, ResolvedConnection};
-use super::jellyfin::JellyfinAdapter;
+use super::connections::{ConnectionResolver, Reads, ResolvedConnection};
 use super::models::{SessionView, SourceName};
-use super::navidrome::NavidromeAdapter;
-use super::plex::PlexAdapter;
 use super::warmup::{MbidIndex, Warmups};
 use crate::playback::presence::{ExternalSession, PresenceRegistry};
 use droppedneedle_kernel::clock::Clock;
@@ -151,27 +148,9 @@ impl RemoteSessionPollers {
 
     fn handle(&self, source: SourceName) -> Result<RemoteHandle, String> {
         let resolved = self.resolve(source)?;
-        Ok(match source {
-            SourceName::Jellyfin => RemoteHandle::Jellyfin(JellyfinAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.user_id,
-            )),
-            SourceName::Navidrome => RemoteHandle::Navidrome(NavidromeAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.username,
-                resolved.credential,
-            )),
-            SourceName::Plex => RemoteHandle::Plex(PlexAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.client_id,
-                resolved.section_ids,
-            )),
-        })
+        Ok(self
+            .resolver
+            .client(&self.http, resolved, Reads::Background))
     }
 
     async fn poll(&self, source: SourceName) -> Result<Vec<PresenceSession>, String> {

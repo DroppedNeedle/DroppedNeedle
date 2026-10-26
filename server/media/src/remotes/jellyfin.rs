@@ -18,17 +18,14 @@
 //! Payloads decode into the typed shapes in [`super::jellyfin_models`]; a
 //! payload missing an item id is an upstream error, not an empty item.
 
-use std::time::Duration;
-
 use serde::de::DeserializeOwned;
 
 use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, checked_url, read_api_body,
-    read_image, request_id,
+    AdapterError, AlbumBrowse, ArtistBrowse, RemoteHttp, RemotePage, TrackBrowse, request_id,
 };
 use super::jellyfin_models::{
-    AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, PlaybackReport, QueryFilters,
-    SearchHints, Session, SystemInfo,
+    AuthenticatedUser, AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, PlaybackReport,
+    QueryFilters, SearchHints, Session, SystemInfo,
 };
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, FilterFacetsView, HistoryPage, HubView,
@@ -36,9 +33,6 @@ use super::models::{
     SessionsView, SourceName, StatsView, TrackView,
 };
 use super::warmup::{INDEX_MAX_PAGES, IndexedAlbum, indexed};
-
-/// Request timeout per upstream call, matching the v2 repository.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// MBID index scan batch size, matching the v2 repository.
 const MBID_BATCH: i64 = 500;
@@ -49,7 +43,7 @@ const TICKS_PER_MS: i64 = 10_000;
 /// Jellyfin browse client. Built per request from the caller's resolved
 /// connection; holds no cache.
 pub struct JellyfinAdapter {
-    client: reqwest::Client,
+    http: RemoteHttp,
     base_url: String,
     api_key: String,
     user_id: String,
@@ -108,14 +102,31 @@ fn params(pairs: &[(&str, &str)]) -> Params {
 impl JellyfinAdapter {
     /// Build a client for one server. Empty base URL or key reads as
     /// unconfigured and every call fails with [`AdapterError::NotConfigured`].
+    /// Kept for the adapter tests; the app builds clients through
+    /// [`ConnectionResolver::client`](super::connections::ConnectionResolver::client).
     pub fn new(
         client: reqwest::Client,
         base_url: String,
         api_key: String,
         user_id: String,
     ) -> Self {
+        Self::over(
+            RemoteHttp::new(client, SourceName::Jellyfin, None),
+            base_url,
+            api_key,
+            user_id,
+        )
+    }
+
+    /// The same, over a configured HTTP layer.
+    pub(crate) fn over(
+        http: RemoteHttp,
+        base_url: String,
+        api_key: String,
+        user_id: String,
+    ) -> Self {
         Self {
-            client,
+            http,
             base_url: base_url.trim_end_matches('/').to_owned(),
             api_key,
             user_id,
@@ -138,6 +149,17 @@ impl JellyfinAdapter {
             info.server_name.as_deref().unwrap_or("Unknown"),
             info.version.as_deref().unwrap_or("Unknown")
         ))
+    }
+
+    /// The server's users as `(id, name)`, for the admin's user picker.
+    pub async fn users(&self) -> Result<Vec<(String, String)>, AdapterError> {
+        let users: Option<Vec<AuthenticatedUser>> = self.get("/Users", &[]).await?;
+        Ok(users
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|user| !user.id.is_empty())
+            .map(|user| (user.id, user.name.unwrap_or_default()))
+            .collect())
     }
 
     /// Every album that carries a release-group or release id, 500 rows per
@@ -638,30 +660,15 @@ impl JellyfinAdapter {
         let header = format!(
             "MediaBrowser Client=\"DroppedNeedle\", Device=\"DroppedNeedle\", DeviceId=\"{device_id}\", Version=\"1.4.0\""
         );
-        let response = client
-            .post(format!("{base_url}/Users/AuthenticateByName"))
+        let endpoint = "/Users/AuthenticateByName";
+        let http = RemoteHttp::new(client.clone(), SourceName::Jellyfin, None);
+        let request = client
+            .post(RemoteHttp::url(base_url, endpoint)?)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .header("Authorization", header)
-            .body(serde_json::json!({ "Username": username, "Pw": password }).to_string())
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            || response.status() == reqwest::StatusCode::FORBIDDEN
-        {
-            return Err(AdapterError::Auth);
-        }
-        if !response.status().is_success() {
-            return Err(AdapterError::Api(format!(
-                "POST /Users/AuthenticateByName failed ({})",
-                response.status()
-            )));
-        }
-        let bytes =
-            read_api_body(SourceName::Jellyfin, "/Users/AuthenticateByName", response).await?;
-        let result: AuthenticationResult = decode("/Users/AuthenticateByName", &bytes)?;
+            .body(serde_json::json!({ "Username": username, "Pw": password }).to_string());
+        let result: AuthenticationResult = http.send(endpoint, request).await?.json().await?;
         if result.user.id.is_empty() || result.access_token.is_empty() {
             return Err(AdapterError::Api(
                 "Jellyfin returned incomplete auth data".to_owned(),
@@ -932,7 +939,7 @@ impl JellyfinAdapter {
         let id = request_id(id)?;
         let size = size.to_string();
         let query = params(&[("maxWidth", &size), ("maxHeight", &size), ("quality", "90")]);
-        self.get_bytes(&format!("/Items/{id}/Images/Primary"), &query, "image/jpeg")
+        self.image(&format!("/Items/{id}/Images/Primary"), &query, "image/jpeg")
             .await
     }
 
@@ -949,13 +956,19 @@ impl JellyfinAdapter {
         let invalid = || AdapterError::Unsupported("Invalid Jellyfin audio id".to_owned());
         let id = request_id(id).map_err(|_| invalid())?;
         let url =
-            checked_url(&self.base_url, &format!("/Audio/{id}/stream")).ok_or_else(invalid)?;
-        self.client
+            RemoteHttp::url(&self.base_url, &format!("/Audio/{id}/stream")).map_err(|error| {
+                match error {
+                    AdapterError::NotFound => invalid(),
+                    other => other,
+                }
+            })?;
+        self.http
+            .client()
             .get(url)
             .header("Authorization", self.auth_header())
             .query(&query)
             .build()
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))
+            .map_err(super::adapter::transport)
     }
 
     /// Session report to `/Sessions/Playing`, `/Sessions/Playing/Progress`,
@@ -1065,33 +1078,23 @@ impl JellyfinAdapter {
         if !self.user_id.is_empty() && !query.iter().any(|(key, _)| key == "userId") {
             query.push(("userId".to_owned(), self.user_id.clone()));
         }
-        let response = self
-            .client
-            .get(checked_url(&self.base_url, endpoint).ok_or(AdapterError::NotFound)?)
+        let request = self
+            .http
+            .client()
+            .get(RemoteHttp::url(&self.base_url, endpoint)?)
             .header("Accept", "application/json")
             .header("Authorization", self.auth_header())
-            .query(&query)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AdapterError::Auth);
-        }
+            .query(&query);
+        let answer = self.http.send(endpoint, request).await?;
+        let status = answer.status();
         if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::NO_CONTENT {
             return Ok(None);
         }
-        if !status.is_success() {
-            return Err(AdapterError::Api(format!(
-                "GET {endpoint} failed ({status})"
-            )));
-        }
-        let bytes = read_api_body(SourceName::Jellyfin, endpoint, response).await?;
+        let bytes = answer.body().await?;
         if bytes.is_empty() {
             return Ok(None);
         }
-        decode(endpoint, &bytes).map(Some)
+        super::adapter::decode(SourceName::Jellyfin, endpoint, &bytes).map(Some)
     }
 
     /// POST a JSON body, discarding the response. Used only for session
@@ -1100,32 +1103,20 @@ impl JellyfinAdapter {
         if !self.is_configured() {
             return Err(AdapterError::NotConfigured);
         }
-        let response = self
-            .client
-            .post(format!("{}{endpoint}", self.base_url))
+        let request = self
+            .http
+            .client()
+            .post(RemoteHttp::url(&self.base_url, endpoint)?)
             .header("Content-Type", "application/json")
             .header("Authorization", self.auth_header())
-            .body(body)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AdapterError::Auth);
-        }
-        if !status.is_success() {
-            return Err(AdapterError::Api(format!(
-                "POST {endpoint} failed ({status})"
-            )));
-        }
-        Ok(())
+            .body(body);
+        self.http.send(endpoint, request).await?.done()
     }
 
     /// GET image bytes, read under the image size cap. Any non-200 is an
     /// API error; a missing content type falls back to
     /// `fallback_content_type`.
-    async fn get_bytes(
+    async fn image(
         &self,
         endpoint: &str,
         query: &[(String, String)],
@@ -1134,47 +1125,22 @@ impl JellyfinAdapter {
         if !self.is_configured() {
             return Err(AdapterError::NotConfigured);
         }
-        let response = self
-            .client
-            .get(checked_url(&self.base_url, endpoint).ok_or(AdapterError::NotFound)?)
+        let request = self
+            .http
+            .client()
+            .get(RemoteHttp::url(&self.base_url, endpoint)?)
             .header("Authorization", self.auth_header())
-            .query(query)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
+            .query(query);
+        self.http
+            .send(endpoint, request)
+            .await?
+            .image(fallback_content_type)
             .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AdapterError::Auth);
-        }
-        if !status.is_success() {
-            return Err(AdapterError::Api(format!(
-                "GET {endpoint} failed ({status})"
-            )));
-        }
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or(fallback_content_type)
-            .to_owned();
-        let bytes = read_image(SourceName::Jellyfin, endpoint, response).await?;
-        Ok((bytes, content_type))
     }
 
     fn auth_header(&self) -> String {
         format!("MediaBrowser Token=\"{}\"", self.api_key)
     }
-}
-
-/// Decode one payload. A shape we cannot read (a missing id included) is
-/// an upstream contract error; the detail stays in the log.
-fn decode<T: DeserializeOwned>(endpoint: &str, bytes: &[u8]) -> Result<T, AdapterError> {
-    serde_json::from_slice(bytes).map_err(|error| {
-        AdapterError::Api(format!(
-            "Jellyfin returned an unreadable {endpoint} payload: {error}"
-        ))
-    })
 }
 
 fn page_of<T>(page: ItemPage, map: impl Fn(&Item) -> T) -> RemotePage<T> {
@@ -1335,10 +1301,4 @@ fn bucket_index(mut artists: Vec<ArtistView>) -> Vec<ArtistIndexEntry> {
         }
     }
     buckets
-}
-
-/// Transport cause for logs and errors. The URL is stripped first: it can
-/// carry credentials (Subsonic `u`/`t`/`s`, Plex and Jellyfin tokens).
-fn trim_cause(cause: reqwest::Error) -> String {
-    cause.without_url().to_string().chars().take(200).collect()
 }

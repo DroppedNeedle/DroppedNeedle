@@ -14,12 +14,9 @@ use crate::stream::gateway::RemoteReader;
 use crate::stream::ranged;
 use crate::stream::routes::{AudioSource, MediaBody, StreamFault, StreamMedia};
 
-use super::adapter::AdapterError;
-use super::connections::{ConnectionResolver, ResolveError};
-use super::jellyfin::JellyfinAdapter;
+use super::adapter::{AdapterError, RemoteHandle, status_error, transport};
+use super::connections::{ConnectionResolver, Reads, ResolveError};
 use super::models::SourceName;
-use super::navidrome::NavidromeAdapter;
-use super::plex::PlexAdapter;
 
 /// Gateway remote reads over the caller's connection (own link first,
 /// then the admin's shared account, like every other remote read).
@@ -41,7 +38,7 @@ impl RemotesRemoteReader {
         &self,
         source: AudioSource,
         user_id: &str,
-    ) -> Result<super::adapter::RemoteHandle, StreamFault> {
+    ) -> Result<RemoteHandle, StreamFault> {
         let name = match source {
             AudioSource::Local => {
                 // The gateway serves local reads itself and never routes
@@ -69,29 +66,10 @@ impl RemotesRemoteReader {
                 },
                 ResolveError::Store(cause) => StreamFault::Internal { cause },
             })?;
-        Ok(match name {
-            SourceName::Jellyfin => super::adapter::RemoteHandle::Jellyfin(JellyfinAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.user_id,
-            )),
-            SourceName::Navidrome => {
-                super::adapter::RemoteHandle::Navidrome(NavidromeAdapter::new(
-                    self.http.clone(),
-                    resolved.base_url,
-                    resolved.username,
-                    resolved.credential,
-                ))
-            }
-            SourceName::Plex => super::adapter::RemoteHandle::Plex(PlexAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.client_id,
-                resolved.section_ids,
-            )),
-        })
+        // Audio streams are not counted against the source's read bound.
+        Ok(self
+            .resolver
+            .client(&self.http, resolved, Reads::Background))
     }
 
     /// Resolve and send the audio request for one key. `head_only` asks
@@ -192,22 +170,15 @@ async fn send(
     let response = tokio::time::timeout(SEND_TIMEOUT, http.execute(request))
         .await
         .map_err(|_| AdapterError::Transport("the server did not answer in time".to_owned()))?
-        .map_err(|cause| {
-            AdapterError::Transport(cause.without_url().to_string().chars().take(200).collect())
-        })?;
+        .map_err(transport)?;
     let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(AdapterError::Auth);
-    }
     if status == reqwest::StatusCode::NOT_FOUND {
         return Err(AdapterError::NotFound);
     }
-    if !status.is_success() {
-        return Err(AdapterError::Api(format!(
-            "audio request failed ({status})"
-        )));
+    match status_error(status, "audio request") {
+        Some(error) => Err(error),
+        None => Ok(response),
     }
-    Ok(response)
 }
 
 /// Re-send the audio request with a `Range` header.

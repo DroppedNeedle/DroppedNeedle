@@ -1060,6 +1060,25 @@ async fn serve_stub() -> String {
     base
 }
 
+/// A server address that does not parse names no server: the media
+/// server checks say they could not connect, never that the server has
+/// no such item.
+#[tokio::test]
+async fn unparseable_server_address_cannot_connect() {
+    let probes = LiveProbes::new(
+        reqwest::Client::new(),
+        &droppedneedle_providers::Providers::closed(),
+    );
+    let address = "http://not a host";
+    for message in [
+        probes.jellyfin(address, "key").await.message,
+        probes.navidrome(address, "ada", "pw").await.message,
+        probes.plex(address, "token").await.message,
+    ] {
+        assert!(message.starts_with("Could not connect"), "{message}");
+    }
+}
+
 /// Every live probe passes against the stub and fails honestly: bad
 /// credentials, rate limits, and dead upstreams are verdicts with the
 /// v2-shaped messages.

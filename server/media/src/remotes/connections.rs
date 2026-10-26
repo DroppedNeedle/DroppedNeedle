@@ -19,7 +19,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::sync::Semaphore;
 
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::crypto::{Crypto, CryptoError};
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, NavidromeConnection, PlexConnection,
@@ -27,8 +29,11 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 use droppedneedle_kernel::runtime_config::sections::InternalState;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
-use super::adapter::{AdapterError, BoxFuture};
+use super::adapter::{AdapterError, BoxFuture, RemoteHandle, RemoteHttp, USER_READS_PER_SOURCE};
+use super::jellyfin::JellyfinAdapter;
 use super::models::SourceName;
+use super::navidrome::NavidromeAdapter;
+use super::plex::PlexAdapter;
 
 // ---------------------------------------------------------------------------
 // Rows
@@ -436,14 +441,7 @@ pub struct ServerSettings {
     pub section_ids: Vec<String>,
 }
 
-/// Admin server settings, read fresh on every call.
-pub trait ServerConfig: Send + Sync {
-    /// The server for one source. `Ok(None)` when it is disabled or has no
-    /// URL; `Err` carries a log-only cause when the settings cannot be read.
-    fn server(&self, source: SourceName) -> Result<Option<ServerSettings>, String>;
-}
-
-/// Server settings, read live on every call.
+/// The admin's server settings, read live on every call.
 #[derive(Clone)]
 pub struct ConfigServers {
     jellyfin: Live<JellyfinConnection>,
@@ -464,8 +462,11 @@ impl ConfigServers {
     }
 }
 
-impl ServerConfig for ConfigServers {
-    fn server(&self, source: SourceName) -> Result<Option<ServerSettings>, String> {
+impl ConfigServers {
+    /// The server for one source. `Ok(None)` when it is disabled or has no
+    /// URL; `Err` carries a log-only cause when the settings cannot be read
+    /// ([`Live::read`] logs it once per revision).
+    pub fn server(&self, source: SourceName) -> Result<Option<ServerSettings>, String> {
         let shared = |username: String, credential: String, user_id: String| {
             (!credential.is_empty()).then_some(SharedCredential {
                 username,
@@ -563,6 +564,25 @@ pub struct ResolvedConnection {
     pub section_ids: Vec<String>,
 }
 
+impl ResolvedConnection {
+    /// Values not stored anywhere yet (a settings check, a login being
+    /// checked, a server probe), with no account behind them.
+    pub fn unsaved(source: SourceName, base_url: String, credential: String) -> Self {
+        Self {
+            source,
+            base_url,
+            username: String::new(),
+            credential,
+            account_mode: String::new(),
+            account_label: String::new(),
+            cache_scope: String::new(),
+            client_id: String::new(),
+            user_id: String::new(),
+            section_ids: Vec::new(),
+        }
+    }
+}
+
 impl std::fmt::Debug for ResolvedConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResolvedConnection")
@@ -637,12 +657,66 @@ pub trait PlexServerTokens: Send + Sync {
     ) -> BoxFuture<'a, Result<Option<String>, AdapterError>>;
 }
 
-/// Resolves a caller's connection for one source, and stores their links.
+/// Whose reads a client serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reads {
+    /// A person waits on them: they share the source's bound of
+    /// [`USER_READS_PER_SOURCE`].
+    User,
+    /// Background work or an audio stream: not counted.
+    Background,
+}
+
+/// Resolves a caller's connection for one source, stores their links, and
+/// builds the source clients.
 pub struct ConnectionResolver {
     rows: Arc<dyn ConnectionStore>,
     coder: Arc<CredentialCoder>,
-    servers: Arc<dyn ServerConfig>,
+    servers: Arc<ConfigServers>,
     plex_tokens: Option<Arc<dyn PlexServerTokens>>,
+    /// One bound per source on the reads people trigger, in
+    /// [`source_slot`] order.
+    user_reads: [Arc<Semaphore>; 3],
+}
+
+/// A source's place in [`ConnectionResolver::user_reads`].
+fn source_slot(source: SourceName) -> usize {
+    match source {
+        SourceName::Jellyfin => 0,
+        SourceName::Navidrome => 1,
+        SourceName::Plex => 2,
+    }
+}
+
+/// Build the client for `connection`, its calls held to `bound` when
+/// there is one.
+fn build_client(
+    http: &reqwest::Client,
+    connection: ResolvedConnection,
+    bound: Option<Arc<Semaphore>>,
+) -> RemoteHandle {
+    let http = RemoteHttp::new(http.clone(), connection.source, bound);
+    match connection.source {
+        SourceName::Jellyfin => RemoteHandle::Jellyfin(JellyfinAdapter::over(
+            http,
+            connection.base_url,
+            connection.credential,
+            connection.user_id,
+        )),
+        SourceName::Navidrome => RemoteHandle::Navidrome(NavidromeAdapter::over(
+            http,
+            connection.base_url,
+            connection.username,
+            connection.credential,
+        )),
+        SourceName::Plex => RemoteHandle::Plex(PlexAdapter::over(
+            http,
+            connection.base_url,
+            connection.credential,
+            connection.client_id,
+            connection.section_ids,
+        )),
+    }
 }
 
 impl std::fmt::Debug for ConnectionResolver {
@@ -657,14 +731,50 @@ impl ConnectionResolver {
     pub fn new(
         rows: Arc<dyn ConnectionStore>,
         coder: Arc<CredentialCoder>,
-        servers: Arc<dyn ServerConfig>,
+        servers: Arc<ConfigServers>,
     ) -> Self {
         Self {
             rows,
             coder,
             servers,
             plex_tokens: None,
+            user_reads: std::array::from_fn(|_| Arc::new(Semaphore::new(USER_READS_PER_SOURCE))),
         }
+    }
+
+    /// The resolver over `platform`: the link rows in its database, sealed
+    /// with its key, over the admin's server settings.
+    pub fn over(platform: &Platform) -> Self {
+        Self::new(
+            Arc::new(SqliteConnectionStore::new(
+                platform.db.clone(),
+                platform.clock.clone(),
+            )),
+            Arc::new(CredentialCoder::new(platform.crypto.clone())),
+            Arc::new(ConfigServers::new(&platform.settings)),
+        )
+    }
+
+    /// The client for `connection`, over `http`. This and
+    /// [`Self::unsaved_client`] are the one place source clients are
+    /// built. A person's reads wait for a place in the source's bound.
+    pub fn client(
+        &self,
+        http: &reqwest::Client,
+        connection: ResolvedConnection,
+        reads: Reads,
+    ) -> RemoteHandle {
+        let bound = match reads {
+            Reads::User => Some(Arc::clone(&self.user_reads[source_slot(connection.source)])),
+            Reads::Background => None,
+        };
+        build_client(http, connection, bound)
+    }
+
+    /// The client for values not stored yet (see
+    /// [`ResolvedConnection::unsaved`]), outside any bound.
+    pub fn unsaved_client(http: &reqwest::Client, connection: ResolvedConnection) -> RemoteHandle {
+        build_client(http, connection, None)
     }
 
     /// Look up and store missing Plex server tokens through `probe`.

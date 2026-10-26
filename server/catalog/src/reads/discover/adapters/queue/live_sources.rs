@@ -25,8 +25,8 @@ use crate::reads::catalog::mapping::should_include_release;
 use crate::reads::catalog::upstream::{CatalogLastFm, UNREADABLE_NAMESPACE, Upstream, user_lastfm};
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
-use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolveError};
-use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
+use droppedneedle_media::remotes::adapter::RemoteHandle;
+use droppedneedle_media::remotes::connections::{ConnectionResolver, Reads, ResolveError};
 use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_providers::lastfm::LastFmCredentials;
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
@@ -71,6 +71,24 @@ impl LiveSources {
             http,
             listening,
             popularity_down_until: Mutex::new(None),
+        }
+    }
+
+    /// The user's Jellyfin client, `None` when Jellyfin is not set up for
+    /// them. Discover reads it in its background warm cycle as well as for
+    /// a page, so its reads are not counted against the user read bound.
+    pub(in crate::reads::discover::adapters) async fn jellyfin_client(
+        &self,
+        user_id: &str,
+    ) -> SourceResult<Option<RemoteHandle>> {
+        match self.jellyfin.resolve(user_id, SourceName::Jellyfin).await {
+            Ok(resolved) => Ok(Some(self.jellyfin.client(
+                &self.http,
+                resolved,
+                Reads::Background,
+            ))),
+            Err(ResolveError::NotConfigured) => Ok(None),
+            Err(error) => Err(ProviderFailure::failed(error.to_string())),
         }
     }
 
@@ -779,17 +797,12 @@ impl QueueSources for LiveSources {
         limit: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
-            let resolved = match self.jellyfin.resolve(user_id, SourceName::Jellyfin).await {
-                Ok(resolved) => resolved,
-                Err(ResolveError::NotConfigured) => return Ok(Vec::new()),
-                Err(error) => return Err(ProviderFailure::failed(error.to_string())),
+            let Some(handle) = self.jellyfin_client(user_id).await? else {
+                return Ok(Vec::new());
             };
-            let adapter = JellyfinAdapter::new(
-                self.http.clone(),
-                resolved.base_url,
-                resolved.credential,
-                resolved.user_id,
-            );
+            let adapter = handle
+                .jellyfin("artist lists")
+                .map_err(|error| ProviderFailure::failed(error.to_string()))?;
             let artists = match list {
                 JellyfinList::MostPlayed => adapter.most_played_artists(i64::from(limit)).await,
                 JellyfinList::Favorites => adapter
