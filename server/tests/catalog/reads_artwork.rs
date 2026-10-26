@@ -339,12 +339,13 @@ async fn a_compat_cover_joins_a_running_fetch() {
 
     let rig = rig(None).await;
     let service = rig.service(true);
-    // The archive's turn comes in two seconds: within a page's wait.
+    // The archive's turn comes in one second, inside the page's `WARM_WAIT`
+    // (2.5 s), which leaves the fetch time to finish.
     rig.archive
         .providers
         .limiter("coverartarchive")
         .unwrap()
-        .cool_down(std::time::Duration::from_secs(2));
+        .cool_down(std::time::Duration::from_secs(1));
     let router = Rig::router(service.clone());
     let page = tokio::spawn(async move {
         get(
