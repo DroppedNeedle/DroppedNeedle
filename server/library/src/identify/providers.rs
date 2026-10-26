@@ -119,6 +119,11 @@ pub trait IdentifyProviders: Send + Sync {
     }
 }
 
+/// The failure code of an exact recall whose release MusicBrainz answers
+/// in a form that will not change by asking again: refused, or a document
+/// that does not decode.
+pub const RELEASE_UNREADABLE: &str = "release_unreadable";
+
 /// Recall result with the criticality each call ran under.
 #[derive(Debug, Clone, Default)]
 pub struct RecallOutcome {
@@ -436,20 +441,60 @@ impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
     }
 
     /// Recall for an exact release: that release alone, plus the merged
-    /// recording ids its files need. No search and no fingerprints.
+    /// recording ids its files need. No search and no fingerprints. An
+    /// answer asking again will not change (one that does not decode,
+    /// say) recalls nothing, with [`RELEASE_UNREADABLE`] as its failure
+    /// code.
     async fn recall_exact(
         &self,
         facts: &LocalAlbumFacts,
         release_mbid: &str,
     ) -> Result<RecallResult, SourceError> {
         let local = local_album(facts, &HashMap::new());
-        let releases: Vec<Release> = self.release(release_mbid).await?.into_iter().collect();
+        let answer = match fresh_release(self.store, release_mbid).await {
+            Ok(Some(stored)) => ReleaseAnswer::Found(Box::new(stored)),
+            Ok(None) => self.release_answer(release_mbid).await?,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    release_mbid,
+                    "stored release document unreadable; asking MusicBrainz"
+                );
+                self.release_answer(release_mbid).await?
+            }
+        };
+        let release = match answer {
+            ReleaseAnswer::Found(release) => *release,
+            ReleaseAnswer::Missing => return Ok(RecallResult::default()),
+            ReleaseAnswer::Refused(reason) => {
+                tracing::info!(
+                    album = facts.local_album_id,
+                    release_mbid,
+                    reason,
+                    "MusicBrainz refused a release document"
+                );
+                return Ok(RecallResult {
+                    failure_code: Some(RELEASE_UNREADABLE.to_owned()),
+                    ..RecallResult::default()
+                });
+            }
+        };
+        let releases = vec![release];
         let recording_aliases = self.resolve_aliases(&local, &releases).await?;
         Ok(RecallResult {
             releases,
             recording_aliases,
             ..RecallResult::default()
         })
+    }
+
+    /// What MusicBrainz answers for release `mbid`; an error only when it
+    /// gave no answer this time.
+    async fn release_answer(&self, mbid: &str) -> Result<ReleaseAnswer, SourceError> {
+        self.releases
+            .release_answer(mbid)
+            .await
+            .map_err(|unanswered| unanswered.error)
     }
 
     /// A release from the store when fresh, else from the source. The

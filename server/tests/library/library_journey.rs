@@ -13961,6 +13961,35 @@ async fn placing_files_never_gives_the_edition_up() {
     );
 }
 
+/// A person's edition whose MusicBrainz answer does not read is kept: the
+/// remap waits for another try instead of handing the album back to
+/// automatic best fit.
+#[tokio::test]
+async fn a_pinned_edition_that_does_not_read_keeps_the_choice() {
+    let (scratch, library, album, tracks) = chosen_album_at_rest("lib-pin-unreadable").await;
+    let db = scratch_db(&scratch);
+    let chosen = choice_row(&db, &album);
+    queue_remap_row(&library, &album, "album_pin");
+    remap_once(
+        &library,
+        &scratch.identify,
+        RecallResult {
+            failure_code: Some(
+                droppedneedle_library::identify::providers::RELEASE_UNREADABLE.to_owned(),
+            ),
+            ..RecallResult::default()
+        },
+    )
+    .await;
+    assert_eq!(remap_row(&db, &album), Some(("album_pin".to_owned(), 1)));
+    assert_eq!(choice_row(&db, &album), chosen, "the person's match stays");
+    assert_eq!(match_state(&db, &album), None);
+    assert!(
+        tracks.iter().all(|track| placement(&db, track).0.is_none()),
+        "nothing placed"
+    );
+}
+
 /// Files queued to be placed on a person's edition are not placed once the
 /// album's match has been made automatic since: the row goes unrun.
 #[tokio::test]

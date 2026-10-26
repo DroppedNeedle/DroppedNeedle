@@ -117,6 +117,11 @@ pub const EDITION_NOT_FOUND: Reason = reason(
     "MusicBrainz does not know this release.",
     "Check the release ID, or pick an edition from the list.",
 );
+pub const EDITION_UNREADABLE: Reason = reason(
+    "EDITION_UNREADABLE",
+    "MusicBrainz's answer for this release could not be read.",
+    "Try again later, or pick another edition.",
+);
 pub const EDITION_FITS_NO_FILE: Reason = reason(
     "EDITION_FITS_NO_FILE",
     "None of this album's files match a track on that edition, so it is probably another album.",

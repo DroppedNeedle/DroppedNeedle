@@ -21,6 +21,7 @@ use super::store::{self, NewReidentification};
 use super::{choice, decisions, hand_match, history, reviews};
 use crate::clock::LibraryClock as _;
 use crate::identify::models::LocalAlbumFacts;
+use crate::identify::providers::RELEASE_UNREADABLE;
 use crate::identify::queue::queue_retry;
 use crate::identify::service::IdentifyService;
 use crate::identify::sources::EditionQuery;
@@ -522,6 +523,9 @@ impl Operations {
                     .unwrap_or_else(|| "musicbrainz_unavailable".to_owned()),
             ));
         }
+        if recall.failure_code.as_deref() == Some(RELEASE_UNREADABLE) {
+            return Err(OperationError::Conflict(reasons::EDITION_UNREADABLE));
+        }
         if recall.releases.is_empty() {
             return Err(OperationError::NotFound(reasons::EDITION_NOT_FOUND));
         }
@@ -883,6 +887,13 @@ impl Operations {
                     }
                     Err(OperationError::Unavailable(_)) => {
                         choice::retry_remap(tx, &pending, reasons::MUSICBRAINZ_UNAVAILABLE, now)?
+                    }
+                    // A release whose answer does not read says nothing
+                    // about the choice: it is kept and asked for again.
+                    Err(OperationError::Conflict(reason))
+                        if reason.code == reasons::EDITION_UNREADABLE.code =>
+                    {
+                        choice::retry_remap(tx, &pending, reason.code, now)?
                     }
                     // The album's files are out of reach for now (a scan may
                     // be moving them): never a reason to drop the choice.

@@ -3703,12 +3703,14 @@ async fn a_confirmed_album_moves_to_the_edition_its_barcode_names() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-/// Recalls a scripted answer that misses the held edition, and cannot
-/// fetch the held edition again (its stored document is stale and
-/// MusicBrainz does not answer).
-struct HeldUnanswered(RecallResult);
+/// Recalls a scripted answer that misses the held edition, and answers
+/// the held edition's own recall with a second script.
+struct HeldRecall {
+    recall: RecallResult,
+    held: RecallResult,
+}
 
-impl identify::providers::IdentifyProviders for HeldUnanswered {
+impl identify::providers::IdentifyProviders for HeldRecall {
     fn recall_candidates(
         &self,
         _facts: &LocalAlbumFacts,
@@ -3717,7 +3719,7 @@ impl identify::providers::IdentifyProviders for HeldUnanswered {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = identify::providers::RecallOutcome> + Send + '_>,
     > {
-        let result = self.0.clone();
+        let result = self.recall.clone();
         Box::pin(async move {
             identify::providers::RecallOutcome {
                 result,
@@ -3734,13 +3736,10 @@ impl identify::providers::IdentifyProviders for HeldUnanswered {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = identify::providers::RecallOutcome> + Send + '_>,
     > {
-        Box::pin(async {
+        let result = self.held.clone();
+        Box::pin(async move {
             identify::providers::RecallOutcome {
-                result: RecallResult {
-                    provider_deferred: true,
-                    failure_code: Some("musicbrainz_unavailable".to_owned()),
-                    ..RecallResult::default()
-                },
+                result,
                 recall_criticality: None,
             }
         })
@@ -3769,11 +3768,18 @@ async fn a_held_edition_that_cannot_be_fetched_keeps_the_album() {
         .unwrap();
     let service = IdentifyService::new(IdentifyDeps {
         store: rig.store.clone(),
-        providers: Arc::new(HeldUnanswered(recall(vec![release(
-            GROUP_A,
-            RELEASE_A2,
-            &[RECORDING_1, RECORDING_2],
-        )]))),
+        providers: Arc::new(HeldRecall {
+            recall: recall(vec![release(
+                GROUP_A,
+                RELEASE_A2,
+                &[RECORDING_1, RECORDING_2],
+            )]),
+            held: RecallResult {
+                provider_deferred: true,
+                failure_code: Some("musicbrainz_unavailable".to_owned()),
+                ..RecallResult::default()
+            },
+        }),
     });
 
     let report = rig.attempt(&service, "job-1", "album-1").await;
@@ -3789,4 +3795,50 @@ async fn a_held_edition_that_cannot_be_fetched_keeps_the_album() {
     );
     let job = rig.store.job("job-1").unwrap().expect("job");
     assert_eq!(job.state, JobState::Deferred);
+}
+
+/// A file carrying a recording id MusicBrainz merged, which only the held
+/// edition's own recall resolved, does not count against the held edition:
+/// recall offered another edition of the group (a stale document still
+/// listing the retired id), and the album stays where it is.
+#[tokio::test]
+async fn a_merged_recording_the_held_edition_resolves_keeps_the_album() {
+    const RETIRED: &str = "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9a";
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts(
+        "album-1",
+        &[("t1", Some(RECORDING_1)), ("t2", Some(RETIRED))],
+    ));
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: "album-1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(GROUP_A.to_owned()),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
+    let mut held = recall(vec![release(
+        GROUP_A,
+        RELEASE_A1,
+        &[RECORDING_1, RECORDING_2],
+    )]);
+    held.recording_aliases
+        .insert(RETIRED.to_owned(), RECORDING_2.to_owned());
+    let service = IdentifyService::new(IdentifyDeps {
+        store: rig.store.clone(),
+        providers: Arc::new(HeldRecall {
+            recall: recall(vec![release(GROUP_A, RELEASE_A2, &[RECORDING_1, RETIRED])]),
+            held,
+        }),
+    });
+
+    rig.attempt(&service, "job-1", "album-1").await;
+
+    let kept = rig.store.album_identity("album-1").unwrap();
+    assert_eq!(
+        kept.and_then(|row| row.release_mbid).as_deref(),
+        Some(RELEASE_A1)
+    );
 }

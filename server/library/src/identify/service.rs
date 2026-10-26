@@ -20,7 +20,7 @@ use super::models::{
     IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief, JobState, LocalAlbumFacts,
     MatchFlag, MatchFlagState, RecallResult, ReviewState, TrackIdentity,
 };
-use super::providers::{IdentifyProviders, RecallOutcome};
+use super::providers::{IdentifyProviders, RELEASE_UNREADABLE, RecallOutcome};
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::review::reject_review;
 use super::rules::retracts_on_contradiction;
@@ -248,11 +248,26 @@ impl IdentifyService {
             // held release MusicBrainz cannot answer for defers the attempt
             // as a busy recall does. A stale stored copy is not used: the
             // move rules compare against what the held edition states now.
+            // One it answers in a form asking again will not change fails
+            // the attempt at once: the album keeps its edition.
             if extra.result.provider_deferred {
                 recall.provider_deferred = true;
                 recall.failure_code = extra.result.failure_code;
+            } else if extra.result.failure_code.as_deref() == Some(RELEASE_UNREADABLE) {
+                land_job(
+                    &mut job,
+                    AttemptLanding::Failed,
+                    now_ms,
+                    Some(HELD_RELEASE_UNREADABLE),
+                );
+                return self.land(job, IdentificationOutcome::Failed, HELD_RELEASE_UNREADABLE);
             } else {
                 recall.releases.extend(extra.result.releases);
+                // The merged recording ids the held release's files need
+                // count against every candidate.
+                for (retired, kept) in extra.result.recording_aliases {
+                    recall.recording_aliases.entry(retired).or_insert(kept);
+                }
             }
         }
         if recall.provider_deferred {
@@ -1019,6 +1034,10 @@ pub const NAMED_GROUP_DIFFERS: &str = "NAMED_GROUP_DIFFERS";
 
 /// The reason a release some file's audio disagrees with is only a guess.
 pub const AUDIO_DISAGREES: &str = "AUDIO_DISAGREES";
+
+/// The reason an attempt failed with the album left on its edition:
+/// MusicBrainz answers for that edition in a form that does not read.
+pub const HELD_RELEASE_UNREADABLE: &str = "HELD_RELEASE_UNREADABLE";
 
 /// True when the new evidence rules `release` out: it was scored and a
 /// file's own id contradicts it, or its album title or artist do not
