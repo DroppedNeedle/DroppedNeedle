@@ -1785,6 +1785,7 @@ async fn jellyfin_addresses_carry_the_base_path() {
     let mut rig = CompatApp::start("compat-base-path").await;
     rig.app.config.base_path = "/music".to_owned();
     rig.app = rig.app.restart().await;
+    rig.jellyfin_ids_caught_up().await;
     let app = &rig.app;
     let key = format!("api_key={}", rig.secret);
 
@@ -2094,12 +2095,13 @@ async fn jellyfin_old_album_ids_still_work_signed_in() {
 }
 
 /// An album keeps its id across a restart, and its picture opens when that
-/// is the first request the new process gets.
+/// is the first request the new process gets, once the server is no longer
+/// busy loading its stored ids.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn jellyfin_album_ids_survive_a_restart() {
     let (mut rig, ids) = covered_jellyfin("compat-jellyfin-restart").await;
     rig.app = rig.app.restart().await;
-    let (status, _, body) = picture(&rig, &ids.album, None).await;
+    let (status, _, body) = crate::common::through_busy(|| picture(&rig, &ids.album, None)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(!body.is_empty());
 
@@ -2377,6 +2379,7 @@ async fn merged_albums_keep_their_ids_in_player_apps() {
     tracks.sort();
     for id in [&keyed, &unkeyed] {
         rig.app = rig.app.restart().await;
+        rig.jellyfin_ids_caught_up().await;
         assert_eq!(
             jellyfin_item(&rig, id).await,
             (json!(achtung_id), tracks.clone()),
@@ -2384,6 +2387,7 @@ async fn merged_albums_keep_their_ids_in_player_apps() {
         );
     }
     rig.app = rig.app.restart().await;
+    rig.jellyfin_ids_caught_up().await;
     let (status, _, body) = picture(&rig, &keyed, None).await;
     assert_eq!((status, body.len()), (StatusCode::NOT_FOUND, 0));
     rig.stop().await;
@@ -2668,6 +2672,7 @@ async fn a_continued_track_opens_by_its_old_id() {
     let (old_id, copy_id) = (unkeyed_id("track", &old), unkeyed_id("track", &copy));
     assert_eq!(jellyfin_item(&rig, &old_id).await.0, json!(copy_id));
     rig.app = rig.app.restart().await;
+    rig.jellyfin_ids_caught_up().await;
     assert_eq!(
         jellyfin_item(&rig, &old_id).await.0,
         json!(copy_id),

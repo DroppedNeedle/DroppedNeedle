@@ -1742,37 +1742,6 @@ impl LocalCatalog {
         Ok(out)
     }
 
-    /// Every `(kind, id)` a player can address: artists, albums and
-    /// streamable tracks by local id, genres by display name.
-    pub async fn every_id(&self) -> Result<Vec<(&'static str, String)>, StoreError> {
-        self.ids_of(
-            "player.every_id",
-            [
-                ("artist", sql::PLAYER_EVERY_ARTIST),
-                ("album", sql::PLAYER_EVERY_ALBUM),
-                ("track", sql::PLAYER_EVERY_TRACK),
-                ("genre", sql::PLAYER_EVERY_GENRE),
-            ],
-        )
-        .await
-    }
-
-    /// The ids each statement answers, tagged with its kind, one read each.
-    async fn ids_of<const N: usize>(
-        &self,
-        name: &'static str,
-        statements: [(&'static str, Statement); N],
-    ) -> Result<Vec<(&'static str, String)>, StoreError> {
-        let mut out = Vec::new();
-        for (kind, statement) in statements {
-            let ids = self
-                .ids(name, statement.text().to_owned(), Vec::new())
-                .await?;
-            out.extend(ids.into_iter().map(|id| (kind, id)));
-        }
-        Ok(out)
-    }
-
     /// The id an album, artist or track (`kind`) has now: `id` itself while
     /// it is live, else the live one a merge or an alias of any kind points
     /// it at. `None` for an album or artist nothing live holds; a track
@@ -1791,21 +1760,6 @@ impl LocalCatalog {
             }
             None => Ok(None),
         }
-    }
-
-    /// Every `(kind, id)` an album or artist merge retired, every artist id
-    /// v2 gave that the upgrade replaced, and every track alias: the old
-    /// local ids an app may still hold.
-    pub async fn merged_ids(&self) -> Result<Vec<(&'static str, String)>, StoreError> {
-        self.ids_of(
-            "player.merged_ids",
-            [
-                ("album", sql::PLAYER_MERGED_ALBUMS),
-                ("artist", sql::PLAYER_MERGED_ARTISTS),
-                ("track", sql::PLAYER_MERGED_TRACKS),
-            ],
-        )
-        .await
     }
 
     /// Every year at least one album with a streamable track has,

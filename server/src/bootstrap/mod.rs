@@ -549,6 +549,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .library_services
         .start_loops(supervisor)
         .map_err(|error| stage("library loops")(error.to_string()))?;
+    state
+        .compat
+        .start_loops(supervisor)
+        .map_err(|error| stage("compat loops")(error.to_string()))?;
     // `activity.changed` and `downloads.changed` for every open stream.
     droppedneedle_kernel::events::revisions::start(supervisor, events.clone(), db.clone())
         .map_err(|error| stage("event loops")(error.to_string()))?;

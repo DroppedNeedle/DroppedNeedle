@@ -81,6 +81,7 @@ user_section_prefs
 
 [compat]
 compat_bookmarks
+compat_jellyfin_ids
 compat_play_queue_items
 compat_play_queues
 

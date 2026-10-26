@@ -741,24 +741,6 @@ droppedneedle_kernel::sql! {
     family ARTIST_TAG_IDS = artist_tag_ids;
     /// One page of album artist ids by name or in insertion order.
     family PLAYER_ALBUM_ARTIST_PAGE = player_album_artist_page;
-    /// Every live artist id.
-    pub(crate) PLAYER_EVERY_ARTIST = "SELECT id FROM local_artists \
-        WHERE retired_into_artist_id IS NULL";
-    /// Every owned album id.
-    pub(crate) PLAYER_EVERY_ALBUM = "SELECT id FROM local_albums a WHERE " + (owned_album!("a"));
-    /// Every streamable track id.
-    pub(crate) PLAYER_EVERY_TRACK = "SELECT id FROM local_tracks WHERE availability = 'indexed'";
-    /// Every genre name, from the genre rows and the tags.
-    pub(crate) PLAYER_EVERY_GENRE = "SELECT name FROM local_track_genres UNION \
-        SELECT genre FROM local_tracks WHERE genre IS NOT NULL";
-    /// Every album id a merge retired.
-    pub(crate) PLAYER_MERGED_ALBUMS = "SELECT alias FROM local_album_aliases \
-        WHERE kind = 'merged_album'";
-    /// Every artist id a merge retired or the upgrade replaced.
-    pub(crate) PLAYER_MERGED_ARTISTS = "SELECT alias FROM local_artist_aliases \
-        WHERE kind IN ('merged_artist', 'legacy_artist')";
-    /// Every track alias.
-    pub(crate) PLAYER_MERGED_TRACKS = "SELECT alias FROM local_track_aliases";
     /// Every year an owned album has, ascending.
     pub(crate) PLAYER_ALBUM_YEARS = "SELECT DISTINCT a.year FROM local_albums a \
         WHERE a.year IS NOT NULL AND " + (owned_album!("a")) + " ORDER BY a.year";

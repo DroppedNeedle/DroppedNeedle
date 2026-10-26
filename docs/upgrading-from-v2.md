@@ -440,7 +440,9 @@ progress over that same single stream, so a rule for those can go.
 Then check:
 
 - You can log in with your v2 password.
-- Your Subsonic or Jellyfin app still connects with its app password.
+- Your Subsonic or Jellyfin app still connects with its app password. For
+  the first moments after each start, while the server records its
+  Jellyfin ids, Jellyfin apps are told the server is busy and try again.
 - Settings > Download Client and Settings > Indexers / Prowlarr look right.
 - Your library folders are listed under Settings > Library. They come across
   with your settings, so check them rather than adding them again: a folder
@@ -646,8 +648,12 @@ If that key is lost for good, stop the server and run
 clears every stored password and API key: the secrets in Settings, every
 app password, and every user's link to Plex, Jellyfin, Navidrome, Spotify,
 ListenBrainz and Last.fm. It prints the settings it cleared so you know
-what to enter again. Jellyfin album and artist ids change with the key, so
-Finamp and Jellify see a new library and lose their pins and downloads.
+what to enter again. It replaces a lost key and does not change the
+Jellyfin ids of what you already have: stored album and artist ids survive
+the reset, so Finamp and Jellify keep their pins and downloads, and only
+items added afterwards get ids under the new key. Whoever holds the old key
+can still work out the picture ids of albums and artists stored before the
+reset.
 The replaced key is kept as `config/data_enc.key.old`. The command refuses,
 changing nothing, while the key file still belongs to the database.
 

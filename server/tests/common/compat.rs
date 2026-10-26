@@ -172,7 +172,7 @@ impl CompatApp {
 
         let token = format!("MediaBrowser Client=\"Journey\", Token=\"{secret}\"");
         let (status, me) = app
-            .call(
+            .call_through_busy(
                 "GET",
                 "/jellyfin/Users/Me",
                 &[("X-Emby-Authorization", token.as_str())],
@@ -182,13 +182,27 @@ impl CompatApp {
         assert_eq!(status, StatusCode::OK, "{me}");
         let user_id = me["Id"].as_str().expect("jellyfin user id").to_owned();
 
-        Self {
+        let rig = Self {
             app,
             secret,
             user_id,
             music,
             layout,
-        }
+        };
+        rig.jellyfin_ids_caught_up().await;
+        rig
+    }
+
+    /// Wait until the stored Jellyfin ids are loaded and hold every item
+    /// written so far, so a picture request without sign-in finds them.
+    pub async fn jellyfin_ids_caught_up(&self) {
+        let ids = self.app.state().compat.jellyfin_ids().clone();
+        self.app
+            .until("the stored jellyfin ids caught up", || {
+                let ids = ids.clone();
+                async move { (ids.ready() && ids.caught_up().await).then_some(()) }
+            })
+            .await;
     }
 
     /// A new app password for the account signed in as `authorization`.

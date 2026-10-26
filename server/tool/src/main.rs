@@ -191,10 +191,10 @@ settings it cleared, never their values. The old key is kept as
 config/data_enc.key.old (or .old.1, .old.2), which still opens backups made
 before the reset.
 
-Also changed with the key: Jellyfin album and artist ids are new, so
-Finamp and Jellify see a new library and lose their pins and downloads, and
-Subsonic picture links, corrections links and transcode links made before
-stop opening.
+It replaces a lost key and does not change the Jellyfin ids of what you
+already have: stored album and artist ids survive the reset, and only items
+added afterwards get ids under the new key. Subsonic picture links,
+corrections links and transcode links made before stop opening.
 
 It refuses, changing nothing, while the key file belongs to the database.
 Stop the server first. It finds the data the way upgrade does.
@@ -867,9 +867,9 @@ fn run_reset_key(args: &[String]) -> Result<(), String> {
         );
     }
     println!(
-        "Re-enter the cleared settings. Jellyfin album and artist ids are new, so Finamp and \
-         Jellify see a new library; Subsonic picture, corrections and transcode links made \
-         before stop opening. If nobody can sign in, run droppedneedle-tool recovery-code."
+        "Re-enter the cleared settings. Stored Jellyfin ids are kept, so Finamp and Jellify \
+         keep their pins; Subsonic picture, corrections and transcode links made before stop \
+         opening. If nobody can sign in, run droppedneedle-tool recovery-code."
     );
     if let Some(config) = &done.unread_config {
         eprintln!(

@@ -267,10 +267,7 @@ where
 
     if !ids.is_empty() {
         let mut built = Vec::new();
-        for jf_id in &ids {
-            let Some((kind, internal)) = state.ids.from_jf(jf_id).await else {
-                continue;
-            };
+        for (kind, internal) in state.ids.from_jf_many(&ids).await.into_iter().flatten() {
             if let Some(item) = fetch_item(&state, &user_id, &kind, &internal).await {
                 built.push(item);
             }

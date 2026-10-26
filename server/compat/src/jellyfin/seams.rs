@@ -150,21 +150,37 @@ impl Principal {
 
 /// Opaque Jellyfin id <-> (kind, internal id). Kinds: `artist`, `album`,
 /// `track`, `playlist`, `genre`, `library` (v2 `VALID_KINDS`).
+///
+/// Every id handed out is stored, so one an app cached before a restart
+/// resolves without reading the catalog. A stored album or artist id
+/// survives a change of the data key; only items added afterwards get ids
+/// under the new key.
 pub trait IdMap: Clone + Send + Sync + 'static {
-    /// Stable 32-hex id for a (kind, internal) pair.
+    /// Whether ids can be handed out and resolved yet. Until the stored
+    /// ids are loaded at start, every route answers busy.
+    fn ready(&self) -> bool;
+    /// Stable 32-hex id for a (kind, internal) pair. Reads nothing.
     fn to_jf(&self, kind: &str, internal: &str) -> impl Future<Output = String> + Send;
     /// Reverse lookup for a signed-in caller only: call it after `authed`.
     /// Answers to current ids, to the old ids albums and artists had
     /// before theirs were keyed, and to the ids of a merged album or
     /// artist; an album or artist comes back as the one that holds it now.
     /// Accepts dashed or undashed input, `None` when unknown or when
-    /// nothing live holds it. (`from_*` takes `self` by v2-naming parity,
+    /// nothing live holds it. An id handed out since the last stored one
+    /// is waited for, briefly. (`from_*` takes `self` by v2-naming parity,
     /// not by convention.)
     #[allow(clippy::wrong_self_convention)]
     fn from_jf(&self, jf_id: &str) -> impl Future<Output = Option<(String, String)>> + Send;
+    /// [`IdMap::from_jf`] for several ids, in order, waiting at most once
+    /// for all of them.
+    #[allow(clippy::wrong_self_convention)]
+    fn from_jf_many(
+        &self,
+        jf_ids: &[String],
+    ) -> impl Future<Output = Vec<Option<(String, String)>>> + Send;
     /// Reverse lookup for a caller who has not signed in (the picture
-    /// address): current ids only, never an old one, and a miss does not
-    /// read the catalog again once it has been read.
+    /// address): current ids only, never an old one, and a miss answers at
+    /// once.
     #[allow(clippy::wrong_self_convention)]
     fn from_jf_anonymous(
         &self,

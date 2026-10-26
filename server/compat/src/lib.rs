@@ -25,6 +25,9 @@
 //!   [`SubsonicStore`](adapters::subsonic_store::SubsonicStore) and
 //!   [`JellyfinLibrary`](adapters::jellyfin_library::JellyfinLibrary) shape
 //!   it for each protocol.
+//! - Jellyfin ids: [`CatalogIds`](adapters::jellyfin_library::CatalogIds)
+//!   over the stored table ([`jellyfin_ids`](adapters::jellyfin_ids)),
+//!   which compat's one loop ([`LOOPS`]) fills.
 //! - Settings: [`LiveSettings`](settings::LiveSettings), read per request.
 //!
 //! # Tests
@@ -54,3 +57,12 @@ pub mod shared;
 pub mod subsonic;
 
 pub use setup::CompatSetup;
+
+/// Every always-on compat loop, by name.
+pub const LOOPS: &[&str] = &[adapters::jellyfin_ids::JOB_NAME];
+
+/// Every `sql.rs` of this crate, one line each, for the schema test.
+#[cfg(any(test, feature = "test-support"))]
+pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
+    vec![adapters::jellyfin_ids::sql::registered()]
+}

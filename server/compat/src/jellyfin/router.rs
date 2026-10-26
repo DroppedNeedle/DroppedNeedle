@@ -17,12 +17,13 @@
 
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse as _, Response};
 use axum::routing::{get, post};
 use droppedneedle_auth::compat_auth::jellyfin::{
     JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
 };
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::ids::RequestId;
 use droppedneedle_kernel::mount::CompatRoutes;
 use uuid::Uuid;
@@ -469,13 +470,21 @@ pub(super) async fn authed(
     }
 }
 
-/// The kill-switch gate: disabled → 404 before any handler lookup.
-pub(super) fn gate<L, E, P, I>(state: &JellyfinState<L, E, P, I>) -> Option<Response> {
-    if state.settings.jellyfin().enabled {
-        None
-    } else {
-        Some(error(StatusCode::NOT_FOUND))
+/// The kill-switch gate: disabled → 404 before any handler lookup. Then,
+/// until this process has loaded the stored ids, 503 server busy with
+/// `Retry-After`, so no answer is a 404 or an empty list for an id the
+/// store has not caught up with. It reads nothing.
+pub(super) fn gate<L, E, P, I: IdMap>(state: &JellyfinState<L, E, P, I>) -> Option<Response> {
+    if !state.settings.jellyfin().enabled {
+        return Some(error(StatusCode::NOT_FOUND));
     }
+    if !state.ids.ready() {
+        return Some(
+            ApiError::unavailable(Unavailable::ServerBusy, "jellyfin ids are not loaded yet")
+                .into_response(),
+        );
+    }
+    None
 }
 
 /// The address of this API as `request` reached it ([`base_address`]) plus

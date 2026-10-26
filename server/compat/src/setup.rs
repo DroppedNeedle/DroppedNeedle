@@ -18,7 +18,8 @@ use axum::Router;
 use axum::middleware::from_fn_with_state;
 
 use crate::adapters::audio::GatewayAudio;
-use crate::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary, REBUILD_COOLDOWN};
+use crate::adapters::jellyfin_ids::{JellyfinIds, RESOLVE_WAIT};
+use crate::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
 use crate::adapters::library::CompatLibrary;
 use crate::adapters::playback::CompatPlayback;
 use crate::adapters::principal::SubsonicVerifier;
@@ -31,6 +32,8 @@ use crate::shared::address::ListenerConfig;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::ReadsSetup;
+use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::jobs::{AlreadyRunning, Supervisor};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::wiring::LibrarySetup;
@@ -50,6 +53,8 @@ pub type CompatJellyfinState = crate::jellyfin::JellyfinState<
 
 /// What the compat bundle is built from.
 pub struct CompatDeps {
+    /// The database, for the stored Jellyfin ids.
+    pub db: Db,
     /// Users and avatars.
     pub users: UsersDeps,
     /// Key for the app-password store.
@@ -85,6 +90,7 @@ impl CompatDeps {
         let config = &platform.config;
         let settings = LiveSettings::from_config(&platform.settings, engine.can_transcode());
         Self {
+            db: platform.db.clone(),
             users,
             crypto: platform.crypto.clone(),
             playback,
@@ -109,6 +115,7 @@ pub struct CompatSetup {
     store: SubsonicStore,
     audio: CompatAudio,
     jellyfin: CompatJellyfinState,
+    ids: JellyfinIds,
     settings: LiveSettings,
     limits: CompatLimits,
     listener: ListenerConfig,
@@ -130,12 +137,13 @@ impl CompatSetup {
             Arc::clone(&deps.crypto),
             deps.settings.clone(),
         );
+        let ids = JellyfinIds::new(deps.db, Arc::clone(&deps.crypto), RESOLVE_WAIT);
         let jellyfin = JellyfinState::new(
             passwords.clone(),
             JellyfinLibrary::new(deps.library.clone()),
             GatewayAudio::new(Arc::clone(&deps.engine)),
             playback,
-            CatalogIds::new(deps.library, deps.crypto, REBUILD_COOLDOWN),
+            CatalogIds::new(ids.clone(), deps.library.catalog.clone()),
             deps.settings.clone(),
             deps.listener.clone(),
         );
@@ -161,12 +169,24 @@ impl CompatSetup {
             store,
             audio,
             jellyfin,
+            ids,
             settings: deps.settings,
             limits,
             listener: deps.listener,
             router,
             templates,
         }
+    }
+
+    /// Start compat's loops ([`crate::LOOPS`]) on `supervisor`: the fill of
+    /// the stored Jellyfin ids.
+    pub fn start_loops(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+        self.ids.start(supervisor)
+    }
+
+    /// The stored Jellyfin ids, for a caller that waits for the fill.
+    pub fn jellyfin_ids(&self) -> &JellyfinIds {
+        &self.ids
     }
 
     /// Enable one or both protocols with fixed settings (wiring tests;

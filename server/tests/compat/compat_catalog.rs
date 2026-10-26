@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::reads::ReadsSetup;
 use droppedneedle_catalog::reads::collections::CollectionsState;
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
@@ -13,13 +14,18 @@ use droppedneedle_catalog::reads::collections::models::{
     AddTracksBody, CreatePlaylistBody, TrackInput,
 };
 use droppedneedle_catalog::reads::collections::service::CollectionsService;
+use droppedneedle_compat::adapters::jellyfin_ids::JellyfinIds;
 use droppedneedle_compat::adapters::jellyfin_library::CatalogIds;
-use droppedneedle_compat::adapters::library::CompatLibrary;
 use droppedneedle_compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
-use droppedneedle_compat::jellyfin::seams::IdMap as _;
+use droppedneedle_compat::jellyfin::fake::{FakeLibrary, MemoryEngine, MemorySessions};
+use droppedneedle_compat::jellyfin::seams::{IdMap as _, JellyfinSettings};
+use droppedneedle_compat::jellyfin::{JellyfinState, routes};
+use droppedneedle_compat::shared::address::ListenerConfig;
+use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_kernel::runtime_config::Crypto;
 use serde_json::{Value, json};
+use tower::ServiceExt as _;
 
 use crate::common::ScratchDir;
 use crate::common::auth::AuthRig;
@@ -432,7 +438,7 @@ struct Rig {
     _dir: ScratchDir,
     runtime: DbRuntime,
     reads: ReadsSetup,
-    _auth: AuthRig,
+    auth: AuthRig,
 }
 
 impl Rig {
@@ -473,7 +479,7 @@ impl Rig {
             _dir: dir,
             runtime,
             reads,
-            _auth: auth,
+            auth,
         }
     }
 }
@@ -549,86 +555,261 @@ async fn native_playlists_export_to_m3u_with_their_files() {
     assert!(text.contains("music/dummy/01.flac"), "{text}");
 }
 
-/// Jellyfin ids over the seeded catalog, keyed with `key`, reading the
-/// catalog again with no wait between reads.
-fn catalog_ids(rig: &Rig, key: u8) -> CatalogIds {
-    let crypto = Arc::new(Crypto::from_key_bytes(&[key; 32]).unwrap());
-    CatalogIds::new(
-        CompatLibrary::from_reads(&rig.reads),
-        crypto,
-        Duration::ZERO,
-    )
-}
+/// Move the catalog revision, as every catalog write does.
+const BUMP_REVISION: &str = "INSERT INTO library_catalog_revision (singleton, value) \
+    VALUES (1, 1) ON CONFLICT (singleton) DO UPDATE SET value = value + 1;";
 
-/// A caller who has not signed in causes one catalog read, the first, and
-/// never another: an album added after it is found only once a signed-in
-/// lookup has read the catalog again. An album's old unkeyed id answers
-/// only the signed-in lookup.
-#[tokio::test]
-async fn jellyfin_ids_unknown_to_a_caller_without_sign_in_read_the_catalog_once() {
-    let rig = Rig::open().await;
-    let ids = catalog_ids(&rig, 7);
-    let unknown = "0123456789abcdef0123456789abcdef";
-    assert_eq!(ids.from_jf_anonymous(unknown).await, None);
-    let first = ids.id_for("album", "alb-1");
-    let found = Some(("album".to_owned(), "alb-1".to_owned()));
-    assert_eq!(ids.from_jf_anonymous(&first).await, found);
-    let old = CatalogIds::derive("album", "alb-1");
-    assert_eq!(ids.from_jf_anonymous(&old).await, None);
-    assert_eq!(ids.from_jf(&old).await, found);
+/// A second album by Portishead with one track.
+const SECOND_ALBUM: &str = "INSERT INTO local_albums (id, root_id, grouping_key, title, \
+    title_folded, album_artist_name, album_artist_name_folded, album_artist_id, year, \
+    grouping_source, created_at, updated_at) VALUES ('alb-2', 'root', 'k2', 'Portishead', \
+    'portishead', 'Portishead', 'portishead', 'art-1', 1997, 'automatic', 1, 1); \
+    INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+    path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+    album_title, album_title_folded, file_format, ingest_source, imported_at, \
+    membership_source) VALUES ('trk-2', 'alb-2', 'root', '/music/portishead/01.flac', \
+    'portishead/01.flac', 'h2', 1000, 1, 'r2', 'Cowboys', 'cowboys', 'Portishead', \
+    'portishead', 'flac', 'scan', 1, 'automatic');";
 
+/// Write `sql` and move the catalog revision in one transaction through
+/// the rig's writer, as a scan writes the catalog.
+async fn write_catalog(rig: &Rig, sql: &'static str) {
     rig.runtime
         .db()
-        .write(Lane::Foreground, "seed", |tx| {
-            tx.execute_batch(
-                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-                 album_artist_name, album_artist_name_folded, album_artist_id, year, \
-                 grouping_source, created_at, updated_at) VALUES ('alb-2', 'root', 'k2', \
-                 'Portishead', 'portishead', 'Portishead', 'portishead', 'art-1', 1997, \
-                 'automatic', 1, 1); \
-                 INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
-                 relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
-                 title, title_folded, album_title, album_title_folded, file_format, \
-                 ingest_source, imported_at, membership_source) VALUES ('trk-2', 'alb-2', \
-                 'root', '/music/portishead/01.flac', 'portishead/01.flac', 'h2', 1000, 1, \
-                 'r2', 'Cowboys', 'cowboys', 'Portishead', 'portishead', 'flac', 'scan', 1, \
-                 'automatic')",
-            )?;
+        .write(Lane::Foreground, "seed", move |tx| {
+            tx.execute_batch(sql)?;
+            tx.execute_batch(BUMP_REVISION)?;
             Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .unwrap();
-    let added = ids.id_for("album", "alb-2");
-    let found = Some(("album".to_owned(), "alb-2".to_owned()));
-    assert_eq!(ids.from_jf_anonymous(&added).await, None);
-    assert_eq!(ids.from_jf(&added).await, found);
-    assert_eq!(ids.from_jf_anonymous(&added).await, found);
 }
 
-/// Album and artist ids depend on the data key; track, playlist, genre and
-/// library ids do not, so music and playlists an app downloaded stay
-/// matched and its stored library still browses.
-#[tokio::test]
-async fn only_album_and_artist_ids_depend_on_the_data_key() {
+/// The stored Jellyfin ids over the rig's database under the data key
+/// `[key; 32]`, as one process holds them. A signed-in miss waits `wait`.
+fn jellyfin_ids(rig: &Rig, key: u8, wait: Duration) -> JellyfinIds {
+    let crypto = Arc::new(Crypto::from_key_bytes(&[key; 32]).unwrap());
+    JellyfinIds::new(rig.runtime.db().clone(), crypto, wait)
+}
+
+/// A process started under `key`: its id map once its first fill pass
+/// has committed.
+async fn booted(rig: &Rig, key: u8) -> (CatalogIds, JellyfinIds) {
+    let ids = jellyfin_ids(rig, key, Duration::from_secs(1));
+    ids.fill().pass().await.unwrap();
+    (
+        CatalogIds::new(ids.clone(), rig.reads.library.catalog.clone()),
+        ids,
+    )
+}
+
+fn named(kind: &str, internal: &str) -> Option<(String, String)> {
+    Some((kind.to_owned(), internal.to_owned()))
+}
+
+/// Ids handed out before a restart resolve after it straight from the
+/// stored table, before the new process has run a fill pass and with the
+/// catalog impossible to list (its genre table is gone, so any read of
+/// every item fails): an album, a track, a playlist and an album's old
+/// unkeyed id for a signed-in caller, the album for a caller without
+/// sign-in. An id never handed out answers at once, with a commit the
+/// fill has not seen yet, rather than waiting for a pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jellyfin_ids_resolve_after_a_restart_without_reading_the_catalog() {
     let rig = Rig::open().await;
-    let (one, two) = (catalog_ids(&rig, 7), catalog_ids(&rig, 8));
-    for (kind, internal) in [("album", "alb-1"), ("artist", "art-1")] {
-        assert_ne!(one.id_for(kind, internal), two.id_for(kind, internal));
-        assert_ne!(
-            one.id_for(kind, internal),
-            CatalogIds::derive(kind, internal)
-        );
+    write_catalog(
+        &rig,
+        "INSERT INTO playlists (id, name, created_at, updated_at, user_id) \
+         VALUES ('pl-1', 'Mix', '2024-01-01', '2024-01-01', 'u1');",
+    )
+    .await;
+    let (before, _) = booted(&rig, 7).await;
+    let handed = [
+        before.to_jf("album", "alb-1").await,
+        before.to_jf("track", "trk-1").await,
+        before.to_jf("playlist", "pl-1").await,
+        CatalogIds::derive("album", "alb-1"),
+    ];
+    drop(before);
+    write_catalog(&rig, "DROP TABLE local_track_genres;").await;
+
+    let wait = Duration::from_secs(2);
+    let ids = CatalogIds::new(
+        jellyfin_ids(&rig, 7, wait),
+        rig.reads.library.catalog.clone(),
+    );
+    assert_eq!(
+        ids.from_jf_anonymous(&handed[0]).await,
+        named("album", "alb-1")
+    );
+    let mut found = Vec::new();
+    for id in &handed {
+        found.push(ids.from_jf(id).await);
     }
+    assert_eq!(
+        found,
+        [
+            named("album", "alb-1"),
+            named("track", "trk-1"),
+            named("playlist", "pl-1"),
+            named("album", "alb-1"),
+        ]
+    );
+    let started = std::time::Instant::now();
+    assert_eq!(
+        ids.from_jf_anonymous("0123456789abcdef0123456789abcdef")
+            .await,
+        None
+    );
+    assert!(started.elapsed() < wait, "an anonymous miss never waits");
+}
+
+/// A stored album or artist id survives a new data key: the server keeps
+/// handing it out and both lookups answer it. An album added afterwards
+/// gets its id under the new key. Track, playlist, genre and library ids
+/// never depend on the key. The derivation is pinned here, since the
+/// golden traces mask ids.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stored_jellyfin_ids_survive_a_new_data_key() {
+    let rig = Rig::open().await;
+    let (seven, _) = booted(&rig, 7).await;
+    let album = seven.to_jf("album", "alb-1").await;
+    let artist = seven.to_jf("artist", "art-1").await;
+    assert_eq!(album, "99b1c37e25c6afcbaa3b4632f29459bd");
+    assert_eq!(
+        CatalogIds::derive("album", "alb-1"),
+        "e14c88410632f4de1c3da5b07ae1f34d"
+    );
+
+    let (eight, ids) = booted(&rig, 8).await;
+    assert_ne!(eight.id_for("album", "alb-1"), album);
+    assert_eq!(eight.to_jf("album", "alb-1").await, album);
+    assert_eq!(eight.to_jf("artist", "art-1").await, artist);
+    assert_eq!(eight.from_jf(&album).await, named("album", "alb-1"));
+    assert_eq!(
+        eight.from_jf_anonymous(&artist).await,
+        named("artist", "art-1")
+    );
+
+    write_catalog(&rig, SECOND_ALBUM).await;
+    ids.fill().pass().await.unwrap();
+    let added = eight.to_jf("album", "alb-2").await;
+    assert_eq!(added, eight.id_for("album", "alb-2"));
+    assert_ne!(added, seven.id_for("album", "alb-2"));
+    assert_eq!(
+        eight.from_jf_anonymous(&added).await,
+        named("album", "alb-2")
+    );
+
     for (kind, internal) in [
         ("track", "trk-1"),
         ("playlist", "pl-1"),
         ("genre", "trip-hop"),
         ("library", LIBRARY_INTERNAL_ID),
     ] {
-        assert_eq!(one.id_for(kind, internal), two.id_for(kind, internal));
+        assert_eq!(seven.id_for(kind, internal), eight.id_for(kind, internal));
         assert_eq!(
-            one.id_for(kind, internal),
+            eight.to_jf(kind, internal).await,
             CatalogIds::derive(kind, internal)
         );
     }
+}
+
+/// The Jellyfin router over the real id map and the in-memory library.
+fn jellyfin_router(rig: &Rig, ids: &JellyfinIds) -> axum::Router {
+    routes(JellyfinState::new(
+        rig.auth.compat_passwords(),
+        FakeLibrary::new(),
+        MemoryEngine::new(),
+        MemorySessions::new(),
+        CatalogIds::new(ids.clone(), rig.reads.library.catalog.clone()),
+        JellyfinSettings {
+            enabled: true,
+            ..JellyfinSettings::default()
+        },
+        ListenerConfig {
+            port: 8096,
+            trusted_proxies: TrustedProxies::default(),
+            base_path: String::new(),
+        },
+    ))
+    .into_parts()
+    .0
+}
+
+async fn jellyfin_get(
+    router: axum::Router,
+    uri: &str,
+    token: Option<&str>,
+) -> (StatusCode, Value, bool) {
+    let mut request = axum::http::Request::builder().uri(uri);
+    if let Some(token) = token {
+        request = request.header(
+            "authorization",
+            format!("MediaBrowser Client=\"Test\", Token=\"{token}\""),
+        );
+    }
+    let response = router
+        .oneshot(request.body(axum::body::Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let retry = response.headers().contains_key("retry-after");
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        retry,
+    )
+}
+
+/// Until this process's first fill pass has committed, every Jellyfin
+/// route answers 503 server busy with `Retry-After`, the picture address
+/// with no sign-in included, so no app is told an item it holds is gone.
+/// After it, an `Ids=` list of ids the store has not seen since the last
+/// commit waits once for the fill, not once per id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jellyfin_answers_busy_until_its_ids_load_and_waits_once_per_request() {
+    const SECRET: &str = "alice-app-secret";
+    let rig = Rig::open().await;
+    let user = rig.auth.seed_user("alice", Role::User).await;
+    rig.auth.seed_app_password(&user.id, SECRET).await;
+    let wait = Duration::from_secs(3);
+    let ids = jellyfin_ids(&rig, 7, wait);
+    let album = ids.computed("album", "alb-1");
+    let picture = format!("/jellyfin/Items/{album}/Images/Primary");
+    let listed = format!("/jellyfin/Items?Ids={album}");
+    for (uri, token) in [
+        (picture.as_str(), None),
+        (listed.as_str(), Some(SECRET)),
+        ("/jellyfin/System/Info/Public", None),
+    ] {
+        let (status, _, retry) = jellyfin_get(jellyfin_router(&rig, &ids), uri, token).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert!(retry, "{uri} says when to try again");
+    }
+
+    ids.fill().pass().await.unwrap();
+    let (status, _, _) = jellyfin_get(jellyfin_router(&rig, &ids), &picture, None).await;
+    assert_ne!(status, StatusCode::SERVICE_UNAVAILABLE);
+
+    write_catalog(&rig, "").await;
+    let unseen = (1..=3)
+        .map(|n| format!("{n:032x}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let started = std::time::Instant::now();
+    let (status, body, _) = jellyfin_get(
+        jellyfin_router(&rig, &ids),
+        &format!("/jellyfin/Items?Ids={unseen}"),
+        Some(SECRET),
+    )
+    .await;
+    let took = started.elapsed();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["TotalRecordCount"], 0, "{body}");
+    assert!(took >= wait, "the misses waited for the fill: {took:?}");
+    assert!(took < wait * 2, "three misses waited once: {took:?}");
 }

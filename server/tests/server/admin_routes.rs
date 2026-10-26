@@ -845,6 +845,7 @@ async fn queue_stats_shows_every_boot_loop_running() {
             .chain(droppedneedle_kernel::events::LOOPS)
             .chain(droppedneedle_library::LOOPS)
             .chain(droppedneedle_media::LOOPS)
+            .chain(droppedneedle_compat::LOOPS)
             .all(|name| {
                 jobs.iter()
                     .any(|job| job["name"] == *name && job["state"] == "running")

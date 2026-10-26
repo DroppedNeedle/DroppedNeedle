@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 169);
+    assert_eq!(table_names(&pool).await.len(), 170);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -3935,6 +3935,7 @@ const REGISTRIES: &[(&str, StatementFiles)] = &[
     ("acquire", droppedneedle_acquire::statement_files),
     ("library", droppedneedle_library::statement_files),
     ("media", droppedneedle_media::statement_files),
+    ("compat", droppedneedle_compat::statement_files),
     ("tool", droppedneedle_tool::statement_files),
 ];
 
@@ -4135,8 +4136,8 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::reads::library::sql::PLAYER_TRACK_COUNT",
     "droppedneedle_catalog::reads::library::sql::PLAYER_TRACKS_UNPLAYED",
     "droppedneedle_catalog::reads::library::sql::PLAYER_TRACKS_UNPLAYED_COUNT",
-    "droppedneedle_catalog::reads::library::sql::PLAYER_EVERY_TRACK",
-    "droppedneedle_catalog::reads::library::sql::PLAYER_EVERY_GENRE",
+    "droppedneedle_compat::adapters::jellyfin_ids::sql::NEW_TRACKS",
+    "droppedneedle_compat::adapters::jellyfin_ids::sql::GENRE_NAMES",
 ];
 
 /// Before the first ANALYZE (a fresh install) the planner has no
@@ -6308,6 +6309,117 @@ async fn tracks_gain_a_download_task_index_on_upgrade() {
     .await
     .unwrap();
     assert_eq!(kept, ("t1".to_owned(), Some("task-1".to_owned()), 1234));
+}
+
+/// Migration 0091 adds the stored Jellyfin ids. On a catalog that already
+/// holds an album, a track and a merged-away album (beside the artists the
+/// migrations seed), the table arrives
+/// empty, STRICT and with its partial unique index, and one fill pass then
+/// stores each item's current id and the aliases that still resolve.
+#[tokio::test]
+async fn jellyfin_ids_arrive_empty_and_fill_on_upgrade() {
+    use droppedneedle_compat::adapters::jellyfin_ids::JellyfinIds;
+
+    let dir = crate::common::ScratchDir::new("jellyfin-ids-upgrade");
+    let path = dir.join("app.db");
+    let pool = &SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("sqlite://{}?mode=rwc", path.display()))
+        .await
+        .unwrap();
+    migrator_through(90).run(pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('ar1', 'A', 'a', 'person', 0, 0); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, album_artist_name, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'al1', 'T', 't', 'ar1', 'A', 'automatic', 0, 0); \
+         INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+         VALUES ('al0', 'al1', 'merged_album', 0); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source, availability, genre) \
+         VALUES ('t1', 'al1', 'r1', '/m/1.mp3', '1.mp3', 'p1', 1234, 0, 's', 'T', 't', 'T', \
+             't', 'mp3', 'scan', 0, 'automatic', 'indexed', 'Trip Hop');",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    apply_migrations(pool).await.unwrap();
+    assert_migrated(pool).await.unwrap();
+    let (table, index): (String, String) = sqlx::query_as(
+        "SELECT t.sql, i.sql FROM sqlite_master t, sqlite_master i \
+         WHERE t.name = 'compat_jellyfin_ids' AND i.name = 'idx_compat_jellyfin_ids_current'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(table.contains("STRICT"), "{table}");
+    assert!(
+        index.contains("UNIQUE") && index.contains("WHERE current = 1"),
+        "{index}"
+    );
+    let stored = || async {
+        sqlx::query_as::<_, (String, String, String, i64)>(
+            "SELECT jellyfin_id, kind, internal_id, current FROM compat_jellyfin_ids \
+             ORDER BY kind, internal_id, current, jellyfin_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    };
+    assert!(stored().await.is_empty(), "the table arrives empty");
+
+    let runtime = open_runtime(&DbConfig::new(&path))
+        .await
+        .expect("runtime opens");
+    let crypto = std::sync::Arc::new(
+        droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7; 32]).unwrap(),
+    );
+    let ids = JellyfinIds::new(runtime.db().clone(), crypto, std::time::Duration::ZERO);
+    ids.fill().pass().await.unwrap();
+    let row = |id: String, kind: &str, internal: &str, current: i64| {
+        (id, kind.to_owned(), internal.to_owned(), current)
+    };
+    let mut expected = vec![
+        row(ids.computed("album", "al0"), "album", "al0", 0),
+        row(JellyfinIds::derive("album", "al0"), "album", "al0", 0),
+        row(JellyfinIds::derive("album", "al1"), "album", "al1", 0),
+        row(ids.computed("album", "al1"), "album", "al1", 1),
+        row(JellyfinIds::derive("artist", "ar1"), "artist", "ar1", 0),
+        row(ids.computed("artist", "ar1"), "artist", "ar1", 1),
+        row(
+            JellyfinIds::derive("genre", "trip-hop"),
+            "genre",
+            "trip-hop",
+            1,
+        ),
+        row(
+            JellyfinIds::derive("library", "music"),
+            "library",
+            "music",
+            1,
+        ),
+        row(JellyfinIds::derive("track", "t1"), "track", "t1", 1),
+    ];
+    let seeded: Vec<String> = sqlx::query_scalar("SELECT id FROM local_artists WHERE id <> 'ar1'")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    for artist in &seeded {
+        expected.push(row(ids.computed("artist", artist), "artist", artist, 1));
+        expected.push(row(
+            JellyfinIds::derive("artist", artist),
+            "artist",
+            artist,
+            0,
+        ));
+    }
+    expected.sort_by(|a, b| (&a.1, &a.2, a.3, &a.0).cmp(&(&b.1, &b.2, b.3, &b.0)));
+    assert_eq!(stored().await, expected);
+    runtime.shutdown().await;
 }
 
 /// Wall time in milliseconds, for checks against "due now".

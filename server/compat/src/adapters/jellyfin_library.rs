@@ -6,39 +6,29 @@
 //! weighed against the caller's played and unplayed marks) are read for
 //! that page only, and image tags come from the rows themselves.
 //!
-//! [`CatalogIds`] makes album and artist ids with the data key, so nobody
-//! without an account can work one out, and every other id as
-//! `sha256("kind:internal")[:32]`. Because an id is a pure function of
-//! what it names and the key, nothing needs storing: an id a client cached
-//! before a restart resolves again by deriving the ids of everything the
-//! library holds.
+//! [`CatalogIds`] answers Jellyfin ids from the stored table
+//! ([`jellyfin_ids`](super::jellyfin_ids)), which a loop fills. Album and
+//! artist ids are made with the data key, so nobody without an account can
+//! work one out, and once stored an id never changes, not even with the
+//! key. An id a client cached before a restart resolves with one read.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
+use super::jellyfin_ids::{IdKind, JellyfinIds};
 use super::library::{CompatError, CompatLibrary};
-use crate::jellyfin::builders::LIBRARY_INTERNAL_ID;
 use crate::jellyfin::params::SortKey;
 use crate::jellyfin::seams::{
     AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, ItemSort,
     ItemView, LibraryRead, LyricsView, PlaylistDetail, PlaylistEntry, PlaylistView, ReadFailed,
     TrackFilter, TrackView, WriteRefusal,
 };
-use crate::subsonic::views::{genre_slug, song_path};
+use crate::subsonic::views::song_path;
 use droppedneedle_catalog::reads::collections::store::play_marks::MarkScope;
 use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
+use droppedneedle_catalog::reads::library::store::LocalCatalog;
 use droppedneedle_catalog::reads::library::stores::{ArtistRecord, ArtistScope as CatalogScope};
-use droppedneedle_kernel::runtime_config::Crypto;
-
-/// Shortest gap between two catalog reads for the id map.
-pub const REBUILD_COOLDOWN: Duration = Duration::from_secs(10);
-
-/// The data key's purpose for album and artist ids: nothing else the key
-/// signs is a valid id, and an id signs nothing else.
-const ITEM_ID_PURPOSE: &str = "jellyfin-item-id";
 
 /// Log a failed read and fall back to the empty answer the seam allows.
 fn logged<T: Default>(operation: &str, outcome: Result<T, CompatError>) -> T {
@@ -724,167 +714,31 @@ impl LibraryRead for JellyfinLibrary {
     }
 }
 
-#[derive(Default)]
-struct IdTable {
-    /// The ids this server hands out today, every kind.
-    current: HashMap<String, (String, String)>,
-    /// The unkeyed ids albums and artists had before theirs were keyed, and
-    /// both ids of every album and artist a merge retired.
-    old: HashMap<String, (String, String)>,
-    /// Whether a whole catalog read has succeeded in this process.
-    filled: bool,
-    /// When the catalog was last read, whether or not the read succeeded.
-    read_at: Option<Instant>,
-}
-
-/// Jellyfin ids over the catalog (see module docs).
-///
-/// The catalog is read for the first lookup of the process, by anyone.
-/// After that only a miss from a signed-in caller ([`IdMap::from_jf`]) reads
-/// it again, at most once per `cooldown`; a read that failed is retried no
-/// sooner than that either.
+/// Jellyfin ids over the stored table (see
+/// [`jellyfin_ids`](super::jellyfin_ids)): an id resolves with one read by
+/// primary key, and an album, artist or track is then followed to the one
+/// that holds it now.
 #[derive(Clone)]
 pub struct CatalogIds {
-    library: CompatLibrary,
-    crypto: Arc<Crypto>,
-    cooldown: Duration,
-    table: Arc<Mutex<IdTable>>,
-    /// One catalog read at a time: concurrent misses wait for it instead of
-    /// each reading the whole catalog.
-    reading: Arc<tokio::sync::Mutex<()>>,
+    ids: JellyfinIds,
+    catalog: LocalCatalog,
 }
 
 impl CatalogIds {
-    /// Ids over the shared compat reads, keyed with the data key.
-    /// Production passes [`REBUILD_COOLDOWN`] as `cooldown`.
-    pub fn new(library: CompatLibrary, crypto: Arc<Crypto>, cooldown: Duration) -> Self {
-        Self {
-            library,
-            crypto,
-            cooldown,
-            table: Arc::new(Mutex::new(IdTable::default())),
-            reading: Arc::new(tokio::sync::Mutex::new(())),
-        }
+    /// Ids over the stored table, followed through `catalog`.
+    pub fn new(ids: JellyfinIds, catalog: LocalCatalog) -> Self {
+        Self { ids, catalog }
     }
 
-    /// The unkeyed id: the first 32 hex characters of
-    /// `sha256("kind:internal")`. Tracks, playlists, genres and the library
-    /// keep it; for an album or artist it is the old id.
+    /// The unkeyed id (see [`JellyfinIds::derive`]).
     pub fn derive(kind: &str, internal: &str) -> String {
-        use sha2::{Digest, Sha256};
-        format!(
-            "{:x}",
-            Sha256::digest(format!("{kind}:{internal}").as_bytes())
-        )[..32]
-            .to_owned()
+        JellyfinIds::derive(kind, internal)
     }
 
-    /// The id handed out for a (kind, internal) pair, without remembering
-    /// it. Album and artist ids are the first 32 hex characters of a MAC
-    /// under the data key over `kind\0internal`.
+    /// The id an item gets under today's data key (see
+    /// [`JellyfinIds::computed`]).
     pub fn id_for(&self, kind: &str, internal: &str) -> String {
-        if kind != "album" && kind != "artist" {
-            return Self::derive(kind, internal);
-        }
-        let message = [kind.as_bytes(), b"\0", internal.as_bytes()].concat();
-        self.crypto.mac(ITEM_ID_PURPOSE, &message)[..16]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
-    }
-
-    fn normalize(jf_id: &str) -> String {
-        jf_id.replace('-', "").trim().to_lowercase()
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, IdTable> {
-        self.table
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn lookup(&self, jf_id: &str, with_old: bool) -> Option<(String, String)> {
-        let table = self.lock();
-        table
-            .current
-            .get(jf_id)
-            .or_else(|| with_old.then(|| table.old.get(jf_id)).flatten())
-            .cloned()
-    }
-
-    /// Whether a lookup may read the catalog now: never within `cooldown`
-    /// of the last read, and once a read has succeeded only for a
-    /// signed-in caller.
-    fn may_read(&self, signed_in: bool) -> bool {
-        let table = self.lock();
-        let rested = table.read_at.is_none_or(|at| at.elapsed() >= self.cooldown);
-        rested && (signed_in || !table.filled)
-    }
-
-    /// Read every id the catalog holds and remember the current id of each,
-    /// plus the old id of each album and artist, when [`Self::may_read`]
-    /// allows it.
-    async fn read_catalog(&self, signed_in: bool) {
-        // Waiters see the read that ran while they queued and return; the
-        // caller then looks the id up again.
-        let _single = self.reading.lock().await;
-        if !self.may_read(signed_in) {
-            return;
-        }
-        let mut complete = true;
-        let mut pairs: Vec<(String, String)> =
-            vec![("library".to_owned(), LIBRARY_INTERNAL_ID.to_owned())];
-        match self.library.catalog.every_id().await {
-            Ok(ids) => {
-                for (kind, id) in ids {
-                    let internal = if kind == "genre" { genre_slug(&id) } else { id };
-                    pairs.push((kind.to_owned(), internal));
-                }
-            }
-            Err(error) => {
-                complete = false;
-                tracing::error!(%error, "jellyfin id rebuild could not read the catalog");
-            }
-        }
-        match self.library.collections.stores.playlists.list().await {
-            Ok(rows) => pairs.extend(rows.into_iter().map(|row| ("playlist".to_owned(), row.id))),
-            Err(error) => {
-                complete = false;
-                tracing::error!(%error, "jellyfin id rebuild could not read playlists");
-            }
-        }
-        let merged = match self.library.catalog.merged_ids().await {
-            Ok(merged) => merged,
-            Err(error) => {
-                complete = false;
-                tracing::error!(%error, "jellyfin id rebuild could not read merged ids");
-                Vec::new()
-            }
-        };
-        let mut current = Vec::with_capacity(pairs.len());
-        let mut old = Vec::new();
-        for (kind, internal) in pairs {
-            if kind == "album" || kind == "artist" {
-                old.push((
-                    Self::derive(&kind, &internal),
-                    (kind.clone(), internal.clone()),
-                ));
-            }
-            current.push((self.id_for(&kind, &internal), (kind, internal)));
-        }
-        // A merged album or artist answers to both ids it was handed out
-        // under, and a track alias to its own, for signed-in callers only;
-        // `from_jf` follows it to the one that holds it now.
-        for (kind, internal) in merged {
-            let found = (kind.to_owned(), internal.clone());
-            old.push((Self::derive(kind, &internal), found.clone()));
-            old.push((self.id_for(kind, &internal), found));
-        }
-        let mut table = self.lock();
-        table.current.extend(current);
-        table.old.extend(old);
-        table.filled |= complete;
-        table.read_at = Some(Instant::now());
+        self.ids.computed(kind, internal)
     }
 
     /// An album, artist or track as it is now: a merged album or artist
@@ -892,48 +746,62 @@ impl CatalogIds {
     /// is not found; the old id of a missing track that continued into
     /// another becomes that track. Other kinds pass through, and so does an
     /// id that could not be followed, so a live one still answers.
-    async fn current(&self, (kind, internal): (String, String)) -> Option<(String, String)> {
-        if kind != "album" && kind != "artist" && kind != "track" {
-            return Some((kind, internal));
+    async fn current(&self, kind: IdKind, internal: String) -> Option<(String, String)> {
+        let name = kind.as_str().to_owned();
+        if !matches!(kind, IdKind::Album | IdKind::Artist | IdKind::Track) {
+            return Some((name, internal));
         }
-        match self.library.catalog.current_id(&kind, &internal).await {
-            Ok(current) => current.map(|id| (kind, id)),
+        match self.catalog.current_id(&name, &internal).await {
+            Ok(current) => current.map(|id| (name, id)),
             Err(error) => {
                 tracing::warn!(%error, "jellyfin id could not be followed to its current item");
-                Some((kind, internal))
+                Some((name, internal))
             }
         }
     }
 }
 
 impl IdMap for CatalogIds {
+    fn ready(&self) -> bool {
+        self.ids.ready()
+    }
+
     async fn to_jf(&self, kind: &str, internal: &str) -> String {
-        let jf_id = self.id_for(kind, internal);
-        self.lock()
-            .current
-            .entry(jf_id.clone())
-            .or_insert_with(|| (kind.to_owned(), internal.to_owned()));
-        jf_id
+        self.ids.handed_out(kind, internal)
     }
 
     async fn from_jf(&self, jf_id: &str) -> Option<(String, String)> {
-        let normalized = Self::normalize(jf_id);
-        let found = match self.lookup(&normalized, true) {
-            Some(found) => found,
-            None => {
-                self.read_catalog(true).await;
-                self.lookup(&normalized, true)?
+        self.from_jf_many(&[jf_id.to_owned()]).await.pop().flatten()
+    }
+
+    async fn from_jf_many(&self, jf_ids: &[String]) -> Vec<Option<(String, String)>> {
+        let found = match self.ids.resolve(jf_ids, true).await {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::error!(%error, "jellyfin ids could not be read");
+                return vec![None; jf_ids.len()];
             }
         };
-        self.current(found).await
+        let mut out = Vec::with_capacity(found.len());
+        for item in found {
+            out.push(match item {
+                Some((kind, internal)) => self.current(kind, internal).await,
+                None => None,
+            });
+        }
+        out
     }
 
     async fn from_jf_anonymous(&self, jf_id: &str) -> Option<(String, String)> {
-        let normalized = Self::normalize(jf_id);
-        if let Some(found) = self.lookup(&normalized, false) {
-            return Some(found);
+        match self.ids.resolve(&[jf_id.to_owned()], false).await {
+            Ok(mut found) => found
+                .pop()
+                .flatten()
+                .map(|(kind, internal)| (kind.as_str().to_owned(), internal)),
+            Err(error) => {
+                tracing::error!(%error, "jellyfin id could not be read");
+                None
+            }
         }
-        self.read_catalog(false).await;
-        self.lookup(&normalized, false)
     }
 }

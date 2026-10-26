@@ -15,8 +15,7 @@ use droppedneedle_media::stream::transcode::{
 };
 
 /// Deterministic `sha256("kind:internal")[:32]` with an in-memory reverse
-/// table (v2 `CompatIdMapService` derivation; the persisted table is not
-/// bound yet).
+/// table (v2 `CompatIdMapService` derivation), always ready.
 #[derive(Debug, Clone, Default)]
 pub struct MemoryIds {
     reverse: std::sync::Arc<Mutex<HashMap<String, (String, String)>>>,
@@ -43,6 +42,18 @@ impl MemoryIds {
 }
 
 impl IdMap for MemoryIds {
+    fn ready(&self) -> bool {
+        true
+    }
+
+    async fn from_jf_many(&self, jf_ids: &[String]) -> Vec<Option<(String, String)>> {
+        let mut out = Vec::with_capacity(jf_ids.len());
+        for jf_id in jf_ids {
+            out.push(self.from_jf(jf_id).await);
+        }
+        out
+    }
+
     async fn to_jf(&self, kind: &str, internal: &str) -> String {
         let jf_id = Self::derive(kind, internal);
         if let Ok(mut reverse) = self.reverse.lock() {
