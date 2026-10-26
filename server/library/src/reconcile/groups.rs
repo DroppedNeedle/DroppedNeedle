@@ -85,6 +85,7 @@ pub fn build(inputs: &GroupInputs) -> Vec<Group> {
             reason_code: merge.reason_code.clone(),
             reason: reasons::for_code(&merge.reason_code),
             resolved_at: Some(merge.created_at),
+            merge_basis: merge.basis,
         })
     }));
     groups.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
@@ -177,6 +178,7 @@ fn open_group(members: &[&Candidate], ambiguous: &HashSet<&str>) -> Group {
         reason_code: reason.code.to_owned(),
         reason,
         resolved_at: None,
+        merge_basis: None,
     }
 }
 
@@ -211,6 +213,7 @@ fn moved_group(rows: &[Candidate]) -> Option<Group> {
         reason_code: reason.code.to_owned(),
         reason,
         resolved_at: None,
+        merge_basis: None,
     })
 }
 

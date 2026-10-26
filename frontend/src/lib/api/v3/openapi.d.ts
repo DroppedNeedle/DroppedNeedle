@@ -3783,7 +3783,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Artist reconciliation progress and open group counts. */
+        /** Automatic artist merges so far and open group counts. */
         get: operations["artist_reconciliation"];
         put?: never;
         post?: never;
@@ -10661,8 +10661,7 @@ export interface components {
         ArtistDuplicateGroupSummary: {
             /**
              * Format: int64
-             * @description Credits, favorites, playlist entries, plays, and client ids a merge
-             *     would move.
+             * @description Credits, favorites and plays a merge would move.
              */
             affected_reference_count: number;
             display_name: string;
@@ -10670,6 +10669,7 @@ export interface components {
             id: string;
             member_count: number;
             members: components["schemas"]["ArtistReconciliationMember"][];
+            merge_basis?: null | components["schemas"]["ArtistMergeBasis"];
             provider_mbids: string[];
             /** @description Why the group is listed and what to do about it. */
             reason: components["schemas"]["ReasonView"];
@@ -10826,6 +10826,11 @@ export interface components {
             source_artist_ids: string[];
             surviving_artist_id: string;
         };
+        /**
+         * @description What an automatic artist merge rested on.
+         * @enum {string}
+         */
+        ArtistMergeBasis: "musicbrainz_proof" | "same_name";
         /** @description An artist merge to preview. */
         ArtistMergePreviewBody: {
             /**
@@ -10895,15 +10900,11 @@ export interface components {
             /** Format: int64 */
             album_credit_count: number;
             /** Format: int64 */
-            compatibility_id_count: number;
-            /** Format: int64 */
             favorite_count: number;
             /** Format: int64 */
             history_count: number;
             id: string;
             name: string;
-            /** Format: int64 */
-            playlist_count: number;
             /** Format: int64 */
             primary_album_count: number;
             /** Format: int64 */
@@ -10915,7 +10916,7 @@ export interface components {
             /** Format: int64 */
             track_credit_count: number;
         };
-        /** @description Where the artist reconciliation pass stands. */
+        /** @description Automatic merges so far and open duplicate groups by state. */
         ArtistReconciliationProgress: {
             ambiguous_credit_structure_count: number;
             /**
@@ -10923,17 +10924,10 @@ export interface components {
              * @description Artist records merged automatically so far.
              */
             automatically_resolved_count: number;
-            /** Format: int64 */
-            completed_count: number;
-            /** Format: int64 */
-            expected_count: number;
             /** @description Groups that need an administrator's judgement. */
             genuine_review_count: number;
-            operation_job_id?: string | null;
             provider_conflict_count: number;
             same_name_only_count: number;
-            /** @description The newest reconciliation job's state, or `idle`. */
-            state: string;
             waiting_for_identity_count: number;
         };
         /**

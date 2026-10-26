@@ -32,26 +32,21 @@ impl Reconcile {
             .ok_or(ReconcileError::NotFound(reasons::GROUP_NOT_FOUND))
     }
 
-    /// Where the reconciliation pass stands, with open groups by state.
+    /// How many records were merged automatically, with open groups by
+    /// state.
     pub fn progress(&self) -> Result<Progress, ReconcileError> {
-        let (job, merged) = self
+        let merged = self
             .db
             .read_blocking("reconcile.progress", store::progress)?;
         let groups = self.groups()?;
         let count = |state: GroupState| groups.iter().filter(|g| g.state == state).count();
         Ok(Progress {
-            state: job
-                .as_ref()
-                .map_or_else(|| "idle".to_owned(), |job| job.state.clone()),
-            completed_count: job.as_ref().map_or(0, |job| job.completed_count),
-            expected_count: job.as_ref().map_or(0, |job| job.expected_count),
             automatically_resolved_count: merged,
             waiting_for_identity_count: count(GroupState::WaitingForIdentity),
             genuine_review_count: groups.iter().filter(|g| g.state.needs_review()).count(),
             provider_conflict_count: count(GroupState::ProviderConflict),
             ambiguous_credit_structure_count: count(GroupState::AmbiguousCreditStructure),
             same_name_only_count: count(GroupState::SameNameOnly),
-            operation_job_id: job.map(|job| job.id),
         })
     }
 

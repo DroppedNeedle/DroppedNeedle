@@ -19,6 +19,7 @@
 //! sentences, `token` the preview tokens, `membership` split, merge and
 //! move, `reset` reset grouping, `edition` what happens to editions,
 //! `artists` the artist merge, `artist_convergence` the automatic one,
+//! `merge_basis` what each artist merge rests on,
 //! `retag_merge` the join of an album
 //! retagged across two scans, `retag_pairs` the pairs a person joins or
 //! dismisses, `release_join` the join of an album whose files another
@@ -32,6 +33,7 @@ mod artists;
 pub mod continuation;
 mod edition;
 pub(crate) mod membership;
+mod merge_basis;
 pub mod models;
 pub(crate) mod placement;
 pub mod reasons;

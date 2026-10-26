@@ -653,8 +653,7 @@ pub async fn preview_artist_merge(
         body.expected_revisions,
         body.provider_choice,
     );
-    let actor = caller.user_id().to_owned();
-    let previewed = blocking(move || corrections.preview_artist_merge(&request, &actor)).await?;
+    let previewed = blocking(move || corrections.preview_artist_merge(&request, &caller)).await?;
     Ok(Json(artist_view(previewed.token, previewed.outcome)))
 }
 
@@ -689,7 +688,8 @@ pub async fn apply_artist_merge(
         idempotency_key: body.idempotency_key.filter(|key| !key.trim().is_empty()),
         actor: caller.user_id().to_owned(),
     };
-    let applied = blocking(move || corrections.apply_artist_merge(&request, &meta)).await?;
+    let applied =
+        blocking(move || corrections.apply_artist_merge(&request, &meta, &caller)).await?;
     Ok(Json(applied.into()))
 }
 

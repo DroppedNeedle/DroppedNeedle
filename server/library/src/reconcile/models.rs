@@ -48,9 +48,7 @@ pub struct ReferenceCounts {
     pub track_credits: i64,
     pub primary_albums: i64,
     pub favorites: i64,
-    pub playlist_snapshots: i64,
     pub history: i64,
-    pub compatibility_ids: i64,
     /// Credits backed by a MusicBrainz proof at the current identity.
     pub proven_credits: i64,
 }
@@ -62,11 +60,7 @@ impl ReferenceCounts {
 
     /// Everything a merge of this record would move.
     pub fn affected(&self) -> i64 {
-        self.active_credits()
-            + self.favorites
-            + self.playlist_snapshots
-            + self.history
-            + self.compatibility_ids
+        self.active_credits() + self.favorites + self.history
     }
 }
 
@@ -101,11 +95,35 @@ pub struct Dismissal {
     pub right_revision: i64,
 }
 
+/// What an automatic merge rested on, as its reason records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeBasisLabel {
+    /// MusicBrainz proved the records to be one artist.
+    MusicbrainzProof,
+    /// A retag moved every credit to a record of the same name, with only
+    /// its sort name, capitals or spacing changed.
+    SameName,
+}
+
+impl MergeBasisLabel {
+    /// The basis an automatic merge's reason code stands for. Older rows
+    /// and v2's carry no basis of their own, so the reason is what says.
+    pub fn for_reason(reason_code: &str) -> Option<Self> {
+        match reason_code {
+            "AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE"
+            | "AUTOMATIC_PROVIDER_ANCHORED_ARTIST_CONVERGENCE" => Some(Self::MusicbrainzProof),
+            crate::corrections::artist_convergence::MERGED_BY_NAME => Some(Self::SameName),
+            _ => None,
+        }
+    }
+}
+
 /// An automatic merge from the catalog action log.
 #[derive(Debug, Clone)]
 pub struct MergeAction {
     pub id: String,
     pub reason_code: String,
+    pub basis: Option<MergeBasisLabel>,
     pub created_at: f64,
     pub survivor_id: String,
     pub retired_ids: Vec<String>,
@@ -142,6 +160,8 @@ pub struct Group {
     pub reason_code: String,
     pub reason: Reason,
     pub resolved_at: Option<f64>,
+    /// What an automatic merge rested on, for a resolved group.
+    pub merge_basis: Option<MergeBasisLabel>,
 }
 
 /// A page of groups with the per-state counts over every group.
@@ -157,25 +177,12 @@ pub struct GroupPage {
 /// Where the reconciliation pass stands.
 #[derive(Debug, Clone, Default)]
 pub struct Progress {
-    pub state: String,
-    pub completed_count: i64,
-    pub expected_count: i64,
     pub automatically_resolved_count: i64,
     pub waiting_for_identity_count: usize,
     pub genuine_review_count: usize,
     pub provider_conflict_count: usize,
     pub ambiguous_credit_structure_count: usize,
     pub same_name_only_count: usize,
-    pub operation_job_id: Option<String>,
-}
-
-/// The newest reconciliation job, if any.
-#[derive(Debug, Clone)]
-pub struct ReconcileJob {
-    pub id: String,
-    pub state: String,
-    pub completed_count: i64,
-    pub expected_count: i64,
 }
 
 /// A MusicBrainz credit proof behind a member's credit.

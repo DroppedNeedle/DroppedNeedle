@@ -6377,3 +6377,97 @@ async fn migration_0005_backfills_on_upgrade() {
     .expect("stats re-read");
     assert_eq!(flac, (2, 1399));
 }
+
+/// Migration 0088 clears MusicBrainz's special-purpose artist ids from
+/// stored track and album credits, keeps every real id, and empties the
+/// artist link stamp of each album whose credits it changed, so the next
+/// sweep links the rows it freed.
+#[tokio::test]
+async fn placeholder_artist_ids_are_cleared_on_upgrade() {
+    const UNKNOWN: &str = "125ec42a-7229-4250-afc5-e057484327fe";
+    const VARIOUS: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
+    const REAL: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    let pool = scratch_pool().await;
+    migrator_through(87).run(&pool).await.unwrap();
+    let album = |id: &str| {
+        format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) VALUES ('{id}', 'music', \
+             '{id}', 'Album', 'album', '00000000-0000-4000-8000-000000000002', 'automatic', 0, 0); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source) VALUES ('{id}-t', '{id}', 'music', '{id}/01.flac', \
+             '{id}/01.flac', '{id}', 0, 0, '0:0', 'T', 't', 'Album', 'album', 'flac', 'scan', 0, \
+             'automatic'); \
+             INSERT INTO library_artist_reconciliation_state (local_album_id, input_revision, \
+             state, reason_code, updated_at) VALUES ('{id}', 'stamp', 'projected', \
+             'CREDITS_LINE_UP', 0);"
+        )
+    };
+    sqlx::raw_sql(&format!(
+        "{} {} {} \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('artist', 'Artist', 'artist', 'group', 0, 0); \
+         INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
+         artist_mbid) VALUES ('by-album', 0, 'artist', 'primary', '{UNKNOWN}'), \
+         ('by-album', 1, 'artist', 'primary', '{REAL}'), \
+         ('by-track', 0, 'artist', 'primary', '{REAL}'), \
+         ('real', 0, 'artist', 'primary', '{REAL}'); \
+         INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role, \
+         artist_mbid) VALUES ('by-album-t', 0, 'artist', 'primary', '{REAL}'), \
+         ('by-track-t', 0, 'artist', 'primary', '{VARIOUS}'), \
+         ('real-t', 0, 'artist', 'primary', '{REAL}');",
+        album("by-album"),
+        album("by-track"),
+        album("real")
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 88 && stamped == latest_version(), "{stamped}");
+    let credits: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT local_album_id || ':' || position, artist_mbid FROM local_album_artists \
+         UNION ALL SELECT local_track_id || ':' || position, artist_mbid FROM local_track_artists \
+         ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let real = Some(REAL.to_owned());
+    assert_eq!(
+        credits,
+        vec![
+            ("by-album-t:0".to_owned(), real.clone()),
+            ("by-album:0".to_owned(), None),
+            ("by-album:1".to_owned(), real.clone()),
+            ("by-track-t:0".to_owned(), None),
+            ("by-track:0".to_owned(), real.clone()),
+            ("real-t:0".to_owned(), real.clone()),
+            ("real:0".to_owned(), real),
+        ]
+    );
+    let stamps: Vec<(String, String)> = sqlx::query_as(
+        "SELECT local_album_id, input_revision FROM library_artist_reconciliation_state \
+         ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stamps,
+        vec![
+            ("by-album".to_owned(), String::new()),
+            ("by-track".to_owned(), String::new()),
+            ("real".to_owned(), "stamp".to_owned()),
+        ]
+    );
+}

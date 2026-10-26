@@ -1,9 +1,11 @@
 //! Merge duplicate local artists into one survivor.
 //!
 //! Every reference to a merged artist (album and track credits, album
-//! artists, favorites, play history, credit proofs, source links) moves
-//! to the survivor; the merged rows stay as retired records with an
-//! alias, so old links keep resolving. As in v2, this is not undoable.
+//! artists, favorites, ratings, play history, credit proofs, links and
+//! source links) moves to the survivor; the merged rows stay as retired
+//! records with an alias, so old links keep resolving. As in v2, this is
+//! not undoable. Every merge, chosen or automatic, retires a row only
+//! through [`retire_artist`], with the [`MergeBasis`] it rests on.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,9 +14,11 @@ use rusqlite::{OptionalExtension as _, Transaction, params, params_from_iter};
 use serde::Serialize;
 
 use super::edition::placeholders;
+use super::merge_basis::MergeBasis;
 use super::models::{ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, ProviderChoice};
 use super::reasons;
 use crate::identify::sqlite::retarget_references;
+use droppedneedle_auth::Admin;
 
 const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";
 const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
@@ -48,18 +52,12 @@ const REFERENCE_COUNTS: [(&str, &str); 5] = [
     ),
 ];
 
-/// Kinds the preview still lists, always at zero: v3 keeps nothing of
-/// these kinds that names an artist record.
-const UNCOUNTED_KINDS: [&str; 3] = [
-    "migration_references",
-    "playlist_snapshots",
-    "compatibility_ids",
-];
-
 /// A merge as run: what it did and the material its token covers.
 pub(super) struct ArtistRun {
     pub outcome: ArtistMergeOutcome,
     pub material: String,
+    /// What the merge rests on, for the audit row.
+    pub basis: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -74,6 +72,7 @@ struct Material<'a> {
 
 pub(super) fn merge(
     tx: &Transaction<'_>,
+    admin: &Admin,
     request: &ArtistMergeRequest,
     now: f64,
 ) -> Result<ArtistRun, CorrectionError> {
@@ -139,8 +138,12 @@ pub(super) fn merge(
         Some((from, _)) => Some(identity_row(tx, from)?),
         None => None,
     };
+    let mut basis = serde_json::Value::Null;
     for id in &retired {
-        retire_artist(tx, id, &survivor, now)?;
+        let chosen = MergeBasis::person(tx, admin, &survivor, id)?
+            .ok_or(CorrectionError::NotFound(reasons::ARTIST_NOT_FOUND))?;
+        basis = chosen.audit();
+        retire_artist(tx, chosen, now)?;
     }
     match request.provider_choice {
         ProviderChoice::Detach => {
@@ -181,6 +184,7 @@ pub(super) fn merge(
             reference_counts,
         },
         material,
+        basis,
     })
 }
 
@@ -227,9 +231,6 @@ fn reference_counts(
         }
         counts.insert(kind.to_owned(), total);
     }
-    for kind in UNCOUNTED_KINDS {
-        counts.insert(kind.to_owned(), 0);
-    }
     Ok(counts)
 }
 
@@ -251,13 +252,16 @@ pub(crate) const MOVED_WITH_ID: &str = "CREDITS_MOVED_WITH_ID";
 /// spacing (`artist_convergence`).
 pub(crate) const MERGED_BY_NAME: &str = "AUTOMATIC_SAME_NAME_CREDITS_MOVED";
 
-/// Point every reference of `artist` at `survivor` and retire it.
+/// Point every reference of the basis's retiree at its survivor and
+/// retire it, recording in `converged_mbid` what proved the merge. The
+/// only writer of `local_artists.retired_into_artist_id`.
 pub(super) fn retire_artist(
     tx: &Transaction<'_>,
-    artist: &str,
-    survivor: &str,
+    basis: MergeBasis<'_>,
     now: f64,
 ) -> rusqlite::Result<()> {
+    let artist = basis.retiree();
+    let survivor = basis.survivor();
     // A row waiting to follow its credits to `artist`, or whose credits a
     // scan moved to it, follows them on to the survivor; every other open
     // candidate naming `artist` is resolved below.
@@ -290,8 +294,8 @@ pub(super) fn retire_artist(
         "UPDATE local_entity_source_links SET local_artist_id = ?2, updated_at = ?3, \
          row_revision = row_revision + 1 WHERE local_artist_id = ?1",
         "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1",
-        "UPDATE local_artists SET retired_into_artist_id = ?2, updated_at = ?3, \
-         row_revision = row_revision + 1 WHERE id = ?1",
+        "UPDATE local_artists SET retired_into_artist_id = ?2, converged_mbid = ?4, \
+         updated_at = ?3, row_revision = row_revision + 1 WHERE id = ?1",
         "UPDATE local_artist_aliases SET local_artist_id = ?2 WHERE local_artist_id = ?1",
         "INSERT OR IGNORE INTO local_artist_aliases (alias, local_artist_id, kind, created_at) \
          VALUES (?1, ?2, 'merged_artist', ?3)",
@@ -305,15 +309,19 @@ pub(super) fn retire_artist(
          row_revision = row_revision + 1 WHERE state = 'open' \
          AND (left_artist_id = ?1 OR right_artist_id = ?1)",
     ];
-    // Favorites (with their names), playlist entries, play history and
-    // app ids, the same way identify merges move them.
+    // Favorites (with their names), ratings and plays, the same way
+    // identify merges move them.
     retarget_references(tx, "artist", artist, survivor)?;
+    let mark = basis
+        .converged_mark()
+        .map_or(Value::Null, |mark| Value::Text(mark.to_owned()));
     for sql in moves {
         let mut stmt = tx.prepare(sql)?;
         let values = [
             Value::Text(artist.to_owned()),
             Value::Text(survivor.to_owned()),
             Value::Real(now),
+            mark.clone(),
         ];
         let wanted = stmt.parameter_count();
         stmt.execute(params_from_iter(values.into_iter().take(wanted)))?;

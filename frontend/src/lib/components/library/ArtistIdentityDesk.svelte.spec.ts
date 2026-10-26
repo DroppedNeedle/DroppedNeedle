@@ -19,9 +19,7 @@ const memberOne = {
 	track_credit_count: 10,
 	primary_album_count: 2,
 	favorite_count: 1,
-	playlist_count: 1,
 	history_count: 2,
-	compatibility_id_count: 1,
 	proven_credit_count: 12,
 	active_credit_count: 12
 };
@@ -52,7 +50,8 @@ const group: ArtistDuplicateGroupSummary = {
 		message: 'Only some of these records are matched to MusicBrainz yet.',
 		action: 'Identify the unmatched albums.'
 	},
-	resolved_at: null
+	resolved_at: null,
+	merge_basis: null
 };
 
 const detail: ArtistDuplicateGroupDetail = {
@@ -89,24 +88,18 @@ const detail: ArtistDuplicateGroupDetail = {
 		album_credits: 3,
 		track_credits: 14,
 		favorites: 2,
-		playlist_snapshots: 2,
-		history: 4,
-		compatibility_ids: 2
+		history: 4
 	},
 	member_revisions: { 'artist-1': 3, 'artist-2': 5 }
 };
 
 const progress: ArtistReconciliationProgress = {
-	state: 'running',
-	completed_count: 12,
-	expected_count: 24,
 	automatically_resolved_count: 14,
 	waiting_for_identity_count: 49,
 	genuine_review_count: 3,
 	provider_conflict_count: 1,
 	ambiguous_credit_structure_count: 1,
-	same_name_only_count: 1,
-	operation_job_id: 'job-1'
+	same_name_only_count: 1
 };
 
 const previewResult: MembershipPreviewResponse = {

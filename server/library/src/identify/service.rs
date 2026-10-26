@@ -64,6 +64,8 @@ struct LookupHold {
     until: Option<Instant>,
     failures: u32,
     rng: SplitMix64,
+    /// The id the last lookup that went unanswered asked about.
+    stuck: Option<String>,
 }
 
 /// The first wait after a failed lookup with no `Retry-After`; it doubles
@@ -77,6 +79,7 @@ impl LookupHold {
             until: None,
             failures: 0,
             rng: SplitMix64::new(SplitMix64::seed_from_time()),
+            stuck: None,
         }
     }
 
@@ -87,6 +90,7 @@ impl LookupHold {
     fn clear(&mut self) {
         self.until = None;
         self.failures = 0;
+        self.stuck = None;
     }
 
     /// Hold lookups back after one went unanswered: for the `Retry-After`
@@ -403,25 +407,38 @@ impl IdentifyService {
     /// answer, newest first, and write each answer in its own transaction.
     /// A lookup that gets no answer stops the batch and holds lookups back
     /// for the `Retry-After` it gave, else 5 minutes doubling to an hour,
-    /// each with up to 20% more. Returns how many ids were answered. An
-    /// answer that cannot be written holds lookups back too.
+    /// each with up to 20% more; that id is asked last in the next batch,
+    /// so it does not hold up the others. Returns how many ids were
+    /// answered. An answer that cannot be written holds lookups back too,
+    /// and only a written answer ends a hold.
     pub async fn resolve_merged_artist_ids(&self, limit: usize) -> Result<usize, StoreError> {
         if lock(&self.artist_hold).held() {
             return Ok(0);
         }
         let mut answered = 0;
-        for mbid in self.deps.store.pending_artist_ids(limit)? {
+        let mut pending = self.deps.store.pending_artist_ids(limit)?;
+        let stuck = lock(&self.artist_hold).stuck.clone();
+        if let Some(stuck) = stuck
+            && let Some(at) = pending.iter().position(|mbid| *mbid == stuck)
+        {
+            let id = pending.remove(at);
+            pending.push(id);
+        }
+        for mbid in pending {
             match self.deps.providers.canonical_artist(&mbid).await {
                 Ok(answer) => {
-                    lock(&self.artist_hold).clear();
                     if let Err(error) = self.deps.store.answer_artist_id(&mbid, &answer) {
                         lock(&self.artist_hold).hold(None);
                         return Err(error);
                     }
+                    lock(&self.artist_hold).clear();
                     answered += 1;
                 }
                 Err(unanswered) => {
-                    lock(&self.artist_hold).hold(unanswered.retry_after_secs);
+                    let mut hold = lock(&self.artist_hold);
+                    hold.hold(unanswered.retry_after_secs);
+                    hold.stuck = Some(mbid.clone());
+                    drop(hold);
                     tracing::debug!(
                         artist_mbid = mbid,
                         error = unanswered.error.0,

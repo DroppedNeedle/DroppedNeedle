@@ -18,11 +18,7 @@ export const getArtistReconciliationProgressQuery = (getEnabled: Getter<boolean>
 		enabled: getEnabled(),
 		queryKey: ArtistReconciliationQueryKeyFactory.progress(authStore.user?.id),
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(ARTIST_RECONCILIATION_ENDPOINTS.progress(), { signal }),
-		refetchInterval: (query) =>
-			query.state.data && ['queued', 'running', 'pausing'].includes(query.state.data.state)
-				? 2000
-				: false
+			api.global.v3.GET(ARTIST_RECONCILIATION_ENDPOINTS.progress(), { signal })
 	}));
 
 export const getArtistDuplicateGroupsQuery = (getParams: Getter<ArtistDuplicateGroupParams>) =>

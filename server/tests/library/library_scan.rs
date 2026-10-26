@@ -6904,6 +6904,67 @@ async fn a_group_marked_distinct_is_not_merged() {
     assert_eq!(rig.merges(), 1);
 }
 
+/// MusicBrainz's `[unknown]` artist, which stands for no one artist.
+const UNKNOWN_MBID: &str = "125ec42a-7229-4250-afc5-e057484327fe";
+
+/// Two differently named artists whose files both carry MusicBrainz's
+/// `[unknown]` id keep a row each after the scan and its run end, and
+/// neither credit stores the id: a special-purpose id is never proof.
+#[tokio::test]
+async fn a_placeholder_artist_id_keeps_two_artists_apart() {
+    let rig = ArtistRig::new("artist-placeholder");
+    rig.put(
+        "A/01.flac",
+        "Album A",
+        listed(&["Oh"], &[UNKNOWN_MBID]),
+        listed(&["Oh"], &[UNKNOWN_MBID]),
+    );
+    rig.put(
+        "B/01.flac",
+        "Album B",
+        listed(&["En"], &[UNKNOWN_MBID]),
+        listed(&["En"], &[UNKNOWN_MBID]),
+    );
+    rig.scan().await;
+    let oh = rig.track_artist("A/01.flac", 0);
+    let en = rig.track_artist("B/01.flac", 0);
+    assert_ne!(oh, en);
+    assert_eq!(rig.name(&oh), "Oh");
+    assert_eq!(rig.name(&en), "En");
+    assert_eq!(rig.retired_into(&oh), None);
+    assert_eq!(rig.retired_into(&en), None);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT (SELECT COUNT(*) FROM local_track_artists WHERE artist_mbid = '{UNKNOWN_MBID}') \
+             + (SELECT COUNT(*) FROM local_album_artists WHERE artist_mbid = '{UNKNOWN_MBID}')"
+        )),
+        0
+    );
+}
+
+/// Rows whose credits already store the `[unknown]` id, as files scanned
+/// before it was dropped left them, stay apart at the run end.
+#[tokio::test]
+async fn rows_holding_a_placeholder_id_are_not_merged() {
+    let rig = ArtistRig::new("artist-placeholder-stored");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.put("B/01.flac", "Album B", plain(&["En"]), plain(&["En"]));
+    rig.scan().await;
+    let oh = rig.track_artist("A/01.flac", 0);
+    let en = rig.track_artist("B/01.flac", 0);
+    assert_ne!(oh, en);
+    rig.run(&format!(
+        "UPDATE local_track_artists SET artist_mbid = '{UNKNOWN_MBID}' \
+         WHERE local_artist_id IN ('{oh}', '{en}'); \
+         UPDATE local_album_artists SET artist_mbid = '{UNKNOWN_MBID}' \
+         WHERE local_artist_id IN ('{oh}', '{en}');"
+    ));
+    rig.scan().await;
+    assert_eq!(rig.retired_into(&oh), None);
+    assert_eq!(rig.retired_into(&en), None);
+    assert_eq!(rig.merges(), 0);
+}
+
 /// A merge the store refuses is rolled back with one warning and the run
 /// still ends; the next run end merges.
 #[tokio::test]

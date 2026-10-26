@@ -23,9 +23,9 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::commit::{TRACK_GONE, UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
+use crate::identify::artist_links::placeholder;
 use crate::identify::merged_ids;
 use crate::identity::sql::PERSONS;
-use crate::matching::model::VARIOUS_ARTISTS_MBID;
 use crate::scan::naming::{VARIOUS_ARTISTS_ID, artist_key, artist_mbid_key};
 use crate::tags::AudioArtistCredit;
 use droppedneedle_kernel::db::fold_text;
@@ -80,8 +80,8 @@ fn aligned_ids(names: &[AudioArtistCredit], ids: &[String], listed: bool) -> Opt
 
 /// One side's credits: from the tags, else one credit from the fallback
 /// name. An aligned side gives each credit its id, or the id MusicBrainz
-/// merged it into; Various Artists and the "Unknown Artist" sentinel carry
-/// none.
+/// merged it into. MusicBrainz's special-purpose artists (Various Artists,
+/// `[unknown]` and the like) and the "Unknown Artist" sentinel carry none.
 pub(super) fn credits(
     tx: &Connection,
     from_tags: &[AudioArtistCredit],
@@ -100,9 +100,10 @@ pub(super) fn credits(
         let mbid = match aligned
             .as_ref()
             .and_then(|ids| ids.get(position))
-            .filter(|id| id.as_str() != VARIOUS_ARTISTS_MBID && name != UNKNOWN_ARTIST)
+            .filter(|id| !placeholder(id) && name != UNKNOWN_ARTIST)
         {
-            Some(id) => Some(merged_ids::merged_into(tx, id)?.unwrap_or_else(|| id.clone())),
+            Some(id) => Some(merged_ids::merged_into(tx, id)?.unwrap_or_else(|| id.clone()))
+                .filter(|id| !placeholder(id)),
             None => None,
         };
         out.push(Credit {

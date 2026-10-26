@@ -19,6 +19,7 @@ use super::retag_pairs;
 use super::token::{self, TokenFault};
 use crate::clock::LibraryClock as _;
 use crate::settings::LibrarySettings;
+use droppedneedle_auth::Admin;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
 
 /// Catalog corrections over the library's store. Preview tokens are signed
@@ -113,30 +114,36 @@ impl Corrections {
             })
     }
 
-    /// What an artist merge would do, and its token.
+    /// What an administrator's artist merge would do, and its token.
     pub fn preview_artist_merge(
         &self,
         request: &ArtistMergeRequest,
-        actor: &str,
+        admin: &Admin,
     ) -> Result<Previewed<ArtistMergeOutcome>, CorrectionError> {
         let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Foreground, "corrections.preview_artist_merge", |tx| {
                 rolled_back(tx, || {
-                    let run = artists::merge(tx, request, now)?;
+                    let run = artists::merge(tx, admin, request, now)?;
                     Ok(Previewed {
-                        token: token::issue(&self.signer, actor, &run.material, now as i64),
+                        token: token::issue(
+                            &self.signer,
+                            admin.user_id(),
+                            &run.material,
+                            now as i64,
+                        ),
                         outcome: run.outcome,
                     })
                 })
             })
     }
 
-    /// Apply a previewed artist merge.
+    /// Apply an administrator's previewed artist merge.
     pub fn apply_artist_merge(
         &self,
         request: &ArtistMergeRequest,
         meta: &ApplyMeta,
+        admin: &Admin,
     ) -> Result<Applied, CorrectionError> {
         let now = self.clock.now_secs();
         self.db
@@ -144,7 +151,7 @@ impl Corrections {
                 if let Some(done) = replay(tx, meta.idempotency_key.as_deref())? {
                     return Ok(done);
                 }
-                let run = artists::merge(tx, request, now)?;
+                let run = artists::merge(tx, admin, request, now)?;
                 self.check_token(meta, &run.material, now)?;
                 let mut applied = Applied {
                     kind: "merge_artist".to_owned(),
@@ -161,7 +168,7 @@ impl Corrections {
                         kind: "merge_artist",
                         album_id: None,
                         artist_id: Some(&run.outcome.surviving_artist_id),
-                        before: serde_json::json!({ "artist_ids": all }),
+                        before: serde_json::json!({ "artist_ids": all, "basis": run.basis }),
                         reason: "MANUAL_ARTIST_MERGE",
                         meta,
                         now,

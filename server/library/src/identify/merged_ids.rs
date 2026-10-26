@@ -53,9 +53,9 @@ impl CheckState {
 pub(crate) fn merged_into(conn: &Connection, mbid: &str) -> rusqlite::Result<Option<String>> {
     conn.prepare_cached(
         "SELECT canonical_mbid FROM library_identify_artist_id_checks \
-         WHERE artist_mbid = ?1 AND state = 'merged'",
+         WHERE artist_mbid = ?1 AND state = ?2",
     )?
-    .query_row(params![mbid], |row| row.get(0))
+    .query_row(params![mbid, CheckState::Merged.as_str()], |row| row.get(0))
     .optional()
 }
 
@@ -79,12 +79,18 @@ pub(crate) fn nominate(
         }
         conn.prepare_cached(
             "INSERT INTO library_identify_artist_id_checks (artist_mbid, state, nominated_at) \
-             VALUES (?1, 'pending', ?2) ON CONFLICT (artist_mbid) DO UPDATE SET \
-             state = 'pending', nominated_at = excluded.nominated_at, checked_at = NULL \
-             WHERE library_identify_artist_id_checks.state = 'kept' \
+             VALUES (?1, ?4, ?2) ON CONFLICT (artist_mbid) DO UPDATE SET \
+             state = excluded.state, nominated_at = excluded.nominated_at, checked_at = NULL \
+             WHERE library_identify_artist_id_checks.state = ?5 \
              AND library_identify_artist_id_checks.checked_at < ?3",
         )?
-        .execute(params![id, now_ms, now_ms - RECHECK_AFTER_MS])?;
+        .execute(params![
+            id,
+            now_ms,
+            now_ms - RECHECK_AFTER_MS,
+            CheckState::Pending.as_str(),
+            CheckState::Kept.as_str()
+        ])?;
     }
     Ok(())
 }
@@ -93,18 +99,20 @@ pub(crate) fn nominate(
 pub fn pending(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<String>> {
     conn.prepare_cached(
         "SELECT artist_mbid FROM library_identify_artist_id_checks \
-         WHERE state = 'pending' ORDER BY nominated_at DESC LIMIT ?1",
+         WHERE state = ?2 ORDER BY nominated_at DESC LIMIT ?1",
     )?
-    .query_map(params![limit as i64], |row| row.get(0))?
+    .query_map(params![limit as i64, CheckState::Pending.as_str()], |row| {
+        row.get(0)
+    })?
     .collect()
 }
 
 fn keep(tx: &Transaction<'_>, mbid: &str, now_ms: i64) -> rusqlite::Result<()> {
     tx.prepare_cached(
-        "UPDATE library_identify_artist_id_checks SET state = 'kept', canonical_mbid = NULL, \
+        "UPDATE library_identify_artist_id_checks SET state = ?3, canonical_mbid = NULL, \
          checked_at = ?2 WHERE artist_mbid = ?1",
     )?
-    .execute(params![mbid, now_ms])?;
+    .execute(params![mbid, now_ms, CheckState::Kept.as_str()])?;
     Ok(())
 }
 
@@ -121,9 +129,11 @@ pub(crate) fn answer(
     let pending: bool = tx
         .prepare_cached(
             "SELECT EXISTS (SELECT 1 FROM library_identify_artist_id_checks \
-             WHERE artist_mbid = ?1 AND state = 'pending')",
+             WHERE artist_mbid = ?1 AND state = ?2)",
         )?
-        .query_row(params![retired], |row| row.get(0))?;
+        .query_row(params![retired, CheckState::Pending.as_str()], |row| {
+            row.get(0)
+        })?;
     if !pending {
         return Ok(Vec::new());
     }
@@ -194,6 +204,41 @@ fn person_link_elsewhere(conn: &Connection, artist: &str, mbid: &str) -> rusqlit
     .query_row(params![mbid, artist], |row| row.get(0))
 }
 
+/// Record row `artist` and the row a person's or v2's link holds `mbid`
+/// on as an open merge candidate, the pair a contribution records when
+/// two rows are linked to one id.
+fn suggest_merge(tx: &Transaction<'_>, artist: &str, mbid: &str, now: f64) -> rusqlite::Result<()> {
+    let other: Option<String> = tx
+        .prepare_cached(&format!(
+            "SELECT local_artist_id FROM local_artist_external_identities \
+             WHERE provider = 'musicbrainz' AND decision_source IN {PERSONS} \
+             AND lower(provider_artist_id) = ?1 AND local_artist_id <> ?2 \
+             ORDER BY local_artist_id LIMIT 1"
+        ))?
+        .query_row(params![mbid, artist], |row| row.get(0))
+        .optional()?;
+    let Some(other) = other else {
+        return Ok(());
+    };
+    let (left, right) = if artist < other.as_str() {
+        (artist, other.as_str())
+    } else {
+        (other.as_str(), artist)
+    };
+    tx.prepare_cached(
+        "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
+         right_artist_id, reason_code, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'SHARED_PROVIDER_IDENTITY', ?4, ?4)",
+    )?
+    .execute(params![
+        format!("provider:{left}:{right}"),
+        left,
+        right,
+        now
+    ])?;
+    Ok(())
+}
+
 fn follow(
     tx: &Transaction<'_>,
     retired: &str,
@@ -225,10 +270,15 @@ fn follow(
         return Ok(Vec::new());
     }
     tx.prepare_cached(
-        "UPDATE library_identify_artist_id_checks SET state = 'merged', canonical_mbid = ?2, \
+        "UPDATE library_identify_artist_id_checks SET state = ?4, canonical_mbid = ?2, \
          checked_at = ?3 WHERE artist_mbid = ?1",
     )?
-    .execute(params![retired, current, now_ms])?;
+    .execute(params![
+        retired,
+        current,
+        now_ms,
+        CheckState::Merged.as_str()
+    ])?;
     tx.prepare_cached(
         "UPDATE library_identify_artist_id_checks SET canonical_mbid = ?2 \
          WHERE canonical_mbid = ?1",
@@ -284,7 +334,8 @@ fn follow(
 
 /// Move each person's or v2's link among `rows` that names an id recorded
 /// as merged to the id it was merged into, unless another row holds that
-/// id by a person's or v2's link. The app's own links to that id give
+/// id by a person's or v2's link: then the pair is recorded as a merge
+/// candidate for a person to decide. The app's own links to that id give
 /// way. Returns whether any link moved.
 pub(crate) fn follow_person_links(
     tx: &Transaction<'_>,
@@ -313,6 +364,7 @@ pub(crate) fn follow_person_links(
                 merged_into = current,
                 "another artist holds the kept id by a person's link; link not moved"
             );
+            suggest_merge(tx, artist, &current, now)?;
             continue;
         }
         let giving_way: Vec<String> = tx

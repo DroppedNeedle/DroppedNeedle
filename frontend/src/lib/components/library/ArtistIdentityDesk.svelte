@@ -106,15 +106,6 @@
 			(member) => member.id !== (previewRequest?.surviving_artist_id ?? survivingId)
 		) ?? []
 	);
-	const progressPercent = $derived(
-		progressQuery.data?.expected_count
-			? Math.min(
-					100,
-					Math.round((progressQuery.data.completed_count / progressQuery.data.expected_count) * 100)
-				)
-			: 0
-	);
-
 	$effect(() => {
 		filterState = appliedFilterState;
 		search = appliedSearch;
@@ -141,6 +132,11 @@
 	function stateLabel(state: ArtistReconciliationGroupState): string {
 		return stateOptions.find((option) => option.value === state)?.label ?? state;
 	}
+
+	const basisLabels: Record<NonNullable<ArtistDuplicateGroupSummary['merge_basis']>, string> = {
+		musicbrainz_proof: 'MusicBrainz proof',
+		same_name: 'Same name'
+	};
 
 	function stateClass(state: ArtistReconciliationGroupState): string {
 		if (state === 'resolved_automatically') return 'badge-success';
@@ -307,22 +303,8 @@
 	{:else if progressQuery.isError}
 		<div class="alert alert-error">Could not load artist reconciliation progress.</div>
 	{:else if progressQuery.data}
-		<Card as="section" variant="bordered" padding="md" aria-label="Reconciliation progress">
-			<div class="flex flex-wrap items-center justify-between gap-3">
-				<div>
-					<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
-						Background reconciliation
-					</p>
-					<p class="mt-1 font-semibold">
-						{progressQuery.data.state.replaceAll('_', ' ')} · {progressQuery.data.completed_count.toLocaleString()}
-						of {progressQuery.data.expected_count.toLocaleString()} albums
-					</p>
-				</div>
-				<span class="font-mono text-sm text-base-content/60">{progressPercent}%</span>
-			</div>
-			<progress class="progress progress-primary mt-3 w-full" value={progressPercent} max="100"
-			></progress>
-			<div class="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+		<Card as="section" variant="bordered" padding="md" aria-label="Artist identity counts">
+			<div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
 				<div>
 					<span class="block text-xs text-base-content/50">Resolved automatically</span><strong
 						>{progressQuery.data.automatically_resolved_count.toLocaleString()}</strong
@@ -469,6 +451,12 @@
 								</div>
 								<p class="mt-2 text-sm text-base-content/70">{detail.reason.message}</p>
 								<p class="mt-1 text-sm text-base-content/50">{detail.reason.action}</p>
+								{#if detail.merge_basis}
+									<p class="mt-2 text-sm">
+										<span class="text-base-content/50">Merged on</span>
+										<strong>{basisLabels[detail.merge_basis]}</strong>
+									</p>
+								{/if}
 							</header>
 
 							<div class="space-y-5 p-4">

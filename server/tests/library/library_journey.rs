@@ -3875,7 +3875,7 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
             None,
         )
         .await;
-    assert_eq!(body["state"], "idle", "{body}");
+    assert_eq!(body["automatically_resolved_count"], 0, "{body}");
     assert_eq!(body["same_name_only_count"], 0, "{body}");
     let (status, _) = app.call("GET", &path, &headers, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);

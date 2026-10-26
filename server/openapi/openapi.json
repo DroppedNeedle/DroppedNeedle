@@ -12713,7 +12713,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Artist reconciliation progress and open group counts.",
+        "summary": "Automatic artist merges so far and open group counts.",
         "operationId": "artist_reconciliation",
         "responses": {
           "200": {
@@ -37346,7 +37346,7 @@
           "affected_reference_count": {
             "type": "integer",
             "format": "int64",
-            "description": "Credits, favorites, playlist entries, plays, and client ids a merge\nwould move."
+            "description": "Credits, favorites and plays a merge would move."
           },
           "display_name": {
             "type": "string"
@@ -37364,6 +37364,17 @@
             "items": {
               "$ref": "#/components/schemas/ArtistReconciliationMember"
             }
+          },
+          "merge_basis": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ArtistMergeBasis",
+                "description": "What that merge rested on."
+              }
+            ]
           },
           "provider_mbids": {
             "type": "array",
@@ -37804,6 +37815,14 @@
           }
         }
       },
+      "ArtistMergeBasis": {
+        "type": "string",
+        "description": "What an automatic artist merge rested on.",
+        "enum": [
+          "musicbrainz_proof",
+          "same_name"
+        ]
+      },
       "ArtistMergePreviewBody": {
         "type": "object",
         "description": "An artist merge to preview.",
@@ -37947,9 +37966,7 @@
           "track_credit_count",
           "primary_album_count",
           "favorite_count",
-          "playlist_count",
           "history_count",
-          "compatibility_id_count",
           "proven_credit_count",
           "active_credit_count"
         ],
@@ -37959,10 +37976,6 @@
             "format": "int64"
           },
           "album_credit_count": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "compatibility_id_count": {
             "type": "integer",
             "format": "int64"
           },
@@ -37979,10 +37992,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "playlist_count": {
-            "type": "integer",
-            "format": "int64"
           },
           "primary_album_count": {
             "type": "integer",
@@ -38016,11 +38025,8 @@
       },
       "ArtistReconciliationProgress": {
         "type": "object",
-        "description": "Where the artist reconciliation pass stands.",
+        "description": "Automatic merges so far and open duplicate groups by state.",
         "required": [
-          "state",
-          "completed_count",
-          "expected_count",
           "automatically_resolved_count",
           "waiting_for_identity_count",
           "genuine_review_count",
@@ -38038,24 +38044,10 @@
             "format": "int64",
             "description": "Artist records merged automatically so far."
           },
-          "completed_count": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "expected_count": {
-            "type": "integer",
-            "format": "int64"
-          },
           "genuine_review_count": {
             "type": "integer",
             "description": "Groups that need an administrator's judgement.",
             "minimum": 0
-          },
-          "operation_job_id": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "provider_conflict_count": {
             "type": "integer",
@@ -38064,10 +38056,6 @@
           "same_name_only_count": {
             "type": "integer",
             "minimum": 0
-          },
-          "state": {
-            "type": "string",
-            "description": "The newest reconciliation job's state, or `idle`."
           },
           "waiting_for_identity_count": {
             "type": "integer",

@@ -39,7 +39,7 @@ use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::accepted_release;
 use crate::identity::DecisionSource;
 use crate::identity::reads::release_input_hash;
-use crate::identity::sql::REVISABLE;
+use crate::identity::sql::{PERSONS, REVISABLE};
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 use droppedneedle_kernel::db::fold_text;
@@ -1081,7 +1081,13 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
             .flatten()
             .filter(|mbid| !placeholder(mbid));
         match only {
-            Some(mbid) if link.as_ref().is_some_and(|(linked, _)| *linked == mbid) => {}
+            // The app's link gives way to a person's or v2's link to the
+            // same id on another row.
+            Some(mbid) if link.as_ref().is_some_and(|(linked, _)| *linked == mbid) => {
+                if person_holds(conn, &mbid, artist)? {
+                    unlinks.insert(artist.clone());
+                }
+            }
             Some(mbid) => candidates.push(Candidate {
                 created,
                 artist: artist.clone(),
@@ -1114,12 +1120,13 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
         .collect();
     let mut taken: BTreeSet<String> = BTreeSet::new();
     for candidate in candidates {
+        // A person's or v2's link first: it never gives way.
         let owner: Option<String> = conn
-            .prepare_cached(
+            .prepare_cached(&format!(
                 "SELECT local_artist_id FROM local_artist_external_identities \
                  WHERE provider = 'musicbrainz' AND lower(provider_artist_id) = ?1 \
-                 ORDER BY local_artist_id LIMIT 1",
-            )?
+                 ORDER BY decision_source IN {PERSONS} DESC, local_artist_id LIMIT 1"
+            ))?
             .query_row(params![candidate.mbid], |row| row.get(0))
             .optional()?;
         let owned =
@@ -1138,6 +1145,17 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
         }
     }
     Ok(Planned { changes, conflicts })
+}
+
+/// Whether a row other than `artist` holds `mbid` by a person's or v2's
+/// link.
+fn person_holds(conn: &Connection, mbid: &str, artist: &str) -> rusqlite::Result<bool> {
+    conn.prepare_cached(&format!(
+        "SELECT EXISTS (SELECT 1 FROM local_artist_external_identities \
+         WHERE provider = 'musicbrainz' AND decision_source IN {PERSONS} \
+         AND lower(provider_artist_id) = ?1 AND local_artist_id <> ?2)"
+    ))?
+    .query_row(params![mbid, artist], |row| row.get(0))
 }
 
 /// Move the artist's `updated_at` (seconds) and revision once.
@@ -1174,6 +1192,19 @@ pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::R
                 touch(artist)?;
                 changed = true;
             }
+        }
+    }
+    // A row taking an id another row of this settle is moving off can
+    // only be linked once that row's old link is gone: remove every
+    // moving row's old link before linking any.
+    for change in &changes {
+        if let LinkChange::Link { artist, mbid } = change {
+            tx.prepare_cached(&format!(
+                "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1 \
+                 AND provider = 'musicbrainz' AND decision_source IN {REVISABLE} \
+                 AND lower(provider_artist_id) <> ?2"
+            ))?
+            .execute(params![artist, mbid])?;
         }
     }
     for change in &changes {

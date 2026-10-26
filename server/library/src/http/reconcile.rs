@@ -19,7 +19,8 @@ use utoipa::{IntoParams, ToSchema};
 use super::error::refused;
 use super::operations::ReasonView;
 use crate::reconcile::models::{
-    CreditEvidence, Group, GroupDetail, GroupState, Member, OwnedReference, ReconcileError,
+    CreditEvidence, Group, GroupDetail, GroupState, Member, MergeBasisLabel, OwnedReference,
+    ReconcileError,
 };
 use crate::reconcile::service::Reconcile;
 use crate::wiring::LibraryServices;
@@ -102,13 +103,29 @@ impl From<ArtistGroupState> for GroupState {
     }
 }
 
-/// Where the artist reconciliation pass stands.
+/// What an automatic artist merge rested on.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtistMergeBasis {
+    /// MusicBrainz proved the records to be one artist.
+    MusicbrainzProof,
+    /// A tag edit moved every song to a record of the same name, with only
+    /// its sort name, capitals or spacing changed.
+    SameName,
+}
+
+impl From<MergeBasisLabel> for ArtistMergeBasis {
+    fn from(label: MergeBasisLabel) -> Self {
+        match label {
+            MergeBasisLabel::MusicbrainzProof => Self::MusicbrainzProof,
+            MergeBasisLabel::SameName => Self::SameName,
+        }
+    }
+}
+
+/// Automatic merges so far and open duplicate groups by state.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ArtistReconciliationProgress {
-    /// The newest reconciliation job's state, or `idle`.
-    pub state: String,
-    pub completed_count: i64,
-    pub expected_count: i64,
     /// Artist records merged automatically so far.
     pub automatically_resolved_count: i64,
     pub waiting_for_identity_count: usize,
@@ -117,7 +134,6 @@ pub struct ArtistReconciliationProgress {
     pub provider_conflict_count: usize,
     pub ambiguous_credit_structure_count: usize,
     pub same_name_only_count: usize,
-    pub operation_job_id: Option<String>,
 }
 
 /// One artist record in a group, with how often it is referenced.
@@ -132,9 +148,7 @@ pub struct ArtistReconciliationMember {
     pub track_credit_count: i64,
     pub primary_album_count: i64,
     pub favorite_count: i64,
-    pub playlist_count: i64,
     pub history_count: i64,
-    pub compatibility_id_count: i64,
     pub proven_credit_count: i64,
     pub active_credit_count: i64,
 }
@@ -152,9 +166,7 @@ impl From<&Member> for ArtistReconciliationMember {
             track_credit_count: c.track_credits,
             primary_album_count: c.primary_albums,
             favorite_count: c.favorites,
-            playlist_count: c.playlist_snapshots,
             history_count: c.history,
-            compatibility_id_count: c.compatibility_ids,
             proven_credit_count: c.proven_credits,
             active_credit_count: c.active_credits(),
         }
@@ -173,14 +185,15 @@ pub struct ArtistDuplicateGroupSummary {
     pub provider_mbids: Vec<String>,
     /// The record a merge would keep, when the evidence names one.
     pub recommended_survivor_id: Option<String>,
-    /// Credits, favorites, playlist entries, plays, and client ids a merge
-    /// would move.
+    /// Credits, favorites and plays a merge would move.
     pub affected_reference_count: i64,
     pub reason_code: String,
     /// Why the group is listed and what to do about it.
     pub reason: ReasonView,
     /// When an automatic merge resolved the group (unix seconds).
     pub resolved_at: Option<f64>,
+    /// What that merge rested on.
+    pub merge_basis: Option<ArtistMergeBasis>,
 }
 
 impl From<&Group> for ArtistDuplicateGroupSummary {
@@ -197,6 +210,7 @@ impl From<&Group> for ArtistDuplicateGroupSummary {
             reason_code: group.reason_code.clone(),
             reason: group.reason.into(),
             resolved_at: group.resolved_at,
+            merge_basis: group.merge_basis.map(Into::into),
         }
     }
 }
@@ -310,15 +324,7 @@ impl From<GroupDetail> for ArtistDuplicateGroupDetail {
                 total(|m| m.counts.primary_albums),
             ),
             ("favorites".to_owned(), total(|m| m.counts.favorites)),
-            (
-                "playlist_snapshots".to_owned(),
-                total(|m| m.counts.playlist_snapshots),
-            ),
             ("history".to_owned(), total(|m| m.counts.history)),
-            (
-                "compatibility_ids".to_owned(),
-                total(|m| m.counts.compatibility_ids),
-            ),
         ]);
         let member_revisions = members
             .iter()
@@ -381,7 +387,7 @@ pub struct ArtistDuplicateGroupDismissResponse {
 // Handlers.
 // ---------------------------------------------------------------------------
 
-/// Artist reconciliation progress and open group counts.
+/// Automatic artist merges so far and open group counts.
 #[utoipa::path(
     get,
     tag = "library management",
@@ -398,16 +404,12 @@ pub async fn artist_reconciliation(
 ) -> Result<Json<ArtistReconciliationProgress>, ApiError> {
     let p = blocking(move || service.progress()).await?;
     Ok(Json(ArtistReconciliationProgress {
-        state: p.state,
-        completed_count: p.completed_count,
-        expected_count: p.expected_count,
         automatically_resolved_count: p.automatically_resolved_count,
         waiting_for_identity_count: p.waiting_for_identity_count,
         genuine_review_count: p.genuine_review_count,
         provider_conflict_count: p.provider_conflict_count,
         ambiguous_credit_structure_count: p.ambiguous_credit_structure_count,
         same_name_only_count: p.same_name_only_count,
-        operation_job_id: p.operation_job_id,
     }))
 }
 
