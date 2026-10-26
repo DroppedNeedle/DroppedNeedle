@@ -20,7 +20,10 @@ use super::models::{
     IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief, JobState, LocalAlbumFacts,
     MatchFlag, MatchFlagState, RecallResult, ReviewState, TrackIdentity,
 };
-use super::providers::{IdentifyProviders, RELEASE_UNREADABLE, RecallOutcome};
+use super::providers::{
+    IdentifyProviders, RELEASE_UNREADABLE, RELEASES_UNREADABLE, RecallOutcome,
+    TAGGED_RELEASE_UNREADABLE,
+};
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::review::reject_review;
 use super::rules::retracts_on_contradiction;
@@ -248,15 +251,16 @@ impl IdentifyService {
             // held release MusicBrainz cannot answer for defers the attempt
             // as a busy recall does. A stale stored copy is not used: the
             // move rules compare against what the held edition states now.
-            // One it answers in a form asking again will not change fails
-            // the attempt at once: the album keeps its edition.
+            // One it answers in a form asking again will not change ends
+            // the attempt at once in Attention, where the Scanning panel
+            // counts it: the album keeps its edition.
             if extra.result.provider_deferred {
                 recall.provider_deferred = true;
                 recall.failure_code = extra.result.failure_code;
             } else if extra.result.failure_code.as_deref() == Some(RELEASE_UNREADABLE) {
                 land_job(
                     &mut job,
-                    AttemptLanding::Failed,
+                    AttemptLanding::Attention,
                     now_ms,
                     Some(HELD_RELEASE_UNREADABLE),
                 );
@@ -319,6 +323,26 @@ impl IdentifyService {
             },
             &preferences,
         );
+        // A release MusicBrainz refused may be the one the files are: with
+        // it missing, matching nothing is not evidence, so the job waits as
+        // for an outage instead of marking the album unmatched.
+        let refused = matches!(
+            recall.failure_code.as_deref(),
+            Some(RELEASES_UNREADABLE | TAGGED_RELEASE_UNREADABLE)
+        );
+        if refused && matches!(decision, Decision::Terminal(..) | Decision::Contradictory) {
+            land_job(
+                &mut job,
+                AttemptLanding::Deferred,
+                now_ms,
+                Some(RELEASES_UNREADABLE),
+            );
+            return self.land(
+                job,
+                IdentificationOutcome::ProviderDeferred,
+                "PROVIDER_DEFERRED",
+            );
+        }
         self.apply_decision(job, &facts, &ranking, decision, now_ms)
     }
 
@@ -585,8 +609,11 @@ impl IdentifyService {
                 kept
             }
         };
+        // Without the release the files' tags name, nothing is confirmed:
+        // the pick is a guess and never moves the album to another edition.
+        let tag_unreadable = recall.failure_code.as_deref() == Some(TAGGED_RELEASE_UNREADABLE);
         let verdict = match verdict {
-            Verdict::Identified(index) => Verdict::Identified(keep(index, true)),
+            Verdict::Identified(index) => Verdict::Identified(keep(index, !tag_unreadable)),
             Verdict::EditionUncertain(index) => Verdict::EditionUncertain(keep(index, false)),
             Verdict::OutsideNamedGroup(index) => Verdict::OutsideNamedGroup(keep(index, false)),
             Verdict::AudioDisagrees(index) => Verdict::AudioDisagrees(keep(index, false)),
@@ -634,6 +661,9 @@ impl IdentifyService {
                     .position(|index| Some(*index) == lead || plausible(*index))
             });
         let decision = match verdict {
+            Verdict::Identified(_) | Verdict::EditionUncertain(_) if tag_unreadable => {
+                Decision::Ambiguous(TAGGED_RELEASE_UNREADABLE.to_owned())
+            }
             Verdict::Identified(_) => Decision::Identified(0),
             Verdict::EditionUncertain(_) => Decision::EditionUncertain,
             Verdict::Review(reason) => Decision::Ambiguous(reason.code().to_owned()),
@@ -1035,8 +1065,9 @@ pub const NAMED_GROUP_DIFFERS: &str = "NAMED_GROUP_DIFFERS";
 /// The reason a release some file's audio disagrees with is only a guess.
 pub const AUDIO_DISAGREES: &str = "AUDIO_DISAGREES";
 
-/// The reason an attempt failed with the album left on its edition:
-/// MusicBrainz answers for that edition in a form that does not read.
+/// The reason an attempt ended in Attention with the album left on its
+/// edition: MusicBrainz answers for that edition in a form that does not
+/// read.
 pub const HELD_RELEASE_UNREADABLE: &str = "HELD_RELEASE_UNREADABLE";
 
 /// True when the new evidence rules `release` out: it was scored and a

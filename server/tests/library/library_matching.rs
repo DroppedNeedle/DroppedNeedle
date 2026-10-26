@@ -267,6 +267,11 @@ fn album(files: &[FileTags<'_>]) -> LocalAlbumFacts {
 
 async fn identify(rig: &Rig, facts: LocalAlbumFacts) -> identify::service::AttemptReport {
     seed_album(rig, &facts);
+    run(rig).await
+}
+
+/// Queue and run one attempt for the seeded album.
+async fn run(rig: &Rig) -> identify::service::AttemptReport {
     rig.service
         .enqueue_album(
             "job-1",
@@ -436,6 +441,207 @@ async fn musicbrainz_outage_defers_the_job() {
     let report = identify(&rig, album(&[("Lamplight", 214, None)])).await;
     assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
     assert!(rig.store.album_identity("album-1").unwrap().is_none());
+}
+
+/// A release document MusicBrainz answers in a form that does not read:
+/// the recorded one without its release group.
+fn unreadable(name: &str) -> RawResponse {
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&fixture(name)).expect("fixture decodes");
+    document
+        .as_object_mut()
+        .expect("release object")
+        .remove("release-group");
+    RawResponse::new(
+        200,
+        Vec::new(),
+        serde_json::to_vec(&document).expect("encodes"),
+    )
+}
+
+/// Untagged files that fit the remaster, as in
+/// `edition_with_the_closest_tracklist_wins`.
+fn remaster_files() -> LocalAlbumFacts {
+    album(&[
+        ("Lamplight", 214, None),
+        ("Blue Hour", 296, None),
+        ("Night Shift", 198, None),
+        ("Last Train Home", 305, None),
+    ])
+}
+
+/// How often release `id` was asked for.
+fn asked_release(rig: &Rig, id: &str) -> usize {
+    let path = format!("/release/{id}");
+    rig.seen
+        .lock()
+        .expect("seen")
+        .iter()
+        .filter(|seen| **seen == path)
+        .count()
+}
+
+/// One search hit MusicBrainz will not give in a readable form is
+/// dropped, asked for once, and the rest identify the album. An album
+/// already on that release keeps it, and the attempt lands in Attention.
+#[tokio::test]
+async fn an_unreadable_search_hit_does_not_hold_up_the_album() {
+    let routes = || {
+        with(
+            routes(),
+            vec![(
+                format!("/release/{STANDARD}"),
+                unreadable("release_standard.json"),
+            )],
+        )
+    };
+    let rig = rig_with(routes(), false);
+
+    let report = identify(&rig, remaster_files()).await;
+
+    assert_eq!(report.outcome, IdentificationOutcome::Identified);
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
+    assert_eq!(identity.release_mbid.as_deref(), Some(REMASTER));
+    assert_eq!(asked_release(&rig, STANDARD), 1);
+
+    let rig = rig_with(routes(), false);
+    let facts = remaster_files();
+    seed_album(&rig, &facts);
+    rig.db
+        .execute(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             VALUES ('album-1', 'musicbrainz', ?1, ?2, 'automatic', 1)",
+            params![GROUP, STANDARD],
+        )
+        .expect("identity seeds");
+
+    let report = run(&rig).await;
+
+    assert_eq!(report.outcome, IdentificationOutcome::Failed);
+    assert_eq!(report.reason_code, "HELD_RELEASE_UNREADABLE");
+    assert_eq!(report.job.state, identify::models::JobState::Attention);
+    assert_eq!(
+        report.job.failure_code.as_deref(),
+        Some("HELD_RELEASE_UNREADABLE")
+    );
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
+    assert_eq!(identity.release_mbid.as_deref(), Some(STANDARD));
+    assert_eq!(identity.decision_source, DecisionSource::Automatic);
+}
+
+/// When MusicBrainz refuses every candidate it was asked for, the job
+/// waits as for an outage, under its own code: nothing is matched or
+/// marked unmatched.
+#[tokio::test]
+async fn every_candidate_unreadable_defers_the_job() {
+    let rig = rig_with(
+        with(
+            routes(),
+            vec![
+                (
+                    format!("/release/{STANDARD}"),
+                    unreadable("release_standard.json"),
+                ),
+                (
+                    format!("/release/{REMASTER}"),
+                    unreadable("release_remaster.json"),
+                ),
+            ],
+        ),
+        false,
+    );
+
+    let report = identify(&rig, remaster_files()).await;
+
+    assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
+    assert_eq!(report.job.state, identify::models::JobState::Deferred);
+    assert_eq!(
+        report.job.failure_code.as_deref(),
+        Some("releases_unreadable")
+    );
+    assert!(rig.store.album_identity("album-1").unwrap().is_none());
+    assert!(rig.store.match_flag("album-1").unwrap().is_none());
+}
+
+/// Search finds the release the files are, which MusicBrainz will not
+/// give in a readable form, and one unrelated release that fits nothing.
+/// Matching nothing is not evidence while the right release is unread:
+/// the job waits as for an outage and the album is not marked unmatched.
+#[tokio::test]
+async fn an_unreadable_hit_beside_an_unrelated_one_defers_the_job() {
+    const UNRELATED: &str = "c0ffee00-0000-4000-8000-00000000c009";
+    let json = |name: &str| -> serde_json::Value {
+        serde_json::from_slice(&fixture(name)).expect("fixture decodes")
+    };
+    let mut search = json("release_search.json");
+    let hits = search["releases"].as_array_mut().expect("hits");
+    hits.retain(|hit| hit["id"] == STANDARD || hit["id"] == UNRELATED);
+    for hit in hits.iter_mut().filter(|hit| hit["id"] == UNRELATED) {
+        hit["title"] = "Harbour Songs".into();
+        hit["track-count"] = 4.into();
+        hit["media"][0]["track-count"] = 4.into();
+    }
+    let mut unrelated = json("release_standard.json");
+    unrelated["id"] = UNRELATED.into();
+    unrelated["title"] = "Harbour Songs".into();
+    unrelated["release-group"]["id"] = "c0ffee00-0000-4000-8000-00000000b009".into();
+    unrelated["release-group"]["title"] = "Harbour Songs".into();
+    for (index, track) in unrelated["media"][0]["tracks"]
+        .as_array_mut()
+        .expect("tracks")
+        .iter_mut()
+        .enumerate()
+    {
+        let title = format!("Harbour Song {}", index + 1);
+        track["title"] = title.clone().into();
+        track["recording"]["title"] = title.into();
+        track["length"] = 600_000.into();
+        track["recording"]["length"] = 600_000.into();
+    }
+    let ok = |document: serde_json::Value| {
+        RawResponse::new(200, Vec::new(), document.to_string().into_bytes())
+    };
+    let rig = rig_with(
+        with(
+            routes(),
+            vec![
+                ("/release".to_owned(), ok(search)),
+                (
+                    format!("/release/{STANDARD}"),
+                    unreadable("release_standard.json"),
+                ),
+                (format!("/release/{UNRELATED}"), ok(unrelated)),
+            ],
+        ),
+        false,
+    );
+    let files: [FileTags<'_>; 4] = [
+        ("Lamplight", 214, None),
+        ("Blue Hour", 251, None),
+        ("Night Shift", 198, None),
+        ("Last Train Home", 305, None),
+    ];
+
+    let report = identify(&rig, album(&files)).await;
+
+    assert_eq!(asked_release(&rig, UNRELATED), 1);
+    assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
+    assert_eq!(report.job.state, identify::models::JobState::Deferred);
+    assert_eq!(
+        report.job.failure_code.as_deref(),
+        Some("releases_unreadable")
+    );
+    assert!(rig.store.album_identity("album-1").unwrap().is_none());
+    assert!(rig.store.match_flag("album-1").unwrap().is_none());
 }
 
 /// Random Access Memories (Daft Punk), as two of its editions: the
@@ -619,6 +825,71 @@ async fn a_stray_track_id_does_not_move_the_album_to_another_edition() {
         .expect("track identity");
     let expected = ram_track(RAM, 7);
     assert_eq!(track.release_track_mbid.as_deref(), Some(expected.as_str()));
+}
+
+/// Thirteen files name the digital release, which MusicBrainz will not
+/// give in a readable form, and carry its recordings. Recall goes on
+/// without it and the CD fits every file, but with the files' own
+/// edition unread nothing is confirmed: the CD is kept only as an
+/// unconfirmed guess.
+#[tokio::test]
+async fn an_unreadable_tagged_release_leaves_only_a_guess() {
+    let ok = |document: serde_json::Value| {
+        RawResponse::new(200, Vec::new(), document.to_string().into_bytes())
+    };
+    let mut digital = ram_release(RAM, "Digital Media");
+    digital
+        .as_object_mut()
+        .expect("release object")
+        .remove("release-group");
+    let rig = rig_with(
+        HashMap::from([
+            ("/release".to_owned(), ok(ram_search())),
+            (format!("/release/{RAM}"), ok(digital)),
+            (format!("/release/{RAM_CD}"), ok(ram_release(RAM_CD, "CD"))),
+        ]),
+        false,
+    );
+    let facts = LocalAlbumFacts {
+        local_album_id: "album-1".to_owned(),
+        title: "Random Access Memories".to_owned(),
+        album_artist_name: "Daft Punk".to_owned(),
+        tracks: RAM_TRACKS
+            .iter()
+            .enumerate()
+            .map(|(index, (title, seconds))| LocalTrackFacts {
+                local_track_id: format!("t{}", index + 1),
+                title: (*title).to_owned(),
+                artist_name: "Daft Punk".to_owned(),
+                track_number: index as u32 + 1,
+                disc_number: 1,
+                duration_secs: Some(*seconds),
+                recording_mbid: Some(ram_recording(index)),
+                release_mbid: Some(RAM.to_owned()),
+                ..LocalTrackFacts::default()
+            })
+            .collect(),
+        ..LocalAlbumFacts::default()
+    };
+
+    let report = identify(&rig, facts).await;
+
+    assert_eq!(report.outcome, IdentificationOutcome::Ambiguous);
+    assert_eq!(report.reason_code, "TAGGED_RELEASE_UNREADABLE");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("best guess");
+    assert_eq!(identity.release_mbid.as_deref(), Some(RAM_CD));
+    assert_eq!(identity.decision_source, DecisionSource::Automatic);
+    let flag = rig
+        .store
+        .match_flag("album-1")
+        .unwrap()
+        .expect("unconfirmed flag");
+    assert_eq!(flag.state, identify::models::MatchFlagState::Unconfirmed);
+    assert_eq!(flag.reason_code, "TAGGED_RELEASE_UNREADABLE");
 }
 
 /// A store of the merged release id that a lookup through the merged id

@@ -561,6 +561,11 @@ pub fn match_reason(code: &str) -> Reason {
             "Two different albums fit the files about equally well; this one fit slightly better.",
             "Compare the candidates and confirm the right one.",
         ),
+        "TAGGED_RELEASE_UNREADABLE" => reason(
+            "TAGGED_RELEASE_UNREADABLE",
+            "MusicBrainz's answer for the release your files name could not be read, so this edition is a best guess.",
+            "Confirm it or pick another edition.",
+        ),
         "NAMED_GROUP_DIFFERS" => reason(
             "NAMED_GROUP_DIFFERS",
             "Fits best, but the files' tags or earlier match name another album.",
