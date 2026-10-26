@@ -24,11 +24,11 @@
 //! seams to the app-password store, the catalog-backed
 //! [`JellyfinLibrary`](crate::adapters::jellyfin_library::JellyfinLibrary)
 //! and [`CatalogIds`](crate::adapters::jellyfin_library::CatalogIds),
-//! the [`GatewayStream`](crate::adapters::engines::GatewayStream),
-//! and the playback adapter. Not in this module, on purpose: rate
-//! limiting, CORS, case-insensitive path handling, access-log redaction
-//! (the shared compat edge in [`compat::http`](crate::http)), and
-//! the plugin-stream fallback (not wired yet).
+//! the [`GatewayAudio`](crate::adapters::audio::GatewayAudio) (which
+//! falls back to `streaming_source` plugins on a local miss), and the
+//! playback adapter. Not in this module, on purpose: rate limiting, CORS,
+//! case-insensitive path handling and access-log redaction (the shared
+//! compat edge in [`compat::http`](crate::http)).
 
 mod audio;
 mod browse;

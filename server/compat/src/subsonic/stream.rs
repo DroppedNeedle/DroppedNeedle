@@ -1,25 +1,21 @@
-//! Streaming seam: the `decide()` policy, the audio backend trait, and
-//! original-byte serving over the stream routes' range framing.
+//! Streaming seam: the audio backend trait, and serving what it opened
+//! over the stream routes' range framing.
 //!
-//! The stream engine owns real bytes; the compat adapters implement
-//! [`AudioBackend`] on top of it. Everything else here (the Feishin
-//! bitrate-0 quirk, download filenames) is ported from v2 and covered by
-//! goldens.
+//! The handlers translate Subsonic's parameters into [`StreamParams`]; the
+//! backend (the stream gateway in production) makes the one transcode
+//! decision and says which plan it ran. Everything else here (download
+//! filenames, cover buckets) is ported from v2 and covered by goldens.
 //!
-//! v2: the compat transcode service (`decide()`), the local files service
-//! (ranges, HEAD, MIME), and the Subsonic router (`_serve_file`, `_stream`,
-//! `_download`, `_cover_size`).
+//! v2: the local files service (ranges, HEAD, MIME) and the Subsonic
+//! router (`_serve_file`, `_stream`, `_download`, `_cover_size`).
 
 use axum::http::HeaderMap;
-use droppedneedle_media::stream::routes::{DirectSpan, content_type_for_extension};
+use droppedneedle_media::stream::routes::DirectSpan;
+pub use droppedneedle_media::stream::routes::StreamParams;
 
-use super::error::{GENERIC, SubsonicError};
+use super::error::{GENERIC, NOT_AUTHORIZED, SubsonicError};
 pub use crate::body::AudioBody;
 
-/// Minimum transcode bitrate kbps (v2 `_MIN_BITRATE_KBPS`).
-pub const MIN_BITRATE_KBPS: i64 = 32;
-/// Effectively-unset client ceiling (v2 `_HUGE`).
-pub const UNSET_BITRATE_KBPS: i64 = 1_000_000_000;
 /// Max `timeOffset` / transcode `offset` seconds.
 pub const MAX_OFFSET_SECONDS: f64 = 604_800.0;
 
@@ -33,100 +29,6 @@ pub fn transcode_hint(format: &str) -> (&'static str, &'static str) {
         "opus" => ("audio/ogg", "opus"),
         _ => ("audio/mpeg", "mp3"),
     }
-}
-
-/// Planned stream: direct file bytes or a transcode pipe.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StreamPlan {
-    /// True when the client must be transcoded for.
-    pub transcode: bool,
-    /// Output format (`mp3`/`opus`) when transcoding.
-    pub out_format: Option<String>,
-    /// Output bitrate kbps when transcoding.
-    pub out_bitrate_kbps: Option<i64>,
-    /// Start offset seconds (>= 0).
-    pub start_seconds: f64,
-}
-
-/// The `decide()` policy, rules in order:
-/// 1. force-original, transcoding off, or no ffmpeg -> direct.
-/// 2. A transcode needs an explicit client trigger: codec mismatch
-///    (`req` non-empty, not `raw`, not the source format) or the client
-///    ceiling under the source bitrate. The server max is a quality
-///    ceiling, never a trigger. `max_bitrate <= 0`/None means unset
-///    (Feishin sends bitrate cap 0, issues #464/#468).
-/// 3. Output is `req` when it is mp3/opus else the server default;
-///    bitrate is the client cap, or the codec default (opus 128, mp3 192)
-///    when the client set none, clamped to `max(min(that, server), 32)`.
-#[allow(clippy::too_many_arguments)]
-pub fn decide(
-    source_format: &str,
-    source_bitrate_kbps: Option<i64>,
-    requested_format: Option<&str>,
-    max_bitrate_kbps: Option<i64>,
-    force_original: bool,
-    start_seconds: f64,
-    transcoding_enabled: bool,
-    ffmpeg_available: bool,
-    default_format: &str,
-    server_max_bitrate_kbps: i64,
-) -> StreamPlan {
-    let start_seconds = start_seconds.max(0.0);
-    if force_original || !transcoding_enabled || !ffmpeg_available {
-        return StreamPlan {
-            transcode: false,
-            out_format: None,
-            out_bitrate_kbps: None,
-            start_seconds,
-        };
-    }
-    let client_ceiling = match max_bitrate_kbps {
-        Some(bitrate) if bitrate > 0 => bitrate,
-        _ => UNSET_BITRATE_KBPS,
-    };
-    let source = source_format.to_lowercase();
-    let codec_mismatch = requested_format.is_some_and(|req| {
-        let req = req.to_lowercase();
-        !req.is_empty() && req != "raw" && req != source
-    });
-    let bitrate_trigger =
-        source_bitrate_kbps.is_some_and(|source_bitrate| client_ceiling < source_bitrate);
-    if !codec_mismatch && !bitrate_trigger {
-        return StreamPlan {
-            transcode: false,
-            out_format: None,
-            out_bitrate_kbps: None,
-            start_seconds,
-        };
-    }
-    let out_format = match requested_format.map(str::to_lowercase) {
-        Some(req) if req == "mp3" || req == "opus" => req,
-        _ => default_format.to_lowercase(),
-    };
-    // No client cap: the codec's default bitrate, not the server ceiling.
-    let wanted = if client_ceiling == UNSET_BITRATE_KBPS {
-        droppedneedle_media::stream::transcode::default_bitrate_kbps(&out_format)
-    } else {
-        client_ceiling
-    };
-    let bitrate = wanted.min(server_max_bitrate_kbps).max(MIN_BITRATE_KBPS);
-    StreamPlan {
-        transcode: true,
-        out_format: Some(out_format),
-        out_bitrate_kbps: Some(bitrate),
-        start_seconds,
-    }
-}
-
-/// Estimated transcode length (bitrate*1000/8*(duration-start)),
-/// attached only with `estimateContentLength=true` on transcodes.
-pub fn estimate_transcode_length(
-    bitrate_kbps: i64,
-    duration_seconds: f64,
-    start_seconds: f64,
-) -> i64 {
-    let remaining = (duration_seconds - start_seconds).max(0.0);
-    (bitrate_kbps as f64 * 1000.0 / 8.0 * remaining) as i64
 }
 
 /// Download filename: sanitize the stem (`[^A-Za-z0-9._ -]` -> `_`,
@@ -251,17 +153,13 @@ pub fn placeholder_cover(seed: &str) -> Option<Vec<u8>> {
     Some(bytes.into_inner())
 }
 
-/// Audio facts the backend reports for one file id.
+/// Facts about an original the backend opened.
 #[derive(Debug, Clone)]
 pub struct AudioFacts {
     /// File size bytes.
     pub size: u64,
-    /// Audio suffix (`mp3`, `flac`, ...).
-    pub suffix: String,
-    /// Source bitrate kbps, if known.
-    pub bitrate_kbps: Option<i64>,
-    /// Duration seconds, if known.
-    pub duration_seconds: Option<f64>,
+    /// The content type the backend serves it under.
+    pub content_type: String,
 }
 
 /// One served audio response: headers plus the body (already ranged).
@@ -307,12 +205,41 @@ impl OpenedAudio {
     }
 }
 
-/// Backend failure: a plain storage failure (surfaced as code 0) or
-/// a full concurrency pool (surfaced as 429 + `Retry-After: 1`).
+/// A transcode the backend started, or for HEAD would start.
+pub struct TranscodedAudio {
+    /// Content type of the output.
+    pub content_type: String,
+    /// Estimated length, when the request asked for one.
+    pub estimated_len: Option<u64>,
+    /// The output as ffmpeg produces it; empty for HEAD.
+    pub body: AudioBody,
+}
+
+/// What the backend opened for one request: the original, or a transcode.
+pub enum PlayedAudio {
+    /// The original bytes, served by range.
+    Original(OpenedAudio),
+    /// Transcode output, served whole.
+    Transcoded(TranscodedAudio),
+}
+
+/// Why the backend could not serve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackendFailure {
+    /// A storage or server failure (code 0).
+    Failed,
+    /// Playback refused (code 50).
+    Forbidden,
+    /// A full concurrency pool (429 + `Retry-After: 1`).
+    Full,
+}
+
+/// Backend failure: a plain storage failure (surfaced as code 0), a
+/// refusal (code 50), or a full concurrency pool (429 + `Retry-After: 1`).
 #[derive(Debug, Clone)]
 pub struct BackendError {
     message: String,
-    capacity_full: bool,
+    failure: BackendFailure,
 }
 
 impl BackendError {
@@ -320,7 +247,15 @@ impl BackendError {
     pub fn failed(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            capacity_full: false,
+            failure: BackendFailure::Failed,
+        }
+    }
+
+    /// Playback refused, with a message the client may see.
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            failure: BackendFailure::Forbidden,
         }
     }
 
@@ -328,13 +263,13 @@ impl BackendError {
     pub fn full() -> Self {
         Self {
             message: "stream capacity exhausted".to_owned(),
-            capacity_full: true,
+            failure: BackendFailure::Full,
         }
     }
 
     /// True when the caller must answer 429.
     pub fn is_full(&self) -> bool {
-        self.capacity_full
+        self.failure == BackendFailure::Full
     }
 }
 
@@ -346,9 +281,9 @@ impl std::fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
-/// Minimal audio backend, implemented over the stream engine (local files
-/// plus the transcode pipeline) in `compat::adapters::engines`. Leases,
-/// concurrency pools and cancellation live behind this trait.
+/// Minimal audio backend, implemented over the stream gateway in
+/// `compat::adapters::audio`. The transcode decision, leases, concurrency
+/// pools and cancellation live behind this trait.
 pub trait AudioBackend: Clone + Send + Sync {
     /// The backend scoped to one authenticated caller, so stream leases
     /// count against that user. Backends without leases return themselves.
@@ -356,27 +291,15 @@ pub trait AudioBackend: Clone + Send + Sync {
         self.clone()
     }
 
-    /// Facts for a file id from metadata alone (HEAD), or None when
-    /// nothing can serve the track.
-    fn audio_facts(
+    /// Open one file id as `params` ask: the backend decides whether the
+    /// original or a transcode plays. `head_only` needs the facts alone and
+    /// never starts a transcode. `None` when nothing can serve the track.
+    fn play(
         &self,
         file_id: &str,
-    ) -> impl Future<Output = Result<Option<AudioFacts>, BackendError>> + Send;
-
-    /// Open the original once for a GET: facts first, then one span of
-    /// bytes read as the response streams.
-    fn open_original(
-        &self,
-        file_id: &str,
-    ) -> impl Future<Output = Result<Option<OpenedAudio>, BackendError>> + Send;
-
-    /// Transcode output + content type for a plan (ffmpeg pipe behind
-    /// the seam), streamed as ffmpeg produces it.
-    fn transcode(
-        &self,
-        file_id: &str,
-        plan: &StreamPlan,
-    ) -> impl Future<Output = Result<(AudioBody, String), BackendError>> + Send;
+        params: &StreamParams,
+        head_only: bool,
+    ) -> impl Future<Output = Result<Option<PlayedAudio>, BackendError>> + Send;
 }
 
 /// Failure serving original bytes: a protocol error, a 416 range
@@ -400,63 +323,77 @@ impl From<SubsonicError> for ServeError {
 
 impl From<BackendError> for ServeError {
     fn from(err: BackendError) -> Self {
-        if err.is_full() {
-            ServeError::CapacityFull
-        } else {
-            ServeError::Subsonic(SubsonicError::new(GENERIC, err.to_string()))
+        match err.failure {
+            BackendFailure::Full => ServeError::CapacityFull,
+            BackendFailure::Forbidden => {
+                ServeError::Subsonic(SubsonicError::new(NOT_AUTHORIZED, err.message))
+            }
+            BackendFailure::Failed => {
+                ServeError::Subsonic(SubsonicError::new(GENERIC, err.message))
+            }
         }
     }
 }
 
-/// Serve original bytes (v2 `_serve_file` minus the lease plumbing, which
-/// lives behind [`AudioBackend`]). Ranges, lengths and the 200/206/416
-/// verdict come from the stream routes' [`DirectSpan`], so they match the
-/// native and Jellyfin routes. HEAD answers the status and headers GET
-/// would (HEAD honors Range, like the stream engine) with an empty body,
-/// from facts alone. GET opens the backend exactly once
-/// ([`AudioBackend::open_original`]) and streams the asked span.
-pub async fn serve_original<B: AudioBackend>(
+/// Serve one file id as `params` ask (v2 `_serve_file` and the transcode
+/// pipe, minus the lease plumbing, which lives behind [`AudioBackend`]).
+///
+/// An original takes its ranges, lengths and the 200/206/416 verdict from
+/// the stream routes' [`DirectSpan`], so they match the native and Jellyfin
+/// routes; HEAD honors Range too. A transcode is 200 with
+/// `Accept-Ranges: none` and `Cache-Control: no-store`, sized only by the
+/// estimate the request asked for. HEAD answers the headers GET would,
+/// with an empty body and no transcode started. GET opens the backend
+/// exactly once.
+pub async fn serve<B: AudioBackend>(
     backend: &B,
     file_id: &str,
+    params: &StreamParams,
     range_header: Option<&str>,
     head_only: bool,
     content_disposition: Option<String>,
 ) -> Result<ServedAudio, ServeError> {
-    let not_found = || SubsonicError::code_only(super::error::NOT_FOUND);
-    let (facts, opened) = if head_only {
-        let facts = backend.audio_facts(file_id).await?.ok_or_else(not_found)?;
-        (facts, None)
-    } else {
-        let opened = backend
-            .open_original(file_id)
-            .await?
-            .ok_or_else(not_found)?;
-        (opened.facts.clone(), Some(opened))
+    let played = backend
+        .play(file_id, params, head_only)
+        .await?
+        .ok_or_else(|| SubsonicError::code_only(super::error::NOT_FOUND))?;
+    let mut headers = vec![("Content-Encoding".to_owned(), "identity".to_owned())];
+    let opened = match played {
+        PlayedAudio::Original(opened) => opened,
+        PlayedAudio::Transcoded(transcoded) => {
+            headers.push(("Accept-Ranges".to_owned(), "none".to_owned()));
+            headers.push(("Cache-Control".to_owned(), "no-store".to_owned()));
+            if let Some(len) = transcoded.estimated_len {
+                headers.push(("Content-Length".to_owned(), len.to_string()));
+            }
+            return Ok(ServedAudio {
+                status: 200,
+                content_type: transcoded.content_type,
+                headers,
+                body: transcoded.body,
+            });
+        }
     };
-    let content_type = content_type_for_extension(&facts.suffix).ok_or_else(|| {
-        SubsonicError::new(GENERIC, format!("Cannot stream .{} files", facts.suffix))
-    })?;
-    let span = DirectSpan::for_request(range_header, facts.size)
-        .ok_or(ServeError::RangeUnsatisfiable(facts.size))?;
+    let content_type = opened.facts.content_type.clone();
+    let span = DirectSpan::for_request(range_header, opened.facts.size)
+        .ok_or(ServeError::RangeUnsatisfiable(opened.facts.size))?;
     let mut framing = HeaderMap::new();
     span.write_headers(&mut framing);
-    let mut headers = vec![("Content-Encoding".to_owned(), "identity".to_owned())];
     headers.extend(framing.iter().filter_map(|(name, value)| {
         Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
     }));
     if let Some(disposition) = content_disposition {
         headers.push(("Content-Disposition".to_owned(), disposition));
     }
-    let body = match opened {
-        Some(opened) => opened.read(span.start, span.len),
-        None => {
-            headers.push(("Content-Type".to_owned(), content_type.to_owned()));
-            AudioBody::empty()
-        }
+    let body = if head_only {
+        headers.push(("Content-Type".to_owned(), content_type.clone()));
+        AudioBody::empty()
+    } else {
+        opened.read(span.start, span.len)
     };
     Ok(ServedAudio {
         status: span.status().as_u16(),
-        content_type: content_type.to_owned(),
+        content_type,
         headers,
         body,
     })

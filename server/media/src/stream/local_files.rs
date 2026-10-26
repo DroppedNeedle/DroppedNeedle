@@ -18,7 +18,7 @@ use droppedneedle_library::scan::coordinator::{ResolverSource as _, SharedResolv
 use droppedneedle_library::scan::roots::RootRegistry;
 
 /// One catalog file playback or a download may serve.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CatalogFile {
     /// Local track id.
     pub track_id: String,
@@ -35,10 +35,16 @@ pub struct CatalogFile {
     pub disc_number: i64,
     /// Track number within the disc.
     pub track_number: i64,
+    /// Audio format the scan read, e.g. `flac`.
+    pub file_format: String,
+    /// Source bitrate in kbps, when the scan read one.
+    pub bitrate_kbps: Option<i64>,
+    /// Length in seconds, when the scan read one.
+    pub duration_seconds: Option<f64>,
 }
 
 /// An album and its streamable files, disc and track order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AlbumFiles {
     /// Album title.
     pub title: String,
@@ -57,8 +63,8 @@ pub enum PathRefusal {
     Outside,
 }
 
-const FILE_COLUMNS: &str =
-    "id, root_id, relative_path, file_path, title, disc_number, track_number";
+const FILE_COLUMNS: &str = "id, root_id, relative_path, file_path, title, disc_number, \
+     track_number, file_format, bit_rate, duration_seconds";
 
 fn file_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<CatalogFile, sqlx::Error> {
     Ok(CatalogFile {
@@ -69,6 +75,9 @@ fn file_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<CatalogFile, sqlx::Err
         title: row.try_get("title")?,
         disc_number: row.try_get("disc_number")?,
         track_number: row.try_get("track_number")?,
+        file_format: row.try_get("file_format")?,
+        bitrate_kbps: row.try_get("bit_rate")?,
+        duration_seconds: row.try_get("duration_seconds")?,
     })
 }
 
@@ -238,7 +247,7 @@ impl LibraryFiles {
     }
 
     /// The file of one streamable catalog track, confined to the library
-    /// roots.
+    /// roots, with the format, bitrate and length the scan read from it.
     pub async fn locate_track(
         &self,
         track_id: &str,
@@ -275,6 +284,9 @@ mod tests {
             title: "Song".to_owned(),
             disc_number: 1,
             track_number: 1,
+            file_format: "flac".to_owned(),
+            bitrate_kbps: None,
+            duration_seconds: None,
         }
     }
 

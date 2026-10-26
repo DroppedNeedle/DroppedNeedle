@@ -11,10 +11,10 @@ use super::models::{PlaybackInfoBody, PlaybackInfoResponse};
 use super::params::{self, CiParams};
 use super::router::*;
 use super::seams::{
-    ByteOutcome, DecideInput, IdMap, LibraryRead, PlaybackSessions, StreamEngine, StreamPlan,
-    TICKS_PER_SECOND, decide,
+    ByteOutcome, IdMap, LibraryRead, PlaybackSessions, StreamEngine, StreamParams, TICKS_PER_SECOND,
 };
 use crate::subsonic::stream::download_filename;
+use droppedneedle_media::stream::transcode::{HLS_SEGMENT_FORMAT, TrackInfo, decide};
 
 // ===== Streaming + PlaybackInfo =====
 
@@ -63,17 +63,16 @@ where
     }
 }
 
-/// Run the policy and serve direct or transcoded bytes (v2
-/// `_stream_decided`, minus the plugin fallback: no plugin seam exists
-/// here yet, so a local miss is a plain 404.
-pub(super) async fn stream_decided<L, E, P, I>(
+/// Serve one track as `params` ask; the stream gateway decides direct or
+/// transcode (v2 `_stream_decided`). A local miss falls back to a
+/// `streaming_source` plugin behind the engine seam. HEAD answers the
+/// status and headers GET would, with no body and no transcode started.
+async fn play<L, E, P, I>(
     state: &JellyfinState<L, E, P, I>,
-    range: Option<&str>,
     internal: &str,
-    req_format: Option<String>,
-    max_kbps: Option<u32>,
-    start_seconds: f64,
-    force: bool,
+    params: &StreamParams,
+    range: Option<&str>,
+    head: bool,
 ) -> Response
 where
     L: LibraryRead,
@@ -81,35 +80,17 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    let Some(track) = state.library.track("", internal).await else {
-        return error(StatusCode::NOT_FOUND);
-    };
-    let settings = state.settings.jellyfin();
-    let plan = decide(&DecideInput {
-        src_format: track.file_format.as_deref(),
-        src_bitrate_kbps: track.bitrate.unwrap_or(0),
-        requested: req_format.as_deref(),
-        ceiling_kbps: max_kbps,
-        force_original: force,
-        start_seconds,
-        transcoding_enabled: settings.transcoding_enabled,
-        server_max_kbps: settings.transcode_max_bitrate_kbps,
-        default_format: &settings.transcode_default_format,
-        ffmpeg: settings.ffmpeg_available,
-    });
-    match plan {
-        StreamPlan::Direct => outcome_response(&state.engine.direct(internal, range).await),
-        StreamPlan::Transcode {
-            format,
-            bitrate_kbps,
-            start_seconds,
-        } => outcome_response(
-            &state
-                .engine
-                .transcode(internal, &format, bitrate_kbps, start_seconds)
-                .await,
-        ),
+    let outcome = state.engine.play(internal, params, range, head).await;
+    if head {
+        head_outcome_response(&outcome)
+    } else {
+        outcome_response(&outcome)
     }
+}
+
+/// A client's bits-per-second value as a kbps ceiling; 0 or less is none.
+fn ceiling_kbps(bits_per_second: i64) -> Option<i64> {
+    (bits_per_second > 0).then(|| (bits_per_second as f64 / 1000.0).round() as i64)
 }
 
 pub(super) async fn audio<L, E, P, I>(
@@ -144,11 +125,11 @@ where
             let missing = not_found_item(&request);
             super::lyrics::lyrics(&state, &item_id, missing).await
         }
-        "universal" => universal(&state, &headers, query.as_deref(), &item_id).await,
+        "universal" => universal(&state, &headers, query.as_deref(), &item_id, false).await,
         HLS_PLAYLIST => hls_playlist(&state, query.as_deref(), &item_id).await,
         HLS_SEGMENT => hls_segment(&state, query.as_deref(), &item_id).await,
         _ if is_stream_tail(&tail) => {
-            audio_stream(&state, &headers, query.as_deref(), &item_id).await
+            audio_stream(&state, &headers, query.as_deref(), &item_id, false).await
         }
         _ => error(StatusCode::NOT_FOUND),
     }
@@ -230,8 +211,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    use droppedneedle_media::stream::transcode::{HLS_SEGMENT_FORMAT, out_bitrate_kbps};
-
     let settings = state.settings.jellyfin();
     if !settings.transcoding_enabled || !settings.ffmpeg_available {
         return error(StatusCode::NOT_FOUND);
@@ -241,24 +220,12 @@ where
         Err(denied) => return denied,
     };
     let q = CiParams::parse(query);
-    let audio_bps = params::qint(&q, "audioBitRate", 0);
-    let cap_kbps = (audio_bps > 0).then(|| (audio_bps as f64 / 1000.0).round() as i64);
-    let bitrate = out_bitrate_kbps(
-        HLS_SEGMENT_FORMAT,
-        cap_kbps,
-        i64::from(settings.transcode_max_bitrate_kbps),
-    );
-    outcome_response(
-        &state
-            .engine
-            .transcode(
-                &internal,
-                HLS_SEGMENT_FORMAT,
-                u32::try_from(bitrate).unwrap_or(u32::MAX),
-                0.0,
-            )
-            .await,
-    )
+    let params = StreamParams {
+        format: Some(HLS_SEGMENT_FORMAT.to_owned()),
+        max_bitrate_kbps: ceiling_kbps(params::qint(&q, "audioBitRate", 0)),
+        ..StreamParams::default()
+    };
+    play(state, &internal, &params, None, false).await
 }
 
 /// `GET /Items/{id}/File`: the original file with Range support. Finamp
@@ -427,12 +394,11 @@ where
         Err(denied) => return denied,
     };
     let range = header(headers, "range");
-    let mut outcome = if head {
-        state.engine.head(&internal, range).await
-    } else {
-        let engine = state.engine.for_caller(&caller.id);
-        engine.direct(&internal, range).await
-    };
+    let mut outcome = state
+        .engine
+        .for_caller(&caller.id)
+        .play(&internal, &StreamParams::original(), range, head)
+        .await;
     if download && matches!(outcome.status, 200 | 206) {
         // A row deleted since the bytes were opened still downloads, under
         // a plain name.
@@ -465,25 +431,6 @@ fn served_format(outcome: &ByteOutcome) -> &'static str {
     droppedneedle_media::stream::routes::extension_for_content_type(content_type).unwrap_or("")
 }
 
-/// HEAD for one item: the status and headers a direct GET would answer.
-async fn head_response<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
-    headers: &HeaderMap,
-    item_id: &str,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
-    let internal = match decode_track(state, item_id).await {
-        Ok(internal) => internal,
-        Err(denied) => return denied,
-    };
-    head_outcome_response(&state.engine.head(&internal, header(headers, "range")).await)
-}
-
 /// A HEAD outcome as a response: its status and headers, no body.
 fn head_outcome_response(outcome: &ByteOutcome) -> Response {
     if outcome.status == StatusCode::NOT_FOUND.as_u16() {
@@ -499,9 +446,9 @@ fn head_outcome_response(outcome: &ByteOutcome) -> Response {
         .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
-/// `HEAD /Audio/...`: the same status and headers GET would answer
-/// (200/206/416; HEAD honors Range), always with an empty body, no
-/// lease (v2 `_audio_stream_head`).
+/// `HEAD /Audio/...`: the same status and headers GET would answer, the
+/// transcode decision included (200/206/416; HEAD honors Range), always
+/// with an empty body and no transcode started (v2 `_audio_stream_head`).
 pub(super) async fn audio_head<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path((item_id, tail)): Path<(String, String)>,
@@ -526,9 +473,12 @@ where
     }
     let headers = request.headers().clone();
     let query = request.uri().query().map(str::to_owned);
-    if let Err(denied) = authed(&state.passwords, &headers, query.as_deref()).await {
-        return denied;
-    }
+    let caller = match authed(&state.passwords, &headers, query.as_deref()).await {
+        Ok(caller) => caller,
+        Err(denied) => return denied,
+    };
+    let mut state = state;
+    state.engine = state.engine.for_caller(&caller.principal.id);
     if tail == HLS_PLAYLIST {
         let (parts, body) = hls_playlist(&state, query.as_deref(), &item_id)
             .await
@@ -544,15 +494,23 @@ where
         }
         return response;
     }
-    head_response(&state, &headers, &item_id).await
+    if tail == "universal" {
+        universal(&state, &headers, query.as_deref(), &item_id, true).await
+    } else {
+        audio_stream(&state, &headers, query.as_deref(), &item_id, true).await
+    }
 }
 
-/// `/universal` container negotiation (v2 `_universal`).
+/// `/universal` container negotiation (v2 `_universal`): a source format
+/// the client lists in `Container` asks for nothing, else `AudioCodec` is
+/// the requested format; `MaxStreamingBitrate` is the ceiling and
+/// `StartTimeTicks` the offset.
 pub(super) async fn universal<L, E, P, I>(
     state: &JellyfinState<L, E, P, I>,
     headers: &HeaderMap,
     query: Option<&str>,
     item_id: &str,
+    head: bool,
 ) -> Response
 where
     L: LibraryRead,
@@ -565,16 +523,13 @@ where
         Err(denied) => return denied,
     };
     let q = CiParams::parse(query);
-    let max_bps = params::qint(&q, "MaxStreamingBitrate", 0);
-    let max_kbps = (max_bps > 0).then(|| (max_bps as f64 / 1000.0).round() as u32);
-    let start_seconds = params::qint(&q, "StartTimeTicks", 0) as f64 / TICKS_PER_SECOND as f64;
     let accepted = accepted_containers(q.get("Container"));
     let track_format = state
         .library
         .track("", &internal)
         .await
         .and_then(|t| t.file_format);
-    let req_format = if track_format
+    let format = if track_format
         .as_deref()
         .is_some_and(|f| accepted.contains(&f.to_lowercase()))
     {
@@ -582,26 +537,24 @@ where
     } else {
         map_codec(q.get("AudioCodec"))
     };
-    let range = header(headers, "range").map(str::to_owned);
-    stream_decided(
-        state,
-        range.as_deref(),
-        &internal,
-        req_format,
-        max_kbps,
-        start_seconds,
-        false,
-    )
-    .await
+    let params = StreamParams {
+        format,
+        max_bitrate_kbps: ceiling_kbps(params::qint(&q, "MaxStreamingBitrate", 0)),
+        start_seconds: params::qint(&q, "StartTimeTicks", 0) as f64 / TICKS_PER_SECOND as f64,
+        estimate_content_length: false,
+    };
+    play(state, &internal, &params, header(headers, "range"), head).await
 }
 
-/// `/stream[.ext]`: `static=true` (case-insensitive) forces direct (v2
-/// `_audio_stream`).
+/// `/stream[.ext]`: `static=true` (case-insensitive) asks for the original
+/// (v2 `_audio_stream`); otherwise `audioCodec` is the requested format,
+/// `audioBitRate` the ceiling and `startTimeTicks` the offset.
 pub(super) async fn audio_stream<L, E, P, I>(
     state: &JellyfinState<L, E, P, I>,
     headers: &HeaderMap,
     query: Option<&str>,
     item_id: &str,
+    head: bool,
 ) -> Response
 where
     L: LibraryRead,
@@ -614,24 +567,17 @@ where
         Err(denied) => return denied,
     };
     let q = CiParams::parse(query);
-    if q.get("static").unwrap_or("").eq_ignore_ascii_case("true") {
-        let range = header(headers, "range");
-        return outcome_response(&state.engine.direct(&internal, range).await);
-    }
-    let audio_bps = params::qint(&q, "audioBitRate", 0);
-    let max_kbps = (audio_bps > 0).then(|| (audio_bps as f64 / 1000.0).round() as u32);
-    let start_seconds = params::qint(&q, "startTimeTicks", 0) as f64 / TICKS_PER_SECOND as f64;
-    let range = header(headers, "range").map(str::to_owned);
-    stream_decided(
-        state,
-        range.as_deref(),
-        &internal,
-        map_codec(q.get("audioCodec")),
-        max_kbps,
-        start_seconds,
-        false,
-    )
-    .await
+    let params = if q.get("static").unwrap_or("").eq_ignore_ascii_case("true") {
+        StreamParams::original()
+    } else {
+        StreamParams {
+            format: map_codec(q.get("audioCodec")),
+            max_bitrate_kbps: ceiling_kbps(params::qint(&q, "audioBitRate", 0)),
+            start_seconds: params::qint(&q, "startTimeTicks", 0) as f64 / TICKS_PER_SECOND as f64,
+            estimate_content_length: false,
+        }
+    };
+    play(state, &internal, &params, header(headers, "range"), head).await
 }
 
 /// GET+POST PlaybackInfo (v2 `_playback_info`). `DirectStreamUrl` embeds
@@ -687,24 +633,20 @@ where
             max_bps = Some(parsed);
         }
     }
-    let max_kbps = max_bps
-        .filter(|b| *b > 0)
-        .map(|b| (b as f64 / 1000.0).round() as u32);
     let settings = state.settings.jellyfin();
-    let will_transcode = matches!(
-        decide(&DecideInput {
-            src_format: track.file_format.as_deref(),
-            src_bitrate_kbps: track.bitrate.unwrap_or(0),
-            requested: None,
-            ceiling_kbps: max_kbps,
-            force_original: false,
-            start_seconds: 0.0,
-            transcoding_enabled: settings.transcoding_enabled,
-            server_max_kbps: settings.transcode_max_bitrate_kbps,
-            default_format: &settings.transcode_default_format,
-            ffmpeg: settings.ffmpeg_available,
-        }),
-        StreamPlan::Transcode { .. }
+    // The same decision the stream gateway makes, on the same catalog facts.
+    let plan = decide(
+        &TrackInfo {
+            file_format: track.file_format.clone().unwrap_or_default(),
+            bitrate_kbps: track.bitrate.map(i64::from),
+            duration_seconds: track.duration_seconds.unwrap_or(0.0),
+        },
+        None,
+        max_bps.and_then(ceiling_kbps),
+        false,
+        0.0,
+        &settings.transcode_policy(),
+        settings.ffmpeg_available,
     );
     let psid = Uuid::new_v4().simple().to_string();
     let ext = track
@@ -721,20 +663,16 @@ where
         settings.transcoding_enabled && settings.ffmpeg_available,
     );
     src.direct_stream_url = Some(direct_url);
-    if will_transcode {
-        let out = settings.transcode_default_format.clone();
+    if let Some(out) = plan.out_format() {
+        let codec = out.name();
         // Root-relative yet inside the deployment prefix: players resolve
         // against the advertised origin, so a bare path would escape the
         // base path under non-empty BASE_PATH deployments (v2 `_playback_info`).
         src.transcoding_url = Some(format!(
-            "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={out}&Container={out}&PlaySessionId={psid}&api_key={}",
+            "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={codec}&Container={codec}&PlaySessionId={psid}&api_key={}",
             state.listener.base_path, authed.principal.token,
         ));
-        src.transcoding_container = Some(if out == "mp3" {
-            "mp3".to_owned()
-        } else {
-            "ogg".to_owned()
-        });
+        src.transcoding_container = Some(out.container().to_owned());
     }
     json(
         StatusCode::OK,

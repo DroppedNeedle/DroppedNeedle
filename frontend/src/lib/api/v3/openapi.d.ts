@@ -46867,6 +46867,8 @@ export interface operations {
                 format?: string;
                 /** @description Client bitrate cap in kbps (0 or unset means uncapped) */
                 max_bitrate?: number;
+                /** @description Seek offset in seconds for a transcode */
+                start_seconds?: number;
                 /** @description Ask a transcode landing for its estimated Content-Length */
                 estimate_content_length?: boolean;
             };
@@ -46962,7 +46964,16 @@ export interface operations {
     };
     stream_head: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Requested output codec: mp3, opus, or raw */
+                format?: string;
+                /** @description Client bitrate cap in kbps (0 or unset means uncapped) */
+                max_bitrate?: number;
+                /** @description Seek offset in seconds for a transcode */
+                start_seconds?: number;
+                /** @description Ask a transcode landing for its estimated Content-Length */
+                estimate_content_length?: boolean;
+            };
             header?: never;
             path: {
                 /** @description Audio source: local, jellyfin, navidrome, plex, or plugin */

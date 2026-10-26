@@ -14,11 +14,11 @@
 //!   maps classified credentials back onto `compat_auth`'s `authenticate`
 //!   so the contract runs exactly once; Jellyfin handlers call
 //!   `resolve_token`/`authenticate_by_name` directly.
-//! - Streaming: [`GatewayAudio`](adapters::engines::GatewayAudio) and
-//!   [`GatewayStream`](adapters::engines::GatewayStream) over the
-//!   [`StreamEngine`](droppedneedle_media::stream::routes::StreamEngine). Range slicing
-//!   stays in each protocol layer (byte-identical rules); leases count
-//!   against the authenticated caller.
+//! - Streaming: [`GatewayAudio`](adapters::audio::GatewayAudio), for both
+//!   protocols, over the
+//!   [`StreamEngine`](droppedneedle_media::stream::routes::StreamEngine), which
+//!   makes the one transcode decision; ranges frame through the stream
+//!   routes' framing, and leases count against the authenticated caller.
 //! - Library: [`CompatLibrary`](adapters::library::CompatLibrary) over the
 //!   v3 catalog and the shared collections, so playlists, favorites, queues
 //!   and bookmarks are the same rows the web UI uses.

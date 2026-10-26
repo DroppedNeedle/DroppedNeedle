@@ -17,7 +17,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::middleware::from_fn_with_state;
 
-use crate::adapters::engines::{GatewayAudio, GatewayStream};
+use crate::adapters::audio::GatewayAudio;
 use crate::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary, REBUILD_COOLDOWN};
 use crate::adapters::library::CompatLibrary;
 use crate::adapters::playback::CompatPlayback;
@@ -43,7 +43,7 @@ pub type CompatAudio = GatewayAudio<MediaEngine>;
 /// Wired Jellyfin router state.
 pub type CompatJellyfinState = crate::jellyfin::JellyfinState<
     JellyfinLibrary,
-    GatewayStream<MediaEngine>,
+    GatewayAudio<MediaEngine>,
     CompatPlayback,
     CatalogIds,
 >;
@@ -133,7 +133,7 @@ impl CompatSetup {
         let jellyfin = JellyfinState::new(
             passwords.clone(),
             JellyfinLibrary::new(deps.library.clone()),
-            GatewayStream::new(Arc::clone(&deps.engine)),
+            GatewayAudio::new(Arc::clone(&deps.engine)),
             playback,
             CatalogIds::new(deps.library, deps.crypto, REBUILD_COOLDOWN),
             deps.settings.clone(),

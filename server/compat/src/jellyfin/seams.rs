@@ -11,11 +11,11 @@
 //!   ([`TrackFilter`], [`AlbumFilter`], [`ItemSort`], start, limit) and the
 //!   library answers that page plus the match total, so production filters,
 //!   orders and pages in SQL and the routes shape only the page.
-//! - Streaming: [`StreamEngine`]. Production binds the stream engine
-//!   (real `stream_track` byte contract, ffmpeg pipe, concurrency leases);
-//!   the `fake` engine replays the same range/status contract over seeded
-//!   bytes so the goldens pin it. [`decide`] ports v2's transcode policy
-//!   rules verbatim for the PlaybackInfo direct/transcode fork.
+//! - Streaming: [`StreamEngine`]. Production binds the stream gateway,
+//!   which makes the one transcode decision (byte contract, ffmpeg pipe,
+//!   concurrency leases); the `fake` engine replays the same range/status
+//!   contract over seeded bytes so the goldens pin it. The routes only
+//!   translate Jellyfin's parameters into [`StreamParams`].
 //! - Ids: [`IdMap`]. Production derives the ids from the catalog, album
 //!   and artist ids with the data key.
 //! - Playback sessions: [`PlaybackSessions`]. Production binds the
@@ -24,6 +24,8 @@
 use droppedneedle_auth::compat_auth::jellyfin::{JellyfinUser, PolicyFacts, effective_name};
 
 use droppedneedle_kernel::runtime_config::sections::DownloadAccess;
+pub use droppedneedle_media::stream::routes::StreamParams;
+use droppedneedle_media::stream::transcode::{OutFormat, TranscodeSettings};
 
 use super::models::UserDto;
 
@@ -59,6 +61,21 @@ impl JellyfinSettings {
         PolicyFacts {
             audio_transcoding: self.transcoding_enabled && self.ffmpeg_available,
             content_downloading: self.download_access.admits(role),
+        }
+    }
+}
+
+impl JellyfinSettings {
+    /// The transcode policy these settings set, for the one decision.
+    pub fn transcode_policy(&self) -> TranscodeSettings {
+        TranscodeSettings {
+            transcoding_enabled: self.transcoding_enabled,
+            default_format: if self.transcode_default_format.eq_ignore_ascii_case("opus") {
+                OutFormat::Opus
+            } else {
+                OutFormat::Mp3
+            },
+            max_bitrate_kbps: i64::from(self.transcode_max_bitrate_kbps),
         }
     }
 }
@@ -545,78 +562,6 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
 
 // ===== Streaming seam =====
 
-/// Inputs to the direct-vs-transcode policy (v2 `decide()`).
-#[derive(Debug, Clone)]
-pub struct DecideInput<'a> {
-    /// Lowercase source container (`track.file_format`).
-    pub src_format: Option<&'a str>,
-    /// Source bitrate in kbps (`track.bitrate or 0`).
-    pub src_bitrate_kbps: u32,
-    /// Client-requested output (`requested_format`), already codec-mapped.
-    pub requested: Option<&'a str>,
-    /// Client ceiling in kbps (`max_bitrate_kbps`).
-    pub ceiling_kbps: Option<u32>,
-    pub force_original: bool,
-    pub start_seconds: f64,
-    pub transcoding_enabled: bool,
-    /// Server quality ceiling, default 320: a ceiling, never a trigger.
-    pub server_max_kbps: u32,
-    /// Default output when the request names none usable.
-    pub default_format: &'a str,
-    pub ffmpeg: bool,
-}
-
-/// The policy verdict (v2 `StreamPlan` subset).
-#[derive(Debug, Clone, PartialEq)]
-pub enum StreamPlan {
-    Direct,
-    Transcode {
-        format: String,
-        bitrate_kbps: u32,
-        start_seconds: f64,
-    },
-}
-
-/// Direct-vs-transcode policy, v2 `transcode_service.decide()` rules in
-/// order: silent direct fallback first; a transcode needs an explicit client
-/// request (codec mismatch or client ceiling below source); the server max
-/// only caps quality once transcoding.
-pub fn decide(input: &DecideInput) -> StreamPlan {
-    const HUGE: u32 = 1_000_000_000;
-    const MIN_BITRATE_KBPS: u32 = 64;
-    if input.force_original || !input.transcoding_enabled || !input.ffmpeg {
-        return StreamPlan::Direct;
-    }
-    let ceiling = match input.ceiling_kbps {
-        Some(c) if c > 0 => c,
-        _ => HUGE,
-    };
-    let src = input.src_format.unwrap_or("").to_lowercase();
-    let req = input.requested.unwrap_or("").to_lowercase();
-    let codec_mismatch = !req.is_empty() && req != "raw" && req != src;
-    let over_ceiling = ceiling < input.src_bitrate_kbps;
-    if !codec_mismatch && !over_ceiling {
-        return StreamPlan::Direct;
-    }
-    let out = if req == "mp3" || req == "opus" {
-        req
-    } else {
-        input.default_format.to_lowercase()
-    };
-    // No client cap: the codec's default bitrate, not the server ceiling.
-    let wanted = if ceiling == HUGE {
-        u32::try_from(droppedneedle_media::stream::transcode::default_bitrate_kbps(&out))
-            .unwrap_or(HUGE)
-    } else {
-        ceiling
-    };
-    StreamPlan::Transcode {
-        format: out,
-        bitrate_kbps: wanted.min(input.server_max_kbps).max(MIN_BITRATE_KBPS),
-        start_seconds: input.start_seconds.max(0.0),
-    }
-}
-
 /// Served audio: status, headers, body (in memory or streamed).
 #[derive(Debug, Clone)]
 pub struct ByteOutcome {
@@ -635,27 +580,19 @@ pub trait StreamEngine: Clone + Send + Sync + 'static {
         self.clone()
     }
 
-    /// Direct bytes with range support (200/206/416 contract).
-    fn direct(
+    /// Play one file id as `params` ask: the engine decides whether the
+    /// original (with range support, the 200/206/416 contract) or a
+    /// transcode plays. A transcode never carries a Content-Length (estimate
+    /// off on Jellyfin) and streams unsized: axum stamps a `Content-Length`
+    /// on sized bodies. `head_only` answers the same status and headers with
+    /// an empty body and never starts a transcode. Unknown ids are 404,
+    /// refusals 403, a full pool 429 with `Retry-After`, and failures 500.
+    fn play(
         &self,
         file_id: &str,
+        params: &StreamParams,
         range: Option<&str>,
-    ) -> impl Future<Output = ByteOutcome> + Send;
-    /// HEAD outcome for a file: the same status and headers a `direct`
-    /// GET would answer (200/206/416, unknown ids 404), always with an
-    /// empty body. The router maps it straight onto the response.
-    fn head(&self, file_id: &str, range: Option<&str>) -> impl Future<Output = ByteOutcome> + Send;
-    /// Transcoded bytes (estimate off on Jellyfin: never a Content-Length).
-    /// The real adapter must serve an unsized streaming
-    /// body (ffmpeg pipe). Axum auto-adds `Content-Length` to sized bodies,
-    /// so a sized adapter response would violate the v2 contract on the wire;
-    /// only an unknown size hint keeps the header off.
-    fn transcode(
-        &self,
-        file_id: &str,
-        format: &str,
-        bitrate_kbps: u32,
-        start_seconds: f64,
+        head_only: bool,
     ) -> impl Future<Output = ByteOutcome> + Send;
 }
 

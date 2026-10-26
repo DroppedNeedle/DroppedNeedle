@@ -16,8 +16,15 @@ use super::store::{
     PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData, Store,
     StreamDetailsData, TranscodeDecisionData,
 };
-use super::stream::{AudioBackend, AudioBody, AudioFacts, BackendError, OpenedAudio, StreamPlan};
+use super::stream::{
+    AudioBackend, AudioBody, AudioFacts, BackendError, OpenedAudio, PlayedAudio, StreamParams,
+    TranscodedAudio,
+};
 use super::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
+use droppedneedle_media::stream::routes::content_type_for_extension;
+use droppedneedle_media::stream::transcode::{
+    TrackInfo, TranscodeSettings, decide, estimate_size, out_media_type,
+};
 
 /// Fixed clock (2023-11-14T22:13:20Z): golden time fields pin to this.
 pub const NOW_UNIX: f64 = 1_700_000_000.0;
@@ -1078,7 +1085,10 @@ impl Store for FakeStore {
 }
 
 /// Fake audio backend: f1 = 100 mp3 bytes (0..100), f2 = 64 flac
-/// bytes, f3 = 32 mp3 bytes. Transcodes answer canned bytes.
+/// bytes, f3 = 32 mp3 bytes; flac reads as 900 kbps, mp3 as 320, every
+/// file as 200 seconds. It makes the stream gateway's decision under the
+/// default policy (on, mp3, at most 320 kbps); transcodes answer canned
+/// bytes.
 #[derive(Debug, Clone, Default)]
 pub struct FakeAudio;
 
@@ -1095,53 +1105,66 @@ impl FakeAudio {
 }
 
 impl AudioBackend for FakeAudio {
-    async fn audio_facts(&self, file_id: &str) -> Result<Option<AudioFacts>, BackendError> {
-        Ok(Self::bytes(file_id).map(|bytes| {
-            let (suffix, bitrate) = match file_id {
-                "f2" => ("flac".to_owned(), Some(900)),
-                _ => ("mp3".to_owned(), Some(320)),
-            };
-            AudioFacts {
-                size: bytes.len() as u64,
-                suffix,
-                bitrate_kbps: bitrate,
-                duration_seconds: Some(200.0),
-            }
-        }))
-    }
-
-    async fn open_original(&self, file_id: &str) -> Result<Option<OpenedAudio>, BackendError> {
-        let (Some(facts), Some(bytes)) = (self.audio_facts(file_id).await?, Self::bytes(file_id))
-        else {
-            return Ok(None);
-        };
-        Ok(Some(OpenedAudio::new(facts, move |start, len| {
-            let start = usize::try_from(start).unwrap_or(usize::MAX);
-            let end = start.saturating_add(usize::try_from(len).unwrap_or(usize::MAX));
-            AudioBody::Bytes(
-                bytes
-                    .get(start..end.min(bytes.len()))
-                    .unwrap_or(&[])
-                    .to_vec(),
-            )
-        })))
-    }
-
-    async fn transcode(
+    async fn play(
         &self,
         file_id: &str,
-        plan: &StreamPlan,
-    ) -> Result<(AudioBody, String), BackendError> {
-        if Self::bytes(file_id).is_none() {
-            return Err(BackendError::failed(format!("no audio for {file_id}")));
-        }
-        let content_type = match plan.out_format.as_deref() {
-            Some("opus") => "audio/ogg",
-            _ => "audio/mpeg",
+        params: &StreamParams,
+        head_only: bool,
+    ) -> Result<Option<PlayedAudio>, BackendError> {
+        let Some(bytes) = Self::bytes(file_id) else {
+            return Ok(None);
         };
-        Ok((
-            AudioBody::Bytes(b"TRANSCODED".to_vec()),
-            content_type.to_owned(),
-        ))
+        let (format, bitrate) = match file_id {
+            "f2" => ("flac", 900),
+            _ => ("mp3", 320),
+        };
+        let track = TrackInfo {
+            file_format: format.to_owned(),
+            bitrate_kbps: Some(bitrate),
+            duration_seconds: 200.0,
+        };
+        let raw = params
+            .format
+            .as_deref()
+            .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
+        let plan = decide(
+            &track,
+            params.format.as_deref(),
+            params.max_bitrate_kbps,
+            raw,
+            params.start_seconds,
+            &TranscodeSettings::default(),
+            true,
+        );
+        if let Some(out) = plan.out_format() {
+            return Ok(Some(PlayedAudio::Transcoded(TranscodedAudio {
+                content_type: out_media_type(&out).to_owned(),
+                estimated_len: estimate_size(&plan).filter(|_| params.estimate_content_length),
+                body: if head_only {
+                    AudioBody::empty()
+                } else {
+                    AudioBody::Bytes(b"TRANSCODED".to_vec())
+                },
+            })));
+        }
+        let facts = AudioFacts {
+            size: bytes.len() as u64,
+            content_type: content_type_for_extension(format)
+                .unwrap_or("application/octet-stream")
+                .to_owned(),
+        };
+        Ok(Some(PlayedAudio::Original(OpenedAudio::new(
+            facts,
+            move |start, len| {
+                let start = usize::try_from(start).unwrap_or(usize::MAX);
+                let end = start.saturating_add(usize::try_from(len).unwrap_or(usize::MAX));
+                AudioBody::Bytes(
+                    bytes
+                        .get(start..end.min(bytes.len()))
+                        .unwrap_or(&[])
+                        .to_vec(),
+                )
+            },
+        ))))
     }
 }

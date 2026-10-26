@@ -33908,6 +33908,16 @@
             }
           },
           {
+            "name": "start_seconds",
+            "in": "query",
+            "description": "Seek offset in seconds for a transcode",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
             "name": "estimate_content_length",
             "in": "query",
             "description": "Ask a transcode landing for its estimated Content-Length",
@@ -34026,6 +34036,44 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Requested output codec: mp3, opus, or raw",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_bitrate",
+            "in": "query",
+            "description": "Client bitrate cap in kbps (0 or unset means uncapped)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "start_seconds",
+            "in": "query",
+            "description": "Seek offset in seconds for a transcode",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "estimate_content_length",
+            "in": "query",
+            "description": "Ask a transcode landing for its estimated Content-Length",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

@@ -15,12 +15,12 @@
 //! `source` is one of `local`, `jellyfin`, `navidrome`, `plex`. `key` is the
 //! source identifier: a local file id, a Jellyfin/Navidrome item id, or a Plex
 //! part key (which may itself contain slashes, hence the wildcard). Query
-//! keys are `format`, `max_bitrate`, and `estimate_content_length` (see
-//! [`StreamQuery`]).
+//! keys are `format`, `max_bitrate`, `start_seconds` and
+//! `estimate_content_length` (see [`StreamQuery`]).
 //!
 //! # Deep links
 //!
-//! Players link to `/api/v3/stream/{source}/{key}` with those three query
+//! Players link to `/api/v3/stream/{source}/{key}` with those query
 //! keys. The shapes stay small and stable: one handler shape
 //! `(State, User, Path, HeaderMap, ValidQuery)`, path params only
 //! for identity, query only for transcode hints. A new gateway capability
@@ -155,26 +155,30 @@ impl AudioSource {
 // Engine seam (implemented by `super::gateway::Gateway`)
 // ---------------------------------------------------------------------------
 
-/// Transcode hints from the query string, mapped 1:1 for the engine.
+/// What a client asked of one stream, in every protocol's terms: the
+/// native query maps 1:1, and the Subsonic and Jellyfin routes translate
+/// their own parameter names into it. The engine's `decide()` reads it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StreamParams {
-    /// Requested output codec (`mp3`, `opus`, `raw`, or unset). The engine's
-    /// `decide()` interprets it, including the `raw` backstop.
+    /// Requested output codec (`mp3`, `opus`, `raw`, or unset). `raw`
+    /// always serves the original bytes.
     pub format: Option<String>,
     /// Client bitrate cap in kbps. 0 or unset means uncapped.
     pub max_bitrate_kbps: Option<i64>,
     /// Ask a transcode landing for its estimated `Content-Length`.
     pub estimate_content_length: bool,
-    /// Seek offset in seconds (`-ss`, transcode only). Compat adapters
-    /// forward the protocol plan's offset here; native callers pass the
-    /// `start_seconds` query key (default 0).
+    /// Seek offset in seconds (`-ss`, transcode only).
     pub start_seconds: f64,
-    /// Explicit transcode directive from a compat plan. The gateway's own
-    /// `decide()` re-run sees no source bitrate at this layer, so a
-    /// bitrate-triggered same-codec plan would land direct without this
-    /// carry; when set (and transcoding is available) the gateway honors
-    /// the compat verdict instead of re-deciding.
-    pub force_transcode: bool,
+}
+
+impl StreamParams {
+    /// The original bytes, whatever the transcode policy says.
+    pub fn original() -> Self {
+        Self {
+            format: Some("raw".to_owned()),
+            ..Self::default()
+        }
+    }
 }
 
 /// One engine read: identity, lease principal, and transcode hints.
@@ -395,10 +399,10 @@ impl<E> Clone for StreamState<E> {
     }
 }
 
-/// Transcode hints. All optional; `format`/`max_bitrate` pass straight to
-/// the engine's `decide()`, and `estimate_content_length=true` asks a
-/// transcode landing for its estimated length. Player deep links rely on
-/// these three keys.
+/// Transcode hints. All optional; `format`, `max_bitrate` and
+/// `start_seconds` pass straight to the engine's `decide()`, and
+/// `estimate_content_length=true` asks a transcode landing for its
+/// estimated length. Player deep links rely on these keys.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct StreamQuery {
     /// Requested output codec (`mp3`, `opus`, `raw`, or unset).
@@ -557,6 +561,7 @@ where
         ("*key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes"),
         ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, or raw"),
         ("max_bitrate" = Option<i64>, Query, description = "Client bitrate cap in kbps (0 or unset means uncapped)"),
+        ("start_seconds" = Option<f64>, Query, description = "Seek offset in seconds for a transcode"),
         ("estimate_content_length" = Option<bool>, Query, description = "Ask a transcode landing for its estimated Content-Length"),
     ),
     responses(
@@ -591,6 +596,10 @@ pub async fn stream_get_route(
     params(
         ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),
         ("*key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes"),
+        ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, or raw"),
+        ("max_bitrate" = Option<i64>, Query, description = "Client bitrate cap in kbps (0 or unset means uncapped)"),
+        ("start_seconds" = Option<f64>, Query, description = "Seek offset in seconds for a transcode"),
+        ("estimate_content_length" = Option<bool>, Query, description = "Ask a transcode landing for its estimated Content-Length"),
     ),
     responses(
         (status = 200, description = "Stream headers, no body"),
@@ -661,7 +670,6 @@ async fn serve<E: StreamEngine>(
                     max_bitrate_kbps: query.max_bitrate,
                     estimate_content_length: query.estimate_content_length,
                     start_seconds: query.start_seconds,
-                    force_transcode: false,
                 },
             },
             head_only,

@@ -1636,58 +1636,73 @@ async fn transcoding_streams() {
 }
 
 /// When `stream` transcodes: only on a real trigger, never when forced
-/// original, disabled or without ffmpeg.
+/// original, disabled or without ffmpeg. The stream gateway makes this one
+/// decision for every protocol.
 #[test]
 fn stream_transcode_decision() {
-    use droppedneedle_compat::subsonic::stream::decide;
+    use droppedneedle_media::stream::transcode::{
+        OutFormat, StreamPlan, TrackInfo, TranscodeSettings, decide,
+    };
 
-    let plan = |source: (&str, i64), requested: Option<&str>, ceiling: Option<i64>| {
+    let source = |format: &str, bitrate: i64| TrackInfo {
+        file_format: format.to_owned(),
+        bitrate_kbps: Some(bitrate),
+        duration_seconds: 0.0,
+    };
+    let plan = |source: TrackInfo, requested: Option<&str>, ceiling: Option<i64>| {
         decide(
-            source.0,
-            Some(source.1),
+            &source,
             requested,
             ceiling,
             false,
             0.0,
+            &TranscodeSettings::default(),
             true,
-            true,
-            "mp3",
-            320,
         )
     };
     // A server ceiling alone, or a zero client bitrate (Feishin), is no trigger.
-    assert!(!plan(("flac", 900), None, None).transcode);
-    assert!(!plan(("flac", 900), None, Some(0)).transcode);
-    assert!(!plan(("mp3", 320), Some("mp3"), None).transcode);
-    let ceiling = plan(("flac", 900), None, Some(128));
-    assert!(ceiling.transcode);
+    assert!(!plan(source("flac", 900), None, None).is_transcode());
+    assert!(!plan(source("flac", 900), None, Some(0)).is_transcode());
+    assert!(!plan(source("mp3", 320), Some("mp3"), None).is_transcode());
+    assert!(matches!(
+        plan(source("flac", 900), None, Some(128)),
+        StreamPlan::Transcode {
+            out_format: OutFormat::Mp3,
+            out_bitrate_kbps: 128,
+            ..
+        }
+    ));
     assert_eq!(
-        (ceiling.out_format.as_deref(), ceiling.out_bitrate_kbps),
-        (Some("mp3"), Some(128))
+        plan(source("mp3", 320), Some("opus"), None).out_format(),
+        Some(OutFormat::Opus)
     );
-    assert_eq!(
-        plan(("mp3", 320), Some("opus"), None).out_format.as_deref(),
-        Some("opus")
-    );
+    // The floor is 64 kbps on every protocol.
+    assert!(matches!(
+        plan(source("flac", 900), None, Some(48)),
+        StreamPlan::Transcode {
+            out_bitrate_kbps: 64,
+            ..
+        }
+    ));
     for (force, enabled, ffmpeg) in [
         (true, true, true),
         (false, false, true),
         (false, true, false),
     ] {
+        let settings = TranscodeSettings {
+            transcoding_enabled: enabled,
+            ..TranscodeSettings::default()
+        };
         let plan = decide(
-            "flac",
-            Some(900),
+            &source("flac", 900),
             Some("opus"),
             Some(64),
             force,
             5.0,
-            enabled,
+            &settings,
             ffmpeg,
-            "mp3",
-            320,
         );
-        assert!(!plan.transcode);
-        assert_eq!(plan.start_seconds, 5.0);
+        assert!(!plan.is_transcode());
     }
 }
 

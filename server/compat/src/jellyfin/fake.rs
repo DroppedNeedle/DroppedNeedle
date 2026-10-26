@@ -10,6 +10,9 @@ use sha2::{Digest, Sha256};
 use super::params::SortKey;
 use super::seams::*;
 use crate::body::AudioBody;
+use droppedneedle_media::stream::transcode::{
+    StreamPlan, TrackInfo, TranscodeSettings, decide, out_media_type,
+};
 
 /// Deterministic `sha256("kind:internal")[:32]` with an in-memory reverse
 /// table (v2 `CompatIdMapService` derivation; the persisted table is not
@@ -786,8 +789,18 @@ fn unsatisfied(size: usize) -> ByteOutcome {
     }
 }
 
+/// Seeded files read as 320 kbps; the fake makes the stream gateway's
+/// decision under the default policy (on, mp3, at most 320 kbps).
+const SEEDED_BITRATE_KBPS: i64 = 320;
+
 impl StreamEngine for MemoryEngine {
-    async fn direct(&self, file_id: &str, range: Option<&str>) -> ByteOutcome {
+    async fn play(
+        &self,
+        file_id: &str,
+        params: &StreamParams,
+        range: Option<&str>,
+        head_only: bool,
+    ) -> ByteOutcome {
         let Some((bytes, format)) = self.lookup(file_id) else {
             return ByteOutcome {
                 status: 404,
@@ -795,115 +808,99 @@ impl StreamEngine for MemoryEngine {
                 body: AudioBody::empty(),
             };
         };
+        let raw = params
+            .format
+            .as_deref()
+            .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
+        let plan = decide(
+            &TrackInfo {
+                file_format: format.clone().unwrap_or_default(),
+                bitrate_kbps: Some(SEEDED_BITRATE_KBPS),
+                duration_seconds: 0.0,
+            },
+            params.format.as_deref(),
+            params.max_bitrate_kbps,
+            raw,
+            params.start_seconds,
+            &TranscodeSettings::default(),
+            true,
+        );
+        if let StreamPlan::Transcode {
+            out_format,
+            out_bitrate_kbps,
+            start_seconds,
+            ..
+        } = plan
+        {
+            // Marker bytes only: production binds the real ffmpeg pipe. The
+            // header set is the real v2 contract (200, no ranges, no store,
+            // identity encoding, never a Content-Length on Jellyfin).
+            // Transcoded opus rides an ogg container (`-f ogg`), hence
+            // `audio/ogg`, unlike direct .opus files, which serve as
+            // `audio/opus` (as in v2).
+            let name = out_format.name();
+            return ByteOutcome {
+                status: 200,
+                headers: vec![
+                    (
+                        "Content-Type".to_owned(),
+                        out_media_type(&out_format).to_owned(),
+                    ),
+                    ("Accept-Ranges".to_owned(), "none".to_owned()),
+                    ("Cache-Control".to_owned(), "no-store".to_owned()),
+                    ("Content-Encoding".to_owned(), "identity".to_owned()),
+                ],
+                body: if head_only {
+                    AudioBody::empty()
+                } else {
+                    AudioBody::Bytes(
+                        format!("transcoded:{name}:{out_bitrate_kbps}:{start_seconds:.3}")
+                            .into_bytes(),
+                    )
+                },
+            };
+        }
         let size = bytes.len();
         let span = match resolve_range(range, size) {
             Ok(span) => span,
             Err(()) => return unsatisfied(size),
         };
         // `Content-Encoding: identity` on every audio response: gzip drops
-        // Content-Length and breaks seeking (as v2 found).
+        // Content-Length and breaks seeking (as v2 found). HEAD answers the
+        // same headers with an empty body.
         let content_type = content_type_for_format(format.as_deref()).to_owned();
-        match span {
-            None => ByteOutcome {
-                status: 200,
-                headers: vec![
+        let (status, mut headers, body) = match span {
+            None => (
+                200,
+                vec![
                     ("Content-Type".to_owned(), content_type),
                     ("Content-Length".to_owned(), size.to_string()),
-                    ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                    ("Content-Encoding".to_owned(), "identity".to_owned()),
                 ],
-                body: AudioBody::Bytes(bytes),
-            },
-            Some((start, end)) => ByteOutcome {
-                status: 206,
-                headers: vec![
-                    ("Content-Type".to_owned(), content_type),
-                    ("Content-Length".to_owned(), (end - start + 1).to_string()),
-                    (
-                        "Content-Range".to_owned(),
-                        format!("bytes {start}-{end}/{size}"),
-                    ),
-                    ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                    ("Content-Encoding".to_owned(), "identity".to_owned()),
-                ],
-                body: AudioBody::Bytes(bytes[start..=end].to_vec()),
-            },
-        }
-    }
-
-    async fn head(&self, file_id: &str, range: Option<&str>) -> ByteOutcome {
-        let Some((bytes, format)) = self.lookup(file_id) else {
-            return ByteOutcome {
-                status: 404,
-                headers: Vec::new(),
-                body: AudioBody::empty(),
-            };
-        };
-        let size = bytes.len();
-        let span = match resolve_range(range, size) {
-            Ok(span) => span,
-            Err(()) => return unsatisfied(size),
-        };
-        // GET-equivalent headers, empty body: HEAD honors Range (206 +
-        // Content-Range) exactly like the stream engine does.
-        let content_type = content_type_for_format(format.as_deref()).to_owned();
-        match span {
-            None => ByteOutcome {
-                status: 200,
-                headers: vec![
-                    ("Content-Type".to_owned(), content_type),
-                    ("Content-Length".to_owned(), size.to_string()),
-                    ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                    ("Content-Encoding".to_owned(), "identity".to_owned()),
-                ],
-                body: AudioBody::empty(),
-            },
-            Some((start, end)) => ByteOutcome {
-                status: 206,
-                headers: vec![
-                    ("Content-Type".to_owned(), content_type),
-                    ("Content-Length".to_owned(), (end - start + 1).to_string()),
-                    (
-                        "Content-Range".to_owned(),
-                        format!("bytes {start}-{end}/{size}"),
-                    ),
-                    ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                    ("Content-Encoding".to_owned(), "identity".to_owned()),
-                ],
-                body: AudioBody::empty(),
-            },
-        }
-    }
-
-    async fn transcode(
-        &self,
-        file_id: &str,
-        format: &str,
-        bitrate_kbps: u32,
-        start_seconds: f64,
-    ) -> ByteOutcome {
-        // Marker bytes only: production binds the real ffmpeg pipe. The
-        // header set is the real v2 contract (200, no ranges, no store,
-        // identity encoding, never a Content-Length on Jellyfin). Transcoded
-        // opus rides an ogg container (`-f ogg`), hence `audio/ogg`, unlike
-        // direct .opus files, which serve as `audio/opus` (as in v2).
-        let _ = self.lookup(file_id);
-        let content_type = if format.eq_ignore_ascii_case("opus") {
-            "audio/ogg"
-        } else {
-            content_type_for_format(Some(format))
-        };
-        ByteOutcome {
-            status: 200,
-            headers: vec![
-                ("Content-Type".to_owned(), content_type.to_owned()),
-                ("Accept-Ranges".to_owned(), "none".to_owned()),
-                ("Cache-Control".to_owned(), "no-store".to_owned()),
-                ("Content-Encoding".to_owned(), "identity".to_owned()),
-            ],
-            body: AudioBody::Bytes(
-                format!("transcoded:{format}:{bitrate_kbps}:{start_seconds:.3}").into_bytes(),
+                bytes,
             ),
+            Some((start, end)) => (
+                206,
+                vec![
+                    ("Content-Type".to_owned(), content_type),
+                    ("Content-Length".to_owned(), (end - start + 1).to_string()),
+                    (
+                        "Content-Range".to_owned(),
+                        format!("bytes {start}-{end}/{size}"),
+                    ),
+                ],
+                bytes[start..=end].to_vec(),
+            ),
+        };
+        headers.push(("Accept-Ranges".to_owned(), "bytes".to_owned()));
+        headers.push(("Content-Encoding".to_owned(), "identity".to_owned()));
+        ByteOutcome {
+            status,
+            headers,
+            body: if head_only {
+                AudioBody::empty()
+            } else {
+                AudioBody::Bytes(body)
+            },
         }
     }
 }

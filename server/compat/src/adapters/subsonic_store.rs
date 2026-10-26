@@ -1103,7 +1103,7 @@ impl Store for SubsonicStore {
             ffmpeg_available: settings.ffmpeg_available,
             max_bitrate_kbps: settings.transcode_max_bitrate_kbps,
         };
-        let decision = advanced::decide(track, client, policy);
+        let decision = advanced::negotiate(track, client, policy);
         let mut answer = decision.answer;
         answer.transcode_params = decision.grant.and_then(|grant| {
             advanced::seal(

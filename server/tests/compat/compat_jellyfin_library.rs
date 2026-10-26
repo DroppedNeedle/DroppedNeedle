@@ -17,7 +17,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use axum::http::{HeaderMap, StatusCode};
 use droppedneedle_auth::compat_auth::jellyfin::server_id;
-use droppedneedle_compat::jellyfin::seams::{DecideInput, StreamPlan, decide};
+use droppedneedle_media::stream::transcode::{
+    OutFormat, StreamPlan, TrackInfo, TranscodeSettings, decide,
+};
 use serde_json::{Value, json};
 
 use crate::common::compat::{CompatApp, PLAYER, named};
@@ -979,48 +981,54 @@ async fn finamp_file_universal_and_hls_routes() {
     rig.stop().await;
 }
 
-/// The transcode policy shared by `/Audio` and PlaybackInfo.
+/// The transcode policy shared by `/Audio` and PlaybackInfo, which both
+/// read the stream gateway's one decision.
 #[test]
 fn transcode_decision_rules() {
-    let input = |requested: Option<&'static str>, ceiling: Option<u32>, force: bool| DecideInput {
-        src_format: Some("mp3"),
-        src_bitrate_kbps: 320,
-        requested,
-        ceiling_kbps: ceiling,
-        force_original: force,
-        start_seconds: 0.0,
-        transcoding_enabled: true,
-        server_max_kbps: 320,
-        default_format: "mp3",
-        ffmpeg: true,
+    let track = TrackInfo {
+        file_format: "mp3".to_owned(),
+        bitrate_kbps: Some(320),
+        duration_seconds: 0.0,
+    };
+    let on = TranscodeSettings::default();
+    let plan = |requested: Option<&str>,
+                ceiling: Option<i64>,
+                force: bool,
+                start: f64,
+                settings: &TranscodeSettings| {
+        decide(&track, requested, ceiling, force, start, settings, true)
     };
     // Nothing requested, a zero ceiling, force-original or transcoding off
     // all stream direct.
-    assert_eq!(decide(&input(None, None, false)), StreamPlan::Direct);
-    assert_eq!(decide(&input(None, Some(0), false)), StreamPlan::Direct);
-    assert_eq!(decide(&input(Some("opus"), None, true)), StreamPlan::Direct);
-    let mut off = input(Some("opus"), None, false);
-    off.transcoding_enabled = false;
-    assert_eq!(decide(&off), StreamPlan::Direct);
+    assert!(!plan(None, None, false, 0.0, &on).is_transcode());
+    assert!(!plan(None, Some(0), false, 0.0, &on).is_transcode());
+    assert!(!plan(Some("opus"), None, true, 0.0, &on).is_transcode());
+    let off = TranscodeSettings {
+        transcoding_enabled: false,
+        ..TranscodeSettings::default()
+    };
+    assert!(!plan(Some("opus"), None, false, 0.0, &off).is_transcode());
     // A codec or a ceiling triggers; the server max caps but never triggers.
     assert!(matches!(
-        decide(&input(None, Some(64), false)),
+        plan(None, Some(64), false, 0.0, &on),
         StreamPlan::Transcode {
-            bitrate_kbps: 64,
+            out_bitrate_kbps: 64,
             ..
         }
     ));
     assert!(matches!(
-        decide(&input(Some("opus"), Some(999), false)),
-        StreamPlan::Transcode { ref format, bitrate_kbps: 320, .. } if format == "opus"
+        plan(Some("opus"), Some(999), false, 0.0, &on),
+        StreamPlan::Transcode {
+            out_format: OutFormat::Opus,
+            out_bitrate_kbps: 320,
+            ..
+        }
     ));
     // Unusable formats fall back to the default; negative starts clamp.
-    let mut start = input(Some("wav"), None, false);
-    start.start_seconds = -5.0;
     assert!(matches!(
-        decide(&start),
-        StreamPlan::Transcode { ref format, start_seconds, .. }
-            if format == "mp3" && start_seconds == 0.0
+        plan(Some("wav"), None, false, -5.0, &on),
+        StreamPlan::Transcode { out_format: OutFormat::Mp3, start_seconds, .. }
+            if start_seconds == 0.0
     ));
 }
 

@@ -26,8 +26,9 @@
 //! * Service: [`Transcoder`] is the trait the gateway calls,
 //!   [`FfmpegTranscoder`] the implementation. [`FfmpegSpawner`] and
 //!   [`FfmpegChild`] put the process behind a trait so tests script it.
-//! * Inputs: [`TrackInfo`] mirrors the track fields `decide()` reads from the
-//!   gateway view model (`file_format`, `bitrate` in kbps, `duration_seconds`);
+//! * Inputs: [`TrackInfo`] holds the source facts `decide()` reads, which
+//!   the gateway takes from the catalog row (`file_format`, `bit_rate` in
+//!   kbps, `duration_seconds`);
 //!   [`TranscodeSettings`] mirrors the `connect_apps` section
 //!   (`transcoding_enabled`, `transcode_default_format`,
 //!   `transcode_max_bitrate_kbps`).
@@ -58,8 +59,8 @@ use std::os::unix::fs::PermissionsExt as _;
 pub const SUPPORTED_OUT_FORMATS: &[&str] = &["mp3", "opus"];
 
 /// Internal format name for AAC in MPEG-TS, the segment format the
-/// Jellyfin HLS playlist serves. Not a client-facing codec choice: only the
-/// compat forced plan accepts it, never [`decide`].
+/// Jellyfin HLS playlist serves. [`decide`] produces it only when it is
+/// asked for by this name.
 pub const HLS_SEGMENT_FORMAT: &str = "aac-ts";
 
 /// Output bitrate when the client sets no cap, per codec (Navidrome's
@@ -138,10 +139,18 @@ impl OutFormat {
             OutFormat::AacTs => HLS_SEGMENT_FORMAT,
         }
     }
+
+    /// The container the output rides in, as players name it.
+    pub fn container(self) -> &'static str {
+        match self {
+            OutFormat::Mp3 => "mp3",
+            OutFormat::Opus => "ogg",
+            OutFormat::AacTs => "ts",
+        }
+    }
 }
 
-/// The track fields `decide()` reads. Minimal mirror of the gateway view
-/// model.
+/// The source facts `decide()` reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackInfo {
     /// Source container/codec tag, e.g. "flac". Compared case-insensitively.
@@ -245,7 +254,8 @@ impl StreamPlan {
 ///    mismatch (Subsonic `format=raw` short-circuits to the file upstream of
 ///    `decide()`; this rule is the backstop inside it).
 /// 4. With no client cap the output takes the codec default (opus 128,
-///    mp3 192), not the server max.
+///    mp3 192), not the server max; the output never drops below
+///    [`MIN_BITRATE_KBPS`].
 /// 5. The server max is a quality ceiling applied while transcoding, never a
 ///    trigger: a lossless file over the server cap still direct-plays when
 ///    nothing was requested (Jellify regression), while an explicit codec
@@ -286,6 +296,7 @@ pub fn decide(
     let out_format = match requested.as_str() {
         "mp3" => OutFormat::Mp3,
         "opus" => OutFormat::Opus,
+        HLS_SEGMENT_FORMAT => OutFormat::AacTs,
         _ => settings.default_format,
     };
     let bitrate = out_bitrate_kbps(

@@ -15,6 +15,7 @@ use super::media::client_info::{CodecLimitation, DirectPlayProfile};
 use super::store::{ClientInfo, StreamDetailsData, TranscodeDecisionData};
 use super::views::ViewTrack;
 use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_media::stream::transcode::MIN_BITRATE_KBPS;
 
 /// How long sealed parameters stay valid.
 const TOKEN_TTL_SECONDS: i64 = 5 * 60;
@@ -184,8 +185,10 @@ pub struct Decision {
     pub grant: Option<(bool, Option<String>, Option<i64>)>,
 }
 
-/// Decide how one track plays for one client (v2 `decide`).
-pub fn decide(track: &ViewTrack, client: &ClientInfo, policy: Policy) -> Decision {
+/// Match one track against the client's profiles (v2 `decide`): direct
+/// play, or the output format and ceiling a transcode asks the stream
+/// gateway for.
+pub fn negotiate(track: &ViewTrack, client: &ClientInfo, policy: Policy) -> Decision {
     let format = track.file_format.clone().unwrap_or_default().to_lowercase();
     let mut direct = client
         .direct_play_profiles
@@ -262,7 +265,11 @@ pub fn decide(track: &ViewTrack, client: &ClientInfo, policy: Policy) -> Decisio
     {
         ceilings.push(to_kbps(limit));
     }
-    let bitrate = ceilings.into_iter().min().unwrap_or(320).max(64);
+    let bitrate = ceilings
+        .into_iter()
+        .min()
+        .unwrap_or(320)
+        .max(MIN_BITRATE_KBPS);
     let output = profile.audio_codec.to_lowercase();
     Decision {
         answer: TranscodeDecisionData {
@@ -384,7 +391,7 @@ mod tests {
             ffmpeg_available: true,
             max_bitrate_kbps: 320,
         };
-        let decision = decide(&flac(), &mp3_only(), policy);
+        let decision = negotiate(&flac(), &mp3_only(), policy);
         assert!(decision.answer.can_transcode && !decision.answer.can_direct_play);
         assert_eq!(
             decision.grant,

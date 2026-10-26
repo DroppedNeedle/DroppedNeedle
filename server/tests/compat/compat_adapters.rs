@@ -1,20 +1,18 @@
-//! The production `GatewayAudio` (Subsonic) and `GatewayStream` (Jellyfin)
-//! adapters over a scripted stream engine: fault mapping, and that the
-//! transcode codec, bitrate and seek offset reach the engine. Range and
-//! HEAD framing is pinned on every stream route by the library journey's
-//! range matrix.
+//! The production `GatewayAudio` adapter over a scripted stream engine:
+//! each protocol's fault mapping, that the translated parameters reach the
+//! engine unchanged, and that the answer is framed by the plan the engine
+//! ran. Range and HEAD framing is pinned on every stream route by the
+//! library journey's range matrix.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use droppedneedle_compat::adapters::engines::{GatewayAudio, GatewayStream};
+use droppedneedle_compat::adapters::audio::GatewayAudio;
 use droppedneedle_compat::body::AudioBody;
 use droppedneedle_compat::jellyfin::seams::StreamEngine as JellyfinEngine;
-use droppedneedle_compat::subsonic::stream::{
-    AudioBackend, ServeError, StreamPlan, serve_original,
-};
+use droppedneedle_compat::subsonic::stream::{ServeError, serve};
 use droppedneedle_media::stream::routes::{
-    MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
+    MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
 };
 
 /// Scripted engine: scripted files, recorded opens, scripted faults.
@@ -35,7 +33,7 @@ impl StubEngine {
                 ),
                 (
                     "landed.mp3".to_owned(),
-                    (b"TRANSCODED".to_vec(), "audio/mpeg".to_owned(), true),
+                    (b"TRANSCODED".to_vec(), "audio/ogg".to_owned(), true),
                 ),
             ]),
             opens: Arc::new(Mutex::new(Vec::new())),
@@ -54,8 +52,19 @@ impl StreamEngine for StubEngine {
         _head_only: bool,
     ) -> Result<StreamMedia, StreamFault> {
         self.opens.lock().expect("opens lock").push(request.clone());
-        if request.key == "busy.mp3" {
-            return Err(StreamFault::Capacity);
+        match request.key.as_str() {
+            "busy.mp3" => return Err(StreamFault::Capacity),
+            "denied.mp3" => {
+                return Err(StreamFault::Forbidden {
+                    message: "Playback not allowed".to_owned(),
+                });
+            }
+            "broken.mp3" => {
+                return Err(StreamFault::Internal {
+                    cause: "read /srv/music/broken.mp3: I/O error".to_owned(),
+                });
+            }
+            _ => {}
         }
         let (bytes, content_type, transcoded) = self
             .files
@@ -64,22 +73,17 @@ impl StreamEngine for StubEngine {
             .ok_or(StreamFault::NotFound)?;
         Ok(StreamMedia {
             content_type,
-            total_len: bytes.len() as u64,
+            total_len: if transcoded { 0 } else { bytes.len() as u64 },
             transcoded,
-            estimated_len: None,
+            estimated_len: transcoded.then_some(4_000),
             body: MediaBody::Bytes(bytes),
             lease: None,
         })
     }
 }
 
-fn audio(engine: &StubEngine) -> GatewayAudio<StubEngine> {
-    use droppedneedle_compat::subsonic::AudioBackend as _;
-    GatewayAudio::new(Arc::new(engine.clone())).for_caller("test-user")
-}
-
-fn stream(engine: &StubEngine) -> GatewayStream<StubEngine> {
-    GatewayStream::new(Arc::new(engine.clone()))
+fn adapter(engine: &StubEngine) -> GatewayAudio<StubEngine> {
+    GatewayAudio::new(Arc::new(engine.clone()))
 }
 
 fn header(headers: &[(String, String)], name: &str) -> Option<String> {
@@ -89,66 +93,103 @@ fn header(headers: &[(String, String)], name: &str) -> Option<String> {
         .map(|(_, value)| value.clone())
 }
 
-#[tokio::test]
-async fn adapters_map_faults_and_forward_transcodes() {
-    let engine = StubEngine::new();
-    let audio = audio(&engine);
-    let stream = stream(&engine);
+fn opus(estimate: bool) -> StreamParams {
+    StreamParams {
+        format: Some("opus".to_owned()),
+        max_bitrate_kbps: Some(96),
+        start_seconds: 12.5,
+        estimate_content_length: estimate,
+    }
+}
 
-    // Exhausted stream leases: 429 with Retry-After; unknown ids 404/70.
-    let busy = serve_original(&audio, "busy.mp3", None, false, None)
+#[tokio::test]
+async fn adapters_map_faults_once_and_frame_by_the_plan_run() {
+    let engine = StubEngine::new();
+    let audio = adapter(&engine);
+    let original = StreamParams::original();
+
+    // Each fault maps once: a full pool is 429 with Retry-After, an
+    // unknown id 404 or 70, a refusal 403 or 50, a server fault a logged
+    // 500 or code 0 with the fixed text.
+    let busy = serve(&audio, "busy.mp3", &original, None, false, None)
         .await
         .expect_err("pool full");
     assert!(matches!(busy, ServeError::CapacityFull));
-    let busy = stream.direct("busy.mp3", None).await;
+    let busy = audio.play("busy.mp3", &original, None, false).await;
     assert_eq!(busy.status, 429);
     assert_eq!(header(&busy.headers, "Retry-After").as_deref(), Some("1"));
-    assert_eq!(stream.direct("missing.mp3", None).await.status, 404);
-    let missing = serve_original(&audio, "missing.mp3", None, false, None)
-        .await
-        .expect_err("unknown id");
-    assert!(matches!(missing, ServeError::Subsonic(_)));
+    for (key, jellyfin, subsonic) in [
+        ("missing.mp3", 404, 70),
+        ("denied.mp3", 403, 50),
+        ("broken.mp3", 500, 0),
+    ] {
+        let answer = audio.play(key, &original, None, false).await;
+        assert_eq!(answer.status, jellyfin, "{key}");
+        let Err(ServeError::Subsonic(error)) =
+            serve(&audio, key, &original, None, false, None).await
+        else {
+            panic!("{key}: a protocol error");
+        };
+        assert_eq!(error.code, subsonic, "{key}");
+        assert!(!error.message.contains("/srv/"), "{key}: {}", error.message);
+    }
 
-    // A transcode landing is served whole and never honours a range.
-    let landed = stream.direct("landed.mp3", Some("bytes=0-1")).await;
+    // The translated parameters reach the engine unchanged.
+    let before = engine.recorded().len();
+    audio.play("landed.mp3", &opus(false), None, false).await;
+    assert_eq!(engine.recorded()[before].params, opus(false));
+
+    // A transcode landing is served whole and never honours a range; the
+    // estimate rides only when asked for, and never on Jellyfin.
+    let landed = audio
+        .play("landed.mp3", &opus(true), Some("bytes=0-1"), false)
+        .await;
     assert_eq!(landed.status, 200);
     assert_eq!(
         header(&landed.headers, "Accept-Ranges").as_deref(),
         Some("none")
     );
-    assert_eq!(landed.body, AudioBody::Bytes(b"TRANSCODED".to_vec()));
-
-    // Transcodes forward codec, bitrate and offset; Jellyfin's carry no
-    // length.
-    let plan = StreamPlan {
-        transcode: true,
-        out_format: Some("opus".to_owned()),
-        out_bitrate_kbps: Some(128),
-        start_seconds: 30.0,
-    };
-    let before = engine.recorded().len();
-    audio
-        .transcode("song.mp3", &plan)
-        .await
-        .expect("transcodes");
-    let params = &engine.recorded()[before].params;
-    assert_eq!(params.format.as_deref(), Some("opus"));
-    assert_eq!(params.max_bitrate_kbps, Some(128));
-    assert_eq!(params.start_seconds, 30.0);
-    assert!(params.force_transcode);
-
-    let before = engine.recorded().len();
-    let landed = stream.transcode("landed.mp3", "opus", 96, 12.5).await;
-    assert_eq!(
-        header(&landed.headers, "Cache-Control").as_deref(),
-        Some("no-store")
-    );
     assert!(header(&landed.headers, "Content-Length").is_none());
-    let params = &engine.recorded()[before].params;
-    assert_eq!(params.format.as_deref(), Some("opus"));
-    assert_eq!(params.max_bitrate_kbps, Some(96));
-    assert_eq!(params.start_seconds, 12.5);
-    assert!(params.force_transcode);
+    assert_eq!(landed.body, AudioBody::Bytes(b"TRANSCODED".to_vec()));
+    for (estimate, length) in [(true, Some("4000")), (false, None)] {
+        let served = serve(&audio, "landed.mp3", &opus(estimate), None, false, None)
+            .await
+            .expect("transcodes");
+        assert_eq!(served.content_type, "audio/ogg");
+        assert_eq!(header(&served.headers, "Content-Length").as_deref(), length);
+        assert_eq!(
+            header(&served.headers, "Cache-Control").as_deref(),
+            Some("no-store")
+        );
+    }
+
+    // A transcode request the engine served direct is framed as direct.
+    let direct = audio
+        .play("song.mp3", &opus(false), Some("bytes=0-1"), false)
+        .await;
+    assert_eq!(direct.status, 206);
+    assert_eq!(
+        header(&direct.headers, "Accept-Ranges").as_deref(),
+        Some("bytes")
+    );
+    let served = serve(
+        &audio,
+        "song.mp3",
+        &opus(true),
+        Some("bytes=0-1"),
+        false,
+        None,
+    )
+    .await
+    .expect("serves");
+    assert_eq!(
+        (served.status, served.content_type.as_str()),
+        (206, "audio/mpeg")
+    );
+    assert_eq!(
+        header(&served.headers, "Content-Length").as_deref(),
+        Some("2")
+    );
 }
 
 /// Remote reader for a local-only gateway.
@@ -188,9 +229,16 @@ async fn real_gateway_streams_the_asked_span_from_the_file() {
         TranscodeSettings::default(),
         false,
     ));
+    let audio = JellyfinEngine::for_caller(&GatewayAudio::new(gateway), "u1");
 
-    let jellyfin = GatewayStream::new(Arc::clone(&gateway)).for_caller("u1");
-    let got = jellyfin.direct("song.mp3", Some("bytes=10-19")).await;
+    let got = audio
+        .play(
+            "song.mp3",
+            &StreamParams::original(),
+            Some("bytes=10-19"),
+            false,
+        )
+        .await;
     assert_eq!(got.status, 206);
     assert!(
         matches!(got.body, AudioBody::Live(_)),
@@ -201,10 +249,16 @@ async fn real_gateway_streams_the_asked_span_from_the_file() {
         (10..20u8).collect::<Vec<_>>()
     );
 
-    let subsonic = GatewayAudio::new(gateway).for_caller("u1");
-    let served = serve_original(&subsonic, "song.mp3", Some("bytes=-5"), false, None)
-        .await
-        .expect("serves");
+    let served = serve(
+        &audio,
+        "song.mp3",
+        &StreamParams::original(),
+        Some("bytes=-5"),
+        false,
+        None,
+    )
+    .await
+    .expect("serves");
     assert_eq!(
         header(&served.headers, "Content-Length").as_deref(),
         Some("5")

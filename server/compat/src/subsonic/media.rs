@@ -9,9 +9,8 @@ use super::models::{Render, SStreamDetails, STranscodeDecision};
 use super::picture::PictureKind;
 use super::store::{ClientInfo, Store};
 use super::stream::{
-    AudioBackend, AudioBody, MAX_OFFSET_SECONDS, ServeError, ServedAudio, StreamPlan, cover_bucket,
-    decide, download_filename, estimate_transcode_length, placeholder_cover, serve_original,
-    transcode_hint,
+    AudioBackend, AudioBody, MAX_OFFSET_SECONDS, ServeError, ServedAudio, StreamParams,
+    cover_bucket, download_filename, placeholder_cover, serve,
 };
 use super::{AVATAR_FORBIDDEN_MESSAGE, Ctx, Outcome};
 use droppedneedle_media::stream::leases::RETRY_AFTER_SECONDS;
@@ -226,67 +225,36 @@ pub async fn cover_art<P: Principal, S: Store, B: AudioBackend>(
     }
 }
 
-/// Stream: `format=raw` always serves original bytes; otherwise the
-/// `decide()` policy picks direct vs transcode. `timeOffset` applies to
-/// transcodes only; `maxBitRate` never affects direct serves;
-/// `estimateContentLength` adds Content-Length on transcodes only.
+/// Stream: the request's `format`, `maxBitRate`, `timeOffset` and
+/// `estimateContentLength` go to the stream gateway, which decides direct
+/// or transcode. `format=raw` always serves the original bytes;
+/// `timeOffset` applies to transcodes only; `estimateContentLength` adds
+/// Content-Length on transcodes only. A local miss falls through to the
+/// plugin fallback behind the backend seam, else 70 (v2 `_stream`).
 pub async fn stream<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let fid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
     let fid = current_id(ctx, IdKind::Track, fid).await?;
-    let format = ctx.params.one_of("format", &["raw", "mp3", "opus"], None)?;
-    let max_bitrate = ctx.pint("maxBitRate", None, Some(0), Some(1_000_000))?;
-    let time_offset = ctx
-        .pfloat("timeOffset", Some(0.0), Some(0.0), Some(MAX_OFFSET_SECONDS))?
-        .unwrap_or(0.0);
-    let estimate = ctx.pbool("estimateContentLength", false)?;
-    if format.as_deref() == Some("raw") {
-        // Local miss falls through to the plugin fallback behind the
-        // backend seam, else 70 (v2 `_stream`).
-        return serve_outcome(
-            serve_original(
-                ctx.audio,
-                &fid,
-                ctx.range.as_deref(),
-                ctx.method == "HEAD",
-                None,
-            )
-            .await,
-        );
-    }
-    let track = ctx
-        .store
-        .get_track(&fid)
-        .await
-        .map_err(Ctx::<P, S, B>::store_err)?
-        .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Song not found"))?;
-    let settings = ctx.settings;
-    let plan = decide(
-        track.file_format.as_deref().unwrap_or(""),
-        track.bitrate,
-        format.as_deref(),
-        max_bitrate,
-        false,
-        time_offset,
-        settings.transcoding_enabled,
-        settings.ffmpeg_available,
-        &settings.transcode_default_format,
-        settings.transcode_max_bitrate_kbps,
-    );
-    if !plan.transcode {
-        return serve_outcome(
-            serve_original(
-                ctx.audio,
-                &fid,
-                ctx.range.as_deref(),
-                ctx.method == "HEAD",
-                None,
-            )
-            .await,
-        );
-    }
-    serve_transcode(ctx, &fid, &plan, track.duration_seconds, estimate).await
+    let params = StreamParams {
+        format: ctx.params.one_of("format", &["raw", "mp3", "opus"], None)?,
+        max_bitrate_kbps: ctx.pint("maxBitRate", None, Some(0), Some(1_000_000))?,
+        start_seconds: ctx
+            .pfloat("timeOffset", Some(0.0), Some(0.0), Some(MAX_OFFSET_SECONDS))?
+            .unwrap_or(0.0),
+        estimate_content_length: ctx.pbool("estimateContentLength", false)?,
+    };
+    serve_outcome(
+        serve(
+            ctx.audio,
+            &fid,
+            &params,
+            ctx.range.as_deref(),
+            ctx.method == "HEAD",
+            None,
+        )
+        .await,
+    )
 }
 
 /// Download: always original bytes, with a sanitized attachment filename.
@@ -312,74 +280,16 @@ pub async fn download<P: Principal, S: Store, B: AudioBackend>(
     let filename = download_filename(&track.title, track.file_format.as_deref().unwrap_or(""));
     let disposition = format!("attachment; filename=\"{}\"", filename.replace('"', "_"));
     serve_outcome(
-        serve_original(
+        serve(
             ctx.audio,
             &fid,
+            &StreamParams::original(),
             ctx.range.as_deref(),
             ctx.method == "HEAD",
             Some(disposition),
         )
         .await,
     )
-}
-
-/// Serve a transcode pipe: 200, `Accept-Ranges: none`,
-/// `Cache-Control: no-store`, identity encoding; Content-Length only
-/// with `estimateContentLength=true`. HEAD short-circuits before the
-/// pipe (headers only, no lease, no ffmpeg): the content type derives
-/// from the plan's output format instead of the backend.
-pub async fn serve_transcode<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-    file_id: &str,
-    plan: &StreamPlan,
-    duration_seconds: f64,
-    estimate: bool,
-) -> Result<Outcome, SubsonicError> {
-    if ctx.method == "HEAD" {
-        let (content_type, _) = transcode_hint(plan.out_format.as_deref().unwrap_or(""));
-        let mut headers = vec![
-            ("Accept-Ranges".to_owned(), "none".to_owned()),
-            ("Cache-Control".to_owned(), "no-store".to_owned()),
-            ("Content-Encoding".to_owned(), "identity".to_owned()),
-        ];
-        if estimate && let Some(bitrate) = plan.out_bitrate_kbps {
-            headers.push((
-                "Content-Length".to_owned(),
-                estimate_transcode_length(bitrate, duration_seconds, plan.start_seconds)
-                    .to_string(),
-            ));
-        }
-        return Ok(Outcome::Binary {
-            status: 200,
-            content_type: content_type.to_owned(),
-            headers,
-            body: Vec::new(),
-        });
-    }
-    let (body, content_type) = match ctx.audio.transcode(file_id, plan).await {
-        Ok(ok) => ok,
-        Err(err) if err.is_full() => {
-            return Ok(Outcome::Binary {
-                status: 429,
-                content_type: "text/plain".to_owned(),
-                headers: vec![("Retry-After".to_owned(), RETRY_AFTER_SECONDS.to_string())],
-                body: Vec::new(),
-            });
-        }
-        Err(err) => return Err(SubsonicError::new(0, err.to_string())),
-    };
-    let mut headers = vec![
-        ("Accept-Ranges".to_owned(), "none".to_owned()),
-        ("Cache-Control".to_owned(), "no-store".to_owned()),
-        ("Content-Encoding".to_owned(), "identity".to_owned()),
-    ];
-    if estimate && let Some(bitrate) = plan.out_bitrate_kbps {
-        headers.push((
-            "Content-Length".to_owned(),
-            estimate_transcode_length(bitrate, duration_seconds, plan.start_seconds).to_string(),
-        ));
-    }
-    Ok(audio_outcome(200, content_type, headers, body))
 }
 
 /// Transcode client description, strict: unknown fields rejected at
@@ -577,8 +487,9 @@ pub async fn transcode_decision<P: Principal, S: Store, B: AudioBackend>(
     ))
 }
 
-/// Transcode stream: validates signed params; direct params serve the
-/// original file, else the ffmpeg pipe at the offset (estimate off).
+/// Transcode stream: validates the signed parameters. Direct parameters
+/// serve the original file; otherwise their format and bitrate go to the
+/// stream gateway as the request, with the offset (estimate off).
 pub async fn transcode_stream<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
@@ -603,51 +514,39 @@ pub async fn transcode_stream<P: Principal, S: Store, B: AudioBackend>(
         .pint("offset", Some(0), Some(0), Some(604_800))?
         .unwrap_or(0)
         .max(0) as f64;
-    let track = ctx
-        .store
-        .get_track(&file_id)
-        .await
-        .map_err(Ctx::<P, S, B>::store_err)?
-        .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Song not found"))?;
     let user_id = ctx.user()?.user_id().to_owned();
     let (direct, out_format, bitrate) = ctx
         .store
         .decode_transcode_params(&params, &user_id, &file_id)
         .await
         .map_err(Ctx::<P, S, B>::store_err)?;
-    if direct {
-        return serve_outcome(
-            serve_original(
-                ctx.audio,
-                &file_id,
-                ctx.range.as_deref(),
-                ctx.method == "HEAD",
-                None,
-            )
-            .await,
-        );
-    }
-    if !ctx.settings.transcoding_enabled {
-        return Err(SubsonicError::new(0, "Transcoding is disabled"));
-    }
-    match (out_format, bitrate) {
-        (Some(out_format), Some(bitrate)) => {
-            serve_transcode(
-                ctx,
-                &file_id,
-                &StreamPlan {
-                    transcode: true,
-                    out_format: Some(out_format),
-                    out_bitrate_kbps: Some(bitrate),
-                    start_seconds: offset,
-                },
-                track.duration_seconds,
-                false,
-            )
-            .await
+    let params = if direct {
+        StreamParams::original()
+    } else {
+        if !ctx.settings.transcoding_enabled {
+            return Err(SubsonicError::new(0, "Transcoding is disabled"));
         }
-        _ => Err(SubsonicError::new(10, "Invalid transcode parameters")),
-    }
+        let (Some(format), Some(bitrate)) = (out_format, bitrate) else {
+            return Err(SubsonicError::new(10, "Invalid transcode parameters"));
+        };
+        StreamParams {
+            format: Some(format),
+            max_bitrate_kbps: Some(bitrate),
+            start_seconds: offset,
+            estimate_content_length: false,
+        }
+    };
+    serve_outcome(
+        serve(
+            ctx.audio,
+            &file_id,
+            &params,
+            ctx.range.as_deref(),
+            ctx.method == "HEAD",
+            None,
+        )
+        .await,
+    )
 }
 
 /// Avatar: self-only. A username that is not the caller's is the one

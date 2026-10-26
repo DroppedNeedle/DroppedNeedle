@@ -1,15 +1,19 @@
 //! Stream-gateway engine: one source-keyed byte source behind the routes.
 //!
 //! [`Gateway`] implements the routes' [`StreamEngine`] seam: it takes a
-//! direct lease, resolves local files or proxied remote bytes, and runs the
-//! transcode [`decide()`] policy for local files.
+//! direct lease, resolves local files or proxied remote bytes, and makes
+//! the one transcode [`decide()`] call for every protocol. The native,
+//! Subsonic and Jellyfin routes only translate their parameters into
+//! [`StreamParams`]; the plan the gateway ran comes back as
+//! [`StreamMedia::transcoded`], so a direct landing is framed as direct.
 //!
 //! A local key is a catalog track id. It resolves through
 //! [`LibraryFiles::locate_track`], the same lookup and root confinement
 //! that library downloads use, so playback and downloads agree on which
-//! files exist. A gateway without the library wired (tests, unwired
+//! files exist; the row's format, bitrate and length are the facts the
+//! decision reads. A gateway without the library wired (tests, unwired
 //! builds) joins the key onto its constructor root as a relative path
-//! instead, sandboxed to that root.
+//! instead, sandboxed to that root, and knows only the file's extension.
 //! The open hands the routes a file body read by range, or the transcode
 //! output chunk by chunk; HEAD answers from file metadata and never starts
 //! ffmpeg. Range slicing, 206/416 decisions, and headers stay in the routes
@@ -23,13 +27,14 @@
 //! path; per-source server-side transcode stays a remotes-adapter concern).
 //!
 //! [`StreamEngine`]: super::routes::StreamEngine
+//! [`StreamParams`]: super::routes::StreamParams
 //! [`decide()`]: super::transcode::decide
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::leases::DirectGate;
-use super::local_files::{LibraryFiles, LocateError, PathRefusal};
+use super::local_files::{CatalogFile, LibraryFiles, LocateError, PathRefusal};
 use super::plugin_url;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::ConnectApps;
@@ -38,12 +43,12 @@ use futures_util::StreamExt as _;
 
 use super::leases::OwnedDirectLease;
 use super::routes::{
-    AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
+    AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
     content_type_for_extension,
 };
 use super::transcode::{
-    OutFormat, StreamPlan, TrackInfo, TranscodeError, TranscodeSettings, Transcoder, decide,
-    estimate_size, out_media_type,
+    StreamPlan, TrackInfo, TranscodeError, TranscodeSettings, Transcoder, decide, estimate_size,
+    out_media_type,
 };
 
 /// A canned remote object, for scripted readers: upstream bytes plus the
@@ -265,15 +270,28 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
 
     /// Resolve the file, its content type, and the plan.
     async fn local_read(&self, request: &StreamOpen) -> Result<LocalRead, StreamFault> {
-        let path = match &self.library {
-            Some(library) => catalog_path(library, &request.key).await?,
-            None => self.sandboxed_path(&request.key)?,
-        };
-        self.read_plan(path, request)
+        match &self.library {
+            Some(library) => {
+                let (file, path) = catalog_file(library, &request.key).await?;
+                let track = TrackInfo {
+                    file_format: file.file_format,
+                    bitrate_kbps: file.bitrate_kbps,
+                    duration_seconds: file.duration_seconds.unwrap_or(0.0),
+                };
+                self.read_plan(path, Some(track), request)
+            }
+            None => self.read_plan(self.sandboxed_path(&request.key)?, None, request),
+        }
     }
 
-    /// Content type and transcode plan for one resolved local path.
-    fn read_plan(&self, path: PathBuf, request: &StreamOpen) -> Result<LocalRead, StreamFault> {
+    /// Content type and transcode plan for one resolved local path. A path
+    /// with no catalog facts is known only by its extension.
+    fn read_plan(
+        &self,
+        path: PathBuf,
+        track: Option<TrackInfo>,
+        request: &StreamOpen,
+    ) -> Result<LocalRead, StreamFault> {
         let extension = path
             .extension()
             .and_then(|ext| ext.to_str())
@@ -283,7 +301,12 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             content_type_for_extension(&extension).ok_or_else(|| StreamFault::InvalidInput {
                 message: "Unsupported audio format".to_owned(),
             })?;
-        let plan = self.plan_for(&extension, None, request)?;
+        let track = track.unwrap_or(TrackInfo {
+            file_format: extension,
+            bitrate_kbps: None,
+            duration_seconds: 0.0,
+        });
+        let plan = self.plan_for(&track, request)?;
         Ok(LocalRead {
             path,
             content_type,
@@ -291,54 +314,26 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         })
     }
 
-    /// The transcode plan for a source in `format` (a file extension),
-    /// with its length when known.
-    fn plan_for(
-        &self,
-        format: &str,
-        duration: Option<f64>,
-        request: &StreamOpen,
-    ) -> Result<StreamPlan, StreamFault> {
-        // Track facts for decide(): the format is exact; bitrate is unknown
-        // at this layer, so a client cap alone never triggers a transcode
-        // here; only a codec mismatch does.
-        let track = TrackInfo {
-            file_format: format.to_owned(),
-            bitrate_kbps: None,
-            duration_seconds: duration.unwrap_or(0.0),
-        };
+    /// The one transcode decision, from the source's own facts and the
+    /// request's parameters. `format=raw` always lands direct.
+    fn plan_for(&self, track: &TrackInfo, request: &StreamOpen) -> Result<StreamPlan, StreamFault> {
         let force_original = request
             .params
             .format
             .as_deref()
             .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
-        let start_seconds = request.params.start_seconds;
         let settings = match &self.settings {
             Some(live) => crate::transcode_policy(live).ok_or_else(|| StreamFault::Internal {
                 cause: "connect_apps settings cannot be read".to_owned(),
             })?,
             None => self.fixed.clone(),
         };
-        // Compat verdict carry: the protocol modules decide with real source
-        // bitrate facts, while this re-run sees `bitrate_kbps: None`, so a
-        // bitrate-triggered same-codec plan would land direct here. When the
-        // adapter carries `force_transcode`, honor the compat verdict (codec
-        // + bitrate + offset) instead of re-deciding; the hard outs still
-        // win, since a forced plan must never spawn ffmpeg when the policy
-        // says direct.
-        if request.params.force_transcode
-            && settings.transcoding_enabled
-            && self.ffmpeg_present
-            && !force_original
-        {
-            return Ok(forced_plan(&request.params, &settings, start_seconds));
-        }
         Ok(decide(
-            &track,
+            track,
             request.params.format.as_deref(),
             request.params.max_bitrate_kbps,
             force_original,
-            start_seconds,
+            request.params.start_seconds,
             &settings,
             self.ffmpeg_present,
         ))
@@ -379,7 +374,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .ok_or(StreamFault::NotFound)?;
         match resolved {
             PluginStream::File { path, .. } => {
-                let read = self.read_plan(path, request)?;
+                let read = self.read_plan(path, None, request)?;
                 self.stream_read(read, request, head_only, lease).await
             }
             PluginStream::Remote {
@@ -389,7 +384,12 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                 duration_seconds,
             } => {
                 let format = plugin_url::url_format(&url, &content_type);
-                let plan = self.plan_for(&format, duration_seconds, request)?;
+                let track = TrackInfo {
+                    file_format: format.clone(),
+                    bitrate_kbps: None,
+                    duration_seconds: duration_seconds.unwrap_or(0.0),
+                };
+                let plan = self.plan_for(&track, request)?;
                 if plan.is_transcode() {
                     return self
                         .transcode_plugin_url(
@@ -533,12 +533,15 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     }
 }
 
-/// The file of catalog track `track_id`. Unknown tracks and files gone
-/// from disk are 404; a file that resolves outside the library roots is
-/// 403 with v2's message.
-async fn catalog_path(library: &LibraryFiles, track_id: &str) -> Result<PathBuf, StreamFault> {
+/// The catalog row and file of track `track_id`. Unknown tracks and files
+/// gone from disk are 404; a file that resolves outside the library roots
+/// is 403 with v2's message.
+async fn catalog_file(
+    library: &LibraryFiles,
+    track_id: &str,
+) -> Result<(CatalogFile, PathBuf), StreamFault> {
     match library.locate_track(track_id).await {
-        Ok((_, path)) => Ok(path),
+        Ok(found) => Ok(found),
         Err(LocateError::Unknown | LocateError::Refused(PathRefusal::Missing)) => {
             Err(StreamFault::NotFound)
         }
@@ -552,40 +555,6 @@ async fn catalog_path(library: &LibraryFiles, track_id: &str) -> Result<PathBuf,
             })
         }
         Err(LocateError::Internal(cause)) => Err(StreamFault::Internal { cause }),
-    }
-}
-
-/// Build the transcode plan a compat verdict dictates: the adapter's
-/// codec (`mp3`, `opus`, or the Jellyfin HLS segment format `aac-ts`, which
-/// only this path accepts) and its already-decided bitrate, plus the seek
-/// offset. Duration is unknown at this layer, so
-/// the size estimate degrades to zero remaining seconds.
-fn forced_plan(
-    params: &StreamParams,
-    settings: &TranscodeSettings,
-    start_seconds: f64,
-) -> StreamPlan {
-    let out_format = match params
-        .format
-        .as_deref()
-        .unwrap_or("")
-        .to_lowercase()
-        .as_str()
-    {
-        "opus" => OutFormat::Opus,
-        super::transcode::HLS_SEGMENT_FORMAT => OutFormat::AacTs,
-        _ => OutFormat::Mp3,
-    };
-    let out_bitrate_kbps = super::transcode::out_bitrate_kbps(
-        out_format.name(),
-        params.max_bitrate_kbps,
-        settings.max_bitrate_kbps,
-    );
-    StreamPlan::Transcode {
-        out_format,
-        out_bitrate_kbps,
-        start_seconds: start_seconds.max(0.0),
-        source_duration_seconds: 0.0,
     }
 }
 

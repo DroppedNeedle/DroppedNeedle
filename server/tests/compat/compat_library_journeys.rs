@@ -970,6 +970,168 @@ async fn streaming_ranges_and_head_on_every_stream_route() {
     rig.stop().await;
 }
 
+/// One track's ids on each route, and the bitrate the scan read.
+async fn stream_ids(
+    rig: &CompatApp,
+    auth: &str,
+    items: &Value,
+    title: &str,
+) -> (String, String, String, i64) {
+    let (_, found) = rig
+        .app
+        .call(
+            "GET",
+            &rest(&format!("search3?query={title}&songCount=5"), auth),
+            &[],
+            None,
+        )
+        .await;
+    let song = named(
+        &found["subsonic-response"]["searchResult3"]["song"],
+        "title",
+        title,
+    );
+    let id = song["id"].as_str().expect("song id").to_owned();
+    let bitrate = song["bitRate"].as_i64().expect("song bitrate");
+    let local = id.strip_prefix("tr-").expect("a track id").to_owned();
+    let item = named(&items["Items"], "Name", title)["Id"]
+        .as_str()
+        .expect("track id")
+        .to_owned();
+    (local, id, item, bitrate)
+}
+
+/// The one transcode decision on the native, Subsonic and Jellyfin stream
+/// routes, from the track's own facts: a ceiling under the source bitrate
+/// transcodes the same codec, a codec change transcodes, the original
+/// stays direct whatever the ceiling, and HEAD of a transcode answers its
+/// headers without starting ffmpeg. Every route answers the same status
+/// and headers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transcodes_alike_on_every_stream_route() {
+    let rig = CompatApp::transcoding("compat-transcodes").await;
+    let app = &rig.app;
+    let auth = rig.subsonic_auth("matrix");
+    let key = format!("api_key={}", rig.secret);
+    let session = player_web_session(&rig).await;
+    let bearer = [("authorization", session.as_str())];
+    let (_, items) = app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items?includeItemTypes=Audio&Recursive=true&{key}"),
+            &[],
+            None,
+        )
+        .await;
+    let (mp3, mp3_song, mp3_item, mp3_kbps) = stream_ids(&rig, &auth, &items, "One").await;
+    let (flac, flac_song, flac_item, _) = stream_ids(&rig, &auth, &items, "Airbag").await;
+    let ceiling = mp3_kbps / 2;
+    let routes = |local: &str, native: &str, song: &str, subsonic: &str, item: &str, jf: &str| {
+        [
+            (
+                "native",
+                format!("/api/v3/stream/local/{local}?{native}"),
+                &bearer[..],
+            ),
+            (
+                "subsonic",
+                format!("/subsonic/rest/stream?id={song}&{subsonic}&{auth}"),
+                &[][..],
+            ),
+            (
+                "jellyfin",
+                format!("/jellyfin/Audio/{item}/stream?{jf}&{key}"),
+                &[][..],
+            ),
+        ]
+    };
+    let under_ceiling = routes(
+        &mp3,
+        &format!("max_bitrate={ceiling}"),
+        &mp3_song,
+        &format!("maxBitRate={ceiling}"),
+        &mp3_item,
+        &format!("audioBitRate={}", ceiling * 1000),
+    );
+    let codec_change = routes(
+        &flac,
+        "format=mp3",
+        &flac_song,
+        "format=mp3",
+        &flac_item,
+        "audioCodec=mp3",
+    );
+    let original = routes(
+        &flac,
+        "format=raw&max_bitrate=64",
+        &flac_song,
+        "format=raw&maxBitRate=64",
+        &flac_item,
+        "static=true&audioBitRate=64000",
+    );
+    let out_kbps = ceiling.clamp(64, 320);
+    let airbag = rig.file("airbag");
+    let cases = [
+        (
+            "ceiling under the source",
+            "GET",
+            &under_ceiling,
+            Some(format!("ffmpeg stand-in: mp3 {out_kbps}k\n").into_bytes()),
+        ),
+        (
+            "codec change",
+            "GET",
+            &codec_change,
+            Some(b"ffmpeg stand-in: mp3 192k\n".to_vec()),
+        ),
+        (
+            "HEAD of a transcode",
+            "HEAD",
+            &codec_change,
+            Some(Vec::new()),
+        ),
+        ("original", "GET", &original, None),
+    ];
+    for (case, method, routes, transcoded) in cases {
+        let runs = rig.ffmpeg_runs("airbag").len();
+        let mut answers = Vec::new();
+        for (route, url, headers) in routes {
+            let (status, got, bytes) = app.raw(method, url, headers, None).await;
+            let label = format!("{case}: {route}");
+            assert_eq!(status, StatusCode::OK, "{label}");
+            assert_eq!(header_str(&got, "content-encoding"), "identity", "{label}");
+            match &transcoded {
+                Some(body) => {
+                    assert_eq!(header_str(&got, "content-type"), "audio/mpeg", "{label}");
+                    assert_eq!(header_str(&got, "accept-ranges"), "none", "{label}");
+                    assert_eq!(header_str(&got, "cache-control"), "no-store", "{label}");
+                    assert_eq!(&bytes, body, "{label}");
+                }
+                None => {
+                    assert_eq!(header_str(&got, "content-type"), "audio/flac", "{label}");
+                    assert_eq!(header_str(&got, "accept-ranges"), "bytes", "{label}");
+                    assert_eq!(bytes, airbag, "{label}");
+                }
+            }
+            answers.push((
+                header_str(&got, "content-type"),
+                header_str(&got, "content-length"),
+                header_str(&got, "accept-ranges"),
+                header_str(&got, "cache-control"),
+                bytes,
+            ));
+        }
+        assert!(
+            answers.windows(2).all(|pair| pair[0] == pair[1]),
+            "{case}: the routes differ: {answers:?}"
+        );
+        if method == "HEAD" {
+            assert_eq!(rig.ffmpeg_runs("airbag").len(), runs, "{case}: no ffmpeg");
+        }
+    }
+    rig.stop().await;
+}
+
 /// Media paths skip the token buckets but not the auth-failure lockout, so
 /// guessing passwords over `stream` still trips the backoff.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

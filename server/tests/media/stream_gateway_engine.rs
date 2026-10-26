@@ -164,7 +164,6 @@ fn open_transcode(key: &str, format: &str) -> StreamOpen {
             max_bitrate_kbps: None,
             estimate_content_length: false,
             start_seconds: 0.0,
-            force_transcode: false,
         },
     }
 }
@@ -324,45 +323,6 @@ async fn seek_then_transcode_starts_at_offset() {
             assert_eq!(*start_seconds, 42.5);
         }
         StreamPlan::Direct { .. } => panic!("seek-transcode must not land direct"),
-    }
-}
-
-#[tokio::test]
-async fn forced_verdict_transcodes_same_codec_despite_unknown_source_bitrate() {
-    // The gateway re-decide sees no source bitrate, so a same-codec
-    // bitrate plan lands direct, unless the compat adapter carries the
-    // explicit `force_transcode` verdict, which the gateway then honors.
-    let root = ScratchDir::new("forced");
-    put(&root, "song.mp3", b"MP3-BYTES");
-    let transcoder = FakeTranscoder::succeeding(vec![b"OUT".to_vec()]);
-    let calls = Arc::clone(&transcoder.calls);
-    let app = engine(&root, FakeRemote::default(), transcoder, true);
-
-    let mut request = open_transcode("song.mp3", "mp3");
-    request.params.max_bitrate_kbps = Some(128);
-    let media = app.open_stream(request.clone(), false).await.unwrap();
-    assert!(
-        !media.transcoded,
-        "no carry: unknown source bitrate lands direct"
-    );
-
-    request.params.force_transcode = true;
-    request.params.start_seconds = 7.0;
-    let media = app.open_stream(request, false).await.unwrap();
-    assert!(media.transcoded);
-    assert_eq!(media.content_type, "audio/mpeg");
-    let plans = calls.lock().unwrap();
-    assert_eq!(plans.len(), 1);
-    match &plans[0] {
-        StreamPlan::Transcode {
-            out_bitrate_kbps,
-            start_seconds,
-            ..
-        } => {
-            assert_eq!(*out_bitrate_kbps, 128);
-            assert_eq!(*start_seconds, 7.0);
-        }
-        StreamPlan::Direct { .. } => panic!("forced verdict must transcode"),
     }
 }
 
