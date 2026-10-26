@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import errno
 import hashlib
 import json
@@ -304,6 +305,16 @@ async def test_desired_document_without_embedded_choices_keeps_pinned_artwork() 
     result = await publisher._desired_document(item, ())
 
     assert result.artwork == desired.artwork
+
+
+def _png(color: bytes) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (4, 4), tuple(color)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _import_file(
@@ -1565,8 +1576,22 @@ async def test_edition_conversion_apply_and_undo_restore_a_different_track_set(
         "77777777-7777-4777-8777-000000000002",
     )
 
+    cover = _png(b"\x10\x80\xf0")
+    cover_descriptor = EmbeddedArtworkDescriptor(
+        image_type="front",
+        mime_type="image/png",
+        description="",
+        width=4,
+        height=4,
+        byte_size=len(cover),
+        sha256=hashlib.sha256(cover).hexdigest(),
+        content=cover,
+        format_supported=True,
+    )
+
     def desired_document(position: int) -> DesiredAudioDocument:
         return DesiredAudioDocument(
+            artwork=(cover_descriptor,) if position == 1 else None,
             fields=(
                 DesiredAudioField(
                     name="title", action="set", value=f"Exact Track {position}"
@@ -1642,6 +1667,19 @@ async def test_edition_conversion_apply_and_undo_restore_a_different_track_set(
                 settings_revision=saved.settings_revision,
                 naming_policy_revision=naming_revision,
                 undo_retention_days=management.undo_retention_days,
+                artifacts=(
+                    (
+                        LibraryManagementImportArtifact(
+                            kind="external_art",
+                            destination_root_id="root-1",
+                            destination_relative_path="Converted/cover.png",
+                            content=cover,
+                            source_fingerprint=hashlib.sha256(cover).hexdigest(),
+                        ),
+                    )
+                    if ordinal == 0
+                    else ()
+                ),
             )
         )
     second_tag, second_info = legacy_audio_projection(audio.read(second_source))
@@ -1688,7 +1726,14 @@ async def test_edition_conversion_apply_and_undo_restore_a_different_track_set(
         conversion_preview_job_id=preview_job_id,
         conversion_recycle_bin_path=str(recycle),
     )
-    bundle_json = msgspec.json.encode(bundle).decode()
+    # Apply publishes the sealed bundle as stored: artwork bytes come back from
+    # the blob store, and the request hash still matches the seal.
+    bundle_json = await service.encode_import_bundle(bundle)
+    assert cover.hex() not in bundle_json
+    assert base64.b64encode(cover).decode() not in bundle_json
+    sealed_bundle = msgspec.json.decode(
+        bundle_json.encode(), type=LibraryManagementImportBundle
+    )
     bundle_hash = hashlib.sha256(bundle_json.encode()).hexdigest()
     catalog_revision = await store.get_catalog_revision()
     preview_token = "sealed-conversion-preview"
@@ -1848,7 +1893,18 @@ async def test_edition_conversion_apply_and_undo_restore_a_different_track_set(
     assert {row["decision_source"] for row in seed_album_identities} == {"manual"}
     assert {row["decision_source"] for row in seed_track_identities} == {"manual"}
 
-    await service.publish_import_bundle(bundle)
+    await service.publish_import_bundle(sealed_bundle)
+
+    assert audio.read(root / "Converted/01 Exact Track 1.flac").artwork[0].content == (
+        cover
+    )
+    assert (root / "Converted/cover.png").read_bytes() == cover
+    with sqlite3.connect(store.db_path) as connection:
+        stored_request = connection.execute(
+            "SELECT request_json,request_hash FROM library_management_import_bundles"
+        ).fetchone()
+    assert stored_request[0] == bundle_json
+    assert stored_request[1] == bundle_hash
 
     after_apply = await store.get_target_album_tracks(
         "album-1", include_unavailable=True
@@ -4399,7 +4455,17 @@ async def _conversion_final_preview(tmp_path: Path, *, null_tag: bool = False):
         automatic_management=AsyncMock(),
         fingerprinter=AsyncMock(),
         held_dir=tmp_path / "held",
-        import_library=AsyncMock(),
+        import_library=SimpleNamespace(
+            encode_import_bundle=LibraryManagementPublisher(
+                store,
+                preferences,
+                AudioMetadataEngine(),
+                AudioWritePlanningService(AudioMetadataEngine()),
+                LibraryManagementBlobStore(tmp_path / "conversion-blobs", store),
+                LibraryFilesystemCoordinator(),
+                clock=lambda: 100.0,
+            ).encode_import_bundle
+        ),
         clock=lambda: 100.0,
     )
     service._fingerprinter.fingerprint.return_value = SimpleNamespace(

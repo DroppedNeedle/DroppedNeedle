@@ -64,6 +64,19 @@ class ExistingArtworkDescriptor(msgspec.Struct, frozen=True, kw_only=True):
     sha256: str
 
 
+class StoredEmbeddedArtwork(msgspec.Struct, frozen=True, kw_only=True):
+    """Embedded artwork of a persisted import file; the bytes sit in the blob store under ``sha256``."""
+
+    image_type: ArtworkImageType
+    mime_type: str | None
+    description: str
+    width: int | None
+    height: int | None
+    byte_size: int
+    sha256: str
+    format_supported: bool
+
+
 class ArtworkOutput(msgspec.Struct, frozen=True, kw_only=True):
     output_kind: ArtworkOutputKind
     image_type: ArtworkImageType

@@ -17,6 +17,7 @@ from core.exceptions import (
 from api.v1.schemas.library_management_preview import (
     LibraryManagementPreviewSummaryResponse,
 )
+from infrastructure.library_management_blob_store import LibraryManagementBlobStore
 from infrastructure.persistence.native_library_store import (
     MANAGEMENT_PERSISTENCE_BATCH_SIZE,
     MAX_REVISION,
@@ -206,6 +207,44 @@ def _plan_item(job_id: str, ordinal: int) -> LibraryManagementPlanItem:
         eligibility="eligible",
         created_at=11 + ordinal,
     )
+
+
+@pytest.mark.asyncio
+async def test_appended_plan_items_reference_their_embedded_artwork(
+    store: NativeLibraryStore, tmp_path: Path
+) -> None:
+    job_id = "management-artwork"
+    blobs = LibraryManagementBlobStore(tmp_path / "blobs", store)
+    blob = await blobs.add_bytes(b"cover", kind="image", created_at=1)
+    await store.create_library_management_job(
+        OperationJob(
+            id=job_id,
+            kind="library_management",
+            input_catalog_revision=0,
+            created_at=10,
+        ),
+        _job_snapshot(job_id),
+    )
+    item = msgspec.structs.replace(
+        _plan_item(job_id, 3),
+        artwork_choices_json=json.dumps(
+            [
+                {"output_kind": "sidecar", "blob_sha256": "ignored"},
+                {"output_kind": "embedded", "blob_sha256": blob.sha256},
+            ]
+        ),
+    )
+
+    await store.append_library_management_plan_items(
+        job_id, [item], expected_snapshot_revision=1
+    )
+
+    with sqlite3.connect(store.db_path) as connection:
+        references = connection.execute(
+            "SELECT blob_sha256,reference_kind,reference_id "
+            "FROM library_management_blob_references"
+        ).fetchall()
+    assert references == [(blob.sha256, "artwork", f"{job_id}:3:1")]
 
 
 @pytest.mark.asyncio

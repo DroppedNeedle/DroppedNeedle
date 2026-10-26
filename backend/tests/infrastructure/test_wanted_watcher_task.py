@@ -165,3 +165,42 @@ async def test_store_prune_survives_native_identification_errors(monkeypatch):
 
     # the loop reached the sleep after the failure instead of crashing
     assert len(sleeps) >= 1
+
+
+@pytest.mark.asyncio
+async def test_store_prune_also_prunes_finished_import_bundles(monkeypatch):
+    """#517: the six-hour pass retires finished import bundles and their artwork."""
+    sleeps, fake_sleep = _break_after(2)
+    monkeypatch.setattr(tasks.asyncio, "sleep", fake_sleep)
+    request_history, mbid_store, youtube_store = AsyncMock(), AsyncMock(), AsyncMock()
+    import_retention = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await tasks.prune_stores_periodically(
+            request_history,
+            mbid_store,
+            youtube_store,
+            import_retention=import_retention,
+        )
+
+    import_retention.prune.assert_awaited_once_with()
+    assert len(sleeps) >= 2
+
+
+@pytest.mark.asyncio
+async def test_store_prune_survives_import_retention_errors(monkeypatch):
+    sleeps, fake_sleep = _break_after(2)
+    monkeypatch.setattr(tasks.asyncio, "sleep", fake_sleep)
+    request_history, mbid_store, youtube_store = AsyncMock(), AsyncMock(), AsyncMock()
+    import_retention = AsyncMock()
+    import_retention.prune.side_effect = RuntimeError("db busy")
+
+    with pytest.raises(asyncio.CancelledError):
+        await tasks.prune_stores_periodically(
+            request_history,
+            mbid_store,
+            youtube_store,
+            import_retention=import_retention,
+        )
+
+    assert len(sleeps) >= 2

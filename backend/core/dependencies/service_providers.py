@@ -981,6 +981,24 @@ def get_library_management_baseline_service() -> "LibraryManagementBaselineServi
 
 
 @singleton
+def get_library_management_import_retention() -> "LibraryManagementImportRetention":
+    from services.native.library_management_import_retention import (
+        LibraryManagementImportRetention,
+    )
+
+    from .cache_providers import (
+        get_library_management_blob_store,
+        get_native_library_store,
+    )
+
+    return LibraryManagementImportRetention(
+        get_native_library_store(),
+        get_library_management_blob_store(),
+        get_preferences_service(),
+    )
+
+
+@singleton
 def get_library_management_duplicate_service() -> "LibraryManagementDuplicateService":
     from services.native.library_management_duplicate_service import (
         LibraryManagementDuplicateService,

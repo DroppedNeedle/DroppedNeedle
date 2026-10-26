@@ -647,8 +647,6 @@ class LibraryManagementBaselineService:
             ),
             desired_document_json=desired_json,
             desired_document_hash=hashlib.sha256(desired_json.encode()).hexdigest(),
-            catalog_document_json=desired_json,
-            catalog_document_hash=hashlib.sha256(desired_json.encode()).hexdigest(),
             artwork_choices_json=_json(artwork_choices),
             diff_json=_json(diff),
             capability_json=_json(

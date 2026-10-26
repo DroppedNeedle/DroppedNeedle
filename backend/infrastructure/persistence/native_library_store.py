@@ -12,7 +12,7 @@ import sqlite3
 import unicodedata
 import uuid
 from collections import Counter, OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path, PurePosixPath
 import threading
 import time
@@ -88,6 +88,10 @@ from models.library_management import (
     LibraryManagementTagEditIntent,
     LibraryTrackManagementState,
     MutationJournalState,
+)
+from models.library_management_stored_artwork import (
+    embedded_artwork_choices,
+    persisted_import_file,
 )
 from models.library_management_planning import (
     LibraryManagementCatalogFilter,
@@ -239,8 +243,59 @@ _IMPORT_JOURNAL_TRANSITIONS: dict[str, frozenset[str]] = {
     "needs_attention": frozenset(),
     "resolved": frozenset(),
 }
+_IMPORT_BUNDLE_LOOKUP_MARKER = "import_bundle_lookup_index"
+IMPORT_BUNDLE_LOOKUP_BACKFILL_BATCH_SIZE = 8
+IMPORT_BUNDLE_PRUNE_BATCH_SIZE = 50
+# Blob references an import bundle holds on its artwork, keyed by the bundle id.
+IMPORT_BUNDLE_REFERENCE_PREFIX = "import-bundle:"
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
+
+
+class _ImportFileLookupKey(msgspec.Struct):
+    download_task_id: str | None = None
+
+
+class _ImportBundleLookupKeys(msgspec.Struct):
+    files: tuple[_ImportFileLookupKey, ...] = ()
+    conversion_job_id: str | None = None
+
+
+def _import_plan_documents(
+    request: LibraryManagementImportFile,
+) -> tuple[str, str, list[dict[str, object]]]:
+    """Desired document without artwork bytes, its hash and the embedded artwork choices.
+
+    The bytes stay in the blob store, where the import bundle already put them.
+    """
+
+    stored = persisted_import_file(request)
+    desired_json = msgspec.json.encode(stored.desired_document).decode()
+    return (
+        desired_json,
+        hashlib.sha256(desired_json.encode()).hexdigest(),
+        embedded_artwork_choices(stored.desired_artwork or ()),
+    )
+
+
+def _import_bundle_lookup_keys(
+    request_json: str,
+) -> tuple[tuple[str, ...], str | None]:
+    """Download-task and conversion identities of a sealed import bundle.
+
+    Decodes only the identity fields, so the bundle's embedded artwork bytes are
+    skipped rather than materialized.
+    """
+
+    keys = msgspec.json.decode(request_json, type=_ImportBundleLookupKeys)
+    return (
+        tuple(
+            file.download_task_id
+            for file in keys.files
+            if file.download_task_id is not None
+        ),
+        keys.conversion_job_id,
+    )
 
 
 def _complete_track_identity_mapping(
@@ -19798,10 +19853,14 @@ class NativeLibraryStore(PersistenceBase):
         self, reference: LibraryManagementBlobReference
     ) -> None:
         def operation(connection: sqlite3.Connection) -> None:
+            # A re-added reference restarts its age, so the orphan grace period
+            # protects a retried publish of an old failed bundle.
             connection.execute(
-                "INSERT OR IGNORE INTO library_management_blob_references "
+                "INSERT INTO library_management_blob_references "
                 "(blob_sha256, reference_kind, reference_id, created_at) "
-                "VALUES (?,?,?,?)",
+                "VALUES (?,?,?,?) "
+                "ON CONFLICT(blob_sha256, reference_kind, reference_id) "
+                "DO UPDATE SET created_at=excluded.created_at",
                 (
                     reference.blob_sha256,
                     reference.reference_kind,
@@ -19888,6 +19947,8 @@ class NativeLibraryStore(PersistenceBase):
                 "WHERE baseline.semantic_snapshot_blob_sha256 = blob.sha256) "
                 "AND NOT EXISTS (SELECT 1 FROM library_management_operation_snapshots snapshot "
                 "WHERE snapshot.semantic_snapshot_blob_sha256 = blob.sha256) "
+                "AND NOT EXISTS (SELECT 1 FROM library_management_import_journal journal "
+                "WHERE journal.baseline_blob_sha256 = blob.sha256) "
                 "ORDER BY blob.created_at, blob.sha256 LIMIT ?",
                 (older_than, limit),
             ).fetchall()
@@ -21473,11 +21534,21 @@ class NativeLibraryStore(PersistenceBase):
                 "SELECT state FROM library_edition_conversion_jobs WHERE id=?",
                 (job_id,),
             ).fetchone()
-            bundle = connection.execute(
-                "SELECT state FROM library_management_import_bundles WHERE "
-                "json_extract(request_json,'$.conversion_job_id')=?",
-                (job_id,),
-            ).fetchone()
+            if self._import_bundle_lookups_complete(connection):
+                bundle = connection.execute(
+                    "SELECT bundle.state FROM "
+                    "library_management_import_bundle_conversions conversion "
+                    "JOIN library_management_import_bundles bundle "
+                    "ON bundle.id=conversion.bundle_id "
+                    "WHERE conversion.conversion_job_id=?",
+                    (job_id,),
+                ).fetchone()
+            else:
+                bundle = connection.execute(
+                    "SELECT state FROM library_management_import_bundles WHERE "
+                    "json_extract(request_json,'$.conversion_job_id')=?",
+                    (job_id,),
+                ).fetchone()
             if conversion is None or str(conversion["state"]) != "ready":
                 return
             if bundle is not None and str(bundle["state"]) in {
@@ -23837,6 +23908,8 @@ class NativeLibraryStore(PersistenceBase):
                     for item in items
                 ],
             )
+            for item in items:
+                self._reference_plan_item_artwork(connection, item)
             counts = connection.execute(
                 "SELECT COUNT(*) AS item_count, "
                 "COUNT(DISTINCT bundle_ordinal) AS bundle_count "
@@ -24480,6 +24553,9 @@ class NativeLibraryStore(PersistenceBase):
     ) -> tuple[LibraryManagementImportBundleRecord, bool]:
         """Create an immutable import publication intent or return its exact retry."""
 
+        # Decoding the multi-MB request belongs outside the write lock.
+        lookup_keys = _import_bundle_lookup_keys(bundle.request_json)
+
         def operation(
             connection: sqlite3.Connection,
         ) -> tuple[LibraryManagementImportBundleRecord, bool]:
@@ -24523,9 +24599,153 @@ class NativeLibraryStore(PersistenceBase):
                     bundle.row_revision,
                 ),
             )
+            self._insert_import_bundle_lookups(connection, bundle.id, *lookup_keys)
             return bundle, True
 
         return await self._write(operation)
+
+    @staticmethod
+    def _insert_import_bundle_lookups(
+        connection: sqlite3.Connection,
+        bundle_id: str,
+        task_ids: tuple[str, ...],
+        conversion_job_id: str | None,
+    ) -> None:
+        # Selecting from the bundle keeps a bundle pruned since it was read from
+        # failing the foreign key.
+        for task_id in task_ids:
+            connection.execute(
+                "INSERT OR IGNORE INTO library_management_import_bundle_tasks "
+                "(download_task_id,bundle_id) "
+                "SELECT ?,id FROM library_management_import_bundles WHERE id=?",
+                (task_id, bundle_id),
+            )
+        if conversion_job_id is not None:
+            connection.execute(
+                "INSERT OR IGNORE INTO library_management_import_bundle_conversions "
+                "(conversion_job_id,bundle_id) "
+                "SELECT ?,id FROM library_management_import_bundles WHERE id=?",
+                (conversion_job_id, bundle_id),
+            )
+
+    @staticmethod
+    def _import_bundle_lookups_complete(connection: sqlite3.Connection) -> bool:
+        return (
+            connection.execute(
+                "SELECT 1 FROM library_migration_markers WHERE marker=?",
+                (_IMPORT_BUNDLE_LOOKUP_MARKER,),
+            ).fetchone()
+            is not None
+        )
+
+    async def has_completed_import_bundle_lookup_backfill(self) -> bool:
+        def operation(connection: sqlite3.Connection) -> bool:
+            return self._import_bundle_lookups_complete(connection)
+
+        return await self._read(operation)
+
+    async def backfill_import_bundle_lookups(
+        self,
+        *,
+        after_id: str = "",
+        limit: int = IMPORT_BUNDLE_LOOKUP_BACKFILL_BATCH_SIZE,
+    ) -> str | None:
+        """Index one bounded batch of bundles stored before the lookup tables.
+
+        Resumes after `after_id` and skips bundles that already have lookup rows,
+        so an interrupted run continues where it stopped. Returns the last bundle
+        id examined, or None when no unindexed bundle follows `after_id`.
+        """
+
+        if limit < 1 or limit > MANAGEMENT_PERSISTENCE_BATCH_SIZE:
+            raise ValidationError("Import bundle backfill batch size is out of range.")
+
+        def read(
+            connection: sqlite3.Connection,
+        ) -> tuple[str | None, list[tuple[str, tuple[str, ...], str | None]]]:
+            bundle_ids = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT bundle.id FROM library_management_import_bundles bundle "
+                    "WHERE bundle.id>? "
+                    "AND NOT EXISTS (SELECT 1 FROM "
+                    "library_management_import_bundle_tasks task "
+                    "WHERE task.bundle_id=bundle.id) "
+                    "AND NOT EXISTS (SELECT 1 FROM "
+                    "library_management_import_bundle_conversions conversion "
+                    "WHERE conversion.bundle_id=bundle.id) "
+                    "ORDER BY bundle.id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            ]
+            indexed: list[tuple[str, tuple[str, ...], str | None]] = []
+            for bundle_id in bundle_ids:
+                row = connection.execute(
+                    "SELECT request_json FROM library_management_import_bundles "
+                    "WHERE id=?",
+                    (bundle_id,),
+                ).fetchone()
+                if row is None:
+                    continue
+                try:
+                    task_ids, conversion_job_id = _import_bundle_lookup_keys(
+                        str(row[0])
+                    )
+                except msgspec.DecodeError:
+                    logger.warning(
+                        "Import bundle %s has an unreadable request and was not "
+                        "indexed.",
+                        bundle_id,
+                    )
+                    continue
+                if task_ids or conversion_job_id is not None:
+                    indexed.append((bundle_id, task_ids, conversion_job_id))
+            return (bundle_ids[-1] if bundle_ids else None), indexed
+
+        last_id, indexed = await self._read(read)
+
+        def write(connection: sqlite3.Connection) -> None:
+            for bundle_id, task_ids, conversion_job_id in indexed:
+                self._insert_import_bundle_lookups(
+                    connection, bundle_id, task_ids, conversion_job_id
+                )
+
+        if indexed:
+            await self._write_background(write)
+        return last_id
+
+    async def complete_import_bundle_lookup_backfill(
+        self, *, completed_at: float
+    ) -> None:
+        """Record that every stored bundle is covered by the lookup tables."""
+
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "INSERT INTO library_migration_markers "
+                "(marker,source_revision,target_catalog_revision,created_at) "
+                "VALUES (?,'1',(SELECT value FROM library_catalog_revision "
+                "WHERE singleton=1),?) ON CONFLICT(marker) DO NOTHING",
+                (_IMPORT_BUNDLE_LOOKUP_MARKER, completed_at),
+            )
+
+        await self._write_background(operation)
+
+    async def ensure_import_bundle_state_index(self) -> None:
+        """Index import bundles by state for the recovery and diagnostics scans.
+
+        `state` follows the multi-MB `request_json` in each row, so building the
+        index reads the whole table once. That single pass replaces the full
+        scans recovery would otherwise run, and is a no-op once built. It runs
+        as background work so it never holds up interactive writes.
+        """
+
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_import_bundles_state "
+                "ON library_management_import_bundles(state,updated_at,id)"
+            )
+
+        await self._write_background(operation)
 
     async def get_library_management_import_bundle(
         self, bundle_id: str
@@ -24554,23 +24774,37 @@ class NativeLibraryStore(PersistenceBase):
     ) -> list[LibraryManagementImportBundleRecord]:
         """Import-publication barriers associated with one acquisition task.
 
-        The task identity is part of each file request in the durable bundle JSON.
-        SQLite's JSON table function keeps this an exact lookup rather than a path- or
-        substring-based inference during legacy workspace reconciliation.
+        The task identity is part of each file request in the durable bundle JSON,
+        mirrored into an indexed lookup table when the bundle is stored. Until the
+        backfill has covered bundles stored earlier, SQLite's JSON table function
+        keeps this an exact lookup rather than a path- or substring-based inference
+        during legacy workspace reconciliation.
         """
 
         def operation(
             connection: sqlite3.Connection,
         ) -> list[LibraryManagementImportBundleRecord]:
-            rows = connection.execute(
-                """SELECT DISTINCT bundle.*
-                   FROM library_management_import_bundles bundle,
-                        json_each(bundle.request_json, '$.files') file
-                   WHERE bundle.origin='acquisition'
-                     AND json_extract(file.value, '$.download_task_id')=?
-                   ORDER BY bundle.created_at,bundle.id""",
-                (download_task_id,),
-            ).fetchall()
+            if self._import_bundle_lookups_complete(connection):
+                rows = connection.execute(
+                    """SELECT bundle.*
+                       FROM library_management_import_bundle_tasks task
+                       JOIN library_management_import_bundles bundle
+                         ON bundle.id=task.bundle_id
+                       WHERE task.download_task_id=?
+                         AND bundle.origin='acquisition'
+                       ORDER BY bundle.created_at,bundle.id""",
+                    (download_task_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """SELECT DISTINCT bundle.*
+                       FROM library_management_import_bundles bundle,
+                            json_each(bundle.request_json, '$.files') file
+                       WHERE bundle.origin='acquisition'
+                         AND json_extract(file.value, '$.download_task_id')=?
+                       ORDER BY bundle.created_at,bundle.id""",
+                    (download_task_id,),
+                ).fetchall()
             return [
                 msgspec.convert(
                     dict(row),
@@ -24581,6 +24815,192 @@ class NativeLibraryStore(PersistenceBase):
             ]
 
         return await self._read(operation)
+
+    async def prune_terminal_import_bundles(
+        self,
+        *,
+        updated_before: float,
+        limit: int = IMPORT_BUNDLE_PRUNE_BATCH_SIZE,
+    ) -> tuple[int, bool]:
+        """Delete completed import bundles last touched before `updated_before`.
+
+        A bundle is kept only for idempotent retries, recovery and the cleanup
+        barrier of the download attempts that published it, so a completed one
+        expires on age once no unfinished attempt holds it. A resolved or
+        rolled-back bundle is never pruned: the orphan workspace reconcile keeps
+        a task's folder while any of its bundles is not completed. The journal
+        rows go first (their foreign key restricts), the lookup rows cascade, and
+        the bundle's artwork references go with it so the blob cleanup can
+        reclaim the bytes. Waits for the lookup backfill, which is what shows a
+        bundle still tied to an unfinished edition conversion. Returns
+        `(removed, more_candidates)`.
+        """
+
+        if limit < 1 or limit > MANAGEMENT_PERSISTENCE_BATCH_SIZE:
+            raise ValidationError("Import bundle prune batch size is out of range.")
+
+        def operation(connection: sqlite3.Connection) -> tuple[int, bool]:
+            if not self._import_bundle_lookups_complete(connection):
+                return 0, False
+            held = self._attempt_held_import_bundle_ids(connection)
+            if held is None:
+                return 0, False
+            removable: list[str] = []
+            more = False
+            cursor_updated_at, cursor_id = -1.0, ""
+            while not more:
+                page = connection.execute(
+                    "SELECT bundle.id,bundle.updated_at "
+                    "FROM library_management_import_bundles bundle "
+                    "WHERE bundle.state='completed' "
+                    "AND bundle.updated_at<? "
+                    "AND (bundle.updated_at>? OR (bundle.updated_at=? AND bundle.id>?)) "
+                    "AND NOT EXISTS (SELECT 1 FROM "
+                    "library_management_import_bundle_conversions conversion "
+                    "JOIN library_edition_conversion_jobs job "
+                    "ON job.id=conversion.conversion_job_id "
+                    "WHERE conversion.bundle_id=bundle.id AND job.state='ready') "
+                    "ORDER BY bundle.updated_at,bundle.id LIMIT ?",
+                    (
+                        updated_before,
+                        cursor_updated_at,
+                        cursor_updated_at,
+                        cursor_id,
+                        limit,
+                    ),
+                ).fetchall()
+                for row in page:
+                    cursor_updated_at, cursor_id = float(row[1]), str(row[0])
+                    if cursor_id in held:
+                        continue
+                    if len(removable) == limit:
+                        more = True
+                        break
+                    removable.append(cursor_id)
+                if len(page) < limit:
+                    break
+            for bundle_id in removable:
+                connection.execute(
+                    "DELETE FROM library_management_import_journal WHERE bundle_id=?",
+                    (bundle_id,),
+                )
+                connection.execute(
+                    "DELETE FROM library_management_blob_references "
+                    "WHERE reference_kind='artwork' AND reference_id=?",
+                    (f"{IMPORT_BUNDLE_REFERENCE_PREFIX}{bundle_id}",),
+                )
+                connection.execute(
+                    "DELETE FROM library_management_import_bundles WHERE id=?",
+                    (bundle_id,),
+                )
+            return len(removable), more
+
+        return await self._write_background(operation)
+
+    @staticmethod
+    def _attempt_held_import_bundle_ids(
+        connection: sqlite3.Connection,
+    ) -> set[str] | None:
+        """Bundles an unfinished download attempt still needs as cleanup barriers.
+
+        None means the attempts could not be read, so nothing may be pruned.
+        """
+
+        if (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='download_attempts'"
+            ).fetchone()
+            is None
+        ):
+            return set()
+        held: set[str] = set()
+        for row in connection.execute(
+            "SELECT publisher_bundle_ids_json FROM download_attempts "
+            "WHERE state NOT IN ('complete','preserved') "
+            "AND publisher_bundle_ids_json<>'[]'"
+        ):
+            try:
+                held.update(str(value) for value in json.loads(str(row[0])))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "A download attempt has unreadable import bundle ids; "
+                    "import bundles are not pruned."
+                )
+                return None
+        return held
+
+    async def list_ready_edition_conversion_ids(self) -> list[str]:
+        """Conversions whose sealed bundle can still be applied."""
+
+        def operation(connection: sqlite3.Connection) -> list[str]:
+            return [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT id FROM library_edition_conversion_jobs "
+                    "WHERE state='ready' AND final_bundle_json IS NOT NULL"
+                )
+            ]
+
+        return await self._read(operation)
+
+    async def remove_orphaned_import_bundle_references(
+        self,
+        *,
+        created_before: float,
+        keep_bundle_ids: Collection[str] = (),
+    ) -> int:
+        """Drop artwork references held for import bundles that do not exist.
+
+        Publishing records the references before the bundle row, so a publish
+        that fails in between leaves them behind. Recent ones belong to a publish
+        still in flight and `keep_bundle_ids` to a sealed bundle not stored yet.
+        """
+
+        keep = {f"{IMPORT_BUNDLE_REFERENCE_PREFIX}{value}" for value in keep_bundle_ids}
+
+        def find(connection: sqlite3.Connection) -> list[str]:
+            return [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT reference_id "
+                    "FROM library_management_blob_references "
+                    "WHERE reference_kind='artwork' AND reference_id>=? "
+                    "AND reference_id<? AND created_at<? "
+                    "AND substr(reference_id,?) NOT IN "
+                    "(SELECT id FROM library_management_import_bundles)",
+                    (
+                        IMPORT_BUNDLE_REFERENCE_PREFIX,
+                        IMPORT_BUNDLE_REFERENCE_PREFIX[:-1] + ";",
+                        created_before,
+                        len(IMPORT_BUNDLE_REFERENCE_PREFIX) + 1,
+                    ),
+                )
+                if str(row[0]) not in keep
+            ]
+
+        orphaned = await self._read(find)
+
+        def operation(connection: sqlite3.Connection) -> int:
+            removed = 0
+            for reference_id in orphaned:
+                # Re-checked here: the bundle may have been stored since the read.
+                removed += connection.execute(
+                    "DELETE FROM library_management_blob_references "
+                    "WHERE reference_kind='artwork' AND reference_id=? "
+                    "AND created_at<? AND substr(reference_id,?) NOT IN "
+                    "(SELECT id FROM library_management_import_bundles)",
+                    (
+                        reference_id,
+                        created_before,
+                        len(IMPORT_BUNDLE_REFERENCE_PREFIX) + 1,
+                    ),
+                ).rowcount
+            return removed
+
+        if not orphaned:
+            return 0
+        return await self._write_background(operation)
 
     async def list_recoverable_library_management_import_bundles(
         self,
@@ -25511,8 +25931,9 @@ class NativeLibraryStore(PersistenceBase):
                 raise ValidationError(
                     "An edition-conversion recycle snapshot is incomplete."
                 )
-            desired_json = msgspec.json.encode(request.desired_document).decode()
-            desired_hash = hashlib.sha256(desired_json.encode()).hexdigest()
+            desired_json, desired_hash, embedded_choices = _import_plan_documents(
+                request
+            )
             override_revision = self._management_override_revision_tx(
                 connection, album_id, track_id
             )
@@ -25550,9 +25971,9 @@ class NativeLibraryStore(PersistenceBase):
                 ).casefold(),
                 desired_document_json=desired_json,
                 desired_document_hash=desired_hash,
-                catalog_document_json=desired_json,
-                catalog_document_hash=desired_hash,
-                artwork_choices_json="[]",
+                artwork_choices_json=json.dumps(
+                    embedded_choices, separators=(",", ":"), sort_keys=True
+                ),
                 diff_json=json.dumps(
                     {
                         "requires_write": True,
@@ -26206,8 +26627,9 @@ class NativeLibraryStore(PersistenceBase):
                     (track_id,),
                 ).fetchone()[0]
             )
-            desired_json = msgspec.json.encode(request.desired_document).decode()
-            desired_hash = hashlib.sha256(desired_json.encode()).hexdigest()
+            desired_json, desired_hash, embedded_choices = _import_plan_documents(
+                request
+            )
             before_root_id = (
                 str(request.replacement_root_id)
                 if request.replacement_root_id is not None
@@ -26253,15 +26675,16 @@ class NativeLibraryStore(PersistenceBase):
                 ).casefold(),
                 desired_document_json=desired_json,
                 desired_document_hash=desired_hash,
-                catalog_document_json=desired_json,
-                catalog_document_hash=desired_hash,
                 artwork_choices_json=json.dumps(
                     [
-                        {
-                            "output_kind": artifact.kind,
-                            "destination_relative_path": artifact.destination_relative_path,
-                        }
-                        for artifact in request.artifacts
+                        *embedded_choices,
+                        *(
+                            {
+                                "output_kind": artifact.kind,
+                                "destination_relative_path": artifact.destination_relative_path,
+                            }
+                            for artifact in request.artifacts
+                        ),
                     ],
                     separators=(",", ":"),
                     sort_keys=True,
@@ -26604,6 +27027,26 @@ class NativeLibraryStore(PersistenceBase):
                 item.created_at,
             ),
         )
+        NativeLibraryStore._reference_plan_item_artwork(connection, item)
+
+    @staticmethod
+    def _reference_plan_item_artwork(
+        connection: sqlite3.Connection, item: LibraryManagementPlanItem
+    ) -> None:
+        # Embedded artwork bytes live in the blob store; the item keeps them
+        # referenced the way the preview planner does.
+        for index, choice in enumerate(json.loads(item.artwork_choices_json)):
+            if choice.get("output_kind") == "embedded" and choice.get("blob_sha256"):
+                connection.execute(
+                    "INSERT OR IGNORE INTO library_management_blob_references "
+                    "(blob_sha256, reference_kind, reference_id, created_at) "
+                    "VALUES (?,'artwork',?,?)",
+                    (
+                        choice["blob_sha256"],
+                        f"{item.job_id}:{item.ordinal}:{index}",
+                        item.created_at,
+                    ),
+                )
 
     async def finish_library_management_import_cleanup(
         self,

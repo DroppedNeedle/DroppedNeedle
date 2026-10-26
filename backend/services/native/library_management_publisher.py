@@ -36,7 +36,10 @@ from infrastructure.audio.metadata_engine import (
     legacy_audio_projection,
 )
 from infrastructure.library_management_blob_store import LibraryManagementBlobStore
-from infrastructure.persistence.native_library_store import NativeLibraryStore
+from infrastructure.persistence.native_library_store import (
+    IMPORT_BUNDLE_REFERENCE_PREFIX,
+    NativeLibraryStore,
+)
 from models.audio import AudioArtistCredit, AudioTag
 from models.audio_metadata import (
     DesiredAudioDocument,
@@ -67,6 +70,10 @@ from models.library_management_planning import (
     naming_policy_revision,
     pin_library_management_profile,
 )
+from models.library_management_stored_artwork import (
+    persisted_import_bundle,
+    stored_artwork_descriptor,
+)
 from services.native.artwork_projection_service import merge_embedded_artwork
 from services.native.audio_write_planning_service import AudioWritePlanningService
 from services.native.file_revision import revision_from_stat
@@ -92,6 +99,14 @@ _SNAPSHOT_NAMESPACE = uuid.UUID("77d7be20-4ff2-475a-941f-e0a575806d78")
 _BASELINE_NAMESPACE = uuid.UUID("bf48a4f8-5968-41f6-9c82-f95a976a8f21")
 _IMPORT_BUNDLE_NAMESPACE = uuid.UUID("4ac147e4-7371-4eb4-89d3-5cc30f394277")
 _MAX_DIRECTORY_COLLISION_ENTRIES = 10_000
+
+
+def import_bundle_id(idempotency_key: str) -> str:
+    """The stored bundle id an import idempotency key maps to."""
+
+    return str(uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, idempotency_key))
+
+
 CommitCallback = Callable[[set[str], set[str]], Awaitable[None]]
 ImportCommitCallback = Callable[
     [str, tuple[LibraryManagementPublishedImportFile, ...], MbSourceContext | None],
@@ -349,7 +364,7 @@ class LibraryManagementPublisher:
         """
 
         self._validate_import_bundle(bundle)
-        bundle_id = str(uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, bundle.idempotency_key))
+        bundle_id = import_bundle_id(bundle.idempotency_key)
         self._active_import_bundles[bundle_id] = (
             self._active_import_bundles.get(bundle_id, 0) + 1
         )
@@ -378,11 +393,14 @@ class LibraryManagementPublisher:
         catalog_commit: ImportCommitCallback,
         source_context: MbSourceContext | None,
     ) -> LibraryManagementImportResult:
-        request_json = msgspec.json.encode(bundle).decode()
+        # A sealed bundle may arrive in its persisted form; staging needs the
+        # real bytes, so they come back from the blob store first.
+        bundle = await self._hydrated_import_bundle(bundle)
+        request_json = await self.encode_import_bundle(bundle)
         request_hash = hashlib.sha256(request_json.encode()).hexdigest()
-        bundle_id = str(uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, bundle.idempotency_key))
+        bundle_id = import_bundle_id(bundle.idempotency_key)
         now = self._clock()
-        record, created = await self._store.ensure_library_management_import_bundle(
+        record, created = await self._ensure_import_bundle(
             LibraryManagementImportBundleRecord(
                 id=bundle_id,
                 idempotency_key=bundle.idempotency_key,
@@ -526,6 +544,136 @@ class LibraryManagementPublisher:
             raise asyncio.CancelledError
         return result
 
+    async def encode_import_bundle(self, bundle: LibraryManagementImportBundle) -> str:
+        """Persisted JSON of a bundle, its artwork bytes moved to the blob store.
+
+        The hash of this text is the bundle's request hash, so equal bundles must
+        encode to equal text: references are content hashes and nothing else varies.
+        """
+
+        bundle_id = import_bundle_id(bundle.idempotency_key)
+        now = self._clock()
+        payloads = [
+            image.content
+            for file in bundle.files
+            for image in (
+                file.desired_document.artwork or ()
+                if file.desired_document is not None
+                else ()
+            )
+        ] + [
+            artifact.content
+            for file in bundle.files
+            for artifact in file.artifacts
+            if artifact.content is not None
+        ]
+        # The same cover is usually repeated on every file of the bundle.
+        distinct = {
+            hashlib.sha256(content).hexdigest(): content for content in payloads
+        }
+        for content in distinct.values():
+            blob = await self._blobs.add_bytes(content, kind="image", created_at=now)
+            await self._store.add_management_blob_reference(
+                LibraryManagementBlobReference(
+                    blob_sha256=blob.sha256,
+                    reference_kind="artwork",
+                    reference_id=f"{IMPORT_BUNDLE_REFERENCE_PREFIX}{bundle_id}",
+                    created_at=now,
+                )
+            )
+        return msgspec.json.encode(persisted_import_bundle(bundle)).decode()
+
+    async def _hydrated_import_bundle(
+        self, bundle: LibraryManagementImportBundle
+    ) -> LibraryManagementImportBundle:
+        """Put the artwork bytes of a persisted bundle back; other bundles pass through."""
+
+        files: list[LibraryManagementImportFile] = []
+        contents: dict[str, bytes] = {}
+        for file in bundle.files:
+            if file.desired_artwork is None and all(
+                value.content_blob_sha256 is None for value in file.artifacts
+            ):
+                files.append(file)
+                continue
+            desired = file.desired_document
+            if file.desired_artwork is not None:
+                assert desired is not None
+                images = []
+                for image in file.desired_artwork:
+                    content = await self._cached_import_blob(contents, image.sha256)
+                    images.append(stored_artwork_descriptor(image, content))
+                desired = msgspec.structs.replace(desired, artwork=tuple(images))
+            artifacts = []
+            for artifact in file.artifacts:
+                if artifact.content_blob_sha256 is not None:
+                    artifact = msgspec.structs.replace(
+                        artifact,
+                        content=await self._cached_import_blob(
+                            contents, artifact.content_blob_sha256
+                        ),
+                        content_blob_sha256=None,
+                    )
+                artifacts.append(artifact)
+            files.append(
+                msgspec.structs.replace(
+                    file,
+                    desired_document=desired,
+                    desired_artwork=None,
+                    artifacts=tuple(artifacts),
+                )
+            )
+        return msgspec.structs.replace(bundle, files=tuple(files))
+
+    async def _cached_import_blob(
+        self, contents: dict[str, bytes], sha256: str
+    ) -> bytes:
+        if sha256 not in contents:
+            contents[sha256] = await self._import_blob(sha256)
+        return contents[sha256]
+
+    async def _import_blob(self, sha256: str) -> bytes:
+        content = await self._blobs.read_bytes(sha256)
+        if hashlib.sha256(content).hexdigest() != sha256:
+            raise ConflictError("An import artwork payload changed.")
+        return content
+
+    async def _ensure_import_bundle(
+        self, record: LibraryManagementImportBundleRecord
+    ) -> tuple[LibraryManagementImportBundleRecord, bool]:
+        try:
+            return await self._store.ensure_library_management_import_bundle(record)
+        except ConflictError:
+            saved = await self._store.get_library_management_import_bundle(record.id)
+            if saved is None or not self._is_legacy_retry(saved, record):
+                raise
+            return saved, False
+
+    @staticmethod
+    def _is_legacy_retry(
+        saved: LibraryManagementImportBundleRecord,
+        retry: LibraryManagementImportBundleRecord,
+    ) -> bool:
+        """Whether a bundle saved with inline artwork is this same request."""
+
+        if (
+            saved.id != retry.id
+            or saved.origin != retry.origin
+            or saved.policy_revision != retry.policy_revision
+            or hashlib.sha256(saved.request_json.encode()).hexdigest()
+            != saved.request_hash
+        ):
+            return False
+        try:
+            legacy = msgspec.json.decode(
+                saved.request_json.encode(), type=LibraryManagementImportBundle
+            )
+        except (msgspec.DecodeError, msgspec.ValidationError):
+            return False
+        return msgspec.json.encode(persisted_import_bundle(legacy)).decode() == (
+            retry.request_json
+        )
+
     async def recover_import_bundle(
         self, record: LibraryManagementImportBundleRecord
     ) -> str:
@@ -539,9 +687,7 @@ class LibraryManagementPublisher:
                 request_bytes, type=LibraryManagementImportBundle
             )
             self._validate_import_bundle(bundle)
-            expected_id = str(
-                uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, bundle.idempotency_key)
-            )
+            expected_id = import_bundle_id(bundle.idempotency_key)
             if (
                 expected_id != record.id
                 or (
@@ -804,10 +950,34 @@ class LibraryManagementPublisher:
                     raise ValidationError(
                         "An automatic import naming-policy revision is invalid."
                     )
+            if value.desired_artwork is not None and (
+                value.desired_document is None
+                or value.desired_document.artwork is not None
+            ):
+                raise ValidationError(
+                    "An import file cannot carry both inline and stored artwork."
+                )
             for artifact in value.artifacts:
-                if (artifact.source_path is None) == (artifact.content is None):
+                if (
+                    sum(
+                        source is not None
+                        for source in (
+                            artifact.source_path,
+                            artifact.content,
+                            artifact.content_blob_sha256,
+                        )
+                    )
+                    != 1
+                ):
                     raise ValidationError(
                         "An import artifact needs exactly one immutable source."
+                    )
+                if (
+                    artifact.content_blob_sha256 is not None
+                    and artifact.content_blob_sha256 != artifact.source_fingerprint
+                ):
+                    raise ValidationError(
+                        "An import artifact payload does not match its fingerprint."
                     )
                 if (
                     artifact.source_fingerprint is None
@@ -2285,8 +2455,12 @@ class LibraryManagementPublisher:
                     file_mode=write_plan.snapshot.file_attributes.permission_bits,
                     identity_revision=item.expected_identity_revision,
                     created_at=now,
-                    catalog_document_json=item.catalog_document_json,
-                    catalog_document_hash=item.catalog_document_hash,
+                    catalog_document_json=(
+                        item.catalog_document_json or item.desired_document_json
+                    ),
+                    catalog_document_hash=(
+                        item.catalog_document_hash or item.desired_document_hash
+                    ),
                 )
             )
             operation_snapshot = await self._store.ensure_management_operation_snapshot(
@@ -3042,7 +3216,7 @@ class LibraryManagementPublisher:
                     byte_size=len(content),
                     sha256=choice["blob_sha256"],
                     content=content,
-                    format_supported=True,
+                    format_supported=choice.get("format_supported", True),
                 )
             )
         return msgspec.structs.replace(

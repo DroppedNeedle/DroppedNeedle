@@ -1103,6 +1103,12 @@ class LibraryManagementPreviewService:
             raise ValidationError(
                 "The stored Library Management plan item is invalid."
             ) from error
+        # Rows written before artwork moved to the blob store still hold base64
+        # image bytes here, which the browser never uses.
+        if isinstance(desired_document, dict):
+            for image in desired_document.get("artwork") or ():
+                if isinstance(image, dict):
+                    image.pop("content", None)
         return LibraryManagementPlanItemResponse(
             ordinal=row.ordinal,
             bundle_ordinal=row.bundle_ordinal,
