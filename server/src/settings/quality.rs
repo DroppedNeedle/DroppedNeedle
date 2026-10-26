@@ -5,7 +5,7 @@
 //! default order derivation, the v2 recipe legacy projection, and the
 //! user-facing summary sentence. No I/O: the caller supplies the policy.
 
-use droppedneedle_kernel::runtime_config::sections::{QualityRecipeEntry, derive_default_order};
+use droppedneedle_kernel::runtime_config::sections::QualityRecipeEntry;
 use serde::{Deserialize, Serialize};
 
 /// Canonical five tiers, best first.
@@ -94,62 +94,6 @@ pub fn legacy_range_from_recipe(entries: &[QualityRecipeEntry]) -> (String, Stri
     (ordered[lo].to_owned(), ordered[hi].to_owned())
 }
 
-/// Project every tier in the derived contiguous range exactly once.
-/// Explicit recipe entries establish ordering constraints; missing tiers
-/// slot into canonical positions between them.
-pub fn legacy_recipe_order(entries: &[QualityRecipeEntry]) -> Vec<String> {
-    let mut touched = std::collections::BTreeSet::new();
-    for entry in entries {
-        touched.extend(recipe_entry_legacy_tiers(entry));
-    }
-    let positions: Vec<usize> = touched
-        .iter()
-        .map(|tier| {
-            TIER_KEYS_BEST_FIRST
-                .iter()
-                .position(|t| t == tier)
-                .unwrap_or(0)
-        })
-        .collect();
-    let first = positions.iter().min().copied().unwrap_or(0);
-    let last = positions.iter().max().copied().unwrap_or(0);
-    let contiguous: Vec<&str> = TIER_KEYS_BEST_FIRST[first..=last].to_vec();
-
-    let mut order: Vec<String> = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for entry in entries {
-        let entry_tiers = recipe_entry_legacy_tiers(entry);
-        for tier in TIER_KEYS_BEST_FIRST {
-            if entry_tiers.contains(&tier) && !seen.contains(tier) {
-                order.push(tier.to_owned());
-                seen.insert(tier);
-            }
-        }
-    }
-    for tier in contiguous {
-        if seen.contains(tier) {
-            continue;
-        }
-        let position = TIER_KEYS_BEST_FIRST
-            .iter()
-            .position(|t| *t == tier)
-            .unwrap_or(0);
-        let insertion = order
-            .iter()
-            .position(|existing| {
-                TIER_KEYS_BEST_FIRST
-                    .iter()
-                    .position(|t| t == existing)
-                    .unwrap_or(0)
-                    > position
-            })
-            .unwrap_or(order.len());
-        order.insert(insertion, tier.to_owned());
-        seen.insert(tier);
-    }
-    order
-}
-
 /// Rank of a tier (0 = worst). Unknown tiers rank below everything.
 pub fn tier_rank_worst_zero(tier: &str) -> usize {
     TIER_KEYS_BEST_FIRST
@@ -230,11 +174,4 @@ pub fn recipe_status(
             Some("legacy policy allows codecs outside FLAC/MP3".to_owned()),
         )
     }
-}
-
-/// Whether the order reproduces the legacy default shape: every accepted
-/// tier, best first (summary `legacy_rollback_compatible` / impact
-/// `legacy_representable`).
-pub fn is_legacy_default_shape(order: &[String], quality_min: &str, quality_max: &str) -> bool {
-    order == derive_default_order(quality_min, quality_max).as_slice()
 }

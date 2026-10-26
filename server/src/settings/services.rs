@@ -21,9 +21,9 @@ use super::effects::Effects;
 use super::models::{
     DownloadPolicyView, FrontendCacheTTLs, IndexerSavedResponse, IndexerTestResponse,
     JellyfinUserInfo, JellyfinVerifyResponse, LibraryScanScheduleResponse,
-    LibrarySettingsSaveRequest, PlexLibrarySectionInfo, PlexVerifyResponse, PolicyImpactResponse,
-    PolicySummaryResponse, ProwlarrTestResponse, SabnzbdTestResponse, SourcePriorityOrder,
-    TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
+    LibrarySettingsSaveRequest, PlexLibrarySectionInfo, PlexVerifyResponse, PolicySummaryResponse,
+    ProwlarrTestResponse, SabnzbdTestResponse, SourcePriorityOrder, TestConnectionResponse,
+    UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::quality;
 use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
@@ -500,41 +500,6 @@ impl SettingsService {
         })
     }
 
-    /// Impact preview of an unsaved policy against persisted rows:
-    /// persisted-state bucket counts only. Shares the strict validation
-    /// with the save path.
-    pub async fn policy_impact(
-        &self,
-        buckets: &dyn PolicyImpactBuckets,
-        policy: DownloadPolicy,
-    ) -> Result<PolicyImpactResponse, SettingsError> {
-        let candidate = self.apply_recipe(policy, false)?;
-        candidate.validate().map_err(|error| self.config(error))?;
-        let order = if candidate.quality_recipe.is_empty() {
-            derive_default_order(&candidate.quality_min, &candidate.quality_max)
-        } else {
-            quality::legacy_recipe_order(&candidate.quality_recipe)
-        };
-        let legacy_representable = quality::is_legacy_default_shape(
-            &order,
-            &candidate.quality_min,
-            &candidate.quality_max,
-        );
-        let counts = buckets
-            .counts()
-            .await
-            .map_err(|cause| SettingsError::internal(&cause))?;
-        Ok(PolicyImpactResponse {
-            manual_search_jobs: counts.manual_search_jobs,
-            queued_without_attempts: counts.queued_without_attempts,
-            awaiting_review: counts.awaiting_review,
-            remote_queued_zero_byte: counts.remote_queued_zero_byte,
-            transferring_immutable: counts.transferring,
-            held_reviews: counts.held_reviews,
-            legacy_representable,
-        })
-    }
-
     // --- indexers ---------------------------------------------------------------------
 
     /// The configured Newznab indexers (keys masked unless unset).
@@ -850,93 +815,6 @@ fn summary_inputs(policy: &DownloadPolicy) -> quality::SummaryInputs {
         quality_preference_order: derive_default_order(&policy.quality_min, &policy.quality_max),
         quality_recipe: policy.quality_recipe.clone(),
         flac_mp3_only: policy.flac_mp3_only,
-    }
-}
-
-/// Persisted-state bucket counts for the policy impact preview.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ImpactBucketCounts {
-    /// `searching` jobs with no task yet.
-    pub manual_search_jobs: i64,
-    /// Queued zero-byte rows with no attempts.
-    pub queued_without_attempts: i64,
-    /// Queued rows on completed jobs with no candidate picked.
-    pub awaiting_review: i64,
-    /// Remote-queued zero-byte rows.
-    pub remote_queued_zero_byte: i64,
-    /// Downloading/processing rows (immutable under the new policy).
-    pub transferring: i64,
-    /// Held entries awaiting a decision.
-    pub held_reviews: i64,
-}
-
-/// Bucket-count port. The production implementation counts the download
-/// tables; tests use a canned struct.
-pub trait PolicyImpactBuckets: Send + Sync {
-    /// Count the six persisted-state buckets.
-    fn counts<'a>(
-        &'a self,
-    ) -> futures_util::future::BoxFuture<'a, Result<ImpactBucketCounts, String>>;
-}
-
-/// Production bucket counts over the download tables.
-pub struct SqliteImpactBuckets {
-    /// Reader pool.
-    pub pool: sqlx::SqlitePool,
-}
-
-impl PolicyImpactBuckets for SqliteImpactBuckets {
-    fn counts<'a>(
-        &'a self,
-    ) -> futures_util::future::BoxFuture<'a, Result<ImpactBucketCounts, String>> {
-        Box::pin(async move {
-            async fn one(pool: &sqlx::SqlitePool, query: &str) -> Result<i64, String> {
-                sqlx::query_scalar::<_, i64>(query)
-                    .fetch_one(pool)
-                    .await
-                    .map_err(|cause| cause.to_string())
-            }
-            Ok(ImpactBucketCounts {
-                manual_search_jobs: one(
-                    &self.pool,
-                    "SELECT COUNT(*) FROM search_jobs sj WHERE sj.status = 'searching'
-                     AND NOT EXISTS (SELECT 1 FROM download_tasks t WHERE t.search_job_id = sj.id)",
-                )
-                .await?,
-                queued_without_attempts: one(
-                    &self.pool,
-                    "SELECT COUNT(*) FROM download_tasks t WHERE t.status = 'queued'
-                     AND t.downloaded_bytes = 0
-                     AND NOT EXISTS (SELECT 1 FROM download_attempts a WHERE a.task_id = t.id)",
-                )
-                .await?,
-                awaiting_review: one(
-                    &self.pool,
-                    "SELECT COUNT(*) FROM download_tasks t JOIN search_jobs sj ON sj.id = t.search_job_id
-                     WHERE t.status = 'queued' AND sj.status = 'completed' AND t.candidate_index IS NULL",
-                )
-                .await?,
-                remote_queued_zero_byte: one(
-                    &self.pool,
-                    "SELECT COUNT(*) FROM download_tasks t
-                     WHERE t.remote_queued = 1 AND t.downloaded_bytes = 0 AND t.status = 'queued'",
-                )
-                .await?,
-                transferring: one(
-                    &self.pool,
-                    "SELECT COUNT(*) FROM download_tasks t WHERE t.status IN ('downloading','processing')",
-                )
-                .await?,
-                held_reviews: one(
-                    &self.pool,
-                    &format!(
-                        "SELECT COUNT(*) FROM acquire_held_entries WHERE state IN {}",
-                        droppedneedle_acquire::held::sql::OPEN
-                    ),
-                )
-                .await?,
-            })
-        })
     }
 }
 

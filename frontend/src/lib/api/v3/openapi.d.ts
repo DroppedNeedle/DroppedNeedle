@@ -8077,26 +8077,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/settings/download-clients/policy/impact": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Impact preview of an unsaved policy body against persisted rows.
-         *     Needs the database; unwired states answer 503.
-         */
-        post: operations["post_policy_impact"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/settings/download-clients/sabnzbd": {
         parameters: {
             query?: never;
@@ -19041,44 +19021,6 @@ export interface components {
             settings?: {
                 [key: string]: string;
             };
-        };
-        /**
-         * @description Admin preview of an unsaved policy against persisted state:
-         *     persisted-state bucket counts only.
-         */
-        PolicyImpactResponse: {
-            /**
-             * Format: int64
-             * @description Rows awaiting review.
-             */
-            awaiting_review: number;
-            /**
-             * Format: int64
-             * @description Held reviews.
-             */
-            held_reviews: number;
-            /** @description Whether a down-level image would preserve acquisition behavior. */
-            legacy_representable: boolean;
-            /**
-             * Format: int64
-             * @description Manual search jobs that would re-resolve.
-             */
-            manual_search_jobs: number;
-            /**
-             * Format: int64
-             * @description Queued rows with no attempts yet.
-             */
-            queued_without_attempts: number;
-            /**
-             * Format: int64
-             * @description Remote-queued zero-byte rows.
-             */
-            remote_queued_zero_byte: number;
-            /**
-             * Format: int64
-             * @description Transferring rows (immutable under the new policy).
-             */
-            transferring_immutable: number;
         };
         /**
          * @description Which kind of scope a policy-tree node stands for.
@@ -44209,39 +44151,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PolicySummaryResponse"];
-                };
-            };
-        };
-    };
-    post_policy_impact: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DownloadPolicy"];
-            };
-        };
-        responses: {
-            /** @description Impact preview */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PolicyImpactResponse"];
-                };
-            };
-            /** @description Bucket counts are unwired */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

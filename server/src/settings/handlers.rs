@@ -23,9 +23,9 @@ use super::models::{
     LibraryRestorableRootsResponse, LibraryRestoreRootsRequest, LibraryScanScheduleResponse,
     LibrarySettingsSaveRequest, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
     MusicBrainzSettingsView, MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo,
-    PlexVerifyResponse, PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse,
-    SabnzbdTestResponse, SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder,
-    TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
+    PlexVerifyResponse, PolicySummaryResponse, ProwlarrTestResponse, SabnzbdTestResponse,
+    SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder, TestConnectionResponse,
+    UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::SettingsSetup;
 use droppedneedle_auth::{Admin, User};
@@ -797,36 +797,6 @@ pub async fn get_policy_summary(
     settings
         .service()
         .policy_summary()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Impact preview of an unsaved policy body against persisted rows.
-/// Needs the database; unwired states answer 503.
-#[utoipa::path(
-    post,
-    tag = "settings",
-    path = "/api/v3/settings/download-clients/policy/impact",
-    request_body = DownloadPolicy,
-    responses(
-        (status = 200, description = "Impact preview", body = PolicyImpactResponse),
-        (status = 503, description = "Bucket counts are unwired")
-    )
-)]
-pub async fn post_policy_impact(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<DownloadPolicy>,
-) -> JsonResult<PolicyImpactResponse> {
-    let buckets = settings
-        .buckets()
-        .ok_or_else(|| SettingsError::Unavailable {
-            cause: "Policy impact needs the database.".to_owned(),
-        })?;
-    settings
-        .service()
-        .policy_impact(buckets.as_ref(), body)
-        .await
         .map(Json)
         .map_err(ApiError::from)
 }

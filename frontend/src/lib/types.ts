@@ -2115,8 +2115,6 @@ export interface PolicySummary {
 	quality_recipe_error: string | null;
 }
 
-export type PolicyImpactResponse = components['schemas']['PolicyImpactResponse'];
-
 export interface RestartWithPolicyRequest {
 	expected_snapshot_hash?: string | null;
 }

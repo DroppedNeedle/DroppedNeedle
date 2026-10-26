@@ -23,7 +23,7 @@ use crate::settings::library_policy_service::LibraryPolicyService;
 use crate::settings::models::{DownloadPolicyView, LibraryScanScheduleResponse};
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
-use crate::settings::services::{PolicyImpactBuckets, SettingsService};
+use crate::settings::services::SettingsService;
 use crate::settings::verify::{LiveProbes, VerifyProbes};
 use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
 use droppedneedle_kernel::ids::IdGenerator;
@@ -51,7 +51,6 @@ pub struct SettingsSetup {
     lifecycle: Arc<MusicBrainzLifecycle>,
     management: Arc<LibraryManagementService>,
     prefs: Option<Arc<SectionPrefsDeps>>,
-    buckets: Option<Arc<dyn PolicyImpactBuckets>>,
     policy: Arc<LibraryPolicyService>,
     /// Checks the recycle bin path the download settings show; test
     /// bundles have none.
@@ -125,7 +124,6 @@ impl SettingsSetup {
             lifecycle: Arc::new(MusicBrainzLifecycle::new(store, effects, outbound)),
             management,
             prefs: None,
-            buckets: None,
             bins: None,
             scans: None,
             #[cfg(any(test, feature = "test-support"))]
@@ -141,13 +139,6 @@ impl SettingsSetup {
         links: Arc<dyn LinkStatus>,
     ) -> Self {
         self.prefs = Some(Arc::new(SectionPrefsDeps { store, links }));
-        self
-    }
-
-    /// Attach the policy-impact bucket counts.
-    #[must_use]
-    pub fn with_impact_buckets(mut self, buckets: Arc<dyn PolicyImpactBuckets>) -> Self {
-        self.buckets = Some(buckets);
         self
     }
 
@@ -295,11 +286,6 @@ impl SettingsSetup {
     pub fn prefs(&self) -> Option<&Arc<SectionPrefsDeps>> {
         self.prefs.as_ref()
     }
-
-    /// The policy-impact buckets, when wired.
-    pub fn buckets(&self) -> Option<&Arc<dyn PolicyImpactBuckets>> {
-        self.buckets.as_ref()
-    }
 }
 
 /// Every settings route: the section registry's, the hand-written
@@ -338,7 +324,6 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::get_source_priority, h::put_source_priority))
         .admin(routes!(h::get_policy, h::put_policy))
         .admin(routes!(h::get_policy_summary))
-        .admin(routes!(h::post_policy_impact))
         .admin(routes!(h::list_indexers, h::create_indexer))
         .admin(routes!(h::get_search_backend, h::put_search_backend))
         .admin(routes!(h::update_indexer, h::delete_indexer))

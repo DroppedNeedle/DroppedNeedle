@@ -223,26 +223,6 @@ pub struct PolicySummaryResponse {
     pub quality_recipe_error: Option<String>,
 }
 
-/// Admin preview of an unsaved policy against persisted state:
-/// persisted-state bucket counts only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct PolicyImpactResponse {
-    /// Manual search jobs that would re-resolve.
-    pub manual_search_jobs: i64,
-    /// Queued rows with no attempts yet.
-    pub queued_without_attempts: i64,
-    /// Rows awaiting review.
-    pub awaiting_review: i64,
-    /// Remote-queued zero-byte rows.
-    pub remote_queued_zero_byte: i64,
-    /// Transferring rows (immutable under the new policy).
-    pub transferring_immutable: i64,
-    /// Held reviews.
-    pub held_reviews: i64,
-    /// Whether a down-level image would preserve acquisition behavior.
-    pub legacy_representable: bool,
-}
-
 /// Indexer save acknowledgement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IndexerSavedResponse {

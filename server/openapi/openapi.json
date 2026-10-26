@@ -29913,54 +29913,6 @@
         ]
       }
     },
-    "/api/v3/settings/download-clients/policy/impact": {
-      "post": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Impact preview of an unsaved policy body against persisted rows.\nNeeds the database; unwired states answer 503.",
-        "operationId": "post_policy_impact",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DownloadPolicy"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Impact preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PolicyImpactResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Bucket counts are unwired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/settings/download-clients/sabnzbd": {
       "get": {
         "tags": [
@@ -55882,55 +55834,6 @@
             "propertyNames": {
               "type": "string"
             }
-          }
-        }
-      },
-      "PolicyImpactResponse": {
-        "type": "object",
-        "description": "Admin preview of an unsaved policy against persisted state:\npersisted-state bucket counts only.",
-        "required": [
-          "manual_search_jobs",
-          "queued_without_attempts",
-          "awaiting_review",
-          "remote_queued_zero_byte",
-          "transferring_immutable",
-          "held_reviews",
-          "legacy_representable"
-        ],
-        "properties": {
-          "awaiting_review": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Rows awaiting review."
-          },
-          "held_reviews": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Held reviews."
-          },
-          "legacy_representable": {
-            "type": "boolean",
-            "description": "Whether a down-level image would preserve acquisition behavior."
-          },
-          "manual_search_jobs": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Manual search jobs that would re-resolve."
-          },
-          "queued_without_attempts": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Queued rows with no attempts yet."
-          },
-          "remote_queued_zero_byte": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Remote-queued zero-byte rows."
-          },
-          "transferring_immutable": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Transferring rows (immutable under the new policy)."
           }
         }
       },

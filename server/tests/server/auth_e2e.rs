@@ -267,11 +267,6 @@ impl E2e {
         let settings =
             droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(&p.ids))
                 .expect("test settings bundle builds")
-                .with_impact_buckets(Arc::new(
-                    droppedneedle::settings::services::SqliteImpactBuckets {
-                        pool: p.db.sqlx().clone(),
-                    },
-                ))
                 .with_library_catalog(Arc::new(
                     droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog {
                         pool: p.db.sqlx().clone(),

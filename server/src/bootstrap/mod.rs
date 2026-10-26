@@ -35,7 +35,6 @@ use crate::{
         effects::{Effects, LiveSaveEffects},
         library_catalog::SqliteLibraryPolicyCatalog,
         section_prefs::{SqliteLinkStatus, SqliteSectionPrefsStore},
-        services::SqliteImpactBuckets,
         wiring::SettingsSetup,
     },
     web::{WebError, WebUi},
@@ -503,9 +502,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             lastfm: auth.users.lastfm.clone(),
         }),
     )
-    .with_impact_buckets(Arc::new(SqliteImpactBuckets {
-        pool: db.sqlx().clone(),
-    }))
     .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
         pool: db.sqlx().clone(),
     }));
