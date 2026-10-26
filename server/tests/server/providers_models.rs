@@ -56,6 +56,8 @@ enum Provider {
     MusicBrainzReleaseSearch(&'static str, &'static str),
     MusicBrainzRecordingSearch(&'static str),
     MusicBrainzBrowse(&'static str),
+    TicketmasterAttractions,
+    TicketmasterEvents,
     LastFm(LastFmRead),
 }
 
@@ -666,6 +668,34 @@ const ROWS: &[Row] = &[
         kind: PayloadKind::Decode,
         identity: "/results/0/id",
     },
+    Row {
+        name: "ticketmaster /attractions.json, act id",
+        provider: Provider::TicketmasterAttractions,
+        body: include_str!("../fixtures/ticketmaster/attractions_search_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/_embedded/attractions/0/id",
+    },
+    Row {
+        name: "ticketmaster /attractions.json, act name",
+        provider: Provider::TicketmasterAttractions,
+        body: include_str!("../fixtures/ticketmaster/attractions_search_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/_embedded/attractions/0/name",
+    },
+    Row {
+        name: "ticketmaster /events.json, event id",
+        provider: Provider::TicketmasterEvents,
+        body: include_str!("../fixtures/ticketmaster/events_fontaines_dc.json"),
+        kind: PayloadKind::Decode,
+        identity: "/_embedded/events/0/id",
+    },
+    Row {
+        name: "ticketmaster /events.json, attraction id",
+        provider: Provider::TicketmasterEvents,
+        body: include_str!("../fixtures/ticketmaster/events_fontaines_dc.json"),
+        kind: PayloadKind::Decode,
+        identity: "/_embedded/events/0/_embedded/attractions/0/id",
+    },
 ];
 
 /// Serves `body` from the provider's address and reads it through the
@@ -719,6 +749,48 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .search_cities("Liverpool", DEFAULT_CITY_COUNT, PRIORITY)
                 .await?;
             Ok(!cities.is_empty())
+        }
+        Provider::TicketmasterAttractions => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer(
+                "http://fake/ticketmaster/attractions.json",
+                200,
+                &[],
+                body.as_bytes().to_vec(),
+            );
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    ticketmaster: "http://fake/ticketmaster".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let found = providers
+                .ticketmaster
+                .search_attractions("k", "Radiohead", PRIORITY)
+                .await?;
+            Ok(!found.is_empty())
+        }
+        Provider::TicketmasterEvents => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer(
+                "http://fake/ticketmaster/events.json",
+                200,
+                &[],
+                body.as_bytes().to_vec(),
+            );
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    ticketmaster: "http://fake/ticketmaster".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let page = providers
+                .ticketmaster
+                .events_page("k", "K8vZ9179LP7", 0, PRIORITY)
+                .await?;
+            Ok(!page.events.is_empty())
         }
         Provider::DeezerTrack => {
             let providers = deezer(&[("/search", body)]);

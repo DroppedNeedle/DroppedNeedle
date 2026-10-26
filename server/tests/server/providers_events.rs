@@ -362,37 +362,19 @@ async fn skiddle_429_maps_to_rate_limited() {
 // Ticketmaster
 // ---------------------------------------------------------------------------
 
-/// Live shape (`tm_events.json`, 2026-07-06): local date, sale status, venue
-/// with STRING coordinates, festival lineup with per-act MBIDs.
+/// The recorded events answer for an act with 56 upcoming events: local and
+/// absolute start, sale status, a venue with string coordinates, and the
+/// MusicBrainz id of each lineup act.
 #[tokio::test]
-async fn ticketmaster_events_decode_live_shape() {
+async fn ticketmaster_events_decode_recorded_answer() {
     let (wire, providers) = scripted();
-    json_answer(
-        &wire,
-        "ticketmaster/events.json",
-        json!({
-            "_embedded": {"events": [{
-                "name": "Reading Festival 2026 - Friday",
-                "id": "1AdjZbVGklbLnsr",
-                "url": "https://www.ticketmaster.co.uk/event/1",
-                "dates": {"start": {"localDate": "2026-08-28",
-                                   "dateTime": "2026-08-28T11:00:00Z"},
-                          "status": {"code": "onsale"}},
-                "_embedded": {
-                    "venues": [{"name": "Richfield Avenue",
-                                "city": {"name": "Reading"},
-                                "state": {"name": "Berkshire"},
-                                "country": {"countryCode": "GB"},
-                                "location": {"latitude": "51.46368200",
-                                             "longitude": "-0.97305600"}}],
-                    "attractions": [
-                        {"name": "Fontaines D.C.", "id": "K8vZ9179LP7",
-                         "externalLinks": {"musicbrainz": [
-                             {"id": "FD87ACC7-E0A0-4A45-BC2A-D2AB5C10BE68  "}]}}],
-                }},
-            ]},
-            "page": {"size": 200, "totalElements": 1, "totalPages": 1, "number": 0},
-        }),
+    wire.answer(
+        &url("ticketmaster/events.json"),
+        200,
+        &[],
+        include_str!("../fixtures/ticketmaster/events_fontaines_dc.json")
+            .as_bytes()
+            .to_vec(),
     );
 
     let events = providers
@@ -401,44 +383,43 @@ async fn ticketmaster_events_decode_live_shape() {
         .await
         .unwrap();
 
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 56);
     let event = &events[0];
-    assert_eq!(event.name, "Reading Festival 2026 - Friday");
+    assert_eq!(event.id, "ZG9rmIYnyZdk1k");
+    assert_eq!(event.name, "Fontaines D.C.");
     assert_eq!(
         event.url.as_deref(),
-        Some("https://www.ticketmaster.co.uk/event/1")
+        Some(
+            "https://www.ticketmaster.it/biglietti/fontaines-dc-casalecchio-di-reno-bologna-26-10-2026/event/h5qsmyc9wmts"
+        )
     );
     let dates = event.dates.as_ref().unwrap();
     assert_eq!(
         dates.start.as_ref().unwrap().local_date.as_deref(),
-        Some("2026-08-28")
+        Some("2026-10-26")
     );
     assert_eq!(
         dates.start.as_ref().unwrap().date_time.as_deref(),
-        Some("2026-08-28T11:00:00Z")
+        Some("2026-10-26T20:00:00Z")
     );
     assert_eq!(
         dates.status.as_ref().unwrap().code.as_deref(),
-        Some("onsale")
+        Some("offsale")
     );
     let inner = event.embedded.as_ref().unwrap();
     let venue = &inner.venues[0];
-    assert_eq!(venue.name.as_deref(), Some("Richfield Avenue"));
+    assert_eq!(venue.name.as_deref(), Some("Unipol Arena"));
     assert_eq!(
         venue.city.as_ref().unwrap().name.as_deref(),
-        Some("Reading")
-    );
-    assert_eq!(
-        venue.state.as_ref().unwrap().name.as_deref(),
-        Some("Berkshire")
+        Some("Casalecchio di Reno (Bologna)")
     );
     assert_eq!(
         venue.country.as_ref().unwrap().country_code.as_deref(),
-        Some("GB")
+        Some("IT")
     );
     let location = venue.location.as_ref().unwrap();
-    assert_eq!(location.latitude.as_deref(), Some("51.46368200"));
-    assert_eq!(location.longitude.as_deref(), Some("-0.97305600"));
+    assert_eq!(location.latitude.as_deref(), Some("44.485673"));
+    assert_eq!(location.longitude.as_deref(), Some("11.248983"));
     assert_eq!(
         inner.attractions[0].musicbrainz_ids(),
         ["fd87acc7-e0a0-4a45-bc2a-d2ab5c10be68"]
@@ -511,30 +492,85 @@ async fn ticketmaster_429_carries_retry_after_hint() {
     }
 }
 
-/// Required identity: an event without an id fails the decode instead of
-/// materializing as an empty event.
+/// Zero results are empty answers, not failures: the attractions search omits
+/// `_embedded`, and the events answer has no pages.
 #[tokio::test]
-async fn ticketmaster_missing_id_fails_decode() {
+async fn ticketmaster_zero_results_are_empty_answers() {
+    let (wire, providers) = scripted();
+    wire.answer(
+        &url("ticketmaster/attractions.json"),
+        200,
+        &[],
+        include_str!("../fixtures/ticketmaster/attractions_no_results.json")
+            .as_bytes()
+            .to_vec(),
+    );
+    wire.answer(
+        &url("ticketmaster/events.json"),
+        200,
+        &[],
+        include_str!("../fixtures/ticketmaster/events_radiohead_none.json")
+            .as_bytes()
+            .to_vec(),
+    );
+
+    let acts = providers
+        .ticketmaster
+        .search_attractions("k", "zzqxvnosuchact", USER)
+        .await
+        .unwrap();
+    let events = providers
+        .ticketmaster
+        .events_for_attraction("k", "K8vZ91713wV", USER)
+        .await
+        .unwrap();
+
+    assert!(acts.is_empty());
+    assert!(events.is_empty());
+}
+
+/// A MusicBrainz link with no id is supporting evidence: it is dropped and the
+/// act still reads. Padded and cased ids are trimmed and lowercased, and blank
+/// ids are skipped. The body is made up, since no recorded answer has a link
+/// without an id.
+#[tokio::test]
+async fn ticketmaster_link_without_an_id_is_dropped_and_the_act_reads() {
     let (wire, providers) = scripted();
     json_answer(
         &wire,
         "ticketmaster/events.json",
         json!({
-            "_embedded": {"events": [{"name": "Nameless"}]},
-            "page": {"totalPages": 1, "number": 0},
+            "_embedded": {"events": [{
+                "id": "e1",
+                "_embedded": {"attractions": [{
+                    "id": "K8vZ9179LP7",
+                    "name": "Fontaines D.C.",
+                    "externalLinks": {"musicbrainz": [
+                        {"id": "FD87ACC7-E0A0-4A45-BC2A-D2AB5C10BE68  "},
+                        {"url": "https://musicbrainz.org/artist/unlinked"},
+                        {"id": null},
+                        null,
+                        {"id": "   "}
+                    ]}
+                }]}
+            }]},
+            "page": {"totalPages": 1},
         }),
     );
 
-    assert!(matches!(
-        providers
-            .ticketmaster
-            .events_for_attraction("k", "A1", USER)
-            .await,
-        Err(ProviderError::Payload {
-            kind: PayloadKind::Decode,
-            ..
-        })
-    ));
+    let events = providers
+        .ticketmaster
+        .events_for_attraction("k", "K8vZ9179LP7", USER)
+        .await
+        .unwrap();
+
+    let act = &events[0].embedded.as_ref().unwrap().attractions[0];
+    assert_eq!(act.id, "K8vZ9179LP7");
+    assert_eq!(act.name, "Fontaines D.C.");
+    assert_eq!(
+        act.musicbrainz_ids(),
+        ["fd87acc7-e0a0-4a45-bc2a-d2ab5c10be68"]
+    );
 }
 
 // ---------------------------------------------------------------------------

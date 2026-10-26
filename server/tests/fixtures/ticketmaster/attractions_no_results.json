@@ -1,0 +1,13 @@
+{
+  "_links": {
+    "self": {
+      "href": "/discovery/v2/attractions.json?size=50&classificationName=Music&keyword=zzqxvnosuchact"
+    }
+  },
+  "page": {
+    "size": 50,
+    "totalElements": 0,
+    "totalPages": 0,
+    "number": 0
+  }
+}
