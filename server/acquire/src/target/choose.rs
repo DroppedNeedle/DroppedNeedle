@@ -5,8 +5,11 @@
 //! edition the library has chosen for one of those albums (so a track
 //! request fills the album the user already holds, in the edition they
 //! picked), then the release the user requested it from, then the best
-//! official release by the shared MusicBrainz rank (Official, not live or
-//! remix, Album before EP before Single, no secondary types, earliest).
+//! official release (Official, not live or remix, no secondary types,
+//! Album before EP before Single, earliest). The secondary-type penalty
+//! ranks ahead of the primary type, so a compilation or soundtrack album
+//! falls behind the artist's own release: a download is named after that
+//! release, not after a compilation that lists the track.
 
 use std::collections::{HashMap, HashSet};
 
@@ -57,14 +60,23 @@ pub fn release_order(
     }
     let mut ranked: Vec<&ReleaseCandidate> = candidates.iter().collect();
     ranked.sort_by_key(|candidate| {
-        (
+        let (official, version_changed, primary, secondary_penalty, date, group) =
             recording_release_group_rank(
                 candidate.status.as_deref(),
                 &candidate.secondary_types,
                 candidate.primary_type.as_deref(),
                 candidate.date.as_deref(),
                 &candidate.release_group_mbid,
-            ),
+            );
+        // Official and version-keeping decide first. A secondary type then
+        // falls behind the artist's own release, whatever its primary type.
+        (
+            official,
+            version_changed,
+            secondary_penalty,
+            primary,
+            date,
+            group,
             candidate.id.clone(),
         )
     });
@@ -119,8 +131,8 @@ mod tests {
             order[0], "album",
             "a plain album outranks single and compilation"
         );
-        // Album type comes before the compilation penalty (the shared rank).
-        assert_eq!(order, ["album", "deluxe", "comp", "single"]);
+        // The artist's own single comes before a compilation album.
+        assert_eq!(order, ["album", "deluxe", "single", "comp"]);
 
         let mut library = HashMap::new();
         library.insert(
@@ -133,5 +145,19 @@ mod tests {
         let order = release_order(&candidates, &library, Some("single"));
         assert_eq!(order[0], ("deluxe".to_owned(), "manual_identity"));
         assert_eq!(order[1], ("single".to_owned(), "requested_release"));
+
+        // Official still decides first: an official compilation beats a
+        // bootleg single.
+        let mut bootleg = candidate("bootleg", "g-boot", "Single", &[]);
+        bootleg.status = Some("Bootleg".to_owned());
+        let candidates = vec![
+            bootleg,
+            candidate("wire-08", "g-wire", "Album", &["Compilation"]),
+        ];
+        let order: Vec<_> = release_order(&candidates, &none, None)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(order, ["wire-08", "bootleg"]);
     }
 }
