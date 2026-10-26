@@ -677,6 +677,227 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
     }
 }
 
+/// A curator's Match the library puts off (here its folder is gone)
+/// leaves an upload's file as it was: still held for the reason a person
+/// decides on, still paired to the album the app guessed, so the held
+/// loop's automatic retry never places it there once the folder is back.
+#[tokio::test]
+async fn a_deferred_upload_match_leaves_its_files_as_they_were() {
+    const GUESS_GROUP: &str = "9d0b7a1e-0000-4000-8000-000000000001";
+    const GUESS: &str = "9d0b7a1e-0000-4000-8000-000000000002";
+    let mut picked = release(&["Numb"], &[None]);
+    picked.title = "Rough Mixes".to_owned();
+    let mut guess = release(&["Numb"], &[None]);
+    guess.id = GUESS.to_owned();
+    guess.release_group_id = GUESS_GROUP.to_owned();
+    guess.tracks[0].id = "9d0b7a1e-0000-4000-8000-000000000003".to_owned();
+    let guessed_track = guess.tracks[0].clone();
+    let (db, library, dir, _auth) = bundles().await;
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Arc::new(LibraryLanding::new(
+            library.clone(),
+            every_priority(Arc::new(LargeGroups(vec![picked, guess]))),
+            pool,
+        )),
+    );
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let bytes = tagged(&work, "flac_full_01.flac", "Odds", "Numb", 1);
+    let job = drop_zip(&acquire, &curator, "odds", &[("Odds/01 Numb.flac", &bytes)]).await;
+    let item = &job.items[0];
+    assert_eq!(item.status, "needs_review", "{:?}", item.detail);
+    let (entry, _) = entry_of(&acquire, &curator.user_id, item.id).await;
+    let file_id = entry.files[0].id;
+    // AcoustID heard another recording; the app's guess was another album.
+    let (release, track, recording) = (
+        GUESS.to_owned(),
+        guessed_track.id.clone(),
+        guessed_track.recording_id.clone(),
+    );
+    acquire
+        .db
+        .write("test.guess", move |tx| {
+            tx.execute(
+                "UPDATE acquire_held_files SET reason = 'fingerprint_mismatch', \
+                 release_mbid = ?2, release_track_mbid = ?3, recording_mbid = ?4, \
+                 disc_number = 1, track_number = 1 WHERE id = ?1",
+                rusqlite::params![file_id, release, track, recording],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("held as heard");
+
+    let music = dir.join("music");
+    std::fs::remove_dir(&music).expect("library folder gone");
+    let held_viewer = HeldViewer {
+        user_id: curator.user_id.clone(),
+        admin: false,
+    };
+    let matched = acquire
+        .held
+        .match_album(&held_viewer, entry.id, GROUP, None, &curator.user_id)
+        .await;
+    assert!(matched.is_err(), "the person is told: {matched:?}");
+    let held = || async {
+        sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT state, reason, release_mbid FROM acquire_held_files WHERE id = ?1",
+        )
+        .bind(file_id)
+        .fetch_one(acquire.db.pool())
+        .await
+        .expect("held file")
+    };
+    let as_it_was = (
+        "held".to_owned(),
+        "fingerprint_mismatch".to_owned(),
+        Some(GUESS.to_owned()),
+    );
+    assert_eq!(held().await, as_it_was);
+    let now = acquire.drops.get_job(&curator, &job.id).await.expect("job");
+    assert_eq!(now.items[0].status, "needs_review");
+
+    std::fs::create_dir_all(&music).expect("library folder back");
+    acquire.held.tend().await;
+    assert_eq!(held().await, as_it_was, "nothing retried it");
+    assert!(
+        files_under(&music).is_empty(),
+        "nothing reached the library"
+    );
+}
+
+/// A bonus track of an upload a curator matched, which the library could
+/// not take because its place was taken, loses the pairing the app had
+/// guessed for it: the held loop's retry never places it on that album.
+#[tokio::test]
+async fn a_matched_uploads_bonus_track_is_not_retried_onto_the_old_guess() {
+    const GUESS_GROUP: &str = "9d0b7a1e-0000-4000-8000-000000000011";
+    const GUESS: &str = "9d0b7a1e-0000-4000-8000-000000000012";
+    let picked = release(&["Mysterons", "Sour Times"], &[None, None]);
+    let mut guess = release(&["Hidden Track"], &[None]);
+    guess.id = GUESS.to_owned();
+    guess.release_group_id = GUESS_GROUP.to_owned();
+    guess.title = "Guess".to_owned();
+    guess.tracks[0].id = "9d0b7a1e-0000-4000-8000-000000000013".to_owned();
+    guess.tracks[0].recording_id = "9d0b7a1e-0000-4000-8000-000000000014".to_owned();
+    let guessed = guess.tracks[0].clone();
+    let (db, library, dir, _auth) = bundles().await;
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Arc::new(LibraryLanding::new(
+            library.clone(),
+            every_priority(Arc::new(LargeGroups(vec![picked, guess]))),
+            pool,
+        )),
+    );
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let mysterons = tagged(&work, "flac_full_01.flac", "Odds", "Mysterons", 1);
+    let sour_times = tagged(&work, "flac_full_02.flac", "Odds", "Sour Times", 2);
+    let hidden = tagged(&work, "flac_full_01.flac", "Odds", "Hidden Track", 3);
+    let job = drop_zip(
+        &acquire,
+        &curator,
+        "odds",
+        &[
+            ("Odds/01 Mysterons.flac", &mysterons),
+            ("Odds/02 Sour Times.flac", &sour_times),
+            ("Odds/03 Hidden Track.flac", &hidden),
+        ],
+    )
+    .await;
+    let item = &job.items[0];
+    assert_eq!(item.status, "needs_review", "{:?}", item.detail);
+    let (entry, _) = entry_of(&acquire, &curator.user_id, item.id).await;
+    let file_id = entry
+        .files
+        .iter()
+        .find(|file| file.original_name.contains("Hidden Track"))
+        .expect("bonus track held")
+        .id;
+    // The app had guessed the bonus track was another album's.
+    let (track, recording) = (guessed.id.clone(), guessed.recording_id.clone());
+    acquire
+        .db
+        .write("test.guess", move |tx| {
+            tx.execute(
+                "UPDATE acquire_held_files SET release_mbid = ?2, release_track_mbid = ?3, \
+                 recording_mbid = ?4, disc_number = 1, track_number = 1 WHERE id = ?1",
+                rusqlite::params![file_id, GUESS, track, recording],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("guessed pairing");
+
+    let music = dir.join("music");
+    let taken = music.join("Portishead/Dummy/0103 Hidden Track.flac");
+    std::fs::create_dir_all(taken.parent().expect("album folder")).expect("album folder");
+    std::fs::write(&taken, b"someone else's file").expect("stray file");
+    let held_viewer = HeldViewer {
+        user_id: curator.user_id.clone(),
+        admin: false,
+    };
+    let matched = acquire
+        .held
+        .match_album(&held_viewer, entry.id, GROUP, None, &curator.user_id)
+        .await
+        .expect("matched by hand");
+    assert_eq!(matched.imported, 2, "{matched:?}");
+    let held = || async {
+        sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT state, reason, release_mbid FROM acquire_held_files WHERE id = ?1",
+        )
+        .bind(file_id)
+        .fetch_one(acquire.db.pool())
+        .await
+        .expect("held file")
+    };
+    assert_eq!(
+        held().await,
+        ("held".to_owned(), "target_occupied".to_owned(), None),
+        "the Match left it unpaired"
+    );
+
+    std::fs::remove_file(&taken).expect("place freed");
+    acquire.held.tend().await;
+    assert_eq!(
+        held().await,
+        ("held".to_owned(), "target_occupied".to_owned(), None),
+        "nothing retried it"
+    );
+    assert!(
+        !files_under(&music)
+            .iter()
+            .any(|path| path.to_string_lossy().contains("Guess")),
+        "nothing went onto the guessed album"
+    );
+}
+
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(files_under(&path));
+        } else {
+            found.push(path);
+        }
+    }
+    found
+}
+
 /// Upload one zip of `entries` and wait for its job to settle.
 async fn drop_zip(
     acquire: &droppedneedle_acquire::AcquireSetup,

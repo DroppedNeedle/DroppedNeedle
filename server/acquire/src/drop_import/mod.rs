@@ -159,6 +159,8 @@ struct Organised {
     release: droppedneedle_library::matching::Release,
     placed: usize,
     fulfills: bool,
+    /// The library put the whole import off, so nothing ran: why.
+    deferred: Option<Reason>,
 }
 
 /// The drop-import service.
@@ -345,6 +347,19 @@ impl DropImports {
         let organised = self
             .organise(&job, working, library.as_ref(), &landing, &summary, true)
             .await;
+        // The library put the import off: the files stay held as they
+        // were, with their reason and pairing, so nothing retried later
+        // goes onto the album this Match replaced.
+        if let Some(reason) = organised.deferred {
+            let mut back = item.clone();
+            back.status = item_status::NEEDS_REVIEW.to_owned();
+            self.store.save_item(&back, item_status::PROCESSING).await?;
+            return Err(DropError::Conflict(format!(
+                "{} {}",
+                reason.message(),
+                reason.action()
+            )));
+        }
         let mut matched = Matched::default();
         for fate in &organised.fates {
             match fate.outcome {
@@ -685,6 +700,7 @@ impl DropImports {
                 release: droppedneedle_library::matching::Release::default(),
                 placed: 0,
                 fulfills: false,
+                deferred: None,
             };
         };
         let release = &found.release;
@@ -699,6 +715,7 @@ impl DropImports {
                 release: release.clone(),
                 placed: 0,
                 fulfills: false,
+                deferred: None,
             };
         };
         let batch = intake::IntakeBatch {
@@ -747,6 +764,7 @@ impl DropImports {
                     release: release.clone(),
                     placed: 0,
                     fulfills: false,
+                    deferred: Some(reason),
                 };
             }
         };
@@ -920,6 +938,7 @@ impl DropImports {
             release: release.clone(),
             placed,
             fulfills,
+            deferred: None,
         }
     }
 
@@ -934,6 +953,7 @@ impl DropImports {
             release,
             placed,
             fulfills,
+            ..
         } = organised;
         let recorded = self.record(&job.user_id, &item, &fates, entry).await;
         if recorded {
@@ -1031,9 +1051,10 @@ impl DropImports {
                             }
                             FileFate::Held(reason, detail) => {
                                 rows.rehold(*id, *reason, Some(detail))?;
-                                if let Some(pairing) = pairing {
-                                    rows.pair(*id, pairing)?;
-                                }
+                                // A file the Match left unpaired loses the
+                                // pairing it had, so nothing retried later
+                                // places it on the album this Match replaced.
+                                rows.pair(*id, &pairing.clone().unwrap_or_default())?;
                             }
                         }
                     }

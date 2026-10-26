@@ -5942,18 +5942,35 @@ impl IntakeCase {
             user_id: "u-ada".to_owned(),
             admin: false,
         };
-        self.rig
+        let matched = self
+            .rig
             .acquire
             .held
             .match_album(&viewer, entry, &self.e.group, None, "u-ada")
-            .await
-            .expect("matched by hand");
+            .await;
         let (state, reason): (String, String) =
             sqlx::query_as("SELECT state, reason FROM acquire_held_files WHERE entry_id = ?1")
                 .bind(entry)
                 .fetch_one(self.rig.acquire.db.pool())
                 .await
                 .expect("held file");
+        // A Match the library put off says why and leaves the file as it
+        // was, so no later retry places it on the album it was paired to.
+        if let Err(error) = matched {
+            let message = error.to_string();
+            let why = Reason::ALL
+                .iter()
+                .copied()
+                .find(|reason| message.starts_with(reason.message()))
+                .unwrap_or_else(|| panic!("matched by hand: {message}"));
+            assert_eq!(
+                (state.as_str(), reason.as_str()),
+                ("held", "no_album_match"),
+                "a deferred Match leaves the file as it was"
+            );
+            assert!(staged.is_file(), "a waiting upload is kept");
+            return Some(Seen::Deferred(why));
+        }
         match state.as_str() {
             "held" => {
                 assert!(staged.is_file(), "a waiting upload is kept");
