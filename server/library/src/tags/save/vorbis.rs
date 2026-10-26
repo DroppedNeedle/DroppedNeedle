@@ -32,8 +32,11 @@ impl TagFormat for Vorbis {
     type Truth = VorbisTruth;
     type Edit = VorbisEdit;
 
+    /// An empty comment holds nothing and lofty drops it on save, so it
+    /// reads as absent: reads, saves, their verify and an undo's replay
+    /// all see the tag without it.
     fn parse(format: AudioFormat, bytes: &[u8]) -> Result<Option<VorbisTruth>, Refusal> {
-        parse_vorbis_truth(format, bytes)
+        Ok(parse_vorbis_truth(format, bytes)?.map(without_empty_values))
     }
 
     fn list(truth: VorbisTruth, document: &mut FieldDocument) -> Result<(), Refusal> {
@@ -48,11 +51,6 @@ impl TagFormat for Vorbis {
     }
 
     fn prepare(truth: VorbisTruth) -> Result<VorbisTruth, Refusal> {
-        if let Some(key) = empty_key(&truth) {
-            return Err(Refusal::EmptyVorbisValue {
-                key: key.to_owned(),
-            });
-        }
         if let Some((upper, variants)) = mixed_spelling(&truth) {
             return Err(Refusal::NoByteInventory {
                 detail: format!("comment key '{upper}' has mixed spellings {variants:?}"),
@@ -64,11 +62,6 @@ impl TagFormat for Vorbis {
     /// Every item is listed or owned by a field, so nothing is left
     /// alone; a comment the save would refuse is named instead.
     fn kept(truth: VorbisTruth) -> Result<TagsKept, Refusal> {
-        if let Some(key) = empty_key(&truth) {
-            return Ok(TagsKept::refused(format!(
-                "The file's {key} tag is empty, and the tag writer cannot keep an empty tag."
-            )));
-        }
         if let Some((upper, variants)) = mixed_spelling(&truth) {
             return Ok(TagsKept::refused(format!(
                 "The file spells its {upper} tag more than one way ({}), so saving its tags would merge them.",
@@ -118,16 +111,16 @@ impl TagFormat for Vorbis {
             _ => return Err(foreign(key)),
         };
         // Spellings are matched without case on write, so a key the file
-        // also spells another way, or holds empty, is refused rather than
-        // touched.
+        // also spells another way is refused rather than touched.
         let blocked = truth.is_some_and(|truth| {
-            truth.pairs.iter().any(|(held, value)| {
-                held.eq_ignore_ascii_case(rest) && (held != rest || value.is_empty())
-            })
+            truth
+                .pairs
+                .iter()
+                .any(|(held, _)| held.eq_ignore_ascii_case(rest) && held != rest)
         });
         if blocked {
             return Err(Refusal::NoByteInventory {
-                detail: format!("tag '{key}' is spelled more than one way or holds no value"),
+                detail: format!("tag '{key}' is spelled more than one way"),
             });
         }
         Ok(VorbisEdit {
@@ -207,13 +200,11 @@ impl TagFormat for Vorbis {
     }
 }
 
-/// The first key holding an empty value, which lofty drops on save.
-fn empty_key(truth: &VorbisTruth) -> Option<&str> {
+/// The tag without its empty comments (`LYRICS=`, `BAND=`), which lofty
+/// drops on save.
+fn without_empty_values(mut truth: VorbisTruth) -> VorbisTruth {
+    truth.pairs.retain(|(_, value)| !value.is_empty());
     truth
-        .pairs
-        .iter()
-        .find(|(_, value)| value.is_empty())
-        .map(|(key, _)| key.as_str())
 }
 
 /// The first key spelled more than one way (`title` plus `TITLE`), with
@@ -233,9 +224,8 @@ fn mixed_spelling(truth: &VorbisTruth) -> Option<(String, Vec<String>)> {
 }
 
 /// Vorbis comments no writable field owns (pictures excluded). A key
-/// the file spells more than one way, or that holds an empty value, is
-/// not listed: an edit of one spelling would touch the others, and an
-/// empty value cannot be written back.
+/// the file spells more than one way is not listed: an edit of one
+/// spelling would touch the others.
 fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut unlisted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -251,9 +241,7 @@ fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
             continue;
         }
         let folded = key.to_ascii_uppercase();
-        if *spelling.entry(folded.clone()).or_insert(key.as_str()) != key.as_str()
-            || value.is_empty()
-        {
+        if *spelling.entry(folded.clone()).or_insert(key.as_str()) != key.as_str() {
             unlisted.insert(folded);
             continue;
         }

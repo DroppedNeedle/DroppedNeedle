@@ -30,8 +30,8 @@
 //! `TOTALTRACKS`/`TOTALDISCS` spelling, the vendor string, MP4 freeforms,
 //! the order of MP4 items and of their values, each MP4 item's data
 //! type, pictures, `CUSTOM_KEEP` everywhere,
-//! and byte-identical audio. Refused: present empty
-//! Vorbis values, values a field cannot hold (see [`Refusal`]), a
+//! and byte-identical audio. An empty Vorbis value reads as absent and
+//! is dropped. Refused: values a field cannot hold (see [`Refusal`]), a
 //! performer or arranger in MP4 (which has no home for either), a NUL
 //! in a credit or comment, unparseable tag bytes, and any post-save
 //! delta outside the edit.
@@ -164,8 +164,6 @@ pub enum Refusal {
     ReadOnlyFormat { format: String, reason: String },
     #[error("unencodable {field:?}: {reason}")]
     UnencodableItem { field: TagField, reason: String },
-    #[error("empty Vorbis value present under '{key}'; lofty drops empties on save")]
-    EmptyVorbisValue { key: String },
     #[error("post-save verify found an out-of-edit delta: {detail}")]
     VerifyMismatch { detail: String },
     #[error("no byte inventory possible: {detail}")]
