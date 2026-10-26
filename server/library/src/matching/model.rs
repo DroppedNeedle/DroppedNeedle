@@ -117,6 +117,13 @@ impl LocalAlbum {
                 continue;
             };
             let mbid = mbid.trim().to_ascii_lowercase();
+            // A release tag that is all digits is a Discogs release id, not
+            // an MBID: beets' Discogs plugin writes ids such as `1274403` into
+            // this field, and looking one up answers 400 "Invalid mbid." on
+            // every attempt, which deferred the album's identification forever.
+            if !mbid.is_empty() && mbid.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
             match counts.iter_mut().find(|(seen, _)| *seen == mbid) {
                 Some((_, count)) => *count += 1,
                 None => counts.push((mbid, 1)),
@@ -432,4 +439,33 @@ fn year_of(date: Option<&str>) -> Option<i32> {
         .all(|byte| byte.is_ascii_digit())
         .then(|| year.parse().ok())
         .flatten()
+}
+
+#[cfg(test)]
+mod tagged_release_tests {
+    use super::*;
+
+    fn album(ids: &[&str]) -> LocalAlbum {
+        LocalAlbum {
+            tracks: ids
+                .iter()
+                .map(|id| LocalTrack {
+                    release_mbid: Some((*id).to_owned()),
+                    ..LocalTrack::default()
+                })
+                .collect(),
+            ..LocalAlbum::default()
+        }
+    }
+
+    #[test]
+    fn a_discogs_id_in_the_release_tag_is_no_tagged_release() {
+        assert_eq!(album(&["1274403", "1274403"]).tagged_release(), None);
+    }
+
+    #[test]
+    fn a_real_mbid_still_counts() {
+        let id = "64e58cc0-a214-4a4a-97e5-9ca97b03d3bc";
+        assert_eq!(album(&[id, id]).tagged_release().as_deref(), Some(id));
+    }
 }
