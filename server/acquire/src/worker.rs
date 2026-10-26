@@ -1329,7 +1329,7 @@ impl DownloadWorker {
         if self.backing_off(&attempt.row.source, now) {
             return Polled::Answered;
         }
-        let mut memory = self.poll_memory(&task.id, task, now);
+        let mut memory = self.poll_memory(&task.id, task, &attempt.row, now);
         match source.poll(&handle).await {
             Ok(progress) => {
                 if progress.downloaded_bytes > memory.last_bytes {
@@ -1416,18 +1416,26 @@ impl DownloadWorker {
         }
     }
 
-    /// Cached poll memory, seeded from the task row on first sight.
-    fn poll_memory(&self, task_id: &str, task: &TaskRow, now: f64) -> PollMemory {
+    /// Cached poll memory, seeded from the live attempt on first sight.
+    fn poll_memory(
+        &self,
+        task_id: &str,
+        task: &TaskRow,
+        attempt: &AttemptRow,
+        now: f64,
+    ) -> PollMemory {
         if let Ok(cache) = self.poll_cache.lock()
             && let Some(memory) = cache.get(task_id)
         {
             return memory.clone();
         }
-        // After a restart the preferred-quality wait starts again: the
-        // attempt's own start is not stored.
+        // After a restart the preferred-quality wait starts again from the
+        // last poll: when it began is not stored. The copy is measured from
+        // its own enqueue, as an unbroken run measures it, because the task
+        // can be hours older (approval, earlier copies).
         let last_polled_at = task.last_polled_at.unwrap_or(now);
         PollMemory {
-            enqueued_at: task.started_at.unwrap_or(task.created_at),
+            enqueued_at: attempt.created_at,
             last_bytes: 0,
             last_move_at: last_polled_at,
             give_way_from: last_polled_at,

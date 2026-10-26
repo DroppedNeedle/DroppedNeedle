@@ -564,10 +564,12 @@ async fn unreadable_history_never_fails_a_partly_imported_task() {
     );
 }
 
-/// A Soulseek source with `copies` copies, each queued at its peer with
-/// nothing sent. Discards fail, so a discarded copy stays with cleanup.
+/// A Soulseek source with `copies` copies, each queued at its peer. With
+/// `sending`, a polled copy reports bytes moving. Discards fail, so a
+/// discarded copy stays with cleanup.
 struct QueuedPeers {
     copies: i64,
+    sending: bool,
 }
 
 impl droppedneedle_acquire::downloads::sources::DownloadSource for QueuedPeers {
@@ -623,14 +625,15 @@ impl droppedneedle_acquire::downloads::sources::DownloadSource for QueuedPeers {
             droppedneedle_acquire::downloads::sources::SourceError,
         >,
     > {
-        Box::pin(async {
-            Ok(
-                droppedneedle_acquire::downloads::sources::TransferProgress {
-                    total_bytes: Some(1000),
-                    files_total: 1,
-                    ..Default::default()
-                },
-            )
+        Box::pin(async move {
+            let progress = droppedneedle_acquire::downloads::sources::TransferProgress {
+                total_bytes: Some(1000),
+                downloaded_bytes: if self.sending { 400 } else { 0 },
+                has_active_transfer: self.sending,
+                files_total: 1,
+                ..Default::default()
+            };
+            Ok(progress)
         })
     }
 
@@ -761,7 +764,10 @@ async fn queued_past_the_wait(
     }
     let worker = Arc::new(DownloadWorker::fixed(
         journal.clone(),
-        vec![Arc::new(QueuedPeers { copies })],
+        vec![Arc::new(QueuedPeers {
+            copies,
+            sending: false,
+        })],
         WorkerConfig::default(),
         droppedneedle_kernel::events::EventHub::new(),
         Default::default(),
@@ -819,4 +825,56 @@ async fn a_queued_copy_gives_way_only_to_a_copy_that_is_queued() {
     let (attempts, outcome, _) = queued_past_the_wait(2, Chosen::Picked).await;
     assert_eq!(attempts, vec![waiting(0)], "a person's pick stays");
     assert_eq!(outcome, None);
+}
+
+// A restart measures a copy from its own enqueue, not from the task's
+// creation. A copy queued ten minutes ago and moving bytes stays downloading
+// on a fresh worker's first poll, though its task is seven hours old; the
+// deadline would blocklist it.
+#[tokio::test]
+async fn a_restart_measures_a_copy_from_its_own_enqueue() {
+    use droppedneedle_kernel::clock::ManualClock;
+
+    let now = 1_800_000_000.0;
+    let scratch = AcquireDb::scratch().unwrap();
+    let clock = Arc::new(ManualClock::at(1_800_000_000_000));
+    let db = AcquireDb::new(scratch.db().clone(), clock.clone());
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
+    journal
+        .run("test.seed", move |store| {
+            store.insert_task(&task("t-old"), now - 7.0 * 3600.0)?;
+            store.insert_attempt(
+                "t-old-a0",
+                "t-old",
+                "soulseek",
+                0,
+                "",
+                r#"{"source":"soulseek","username":"peer-0","filenames":["01.flac"],"job_name":"t-old-0"}"#,
+                AttemptState::Acquiring,
+                now - 600.0,
+            )?;
+            store.transition_task("t-old", TaskStatus::Downloading, now, None)
+        })
+        .await
+        .unwrap();
+    // A new worker has an empty poll cache, as after a restart.
+    let worker = Arc::new(DownloadWorker::fixed(
+        journal.clone(),
+        vec![Arc::new(QueuedPeers {
+            copies: 1,
+            sending: true,
+        })],
+        WorkerConfig::default(),
+        droppedneedle_kernel::events::EventHub::new(),
+        Default::default(),
+    ));
+    worker.run_once(1).await;
+    let task = journal.read_task("t-old").await.unwrap().unwrap();
+    assert_eq!(task.status, TaskStatus::Downloading);
+    let quarantined = journal
+        .read("test.read", |store| Ok(store.list_quarantine()?.len()))
+        .await
+        .unwrap();
+    assert_eq!(quarantined, 0, "a copy that is moving is not blocklisted");
 }

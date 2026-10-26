@@ -259,6 +259,8 @@ pub struct AttemptRow {
     pub row_revision: i64,
     /// Whether the client handle was journaled with the attempt.
     pub handle_journaled: bool,
+    /// When the attempt was queued (unix seconds).
+    pub created_at: f64,
 }
 
 impl AttemptRow {
@@ -282,6 +284,7 @@ impl AttemptRow {
             error_code: row.get("error_code")?,
             row_revision: row.get("row_revision")?,
             handle_journaled: !row.get::<_, String>("handle_json")?.is_empty(),
+            created_at: row.get("created_at")?,
         })
     }
 }
