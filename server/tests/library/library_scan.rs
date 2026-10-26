@@ -220,6 +220,71 @@ async fn unchanged_tags_keep_their_revision() {
     );
 }
 
+/// A daily scan runs at the set time in the server's time zone (`TZ`), on
+/// both sides of a daylight-saving change, and not a minute before.
+#[tokio::test]
+async fn daily_scans_run_at_local_time_across_a_clock_change() {
+    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::config::AppConfig;
+    use droppedneedle_kernel::runtime_config::sections::{LibraryScanSchedule, ScanFrequency};
+    // London moves from GMT to BST at 01:00 UTC on Sunday 30 March 2025.
+    const SATURDAY_0300_GMT: i64 = 1_743_217_200_000;
+    const SUNDAY_0300_BST: i64 = 1_743_300_000_000;
+    let scratch = ScratchDir::new("scan-daily-zone");
+    std::fs::create_dir_all(scratch.join("music")).expect("music folder");
+    migrated_db(&scratch.join("app.db"));
+    let db = Db::open_for_tests(&scratch.join("app.db")).expect("database opens");
+    let clock = ManualClock::at(SATURDAY_0300_GMT - 15 * 3_600_000);
+    let mut config = AppConfig::with_root(0, &scratch);
+    config.timezone = Some("Europe/London".to_owned());
+    let platform = TestPlatform::on(&db, &scratch)
+        .settings(config_store(&scratch))
+        .clock(Arc::new(clock.clone()))
+        .config(config)
+        .build()
+        .await;
+    platform
+        .settings
+        .save_blocking(LibraryScanSchedule {
+            scan_frequency: ScanFrequency::Daily,
+            daily_scan_time: "03:00".to_owned(),
+        })
+        .expect("schedule saves");
+    let (library, _) = library_at(&platform);
+    library
+        .add_root(
+            Some("music".to_owned()),
+            scratch.join("music").to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let settle = || async {
+        for _ in 0..50 {
+            library.supervisor_tick().await;
+            if library.coordinator.current().is_empty() {
+                break;
+            }
+        }
+    };
+    // The new folder's first scan ends on Friday at noon.
+    settle().await;
+    let automatic = || {
+        query(
+            &library,
+            "SELECT COUNT(*) FROM library_scan_runs WHERE trigger = 'automatic'",
+        )
+    };
+    for (due, day) in [(SATURDAY_0300_GMT, "Saturday"), (SUNDAY_0300_BST, "Sunday")] {
+        let before = automatic();
+        clock.set(due - 60_000);
+        settle().await;
+        assert_eq!(automatic(), before, "{day}: no scan before 03:00");
+        clock.set(due);
+        settle().await;
+        assert_eq!(automatic(), before + 1, "{day}: one scan at 03:00");
+    }
+}
+
 /// One file scanned, then its row put back the way an upgrade carries it:
 /// no edition hints, its own title, its album unmatched and no
 /// identification waiting.

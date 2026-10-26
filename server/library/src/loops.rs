@@ -121,7 +121,8 @@ impl LibrarySetup {
             root_paths: self.root_dirs.clone(),
             schedule: {
                 let schedule = self.settings.schedule.clone();
-                Arc::new(move || super::settings::schedule(&schedule))
+                let zone = self.settings.schedule_zone.clone();
+                Arc::new(move || super::settings::schedule(&schedule, &zone))
             },
             inclusion_rules: {
                 let registry = self.registry.clone();

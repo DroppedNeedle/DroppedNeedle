@@ -129,7 +129,8 @@ impl LibraryCore {
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
         download_trees: super::publish::bin::DownloadTrees,
     ) -> Result<Self, String> {
-        let settings = LibrarySettings::new(&platform.settings);
+        let settings =
+            LibrarySettings::new(&platform.settings, platform.config.timezone.as_deref());
         // The roots load before anything can scan or stream: a restart
         // comes back with exactly the roots the settings hold.
         let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(
@@ -389,7 +390,8 @@ impl LibrarySetup {
         import_acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
     ) -> Result<Self, String> {
         let db = &platform.db;
-        let settings = LibrarySettings::new(&platform.settings);
+        let settings =
+            LibrarySettings::new(&platform.settings, platform.config.timezone.as_deref());
         let scan_store = Arc::new(SqliteScanStore::new(db.clone(), platform.clock.clone()));
         let LibraryPorts {
             enrichment,

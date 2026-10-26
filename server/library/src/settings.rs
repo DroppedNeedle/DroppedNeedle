@@ -23,6 +23,7 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, UpdateError};
+use jiff::tz::TimeZone;
 
 /// The settings sections the library reads, each a live handle, plus the
 /// store for the few things the library writes or signs.
@@ -32,6 +33,8 @@ pub struct LibrarySettings {
     pub library: Live<TypedLibrary>,
     /// The automatic-scan schedule.
     pub schedule: Live<LibraryScanSchedule>,
+    /// The server's time zone, which a daily scan time is read in.
+    pub schedule_zone: TimeZone,
     /// The filesystem watcher.
     pub watcher: Live<FilesystemWatcher>,
     /// Library Management's profiles and undo retention.
@@ -50,11 +53,13 @@ pub struct LibrarySettings {
 }
 
 impl LibrarySettings {
-    /// Live handles on the library's sections in `config`.
-    pub fn new(config: &ConfigStore) -> Self {
+    /// Live handles on the library's sections in `config`, with daily
+    /// scans in `timezone` (the deployment's `TZ`).
+    pub fn new(config: &ConfigStore, timezone: Option<&str>) -> Self {
         Self {
             library: config.live(),
             schedule: config.live(),
+            schedule_zone: schedule_zone(timezone),
             watcher: config.live(),
             management: config.live(),
             download_policy: config.live(),
@@ -107,9 +112,23 @@ impl LibrarySettings {
     }
 }
 
-/// Timezone daily schedules resolve against. The scheduler has no tz
-/// database, so daily times read as UTC.
-const SCHEDULE_TIMEZONE: &str = "UTC";
+/// The zone daily scans run in: `TZ` as an IANA name from the system zone
+/// database or a POSIX rule, else the host's own zone (`/etc/localtime`).
+/// One that does not resolve logs a warning and falls back to UTC.
+fn schedule_zone(configured: Option<&str>) -> TimeZone {
+    let resolved = match configured.map(|name| name.trim().trim_start_matches(':')) {
+        Some(name) => TimeZone::get(name).or_else(|_| TimeZone::posix(name)),
+        None => TimeZone::try_system(),
+    };
+    resolved.unwrap_or_else(|error| {
+        tracing::warn!(
+            timezone = configured.unwrap_or("system"),
+            %error,
+            "time zone not found; daily scans run in UTC"
+        );
+        TimeZone::UTC
+    })
+}
 
 fn policy(stored: IdentificationPolicy) -> EffectivePolicy {
     match stored {
@@ -202,14 +221,13 @@ pub fn inclusion_rules(registry: &RootRegistry) -> Vec<InclusionRule> {
         .collect()
 }
 
-/// Automatic-scan schedule. An unreadable section schedules nothing.
-pub fn schedule(settings: &Live<LibraryScanSchedule>) -> ScheduleSettings {
+/// Automatic-scan schedule, daily times read in `zone`. An unreadable
+/// section schedules nothing.
+pub fn schedule(settings: &Live<LibraryScanSchedule>, zone: &TimeZone) -> ScheduleSettings {
     match settings.get() {
-        Ok(stored) => ScheduleSettings::new(
-            stored.scan_frequency,
-            &stored.daily_scan_time,
-            SCHEDULE_TIMEZONE,
-        ),
+        Ok(stored) => {
+            ScheduleSettings::new(stored.scan_frequency, &stored.daily_scan_time, zone.clone())
+        }
         Err(error) => {
             tracing::warn!(%error, "cannot read the scan schedule; automatic scans paused");
             ScheduleSettings::manual()

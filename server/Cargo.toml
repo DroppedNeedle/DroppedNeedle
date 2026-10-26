@@ -64,6 +64,11 @@ cbc = { version = "0.1", features = ["alloc"] }
 hmac = "0.12"
 toml = "1"
 time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
+# Daily scans run at local time in the server's time zone. Reads IANA zones
+# from the system database (the image ships tzdata) and handles
+# daylight-saving gaps and repeats. MIT or Unlicense; it brings jiff-core
+# (same author and licence) and nothing else on Linux.
+jiff = { version = "0.2.37", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 # Tokenises Newznab indexer responses, which are untrusted XML. MIT, one
 # dependency (memchr, already in the tree). No features: it never touches

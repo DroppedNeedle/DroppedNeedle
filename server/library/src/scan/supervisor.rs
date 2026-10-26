@@ -334,7 +334,9 @@ mod tests {
     async fn startup_recovery_requests_a_resume_scan() {
         let (_dir, coordinator) = coordinator();
         let inputs = SupervisorInputs {
-            schedule: Arc::new(|| ScheduleSettings::new(ScanFrequency::Hr1, "03:00", "UTC")),
+            schedule: Arc::new(|| {
+                ScheduleSettings::new(ScanFrequency::Hr1, "03:00", jiff::tz::TimeZone::UTC)
+            }),
             ..inputs(DirtyScopes::new())
         };
         startup_recovery(&coordinator, &inputs).await;
