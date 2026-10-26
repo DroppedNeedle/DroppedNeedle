@@ -6,7 +6,7 @@ use super::models::{
     AlbumIdentity, CandidateEvidence, EvidenceClass, LocalAlbumFacts, TrackEvidence,
 };
 use crate::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK, REVIEW_CEILING};
-use crate::matching::score::LIBRARY_EXCLUDED;
+use crate::matching::score::{FINGERPRINT_OVERRULED, LIBRARY_EXCLUDED};
 use crate::matching::{EditionHints, LocalAlbum, LocalTrack, Release, ReleaseMatch};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
@@ -172,7 +172,8 @@ fn non_blank(value: Option<&str>) -> Option<String> {
 
 /// One candidate as a curator and the sealing code see it. Paired tracks
 /// within the track threshold are supported and carry the release's
-/// recording and release-track ids; a vetoed track is contradictory.
+/// recording and release-track ids; a vetoed track is contradictory. A
+/// file whose length overruled its fingerprint says so.
 pub fn candidate_evidence(
     local: &LocalAlbum,
     release: &Release,
@@ -196,6 +197,14 @@ pub fn candidate_evidence(
                 Some(pair) => {
                     let candidate = &release.tracks[pair.track];
                     let close = pair.distance <= ACCEPT_TRACK;
+                    let mut evidence_kinds = vec![if close {
+                        pair.support.code().to_owned()
+                    } else {
+                        "distant_pair".to_owned()
+                    }];
+                    if matched.overruled.contains(&index) {
+                        evidence_kinds.push(FINGERPRINT_OVERRULED.to_owned());
+                    }
                     TrackEvidence {
                         local_track_id: track.id.clone(),
                         classification: if close {
@@ -203,11 +212,7 @@ pub fn candidate_evidence(
                         } else {
                             EvidenceClass::Unknown
                         },
-                        evidence_kinds: vec![if close {
-                            pair.support.code().to_owned()
-                        } else {
-                            "distant_pair".to_owned()
-                        }],
+                        evidence_kinds,
                         recording_mbid: Some(candidate.recording_id.clone()),
                         release_track_mbid: Some(candidate.id.clone()),
                     }

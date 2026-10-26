@@ -78,7 +78,10 @@
 //!   by its description, and the release comes back as
 //!   [`Verdict::AudioDisagrees`], a guess, never identified: AcoustID
 //!   holds user-submitted mistakes, and only a person can tell which side
-//!   is wrong.
+//!   is wrong. The one case the files settle: the file's measured length
+//!   is its title's track's and not the heard track's (see
+//!   `ReleaseMatch::overruled`). Its fingerprint is set aside without
+//!   holding the release.
 //!
 //! "Library distance" leaves missing tracks out, as Lidarr does for files
 //! already on disk: holding part of an album is normal.

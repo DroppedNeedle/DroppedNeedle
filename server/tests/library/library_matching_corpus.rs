@@ -27,7 +27,7 @@ use droppedneedle_library::identify::sources::NoFingerprints;
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::matching::decide::COMPLETE_TRACK;
 use droppedneedle_library::matching::score::LENGTH_GRACE_SECS;
-use droppedneedle_library::matching::strings::basic_dist;
+use droppedneedle_library::matching::strings::{basic_dist, undecorated};
 use droppedneedle_library::matching::{LocalTrack, Release, ReleaseTrack};
 use droppedneedle_providers::executor::{Prepared, Wire, WireAnswer, WireError};
 use droppedneedle_providers::musicbrainz::{self, MbSource, MusicBrainzView};
@@ -522,7 +522,8 @@ fn paired(ranking: &Ranking, release: Option<&str>) -> Vec<(String, String)> {
 /// The lead candidate pairs some file with another track than its own
 /// (the one it pairs with unheard), or leaves it out, while its own track
 /// clearly fits it: the title within [`COMPLETE_TRACK`] by `basic_dist`,
-/// and the track number or the length (within the length grace) too.
+/// in full or with bracketed parts and a "feat." tail left out, and the
+/// track number or the length (within the length grace) too.
 fn moved_off_clear_track(
     ranking: &Ranking,
     releases: &[Release],
@@ -566,7 +567,12 @@ fn clearly_fits(file: &LocalTrack, track: &ReleaseTrack) -> bool {
         (Some(seconds), Some(ms)) => (seconds - ms as f64 / 1000.0).abs() <= LENGTH_GRACE_SECS,
         _ => false,
     };
-    basic_dist(&file.title, &track.title) <= COMPLETE_TRACK && (number || length)
+    let (bare_file, bare_track) = (undecorated(&file.title), undecorated(&track.title));
+    let title = basic_dist(&file.title, &track.title) <= COMPLETE_TRACK
+        || (!bare_file.is_empty()
+            && !bare_track.is_empty()
+            && basic_dist(&bare_file, &bare_track) <= COMPLETE_TRACK);
+    title && (number || length)
 }
 
 fn heard(
@@ -602,8 +608,9 @@ fn heard(
 /// Heard as the next file's recording (a rival track), the lead candidate,
 /// confirmed or not, keeps every file on the track it pairs with unheard
 /// when that track clearly fits it: audio alone never moves a file off
-/// such a track, and settles only files whose titles are unclear.
-/// Nothing confirms a wrong release group.
+/// such a track, and settles only files whose titles are unclear. Such an
+/// album confirms only when some file's measured length overruled what
+/// was heard. Nothing confirms a wrong release group.
 #[tokio::test(flavor = "multi_thread")]
 async fn fingerprints_confirm_and_never_veto() {
     let albums = load_albums();
@@ -647,6 +654,10 @@ async fn fingerprints_confirm_and_never_veto() {
                 recall.fingerprint_support = heard.clone();
                 let ranking = service.rank(&facts, &recall).expect("default preferences");
                 let (got, reason) = outcome(&ranking, &album.truth);
+                let overruled = ranking
+                    .order
+                    .first()
+                    .map_or(0, |lead| ranking.matches[*lead].overruled.len());
                 let label = format!("{copy} heard {scenario:?}");
                 match tallies.iter_mut().find(|(name, _)| *name == label) {
                     Some((_, tally)) => tally.add(got.verdict),
@@ -657,7 +668,8 @@ async fn fingerprints_confirm_and_never_veto() {
                     }
                 }
                 println!(
-                    "{:<28} {label:<24} expected {:<10} {:<8}  got {:<10} {:<8} {reason}",
+                    "{:<28} {label:<24} expected {:<10} {:<8}  got {:<10} {:<8} {reason} \
+                     overruled {overruled}",
                     album.key,
                     expected.verdict.label(),
                     short(expected.release.as_deref()),
@@ -670,7 +682,10 @@ async fn fingerprints_confirm_and_never_veto() {
                             got.verdict != expected.verdict || got.release != expected.release
                         }
                         Heard::Own => got.verdict > expected.verdict,
-                        Heard::Next => moved_off_clear_track(&ranking, &recall.releases, &pairs),
+                        Heard::Next => {
+                            moved_off_clear_track(&ranking, &recall.releases, &pairs)
+                                || (got.verdict <= Verdict::Group && overruled == 0)
+                        }
                     };
                 if fails {
                     failures.push(format!(

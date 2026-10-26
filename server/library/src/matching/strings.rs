@@ -169,6 +169,13 @@ pub fn without_brackets(value: &str) -> String {
         .join(" ")
 }
 
+/// A title without its parenthesized and bracketed parts or a "feat."
+/// tail, lowercased: the decorations [`string_dist`] discounts.
+/// "Song (feat. X) [Remaster]" is "song".
+pub fn undecorated(value: &str) -> String {
+    without_brackets(&strip_featuring(&value.trim().to_lowercase()))
+}
+
 fn strip_parenthesized(value: &str) -> String {
     strip_enclosed(value, '(', ')')
 }
