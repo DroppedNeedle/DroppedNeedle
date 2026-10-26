@@ -13,7 +13,8 @@ use lofty::tag::{TagExt as _, TagType};
 use super::document::FieldRead;
 use super::edit::{foreign, supersede};
 use super::id3::{
-    Id3, existing_txxx, id3_pair, id3_read, is_raw_native_id, raw_after, split_v23_date, year_of,
+    Id3, date_parts, existing_txxx, id3_pair, id3_read, is_raw_native_id, raw_after,
+    split_v23_date, year_of,
 };
 use super::id3_bytes::{
     DeepId3, People, comment_owned, comment_payload, decode_lang_text, decode_people,
@@ -186,25 +187,24 @@ pub(super) fn resolve_fields(
             }
             continue;
         }
-        // lofty writes v2.3 multi-values with '/', so say so up
-        // front and verify what lands.
-        let values = if v23 && edit.values.len() > 1 {
-            vec![edit.values.join("/")]
+        // A v2.3 save writes the form the tag holds, one '/'-joined value
+        // where there are several (lofty would write NULs), and the
+        // verify checks what lands.
+        let values = if v23 {
+            let held = as_v23_holds(edit.field, &edit.values);
+            if held.len() > 1 {
+                vec![held.join("/")]
+            } else {
+                held
+            }
         } else {
             edit.values.clone()
         };
         match edit.field.id3(v23) {
-            Id3Target::Text(id) => {
-                let values = if id == "TORY" {
-                    values.iter().map(|value| year_of(value)).collect()
-                } else {
-                    values
-                };
-                push(Id3Edit::Text {
-                    id: id.to_owned(),
-                    values,
-                });
-            }
+            Id3Target::Text(id) => push(Id3Edit::Text {
+                id: id.to_owned(),
+                values,
+            }),
             Id3Target::User(desc) => push(Id3Edit::User {
                 desc: tag
                     .and_then(|tag| existing_txxx(tag, desc))
@@ -286,6 +286,50 @@ pub(super) fn resolve_fields(
         });
     }
     Ok(resolved)
+}
+
+/// Whether an ID3v2.3 write joins this field's values into one that
+/// reads back whole: a plain text or TXXX frame (ISRC reads back split,
+/// so it stays a list).
+pub(crate) fn joined_on_v23(field: TagField) -> bool {
+    match field.id3(true) {
+        Id3Target::Text(id) => id != "TSRC",
+        Id3Target::User(_) => true,
+        _ => false,
+    }
+}
+
+/// A field's values as an ID3v2.3 tag holds them, which is what reading
+/// the saved file gives back: several values joined with '/', the
+/// original date as the year `TORY` keeps, and the date as
+/// `TYER`/`TDAT`/`TIME` keep it (a month without a day, and seconds, are
+/// lost). The save writes this form and the profile planner compares in
+/// it, or every plan would see a change.
+pub(crate) fn as_v23_holds(field: TagField, values: &[String]) -> Vec<String> {
+    let joined = || match values {
+        [] => None,
+        [value] => Some(value.clone()),
+        _ => Some(values.join("/")),
+    };
+    match field.id3(true) {
+        Id3Target::Text("TORY") => joined().map(|value| year_of(&value)).into_iter().collect(),
+        Id3Target::SplitDate => joined().map(|value| v23_date(&value)).into_iter().collect(),
+        _ if joined_on_v23(field) => joined().into_iter().collect(),
+        _ => values.to_vec(),
+    }
+}
+
+/// A date as `TYER`, `TDAT` and `TIME` read back; a value that is not a
+/// date is kept whole in `TYER`.
+fn v23_date(value: &str) -> String {
+    match date_parts(value) {
+        None => value.to_owned(),
+        Some((year, None, _)) => year.to_owned(),
+        Some((year, Some((month, day)), None)) => format!("{year}-{month}-{day}"),
+        Some((year, Some((month, day)), Some((hour, minute)))) => {
+            format!("{year}-{month}-{day}T{hour}:{minute}")
+        }
+    }
 }
 
 /// The edit an `id3:` native key names. A raw frame id keeps the frames

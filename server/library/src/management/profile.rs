@@ -301,17 +301,6 @@ fn mode_value(
     }
 }
 
-/// Whether an ID3v2.3 write joins this field's values into one: a plain
-/// text or TXXX frame (ISRC reads back split, so it stays a list).
-fn joined_on_v23(field: TagField) -> bool {
-    use crate::tags::fields::Id3Target;
-    match field.id3(true) {
-        Id3Target::Text(id) => id != "TSRC",
-        Id3Target::User(_) => true,
-        _ => false,
-    }
-}
-
 /// [`mode_value`] for a field an ID3v2.3 file holds as one "/"-joined
 /// value: the release's values are joined the same way, and merge counts
 /// a value as present when it stands between slashes in the file's
@@ -581,7 +570,7 @@ pub fn plan_tags(
             }
             let existing = desired.get(field.name()).cloned().unwrap_or_default();
             if id3v23
-                && joined_on_v23(field)
+                && save::joined_on_v23(field)
                 && let Some(values) = canonical.get(field.name())
             {
                 if let Some(values) = joined_mode_value(
@@ -697,10 +686,11 @@ pub fn plan_tags(
     }
     desired.retain(|_, values| !values.is_empty());
     if id3v23 {
-        // Compare in the form the file can hold, or every plan would see
-        // a change.
+        // One "/"-joined value, as the file holds it. Other reductions
+        // (a date's year) wait for the compare below: naming reads
+        // `desired`, and must name a v2.3 file as it names its siblings.
         for (name, values) in desired.iter_mut() {
-            if values.len() > 1 && TagField::from_name(name).is_some_and(joined_on_v23) {
+            if values.len() > 1 && TagField::from_name(name).is_some_and(save::joined_on_v23) {
                 *values = vec![values.join("/")];
             }
         }
@@ -717,6 +707,11 @@ pub fn plan_tags(
         let Some(field) = TagField::from_name(name) else {
             continue;
         };
+        // Compare in the form a v2.3 file holds (the save writes that
+        // form itself), or every plan would see a change.
+        if id3v23 && old == save::as_v23_holds(field, &new) {
+            continue;
+        }
         if doc.opaque.contains(name) {
             warnings.push(format!(
                 "\"{name}\" holds a value in a form undo could not put back, so it is left as it is."
@@ -1247,7 +1242,9 @@ mod tests {
     use crate::management::enrich::{AlbumExtras, Credits, LyricsAnswer};
     use crate::management::planner::Overrides;
     use crate::matching::model::{RecordingRelations, ReleaseRelations, RoleCredit, WorkCredit};
-    use droppedneedle_kernel::runtime_config::sections::RelationshipType;
+    use droppedneedle_kernel::runtime_config::sections::{
+        PathCompatibilitySettings, RelationshipType,
+    };
 
     /// The classical probe: Gould and Karajan's Beethoven concerto, then
     /// Sibelius and a spoken track that performs no work.
@@ -1790,6 +1787,93 @@ mod tests {
             );
             doc.managed = TagUpdates::from_fields(plan.desired.clone()).expect("fields");
         }
+    }
+
+    /// ID3v2.3 keeps only the year of the original date (`TORY`), and
+    /// only the year of a date with a month but no day (`TYER`). Once the
+    /// file holds that form, a second plan finds nothing to change, and
+    /// the file is named from the full dates, as a FLAC sibling is.
+    #[test]
+    fn id3v23_original_date_is_planned_as_its_year() {
+        let (mut release, _) = classical();
+        release.original_date = Some("2015-01-12".to_owned());
+        release.date = Some("2016-03".to_owned());
+        let settings = settings::initial_settings("");
+        let pinned = pin(&settings, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
+        let empty: TagDocument = serde_json::from_value(serde_json::json!({
+            "managed": {},
+            "custom": {}
+        }))
+        .expect("document");
+        let plan = |doc: &TagDocument, format: &str, id3v23: bool| {
+            plan_tags(
+                &pinned,
+                &CompiledScripts::new(&pinned),
+                &FileInput {
+                    release: &release,
+                    track: &release.tracks[0],
+                    doc,
+                    format,
+                    id3v23,
+                    writable: true,
+                    overrides: &Overrides::default(),
+                    extras: &AlbumExtras::default(),
+                    track_id: "track",
+                    lyrics: &LyricsAnswer::Off,
+                },
+            )
+            .expect("planned")
+        };
+        let mut doc = empty.clone();
+        for pass in 0..2 {
+            let planned = plan(&doc, "mp3", true);
+            for field in [TagField::OriginalDate, TagField::Date] {
+                assert_eq!(
+                    planned.updates.field(field).is_some(),
+                    pass == 0,
+                    "pass {pass}: {:?}",
+                    planned.updates
+                );
+            }
+            let held = planned.desired.iter().map(|(name, values)| {
+                let field = TagField::from_name(name).expect("field");
+                (name.clone(), save::as_v23_holds(field, values))
+            });
+            doc.managed = TagUpdates::from_fields(held).expect("fields");
+        }
+        assert_eq!(
+            doc.managed.field(TagField::OriginalDate),
+            Some(&vec!["2015".to_owned()])
+        );
+        assert_eq!(
+            doc.managed.field(TagField::Date),
+            Some(&vec!["2016".to_owned()])
+        );
+        let name = |fields: &BTreeMap<String, Vec<String>>| {
+            let facts = NamingFacts {
+                extension: "x",
+                codec: "x",
+                bit_rate: None,
+                sample_rate: None,
+                bit_depth: None,
+                medium_format: String::new(),
+                medium_number: 1,
+                album_disambiguation: String::new(),
+            };
+            script::render_path(
+                "{original_date}/{date}",
+                &naming_variables(fields, &facts),
+                &PathCompatibilitySettings::default(),
+                "/m",
+            )
+            .expect("renders")
+        };
+        let flac = plan(&empty, "flac", false);
+        assert_eq!(
+            name(&plan(&empty, "mp3", true).desired),
+            name(&flac.desired)
+        );
+        assert_eq!(name(&flac.desired), "2015-01-12/2016-03");
     }
 
     /// Picard's performer wording and the work rules, case by case.

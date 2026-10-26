@@ -63,6 +63,7 @@ pub use kept::{LeftAlone, TagsKept, tags_kept};
 pub use v2_captured::{CapturedAtom, CapturedTags, CapturedValue, document_from_captured};
 
 pub(crate) use id3::mixed_v23_date;
+pub(crate) use id3_edit::{as_v23_holds, joined_on_v23};
 
 use std::fs::{self, File, OpenOptions};
 use std::io::ErrorKind;
