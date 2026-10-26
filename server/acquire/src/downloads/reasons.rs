@@ -20,7 +20,8 @@ pub struct DecisionReason<'a> {
 }
 
 /// The one reason to show for a task, if it needs one. Live tasks have
-/// none (their progress speaks), except a task moved on by hand.
+/// none (their progress speaks), except a task moved on by hand and one
+/// whose queued copy gave way to the next.
 pub fn task_reason(
     status: TaskStatus,
     outcome: Option<Reason>,
@@ -44,8 +45,9 @@ pub fn task_reason(
         return Some(Reason::HeldForReview);
     }
     // The outcome stays on the row after the next source starts; it only
-    // explains the wait before that.
-    let moved_on = status == TaskStatus::Queued && outcome == Some(Reason::MovedOn);
+    // explains the wait before that, or the copy a slow peer gave way to.
+    let moved_on = (status == TaskStatus::Queued && outcome == Some(Reason::MovedOn))
+        || (status == TaskStatus::Downloading && outcome == Some(Reason::QueueGaveWay));
     if !(settled || moved_on) {
         return None;
     }

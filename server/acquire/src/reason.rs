@@ -66,6 +66,7 @@ pub enum Reason {
     WrongTrack,
     Stalled,
     QueueTimeout,
+    QueueGaveWay,
     NeverStarted,
     Deadline,
     SourceFailed,
@@ -109,7 +110,7 @@ pub enum ReasonKind {
 
 impl Reason {
     /// Every reason, in declaration order.
-    pub const ALL: [Reason; 65] = [
+    pub const ALL: [Reason; 66] = [
         Self::WeakMatch,
         Self::NoArtistEvidence,
         Self::MostlyUnmatched,
@@ -154,6 +155,7 @@ impl Reason {
         Self::WrongTrack,
         Self::Stalled,
         Self::QueueTimeout,
+        Self::QueueGaveWay,
         Self::NeverStarted,
         Self::Deadline,
         Self::SourceFailed,
@@ -224,6 +226,7 @@ impl Reason {
             Self::WrongTrack => "wrong_track",
             Self::Stalled => "stalled",
             Self::QueueTimeout => "queue_timeout",
+            Self::QueueGaveWay => "queue_gave_way",
             Self::NeverStarted => "never_started",
             Self::Deadline => "deadline",
             Self::SourceFailed => "source_failed",
@@ -362,6 +365,9 @@ impl Reason {
             Self::WrongTrack => "The downloaded track is not the one you asked for.",
             Self::Stalled => "The transfer stopped moving and timed out.",
             Self::QueueTimeout => "The peer kept the files in its upload queue for too long.",
+            Self::QueueGaveWay => {
+                "The best copy stayed queued at the peer, so the next one was tried."
+            }
             Self::NeverStarted => {
                 "The download client accepted the files but never started the transfer."
             }
@@ -543,6 +549,7 @@ impl Reason {
             Self::AlreadyOwned => "Nothing to do.",
             Self::Cancelled => "Retry it to start again.",
             Self::MovedOn => "Nothing to do: it starts on the next source shortly.",
+            Self::QueueGaveWay => "Nothing to do: the next copy is downloading.",
         }
     }
 
@@ -593,6 +600,7 @@ impl Reason {
             | Self::WrongTrack
             | Self::Stalled
             | Self::QueueTimeout
+            | Self::QueueGaveWay
             | Self::NeverStarted
             | Self::Deadline
             | Self::SourceFailed
@@ -671,6 +679,7 @@ impl Reason {
             | Self::FilesUnlisted
             | Self::OutsideDownloadsFolder
             | Self::SizeMismatch
+            | Self::QueueGaveWay
             | Self::NoSource
             | Self::AlbumLookupUnavailable
             | Self::RecordingUnknown
@@ -857,6 +866,7 @@ mod tests {
             // blocklisted.
             (Reason::TracksMissing, FailedOver { blocklisted: true }),
             (Reason::MovedOn, FailedOver { blocklisted: false }),
+            (Reason::QueueGaveWay, FailedOver { blocklisted: false }),
             (Reason::FilesUnlisted, Waited),
             (Reason::NoSource, Unserved),
             (Reason::AlbumLookupUnavailable, Unserved),

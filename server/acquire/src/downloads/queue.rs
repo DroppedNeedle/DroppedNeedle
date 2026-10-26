@@ -402,6 +402,8 @@ impl DownloadQueue {
                     facts.held_for_review,
                     decision.as_ref(),
                 )
+                // A library wait says more than a copy that gave way.
+                .filter(|reason| *reason != Reason::QueueGaveWay || library_wait.is_none())
                 .or_else(|| {
                     if row.task.status == TaskStatus::Queued && no_source {
                         return Some(Reason::NoDownloadSource);

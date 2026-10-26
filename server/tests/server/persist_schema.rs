@@ -6516,3 +6516,112 @@ async fn placeholder_artist_ids_are_cleared_on_upgrade() {
         ]
     );
 }
+
+/// Migration 0090 rebuilds the held files table so its reason CHECK takes
+/// `queue_gave_way`: a held file comes through with its reason, pairing
+/// and evidence, the new code is accepted, and the triggers still move the
+/// download activity revision. Download tasks gain `picked_by_person`:
+/// a task carried over reads 0, and only 0 or 1 is taken.
+#[tokio::test]
+async fn queued_copies_can_give_way_on_upgrade() {
+    let pool = scratch_pool().await;
+    migrator_through(89).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', 'now'); \
+         INSERT INTO acquire_held_entries (id, user_id, origin, group_key, state, \
+             created_at, expires_at) \
+         VALUES (1, 'u1', 'download', 'album:rg', 'held', 1, 2); \
+         INSERT INTO acquire_held_files (id, entry_id, root, path, original_name, \
+             release_mbid, release_track_mbid, recording_mbid, disc_number, track_number, \
+             track_title, file_format, duration_seconds, expected_duration_seconds, \
+             evidence_title, evidence_artist, evidence_score, source, source_task_id, \
+             reason, reason_detail, state, created_at) \
+         VALUES (7, 1, 'held', 'aa_01.flac', 'CD1/01.flac', 'rel', 'rt', 'rec', 1, 1, \
+             'Mysterons', 'flac', 301.5, 302.0, 'Heard', 'Someone', 0.82, 'soulseek', 't1', \
+             'owned_elsewhere', 'another copy', 'held', 5); \
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
+             album_title, status, created_at, updated_at) \
+         VALUES ('t-linked', 'u1', 'rg', 'A', 'B', 'downloading', 1, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let picked: (i64, String) =
+        sqlx::query_as("SELECT picked_by_person, status FROM download_tasks WHERE id = 't-linked'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        picked,
+        (0, "downloading".to_owned()),
+        "a carried-over task reads 0"
+    );
+    sqlx::raw_sql("UPDATE download_tasks SET picked_by_person = 1 WHERE id = 't-linked'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        sqlx::raw_sql("UPDATE download_tasks SET picked_by_person = 2 WHERE id = 't-linked'")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "only 0 or 1 is taken"
+    );
+
+    type Kept = (
+        i64,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<f64>,
+        i64,
+    );
+    let kept: Kept = sqlx::query_as(
+        "SELECT entry_id, path, original_name, state, reason, reason_detail, \
+         release_track_mbid, evidence_score, created_at FROM acquire_held_files WHERE id = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        (
+            1,
+            "aa_01.flac".to_owned(),
+            "CD1/01.flac".to_owned(),
+            "held".to_owned(),
+            "owned_elsewhere".to_owned(),
+            Some("another copy".to_owned()),
+            Some("rt".to_owned()),
+            Some(0.82),
+            5,
+        )
+    );
+    let revision = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT revision FROM download_activity_global_revision WHERE singleton = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let before = revision().await;
+    sqlx::raw_sql("UPDATE acquire_held_files SET reason = 'queue_gave_way' WHERE id = 7")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        revision().await,
+        before + 1,
+        "the new reason is taken and the list moves"
+    );
+}

@@ -303,7 +303,15 @@ impl JobStore {
                 )?;
                 match outcome {
                     ReviewOutcome::Take(index, source, username) => DownloadStore::new(tx)
-                        .link_candidate(&task_id, &source, username.as_deref(), &job.id, index, at)
+                        .link_candidate(
+                            &task_id,
+                            &source,
+                            username.as_deref(),
+                            &job.id,
+                            index,
+                            false,
+                            at,
+                        )
                         .map_err(|error| store_failed("search_jobs.review", error))?,
                     ReviewOutcome::Park => {
                         tx.execute(
@@ -446,6 +454,7 @@ impl JobStore {
                             picked.username.as_deref(),
                             &job_id,
                             picked.candidate_index,
+                            true,
                             at,
                         )
                         .map_err(store_error)?;
@@ -474,6 +483,7 @@ impl JobStore {
                         picked.username.as_deref(),
                         &job_id,
                         picked.candidate_index,
+                        true,
                         at,
                     )
                     .map_err(store_error)?;

@@ -1571,6 +1571,9 @@ fn worker_config(
                 as f64,
             queued_timeout_seconds: (clamp_u64(policy.download_queued_timeout_minutes).max(1) * 60)
                 as f64,
+            preferred_quality_wait_seconds: (clamp_u64(policy.preferred_quality_wait_minutes)
+                .max(1)
+                * 60) as f64,
             deadline_seconds: 6.0 * 3600.0,
             materialize_seconds: 90.0,
             reap_threshold_seconds: 1800.0,

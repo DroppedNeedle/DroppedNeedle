@@ -96,6 +96,9 @@ const CLEANUP_HEALTH_TTL: Duration = Duration::from_secs(90);
 /// Enqueue backoff after a pass where no source could serve a task.
 const ENQUEUE_BACKOFF_SECONDS: f64 = 15.0 * 60.0;
 
+/// What a copy that gave way to the next one logs as the task's outcome.
+const GAVE_WAY_NOTE: &str = "queued at the peer past the preferred-quality wait";
+
 /// First wait before polling a source again after its client stopped
 /// answering; it doubles while the client keeps failing.
 const POLL_BACKOFF_BASE_SECONDS: f64 = 30.0;
@@ -489,6 +492,9 @@ struct PollMemory {
     enqueued_at: f64,
     last_bytes: u64,
     last_move_at: f64,
+    /// Start of the preferred-quality wait: the enqueue, or the last
+    /// search that found no other copy.
+    give_way_from: f64,
 }
 
 /// The steady-state worker. All passes are idempotent and per-item
@@ -990,7 +996,7 @@ impl DownloadWorker {
             let source_index = handled_count(&attempts, Some(&source.tag()));
             match source.enqueue(&task.id, source_index).await {
                 Ok(handle) => {
-                    self.journal_enqueued(pass, task, source, handled, source_index, &handle)
+                    self.journal_enqueued(pass, task, source, handled, source_index, &handle, None)
                         .await;
                     return true;
                 }
@@ -1101,9 +1107,13 @@ impl DownloadWorker {
     }
 
     /// Journal one successful enqueue: the attempt row plus the
-    /// Downloading transition in one write, then fresh poll memory. If the attempt id is already taken (another
+    /// Downloading transition in one write, then fresh poll memory. A copy
+    /// that gives way names the live attempt it `replaces`: that attempt is
+    /// handed to cleanup for discarding, and the task's outcome says why,
+    /// in the same write. If the attempt id is already taken (another
     /// writer journaled this slot), the new client job is aborted so it
-    /// never runs untracked.
+    /// never runs untracked. Answers whether the attempt was journaled.
+    #[allow(clippy::too_many_arguments)]
     async fn journal_enqueued(
         &self,
         pass: &Pass,
@@ -1112,21 +1122,47 @@ impl DownloadWorker {
         attempt_number: i64,
         source_index: i64,
         handle: &SourceHandle,
-    ) {
+        replaces: Option<&AttemptRow>,
+    ) -> bool {
         let now = pass.now;
         let handle_json = match serde_json::to_string(handle) {
             Ok(json) => json,
             Err(error) => {
                 tracing::error!(task_id = %task.id, %error, "client handle encode failed");
-                return;
+                return false;
             }
         };
         let attempt_id = format!("{}-a{attempt_number}", task.id);
         let task_id = task.id.clone();
         let journal_source = source.tag().to_string();
         let job_name = handle.job_name.clone();
+        let replaced = replaces.map(|attempt| (attempt.id.clone(), attempt.row_revision));
         let journaled = self
             .step("downloads.enqueued", move |store| {
+                let outcome = match &replaced {
+                    Some((replaced_id, revision)) => {
+                        // A copy that changed since it was polled is left
+                        // alone: the write rolls back and the new job is
+                        // aborted.
+                        store
+                            .transition_attempt(
+                                replaced_id,
+                                *revision,
+                                AttemptState::CleanupPending,
+                                now,
+                                Some("discard"),
+                                None,
+                                true,
+                            )?
+                            .ok_or_else(|| {
+                                StoreError::InvalidTransition(format!(
+                                    "attempt {replaced_id} changed before it could give way"
+                                ))
+                            })?;
+                        Some(TaskOutcome::new(Reason::QueueGaveWay, GAVE_WAY_NOTE))
+                    }
+                    None => None,
+                };
                 store.insert_attempt(
                     &attempt_id,
                     &task_id,
@@ -1137,14 +1173,14 @@ impl DownloadWorker {
                     AttemptState::Acquiring,
                     now,
                 )?;
-                store.transition_task(&task_id, TaskStatus::Downloading, now, None)
+                store.transition_task(&task_id, TaskStatus::Downloading, now, outcome)
             })
             .await;
         if journaled.is_none() {
             if let Err(error) = source.abort(handle).await {
                 tracing::warn!(task_id = %task.id, %error, "untracked client job abort failed");
             }
-            return;
+            return false;
         }
         super::plugin_events::download_event(
             &self.plugins,
@@ -1160,9 +1196,11 @@ impl DownloadWorker {
                     enqueued_at: now,
                     last_bytes: 0,
                     last_move_at: now,
+                    give_way_from: now,
                 },
             );
         }
+        true
     }
 
     /// Push one task's next enqueue attempt out by the backoff window.
@@ -1298,6 +1336,15 @@ impl DownloadWorker {
                     memory.last_move_at = now;
                     memory.last_bytes = progress.downloaded_bytes;
                 }
+                let soulseek = attempt.row.source == SourceTag::Soulseek;
+                // A Soulseek transfer slskd reports a size for exists as a
+                // record, queued at the peer: it waits there rather than
+                // counting as never started.
+                let materialized = soulseek && progress.total_bytes.is_some();
+                let give_way_waited = (soulseek
+                    && !picked_by_hand(task, &attempt.row)
+                    && handled_count(&attempts, None) < pass.config.max_failover_attempts)
+                    .then_some(now - memory.give_way_from);
                 let sample = PollSample {
                     elapsed_seconds: now - memory.enqueued_at,
                     idle_seconds: now - memory.last_move_at,
@@ -1307,6 +1354,7 @@ impl DownloadWorker {
                     all_succeeded: progress.all_succeeded,
                     materialize_wait_seconds: if progress.downloaded_bytes == 0
                         && !progress.has_active_transfer
+                        && !materialized
                     {
                         now - memory.enqueued_at
                     } else {
@@ -1314,8 +1362,17 @@ impl DownloadWorker {
                     },
                 };
                 self.store_poll_memory(&task.id, &memory);
-                self.apply_verdict(pass, task, &attempt.row, source, &handle, progress, sample)
-                    .await;
+                self.apply_verdict(
+                    pass,
+                    task,
+                    &attempt.row,
+                    source,
+                    &handle,
+                    progress,
+                    sample,
+                    give_way_waited,
+                )
+                .await;
                 self.clear_backoff(&attempt.row.source);
                 Polled::Answered
             }
@@ -1366,10 +1423,14 @@ impl DownloadWorker {
         {
             return memory.clone();
         }
+        // After a restart the preferred-quality wait starts again: the
+        // attempt's own start is not stored.
+        let last_polled_at = task.last_polled_at.unwrap_or(now);
         PollMemory {
             enqueued_at: task.started_at.unwrap_or(task.created_at),
             last_bytes: 0,
-            last_move_at: task.last_polled_at.unwrap_or(now),
+            last_move_at: last_polled_at,
+            give_way_from: last_polled_at,
         }
     }
 
@@ -1391,10 +1452,11 @@ impl DownloadWorker {
         handle: &SourceHandle,
         progress: super::downloads::sources::TransferProgress,
         sample: PollSample,
+        give_way_waited: Option<f64>,
     ) {
         use super::downloads::watchdog::WatchdogOutcome;
         let now = pass.now;
-        let (reason, text) = match pass.watchdog.evaluate(&sample) {
+        let (reason, text) = match pass.watchdog.evaluate_with(&sample, give_way_waited) {
             WatchdogOutcome::Continue => {
                 self.record_progress(pass, task, &progress).await;
                 return;
@@ -1443,6 +1505,19 @@ impl DownloadWorker {
                 ),
             ),
             WatchdogOutcome::Stalled => (Reason::Stalled, "transfer stalled".to_owned()),
+            WatchdogOutcome::GiveWay => {
+                if !self.give_way(pass, task, attempt, source).await {
+                    // No other copy now: this one keeps its place in the
+                    // queue, and the next look waits another full wait.
+                    if let Ok(mut cache) = self.poll_cache.lock()
+                        && let Some(memory) = cache.get_mut(&task.id)
+                    {
+                        memory.give_way_from = now;
+                    }
+                    self.record_progress(pass, task, &progress).await;
+                }
+                return;
+            }
             WatchdogOutcome::QueuedTimeout => {
                 (Reason::QueueTimeout, "stuck in the remote queue".to_owned())
             }
@@ -1462,6 +1537,66 @@ impl DownloadWorker {
             Some(QuarantineReason::DownloadFailed),
         )
         .await;
+    }
+
+    /// Move a copy that sat in a peer's queue past the preferred-quality
+    /// wait on to the source's next copy. The next copy is enqueued first,
+    /// and only once it is journaled is the waiting one handed to cleanup,
+    /// so a peer that is the only one sharing the album keeps its place.
+    /// The slow peer is not blocklisted: the next search skips it because
+    /// this task already tried it. Answers whether the copy moved.
+    async fn give_way(
+        &self,
+        pass: &Pass,
+        task: &TaskRow,
+        attempt: &AttemptRow,
+        source: &Arc<dyn DownloadSource>,
+    ) -> bool {
+        // No new copy while the library folder cannot take files, as for
+        // any enqueue.
+        if pass.library.is_some() {
+            return false;
+        }
+        let Some(attempts) = self.attempts(&task.id).await else {
+            return false;
+        };
+        let handled = handled_count(&attempts, None);
+        let source_index = handled_count(&attempts, Some(&source.tag()));
+        let key = format!("enqueue:{}:{handled}", task.id);
+        let task_id = task.id.clone();
+        let now = pass.now;
+        if self
+            .step("downloads.enqueue_key", move |store| {
+                store.claim_key(&key, &task_id, "enqueue", now)
+            })
+            .await
+            .is_none()
+        {
+            return false;
+        }
+        match source.enqueue(&task.id, source_index).await {
+            Ok(next) => {
+                let moved = self
+                    .journal_enqueued(
+                        pass,
+                        task,
+                        source,
+                        handled,
+                        source_index,
+                        &next,
+                        Some(attempt),
+                    )
+                    .await;
+                if moved {
+                    tracing::info!(task_id = %task.id, "queued copy gave way to the next one");
+                }
+                moved
+            }
+            Err(error) => {
+                tracing::info!(task_id = %task.id, %error, "no other copy to give way to; still waiting");
+                false
+            }
+        }
     }
 
     /// Fail one attempt over to the next candidate: blocklist the failed
@@ -1917,6 +2052,14 @@ fn live_attempt(attempts: &[Attempt]) -> Option<&Attempt> {
             AttemptState::Acquiring | AttemptState::InUse
         ) && attempt.handle.is_some()
     })
+}
+
+/// Whether a person picked the copy this attempt fetches: they picked
+/// the task's candidate from a search, it is on the attempt's source, and
+/// this is that source's first attempt, the one the pick is enqueued as
+/// (later ones search). A copy the automatic search review took is not.
+fn picked_by_hand(task: &TaskRow, attempt: &AttemptRow) -> bool {
+    task.picked_by_person && attempt.source == task.source && attempt.candidate_index == 0
 }
 
 /// Attempts with a client handle, optionally for one source only.

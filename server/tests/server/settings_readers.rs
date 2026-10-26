@@ -47,10 +47,6 @@ const PENDING: &[(&str, &str)] = &[
         "the preflight check does not score candidates yet",
     ),
     (
-        "download_policy.preferred_quality_wait_minutes",
-        "the wait for a preferred quality is not restored yet",
-    ),
-    (
         "library_management.profiles[]",
         "not every Library Management profile option is honoured yet",
     ),

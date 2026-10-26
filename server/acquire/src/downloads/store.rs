@@ -92,6 +92,8 @@ pub struct TaskRow {
     pub source_username: Option<String>,
     /// Search job id that produced the picked candidate, once linked.
     pub search_job_id: Option<String>,
+    /// A person picked the linked candidate (not the automatic review).
+    pub picked_by_person: bool,
     /// Last outcome, as the worker logged it.
     pub error_message: Option<String>,
     /// Last outcome, typed: what the queue explains.
@@ -156,6 +158,7 @@ impl TaskRow {
             download_client: row.get("download_client")?,
             source_username: row.get("source_username")?,
             search_job_id: row.get("search_job_id")?,
+            picked_by_person: row.get("picked_by_person")?,
             error_message: row.get("error_message")?,
             outcome_code: row
                 .get::<_, Option<String>>("outcome_code")?
@@ -635,11 +638,13 @@ impl<'conn> DownloadStore<'conn> {
         Ok(())
     }
 
-    /// Link one task to the candidate a person picked from a manual
-    /// search: the source, the peer, the search job and the position in
-    /// its list. The worker fetches exactly that candidate first; the
-    /// reimport guard reads these columns back to tell linked tasks from
-    /// never-started ones.
+    /// Link one task to the candidate picked from a search, by a person or
+    /// by the automatic search review (`picked_by_person` says which): the
+    /// source, the peer, the search job and the position in its list. The
+    /// worker fetches exactly that candidate first; the reimport guard
+    /// reads these columns back to tell linked tasks from never-started
+    /// ones.
+    #[allow(clippy::too_many_arguments)]
     pub fn link_candidate(
         &self,
         task_id: &str,
@@ -647,6 +652,7 @@ impl<'conn> DownloadStore<'conn> {
         source_username: Option<&str>,
         search_job_id: &str,
         candidate_index: i64,
+        picked_by_person: bool,
         now: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
@@ -657,7 +663,8 @@ impl<'conn> DownloadStore<'conn> {
                 search_job_id,
                 candidate_index,
                 now,
-                task_id
+                task_id,
+                picked_by_person
             ],
         )?;
         Ok(())

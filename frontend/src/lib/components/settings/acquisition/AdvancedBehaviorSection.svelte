@@ -45,7 +45,7 @@
 			/>
 			<NumberField
 				label="Preferred-quality queue wait (min)"
-				help="After this zero-byte wait, try the best lower accepted quality."
+				help="After this long in a Soulseek peer's queue with nothing downloaded, try the next copy."
 				size="sm"
 				min={1}
 				max={1440}

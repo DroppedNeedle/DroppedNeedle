@@ -61,9 +61,10 @@ droppedneedle_kernel::sql! {
     /// Record a poll without a status change.
     pub(super) TOUCH_POLL = "UPDATE download_tasks SET last_polled_at = ?1, updated_at = ?1 \
              WHERE id = ?2";
-    /// Link a task to the candidate a person picked.
+    /// Link a task to a picked candidate, saying whether a person picked it.
     pub(super) LINK_CANDIDATE = "UPDATE download_tasks SET source = ?1, source_username = ?2, \
-             search_job_id = ?3, candidate_index = ?4, updated_at = ?5 WHERE id = ?6";
+             search_job_id = ?3, candidate_index = ?4, updated_at = ?5, \
+             picked_by_person = ?7 WHERE id = ?6";
     /// Reimport guard: a failed or partial task with an attempt whose handle
     /// still names its files and whose cleanup has not run.
     pub(super) REIMPORTABLE = "SELECT EXISTS (SELECT 1 FROM download_tasks t \
