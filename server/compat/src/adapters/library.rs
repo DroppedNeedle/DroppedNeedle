@@ -20,8 +20,8 @@ use droppedneedle_catalog::reads::collections::store::playlists::NewEntry;
 use droppedneedle_catalog::reads::collections::store::ratings::{ItemRating, RatedKind};
 use droppedneedle_catalog::reads::collections::{CollectionsState, error::CollectionsError};
 use droppedneedle_catalog::reads::library::player::{
-    AlbumOrder, AlbumQuery, PlayStat, PlayedValues, PlayerAlbum, PlayerCatalog, PlayerIds,
-    PlayerTrack, ShuffleSeeds, TrackOrder, TrackQuery,
+    AlbumOrder, AlbumQuery, PlayStat, PlayedValues, PlayerAlbum, PlayerIds, PlayerTrack,
+    ShuffleSeeds, TrackOrder, TrackQuery,
 };
 use droppedneedle_catalog::reads::library::store::LocalCatalog;
 use droppedneedle_catalog::reads::library::stores::{
@@ -126,10 +126,9 @@ pub type ImageBytes = (Vec<u8>, String);
 /// Everything compat reads, behind one cheap clone.
 #[derive(Clone)]
 pub struct CompatLibrary {
-    /// Native catalog reads (artists, genres, single albums and artists).
+    /// The local catalog: native reads (artists, genres, single albums and
+    /// artists) and player reads (rich tracks, filtered pages, history).
     pub catalog: LocalCatalog,
-    /// Player reads (rich tracks, filtered pages, history).
-    pub player: Arc<dyn PlayerCatalog>,
     /// Shared playlists and favorites.
     pub collections: CollectionsState,
     /// Stored or fetched lyrics.
@@ -200,7 +199,6 @@ impl CompatLibrary {
     pub fn from_reads(reads: &droppedneedle_catalog::reads::ReadsSetup) -> Self {
         Self {
             catalog: reads.library.catalog.clone(),
-            player: Arc::new(reads.collections.items.clone()),
             collections: reads.collections.clone(),
             lyrics: reads.library.lyrics.clone(),
             covers: reads.platform.covers.covers.clone(),
@@ -235,7 +233,7 @@ impl CompatLibrary {
     /// One album.
     pub async fn album(&self, id: &str) -> Result<Option<PlayerAlbum>, CompatError> {
         Ok(self
-            .player
+            .catalog
             .albums_by_ids(&[id.to_owned()])
             .await?
             .into_iter()
@@ -245,7 +243,7 @@ impl CompatLibrary {
     /// Albums by id, in the order asked; missing ids drop out.
     pub async fn albums_in_order(&self, ids: &[String]) -> Result<Vec<PlayerAlbum>, CompatError> {
         let mut by_id = self
-            .player
+            .catalog
             .albums_by_ids(ids)
             .await?
             .into_iter()
@@ -262,7 +260,7 @@ impl CompatLibrary {
         limit: u64,
         offset: u64,
     ) -> Result<(Vec<PlayerAlbum>, u64), CompatError> {
-        Ok(self.player.albums(query, order, limit, offset).await?)
+        Ok(self.catalog.albums(query, order, limit, offset).await?)
     }
 
     /// One page of albums without the total.
@@ -273,7 +271,7 @@ impl CompatLibrary {
         limit: u64,
         offset: u64,
     ) -> Result<Vec<PlayerAlbum>, CompatError> {
-        Ok(self.player.album_page(query, order, limit, offset).await?)
+        Ok(self.catalog.album_page(query, order, limit, offset).await?)
     }
 
     /// One page of tracks without the total.
@@ -284,7 +282,7 @@ impl CompatLibrary {
         limit: u64,
         offset: u64,
     ) -> Result<Vec<PlayerTrack>, CompatError> {
-        Ok(self.player.track_page(query, order, limit, offset).await?)
+        Ok(self.catalog.track_page(query, order, limit, offset).await?)
     }
 
     /// The caller's shuffle seed for a random track page at `offset`.
@@ -307,7 +305,7 @@ impl CompatLibrary {
         offset: u64,
     ) -> Result<Vec<ArtistRecord>, CompatError> {
         Ok(self
-            .player
+            .catalog
             .album_artist_page(query, natural, limit, offset)
             .await?)
     }
@@ -320,7 +318,7 @@ impl CompatLibrary {
         limit: u64,
         offset: u64,
     ) -> Result<(Vec<PlayerTrack>, u64), CompatError> {
-        Ok(self.player.tracks(query, order, limit, offset).await?)
+        Ok(self.catalog.tracks(query, order, limit, offset).await?)
     }
 
     /// An album's tracks in disc and track order.
@@ -330,20 +328,20 @@ impl CompatLibrary {
             ..TrackQuery::default()
         };
         Ok(self
-            .player
+            .catalog
             .track_page(&query, TrackOrder::Album, u64::MAX >> 1, 0)
             .await?)
     }
 
     /// Tracks by id, in no particular order.
     pub async fn tracks_by_ids(&self, ids: &[String]) -> Result<Vec<PlayerTrack>, CompatError> {
-        Ok(self.player.tracks_by_ids(ids).await?)
+        Ok(self.catalog.tracks_by_ids(ids).await?)
     }
 
     /// One track.
     pub async fn track(&self, id: &str) -> Result<Option<PlayerTrack>, CompatError> {
         Ok(self
-            .player
+            .catalog
             .tracks_by_ids(&[id.to_owned()])
             .await?
             .into_iter()
@@ -362,7 +360,7 @@ impl CompatLibrary {
 
     /// Catalog revision.
     pub async fn revision(&self) -> Result<i64, CompatError> {
-        Ok(self.player.revision().await?)
+        Ok(self.catalog.revision().await?)
     }
 
     /// When the user favorited each id of one kind.
@@ -435,7 +433,7 @@ impl CompatLibrary {
         kind: &str,
         ids: &[String],
     ) -> Result<HashMap<String, PlayStat>, CompatError> {
-        Ok(self.player.play_stats(user_id, kind, ids).await?)
+        Ok(self.catalog.play_stats(user_id, kind, ids).await?)
     }
 
     /// The user's values for some albums or tracks as Jellyfin apps see
@@ -446,7 +444,7 @@ impl CompatLibrary {
         kind: &str,
         ids: &[String],
     ) -> Result<HashMap<String, PlayedValues>, CompatError> {
-        Ok(self.player.played_values(user_id, kind, ids).await?)
+        Ok(self.catalog.played_values(user_id, kind, ids).await?)
     }
 
     /// Mark the tracks `scope` covers played or unplayed for the user.
@@ -465,7 +463,7 @@ impl CompatLibrary {
         album_ids: &[String],
         artist_ids: &[String],
     ) -> Result<PlayerIds, CompatError> {
-        Ok(self.player.player_ids(album_ids, artist_ids).await?)
+        Ok(self.catalog.player_ids(album_ids, artist_ids).await?)
     }
 
     /// Album ids from the user's play history.
@@ -477,7 +475,7 @@ impl CompatLibrary {
         offset: u64,
     ) -> Result<Vec<String>, CompatError> {
         Ok(self
-            .player
+            .catalog
             .history_albums(user_id, frequent, limit, offset)
             .await?)
     }

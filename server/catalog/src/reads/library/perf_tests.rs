@@ -16,7 +16,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::{Db, DbConfig, DbError, DbRuntime, Lane, fold_text, open_runtime};
-use library::pool_bridge::LibraryDb;
 use library::sql;
 use library::sqlite::fts_match_phrase;
 use library::store::LocalCatalog;
@@ -38,11 +37,6 @@ struct Fixture {
 impl Fixture {
     fn db(&self) -> &Db {
         self.runtime.db()
-    }
-
-    /// The player catalog's pool handle over the same database.
-    fn player_db(&self) -> LibraryDb {
-        LibraryDb::of(self.db())
     }
 }
 
@@ -772,6 +766,47 @@ const TRACK_ORDERS: [(TrackSort, bool, [&str; 7]); 8] = [
     ),
 ];
 
+/// A player search's short words each have to be found in the title, the
+/// artist or the album: a track with no artist name matches on the other
+/// two only, however many short words the search holds.
+#[tokio::test]
+async fn player_short_words_need_a_column_that_holds_them() {
+    use library::player::{TrackOrder, TrackQuery};
+
+    let fixture = seed_small().await;
+    write_batch(
+        &fixture,
+        "track with no artist name",
+        format!(
+            "{TRACK_INSERT}('nt1', 'al1', 'r1', '/m/nt1.flac', 'nt1.flac', 'h-nt1', 1000, 1, \
+             's-nt1', 'Love Song', 'love song', NULL, NULL, 'Greatest', 'greatest', 'Aurora', \
+             'aurora', 1, 9, 2001, 100.0, 'flac', 'indexed', 'scan', 3000.0, 'automatic');"
+        ),
+    )
+    .await;
+    for (q, found) in [
+        ("love so", true),
+        ("love so on g", true),
+        ("love me", false),
+        ("love me do it", false),
+    ] {
+        let query = TrackQuery {
+            q: Some(q.to_owned()),
+            ..TrackQuery::default()
+        };
+        let page = fixture
+            .catalog
+            .track_page(&query, TrackOrder::Title, 50, 0)
+            .await
+            .expect("page reads");
+        assert_eq!(
+            page.iter().any(|track| track.id == "nt1"),
+            found,
+            "{q}: {page:?}"
+        );
+    }
+}
+
 /// Track search answers the fixture's pages on every query shape: misses,
 /// hits, 1-2 character queries (the substring path), LIKE metacharacters,
 /// quotes, unicode, case folding and NUL bytes, in title order and newest
@@ -1354,8 +1389,7 @@ async fn assert_hot_plans(db: &Db) {
     // Player apps read every artist's tag ids in chunks of 500: each chunk
     // probes those artists' credits, never a walk over the tracks.
     let ids: Vec<String> = (0..500).map(|n| format!("ar{n}")).collect();
-    let tag_ids =
-        library::player::ARTIST_TAG_IDS.replace("{marks}", &vec!["?"; ids.len()].join(", "));
+    let tag_ids = sql::artist_tag_ids(ListLen::new(ids.len()));
     let binds: Vec<ExplainBind> = ids
         .iter()
         .chain(&ids)
@@ -1575,15 +1609,12 @@ fn one_sort(
 /// read the marks.
 #[tokio::test]
 async fn history_orders_page_like_one_sort() {
-    use library::player::{
-        AlbumOrder, AlbumQuery, OrderKey, PlayerCatalog, SqlitePlayerCatalog, TrackOrder,
-        TrackQuery,
-    };
+    use library::player::{AlbumOrder, AlbumQuery, OrderKey, TrackOrder, TrackQuery};
 
     let fixture = seed_small().await;
     seed_small_plays(&fixture).await;
     seed_small_marks(&fixture).await;
-    let player = SqlitePlayerCatalog::new(&fixture.player_db());
+    let player = fixture.catalog.clone();
     let streamable_tracks: Vec<String> = fetch(
         fixture.db(),
         "SELECT id FROM local_tracks WHERE availability = 'indexed' ORDER BY id",
@@ -2515,9 +2546,7 @@ async fn artist_counts_follow_every_write() {
 /// the same two indexes.
 async fn assert_history_plans(db: &Db, state: &str) {
     use library::player::{
-        AlbumOrder, AlbumQuery, HistorySource, ValueScope, album_clause, album_page_sql,
-        album_page_values_sql, history_albums_sql, play_stats_sql, played_albums_sql,
-        played_tracks_sql, track_values_sql,
+        AlbumSequence, AlbumShape, HistoryKey, ItemKind, PlayedFilter, TrackKey, TrackShape,
     };
     const BY_TRACK: &str = "idx_play_history_user_track (user_id=?";
     const NO_TRACK: &str = "idx_play_history_user_album_no_track (user_id=?";
@@ -2559,102 +2588,82 @@ async fn assert_history_plans(db: &Db, state: &str) {
     };
     // An `Int` here stands for the page of ids.
     let ids_mark = ExplainBind::Int(0);
-    // The played ids as a JSON list.
+    // The played ids as a JSON list, in every place a count takes a bind.
     let list = ExplainBind::Text(Some("[]"));
-    let tracks = HistorySource::tracks("local_tracks t");
-    let albums = HistorySource::albums();
-    let track_rows = "+t.availability = 'indexed'";
+    let listed = |sql: &str| vec![list; sql.matches('?').count()];
+    // No filter but streamability.
+    let tracks = TrackShape::OPEN;
     // The browsable albums, as every album page filters them.
-    let album_rows = album_clause(&AlbumQuery::default(), None).render();
-    let album_rows = album_rows.as_str();
-    let sql = tracks.played_sql(track_rows, "v.played_at", true);
+    let albums = AlbumShape {
+        artist: false,
+        album_artists: false,
+        appears: false,
+        genre: false,
+        scoped: false,
+        played: PlayedFilter::Any,
+    };
+    let sql = sql::player_tracks_played(tracks, TrackKey::Open, HistoryKey::LastPlayed, true);
     let mut statements: Vec<(&str, String, Vec<ExplainBind<'_>>)> =
         vec![("tracks played by last play", sql.clone(), page(&sql, true))];
-    let sql = tracks.played_sql(track_rows, "v.plays", true);
+    let sql = sql::player_tracks_played(tracks, TrackKey::Open, HistoryKey::PlayCount, true);
     statements.push(("tracks played by play count", sql.clone(), page(&sql, true)));
-    statements.push((
-        "tracks played count",
-        tracks.played_count_sql(track_rows),
-        vec![list],
-    ));
-    let sql = tracks.unplayed_sql(track_rows, true, false);
+    let sql = sql::player_tracks_played_count(tracks, TrackKey::Open);
+    statements.push(("tracks played count", sql.clone(), listed(&sql)));
+    let sql = sql::player_tracks_unplayed(tracks, true, false);
     statements.push(("tracks unplayed", sql.clone(), page(&sql, true)));
+    let sql = sql::player_tracks_unplayed(tracks, true, true);
+    statements.push((
+        "tracks unplayed after a count",
+        sql.clone(),
+        page(&sql, true),
+    ));
+    let sql = sql::player_tracks_unplayed_count(tracks);
+    statements.push(("tracks unplayed count", sql.clone(), listed(&sql)));
+    let played = sql::PLAYER_PLAYED_TRACKS.text();
     statements.extend([
-        (
-            "tracks unplayed after a count",
-            tracks.unplayed_sql(track_rows, true, true),
-            vec![list, limit, offset],
-        ),
-        (
-            "tracks unplayed count",
-            tracks.unplayed_count_sql(track_rows),
-            vec![list],
-        ),
-        (
-            "played tracks",
-            played_tracks_sql(),
-            page(&played_tracks_sql(), false),
-        ),
-        (
-            "played track ids",
-            tracks.played_ids_sql().to_owned(),
-            page(tracks.played_ids_sql(), false),
-        ),
+        ("played tracks", played.to_owned(), page(played, false)),
         (
             "track values",
-            track_values_sql(ValueScope::Tracks(ids)),
+            sql::player_track_values(ListLen::new(ids)),
             with_ids(&[listener, ids_mark], &[listener, ids_mark]),
         ),
     ]);
     let track_statements = statements.len();
-    let sql = albums.played_sql(album_rows, "v.played_at", true);
+    let sql = sql::player_albums_played(albums, HistoryKey::LastPlayed, true);
     statements.push(("albums played by last play", sql.clone(), page(&sql, true)));
-    let sql = albums.played_sql(album_rows, "v.plays", true);
+    let sql = sql::player_albums_played(albums, HistoryKey::PlayCount, true);
     statements.push(("albums played by play count", sql.clone(), page(&sql, true)));
-    statements.push((
-        "albums played count",
-        albums.played_count_sql(album_rows),
-        vec![list],
-    ));
-    let sql = albums.unplayed_sql(album_rows, true, false);
+    let sql = sql::player_albums_played_count(albums);
+    statements.push(("albums played count", sql.clone(), listed(&sql)));
+    let sql = sql::player_albums_unplayed(albums, true, false);
     statements.push(("albums unplayed", sql.clone(), page(&sql, true)));
+    let sql = sql::player_albums_unplayed(albums, true, true);
+    statements.push((
+        "albums unplayed after a count",
+        sql.clone(),
+        page(&sql, true),
+    ));
+    let sql = sql::player_albums_unplayed_count(albums);
+    statements.push(("albums unplayed count", sql.clone(), listed(&sql)));
+    let played_ids = sql::PLAYER_ALBUM_PLAYED_IDS.text();
+    let played = sql::PLAYER_PLAYED_ALBUMS.text();
     statements.extend([
         (
-            "albums unplayed after a count",
-            albums.unplayed_sql(album_rows, true, true),
-            vec![list, limit, offset],
-        ),
-        (
-            "albums unplayed count",
-            albums.unplayed_count_sql(album_rows),
-            vec![list],
-        ),
-        (
             "played album ids",
-            albums.played_ids_sql().to_owned(),
-            page(albums.played_ids_sql(), false),
+            played_ids.to_owned(),
+            page(played_ids, false),
         ),
-        (
-            "played albums",
-            played_albums_sql(),
-            page(&played_albums_sql(), false),
-        ),
+        ("played albums", played.to_owned(), page(played, false)),
         (
             "album values",
-            album_page_values_sql(ids),
+            sql::player_album_values(ListLen::new(ids)),
             with_ids(&[listener, ids_mark], &[]),
         ),
-        (
-            "albums page by title",
-            album_page_sql(album_rows, AlbumOrder::Title),
-            vec![limit, offset],
-        ),
-        (
-            "albums page shuffled",
-            album_page_sql(album_rows, AlbumOrder::Shuffle(7)),
-            vec![limit, offset],
-        ),
     ]);
+    let sql = sql::player_album_page(albums, AlbumSequence::Title);
+    statements.push(("albums page by title", sql.clone(), page(&sql, true)));
+    let sql = sql::player_album_page(albums, AlbumSequence::Shuffle);
+    statements.push(("albums page shuffled", sql.clone(), page(&sql, true)));
     for (index, (what, sql, binds)) in statements.iter().enumerate() {
         let plan = explain(db, sql, binds).await;
         let what = format!("{what}, {state}: {plan:?}");
@@ -2725,11 +2734,13 @@ async fn assert_history_plans(db: &Db, state: &str) {
             })
             .collect();
         let walks = what.contains("unplayed") || what.contains("page");
+        // A shuffle's seed is one constant row, scanned once.
         assert!(
             plan.iter()
                 .filter_map(|line| line.strip_prefix("SCAN "))
                 .all(|scanned| subqueries.contains(&scanned)
                     || scanned.contains("VIRTUAL TABLE")
+                    || scanned == "CONSTANT ROW"
                     || (walks && matches!(scanned.split(' ').next(), Some("t" | "a")))),
             "no table is scanned but the catalog an unplayed half or a page walks: {what}"
         );
@@ -2765,8 +2776,8 @@ async fn assert_history_plans(db: &Db, state: &str) {
 
     // Subsonic: plays alone, as before.
     let subsonic = [
-        ("recently played", history_albums_sql(false)),
-        ("most played", history_albums_sql(true)),
+        ("recently played", sql::player_history_albums(false)),
+        ("most played", sql::player_history_albums(true)),
     ];
     for (what, sql) in &subsonic {
         let plan = explain(db, sql, &page(sql, true)).await;
@@ -2807,14 +2818,14 @@ async fn assert_history_plans(db: &Db, state: &str) {
         );
     }
     let probe = "(user_id=? AND local_track_id=?)";
-    let sql = play_stats_sql("track", 1).expect("track counts");
+    let sql = sql::player_play_stats(ItemKind::Track, ListLen::new(1));
     let binds = [ExplainBind::Text(Some("u1")), ExplainBind::Text(Some("t1"))];
     let plan = explain(db, &sql, &binds).await;
     assert!(
         plan.len() == 1 && plan[0].contains("COVERING INDEX idx_play_history_user_track"),
         "track counts come from the index alone, {state}: {plan:?}"
     );
-    let sql = play_stats_sql("album", ids).expect("album counts");
+    let sql = sql::player_play_stats(ItemKind::Album, ListLen::new(ids));
     let mut half = vec![ExplainBind::Text(Some("u1"))];
     half.resize(ids + 1, ExplainBind::Text(Some("al1")));
     let binds = half.repeat(2);
@@ -3462,10 +3473,7 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
 #[tokio::test]
 #[ignore = "100k acceptance timing; run explicitly with --release on reference hardware"]
 async fn perf_100k_player_pages_hold_p95() {
-    use library::player::{
-        AlbumOrder, AlbumQuery, OrderKey, PlayerCatalog, SqlitePlayerCatalog, TrackOrder,
-        TrackQuery,
-    };
+    use library::player::{AlbumOrder, AlbumQuery, OrderKey, TrackOrder, TrackQuery};
 
     let fixture = seed_small().await;
     seed_100k(&fixture).await;
@@ -3482,7 +3490,7 @@ async fn perf_100k_player_pages_hold_p95() {
     .expect("analyze runs");
     assert_hot_plans(fixture.db()).await;
     assert_history_plans(fixture.db(), "100k with statistics").await;
-    let player = SqlitePlayerCatalog::new(&fixture.player_db());
+    let player = fixture.catalog.clone();
     let listener = TrackQuery {
         listener: Some("p-u1".to_owned()),
         ..TrackQuery::default()

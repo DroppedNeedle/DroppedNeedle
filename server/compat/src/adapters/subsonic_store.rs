@@ -638,7 +638,7 @@ impl Store for SubsonicStore {
     async fn current_id(&self, kind: IdKind, id: &str) -> Result<Option<String>, CompatError> {
         match kind {
             IdKind::Album | IdKind::Artist | IdKind::Track => {
-                Ok(self.library.player.current_id(kind_name(kind), id).await?)
+                Ok(self.library.catalog.current_id(kind_name(kind), id).await?)
             }
             _ => Ok(Some(id.to_owned())),
         }
@@ -656,7 +656,7 @@ impl Store for SubsonicStore {
                 .map(|(_, id)| id.clone())
                 .collect::<Vec<_>>();
             if !ids.is_empty() {
-                existing.insert(kind, self.library.player.existing(kind, &ids).await?);
+                existing.insert(kind, self.library.catalog.existing(kind, &ids).await?);
             }
         }
         let mut missing = Vec::new();

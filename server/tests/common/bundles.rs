@@ -182,19 +182,24 @@ pub fn reads_at(
 pub struct Collections {
     pub db: CollectionsDb,
     pub stores: Stores,
+    pub catalog: LocalCatalog,
 }
 
 /// The collections over the platform's database.
 pub fn collections_at(platform: &Platform) -> Collections {
     let db = CollectionsDb::new(platform.db.clone(), platform.clock.clone());
     let stores = Stores::new(&db);
-    Collections { db, stores }
+    Collections {
+        db,
+        stores,
+        catalog: LocalCatalog::new(platform.db.clone()),
+    }
 }
 
 impl Collections {
     /// The collections state over these stores.
     pub fn wired(&self) -> CollectionsState {
-        CollectionsState::over(self.db.clone(), self.stores.clone())
+        CollectionsState::over(self.db.clone(), self.stores.clone(), self.catalog.clone())
     }
 }
 

@@ -4115,7 +4115,10 @@ fn every_registered_statement_prepares() {
 /// The registered statements that read every indexed track on purpose:
 /// the library-wide track list and its total, the newest and oldest
 /// imports, a random pick, the genres and one genre's tracks and total,
-/// and the playable totals across every folder.
+/// the playable totals across every folder, and the player apps' track
+/// lists, totals and unplayed halves over the whole library (one album's
+/// or one exact title's are families of their own, checked here), and
+/// their lists of every track and genre.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::reads::library::sql::TRACK_PAGE_LIKE",
     "droppedneedle_catalog::reads::library::sql::TRACK_PAGE_WORDS",
@@ -4128,6 +4131,12 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::reads::library::sql::GENRE_TRACKS",
     "droppedneedle_catalog::reads::library::sql::GENRE_TRACK_COUNT",
     "droppedneedle_catalog::reads::library::sql::PLAYABLE_COUNTS",
+    "droppedneedle_catalog::reads::library::sql::PLAYER_TRACK_PAGE",
+    "droppedneedle_catalog::reads::library::sql::PLAYER_TRACK_COUNT",
+    "droppedneedle_catalog::reads::library::sql::PLAYER_TRACKS_UNPLAYED",
+    "droppedneedle_catalog::reads::library::sql::PLAYER_TRACKS_UNPLAYED_COUNT",
+    "droppedneedle_catalog::reads::library::sql::PLAYER_EVERY_TRACK",
+    "droppedneedle_catalog::reads::library::sql::PLAYER_EVERY_GENRE",
 ];
 
 /// Before the first ANALYZE (a fresh install) the planner has no

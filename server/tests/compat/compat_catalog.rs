@@ -461,10 +461,12 @@ impl Rig {
             auth.deps.clone(),
             crate::common::reads_inputs(&dir),
             &library,
-            CollectionsState::new(CollectionsDb::new(
-                runtime.db().clone(),
-                platform.clock.clone(),
-            )),
+            CollectionsState::new(
+                CollectionsDb::new(runtime.db().clone(), platform.clock.clone()),
+                droppedneedle_catalog::reads::library::store::LocalCatalog::new(
+                    runtime.db().clone(),
+                ),
+            ),
             None,
         );
         Self {

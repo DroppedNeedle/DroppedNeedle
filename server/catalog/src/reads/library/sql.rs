@@ -16,6 +16,10 @@ use super::definitions::{
     copy_order, live_album, musicbrainz, owned_album, owned_artist, owned_release_groups,
     recording_mbid,
 };
+use super::player::{
+    AlbumKey, AlbumSequence, AlbumShape, HistoryKey, ItemKind, KeyedBy, PlayedFilter, TextMatch,
+    TrackKey, TrackSequence, TrackShape,
+};
 use super::stores::{AlbumSort, ArtistScope, ArtistSort, TrackSort};
 
 droppedneedle_kernel::sql! {
@@ -497,6 +501,270 @@ droppedneedle_kernel::sql! {
         JOIN local_album_external_identities e \
           ON e.local_album_id = COALESCE(b.retired_into_album_id, b.id) AND "
         + (musicbrainz!("e")) + " WHERE b.id = ? LIMIT 1";
+
+    /// A player track's columns over [`PLAYER_TRACK_JOINS`]: every tag a
+    /// player shows, all genres joined by the unit separator.
+    pub(crate) fragment PLAYER_TRACK_COLUMNS = (concat!(
+        "t.id AS id, t.title AS title, t.local_album_id AS album_id, \
+         t.album_title AS album_title, COALESCE(t.artist_name, '') AS artist_name, \
+         ta.local_artist_id AS artist_id, a.album_artist_id AS album_artist_id, \
+         COALESCE(an.display_name, t.album_artist_name, a.album_artist_name) AS album_artist_name, \
+         t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
+         (SELECT group_concat(name, char(31)) FROM (SELECT g.name AS name FROM local_track_genres g \
+         WHERE g.local_track_id = t.id ORDER BY g.position)) AS genres, \
+         t.genre AS tag_genre, t.duration_seconds AS duration_seconds, \
+         LOWER(t.file_format) AS format, t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
+         t.bit_depth AS bit_depth, t.channels AS channels, t.file_size_bytes AS file_size_bytes, \
+         t.relative_path AS relative_path, \
+         t.imported_at AS date_added, t.title_sort AS sort_name, t.disc_subtitle AS disc_subtitle, ",
+        recording_mbid!("te", "t"),
+        " AS recording_mbid, \
+         tae.provider_artist_id AS artist_mbid, aae.provider_artist_id AS album_artist_mbid, \
+         ae.release_group_mbid AS release_group_mbid, t.release_type AS release_type, \
+         t.replaygain_track_gain AS rg_track_gain, t.replaygain_album_gain AS rg_album_gain, \
+         t.replaygain_track_peak AS rg_track_peak, t.replaygain_album_peak AS rg_album_peak, \
+         EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
+         AS cover_available, \
+         EXISTS (SELECT 1 FROM local_track_lyrics l WHERE l.local_track_id = t.id) AS has_lyrics"
+    ));
+    /// The player track projection's joins.
+    pub(crate) fragment PLAYER_TRACK_JOINS = (concat!(
+        "FROM local_tracks t \
+         JOIN local_albums a ON a.id = t.local_album_id \
+         LEFT JOIN local_artists an ON an.id = a.album_artist_id \
+         LEFT JOIN local_track_artists ta ON ta.local_track_id = t.id AND ta.position = 0 \
+         LEFT JOIN local_track_external_identities te ON te.local_track_id = t.id AND ",
+        musicbrainz!("te"),
+        " LEFT JOIN local_artist_external_identities tae \
+         ON tae.local_artist_id = ta.local_artist_id AND ",
+        musicbrainz!("tae"),
+        " LEFT JOIN local_artist_external_identities aae \
+         ON aae.local_artist_id = a.album_artist_id AND ",
+        musicbrainz!("aae"),
+        " LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND ",
+        musicbrainz!("ae")
+    ));
+    /// The player projection for some streamable track ids.
+    family PLAYER_TRACKS_IN = player_tracks_in;
+    /// One genre on track `t`, folded: the genre twice.
+    pub(crate) fragment TRACK_GENRE_MATCH = "(EXISTS (SELECT 1 FROM local_track_genres g \
+        WHERE g.local_track_id = t.id AND g.folded_name = ?) OR t.genre_folded = ?)";
+    /// The player track filters that never steer a plan, written only when
+    /// one of them is set, each skipped when its first bind is NULL: the
+    /// credited artists as a JSON list twice, the genre three times, the
+    /// exact artist name three times.
+    pub(crate) fragment PLAYER_TRACK_SCOPE = " AND (? IS NULL OR EXISTS (SELECT 1 \
+        FROM local_track_artists x WHERE x.local_track_id = t.id \
+        AND x.local_artist_id IN (SELECT value FROM json_each(?)))) \
+        AND (? IS NULL OR " + TRACK_GENRE_MATCH + ") \
+        AND (? IS NULL OR t.artist_name_folded = ? OR t.album_artist_name_folded = ?)";
+    /// The short words of a search (a JSON list of LIKE patterns), each in
+    /// the title, artist or album. A word one column leaves unknown (NULL)
+    /// and the others miss is missing, as it is in [`TRACK_WORD_LIKE`].
+    pub(crate) fragment PLAYER_SHORT_WORDS = " AND NOT EXISTS (SELECT 1 FROM json_each(?) w \
+        WHERE (t.title_folded LIKE w.value ESCAPE '\\' \
+        OR t.artist_name_folded LIKE w.value ESCAPE '\\' \
+        OR t.album_title_folded LIKE w.value ESCAPE '\\') IS NOT 1)";
+    /// A seeded shuffle key over the track `t`, as the library list's
+    /// shuffle works it out, with the seed's three numbers from
+    /// [`shuffle_values`] bound as the statement's first three values, so
+    /// the key reads no other row.
+    pub(crate) fragment PLAYER_SHUFFLE_KEY = "((((t.rowid * ?1 + ?2) % 2147483647) \
+        * ((t.rowid * ?1 + ?2) % 2147483647)) % 2147483647 * ?3 \
+        + ((t.rowid * ?1 + ?2) % 2147483647)) % 2147483647";
+    /// Every streamable track in insertion order, one page at an offset:
+    /// the full-library sync. The rowids come from the index over
+    /// availability and the time a track went missing, which holds them in
+    /// order for each time; nearly every streamable track has none, and the
+    /// few that have one are merged in. Only the page's rows are read for
+    /// their ids. Binds: limit, offset.
+    pub(crate) fragment PLAYER_NATURAL_PAGE = "SELECT pt.id FROM (\
+        SELECT t.rowid AS k FROM local_tracks t \
+        WHERE t.availability = 'indexed' AND t.missing_since IS NULL \
+        UNION ALL SELECT t.rowid FROM local_tracks t \
+        WHERE t.availability = 'indexed' AND t.missing_since IS NOT NULL \
+        ORDER BY 1 LIMIT ? OFFSET ?) p CROSS JOIN local_tracks pt \
+        WHERE pt.rowid = p.k ORDER BY p.k";
+    /// One page of player track ids in a catalog order, over the whole
+    /// library.
+    family PLAYER_TRACK_PAGE = player_track_page;
+    /// One page of one album's player track ids, with or without an exact
+    /// title.
+    family PLAYER_ALBUM_TRACK_PAGE = player_album_track_page;
+    /// One page of the player track ids with an exact title.
+    family PLAYER_TITLE_TRACK_PAGE = player_title_track_page;
+    /// How many tracks pass the player filters, over the whole library.
+    family PLAYER_TRACK_COUNT = player_track_count;
+    /// How many tracks of one album or one exact title pass the filters.
+    family PLAYER_KEYED_TRACK_COUNT = player_keyed_track_count;
+    /// How many of a JSON list of track ids are streamable.
+    pub(crate) PLAYER_LISTED_TRACK_COUNT = "SELECT COUNT(*) FROM json_each(?) p \
+        CROSS JOIN local_tracks t WHERE t.id = p.value AND +t.availability = 'indexed'";
+    /// The listener's played tracks; see [`player_track_values`]. Binds: the
+    /// listener three times.
+    pub(crate) PLAYER_PLAYED_TRACKS = "SELECT h.local_track_id AS id FROM " + PLAYS
+        + " WHERE h.user_id = ? AND h.local_track_id IS NOT NULL \
+        EXCEPT SELECT m.local_track_id FROM " + MARKS
+        + " WHERE m.user_id = ? AND m.marked_unplayed_at IS NOT NULL \
+        AND NOT EXISTS (SELECT 1 FROM " + PLAYS + " WHERE h.user_id = m.user_id \
+        AND h.local_track_id = m.local_track_id AND " + AFTER_MARK + ") \
+        UNION SELECT m.local_track_id FROM " + MARKS
+        + " WHERE m.user_id = ? AND m.marked_played_at IS NOT NULL";
+    /// The listener's played values for some track ids.
+    family PLAYER_TRACK_VALUES = player_track_values;
+    /// A play-history page of the played tracks.
+    family PLAYER_TRACKS_PLAYED = player_tracks_played;
+    /// A play-history page of the unplayed tracks, over the whole library.
+    family PLAYER_TRACKS_UNPLAYED = player_tracks_unplayed;
+    /// A play-history page of the unplayed tracks of one album or one exact
+    /// title.
+    family PLAYER_KEYED_TRACKS_UNPLAYED = player_keyed_tracks_unplayed;
+    /// How many played tracks pass the filters.
+    family PLAYER_TRACKS_PLAYED_COUNT = player_tracks_played_count;
+    /// How many unplayed tracks pass the filters, over the whole library.
+    family PLAYER_TRACKS_UNPLAYED_COUNT = player_tracks_unplayed_count;
+    /// How many unplayed tracks of one album or one exact title pass the
+    /// filters.
+    family PLAYER_KEYED_TRACKS_UNPLAYED_COUNT = player_keyed_tracks_unplayed_count;
+
+    /// The listener's marks as `m`, read through their primary key: with
+    /// statistics over one listener's marks the planner would otherwise walk
+    /// the table, or reach a mark from its track's index.
+    pub(crate) fragment MARKS =
+        "library_user_play_marks m INDEXED BY sqlite_autoindex_library_user_play_marks_1";
+    /// The plays, as `h`, through the index over listener, track and time.
+    pub(crate) fragment PLAYS = "library_play_history h INDEXED BY idx_play_history_user_track";
+    /// The time of the play `h` in whole seconds. `played_at` is ISO text
+    /// whose form varies (v2 rows), so it is read as seconds, never compared
+    /// as text; one SQLite cannot read gives NULL. `unixepoch` gives what
+    /// `CAST(strftime('%s', ...) AS INTEGER)` gives at a fraction of the
+    /// cost.
+    pub(crate) fragment PLAY_SECONDS = "unixepoch(h.played_at)";
+    /// Whether the play `h` is later than the unplayed mark `m`, in whole
+    /// seconds. A time SQLite cannot read is never later.
+    pub(crate) fragment AFTER_MARK = "unixepoch(h.played_at) > m.marked_unplayed_at / 1000";
+    /// One listener's plays per album, one row each: `id`, `plays` and
+    /// `played_at`, the latest. Subsonic's recently and most played album
+    /// lists read them here; marks do not weigh in. Binds: the listener
+    /// twice.
+    ///
+    /// A play counts for the album its track is on now, streamable or not,
+    /// so a track that moved takes its plays with it; a play that names an
+    /// album and no track counts for that album; a play that names neither
+    /// counts for none. The album id stored on a play with a track is what
+    /// it was filed under at the time and is not read.
+    ///
+    /// Two halves, each from its own index, so the cost is the plays that
+    /// count for an album, never the listener's whole history. The plays
+    /// with a track come from the index over listener, track and time
+    /// alone, grouped per track, then each track's album. The plays with an
+    /// album and no track come from the small index that holds only those.
+    pub(crate) fragment ALBUM_PLAYS = "SELECT id, SUM(plays) AS plays, \
+        MAX(played_at) AS played_at FROM (\
+        SELECT pt.local_album_id AS id, p.plays AS plays, p.played_at AS played_at \
+        FROM (SELECT local_track_id, COUNT(*) AS plays, MAX(played_at) AS played_at \
+        FROM library_play_history INDEXED BY idx_play_history_user_track \
+        WHERE user_id = ? AND local_track_id IS NOT NULL GROUP BY local_track_id) p \
+        CROSS JOIN local_tracks pt WHERE pt.id = p.local_track_id \
+        UNION ALL \
+        SELECT local_album_id, COUNT(*), MAX(played_at) \
+        FROM library_play_history INDEXED BY idx_play_history_user_album_no_track \
+        WHERE user_id = ? AND local_track_id IS NULL AND local_album_id IS NOT NULL \
+        GROUP BY local_album_id) GROUP BY id";
+
+    /// Album extras appended to the shared album columns. The release date
+    /// is kept only when every indexed track has the same one, as Navidrome
+    /// does.
+    pub(crate) fragment ALBUM_EXTRAS = "a.primary_genre AS primary_genre, \
+        a.album_artist_sort_name AS album_sort_name, \
+        a.original_release_date AS original_release_date, \
+        CASE WHEN COUNT(h.release_date) = COUNT(t.id) \
+         AND MIN(h.release_date) = MAX(h.release_date) \
+         THEN MIN(h.release_date) END AS release_date";
+    /// The edition hints of the tracks [`ALBUM_JOINS`] joins, at most one
+    /// row each, for the release date in [`ALBUM_EXTRAS`].
+    pub(crate) fragment ALBUM_EXTRA_JOINS =
+        "LEFT JOIN local_track_edition_tags h ON h.local_track_id = t.id";
+    /// The player projection for some owned album ids.
+    family PLAYER_ALBUMS_IN = player_albums_in;
+    /// The player album filters that never steer a plan, written only when
+    /// one of them is set, each skipped when its first bind is NULL: the
+    /// title or artist pattern three times, the lowest and highest year
+    /// twice each.
+    pub(crate) fragment PLAYER_ALBUM_SCOPE = " AND (? IS NULL \
+        OR a.title_folded LIKE ? ESCAPE '\\' OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
+        AND (? IS NULL OR a.year >= ?) AND (? IS NULL OR a.year <= ?)";
+    /// Albums some artists (a JSON list, bound twice) are credited on
+    /// without leading.
+    pub(crate) fragment PLAYER_APPEARS_ON = " AND a.album_artist_id NOT IN \
+        (SELECT value FROM json_each(?)) AND EXISTS (SELECT 1 FROM local_tracks t \
+        JOIN local_track_artists x ON x.local_track_id = t.id \
+        WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+        AND x.local_artist_id IN (SELECT value FROM json_each(?)))";
+    /// Albums with a streamable track of one genre (bound twice).
+    pub(crate) fragment PLAYER_ALBUM_GENRE = " AND EXISTS (SELECT 1 FROM local_tracks t \
+        WHERE t.local_album_id = a.id AND t.availability = 'indexed' AND "
+        + TRACK_GENRE_MATCH + ")";
+    /// One page of player album ids in a catalog order.
+    family PLAYER_ALBUM_PAGE = player_album_page;
+    /// How many albums pass the player filters.
+    family PLAYER_ALBUM_COUNT = player_album_count;
+    /// The listener's played albums, from the album play summary (migration
+    /// 0065).
+    pub(crate) PLAYER_PLAYED_ALBUMS = "SELECT local_album_id FROM library_user_album_plays \
+        WHERE user_id = ? AND played = 1";
+    /// The albums with a play count above 0 for the listener.
+    pub(crate) PLAYER_ALBUM_PLAYED_IDS = "SELECT local_album_id FROM library_user_album_plays \
+        WHERE user_id = ?";
+    /// The listener's values for some album ids, from the album play
+    /// summary.
+    family PLAYER_ALBUM_VALUES = player_album_values;
+    /// A play-history page of the played albums.
+    family PLAYER_ALBUMS_PLAYED = player_albums_played;
+    /// A play-history page of the unplayed albums.
+    family PLAYER_ALBUMS_UNPLAYED = player_albums_unplayed;
+    /// How many played albums pass the filters.
+    family PLAYER_ALBUMS_PLAYED_COUNT = player_albums_played_count;
+    /// How many unplayed albums pass the filters.
+    family PLAYER_ALBUMS_UNPLAYED_COUNT = player_albums_unplayed_count;
+    /// Subsonic's recently or most played albums.
+    family PLAYER_HISTORY_ALBUMS = player_history_albums;
+    /// One listener's play count and last play for some items of one kind.
+    family PLAYER_PLAY_STATS = player_play_stats;
+    /// Which of some ids of one kind exist for a player.
+    family PLAYER_EXISTING = player_existing;
+    /// The accepted and tag ids of some albums.
+    family PLAYER_ALBUM_IDS = player_album_ids;
+    /// The accepted MusicBrainz ids of some artists.
+    family PLAYER_ARTIST_IDS = player_artist_ids;
+    /// The tag ids of some artists.
+    family ARTIST_TAG_IDS = artist_tag_ids;
+    /// One page of album artist ids by name or in insertion order.
+    family PLAYER_ALBUM_ARTIST_PAGE = player_album_artist_page;
+    /// Every live artist id.
+    pub(crate) PLAYER_EVERY_ARTIST = "SELECT id FROM local_artists \
+        WHERE retired_into_artist_id IS NULL";
+    /// Every owned album id.
+    pub(crate) PLAYER_EVERY_ALBUM = "SELECT id FROM local_albums a WHERE " + (owned_album!("a"));
+    /// Every streamable track id.
+    pub(crate) PLAYER_EVERY_TRACK = "SELECT id FROM local_tracks WHERE availability = 'indexed'";
+    /// Every genre name, from the genre rows and the tags.
+    pub(crate) PLAYER_EVERY_GENRE = "SELECT name FROM local_track_genres UNION \
+        SELECT genre FROM local_tracks WHERE genre IS NOT NULL";
+    /// Every album id a merge retired.
+    pub(crate) PLAYER_MERGED_ALBUMS = "SELECT alias FROM local_album_aliases \
+        WHERE kind = 'merged_album'";
+    /// Every artist id a merge retired or the upgrade replaced.
+    pub(crate) PLAYER_MERGED_ARTISTS = "SELECT alias FROM local_artist_aliases \
+        WHERE kind IN ('merged_artist', 'legacy_artist')";
+    /// Every track alias.
+    pub(crate) PLAYER_MERGED_TRACKS = "SELECT alias FROM local_track_aliases";
+    /// Every year an owned album has, ascending.
+    pub(crate) PLAYER_ALBUM_YEARS = "SELECT DISTINCT a.year FROM local_albums a \
+        WHERE a.year IS NOT NULL AND " + (owned_album!("a")) + " ORDER BY a.year";
+    /// The summed length and count of the streamable tracks crediting some
+    /// artists.
+    family PLAYER_ARTIST_DURATIONS = player_artist_durations;
 }
 
 /// `?, ?, ...` for a list of `len` values.
@@ -1058,5 +1326,684 @@ pub(crate) fn requested_in(ids: ListLen) -> String {
         "SELECT musicbrainz_id_lower FROM request_history \
          WHERE {OPEN_REQUEST} AND musicbrainz_id_lower IN ({})",
         marks(ids)
+    )
+}
+
+/// The streamable-track test, with a unary plus when the page walks the
+/// table or another index (insertion order, year, a play-history order):
+/// driven from an availability index, which looks free because nearly
+/// every track is streamable, such a page would sort the whole catalog.
+fn streamable(row_check: bool) -> &'static str {
+    if row_check {
+        "+t.availability = 'indexed'"
+    } else {
+        "t.availability = 'indexed'"
+    }
+}
+
+/// The player track filters over `t` (and `a` when the shape reads the
+/// album), for the tracks `key` names. Binds, in order: the FTS expression and each short word three
+/// times (or, past two, all of them as a JSON list), or the LIKE pattern
+/// three times; the folded title, the album,
+/// the album artists as a JSON list, the lowest and highest year, the
+/// [`PLAYER_TRACK_SCOPE`] binds when scoped, the played ids as a JSON list.
+fn player_track_filter(shape: TrackShape, key: TrackKey, row_check: bool) -> String {
+    // One album's, one exact title's or some album artists' tracks are
+    // reached through their key, never by a walk of an availability index,
+    // which with no statistics yet looks as good as the key.
+    let row_check = row_check || key != TrackKey::Open || shape.album_artists;
+    let mut text = streamable(row_check).to_owned();
+    match shape.text {
+        TextMatch::Off => {}
+        TextMatch::Like => text.push_str(
+            " AND (t.title_folded LIKE ? ESCAPE '\\' OR t.artist_name_folded LIKE ? ESCAPE '\\' \
+             OR t.album_title_folded LIKE ? ESCAPE '\\')",
+        ),
+        TextMatch::Words => {
+            text.push_str(" AND ");
+            text.push_str(TRACK_TEXT_MATCH);
+        }
+        TextMatch::OneShort | TextMatch::TwoShort => {
+            text.push_str(" AND ");
+            text.push_str(TRACK_TEXT_MATCH);
+            text.push_str(TRACK_WORD_LIKE);
+            if shape.text == TextMatch::TwoShort {
+                text.push_str(TRACK_WORD_LIKE);
+            }
+        }
+        TextMatch::ManyShort => {
+            text.push_str(" AND ");
+            text.push_str(TRACK_TEXT_MATCH);
+            text.push_str(PLAYER_SHORT_WORDS);
+        }
+    }
+    if key.title() {
+        text.push_str(" AND t.title_folded = ?");
+    }
+    if key.album() {
+        text.push_str(" AND t.local_album_id = ?");
+    }
+    if shape.album_artists {
+        text.push_str(" AND a.album_artist_id IN (SELECT value FROM json_each(?))");
+    }
+    if shape.years {
+        text.push_str(" AND t.year >= ? AND t.year <= ?");
+    }
+    if shape.scoped {
+        text.push_str(PLAYER_TRACK_SCOPE);
+    }
+    text.push_str(match shape.played {
+        PlayedFilter::Any => "",
+        PlayedFilter::Played => " AND t.id IN (SELECT value FROM json_each(?))",
+        PlayedFilter::Unplayed => " AND t.id NOT IN (SELECT value FROM json_each(?))",
+    });
+    text
+}
+
+/// The tracks a player page reads: with their album when the filters or
+/// the order read it.
+fn player_track_rows(shape: TrackShape, album_order: bool) -> &'static str {
+    if shape.album_artists || album_order {
+        "local_tracks t JOIN local_albums a ON a.id = t.local_album_id"
+    } else {
+        "local_tracks t"
+    }
+}
+
+/// The ORDER BY of a player track page; ids break ties.
+fn player_track_order(sequence: TrackSequence) -> String {
+    match sequence {
+        TrackSequence::Album => "a.album_artist_name_folded ASC, a.title_folded ASC, a.id ASC, \
+             t.disc_number ASC, t.track_number ASC, t.id ASC"
+            .to_owned(),
+        TrackSequence::Disc => "t.disc_number ASC, t.track_number ASC, t.id ASC".to_owned(),
+        TrackSequence::Title => "t.title_folded ASC, t.id ASC".to_owned(),
+        TrackSequence::Newest => "t.imported_at DESC, t.id ASC".to_owned(),
+        TrackSequence::Random | TrackSequence::Shuffle => "t.rowid ASC".to_owned(),
+        TrackSequence::Natural => "t.rowid ASC".to_owned(),
+        TrackSequence::AddedUp => "t.imported_at ASC, t.id ASC".to_owned(),
+        TrackSequence::AddedDown => "t.imported_at DESC, t.id DESC".to_owned(),
+        TrackSequence::TitleDown => "t.title_folded DESC, t.id DESC".to_owned(),
+        TrackSequence::YearUp => "t.year ASC, t.id ASC".to_owned(),
+        TrackSequence::YearDown => "t.year DESC, t.id DESC".to_owned(),
+    }
+}
+
+/// One page of player track ids over the whole library.
+pub(crate) fn player_track_page(shape: TrackShape, sequence: TrackSequence) -> String {
+    track_page(shape, TrackKey::Open, sequence)
+}
+
+/// One page of one album's player track ids.
+pub(crate) fn player_album_track_page(
+    shape: TrackShape,
+    key: AlbumKey,
+    sequence: TrackSequence,
+) -> String {
+    track_page(shape, key.into(), sequence)
+}
+
+/// One page of the player track ids with an exact title.
+pub(crate) fn player_title_track_page(shape: TrackShape, sequence: TrackSequence) -> String {
+    track_page(shape, TrackKey::Title, sequence)
+}
+
+/// One page of player track ids: the seed of a shuffle, the filters, limit,
+/// offset. The ids are paged over the narrow join; the rich rows are read
+/// for the page alone.
+fn track_page(shape: TrackShape, key: TrackKey, sequence: TrackSequence) -> String {
+    let row_check = matches!(
+        sequence,
+        TrackSequence::Natural | TrackSequence::YearUp | TrackSequence::YearDown
+    );
+    let rows = player_track_rows(shape, sequence == TrackSequence::Album);
+    let filter = player_track_filter(shape, key, row_check);
+    let order = match sequence {
+        TrackSequence::Shuffle => PLAYER_SHUFFLE_KEY,
+        TrackSequence::Random => "RANDOM()",
+        TrackSequence::Natural if shape == TrackShape::OPEN && key == TrackKey::Open => {
+            return PLAYER_NATURAL_PAGE.to_owned();
+        }
+        _ => {
+            return format!(
+                "SELECT t.id FROM {rows} WHERE {filter} ORDER BY {} LIMIT ? OFFSET ?",
+                player_track_order(sequence)
+            );
+        }
+    };
+    // A random order sorts every track: the keys are worked out from the
+    // rowids alone, which a narrow index holds, and only the page's rows
+    // are read for their ids.
+    format!(
+        "SELECT pt.id FROM (SELECT t.rowid AS k, {order} AS o FROM {rows} WHERE {filter} \
+         ORDER BY o, t.rowid LIMIT ? OFFSET ?) p CROSS JOIN local_tracks pt \
+         WHERE pt.rowid = p.k ORDER BY p.o, p.k"
+    )
+}
+
+/// How many tracks pass the filters, over the whole library.
+pub(crate) fn player_track_count(shape: TrackShape) -> String {
+    track_count(shape, TrackKey::Open)
+}
+
+/// How many tracks of one album or one exact title pass the filters.
+pub(crate) fn player_keyed_track_count(shape: TrackShape, key: KeyedBy) -> String {
+    track_count(shape, key.into())
+}
+
+fn track_count(shape: TrackShape, key: TrackKey) -> String {
+    format!(
+        "SELECT COUNT(*) FROM {} WHERE {}",
+        player_track_rows(shape, false),
+        player_track_filter(shape, key, false)
+    )
+}
+
+/// The player projection for `ids` streamable tracks.
+pub(crate) fn player_tracks_in(ids: ListLen) -> String {
+    format!(
+        "SELECT {PLAYER_TRACK_COLUMNS} {PLAYER_TRACK_JOINS} \
+         WHERE t.availability = 'indexed' AND t.id IN ({})",
+        marks(ids)
+    )
+}
+
+/// The listener's played values per track, one row each with a play count
+/// above 0: `id`, `plays` and `played_at` (whole seconds). `ids` limits it
+/// to some tracks (binds: the listener, the ids, the listener, the ids);
+/// without, every track the listener played or marked (binds: the listener
+/// twice).
+///
+/// A track's counted plays are the listener's plays of it later than its
+/// unplayed mark, in whole seconds, or all of them when it has none. Its
+/// play count is that number, or 1 when it is marked played and has none;
+/// its last play is the latest counted play, else the played mark.
+///
+/// The plays are grouped per track from the index over listener, track and
+/// time, and each track's mark is then looked up by key, so the cost is one
+/// probe per played track. Only a track marked unplayed has its plays read
+/// again, from the same index, for those after the mark. A track marked
+/// played with no play at all comes from the marks by key.
+///
+/// This rule for a track also lives in the refresh of migration 0065, which
+/// keeps the album values in `library_user_album_plays`. Changing it takes a
+/// migration that recreates that refresh and runs its backfill again.
+fn track_values(ids: Option<ListLen>) -> String {
+    let (plays, marked) = match ids {
+        None => (
+            format!("FROM {PLAYS} WHERE h.user_id = ? AND h.local_track_id IS NOT NULL"),
+            format!("FROM {MARKS} WHERE m.user_id = ?"),
+        ),
+        Some(ids) => {
+            let ids = marks(ids);
+            (
+                format!("FROM {PLAYS} WHERE h.user_id = ? AND h.local_track_id IN ({ids})"),
+                format!("FROM {MARKS} WHERE m.user_id = ? AND m.local_track_id IN ({ids})"),
+            )
+        }
+    };
+    let after_mark = |aggregate: &str| {
+        format!(
+            "(SELECT {aggregate} FROM {PLAYS} \
+             WHERE h.user_id = p.user AND h.local_track_id = p.id AND {AFTER_MARK})"
+        )
+    };
+    format!(
+        "SELECT id, CASE WHEN plays > 0 THEN plays ELSE 1 END AS plays, \
+         COALESCE(played_at, marked) AS played_at FROM (\
+         SELECT p.id AS id, \
+         CASE WHEN m.marked_unplayed_at IS NULL THEN p.plays ELSE {count} END AS plays, \
+         CASE WHEN m.marked_unplayed_at IS NULL THEN p.played_at ELSE {latest} END \
+         AS played_at, m.marked_played_at / 1000 AS marked \
+         FROM (SELECT h.user_id AS user, h.local_track_id AS id, COUNT(*) AS plays, \
+         MAX({PLAY_SECONDS}) AS played_at {plays} GROUP BY h.local_track_id) p \
+         LEFT JOIN {MARKS} ON m.user_id = p.user AND m.local_track_id = p.id \
+         UNION ALL \
+         SELECT m.local_track_id, 0, NULL, m.marked_played_at / 1000 {marked} \
+         AND m.marked_played_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM {PLAYS} \
+         WHERE h.user_id = m.user_id AND h.local_track_id = m.local_track_id)) \
+         WHERE plays > 0 OR marked IS NOT NULL",
+        count = after_mark("COUNT(*)"),
+        latest = after_mark(&format!("MAX({PLAY_SECONDS})")),
+    )
+}
+
+/// The listener's played values for `ids` tracks; see [`track_values`].
+pub(crate) fn player_track_values(ids: ListLen) -> String {
+    track_values(Some(ids))
+}
+
+/// What a play-history order pages over: the listener's values per row as
+/// `v` (`id`, `plays`, `played_at`), the ids of the rows that have any,
+/// and the catalog rows the filters read, aliased.
+struct History {
+    values: String,
+    played_ids: &'static str,
+    rows: &'static str,
+    alias: &'static str,
+    filter: String,
+}
+
+impl History {
+    /// Tracks, whose filters read `t` (and `a`). The values bind the
+    /// listener twice, the played ids three times.
+    fn tracks(shape: TrackShape, key: TrackKey) -> Self {
+        Self {
+            values: track_values(None),
+            played_ids: PLAYER_PLAYED_TRACKS.text(),
+            rows: player_track_rows(shape, false),
+            alias: "t",
+            filter: player_track_filter(shape, key, true),
+        }
+    }
+
+    /// Albums, as `a`, from the album play summary (migration 0065): its
+    /// rows are the albums with a play count above 0, and its order indexes
+    /// let a played page walk the listener's rows in order and stop at the
+    /// page. `played_at` is the stored milliseconds, which order as the
+    /// seconds do. The values and the played ids bind the listener once.
+    fn albums(shape: AlbumShape) -> Self {
+        Self {
+            values: "SELECT local_album_id AS id, plays, last_played_at AS played_at \
+                     FROM library_user_album_plays WHERE user_id = ?"
+                .to_owned(),
+            played_ids: PLAYER_ALBUM_PLAYED_IDS.text(),
+            rows: "local_albums a",
+            alias: "a",
+            filter: player_album_filter(shape),
+        }
+    }
+
+    /// One page of the played rows, ordered by `key`; ids break ties in the
+    /// same direction. The CROSS JOIN keeps the listener's values as the
+    /// outer loop, so this costs by their history and never by the size of
+    /// the library. Binds: the listener, the filters, limit, offset.
+    fn played(&self, key: HistoryKey, descending: bool) -> String {
+        let Self {
+            values,
+            rows,
+            alias,
+            filter,
+            ..
+        } = self;
+        let column = match key {
+            HistoryKey::LastPlayed => "v.played_at",
+            HistoryKey::PlayCount => "v.plays",
+        };
+        let direction = if descending { "DESC" } else { "ASC" };
+        format!(
+            "SELECT v.id FROM ({values}) v CROSS JOIN {rows} WHERE {alias}.id = v.id \
+             AND {filter} ORDER BY {column} {direction}, v.id {direction} LIMIT ? OFFSET ?"
+        )
+    }
+
+    /// How many rows the played half holds: the played ids that pass the
+    /// filters. Binds: the list of played ids, then the filters.
+    fn played_count(&self) -> String {
+        let Self {
+            rows,
+            alias,
+            filter,
+            ..
+        } = self;
+        format!(
+            "SELECT COUNT(*) FROM json_each(?) p CROSS JOIN {rows} \
+             WHERE {alias}.id = p.value AND {filter}"
+        )
+    }
+
+    /// The rows with a play count of 0 that pass the filters: those not in
+    /// the played ids, read here as one list built once, or (`listed`)
+    /// handed in as a JSON list. Binds: the filters, then the listener or
+    /// the list.
+    fn unplayed_from(&self, listed: bool) -> String {
+        let Self {
+            rows,
+            alias,
+            played_ids,
+            filter,
+            ..
+        } = self;
+        let played = if listed {
+            "SELECT value FROM json_each(?)"
+        } else {
+            played_ids
+        };
+        format!("FROM {rows} WHERE {filter} AND {alias}.id NOT IN ({played})")
+    }
+
+    /// One page of the rows with a play count of 0, in id order: a walk of
+    /// an index on the id that stops at the page. Binds: the filters, the
+    /// listener or the list (`listed`), limit, offset.
+    fn unplayed(&self, descending: bool, listed: bool) -> String {
+        let alias = self.alias;
+        let direction = if descending { "DESC" } else { "ASC" };
+        format!(
+            "SELECT {alias}.id {} ORDER BY {alias}.id {direction} LIMIT ? OFFSET ?",
+            self.unplayed_from(listed)
+        )
+    }
+
+    /// How many rows the unplayed half holds. Binds: the filters, then the
+    /// list of played ids.
+    fn unplayed_count(&self) -> String {
+        format!("SELECT COUNT(*) {}", self.unplayed_from(true))
+    }
+}
+
+/// A page of the played tracks in a play-history order.
+pub(crate) fn player_tracks_played(
+    shape: TrackShape,
+    key: TrackKey,
+    order: HistoryKey,
+    descending: bool,
+) -> String {
+    History::tracks(shape, key).played(order, descending)
+}
+
+/// A page of the unplayed tracks in id order, over the whole library.
+pub(crate) fn player_tracks_unplayed(shape: TrackShape, descending: bool, listed: bool) -> String {
+    History::tracks(shape, TrackKey::Open).unplayed(descending, listed)
+}
+
+/// A page of the unplayed tracks of one album or one exact title.
+pub(crate) fn player_keyed_tracks_unplayed(
+    shape: TrackShape,
+    key: KeyedBy,
+    descending: bool,
+    listed: bool,
+) -> String {
+    History::tracks(shape, key.into()).unplayed(descending, listed)
+}
+
+/// How many played tracks pass the filters.
+pub(crate) fn player_tracks_played_count(shape: TrackShape, key: TrackKey) -> String {
+    History::tracks(shape, key).played_count()
+}
+
+/// How many unplayed tracks pass the filters, over the whole library.
+pub(crate) fn player_tracks_unplayed_count(shape: TrackShape) -> String {
+    History::tracks(shape, TrackKey::Open).unplayed_count()
+}
+
+/// How many unplayed tracks of one album or one exact title pass the
+/// filters.
+pub(crate) fn player_keyed_tracks_unplayed_count(shape: TrackShape, key: KeyedBy) -> String {
+    History::tracks(shape, key.into()).unplayed_count()
+}
+
+/// The player album filters over `a`. Player apps see owned albums only;
+/// the definition's unary plus keeps the planner off the retired index, so
+/// the ordered pages walk the title and created-at indexes and stop early,
+/// and on `has_indexed_track` it keeps the planner from guessing the column
+/// leaves few albums, which with statistics turns the id walk of an
+/// unplayed page into a sort. Binds, in order: the album artist, the album
+/// artists as a JSON list, the [`PLAYER_ALBUM_SCOPE`] binds when scoped,
+/// the appears-on artists twice, the genre twice, the played ids as a JSON
+/// list.
+fn player_album_filter(shape: AlbumShape) -> String {
+    let mut text = owned_album!("a").to_owned();
+    if shape.artist {
+        text.push_str(" AND a.album_artist_id = ?");
+    }
+    if shape.album_artists {
+        text.push_str(" AND a.album_artist_id IN (SELECT value FROM json_each(?))");
+    }
+    if shape.scoped {
+        text.push_str(PLAYER_ALBUM_SCOPE);
+    }
+    if shape.appears {
+        text.push_str(PLAYER_APPEARS_ON);
+    }
+    if shape.genre {
+        text.push_str(PLAYER_ALBUM_GENRE);
+    }
+    text.push_str(match shape.played {
+        PlayedFilter::Any => "",
+        PlayedFilter::Played => " AND a.id IN (SELECT value FROM json_each(?))",
+        PlayedFilter::Unplayed => " AND a.id NOT IN (SELECT value FROM json_each(?))",
+    });
+    text
+}
+
+/// The ORDER BY of a player album page; ids break ties.
+fn player_album_order(sequence: AlbumSequence) -> String {
+    match sequence {
+        AlbumSequence::Newest => "a.created_at DESC, a.id ASC".to_owned(),
+        AlbumSequence::Title => "a.title_folded ASC, a.id ASC".to_owned(),
+        AlbumSequence::Artist => {
+            "a.album_artist_name_folded ASC, a.title_folded ASC, a.id ASC".to_owned()
+        }
+        AlbumSequence::Year => {
+            "(a.year IS NULL) ASC, a.year ASC, a.title_folded ASC, a.id ASC".to_owned()
+        }
+        AlbumSequence::YearDescending => {
+            "(a.year IS NULL) ASC, a.year DESC, a.title_folded ASC, a.id ASC".to_owned()
+        }
+        AlbumSequence::Shuffle => format!("{}, a.rowid", shuffle_key!("a")),
+        AlbumSequence::Natural => "a.rowid ASC".to_owned(),
+        AlbumSequence::AddedUp => "a.created_at ASC, a.id ASC".to_owned(),
+        AlbumSequence::AddedDown => "a.created_at DESC, a.id DESC".to_owned(),
+        AlbumSequence::TitleDown => "a.title_folded DESC, a.id DESC".to_owned(),
+        AlbumSequence::YearUp => "a.year ASC, a.id ASC".to_owned(),
+        AlbumSequence::YearDown => "a.year DESC, a.id DESC".to_owned(),
+    }
+}
+
+/// One page of player album ids: the seed of a shuffle, the filters, limit,
+/// offset.
+pub(crate) fn player_album_page(shape: AlbumShape, sequence: AlbumSequence) -> String {
+    let seed = if sequence == AlbumSequence::Shuffle {
+        SHUFFLE_SEED
+    } else {
+        ""
+    };
+    format!(
+        "SELECT a.id FROM local_albums a{seed} WHERE {} ORDER BY {} LIMIT ? OFFSET ?",
+        player_album_filter(shape),
+        player_album_order(sequence)
+    )
+}
+
+/// How many albums pass the filters.
+pub(crate) fn player_album_count(shape: AlbumShape) -> String {
+    format!(
+        "SELECT COUNT(*) FROM local_albums a WHERE {}",
+        player_album_filter(shape)
+    )
+}
+
+/// The player projection for `ids` albums. An album that is merged away or
+/// has no files answers as an unknown id.
+pub(crate) fn player_albums_in(ids: ListLen) -> String {
+    format!(
+        "SELECT {ALBUM_COLUMNS}, {ALBUM_EXTRAS} {ALBUM_JOINS} {ALBUM_EXTRA_JOINS} \
+         WHERE a.id IN ({}) AND {} GROUP BY a.id",
+        marks(ids),
+        owned_album!("a")
+    )
+}
+
+/// The listener's values for `ids` albums, from the album play summary:
+/// `id`, `plays`, `played_at` (whole seconds) and `played`. Binds: the
+/// listener, then the ids.
+pub(crate) fn player_album_values(ids: ListLen) -> String {
+    format!(
+        "SELECT local_album_id AS id, plays, last_played_at / 1000 AS played_at, played \
+         FROM library_user_album_plays WHERE user_id = ? AND local_album_id IN ({})",
+        marks(ids)
+    )
+}
+
+/// A page of the played albums in a play-history order.
+pub(crate) fn player_albums_played(shape: AlbumShape, key: HistoryKey, descending: bool) -> String {
+    History::albums(shape).played(key, descending)
+}
+
+/// A page of the unplayed albums in id order.
+pub(crate) fn player_albums_unplayed(shape: AlbumShape, descending: bool, listed: bool) -> String {
+    History::albums(shape).unplayed(descending, listed)
+}
+
+/// How many played albums pass the filters.
+pub(crate) fn player_albums_played_count(shape: AlbumShape) -> String {
+    History::albums(shape).played_count()
+}
+
+/// How many unplayed albums pass the filters.
+pub(crate) fn player_albums_unplayed_count(shape: AlbumShape) -> String {
+    History::albums(shape).unplayed_count()
+}
+
+/// The albums with a streamable track the listener played most often
+/// (`frequent`; latest play breaks ties) or most recently, then by id.
+/// Binds: the listener twice, limit, offset.
+pub(crate) fn player_history_albums(frequent: bool) -> String {
+    let order = if frequent {
+        "h.plays DESC, h.played_at DESC"
+    } else {
+        "h.played_at DESC"
+    };
+    format!(
+        "SELECT a.id FROM ({ALBUM_PLAYS}) h CROSS JOIN local_albums a WHERE a.id = h.id \
+         AND {} ORDER BY {order}, a.id LIMIT ? OFFSET ?",
+        owned_album!("a")
+    )
+}
+
+/// One listener's play count and last play for `ids` items of `kind`.
+/// Binds: the listener, then the ids; for albums, both a second time.
+///
+/// An album's plays are the plays of the tracks on it now, found through
+/// the index over listener and track, and the plays filed under the album
+/// with no track. Those have a small index of their own (listener, album,
+/// time, only rows with an album and no track), and the statement names
+/// it: with statistics the planner otherwise walks every play of the
+/// listener that names no track, and an upgraded history can hold very
+/// many.
+pub(crate) fn player_play_stats(kind: ItemKind, ids: ListLen) -> String {
+    let ids = marks(ids);
+    let plays = match kind {
+        ItemKind::Artist => format!(
+            "SELECT local_artist_id AS id, played_at FROM library_play_history \
+             WHERE user_id = ? AND local_artist_id IN ({ids})"
+        ),
+        ItemKind::Track => format!(
+            "SELECT local_track_id AS id, played_at FROM library_play_history \
+             WHERE user_id = ? AND local_track_id IN ({ids})"
+        ),
+        ItemKind::Album => format!(
+            "SELECT pt.local_album_id AS id, h.played_at AS played_at \
+             FROM local_tracks pt CROSS JOIN library_play_history h \
+             WHERE h.user_id = ? AND h.local_track_id = pt.id AND pt.local_album_id IN ({ids}) \
+             UNION ALL \
+             SELECT h.local_album_id, h.played_at \
+             FROM library_play_history h INDEXED BY idx_play_history_user_album_no_track \
+             WHERE h.user_id = ? AND h.local_track_id IS NULL AND h.local_album_id IN ({ids})"
+        ),
+    };
+    format!(
+        "SELECT id, COUNT(*) AS plays, \
+         CAST(strftime('%s', MAX(played_at)) AS REAL) AS last_played FROM ({plays}) GROUP BY id"
+    )
+}
+
+/// Which of `ids` exist for a player: live artists, owned albums,
+/// streamable tracks.
+pub(crate) fn player_existing(kind: ItemKind, ids: ListLen) -> String {
+    let (table, extra) = match kind {
+        ItemKind::Artist => ("local_artists", "retired_into_artist_id IS NULL"),
+        ItemKind::Album => ("local_albums", owned_album!("local_albums")),
+        ItemKind::Track => ("local_tracks", "availability = 'indexed'"),
+    };
+    format!(
+        "SELECT id FROM {table} WHERE {extra} AND id IN ({})",
+        marks(ids)
+    )
+}
+
+/// For `ids` albums, the accepted match's release and release group, or,
+/// for an album with none, each indexed track's tag ids: an accepted album
+/// is one row with no tracks joined.
+pub(crate) fn player_album_ids(ids: ListLen) -> String {
+    format!(
+        "SELECT a.id, ae.release_mbid, ae.release_group_mbid, \
+         t.embedded_release_mbid, t.embedded_release_group_mbid \
+         FROM local_albums a \
+         LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND {} \
+         LEFT JOIN local_tracks t ON ae.local_album_id IS NULL \
+         AND t.local_album_id = a.id AND t.availability = 'indexed' \
+         WHERE a.id IN ({})",
+        musicbrainz!("ae"),
+        marks(ids)
+    )
+}
+
+/// The accepted MusicBrainz ids of `ids` artists.
+pub(crate) fn player_artist_ids(ids: ListLen) -> String {
+    format!(
+        "SELECT e.local_artist_id, e.provider_artist_id \
+         FROM local_artist_external_identities e \
+         WHERE e.local_artist_id IN ({}) AND {}",
+        marks(ids),
+        musicbrainz!("e")
+    )
+}
+
+/// Tag ids of `ids` artists (the ids bound twice): the id each credit of
+/// an indexed track or a live album took from its file, set by the scan
+/// only where the file pairs its artist names and ids one for one. The
+/// credits lead, so a chunk never walks the tracks.
+pub(crate) fn artist_tag_ids(ids: ListLen) -> String {
+    let ids = marks(ids);
+    format!(
+        "SELECT ta.local_artist_id, ta.artist_mbid \
+         FROM local_track_artists ta CROSS JOIN local_tracks t \
+         WHERE ta.local_artist_id IN ({ids}) AND ta.artist_mbid IS NOT NULL \
+         AND t.id = ta.local_track_id AND t.availability = 'indexed' \
+         UNION ALL \
+         SELECT aa.local_artist_id, aa.artist_mbid \
+         FROM local_album_artists aa CROSS JOIN local_albums a \
+         WHERE aa.local_artist_id IN ({ids}) AND aa.artist_mbid IS NOT NULL \
+         AND a.id = aa.local_album_id AND a.retired_into_album_id IS NULL"
+    )
+}
+
+/// One page of album artist ids: name order, or insertion order when
+/// `natural`. Binds: the folded name pattern twice, limit, offset.
+pub(crate) fn player_album_artist_page(natural: bool) -> String {
+    let order = if natural {
+        "r.rowid ASC"
+    } else {
+        "r.folded_name ASC, r.id ASC"
+    };
+    format!(
+        "SELECT r.id FROM local_artists r \
+         WHERE r.retired_into_artist_id IS NULL AND {LED_PREDICATE} \
+         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
+         ORDER BY {order} LIMIT ? OFFSET ?"
+    )
+}
+
+/// For `ids` artists (bound twice), the summed length and the number of
+/// the streamable tracks crediting each as track artist or album artist.
+/// UNION keeps one row per (artist, track), so a track that credits its
+/// album artist is counted once; the credits lead, so each track is
+/// reached by key.
+pub(crate) fn player_artist_durations(ids: ListLen) -> String {
+    let ids = marks(ids);
+    format!(
+        "SELECT c.artist_id, COALESCE(SUM(t.duration_seconds), 0.0), COUNT(*) \
+         FROM (SELECT ta.local_artist_id AS artist_id, ta.local_track_id AS track_id \
+         FROM local_track_artists ta WHERE ta.local_artist_id IN ({ids}) \
+         UNION \
+         SELECT a.album_artist_id, lt.id FROM local_albums a \
+         JOIN local_tracks lt ON lt.local_album_id = a.id \
+         WHERE a.album_artist_id IN ({ids})) c \
+         CROSS JOIN local_tracks t CROSS JOIN local_albums a \
+         WHERE t.id = c.track_id AND t.availability = 'indexed' \
+         AND a.id = t.local_album_id AND {} \
+         GROUP BY c.artist_id",
+        live_album!("a")
     )
 }

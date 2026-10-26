@@ -802,12 +802,28 @@ impl LocalCatalog {
 
     /// Playable tracks and the folders holding at least one, across every
     /// library folder. A track is playable while its file is indexed.
+    /// Counting the folders groups every indexed track and player apps poll
+    /// it, so the counts are kept until the catalog changes.
     pub async fn playable_counts(&self) -> Result<(i64, i64), StoreError> {
-        self.read("library.playable_counts", |conn| {
-            let mut statement = conn.prepare_cached(sql::PLAYABLE_COUNTS.text())?;
-            statement.query_row([], |row| Ok((row.get(0)?, row.get(1)?)))
-        })
-        .await
+        let counted = self
+            .totals(
+                "library.playable_counts".to_owned(),
+                "library.playable_counts",
+                |conn| {
+                    let mut statement = conn.prepare_cached(sql::PLAYABLE_COUNTS.text())?;
+                    statement.query_row([], |row| {
+                        Ok(vec![unsigned(row.get(0)?), unsigned(row.get(1)?)])
+                    })
+                },
+            )
+            .await?;
+        match counted.as_slice() {
+            [tracks, folders] => Ok((
+                i64::try_from(*tracks).unwrap_or(i64::MAX),
+                i64::try_from(*folders).unwrap_or(i64::MAX),
+            )),
+            _ => Ok((0, 0)),
+        }
     }
 
     /// Newest owned albums first, capped: the ids from the creation index,

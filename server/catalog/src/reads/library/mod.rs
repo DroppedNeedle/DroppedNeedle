@@ -25,7 +25,6 @@ pub mod models;
 #[cfg(test)]
 mod perf_tests;
 pub mod player;
-pub mod pool_bridge;
 pub mod services;
 pub(crate) mod sql;
 pub mod sqlite;

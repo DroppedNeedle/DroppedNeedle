@@ -232,7 +232,7 @@ impl JellyfinLibrary {
     ) -> Result<Vec<ArtistView>, CompatError> {
         let ids = views.iter().map(|view| view.id.clone()).collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "artist", &ids).await?;
-        let durations = self.library.player.artist_durations(&ids).await?;
+        let durations = self.library.catalog.artist_durations(&ids).await?;
         let unlinked = views
             .iter()
             .filter(|view| view.artist_mbid.is_none())
@@ -555,7 +555,7 @@ impl LibraryRead for JellyfinLibrary {
 
     async fn years(&self) -> Vec<i32> {
         let outcome = async {
-            let years = self.library.player.album_years().await?;
+            let years = self.library.catalog.album_years().await?;
             Ok(years
                 .into_iter()
                 .filter_map(|year| i32::try_from(year).ok())
@@ -703,7 +703,7 @@ impl LibraryRead for JellyfinLibrary {
             // A merged-away album or artist keeps its old id, and the picture
             // address never opens one, so only the live holder of the id has
             // a name here.
-            let live = self.library.player.current_id(kind, catalog_id).await?;
+            let live = self.library.catalog.current_id(kind, catalog_id).await?;
             if live.as_deref() != Some(catalog_id) {
                 return Ok(None);
             }
@@ -834,7 +834,7 @@ impl CatalogIds {
         let mut complete = true;
         let mut pairs: Vec<(String, String)> =
             vec![("library".to_owned(), LIBRARY_INTERNAL_ID.to_owned())];
-        match self.library.player.every_id().await {
+        match self.library.catalog.every_id().await {
             Ok(ids) => {
                 for (kind, id) in ids {
                     let internal = if kind == "genre" { genre_slug(&id) } else { id };
@@ -853,7 +853,7 @@ impl CatalogIds {
                 tracing::error!(%error, "jellyfin id rebuild could not read playlists");
             }
         }
-        let merged = match self.library.player.merged_ids().await {
+        let merged = match self.library.catalog.merged_ids().await {
             Ok(merged) => merged,
             Err(error) => {
                 complete = false;
@@ -896,7 +896,7 @@ impl CatalogIds {
         if kind != "album" && kind != "artist" && kind != "track" {
             return Some((kind, internal));
         }
-        match self.library.player.current_id(&kind, &internal).await {
+        match self.library.catalog.current_id(&kind, &internal).await {
             Ok(current) => current.map(|id| (kind, id)),
             Err(error) => {
                 tracing::warn!(%error, "jellyfin id could not be followed to its current item");

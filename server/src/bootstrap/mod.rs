@@ -277,13 +277,16 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // The artist and album pages, with plugin purchase links and details.
     // The artwork service names artist images through it, and the library
     // plans covers through that service.
+    // The one local catalog: the catalog pages, the library reads,
+    // collections' ratings and the player apps all read through it.
+    let local = LocalCatalog::new(db.clone());
     let catalog = Catalog::new(
         Upstream::new(
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(config_store)),
             auth.users.clone(),
         ),
-        LocalCatalog::new(db.clone()),
+        local.clone(),
     )
     .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
     .with_details(Arc::new(PluginDetailsSource(plugin_host.clone())))
@@ -341,7 +344,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         Some(enrichment),
         ReadsPorts {
             remotes: remotes.clone(),
-            collections: CollectionsState::over(collections_db, collections),
+            collections: CollectionsState::over(collections_db, collections, local),
             catalog,
             artwork,
             library_files: LibraryFiles::new(db.sqlx().clone(), library.root_source()),

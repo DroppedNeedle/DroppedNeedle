@@ -9,7 +9,6 @@ use crate::reads::collections::models::{
     RatingLookupBody, RatingLookupResponse, RatingStatusResponse,
 };
 use crate::reads::collections::store::ratings::{ItemRating, MAX_RATING, RatedKind};
-use crate::reads::library::player::PlayerCatalog;
 use crate::reads::library::stores::StoreError as LibraryStoreError;
 
 /// Most ids of one kind a lookup accepts.
@@ -71,7 +70,11 @@ impl CollectionsService<'_> {
         if rating > MAX_RATING {
             return Err(CollectionsError::invalid("Rating must be 0 to 5"));
         }
-        let items = &self.state.items;
+        let items = self
+            .state
+            .items
+            .as_ref()
+            .ok_or_else(|| CollectionsError::internal(&"the local catalog is not wired"))?;
         let current = items
             .current_id(kind.as_str(), item_id)
             .await
