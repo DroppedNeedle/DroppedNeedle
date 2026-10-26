@@ -3916,6 +3916,40 @@ fn frames_kept_only_once_are_refused_before_saving() {
     }
 }
 
+/// Zero padding between an MP3's ID3v2 tag and its first frame, outside
+/// the tag's size, keeps the file readable and writable, pictures included.
+/// Padding past what the save looks through is unreadable at preview, not
+/// a save that fails at Apply.
+#[test]
+fn mp3_with_padding_after_the_tag_is_saved() {
+    let (_scratch, path) = temp_copy("management_full.mp3", "padded");
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(&bytes[..3], b"ID3");
+    let size = bytes[6..10]
+        .iter()
+        .fold(0usize, |size, byte| (size << 7) | usize::from(*byte & 0x7F));
+    let end = 10 + size;
+    let padded = |zeros: usize| {
+        let mut padded = bytes[..end].to_vec();
+        padded.extend(std::iter::repeat_n(0u8, zeros));
+        padded.extend_from_slice(&bytes[end..]);
+        padded
+    };
+    std::fs::write(&path, padded(70 * 1024)).unwrap();
+    assert!(matches!(
+        tags::save::read_document(&path),
+        Err(TagsError::TagRead { .. })
+    ));
+    std::fs::write(&path, padded(1044)).unwrap();
+    let pictures = tags::save::read_document(&path).unwrap().pictures;
+    assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
+    tags::save_tags(&path, &[TagEdit::set_title("Padded")]).unwrap();
+    let after = tags::save::read_document(&path).unwrap();
+    assert_eq!(after.values[&TagField::Title], vec!["Padded".to_owned()]);
+    assert_eq!(after.pictures, pictures);
+    assert!(std::fs::read(&path).unwrap().ends_with(&bytes[end..]));
+}
+
 /// A v2.3 tag saved as v2.4 (it holds a `TDRC`) keeps its chapters
 /// readable: a chapter picture of 128 bytes or more has its embedded
 /// frame size rewritten as syncsafe, its bytes unchanged.

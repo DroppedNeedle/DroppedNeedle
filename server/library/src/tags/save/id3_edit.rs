@@ -442,10 +442,30 @@ pub(super) fn apply(
         Some(tag) => tag.major == 3,
         None => matches!(native.original_version(), Id3v2Version::V3),
     };
-    native
-        .save_to_path(temp, WriteOptions::new().use_id3v23(pin_v23))
-        .map_err(save_failed)
+    let options = WriteOptions::new()
+        .use_id3v23(pin_v23)
+        .parse_options(save_parse_options(truth.is_some()));
+    native.save_to_path(temp, options).map_err(save_failed)
 }
+
+/// The options lofty's save checks an MP3's type from its bytes with.
+/// It looks for the first MPEG frame at most `max_junk_bytes` past the
+/// tag, and padding left after a tag's size can be longer than its
+/// default. The same window also lets its writer search that far for an
+/// "ID3" header and replace everything from byte 0 to that header's end
+/// (lofty 0.25.4, `id3/v2/write/mod.rs` and `find_id3v2`), so it is
+/// widened only when our own parse found the tag at byte 0: on a file
+/// with no tag there, a stray "ID3" in the audio could be spliced over.
+pub(super) fn save_parse_options(tag_at_start: bool) -> lofty::config::ParseOptions {
+    let mut options = lofty::config::ParseOptions::new();
+    if tag_at_start {
+        options.max_junk_bytes(MAX_PADDING_AFTER_TAG);
+    }
+    options
+}
+
+/// How far past an ID3v2 tag a save still finds the first MPEG frame.
+const MAX_PADDING_AFTER_TAG: usize = 64 * 1024;
 
 /// Timestamp ids that alias across ID3 versions: the merge emits v2.4
 /// ids that the writer converts on v2.3 saves, so each family is cleared

@@ -9,6 +9,8 @@ use lofty::file::TaggedFileExt as _;
 use lofty::tag::TagType;
 
 use super::id3::Id3;
+use super::id3_bytes::parse_id3_deep;
+use super::id3_edit::save_parse_options;
 use super::mp4::Mp4;
 use super::vorbis::Vorbis;
 use super::{PictureSpec, Refusal, TagFormat, error_chain};
@@ -133,15 +135,33 @@ pub(super) fn read_pictures(
             Ok(with_info(file.vorbis_comments().pictures()))
         }
         AudioFormat::Mp3 | AudioFormat::M4a => {
-            let tag_type = if format == AudioFormat::Mp3 {
-                TagType::Id3v2
+            let (tag_type, file_type) = if format == AudioFormat::Mp3 {
+                (TagType::Id3v2, lofty::file::FileType::Mpeg)
             } else {
-                TagType::Mp4Ilst
+                (TagType::Mp4Ilst, lofty::file::FileType::Mp4)
             };
-            let tagged = lofty::probe::Probe::new(&mut reader)
+            // The format is known, as it is to the save's own read from the
+            // path; guessing it from the bytes fails on an MP3 whose ID3v2
+            // tag is followed by padding outside its size. The save still
+            // checks the type from the bytes, with its own window, so a
+            // file that check would not recognise is unreadable here.
+            if format == AudioFormat::Mp3 {
+                let tag_at_start = matches!(parse_id3_deep(bytes), Ok(Some(_)));
+                let guessed = lofty::probe::Probe::new(std::io::Cursor::new(bytes))
+                    .options(save_parse_options(tag_at_start))
+                    .guess_file_type()
+                    .map_err(failed)?
+                    .file_type();
+                if guessed != Some(file_type) {
+                    return Err(Refusal::SaveFailed {
+                        reason:
+                            "pictures unreadable: the save would not recognise the file as an MP3"
+                                .to_owned(),
+                    });
+                }
+            }
+            let tagged = lofty::probe::Probe::with_file_type(&mut reader, file_type)
                 .options(options)
-                .guess_file_type()
-                .map_err(failed)?
                 .read()
                 .map_err(failed)?;
             let mut out: Vec<PictureSpec> = tagged
