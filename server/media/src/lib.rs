@@ -37,6 +37,7 @@ use crate::remotes::connections::{
 use crate::remotes::folders::SqliteFolderStore;
 use crate::remotes::handlers::RemotesDeps;
 use crate::remotes::plex::PlexTokenProbe;
+use crate::remotes::presence_feed::MediaJobs;
 use crate::remotes::reader::RemotesRemoteReader;
 use crate::remotes::service::RemotesService;
 use crate::stream::download::DownloadState;
@@ -259,6 +260,19 @@ impl MediaSetup {
     /// register with the jobs table.
     pub fn scrobble_jobs(&self) -> Vec<(KindSpec, Arc<dyn JobHandler>)> {
         self.scrobble_jobs.clone()
+    }
+
+    /// What the jobs bundle reads from media: the presence registry the
+    /// playback routes write, the bundle's connection resolver, and the
+    /// platform's outbound client, database and clock.
+    pub fn jobs(&self, platform: &Platform) -> MediaJobs {
+        MediaJobs::new(
+            self.playback.presence.clone(),
+            self.remotes.service.resolver().clone(),
+            platform.http.shared().clone(),
+            platform.db.sqlx().clone(),
+            platform.clock.clone(),
+        )
     }
 }
 

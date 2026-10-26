@@ -241,3 +241,34 @@ impl BatchRequests for NoBatchRequests {
 fn not_running() -> ProviderFailure {
     ProviderFailure::not_built("no download system in this rig")
 }
+
+/// The connection resolver the app builds: the per-user rows in the
+/// platform's database, sealed with its key, over the admin's server
+/// settings.
+pub fn remotes_resolver(
+    platform: &Platform,
+) -> droppedneedle_media::remotes::connections::ConnectionResolver {
+    use droppedneedle_media::remotes::connections::{
+        ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
+    };
+    ConnectionResolver::new(
+        Arc::new(SqliteConnectionStore::new(
+            platform.db.clone(),
+            platform.clock.clone(),
+        )),
+        Arc::new(CredentialCoder::new(platform.crypto.clone())),
+        Arc::new(ConfigServers::new(&platform.settings)),
+    )
+}
+
+/// The jobs bundle's media inputs for a rig with no media bundle: a fresh
+/// presence registry over the platform's event hub and the app's resolver.
+pub fn media_jobs(platform: &Platform) -> droppedneedle_media::remotes::presence_feed::MediaJobs {
+    droppedneedle_media::remotes::presence_feed::MediaJobs::new(
+        droppedneedle_media::playback::presence::PresenceRegistry::new(platform.events.clone()),
+        Arc::new(remotes_resolver(platform)),
+        platform.http.shared().clone(),
+        platform.db.sqlx().clone(),
+        platform.clock.clone(),
+    )
+}

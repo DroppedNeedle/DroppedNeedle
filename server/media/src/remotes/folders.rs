@@ -151,48 +151,6 @@ impl FolderStore for SqliteFolderStore {
     }
 }
 
-/// In-memory folder preferences for tests.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct MemoryFolderStore {
-    inner: std::sync::Mutex<std::collections::HashMap<String, FolderPreference>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemoryFolderStore {
-    /// Empty store.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FolderStore for MemoryFolderStore {
-    fn get<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<FolderPreference, String>> {
-        let preference = self
-            .inner
-            .lock()
-            .map(|guard| guard.get(user_id).cloned().unwrap_or_default())
-            .map_err(|_| "folder store lock poisoned".to_owned());
-        Box::pin(async move { preference })
-    }
-
-    fn set<'a>(
-        &'a self,
-        user_id: &'a str,
-        preference: FolderPreference,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        let stored = self
-            .inner
-            .lock()
-            .map(|mut guard| {
-                guard.insert(user_id.to_owned(), preference);
-            })
-            .map_err(|_| "folder store lock poisoned".to_owned());
-        Box::pin(async move { stored })
-    }
-}
-
 /// Resolve one user's scope. `available` is `None` when the source is
 /// down or unconfigured; `server_identity` is the adapter's current
 /// identity for the staleness check.

@@ -82,7 +82,6 @@ use droppedneedle_media::{
             ConfigServers, ConnectionResolver, CredentialCoder, SignInLinks, SqliteConnectionStore,
         },
         plex::ConfiguredPlexServer,
-        presence_feed::MediaJobs,
     },
     stream::local_files::LibraryFiles,
 };
@@ -439,12 +438,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let jobs = JobsSetup::build(
         p,
         runtime.checkpoint().clone(),
-        MediaJobs {
-            presence: media.playback.presence.clone(),
-            resolver: Some(media.remotes.service.resolver().clone()),
-            http: http.shared().clone(),
-            pool: Some(db.sqlx().clone()),
-        },
+        media.jobs(p),
         concerts.sweep(),
         scans.clone(),
     )

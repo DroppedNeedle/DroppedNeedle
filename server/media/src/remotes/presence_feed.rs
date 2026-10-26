@@ -17,7 +17,7 @@ use super::models::{SessionView, SourceName};
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
 use crate::playback::presence::{ExternalSession, PresenceRegistry};
-use droppedneedle_kernel::clock::{Clock, SystemClock};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
 use droppedneedle_kernel::jobs::presence::{
@@ -27,27 +27,31 @@ use droppedneedle_kernel::jobs::presence::{
 /// What the media bundle hands the jobs bundle.
 #[derive(Clone)]
 pub struct MediaJobs {
-    /// The live presence registry the playback routes write.
-    pub presence: PresenceRegistry,
-    /// Connection resolution (admin servers and their shared accounts);
-    /// `None` in states with no servers, where every source reads disabled.
-    pub resolver: Option<Arc<ConnectionResolver>>,
-    /// Shared outbound client.
-    pub http: reqwest::Client,
-    /// Database for the playlist export; `None` in states without one.
-    pub pool: Option<sqlx::SqlitePool>,
+    presence: PresenceRegistry,
+    resolver: Arc<ConnectionResolver>,
+    http: reqwest::Client,
+    pool: sqlx::SqlitePool,
+    clock: Arc<dyn Clock>,
 }
 
 impl MediaJobs {
-    /// Inputs for test states: a fresh registry on `events`, no servers,
-    /// no database.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(events: droppedneedle_kernel::events::EventHub) -> Self {
+    /// Inputs over the live presence registry the playback routes write,
+    /// the shared connection resolver (admin servers and their shared
+    /// accounts), the outbound client, the database the playlist export
+    /// reads and the clock the presence sweep measures against.
+    pub fn new(
+        presence: PresenceRegistry,
+        resolver: Arc<ConnectionResolver>,
+        http: reqwest::Client,
+        pool: sqlx::SqlitePool,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
-            presence: PresenceRegistry::new(events),
-            resolver: None,
-            http: reqwest::Client::new(),
-            pool: None,
+            presence,
+            resolver,
+            http,
+            pool,
+            clock,
         }
     }
 
@@ -55,7 +59,7 @@ impl MediaJobs {
     pub fn feed(&self) -> RegistryFeed {
         RegistryFeed {
             registry: self.presence.clone(),
-            clock: Arc::new(SystemClock),
+            clock: self.clock.clone(),
         }
     }
 
@@ -69,7 +73,7 @@ impl MediaJobs {
 
     /// The m3u8 exporter.
     pub fn exporter(&self) -> M3uPlaylistExporter {
-        M3uPlaylistExporter::new(self.pool.clone())
+        M3uPlaylistExporter::new(Some(self.pool.clone()))
     }
 }
 
@@ -123,15 +127,13 @@ impl PresenceStore for RegistryFeed {
 /// Session polling over the admin's shared accounts.
 #[derive(Clone)]
 pub struct RemoteSessionPollers {
-    resolver: Option<Arc<ConnectionResolver>>,
+    resolver: Arc<ConnectionResolver>,
     http: reqwest::Client,
 }
 
 impl RemoteSessionPollers {
     fn resolve(&self, source: SourceName) -> Result<ResolvedConnection, String> {
         self.resolver
-            .as_ref()
-            .ok_or_else(|| "no servers are configured".to_owned())?
             .resolve_shared(source)
             .map_err(|error| error.to_string())
     }

@@ -15,9 +15,7 @@ use crate::stream::ranged;
 use crate::stream::routes::{AudioSource, MediaBody, StreamFault, StreamMedia};
 
 use super::adapter::AdapterError;
-use super::connections::{
-    ConnectionResolver, ConnectionStore, CredentialCoder, NoServers, ResolveError,
-};
+use super::connections::{ConnectionResolver, ResolveError};
 use super::jellyfin::JellyfinAdapter;
 use super::models::SourceName;
 use super::navidrome::NavidromeAdapter;
@@ -31,23 +29,6 @@ pub struct RemotesRemoteReader {
 }
 
 impl RemotesRemoteReader {
-    /// A reader with no admin servers configured: every remote read is
-    /// unknown. For builds that never stream remote media.
-    pub fn new(
-        http: reqwest::Client,
-        connections: Arc<dyn ConnectionStore>,
-        coder: Arc<CredentialCoder>,
-    ) -> Self {
-        Self::with_resolver(
-            http,
-            Arc::new(ConnectionResolver::new(
-                connections,
-                coder,
-                Arc::new(NoServers),
-            )),
-        )
-    }
-
     /// A reader over the shared resolver.
     pub fn with_resolver(http: reqwest::Client, resolver: Arc<ConnectionResolver>) -> Self {
         Self { http, resolver }

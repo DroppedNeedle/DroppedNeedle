@@ -235,7 +235,7 @@ impl E2e {
         let jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
             p,
             self.runtime.checkpoint().clone(),
-            droppedneedle_media::remotes::presence_feed::MediaJobs::for_tests(p.events.clone()),
+            media.jobs(p),
             None,
             droppedneedle::bootstrap::jobs::ScansEnded::default(),
         );

@@ -72,9 +72,7 @@ impl Rig {
         let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
             &platform,
             runtime.checkpoint().clone(),
-            droppedneedle_media::remotes::presence_feed::MediaJobs::for_tests(
-                platform.events.clone(),
-            ),
+            crate::common::bundles::media_jobs(&platform),
             None,
             scans.clone(),
         );
