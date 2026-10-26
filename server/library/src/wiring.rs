@@ -584,7 +584,7 @@ impl LibrarySetup {
                 true
             });
             let settled = cell.cell.is_some() && !held;
-            super::import::sweep_import_leftovers(&roots, settled);
+            super::publish::import_staging::sweep_import_leftovers(&roots, settled);
             recoveries
         })
         .await;

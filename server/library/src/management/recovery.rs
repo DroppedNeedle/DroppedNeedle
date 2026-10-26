@@ -107,7 +107,7 @@ impl Management {
     /// a state this does not know all answer no. No such write answers
     /// yes. Blocking.
     pub fn download_publish_settled(&self, task_id: &str) -> Result<bool, ManagementError> {
-        let folder = format!("{}/", crate::import::staging_rel(task_id));
+        let folder = format!("{}/", crate::publish::import_staging::staging_rel(task_id));
         self.setup
             .db
             .read_blocking("management.download_publish_settled", |conn| {
