@@ -407,16 +407,19 @@ impl Operations {
             .await?;
         let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.map(str::to_owned));
         tokio::task::spawn_blocking(move || {
-            ops.db
-                .write_blocking(Lane::Foreground, "operations.choose_edition", |tx| {
-                    choice::choose(
-                        tx,
-                        &album,
-                        &candidate,
-                        actor.as_deref(),
-                        ops.clock.now_secs(),
-                    )
-                })
+            let chosen =
+                ops.db
+                    .write_blocking(Lane::Foreground, "operations.choose_edition", |tx| {
+                        choice::choose(
+                            tx,
+                            &album,
+                            &candidate,
+                            actor.as_deref(),
+                            ops.clock.now_secs(),
+                        )
+                    })?;
+            ops.store.link_after_command(&album);
+            Ok::<_, OperationError>(chosen)
         })
         .await
         .map_err(|error| OperationError::Store(error.to_string()))?
@@ -832,7 +835,9 @@ impl Operations {
         self.db
             .write_blocking(Lane::Foreground, "operations.confirm_match", |tx| {
                 choice::confirm(tx, album_id, actor, self.clock.now_secs())
-            })
+            })?;
+        self.store.link_after_command(album_id);
+        Ok(())
     }
 
     /// Take back the album's last edition change. Blocking.

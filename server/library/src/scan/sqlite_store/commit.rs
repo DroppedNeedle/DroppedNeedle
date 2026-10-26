@@ -41,7 +41,7 @@ use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::placement::place_scanned;
 use crate::corrections::release_join::join_replaced;
 use crate::corrections::retag_merge::{JoinCause, MergeOutcome, album_has_record, merge_retagged};
-use crate::identify::artist_links::mark_stale;
+use crate::identify::artist_links::{mark_stale, placeholder};
 use crate::identify::queue::offer_again;
 use crate::identify::sqlite::{
     chosen_matches_differ, match_chosen, offer_album, release_chosen, retarget_references,
@@ -3274,16 +3274,9 @@ pub(crate) fn automatic_album_for(
         )?;
         return Ok(Some((revived, false)));
     }
-    // An artist already known by this name keeps its row; else the same
-    // stable id a scan would give it.
-    let known: Option<String> = tx
-        .query_row(
-            "SELECT id FROM local_artists WHERE folded_name = ?1 \
-             AND retired_into_artist_id IS NULL ORDER BY created_at, id LIMIT 1",
-            params![fold_text(&stored.album_artist)],
-            |row| row.get(0),
-        )
-        .optional()?;
+    // No artist id: the stored one is only the file's first album artist
+    // id, which for a joined credit names one artist of it. The next scan
+    // writes the ids the file holds.
     let credit = Credit {
         name: stored.album_artist.clone(),
         sort_name: stored.album_artist_sort.clone(),
@@ -3291,10 +3284,7 @@ pub(crate) fn automatic_album_for(
         join_phrase: String::new(),
         mbid: None,
     };
-    let artist_id = match known {
-        Some(id) => id,
-        None => upsert_artist(tx, &credit, now)?,
-    };
+    let artist_id = album_artist_row(tx, track_id, &credit, now)?;
     tx.execute(
         "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
          album_artist_name, album_artist_name_folded, album_artist_id, album_artist_sort_name, \
@@ -3322,6 +3312,40 @@ pub(crate) fn automatic_album_for(
         params![album_id, artist_id, stored.album_artist],
     )?;
     Ok(Some((album_id, true)))
+}
+
+/// The row a reset album's credit, which carries no id, lands on, as a
+/// scan of the track's file would key it ([`artists::resolve`]): the row
+/// of a credit of the track holding an id under the same folded name, else
+/// the name row.
+fn album_artist_row(
+    tx: &Connection,
+    track_id: &str,
+    credit: &Credit,
+    now: f64,
+) -> rusqlite::Result<String> {
+    let folded = fold_text(&credit.name);
+    let shared = tx
+        .prepare_cached(
+            "SELECT c.local_artist_id, c.artist_mbid, c.credited_name \
+             FROM local_track_artists c JOIN local_artists a ON a.id = c.local_artist_id \
+             WHERE c.local_track_id = ?1 AND c.artist_mbid IS NOT NULL \
+             AND a.retired_into_artist_id IS NULL ORDER BY c.position",
+        )?
+        .query_map(params![track_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .find(|(_, mbid, name)| !placeholder(mbid) && fold_text(name) == folded);
+    match shared {
+        Some((row, _, _)) => Ok(row),
+        None => upsert_artist(tx, credit, now),
+    }
 }
 
 /// The track id a file imported to `(root, relative path)` will get: the

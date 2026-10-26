@@ -896,28 +896,34 @@ impl RepairWorker {
                         })?
                 }
                 (_, Phase::Apply) => {
-                    self.db
-                        .write_blocking(Lane::Background, "repairs.apply_album", |tx| {
-                            if !jobs::holds(tx, &job.id, worker)? {
-                                return Ok(());
-                            }
-                            apply_album(
-                                tx,
-                                &job.id,
-                                worker,
-                                ordinal,
-                                &album_id,
-                                actor.as_deref(),
-                                self.clock.now_secs(),
-                            )
-                        })?
+                    let accepted =
+                        self.db
+                            .write_blocking(Lane::Background, "repairs.apply_album", |tx| {
+                                if !jobs::holds(tx, &job.id, worker)? {
+                                    return Ok(false);
+                                }
+                                apply_album(
+                                    tx,
+                                    &job.id,
+                                    worker,
+                                    ordinal,
+                                    &album_id,
+                                    actor.as_deref(),
+                                    self.clock.now_secs(),
+                                )
+                            })?;
+                    if accepted {
+                        self.store.link_after_command(&album_id);
+                    }
                 }
                 (purpose, Phase::DryRun) => match self.check(purpose, &album_id).await? {
                     Checked::Found(verdict, identity_revision) => {
-                        self.db
-                            .write_blocking(Lane::Background, "repairs.save_finding", |tx| {
+                        let accepted = self.db.write_blocking(
+                            Lane::Background,
+                            "repairs.save_finding",
+                            |tx| {
                                 if !jobs::holds(tx, &job.id, worker)? {
-                                    return Ok(());
+                                    return Ok(false);
                                 }
                                 let now = self.clock.now_secs();
                                 store::save_finding(
@@ -931,8 +937,11 @@ impl RepairWorker {
                                     now,
                                 )?;
                                 store::auto_accept(tx, &job.id, &album_id, &verdict, now)
-                                    .map(|_| ())
-                            })?
+                            },
+                        )?;
+                        if accepted {
+                            self.store.link_after_command(&album_id);
+                        }
                     }
                     Checked::Deferred => {
                         return self.db.write_blocking(

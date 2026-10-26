@@ -1397,6 +1397,54 @@ fn an_accepted_match_links_every_credited_artist() {
     assert_eq!(links.written(), before, "nothing new, nothing written");
 }
 
+/// A person approves a review whose release is not on file: the approval
+/// commits, and when it answers the album's credits already wait for the
+/// document. Once the document lands, the sweep proves and links them.
+#[test]
+fn an_approval_without_its_document_waits_and_the_sweep_links_later() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    let alpha: &[Seeded<'_>] = &[("ar-a", "Alpha", None)];
+    links.album("al", alpha, &[("t1", alpha)], "automatic");
+    links
+        .db
+        .execute(
+            "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) \
+             VALUES ('rv', 'al', 'R', '[]', 'pending', 0, 0)",
+            [],
+        )
+        .expect("review seeds");
+    let approved = links
+        .store
+        .approve(&identify::stores::Approval {
+            review_id: "rv".to_owned(),
+            by_user_id: "admin".to_owned(),
+            candidate_key: "c1".to_owned(),
+            album: AlbumIdentity {
+                local_album_id: "al".to_owned(),
+                provider: "musicbrainz".to_owned(),
+                release_group_mbid: Some(LINK_GROUP.to_owned()),
+                release_mbid: Some(LINK_RELEASE.to_owned()),
+                decision_source: DecisionSource::Manual,
+                row_revision: 1,
+            },
+        })
+        .expect("approval commits");
+    assert!(approved);
+    assert_eq!(
+        links.reason("al").as_deref(),
+        Some("waiting_for_identity RELEASE_DOCUMENT_MISSING")
+    );
+    assert!(links.proofs().is_empty());
+    assert_eq!(links.link_of("ar-a"), None);
+
+    links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
+    links.store.sweep_artist_links().unwrap();
+    assert!(!links.proofs().is_empty());
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+}
+
 /// An album credit "A & B" against a release crediting A and B does not
 /// line up: no album proof, and the album's credits are ambiguous. Tracks
 /// credited to A alone still link A.

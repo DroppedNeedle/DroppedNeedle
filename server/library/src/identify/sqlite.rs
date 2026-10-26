@@ -716,9 +716,11 @@ impl SqliteIdentifyStore {
             .map(|written| self.landed(written))
     }
 
-    /// [`Self::link_album_artists`], then merge what the links it made
-    /// prove to be one artist. Identification runs this after each
-    /// attempt and for each album a sweep finds stale.
+    /// [`Self::link_album_artists`], then merge the rows proven to be one
+    /// artist by the ids the album's proofs name and the ids the pass
+    /// newly linked. Identification runs this after each attempt and
+    /// for each album a sweep finds stale; a person's identity command
+    /// runs it once its own write has committed ([`Self::link_after_command`]).
     pub fn link_and_merge_album_artists(&self, local_album_id: &str) -> Result<(), StoreError> {
         self.db
             .write_blocking(
@@ -727,6 +729,21 @@ impl SqliteIdentifyStore {
                 |tx| changing(tx, |tx| artist_pass(tx, &*self.clock, local_album_id, true)),
             )
             .map(|written| self.landed(written))
+    }
+
+    /// [`Self::link_and_merge_album_artists`] right after a person's
+    /// identity command committed, so the album's artist proofs and links
+    /// are there when the command answers. The command has already moved
+    /// the album's identity, so a pass that fails is logged and left to the
+    /// sweep; the command's answer stands.
+    pub fn link_after_command(&self, local_album_id: &str) {
+        if let Err(error) = self.link_and_merge_album_artists(local_album_id) {
+            tracing::warn!(
+                %error,
+                album_id = local_album_id,
+                "the album's artist links were not worked out after the change; the sweep tries again"
+            );
+        }
     }
 
     /// One sweep: up to [`artist_links::SWEEP_BATCH`] albums whose match
@@ -1587,11 +1604,16 @@ impl SqliteIdentifyStore {
     /// album's match ([`identity::approve`]), all or nothing. `Ok(false)`
     /// when the review is no longer pending; nothing is written then.
     pub fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
-        self.db
+        let approved = self
+            .db
             .write_blocking(APPROVE_LANE, "identify.approve_review", |tx| {
                 changing(tx, |tx| approve_tx(tx, &*self.clock, approval))
             })
-            .map(|written| self.landed(written))
+            .map(|written| self.landed(written))?;
+        if approved {
+            self.link_after_command(&approval.album.local_album_id);
+        }
+        Ok(approved)
     }
 }
 

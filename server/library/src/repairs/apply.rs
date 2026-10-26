@@ -21,7 +21,11 @@ use crate::operations::models::OperationError;
 /// Reason an album's match state carries after a recheck detached it.
 pub const DETACH_REASON: &str = "IDENTITY_FAILED_RECHECK";
 
-/// Apply the finding for one claimed album and close its work item.
+/// What an applied finding that accepted an edition settles as.
+const EDITION_ACCEPTED: &str = "EDITION_ACCEPTED";
+
+/// Apply the finding for one claimed album and close its work item. True
+/// when that accepted an edition for the album.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_album(
     tx: &Transaction<'_>,
@@ -31,7 +35,7 @@ pub fn apply_album(
     album_id: &str,
     actor: Option<&str>,
     now: f64,
-) -> Result<(), OperationError> {
+) -> Result<bool, OperationError> {
     let finding = store::open_finding(tx, job_id, album_id)?;
     let outcome = match &finding {
         Some(finding) if store::guard_holds(tx, album_id, finding.payload.guard.as_ref())? => {
@@ -39,6 +43,7 @@ pub fn apply_album(
         }
         _ => None,
     };
+    let accepted = outcome == Some(EDITION_ACCEPTED);
     match (finding, outcome) {
         (Some(finding), Some(result)) => {
             store::settle_finding(tx, &finding.id, "applied", result, now)?;
@@ -60,7 +65,7 @@ pub fn apply_album(
             )?;
         }
     }
-    Ok(())
+    Ok(accepted)
 }
 
 /// The change itself. `None` when the album no longer takes it.
@@ -97,7 +102,7 @@ fn apply_finding(
                 return Ok(None);
             };
             match choice::choose(tx, album_id, candidate, actor, now) {
-                Ok(_) => Ok(Some("EDITION_ACCEPTED")),
+                Ok(_) => Ok(Some(EDITION_ACCEPTED)),
                 // The edition no longer fits the files: leave the album.
                 Err(OperationError::Invalid(_) | OperationError::NotFound(_)) => Ok(None),
                 Err(other) => Err(other),

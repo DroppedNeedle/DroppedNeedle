@@ -1886,6 +1886,66 @@ async fn an_edition_tag_write_planned_after_another_choice_writes_nothing() {
     assert_eq!(file_sha256(&file), before, "the file is as it was");
 }
 
+/// When a person's edition choice answers, the album's artist proofs and
+/// links are already written, with no sweep and no identification run.
+#[tokio::test]
+async fn an_edition_choice_links_its_artists_before_it_answers() {
+    use rusqlite::OptionalExtension as _;
+    const ARTIST: &str = "dddddddd-0000-4000-8000-00000000000d";
+    let (scratch, library, music) = bare_library("lib-choice-links").await;
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    rescan(&library).await;
+    let track = library
+        .scan_store
+        .track_at("music", "a/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    let mut recall = ambiguous_recall(&library.identify_store, &album);
+    for release in &mut recall.releases {
+        release.artists[0].id = ARTIST.to_owned();
+    }
+    scratch.identify.set_recall(recall);
+
+    crate::common::library::operations(&library)
+        .choose_edition(&album, REL_1, Some("admin"))
+        .await
+        .expect("edition chosen");
+
+    let db = droppedneedle_kernel::db::open_connection(&scratch.join("app.db")).expect("db opens");
+    let credited: String = db
+        .query_row(
+            "SELECT local_artist_id FROM local_album_artists WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("album credit");
+    let proven: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_artist_credit_proofs \
+             WHERE subject_kind = 'album' AND subject_id = ?1 AND artist_mbid = ?2",
+            [&album, ARTIST],
+            |row| row.get(0),
+        )
+        .expect("proofs read");
+    assert_eq!(proven, 1, "the album credit is proven");
+    let link: Option<String> = db
+        .query_row(
+            "SELECT provider_artist_id FROM local_artist_external_identities \
+             WHERE local_artist_id = ?1 AND provider = 'musicbrainz'",
+            [&credited],
+            |row| row.get(0),
+        )
+        .optional()
+        .expect("link reads");
+    assert_eq!(link.as_deref(), Some(ARTIST), "the album artist is linked");
+}
+
 /// Library roots live in the settings, so a restart comes back with the
 /// same roots under the same ids, and the next scan finds nothing new.
 #[tokio::test]

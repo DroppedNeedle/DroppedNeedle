@@ -788,6 +788,9 @@ impl LibrarySetup {
             })
             .map_err(|error| fault(format!("the catalog could not be read: {error}")))?
             .ok_or_else(|| fault("imported track is not in the catalog".to_owned()))?;
+        // The commit sealed the match; its artist proofs and links follow
+        // in their own write, so they can never fail the publish.
+        self.identify_store.link_after_command(&album_id);
         let paths = bundle
             .items
             .iter()

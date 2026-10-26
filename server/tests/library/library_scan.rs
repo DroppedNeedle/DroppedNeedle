@@ -4498,6 +4498,156 @@ async fn hand_merge_removes_an_open_pair() {
     );
 }
 
+/// A reset grouping that makes a new album credits it to the row a scan
+/// of the file keys, the name row, not an older row of the same name that
+/// is linked to another artist. Nobody's favourite moves.
+#[tokio::test]
+async fn a_reset_album_is_credited_as_a_scan_keys_it() {
+    let scratch = ScratchDir::new("scan-reset-artist");
+    let music = scratch.join("music");
+    // Credited "Radiohead" with no album artist id and no listed artists.
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    let store = &library.scan_store;
+    let track = store.track_at("music", "a/01.flac").unwrap().expect("a/01");
+    let album = store.album_for_track(&track).unwrap().expect("album");
+    let db = droppedneedle_kernel::db::open_connection(&scratch.join("app.db")).expect("db opens");
+    let name_row: String = db
+        .query_row(
+            "SELECT local_artist_id FROM local_album_artists WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("album credit");
+    // An older live row of the same name, linked to another artist; the
+    // track is held on its album by hand, and the album's key moved on, so
+    // a reset makes a new album.
+    store
+        .db()
+        .run_sql(&format!(
+            "INSERT INTO local_artists (id, display_name, sort_name, folded_name, \
+             normalized_name, kind, created_at, updated_at) \
+             SELECT 'twin', display_name, sort_name, folded_name, normalized_name, kind, \
+             created_at - 1, updated_at FROM local_artists WHERE id = '{name_row}'; \
+             INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES ('twin', 'musicbrainz', 'cccccccc-0000-4000-8000-00000000000c', 'manual', 1); \
+             INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             VALUES ('listener', 'artist', 'twin', 0), ('listener', 'artist', '{name_row}', 0); \
+             UPDATE local_tracks SET membership_locked = 1, membership_source = 'manual' \
+             WHERE id = '{track}'; \
+             UPDATE local_albums SET grouping_key = 'moved-on' WHERE id = '{album}';"
+        ))
+        .expect("seeds");
+
+    reset_grouping(&library, &album, &track);
+    let reset = store.album_for_track(&track).unwrap().expect("reset album");
+    assert_ne!(reset, album, "the reset made a new album");
+    let credited: (String, String) = db
+        .query_row(
+            "SELECT a.album_artist_id, c.local_artist_id FROM local_albums a \
+             JOIN local_album_artists c ON c.local_album_id = a.id WHERE a.id = ?1",
+            [&reset],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("reset album credit");
+    assert_eq!(credited, (name_row.clone(), name_row.clone()));
+    for artist in ["twin", name_row.as_str()] {
+        assert_eq!(
+            query(
+                &library,
+                &format!(
+                    "SELECT COUNT(*) FROM library_user_favorites \
+                     WHERE item_kind = 'artist' AND item_id = '{artist}'"
+                )
+            ),
+            1,
+            "{artist} keeps its favourite"
+        );
+    }
+}
+
+/// A reset album's credit carries no artist id: the stored album artist id
+/// is only the file's first one, so for "A & B" it would name A alone. The
+/// album stays on the "A & B" name row, not on A's row, and the next scan
+/// writes the ids the file holds.
+#[tokio::test]
+async fn a_reset_album_credit_carries_no_artist_id() {
+    const ID_A: &str = "aaaaaaaa-1111-4111-8111-00000000000a";
+    let scratch = ScratchDir::new("scan-reset-joined");
+    let music = scratch.join("music");
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    let store = &library.scan_store;
+    let track = store.track_at("music", "a/01.flac").unwrap().expect("a/01");
+    let album = store.album_for_track(&track).unwrap().expect("album");
+    // The file names "A & B" with ids for A and B; the column keeps A's.
+    // A has a row of its own, linked by a person.
+    store
+        .db()
+        .run_sql(&format!(
+            "UPDATE local_tracks SET album_artist_name = 'A & B', \
+             embedded_album_artist_mbid = '{ID_A}', membership_locked = 1, \
+             membership_source = 'manual' WHERE id = '{track}'; \
+             INSERT INTO local_artists (id, display_name, folded_name, normalized_name, kind, \
+             created_at, updated_at) VALUES ('ar-a', 'A', 'a', 'a', 'person', 0, 0); \
+             INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES ('ar-a', 'musicbrainz', '{ID_A}', 'manual', 1); \
+             UPDATE local_albums SET grouping_key = 'moved-on' WHERE id = '{album}';"
+        ))
+        .expect("seeds");
+    reset_grouping(&library, &album, &track);
+    let reset = store.album_for_track(&track).unwrap().expect("reset album");
+    assert_ne!(reset, album, "the reset made a new album");
+    let db = droppedneedle_kernel::db::open_connection(&scratch.join("app.db")).expect("db opens");
+    let credited: (String, String, Option<String>) = db
+        .query_row(
+            "SELECT c.local_artist_id, r.display_name, c.artist_mbid \
+             FROM local_album_artists c JOIN local_artists r ON r.id = c.local_artist_id \
+             WHERE c.local_album_id = ?1",
+            [&reset],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("reset album credit");
+    assert_ne!(credited.0, "ar-a", "not filed under A alone");
+    assert_eq!(credited.1, "A & B");
+    assert_eq!(credited.2, None, "no id on the album credit");
+}
+
+/// Reset `track` on `album` back to automatic grouping, as an admin.
+fn reset_grouping(library: &LibrarySetup, album: &str, track: &str) {
+    use droppedneedle_library::corrections::models::{
+        ApplyMeta, MembershipKind, MembershipRequest,
+    };
+    let corrections = crate::common::library::services(library).corrections;
+    let request = MembershipRequest {
+        kind: MembershipKind::Reset,
+        album_id: Some(album.to_owned()),
+        track_ids: vec![track.to_owned()],
+        expected_album_revisions: BTreeMap::new(),
+        target_album_id: None,
+        title: None,
+        album_artist_name: None,
+        identity_choice: Default::default(),
+    };
+    let preview = corrections
+        .preview_membership(&request, "admin")
+        .expect("previewed");
+    corrections
+        .apply_membership(
+            &request,
+            &ApplyMeta {
+                preview_token: preview.token,
+                idempotency_key: None,
+                actor: "admin".to_owned(),
+            },
+        )
+        .expect("reset");
+}
+
 // ---------------------------------------------------------------------------
 // A missing track continuing into the track that took its place.
 // ---------------------------------------------------------------------------
