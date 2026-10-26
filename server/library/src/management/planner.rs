@@ -561,12 +561,15 @@ fn plan_file(
     {
         return Err(reasons::root_unavailable());
     }
+    let unreadable = |error: PublishError| {
+        tracing::info!(%error, track = track.id, "file unreadable at preview");
+        path_reason(&error)
+    };
     let path = ctx
         .sandbox
         .resolve_no_symlink(&track.root_id, &track.relative_path)
-        .map_err(|error| path_reason(&error))?;
-    let hashed =
-        crate::publish::paths::hash_regular_file(&path).map_err(|error| path_reason(&error))?;
+        .map_err(unreadable)?;
+    let hashed = crate::publish::paths::hash_regular_file(&path).map_err(unreadable)?;
     let fingerprint = FileFingerprint {
         size: hashed.size,
         sha256: hashed.sha256,
