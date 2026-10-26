@@ -165,6 +165,7 @@ fn rig_on(routes: HashMap<String, RawResponse>, down: bool, source: Source) -> R
     let db = droppedneedle_kernel::db::open_connection(&path).expect("side connection opens");
     let store = Arc::new(SqliteIdentifyStore::new(
         droppedneedle_kernel::db::Db::open_for_tests(&path).expect("store opens"),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     ));
     let service = IdentifyService::new(IdentifyDeps {
         store: store.clone(),

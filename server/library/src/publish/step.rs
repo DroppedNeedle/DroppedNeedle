@@ -69,6 +69,8 @@ pub(super) struct Run<'a> {
     pub bin_seams: Seams,
     /// Unix milliseconds, read by the caller.
     pub now_ms: i64,
+    /// Wall time, for stamps read as each step runs.
+    pub clock: &'a dyn droppedneedle_kernel::clock::Clock,
     pub adoption: AdoptionFrom,
     /// Whether the plan's identities of the files a removal takes away
     /// are trusted before they move: a publish read them itself, recovery
@@ -1219,11 +1221,11 @@ impl Run<'_> {
     /// `published -> committed`, in one durable transaction. The adopted
     /// files are read before it.
     fn commit(&self, plan: &PlanBundle, mut tracks: Vec<TrackCommit>) -> Result<(), PublishError> {
-        read_adopted(&mut tracks)?;
+        read_adopted(&mut tracks, self.clock)?;
         let put_back = plan
             .put_back
             .as_ref()
-            .map(|put_back| super::put_back::read_placed(self.sandbox, put_back))
+            .map(|put_back| super::put_back::read_placed(self.sandbox, put_back, self.clock))
             .transpose()?;
         let commit = BundleCommit {
             bundle_id: plan.id.clone(),
@@ -1232,8 +1234,8 @@ impl Run<'_> {
             put_back,
         };
         durable(self.db, "publish.bundle_commit", |tx| {
-            commit_bundle(tx, &commit)?;
-            enqueue_after_commit(tx, self.jobs, &commit)?;
+            commit_bundle(tx, &commit, self.clock)?;
+            enqueue_after_commit(tx, self.jobs, &commit, self.clock)?;
             let writer = JournalWriter::new(tx);
             for journal in JournalStore::new(tx).bundle(&commit.bundle_id)? {
                 if journal.state != JournalState::Published {
@@ -1313,7 +1315,7 @@ impl Run<'_> {
                     }
                     durable(db, "publish.recover_put_back_lost", |tx| {
                         if let Some(track_id) = journal.track_id.as_deref() {
-                            mark_missing(tx, track_id)?;
+                            mark_missing(tx, track_id, self.clock)?;
                         }
                         flag_rows(tx, journals)
                     })?;
@@ -1348,7 +1350,7 @@ impl Run<'_> {
             } else if !staged_holds {
                 durable(db, "publish.recover_output_lost", |tx| {
                     if let Some(track_id) = journal.track_id.as_deref() {
-                        mark_missing(tx, track_id)?;
+                        mark_missing(tx, track_id, self.clock)?;
                     }
                     flag_rows(tx, journals)
                 })?;

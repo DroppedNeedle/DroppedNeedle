@@ -65,11 +65,10 @@ pub mod naming;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, UNIX_EPOCH};
 
 use droppedneedle_kernel::db::Lane;
 
-use super::clock::{now_ms, today_day};
+use super::clock::LibraryClock as _;
 use super::matching::Release;
 use super::publish::paths::{ResolvedRoot, left_out};
 use super::publish::planner::{
@@ -574,7 +573,7 @@ impl LibrarySetup {
                     "FILE_RECYCLED",
                     import.actor.as_deref(),
                     None,
-                    UNIX_EPOCH + Duration::from_millis(now_ms()),
+                    self.clock.now_system(),
                 ) {
                     Ok(removal) => {
                         claimed_tracks.extend(targets.iter().map(|target| target.track_id.clone()));
@@ -721,10 +720,15 @@ impl LibrarySetup {
                 naming_revision: PINNED_REVISION,
                 policy_revision: bundle.policy_revision,
                 settings_revision: PINNED_REVISION,
-                today_day: today_day(),
+                today_day: self.clock.today_day(),
                 token_hash: token_hash.clone(),
             };
-            let sealed = SealedPreview::seal(bundle, token_hash, PINNED_REVISION, today_day() + 1);
+            let sealed = SealedPreview::seal(
+                bundle,
+                token_hash,
+                PINNED_REVISION,
+                self.clock.today_day() + 1,
+            );
             open.publisher
                 .publish(&sealed, &live, &BTreeMap::new())
                 .map_err(|error| match error {

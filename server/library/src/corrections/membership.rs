@@ -361,7 +361,7 @@ pub(crate) fn retire(
     tx.execute(
         "UPDATE library_identify_reviews SET state = 'rejected', updated_ms = ?2 \
          WHERE local_album_id = ?1 AND state = 'pending'",
-        params![album_id, crate::clock::now_ms() as i64],
+        params![album_id, crate::clock::ms(now)],
     )?;
     tx.execute(
         "DELETE FROM library_identify_jobs WHERE local_album_id = ?1 \
@@ -389,8 +389,8 @@ fn lock_to(tx: &Transaction<'_>, album_id: &str, tracks: &[String]) -> rusqlite:
 /// Offer albums whose contents changed to identification: an automatic
 /// edition gets another look, a new album gets its first. A chosen
 /// edition is never replaced by this.
-pub(super) fn offer(tx: &Transaction<'_>, albums: &[String]) -> rusqlite::Result<()> {
-    let now_ms = crate::clock::now_ms() as i64;
+pub(super) fn offer(tx: &Transaction<'_>, albums: &[String], now: f64) -> rusqlite::Result<()> {
+    let now_ms = crate::clock::ms(now);
     for album in albums {
         let live: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
@@ -536,7 +536,7 @@ pub(super) fn regroup(
     changes.extend(settled.changes);
     let mut changed = live_sources.clone();
     changed.push(dest.id.clone());
-    offer(tx, &changed)?;
+    offer(tx, &changed, now)?;
 
     let outcome = MembershipOutcome {
         track_ids: track_ids.clone(),

@@ -72,14 +72,18 @@ struct Inner {
 /// The scan store, over the application database.
 pub struct SqliteScanStore {
     db: Db,
+    /// Wall time for the artwork and lyrics checks.
+    clock: std::sync::Arc<dyn droppedneedle_kernel::clock::Clock>,
     inner: Mutex<Inner>,
 }
 
 impl SqliteScanStore {
-    /// The store over `db`. It creates no schema itself.
-    pub fn new(db: Db) -> Self {
+    /// The store over `db`, dating its checks by `clock`. It creates no
+    /// schema itself.
+    pub fn new(db: Db, clock: std::sync::Arc<dyn droppedneedle_kernel::clock::Clock>) -> Self {
         Self {
             db,
+            clock,
             inner: Mutex::new(Inner {
                 deferred: HashSet::new(),
                 catalog_version: 0,
@@ -212,7 +216,13 @@ pub(crate) fn scratch_store() -> (
     let path = dir.path().join("app.db");
     droppedneedle_kernel::schema::template::copy_to(&path).unwrap();
     let db = Db::open_for_tests(&path).unwrap();
-    (dir, SqliteScanStore::new(db))
+    (
+        dir,
+        SqliteScanStore::new(
+            db,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
+    )
 }
 
 fn normalize_key(raw: &str) -> String {

@@ -23,7 +23,7 @@ use super::models::{JobIntent, JobMode, ManagementError, Origin, Selection, Sele
 use super::reasons::{self, ItemReason};
 use super::service::{JobSpec, Management};
 use super::{planner, profile, store, takeover};
-use crate::clock::now_unix;
+use crate::clock::LibraryClock as _;
 use crate::identify::models::AlbumIdentity;
 use crate::management::settings::{activation_is_current, migration_carry_applies};
 use crate::operations::status;
@@ -290,7 +290,11 @@ impl crate::wiring::LibrarySetup {
         let queued = self
             .db
             .write_blocking(Lane::Background, "management.queue_automatic", |tx| {
-                Ok::<_, droppedneedle_kernel::db::DbError>(queue(tx, album_id, now_unix())?)
+                Ok::<_, droppedneedle_kernel::db::DbError>(queue(
+                    tx,
+                    album_id,
+                    self.clock.now_secs(),
+                )?)
             });
         if let Err(error) = queued {
             tracing::warn!(%error, album_id, "album not queued for automatic management");
@@ -437,7 +441,7 @@ impl Management {
     /// Look at the next waiting album that has settled, while no scan
     /// runs. True when one was looked at or handed back. Blocking.
     pub fn automatic_step(&self, settle: &mut Settle) -> Result<bool, ManagementError> {
-        self.automatic_step_at(settle, now_unix())
+        self.automatic_step_at(settle, self.setup.clock.now_secs())
     }
 
     /// [`Self::automatic_step`] at `now` (unix seconds). Blocking.
@@ -498,7 +502,7 @@ impl Management {
     /// Look at the next waiting album that is due, settled or not.
     /// Blocking.
     pub fn automatic_next(&self) -> Result<bool, ManagementError> {
-        self.look_at_due(now_unix(), None)
+        self.look_at_due(self.setup.clock.now_secs(), None)
     }
 
     /// Look at the next album due at `now`. With `settled_before`, only
@@ -849,7 +853,13 @@ impl Management {
             if self.setup.db.write_blocking(
                 Lane::Background,
                 "management.judge_remembered",
-                |tx| Ok::<_, ManagementError>(judge_remembered(tx, album_id, now_unix())?),
+                |tx| {
+                    Ok::<_, ManagementError>(judge_remembered(
+                        tx,
+                        album_id,
+                        self.setup.clock.now_secs(),
+                    )?)
+                },
             )? {
                 return Ok(Verdict::Park(takeover::TAKEN_OVER));
             }
@@ -864,7 +874,11 @@ impl Management {
                     Lane::Background,
                     "management.mark_followed",
                     |tx| {
-                        Ok::<_, ManagementError>(takeover::mark_followed(tx, album_id, now_unix())?)
+                        Ok::<_, ManagementError>(takeover::mark_followed(
+                            tx,
+                            album_id,
+                            self.setup.clock.now_secs(),
+                        )?)
                     },
                 )?;
                 return Ok(Verdict::Park(takeover::TAKEN_OVER));
@@ -1005,7 +1019,7 @@ impl Management {
             })?
         {
             let snapshot = self.snapshot(&existing)?;
-            let now = now_unix();
+            let now = self.setup.clock.now_secs();
             let expires = snapshot.preview_expires_at.unwrap_or(0.0);
             match (snapshot.job.state.as_str(), snapshot.phase.as_str()) {
                 // A run for exactly this is waiting or working.

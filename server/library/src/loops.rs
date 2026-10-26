@@ -11,7 +11,7 @@ use droppedneedle_kernel::jobs::{
 };
 use tokio::runtime::Handle;
 
-use super::clock::{now_ms, now_unix, today_day};
+use super::clock::LibraryClock as _;
 use super::publish::PublishError;
 use super::publish::expiry::{self, ExpiryPass, ExpiryReport};
 use super::publish::paths::{Root, Sandbox};
@@ -127,7 +127,10 @@ impl LibrarySetup {
             },
             dirty: self.dirty.clone(),
             wakeups: self.wakeups.clone(),
-            now_unix: Arc::new(now_unix),
+            now_unix: {
+                let clock = Arc::clone(&self.clock);
+                Arc::new(move || clock.now_secs())
+            },
         }
     }
 
@@ -185,7 +188,7 @@ impl LibrarySetup {
             &registry,
             &(self.root_dirs)(),
             &self.pool,
-            now_unix(),
+            self.clock.now_secs(),
             stop,
         )
         .await;
@@ -274,9 +277,10 @@ impl LibrarySetup {
             if self.identification_paused() || !self.settings.identification_readable() {
                 break;
             }
-            let claimed = self
-                .identify_store
-                .claim(now_ms(), super::identify::queue::LEASE_SECONDS * 1000);
+            let claimed = self.identify_store.claim(
+                self.clock.now_ms_u64(),
+                super::identify::queue::LEASE_SECONDS * 1000,
+            );
             let job = match claimed {
                 Ok(Some(job)) => job,
                 Ok(None) => {
@@ -291,7 +295,9 @@ impl LibrarySetup {
                     break;
                 }
             };
-            let attempt = self.identify.run_claimed(job.clone(), now_ms());
+            let attempt = self
+                .identify
+                .run_claimed(job.clone(), self.clock.now_ms_u64());
             tokio::select! {
                 biased;
                 () = stop.cancelled() => break,
@@ -374,7 +380,7 @@ impl LibrarySetup {
             album_id = job.local_album_id,
             "identify attempt stopped on a store error"
         );
-        let now = now_ms();
+        let now = self.clock.now_ms_u64();
         match &error {
             StoreError::Closed => return,
             StoreError::Busy(_) => {
@@ -481,7 +487,7 @@ impl LibrarySetup {
         // long.
         let purged = match cell.cell.as_ref() {
             Some(_) => {
-                let purged = snapshots::purge_expired(&self.db, today_day())?;
+                let purged = snapshots::purge_expired(&self.db, self.clock.today_day())?;
                 // Generated files a preview planned (covers, lyrics) wait in
                 // the blob store until their job is done with them.
                 self.db

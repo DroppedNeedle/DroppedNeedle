@@ -77,7 +77,7 @@ pub(super) fn reset(
         if let Some((_, successor)) = shares.first() {
             let successor = (*successor).clone();
             if !unique {
-                scattered = edition::drop_scattered(tx, &album.id, &successor)?;
+                scattered = edition::drop_scattered(tx, &album.id, &successor, now)?;
             }
             retire(tx, &album.id, &successor, now)?;
             retired.push((album.id.clone(), Some(successor)));
@@ -138,7 +138,7 @@ pub(super) fn reset(
     changes.extend(scattered);
     let mut changed: Vec<String> = landing.keys().cloned().collect();
     changed.push(album.id.clone());
-    offer(tx, &changed)?;
+    offer(tx, &changed, now)?;
 
     let outcome = MembershipOutcome {
         track_ids,

@@ -236,7 +236,7 @@ pub(super) fn join(
         }
     }
     for (reason, title, edition) in dropped {
-        open_review(tx, &new, reason, &title, &[edition])?;
+        open_review(tx, &new, reason, &title, &[edition], now)?;
     }
     Ok(new)
 }

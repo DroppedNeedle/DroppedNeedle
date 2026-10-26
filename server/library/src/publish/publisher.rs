@@ -33,6 +33,8 @@ use super::snapshots::{BlobStore, SnapshotStore, sha256_hex};
 use super::step::{AdoptionFrom, Advanced, Hooks, Run};
 use super::tags_seam::TagDocument;
 use super::{PublishError, paths};
+use crate::clock::LibraryClock as _;
+use droppedneedle_kernel::clock::Clock;
 
 /// One track row in the atomic catalog commit.
 #[derive(Debug, Clone)]
@@ -105,6 +107,7 @@ pub(super) fn enqueue_after_commit(
     tx: &rusqlite::Transaction<'_>,
     jobs: &JobQueue,
     commit: &BundleCommit,
+    clock: &dyn Clock,
 ) -> Result<(), PublishError> {
     let Some(removed) = commit
         .removal
@@ -113,19 +116,11 @@ pub(super) fn enqueue_after_commit(
     else {
         return Ok(());
     };
-    super::planner::AlbumRemovedJob::enqueue(tx, jobs, &commit.bundle_id, removed).map_err(
-        |error| match error {
+    super::planner::AlbumRemovedJob::enqueue(tx, jobs, &commit.bundle_id, removed, clock.now_secs())
+        .map_err(|error| match error {
             JobError::Db(db) => PublishError::from(db),
             other => PublishError::Store(other.to_string()),
-        },
-    )
-}
-
-fn now_secs() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
+        })
 }
 
 /// The catalog revision: a change counter every commit bumps once. Read
@@ -173,7 +168,11 @@ pub fn locate(
 /// album join it, and are placed on its edition in the same
 /// transaction. An import's match is sealed in it too
 /// ([`crate::identity::adopt_import`]).
-pub(super) fn commit_bundle(tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError> {
+pub(super) fn commit_bundle(
+    tx: &Durable<'_>,
+    commit: &BundleCommit,
+    clock: &dyn Clock,
+) -> Result<(), PublishError> {
     let conn: &Connection = tx;
     // The folders the bundle made hold its files now: no unwind removes
     // them.
@@ -183,10 +182,10 @@ pub(super) fn commit_bundle(tx: &Durable<'_>, commit: &BundleCommit) -> Result<(
         return Ok(());
     }
     if let Some(removal) = &commit.removal {
-        super::remove::commit(conn, &commit.bundle_id, removal, now_secs())?;
+        super::remove::commit(conn, &commit.bundle_id, removal, clock.now_secs())?;
     }
     if let Some(put_back) = &commit.put_back {
-        super::put_back::commit(conn, &commit.bundle_id, put_back, now_secs())?;
+        super::put_back::commit(conn, &commit.bundle_id, put_back, clock.now_secs())?;
     }
     // The bundle's own rows, read in this transaction: a scan or an
     // identification that changed one since the seal refuses the
@@ -204,7 +203,7 @@ pub(super) fn commit_bundle(tx: &Durable<'_>, commit: &BundleCommit) -> Result<(
         )));
     }
     crate::catalog_revision::bump_catalog(conn)?;
-    let now = now_secs();
+    let now = clock.now_secs();
     // `written_sha256` is the app's record of the bytes it placed: a
     // file that no longer has them was changed outside the app. A write
     // over a file already changed outside (a person's rename, say)
@@ -290,10 +289,14 @@ pub(super) fn commit_bundle(tx: &Durable<'_>, commit: &BundleCommit) -> Result<(
 
 /// Mark a track missing so streaming and search stay accurate when
 /// committed bytes cannot be recovered.
-pub(super) fn mark_missing(conn: &Connection, track_id: &str) -> Result<(), PublishError> {
+pub(super) fn mark_missing(
+    conn: &Connection,
+    track_id: &str,
+    clock: &dyn Clock,
+) -> Result<(), PublishError> {
     conn.execute(
         "UPDATE local_tracks SET availability = 'missing', missing_since = ?2 WHERE id = ?1",
-        rusqlite::params![track_id, now_secs()],
+        rusqlite::params![track_id, clock.now_secs()],
     )?;
     crate::catalog_revision::bump_catalog(conn)?;
     Ok(())
@@ -582,7 +585,10 @@ fn adopt_track(
 /// Read each adopted file of a commit before its transaction: what the
 /// catalog indexes it as, exactly as a scan would. The transaction then
 /// never waits on a disk or a share.
-pub(super) fn read_adopted(tracks: &mut [TrackCommit]) -> Result<(), PublishError> {
+pub(super) fn read_adopted(
+    tracks: &mut [TrackCommit],
+    clock: &dyn Clock,
+) -> Result<(), PublishError> {
     for track in tracks.iter_mut() {
         let Some(adoption) = &track.adopt else {
             continue;
@@ -593,6 +599,7 @@ pub(super) fn read_adopted(tracks: &mut [TrackCommit]) -> Result<(), PublishErro
             Path::new(&track.file_path),
             adoption.policy,
             &adoption.policy_revision,
+            clock,
         )?);
     }
     Ok(())
@@ -606,6 +613,7 @@ pub(super) fn index_file(
     path: &Path,
     policy: crate::scan::models::EffectivePolicy,
     policy_revision: &str,
+    clock: &dyn Clock,
 ) -> Result<crate::scan::store::CommitIndexedItem, PublishError> {
     use crate::scan::seams::ScannedTags;
     use crate::scan::store::CommitIndexedItem;
@@ -624,7 +632,7 @@ pub(super) fn index_file(
         absolute_path: path.to_string_lossy().into_owned(),
         size_bytes: meta.len(),
         mtime_ns: crate::scan::revision::mtime_ns_from_metadata(&meta),
-        tags_read_at: now_secs(),
+        tags_read_at: clock.now_secs(),
         tags: ScannedTags { tag, header },
         effective_policy: policy,
         policy_revision: policy_revision.to_owned(),
@@ -747,7 +755,7 @@ pub struct Publisher<P: SpaceProbe> {
     add_budget: Option<(Instant, Arc<AtomicBool>)>,
     /// Unix milliseconds, read at the start of each publish: a publisher
     /// stays open for as long as the root set does.
-    clock: Box<dyn Fn() -> i64 + Send>,
+    clock: Arc<dyn Clock>,
     now_ms: i64,
     today_day: i64,
     undo_retention_days: i64,
@@ -825,15 +833,9 @@ fn keep_pictures(
 
 impl<P: SpaceProbe> Publisher<P> {
     /// A publisher over `db`, queueing a commit's follow-up work on `jobs`.
-    /// `clock` reads the time in unix milliseconds.
-    pub fn new(
-        sandbox: Sandbox,
-        db: Db,
-        space: P,
-        jobs: JobQueue,
-        clock: impl Fn() -> i64 + Send + 'static,
-    ) -> Self {
-        let now_ms = clock();
+    /// `clock` is the wall clock its stamps and day boundaries read.
+    pub fn new(sandbox: Sandbox, db: Db, space: P, jobs: JobQueue, clock: Arc<dyn Clock>) -> Self {
+        let now_ms = clock.now_ms();
         Self {
             sandbox,
             db,
@@ -851,7 +853,7 @@ impl<P: SpaceProbe> Publisher<P> {
             add_budget: None,
             now_ms,
             today_day: day_of(now_ms),
-            clock: Box::new(clock),
+            clock,
             undo_retention_days: super::DEFAULT_UNDO_RETENTION_DAYS as i64,
         }
     }
@@ -976,7 +978,7 @@ impl<P: SpaceProbe> Publisher<P> {
         let bundle = &sealed.bundle;
         self.temps.clear();
         self.known.clear();
-        self.now_ms = (self.clock)();
+        self.now_ms = self.clock.now_ms();
         self.today_day = day_of(self.now_ms);
         self.run_pregates(sealed, live)?;
         // Durable source operation for undo: recorded after the gates
@@ -1059,6 +1061,7 @@ impl<P: SpaceProbe> Publisher<P> {
             seams: self.place_seams,
             bin_seams: self.bin_seams,
             now_ms: self.now_ms,
+            clock: &*self.clock,
             adoption: AdoptionFrom::Plan,
             known_removals: true,
             temps: &self.temps,

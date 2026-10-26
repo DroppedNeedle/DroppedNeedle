@@ -485,7 +485,7 @@ pub fn settle(
             ReviewState::Dismissed
         }
     };
-    if !mark(tx, review_id, needed, next, actor)? {
+    if !mark(tx, review_id, needed, next, actor, now)? {
         return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
     }
     Ok(())
@@ -499,6 +499,7 @@ pub fn mark(
     from: &str,
     to: ReviewState,
     actor: &str,
+    now: f64,
 ) -> rusqlite::Result<bool> {
     let changed = tx.execute(
         "UPDATE library_identify_reviews SET state = ?3, resolved_by_user_id = ?4, \
@@ -508,7 +509,7 @@ pub fn mark(
             from,
             state_name(to),
             actor,
-            crate::clock::now_ms() as i64
+            crate::clock::ms(now)
         ],
     )?;
     if changed == 1 {

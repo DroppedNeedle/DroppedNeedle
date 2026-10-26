@@ -9,7 +9,7 @@ use super::models::{JobMode, ManagementError};
 use super::service::Management;
 use super::store::{self, ManagedMark, Snapshot};
 use super::takeover;
-use crate::clock::now_unix;
+use crate::clock::LibraryClock as _;
 use crate::jobs;
 
 impl Management {
@@ -53,7 +53,7 @@ impl Management {
             })?;
         let intent = snapshot.intent();
         let mode = snapshot.job_mode();
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         let mut extra = None;
         if let Some(edit) = &intent.tag_edit {
             self.setup
@@ -242,7 +242,9 @@ impl Management {
                 Ok::<_, ManagementError>(store::bundle_items(conn, &source_id, ordinal)?)
             })?;
         match items.first() {
-            Some(item) => self.run_undone(&source, &item.album_id, None, now_unix()),
+            Some(item) => {
+                self.run_undone(&source, &item.album_id, None, self.setup.clock.now_secs())
+            }
             None => Ok(()),
         }
     }
@@ -290,7 +292,7 @@ impl Management {
                     &targets,
                     settings.retry_attempts.saturating_add(1),
                     settings.retry_delay_seconds,
-                    now_unix(),
+                    self.setup.clock.now_secs(),
                 )?)
             },
         );
@@ -306,7 +308,11 @@ impl Management {
             self.setup
                 .db
                 .write_blocking(Lane::Background, "management.claim_refresh", |tx| {
-                    Ok::<_, ManagementError>(store::claim_refresh(tx, worker, now_unix())?)
+                    Ok::<_, ManagementError>(store::claim_refresh(
+                        tx,
+                        worker,
+                        self.setup.clock.now_secs(),
+                    )?)
                 })?
         else {
             return Ok(false);
@@ -326,7 +332,12 @@ impl Management {
         self.setup
             .db
             .write_blocking(Lane::Background, "management.finish_refresh", |tx| {
-                Ok::<_, ManagementError>(store::finish_refresh(tx, &due, outcome, now_unix())?)
+                Ok::<_, ManagementError>(store::finish_refresh(
+                    tx,
+                    &due,
+                    outcome,
+                    self.setup.clock.now_secs(),
+                )?)
             })?;
         Ok(true)
     }

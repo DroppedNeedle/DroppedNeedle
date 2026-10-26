@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::future::BoxFuture;
 
+use super::clock::LibraryClock as _;
 use super::contrib::error::ContribError;
 use super::contrib::models::{
     ContributionRecord, DiscogsArtistCredit, DiscogsFormat, DiscogsIdentifier, DiscogsLabel,
@@ -442,13 +443,6 @@ impl<V: Clone> TtlCache<V> {
     }
 }
 
-fn now_seconds() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
 /// The production MusicBrainz client the contribution adapter drives.
 pub type ContribMbClient = MusicBrainzView;
 
@@ -800,15 +794,20 @@ const DISCOGS_CACHE: Duration = Duration::from_secs(6 * 60 * 60);
 /// contribution page.
 pub struct LiveDiscogsContrib {
     client: discogs::DiscogsClient,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     releases: TtlCache<Option<DiscogsRelease>>,
     searches: TtlCache<Vec<DiscogsReleaseCandidate>>,
 }
 
 impl LiveDiscogsContrib {
-    /// Read Discogs through `client`.
-    pub fn new(client: discogs::DiscogsClient) -> Self {
+    /// Read Discogs through `client`, dating its answers by `clock`.
+    pub fn new(
+        client: discogs::DiscogsClient,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
         Self {
             client,
+            clock,
             releases: TtlCache::new(DISCOGS_CACHE),
             searches: TtlCache::new(DISCOGS_CACHE),
         }
@@ -932,7 +931,7 @@ impl DiscogsContrib for LiveDiscogsContrib {
             }
             let candidates = self
                 .client
-                .search_releases(query, bounded, now_seconds(), self.turn(priority)?)
+                .search_releases(query, bounded, self.clock.now_secs(), self.turn(priority)?)
                 .await
                 .map_err(discogs_error)?;
             let candidates: Vec<DiscogsReleaseCandidate> = candidates
@@ -968,7 +967,7 @@ impl DiscogsContrib for LiveDiscogsContrib {
             }
             let release = self
                 .client
-                .get_release(release_id, now_seconds(), self.turn(priority)?)
+                .get_release(release_id, self.clock.now_secs(), self.turn(priority)?)
                 .await
                 .map_err(discogs_error)?
                 .map(contrib_release);

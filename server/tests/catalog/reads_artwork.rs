@@ -550,7 +550,10 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
         .expect("fixture carries art");
     let rig = rig(Some(&track)).await;
 
-    let store = SqliteScanStore::new(rig.runtime.db().clone());
+    let store = SqliteScanStore::new(
+        rig.runtime.db().clone(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
     let first = store.refresh_album_artwork(&|| false).unwrap();
     assert_eq!((first.checked, first.changed), (1, 1));
     let again = store.refresh_album_artwork(&|| false).unwrap();
@@ -600,7 +603,10 @@ async fn art_version(rig: &Rig) -> Option<i64> {
 async fn art_that_comes_back_gets_a_new_version() {
     let files = ScratchDir::new("reads-artwork-version");
     let rig = rig(Some(&files.join("01.flac"))).await;
-    let store = SqliteScanStore::new(rig.runtime.db().clone());
+    let store = SqliteScanStore::new(
+        rig.runtime.db().clone(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
 
     std::fs::write(files.join("cover.png"), PNG_BYTES).unwrap();
     touch_dir(&files, 1_000);

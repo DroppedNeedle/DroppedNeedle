@@ -87,7 +87,7 @@ fn apply_finding(
             // Matched again even when its files were identified before:
             // the detach's undo is carried through this identification.
             if detached.is_some() {
-                queue_retry(tx, album_id, actor, crate::clock::now_ms() as i64)?;
+                queue_retry(tx, album_id, actor, crate::clock::ms(now))?;
             }
             Ok(detached.map(|_| "DETACHED"))
         }

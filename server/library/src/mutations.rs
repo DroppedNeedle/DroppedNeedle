@@ -22,13 +22,13 @@
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::queue::JobError;
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::catalog_revision::bump_catalog;
+use super::clock::LibraryClock as _;
 use super::manage::{RemovalDone, RemovalEntry};
 use super::management::takeover;
 use super::operations::reasons::Reason;
@@ -615,7 +615,7 @@ impl<'a> Mutations<'a> {
         Ok(fresh_entry(
             &bin_dir(&bins, root_id)?,
             name,
-            SystemTime::now(),
+            self.setup.clock.now_system(),
         ))
     }
 
@@ -704,6 +704,7 @@ impl<'a> Mutations<'a> {
                     &before,
                     &serde_json::json!({}),
                     "MANAGEMENT_REENABLED",
+                    self.setup.clock.now_secs(),
                 )?;
                 bump_catalog(tx)?;
                 Ok(true)
@@ -734,7 +735,7 @@ impl<'a> Mutations<'a> {
         self.setup
             .db
             .write_blocking(Lane::Foreground, "mutations.hand_back_all", |tx| {
-                Ok(takeover::stamp_all(tx, actor, now_secs())?)
+                Ok(takeover::stamp_all(tx, actor, self.setup.clock.now_secs())?)
             })
     }
 
@@ -755,10 +756,12 @@ impl<'a> Mutations<'a> {
                 Lane::Foreground,
                 "mutations.remove_tracks",
                 |tx| {
-                    let changed = mark_missing(tx, tracks, removal.reason_code, removal.actor)?;
+                    let now = self.setup.clock.now_secs();
+                    let changed =
+                        mark_missing(tx, tracks, removal.reason_code, removal.actor, now)?;
                     if let Some(removed) = &removal.album_removed {
                         let removal_id = uuid::Uuid::new_v4().to_string();
-                        AlbumRemovedJob::enqueue(tx, jobs, &removal_id, removed).map_err(
+                        AlbumRemovedJob::enqueue(tx, jobs, &removal_id, removed, now).map_err(
                             |error| match error {
                                 JobError::Db(db) => MutationError::from(db),
                                 other => MutationError::Store(other.to_string()),
@@ -1071,8 +1074,8 @@ fn mark_missing(
     tracks: &[TrackFile],
     reason_code: &str,
     actor: &str,
+    now: f64,
 ) -> Result<Vec<String>, MutationError> {
-    let now = now_secs();
     let mut changed = Vec::new();
     for track in tracks {
         if remove::mark_removed(
@@ -1102,6 +1105,7 @@ fn record_action(
     before: &serde_json::Value,
     after: &serde_json::Value,
     reason_code: &str,
+    now: f64,
 ) -> rusqlite::Result<()> {
     // The actor column references auth_users; an unknown id stays NULL.
     tx.execute(
@@ -1117,17 +1121,10 @@ fn record_action(
             before.to_string(),
             after.to_string(),
             reason_code,
-            now_secs(),
+            now,
         ],
     )?;
     Ok(())
-}
-
-fn now_secs() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 #[cfg(test)]
@@ -1137,7 +1134,7 @@ mod tests {
 
     #[test]
     fn stamp_and_path_guard() {
-        let at = UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         assert_eq!(utc_stamp(at), "20231114T221320");
         assert!(join_inside(Path::new("/lib"), "a/../../etc").is_none());
         assert!(join_inside(Path::new("/lib"), "/etc/passwd").is_none());

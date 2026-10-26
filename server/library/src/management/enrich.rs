@@ -264,7 +264,7 @@ pub fn ensure_release_extras(
         relations: credits_wanted(profile),
         names: names_wanted(profile),
     };
-    let now_ms = now_ms();
+    let now_ms = store.clock().now_ms();
     let fresh_ms = (RELEASE_FRESH_SECS * 1000) as i64;
     let relations_fresh = release
         .recording_relations
@@ -348,14 +348,6 @@ pub fn ensure_release_extras(
             "artist names",
         ),
     }
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |span| {
-            i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
-        })
 }
 
 /// Drive one call to completion from the blocking planning thread. `None`

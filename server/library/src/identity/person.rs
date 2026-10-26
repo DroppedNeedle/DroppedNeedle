@@ -237,7 +237,7 @@ pub fn choose(
     join_replaced(tx, Scope::Album(album_id), now)?;
     continue_tracks(tx, Scope::Album(album_id), now)?;
     if let Some(actor) = actor {
-        settle_reviews(tx, album_id, "approved", Some(candidate_key), actor)?;
+        settle_reviews(tx, album_id, "approved", Some(candidate_key), actor, now)?;
     }
     record_action(
         tx,
@@ -317,7 +317,7 @@ fn make_persons(
     // A chosen or confirmed edition is what automatic management waits
     // for: the album's files follow that exact edition.
     crate::management::automatic::queue(tx, album_id, now)?;
-    settle_reviews(tx, album_id, "approved", None, actor)?;
+    settle_reviews(tx, album_id, "approved", None, actor, now)?;
     let action = record_action(
         tx,
         CatalogAction {
@@ -412,7 +412,7 @@ pub fn leave_unmanaged(
     if matched {
         drop_satellite(tx, album_id, sql::CLEAR_FLAG)?;
     }
-    settle_reviews(tx, album_id, "rejected", None, actor)?;
+    settle_reviews(tx, album_id, "rejected", None, actor, now)?;
     record_and_keep(
         tx,
         album_id,

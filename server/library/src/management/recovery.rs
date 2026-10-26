@@ -13,7 +13,7 @@ use rusqlite::{OptionalExtension as _, params};
 
 use super::models::ManagementError;
 use super::service::Management;
-use crate::clock::{now_ms, now_unix};
+use crate::clock::LibraryClock as _;
 use crate::publish::recovery::Leftover;
 
 /// One write that needs an administrator.
@@ -166,7 +166,7 @@ impl Management {
             for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
                 diagnostics.needs_attention_bundles.push(row?);
             }
-            diagnostics.retrying_bundles = retrying_bundles(conn, now_ms() as i64)?;
+            diagnostics.retrying_bundles = retrying_bundles(conn, self.setup.clock.now_ms())?;
             Ok(diagnostics)
         })
         .map(|mut diagnostics| {
@@ -268,7 +268,7 @@ impl Management {
             conn.execute(
                 "INSERT OR IGNORE INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
                  verified_files, resolved_at) VALUES (?1, ?2, ?3, ?4)",
-                params![bundle_id, actor, verified, now_unix()],
+                params![bundle_id, actor, verified, self.setup.clock.now_secs()],
             )?;
             Ok::<_, ManagementError>(())
         })?;

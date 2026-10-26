@@ -58,6 +58,7 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     let db = droppedneedle_kernel::db::open_connection(&path).expect("side connection opens");
     let store = Arc::new(SqliteIdentifyStore::new(
         droppedneedle_kernel::db::Db::open_for_tests(&path).expect("store opens"),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     ));
     let providers = Arc::new(FakeProviders::with_recall(recall));
     let service = IdentifyService::new(IdentifyDeps {
@@ -1055,6 +1056,7 @@ impl Links {
         Self {
             store: SqliteIdentifyStore::new(
                 droppedneedle_kernel::db::Db::open_for_tests(&path).expect("store opens"),
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
             ),
             db,
             _dir: dir,

@@ -15,9 +15,10 @@
 //! `Result`: a read that fails is an error, never an absent row.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use sha2::{Digest as _, Sha256};
@@ -34,6 +35,7 @@ use super::queue::{INSERT_JOB, idempotency_key};
 pub use super::queue::{album_input_revision, offer_album};
 use super::sources::ArtistAnswer;
 use super::stores::{Approval, AttemptLanding, RELEASE_FRESH_SECS, StoreError, land_job};
+use crate::clock::LibraryClock as _;
 use crate::corrections::artist_convergence::{
     any_waiting, converge_ids, follow_moved, follow_waiting,
 };
@@ -49,17 +51,6 @@ use crate::identity::{self, AutomaticOutcome, Inputs};
 use crate::matching::Release;
 
 const PROVIDER: &str = "musicbrainz";
-
-fn now_secs() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
-fn now_ms() -> i64 {
-    (now_secs() * 1000.0) as i64
-}
 
 pub(crate) fn kind_str(kind: IdentifyKind) -> &'static str {
     match kind {
@@ -148,6 +139,8 @@ fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentifyJob> {
 /// SQLite identify store.
 pub struct SqliteIdentifyStore {
     db: Db,
+    /// Wall time for job, review and identity stamps.
+    clock: Arc<dyn Clock>,
     /// Where the sweep of the app's artist links goes on from.
     link_cursor: Mutex<String>,
     /// When an album sweep last found nothing to do, and this store's
@@ -198,14 +191,20 @@ fn changing<T>(
 }
 
 impl SqliteIdentifyStore {
-    pub fn new(db: Db) -> Self {
+    pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self {
             db,
+            clock,
             link_cursor: Mutex::new(String::new()),
             swept: Mutex::new(None),
             drained: Mutex::new(None),
             writes: AtomicU64::new(0),
         }
+    }
+
+    /// The wall clock this store stamps its rows by.
+    pub(crate) fn clock(&self) -> &dyn Clock {
+        &*self.clock
     }
 
     /// A committed write's value; one that changed a row is counted.
@@ -221,7 +220,9 @@ impl SqliteIdentifyStore {
     pub fn offer(&self, local_album_id: &str) -> Result<bool, StoreError> {
         self.db
             .write_blocking(Lane::Background, "identify.offer", |tx| {
-                changing(tx, |tx| Ok(offer_album(tx, local_album_id, now_ms())?))
+                changing(tx, |tx| {
+                    Ok(offer_album(tx, local_album_id, self.clock.now_ms())?)
+                })
             })
             .map(|written| self.landed(written))
     }
@@ -251,7 +252,7 @@ impl SqliteIdentifyStore {
         self.db
             .write_blocking(Lane::Background, "identify.save_album_identity", |tx| {
                 changing(tx, |tx| {
-                    crate::identity::save_album(tx, &identity, now_secs())?;
+                    crate::identity::save_album(tx, &identity, self.clock.now_secs())?;
                     Ok(())
                 })
             })
@@ -273,13 +274,13 @@ impl SqliteIdentifyStore {
         self.db
             .write_blocking(Lane::Background, "identify.save_track_identity", |tx| {
                 changing(tx, |tx| {
-                    if crate::identity::save_track(tx, &identity, now_secs())? == 1 {
+                    if crate::identity::save_track(tx, &identity, self.clock.now_secs())? == 1 {
                         let album: String = tx.query_row(
                             "SELECT local_album_id FROM local_tracks WHERE id = ?1",
                             params![identity.local_track_id],
                             |row| row.get(0),
                         )?;
-                        continue_tracks(tx, Scope::Album(&album), now_secs())?;
+                        continue_tracks(tx, Scope::Album(&album), self.clock.now_secs())?;
                     }
                     Ok(())
                 })
@@ -297,7 +298,7 @@ impl SqliteIdentifyStore {
                     let revision = album_input_revision(tx, &seal.local_album_id)?;
                     let inputs = Inputs {
                         input_revision: &revision,
-                        now: now_secs(),
+                        now: self.clock.now_secs(),
                     };
                     Ok(identity::seal_automatic(tx, seal, inputs)? == AutomaticOutcome::Done)
                 })
@@ -322,7 +323,7 @@ impl SqliteIdentifyStore {
                 seal,
                 Inputs {
                     input_revision,
-                    now: now_secs(),
+                    now: self.clock.now_secs(),
                 },
             )
         })
@@ -348,7 +349,7 @@ impl SqliteIdentifyStore {
                 flag,
                 Inputs {
                     input_revision,
-                    now: now_secs(),
+                    now: self.clock.now_secs(),
                 },
             )
         })
@@ -371,11 +372,11 @@ impl SqliteIdentifyStore {
                 land_job(
                     &mut landed,
                     AttemptLanding::Failed,
-                    now_ms().max(0) as u64,
+                    self.clock.now_ms().max(0) as u64,
                     Some("INPUT_MOVED"),
                 );
             }
-            land_tx(tx, &landed)?;
+            land_tx(tx, &*self.clock, &landed)?;
             Ok(((outcome, landed), tx.total_changes() != before))
         });
         match landed {
@@ -471,7 +472,7 @@ impl From<rusqlite::Error> for Landing {
 }
 
 /// Land a claimed job on `tx`, under the lease it was claimed with.
-fn land_tx(tx: &Transaction<'_>, job: &IdentifyJob) -> Result<(), Landing> {
+fn land_tx(tx: &Transaction<'_>, clock: &dyn Clock, job: &IdentifyJob) -> Result<(), Landing> {
     let key = idempotency_key(&job.local_album_id, &job.input_revision);
     let landed = tx.prepare_cached(LAND_JOB)?.execute(params![
         state_str(job.state),
@@ -481,7 +482,7 @@ fn land_tx(tx: &Transaction<'_>, job: &IdentifyJob) -> Result<(), Landing> {
         key,
         job.failure_code,
         job.priority as i64,
-        now_ms(),
+        clock.now_ms(),
         job.id,
         job.lease_expires_ms.map(|at| at as i64),
     ])?;
@@ -635,7 +636,7 @@ impl SqliteIdentifyStore {
         duration_seconds: u32,
         matched: bool,
     ) -> Result<(), StoreError> {
-        let now = now_secs();
+        let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Background, "identify.save_fingerprint", |tx| {
                 changing(tx, |tx| {
@@ -682,8 +683,13 @@ impl SqliteIdentifyStore {
 /// Work out what album `album`'s match proves about its artists and settle
 /// their links; with `converge`, also merge what the links prove to be one
 /// artist. Either way, a row the pass left empty follows its credits.
-fn artist_pass(tx: &Transaction<'_>, album: &str, converge: bool) -> Result<(), StoreError> {
-    let now = now_ms();
+fn artist_pass(
+    tx: &Transaction<'_>,
+    clock: &dyn Clock,
+    album: &str,
+    converge: bool,
+) -> Result<(), StoreError> {
+    let now = clock.now_ms();
     let linked = artist_links::link_album(tx, album, now)?;
     let now_secs = now as f64 / 1000.0;
     if converge && !linked.ids.is_empty() {
@@ -703,7 +709,9 @@ impl SqliteIdentifyStore {
     pub fn link_album_artists(&self, local_album_id: &str) -> Result<(), StoreError> {
         self.db
             .write_blocking(Lane::Background, "identify.link_album_artists", |tx| {
-                changing(tx, |tx| artist_pass(tx, local_album_id, false))
+                changing(tx, |tx| {
+                    artist_pass(tx, &*self.clock, local_album_id, false)
+                })
             })
             .map(|written| self.landed(written))
     }
@@ -716,7 +724,7 @@ impl SqliteIdentifyStore {
             .write_blocking(
                 Lane::Background,
                 "identify.link_and_merge_album_artists",
-                |tx| changing(tx, |tx| artist_pass(tx, local_album_id, true)),
+                |tx| changing(tx, |tx| artist_pass(tx, &*self.clock, local_album_id, true)),
             )
             .map(|written| self.landed(written))
     }
@@ -765,7 +773,7 @@ impl SqliteIdentifyStore {
                 self.db
                     .write_blocking(Lane::Background, "identify.follow_waiting", |tx| {
                         changing(tx, |tx| {
-                            follow_waiting(tx, now_ms() as f64 / 1000.0)?;
+                            follow_waiting(tx, self.clock.now_ms() as f64 / 1000.0)?;
                             Ok(())
                         })
                     })
@@ -810,7 +818,7 @@ impl SqliteIdentifyStore {
                     .db
                     .write_blocking(Lane::Background, "identify.settle_artist_link", |tx| {
                         changing(tx, |tx| {
-                            artist_links::settle(tx, one, now_ms())?;
+                            artist_links::settle(tx, one, self.clock.now_ms())?;
                             Ok(())
                         })
                     })
@@ -855,7 +863,7 @@ impl SqliteIdentifyStore {
         self.db
             .write_blocking(Lane::Background, "identify.release_not_found", |tx| {
                 changing(tx, |tx| {
-                    let now = now_ms();
+                    let now = self.clock.now_ms();
                     let albums = artist_links::release_settled(
                         tx,
                         &release,
@@ -883,7 +891,7 @@ impl SqliteIdentifyStore {
                         tx,
                         &release,
                         artist_links::RELEASE_DOCUMENT_REFUSED,
-                        now_ms(),
+                        self.clock.now_ms(),
                     )?
                     .len())
                 })
@@ -906,7 +914,7 @@ impl SqliteIdentifyStore {
         self.db
             .write_blocking(Lane::Background, "identify.answer_artist_id", |tx| {
                 changing(tx, |tx| {
-                    let now = now_ms();
+                    let now = self.clock.now_ms();
                     let ids = merged_ids::answer(tx, mbid, answer, now)?;
                     if !ids.is_empty() {
                         converge_ids(tx, &ids, now as f64 / 1000.0)?;
@@ -948,7 +956,7 @@ impl SqliteIdentifyStore {
                 .db
                 .write_blocking(Lane::Background, "identify.drain_continuations", |tx| {
                     changing(tx, |tx| {
-                        Ok(drain_continuations(tx, DRAIN_BOUND, now_secs())?)
+                        Ok(drain_continuations(tx, DRAIN_BOUND, self.clock.now_secs())?)
                     })
                 })
                 .map(|written| self.landed(written));
@@ -988,7 +996,7 @@ impl SqliteIdentifyStore {
         release_mbid: &str,
         max_age_secs: Option<u64>,
     ) -> Result<Option<Release>, StoreError> {
-        let oldest = max_age_secs.map_or(0.0, |age| now_secs() - age as f64);
+        let oldest = max_age_secs.map_or(0.0, |age| self.clock.now_secs() - age as f64);
         self.db.read_blocking("identify.release", |conn| {
             Ok(stored_release(conn, release_mbid, oldest)?)
         })
@@ -1001,7 +1009,7 @@ impl SqliteIdentifyStore {
             .write_blocking(lane, "identify.save_release", |tx| {
                 changing(tx, |tx| {
                     let stored = stored_release(tx, &canonical, 0.0)?;
-                    store_release(tx, release, stored, now_secs())
+                    store_release(tx, release, stored, self.clock.now_secs())
                 })
             })
             .map(|written| self.landed(written))
@@ -1340,7 +1348,7 @@ impl SqliteIdentifyStore {
         self.db
             .write_blocking(lane, "identify.enqueue", |tx| {
                 changing(tx, |tx| {
-                    let now = now_ms();
+                    let now = self.clock.now_ms();
                     let inserted = tx.execute(
                         INSERT_JOB,
                         params![
@@ -1422,7 +1430,7 @@ impl SqliteIdentifyStore {
         let landed = self
             .db
             .write_blocking(Lane::Background, "identify.land", |tx| {
-                land_tx(tx, job).map(|()| ((), true))
+                land_tx(tx, &*self.clock, job).map(|()| ((), true))
             });
         match landed {
             Ok(written) => {
@@ -1466,7 +1474,7 @@ impl SqliteIdentifyStore {
                     let requeued = tx.execute(
                         "UPDATE library_identify_jobs SET state = 'queued', \
                          lease_expires_ms = NULL, updated_ms = ?1 WHERE state = 'running'",
-                        params![now_ms()],
+                        params![self.clock.now_ms()],
                     )?;
                     if requeued > 0 {
                         bump_identification_stream(tx)?;
@@ -1490,7 +1498,7 @@ impl SqliteIdentifyStore {
         self.db
             .write_blocking(Lane::Background, "identify.file_review", |tx| {
                 changing(tx, |tx| {
-                    let now = now_ms();
+                    let now = self.clock.now_ms();
                     tx.execute(
                         "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
                          reason_code, candidates_json, state, resolved_by_user_id, \
@@ -1562,7 +1570,7 @@ impl SqliteIdentifyStore {
                             review_state_str(state),
                             by_user_id,
                             selected_key,
-                            now_ms(),
+                            self.clock.now_ms(),
                             review_id
                         ],
                     )?;
@@ -1581,7 +1589,7 @@ impl SqliteIdentifyStore {
     pub fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
         self.db
             .write_blocking(APPROVE_LANE, "identify.approve_review", |tx| {
-                changing(tx, |tx| approve_tx(tx, approval))
+                changing(tx, |tx| approve_tx(tx, &*self.clock, approval))
             })
             .map(|written| self.landed(written))
     }
@@ -1591,7 +1599,11 @@ impl SqliteIdentifyStore {
 const APPROVE_LANE: Lane = Lane::Foreground;
 
 /// [`SqliteIdentifyStore::approve`] on its transaction.
-fn approve_tx(tx: &Transaction<'_>, approval: &Approval) -> Result<bool, StoreError> {
+fn approve_tx(
+    tx: &Transaction<'_>,
+    clock: &dyn Clock,
+    approval: &Approval,
+) -> Result<bool, StoreError> {
     let album = &approval.album.local_album_id;
     let Some(group) = approval.album.release_group_mbid.as_deref() else {
         return Err(StoreError::Failed(format!(
@@ -1607,7 +1619,7 @@ fn approve_tx(tx: &Transaction<'_>, approval: &Approval) -> Result<bool, StoreEr
         params![
             approval.by_user_id,
             approval.candidate_key,
-            now_ms(),
+            clock.now_ms(),
             approval.review_id
         ],
     )?;
@@ -1621,7 +1633,7 @@ fn approve_tx(tx: &Transaction<'_>, approval: &Approval) -> Result<bool, StoreEr
             release_group_mbid: group,
             release_mbid: approval.album.release_mbid.as_deref(),
             by_user_id: &approval.by_user_id,
-            now: crate::clock::now_unix(),
+            now: clock.now_secs(),
         },
     )?;
     bump_identification_stream(tx)?;

@@ -2,9 +2,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::adapters::FsSpaceProbe;
-use super::clock::{now_ms, today_day};
+use super::clock::LibraryClock as _;
 use super::publish::bin::BinSource;
 use super::publish::journal::JournalStore;
 use super::publish::paths::{ResolvedRoot, Root, left_out};
@@ -22,6 +23,7 @@ use super::scan::models::EffectivePolicy;
 use super::scan::roots::RootRegistry;
 use super::service::ServiceError;
 use super::wiring::{LibrarySetup, RootDirs};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{CancelFlag, Db, DbError};
 use droppedneedle_kernel::jobs::queue::JobQueue;
 
@@ -90,6 +92,8 @@ impl SessionRoots {
 /// database call cannot deadlock the lane.
 pub struct PublishCell {
     db: Db,
+    /// Wall time for the publisher and its recovery.
+    clock: Arc<dyn Clock>,
     bins: BinSource,
     /// The jobs table a commit queues its follow-up work on.
     jobs: JobQueue,
@@ -237,13 +241,15 @@ impl HeldBundles {
 #[derive(Clone)]
 pub struct LeftoverFiles {
     db: Db,
+    clock: Arc<dyn Clock>,
     report: std::sync::Arc<std::sync::Mutex<Option<LeftoverReport>>>,
 }
 
 impl LeftoverFiles {
-    pub(crate) fn new(db: Db) -> Self {
+    pub(crate) fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self {
             db,
+            clock,
             report: Default::default(),
         }
     }
@@ -258,7 +264,7 @@ impl LeftoverFiles {
         let found = super::publish::recovery::find_leftovers(
             &self.db,
             &PublishCell::root_dirs(registry),
-            std::time::SystemTime::now(),
+            self.clock.now_system(),
             cancelled,
         )?;
         if let Some(report) = &found {
@@ -283,9 +289,10 @@ impl PublishCell {
     /// An unopened cell over the application database, taking its
     /// recycle bins from `bins` and queueing a commit's follow-up work on
     /// `jobs`.
-    pub(crate) fn new(db: Db, bins: BinSource, jobs: JobQueue) -> Self {
+    pub(crate) fn new(db: Db, bins: BinSource, jobs: JobQueue, clock: Arc<dyn Clock>) -> Self {
         Self {
             db,
+            clock,
             bins,
             jobs,
             cell: None,
@@ -339,7 +346,7 @@ impl PublishCell {
         let Some(open) = self.cell.as_ref() else {
             return Ok(Vec::new());
         };
-        super::publish::recovery::reconcile(&self.db, &open.sandbox, &self.jobs)
+        super::publish::recovery::reconcile(&self.db, &open.sandbox, &self.jobs, &*self.clock)
     }
 
     fn root_dirs(registry: &RootRegistry) -> Vec<Root> {
@@ -443,13 +450,14 @@ impl PublishCell {
         // Recovery runs before the new session takes publishes. The
         // journal lives in the application database, so root order never
         // decides where it is.
-        let recoveries = super::publish::recovery::reconcile(&self.db, &sandbox, &self.jobs)?;
+        let recoveries =
+            super::publish::recovery::reconcile(&self.db, &sandbox, &self.jobs, &*self.clock)?;
         let publisher = Publisher::new(
             sandbox.clone(),
             self.db.clone(),
             FsSpaceProbe::new(space_roots.clone()),
             self.jobs.clone(),
-            || now_ms() as i64,
+            Arc::clone(&self.clock),
         );
         self.placement.follow(Some(sandbox.clone()));
         self.cell = Some(OpenPublish {
@@ -683,7 +691,12 @@ impl super::wiring::LibraryCore {
                 undoes: None,
             }),
         };
-        let (sealed, live) = seal_pinned(bundle, &self.ids.new_id(), policy_revision);
+        let (sealed, live) = seal_pinned(
+            bundle,
+            &self.ids.new_id(),
+            policy_revision,
+            self.clock.today_day(),
+        );
         let bundle_id = sealed.bundle.id.clone();
         let (deadline, cancelled) = (terms.deadline, terms.cancelled.clone());
         let Err(error) = open
@@ -735,13 +748,14 @@ fn seal_pinned(
     bundle: PlanBundle,
     token: &str,
     policy_revision: u64,
+    today_day: i64,
 ) -> (SealedPreview, SealRecheck) {
     let token_hash = sha256_hex(token.as_bytes());
     let sealed = SealedPreview::seal(
         bundle,
         token_hash.clone(),
         PINNED_REVISION,
-        today_day() + PREVIEW_TTL_DAYS,
+        today_day + PREVIEW_TTL_DAYS,
     );
     let live = SealRecheck {
         fingerprints: BTreeMap::new(),
@@ -751,7 +765,7 @@ fn seal_pinned(
         naming_revision: PINNED_REVISION,
         policy_revision,
         settings_revision: PINNED_REVISION,
-        today_day: today_day(),
+        today_day,
         token_hash,
     };
     (sealed, live)
@@ -1030,7 +1044,7 @@ impl LibrarySetup {
 
     /// Drop expired preview seals.
     pub(crate) fn sweep_previews(&self) {
-        let today = today_day();
+        let today = self.clock.today_day();
         let mut previews = self
             .previews
             .lock()
@@ -1487,7 +1501,7 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         let token = self.ids.new_id();
         let token_hash = sha256_hex(token.as_bytes());
-        let expires_day = today_day() + PREVIEW_TTL_DAYS;
+        let expires_day = self.clock.today_day() + PREVIEW_TTL_DAYS;
         let sealed = SealedPreview::seal(
             bundle.clone(),
             token_hash.clone(),
@@ -1546,7 +1560,7 @@ impl LibrarySetup {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             previews.remove(&token_hash).ok_or(ServiceError::NotFound)?
         };
-        if today_day() >= entry.sealed.expires_day {
+        if self.clock.today_day() >= entry.sealed.expires_day {
             return Err(ServiceError::Conflict {
                 message: "Preview expired; plan it again".to_owned(),
             });
@@ -1647,7 +1661,7 @@ impl LibrarySetup {
             naming_revision: pins.naming,
             policy_revision: policy_revision_u64(&self.live_registry()),
             settings_revision: pins.settings,
-            today_day: today_day(),
+            today_day: self.clock.today_day(),
             token_hash: token_hash.to_owned(),
         })
     }
@@ -1847,7 +1861,7 @@ impl LibrarySetup {
             reason_code,
             actor,
             undo,
-            std::time::SystemTime::now(),
+            self.clock.now_system(),
         )?;
         removal.album_removed = album_removed;
         let track_ids: Vec<String> = removal
@@ -1871,7 +1885,7 @@ impl LibrarySetup {
             bundle,
             token_hash.clone(),
             PINNED_REVISION,
-            today_day() + PREVIEW_TTL_DAYS,
+            self.clock.today_day() + PREVIEW_TTL_DAYS,
         );
         let live = SealRecheck {
             fingerprints: BTreeMap::new(),
@@ -1881,7 +1895,7 @@ impl LibrarySetup {
             naming_revision: PINNED_REVISION,
             policy_revision,
             settings_revision: PINNED_REVISION,
-            today_day: today_day(),
+            today_day: self.clock.today_day(),
             token_hash,
         };
         let published = open
@@ -2007,7 +2021,7 @@ impl LibrarySetup {
             bundle,
             token_hash.clone(),
             PINNED_REVISION,
-            today_day() + PREVIEW_TTL_DAYS,
+            self.clock.today_day() + PREVIEW_TTL_DAYS,
         );
         let live = SealRecheck {
             fingerprints: BTreeMap::new(),
@@ -2017,7 +2031,7 @@ impl LibrarySetup {
             naming_revision: PINNED_REVISION,
             policy_revision,
             settings_revision: PINNED_REVISION,
-            today_day: today_day(),
+            today_day: self.clock.today_day(),
             token_hash,
         };
         if let Err(error) = open
@@ -2090,7 +2104,7 @@ impl LibrarySetup {
             bundle,
             token_hash.clone(),
             pins.settings,
-            today_day() + PREVIEW_TTL_DAYS,
+            self.clock.today_day() + PREVIEW_TTL_DAYS,
         );
         let live = self.live_seal(
             &open.sandbox,
@@ -2236,7 +2250,12 @@ impl LibrarySetup {
             put_back: None,
             added: Some(added),
         };
-        let (sealed, live) = seal_pinned(bundle, &self.ids.new_id(), policy_revision);
+        let (sealed, live) = seal_pinned(
+            bundle,
+            &self.ids.new_id(),
+            policy_revision,
+            self.clock.today_day(),
+        );
         let bundle_id = sealed.bundle.id.clone();
         let outcome = match open
             .publisher
@@ -2427,7 +2446,7 @@ impl LibrarySetup {
             locations,
             identities,
             overrides,
-            today_day: today_day(),
+            today_day: self.clock.today_day(),
         };
         let sandbox = open.sandbox.clone();
         let live_paths: Vec<PathBuf> = live
@@ -2815,7 +2834,7 @@ impl LibrarySetup {
             bundle,
             token_hash.clone(),
             PINNED_REVISION,
-            today_day() + PREVIEW_TTL_DAYS,
+            self.clock.today_day() + PREVIEW_TTL_DAYS,
         );
         let live = self.seal_live(&open.sandbox, &sealed.bundle, &token_hash)?;
         open.publisher.set_undo_retention_days(retention);

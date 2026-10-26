@@ -17,7 +17,7 @@ use super::models::{
 use super::reset;
 use super::retag_pairs;
 use super::token::{self, TokenFault};
-use crate::clock::{now_ms, now_unix};
+use crate::clock::LibraryClock as _;
 use crate::settings::LibrarySettings;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
@@ -28,6 +28,7 @@ use droppedneedle_kernel::db::{Db, Lane, savepoint};
 pub struct Corrections {
     db: Db,
     signer: LibrarySettings,
+    clock: std::sync::Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl Corrections {
@@ -35,6 +36,7 @@ impl Corrections {
         Self {
             db: setup.db.clone(),
             signer: setup.settings.clone(),
+            clock: setup.clock.clone(),
         }
     }
 
@@ -44,7 +46,7 @@ impl Corrections {
         request: &MembershipRequest,
         actor: &str,
     ) -> Result<Previewed<MembershipOutcome>, CorrectionError> {
-        let now = now_unix();
+        let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Foreground, "corrections.preview_membership", |tx| {
                 rolled_back(tx, || {
@@ -63,7 +65,7 @@ impl Corrections {
         request: &MembershipRequest,
         meta: &ApplyMeta,
     ) -> Result<Applied, CorrectionError> {
-        let now = now_unix();
+        let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Foreground, "corrections.apply_membership", |tx| {
                 if let Some(done) = replay(tx, meta.idempotency_key.as_deref())? {
@@ -118,7 +120,7 @@ impl Corrections {
         request: &ArtistMergeRequest,
         actor: &str,
     ) -> Result<Previewed<ArtistMergeOutcome>, CorrectionError> {
-        let now = now_unix();
+        let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Foreground, "corrections.preview_artist_merge", |tx| {
                 rolled_back(tx, || {
@@ -137,7 +139,7 @@ impl Corrections {
         request: &ArtistMergeRequest,
         meta: &ApplyMeta,
     ) -> Result<Applied, CorrectionError> {
-        let now = now_unix();
+        let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Foreground, "corrections.apply_artist_merge", |tx| {
                 if let Some(done) = replay(tx, meta.idempotency_key.as_deref())? {
@@ -182,7 +184,7 @@ impl Corrections {
 
     /// Join a pair; returns the album that stays.
     pub fn join_retag_pair(&self, request: &PairJoinRequest) -> Result<String, CorrectionError> {
-        let now = now_unix();
+        let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Foreground, "corrections.join_retag_pair", |tx| {
                 retag_pairs::join(tx, request, now)
@@ -191,7 +193,7 @@ impl Corrections {
 
     /// Mark a pair as two albums. False when it was already.
     pub fn dismiss_retag_pair(&self, old: &str, new: &str) -> Result<bool, CorrectionError> {
-        let now_ms = now_ms() as i64;
+        let now_ms = self.clock.now_ms();
         self.db
             .write_blocking(Lane::Foreground, "corrections.dismiss_retag_pair", |tx| {
                 retag_pairs::dismiss(tx, old, new, now_ms)

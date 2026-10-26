@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::common::ScratchDir;
-use droppedneedle_kernel::clock::SystemClock;
+use droppedneedle_kernel::clock::{ManualClock, SystemClock};
 use droppedneedle_kernel::db::{Db, DurableLane};
 use droppedneedle_kernel::jobs::queue::JobQueue;
 use publish::add::{Added, AddedFile, Origin, TakeBackRefusal};
@@ -158,7 +158,7 @@ fn reconcile(
     db: &Db,
     sandbox: &Sandbox,
 ) -> Result<Vec<publish::recovery::BundleRecovery>, PublishError> {
-    publish::recovery::reconcile(db, sandbox, &jobs(db))
+    publish::recovery::reconcile(db, sandbox, &jobs(db), &SystemClock)
 }
 
 /// [`reconcile`] on a filesystem made to lack a placement step.
@@ -167,7 +167,7 @@ fn reconcile_with_seams(
     sandbox: &Sandbox,
     seams: Seams,
 ) -> Result<Vec<publish::recovery::BundleRecovery>, PublishError> {
-    publish::recovery::reconcile_with_seams(db, sandbox, &jobs(db), seams)
+    publish::recovery::reconcile_with_seams(db, sandbox, &jobs(db), &SystemClock, seams)
 }
 
 /// Fixed free-space probe so disk preflight pins exact values.
@@ -351,7 +351,7 @@ fn open_publisher(fix: &Fixture) -> Publisher<FixedSpace> {
         restart(fix),
         FixedSpace(u64::MAX),
         jobs(&restart(fix)),
-        || DAY_50_MS,
+        std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
     )
 }
 
@@ -905,22 +905,20 @@ fn an_unwind_keeps_an_identical_file_it_never_replaced() {
 #[test]
 fn a_write_counts_as_stuck_after_24_hours() {
     use droppedneedle_library::management::recovery::retrying_bundles;
-    use std::sync::atomic::{AtomicI64, Ordering};
 
     const HOUR: i64 = 3_600_000;
     let fix = fixture("stuck-after-24-hours");
-    let now = std::sync::Arc::new(AtomicI64::new(DAY_50_MS));
-    let clock = std::sync::Arc::clone(&now);
+    let now = ManualClock::at(DAY_50_MS);
     let mut publisher = Publisher::new(
         fix.sandbox.clone(),
         restart(&fix),
         FixedSpace(u64::MAX),
         jobs(&restart(&fix)),
-        move || clock.load(Ordering::Relaxed),
+        std::sync::Arc::new(now.clone()),
     );
     // Day 53, 23:00.
     let made = 53 * 86_400_000 + 23 * HOUR;
-    now.store(made, Ordering::Relaxed);
+    now.set(made);
     let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
     let (sealed, live) = seal(&bundle);
     publisher.set_crash_point(Some(CrashPoint::AfterStage));
@@ -2285,7 +2283,7 @@ fn bin_entries_never_follow_a_symlink_below_the_bin() {
         restart(&fix),
         FixedSpace(u64::MAX),
         jobs(&restart(&fix)),
-        || DAY_50_MS,
+        std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
     );
     assert_eq!(
         publisher.publish(&sealed, &live, &docs).unwrap(),
@@ -2367,7 +2365,7 @@ fn nothing_goes_to_a_bin_while_the_bins_are_unknown() {
         restart(&fix),
         FixedSpace(u64::MAX),
         jobs(&restart(&fix)),
-        || DAY_50_MS,
+        std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
     );
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
     assert!(matches!(err, PublishError::Interrupted(_)), "got {err:?}");
@@ -3057,7 +3055,7 @@ fn a_remove_only_root_takes_removals_only() {
         restart(&fix),
         FixedSpace(u64::MAX),
         jobs(&restart(&fix)),
-        || DAY_50_MS,
+        std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
     );
 
     let removal = removal_bundle(&fix, &sandbox, "excluded", &[("t", "s.flac")]);

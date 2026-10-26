@@ -403,7 +403,7 @@ fn fold_split_legacy_album(
         "UPDATE local_albums SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1",
         params![target, now],
     )?;
-    offer_album(tx, target, crate::clock::now_ms() as i64)?;
+    offer_album(tx, target, crate::clock::ms(now))?;
     let after = serde_json::json!({
         "kind": "repair_contradictory_legacy_identity",
         "surviving_album_id": target,

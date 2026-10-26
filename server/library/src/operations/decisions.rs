@@ -139,7 +139,7 @@ pub fn undo_automatic_edition(
                 "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
                  candidates_json, state, created_ms, updated_ms) \
                  VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', ?3, ?3)",
-                params![review_id, album_id, now_ms()],
+                params![review_id, album_id, crate::clock::ms(now)],
             )?;
             Some(review_id)
         }
@@ -162,18 +162,15 @@ pub(crate) fn settle_reviews(
     state: &str,
     selected: Option<&str>,
     actor: &str,
+    now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
         "UPDATE library_identify_reviews SET state = ?2, resolved_by_user_id = ?3, \
          selected_candidate_key = ?4, updated_ms = ?5 \
          WHERE local_album_id = ?1 AND state = 'pending'",
-        params![album_id, state, actor, selected, now_ms()],
+        params![album_id, state, actor, selected, crate::clock::ms(now)],
     )?;
     Ok(())
-}
-
-fn now_ms() -> i64 {
-    crate::clock::now_ms() as i64
 }
 
 /// One audit row for a catalog decision.

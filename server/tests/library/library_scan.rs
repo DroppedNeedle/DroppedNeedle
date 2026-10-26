@@ -14,6 +14,7 @@ use std::time::Duration;
 use crate::common::library::TestSql as _;
 use crate::common::library::library_at;
 use crate::common::{ScratchDir, TestPlatform, config_store, migrated_db};
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{Budget, Db, LaneLimits};
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_library::identify::models::RecallResult;
@@ -590,10 +591,11 @@ fn coordinator_on<T: TagReader + 'static>(
         "rev-1",
     );
     let coordinator = LibraryScanCoordinator::new(
-        Arc::new(SqliteScanStore::new(db)),
+        Arc::new(SqliteScanStore::new(db, Arc::new(SystemClock))),
         BlockingPool::new(4),
         tags,
         Arc::new(StaticResolver::new(registry)),
+        Arc::new(SystemClock),
     )
     .with_wakeups(WorkWakeups::new());
     let paths = HashMap::from([("music".to_owned(), root.to_owned())]);
@@ -714,7 +716,7 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
     let mut listener = hub.subscribe("listener");
     let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
         db.clone(),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        Arc::new(SystemClock),
         CancellationToken::new(),
     )
     .await
@@ -1302,6 +1304,7 @@ impl RegroupRig {
         migrated_db(&db);
         let store = Arc::new(SqliteScanStore::new(
             droppedneedle_kernel::db::Db::open_for_tests(&db).expect("database opens"),
+            Arc::new(SystemClock),
         ));
         let reader = Arc::new(RetagReader {
             albums: std::sync::Mutex::default(),
@@ -1326,6 +1329,7 @@ impl RegroupRig {
             BlockingPool::new(4),
             Arc::clone(&reader),
             Arc::new(StaticResolver::new(registry)),
+            Arc::new(SystemClock),
         )
         .with_wakeups(WorkWakeups::new());
         Self {
@@ -2012,6 +2016,7 @@ fn matched(release: &str, source: &str) -> Option<(String, String)> {
 async fn identify_now(rig: &RegroupRig, album: &str) -> String {
     let store = Arc::new(SqliteIdentifyStore::new(
         droppedneedle_kernel::db::Db::open_for_tests(&rig.db()).expect("identify store opens"),
+        Arc::new(SystemClock),
     ));
     let service = IdentifyService::new(IdentifyDeps {
         store: store.clone(),
@@ -4720,6 +4725,7 @@ async fn a_store_error_holds_the_continuation_not_the_seal() {
     );
     let identify = SqliteIdentifyStore::new(
         droppedneedle_kernel::db::Db::open_for_tests(&rig.db()).expect("identify store opens"),
+        Arc::new(SystemClock),
     );
     assert!(
         identify
@@ -5499,6 +5505,7 @@ async fn a_join_waits_for_the_rest_of_the_old_album() {
     let new = rig.album_of("b/t000.flac");
     let identify = SqliteIdentifyStore::new(
         droppedneedle_kernel::db::Db::open_for_tests(&rig.db()).expect("identify store opens"),
+        Arc::new(SystemClock),
     );
     assert!(
         identify
@@ -5727,6 +5734,7 @@ impl RegroupRig {
     fn store_release(&self, release: &droppedneedle_library::matching::Release) {
         SqliteIdentifyStore::new(
             droppedneedle_kernel::db::Db::open_for_tests(&self.db()).expect("identify store opens"),
+            Arc::new(SystemClock),
         )
         .save_release(release, droppedneedle_kernel::db::Lane::Background)
         .unwrap();
@@ -6275,6 +6283,7 @@ impl ArtistRig {
         migrated_db(&db);
         let store = Arc::new(SqliteScanStore::new(
             droppedneedle_kernel::db::Db::open_for_tests(&db).expect("database opens"),
+            Arc::new(SystemClock),
         ));
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
@@ -6290,6 +6299,7 @@ impl ArtistRig {
             BlockingPool::new(2),
             Arc::new(droppedneedle_library::adapters::LoftyTagReader),
             Arc::new(StaticResolver::new(registry)),
+            Arc::new(SystemClock),
         )
         .with_wakeups(WorkWakeups::new());
         Self {
@@ -6511,6 +6521,7 @@ impl ArtistRig {
         let store = SqliteIdentifyStore::new(
             droppedneedle_kernel::db::Db::open_for_tests(&self.scratch.join("app.db"))
                 .expect("store opens"),
+            Arc::new(SystemClock),
         );
         store
             .save_release(
@@ -6545,6 +6556,7 @@ impl ArtistRig {
         SqliteIdentifyStore::new(
             droppedneedle_kernel::db::Db::open_for_tests(&self.scratch.join("app.db"))
                 .expect("store opens"),
+            Arc::new(SystemClock),
         )
         .sweep_artist_links()
         .expect("sweep runs");

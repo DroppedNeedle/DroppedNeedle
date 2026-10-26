@@ -15,7 +15,7 @@ use droppedneedle_kernel::db::writer::Lane;
 
 use self::feed::{FeedInputs, LibraryActivity};
 use self::store::{ControlError, IdentificationControl};
-use super::clock::now_unix;
+use super::clock::LibraryClock as _;
 use super::scan::models::{Counters, ScanRun};
 use super::scan::store::ScanStoreError;
 use super::scans::store_error;
@@ -58,7 +58,7 @@ impl LibrarySetup {
             .into_iter()
             .next()
             .map(with_counters);
-        let now = now_unix();
+        let now = self.clock.now_secs();
         // One snapshot, so the counts and the revisions agree.
         let (identification, revisions, operations) = self
             .scan_store
@@ -98,7 +98,7 @@ impl LibrarySetup {
         user_id: &str,
         expected: Option<u64>,
     ) -> Result<IdentificationControlAnswer, ServiceError> {
-        let now = now_unix();
+        let now = self.clock.now_secs();
         let (revision, snapshot) = self
             .scan_store
             .db()

@@ -63,8 +63,14 @@ impl Rig {
         let db = droppedneedle_kernel::db::Db::open_for_tests(&app.config.library_db_path)
             .expect("database opens");
         Self {
-            scan_store: SqliteScanStore::new(db.clone()),
-            identify_store: SqliteIdentifyStore::new(db),
+            scan_store: SqliteScanStore::new(
+                db.clone(),
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ),
+            identify_store: SqliteIdentifyStore::new(
+                db,
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ),
             app,
             identify,
             contrib,

@@ -21,6 +21,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -811,6 +812,7 @@ pub struct PutBackCommit {
 pub(super) fn read_placed(
     sandbox: &Sandbox,
     put_back: &PutBack,
+    clock: &dyn Clock,
 ) -> Result<PutBackCommit, PublishError> {
     let mut indexed = Vec::with_capacity(put_back.items.len());
     for item in &put_back.items {
@@ -821,6 +823,7 @@ pub(super) fn read_placed(
             &home,
             item.policy,
             &item.policy_revision,
+            clock,
         )?);
     }
     Ok(PutBackCommit {

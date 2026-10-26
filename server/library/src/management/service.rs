@@ -20,7 +20,7 @@ use super::reasons::{self, ItemReason};
 use super::selection;
 use super::store::{self, NewJob, Snapshot};
 use super::takeover;
-use crate::clock::{now_unix, today_day};
+use crate::clock::LibraryClock as _;
 use crate::jobs::{self, ManagementPhase, OperationKind, OperationState};
 use crate::manage::SealPins;
 use crate::operations::models::OperationJob;
@@ -238,7 +238,7 @@ impl Management {
     /// the same thing. Blocking.
     pub(super) fn start_job(&self, spec: JobSpec<'_>) -> Result<PreviewHandle, ManagementError> {
         let profile_json = serde_json::to_string(spec.pinned)?;
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         let (token, token_hash) = self.token();
         // A job no person asked for is the automatic worker's.
         let lane = if spec.actor.is_some() {
@@ -368,7 +368,7 @@ impl Management {
     /// One job as the preview and operation pages show it. Blocking.
     pub fn detail(&self, job_id: &str) -> Result<JobDetail, ManagementError> {
         let snapshot = self.snapshot(job_id)?;
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         let expired = snapshot.preview_expires_at.is_none_or(|at| at <= now);
         let ready =
             snapshot.phase == ManagementPhase::Ready && snapshot.job.state == OperationState::Ready;
@@ -381,7 +381,11 @@ impl Management {
             .setup
             .db
             .read_blocking("management.undo_counts", |conn| {
-                Ok::<_, ManagementError>(store::undo_counts(conn, job_id, today_day())?)
+                Ok::<_, ManagementError>(store::undo_counts(
+                    conn,
+                    job_id,
+                    self.setup.clock.today_day(),
+                )?)
             })?;
         let baseline_available_count = self
             .setup
@@ -514,7 +518,7 @@ impl Management {
                         tx,
                         job_id,
                         expected_row_revision,
-                        now_unix(),
+                        self.setup.clock.now_secs(),
                     )?)
                 })?;
         if !discarded {
@@ -546,7 +550,7 @@ impl Management {
             ));
         }
         let (token, token_hash) = self.token();
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         self.setup
             .db
             .write_blocking(Lane::Foreground, "management.reissue", |conn| {
@@ -642,7 +646,12 @@ impl Management {
                     Lane::Foreground,
                     "management.complete_without_work",
                     |tx| {
-                        store::complete_without_work(tx, job_id, "DUPLICATE_RECYCLED", now_unix())?;
+                        store::complete_without_work(
+                            tx,
+                            job_id,
+                            "DUPLICATE_RECYCLED",
+                            self.setup.clock.now_secs(),
+                        )?;
                         store::record_apply_key(tx, job_id, &request.idempotency_key)?;
                         jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                             "This management job does not exist.",
@@ -672,7 +681,7 @@ impl Management {
             JobMode::BaselineRestore => ManagementPhase::Restoring,
             _ => ManagementPhase::Applying,
         };
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         // An automatic apply is the worker's; anything else is a request.
         let lane = if mode == JobMode::AutomaticApply {
             Lane::Background
@@ -783,7 +792,7 @@ impl Management {
                 "This operation wrote nothing, so there is nothing to undo.",
             ));
         }
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         if let Some(existing) = self
             .setup
             .db
@@ -922,7 +931,7 @@ impl Management {
                 Ok::<_, ManagementError>(jobs::recover_at_start(
                     tx,
                     OperationKind::LibraryManagement,
-                    now_unix(),
+                    self.setup.clock.now_secs(),
                 )?)
             })
     }
@@ -934,7 +943,7 @@ impl Management {
         if !self.setup.coordinator.current().is_empty() {
             return Ok(false);
         }
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         let Some((job_id, phase)) =
             self.setup
                 .db
@@ -970,7 +979,7 @@ impl Management {
                     self.setup
                         .db
                         .write_blocking(Lane::Background, "management.release", |tx| {
-                            let now = now_unix();
+                            let now = self.setup.clock.now_secs();
                             Ok::<_, ManagementError>(jobs::release_until(
                                 tx,
                                 &job_id,
@@ -995,7 +1004,7 @@ impl Management {
                             &job_id,
                             worker,
                             "MANAGEMENT_FAILED",
-                            now_unix(),
+                            self.setup.clock.now_secs(),
                         )?)
                     })?;
                 Ok(true)
@@ -1014,14 +1023,19 @@ impl Management {
             self.setup
                 .db
                 .write_blocking(Lane::Background, "management.release", |tx| {
-                    Ok::<_, ManagementError>(jobs::release(tx, job_id, worker, now_unix())?)
+                    Ok::<_, ManagementError>(jobs::release(
+                        tx,
+                        job_id,
+                        worker,
+                        self.setup.clock.now_secs(),
+                    )?)
                 })?;
             return Ok(true);
         }
         self.setup
             .db
             .write_blocking(Lane::Background, "management.checkpoint", |tx| {
-                Ok(jobs::checkpoint(tx, job_id, worker, now_unix())?.is_some())
+                Ok(jobs::checkpoint(tx, job_id, worker, self.setup.clock.now_secs())?.is_some())
             })
     }
 
@@ -1029,7 +1043,12 @@ impl Management {
         self.setup
             .db
             .write_blocking(Lane::Background, "management.heartbeat", |conn| {
-                Ok(jobs::heartbeat(conn, job_id, worker, now_unix())?)
+                Ok(jobs::heartbeat(
+                    conn,
+                    job_id,
+                    worker,
+                    self.setup.clock.now_secs(),
+                )?)
             })
     }
 
@@ -1080,7 +1099,7 @@ impl Management {
             counted: changed,
             accepted,
         } = changed;
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         let (finished, stepped_back) =
             self.setup
                 .db
@@ -1251,7 +1270,12 @@ impl Management {
             "management.finish_unchanged",
             |tx| {
                 store::set_mode(tx, job_id, JobMode::AutomaticApply.as_str())?;
-                store::complete_without_work(tx, job_id, "MANAGEMENT_UNCHANGED", now_unix())?;
+                store::complete_without_work(
+                    tx,
+                    job_id,
+                    "MANAGEMENT_UNCHANGED",
+                    self.setup.clock.now_secs(),
+                )?;
                 Ok::<_, ManagementError>(store::bundle_ordinals(tx, job_id)?)
             },
         )?;
@@ -1274,7 +1298,7 @@ impl Management {
         self.setup
             .db
             .write_blocking(Lane::Background, "management.keep_items", |tx| {
-                store::insert_items(tx, job_id, snapshot, items, now_unix())
+                store::insert_items(tx, job_id, snapshot, items, self.setup.clock.now_secs())
             })?;
         if self.checkpoint(job_id, worker)? {
             return Ok(false);
@@ -1435,7 +1459,7 @@ impl Management {
         }
         if self.managed_automatically(album_id)? {
             let tracks: Vec<String> = changed.into_iter().map(|(_, track)| track).collect();
-            let now = now_unix();
+            let now = self.setup.clock.now_secs();
             self.setup
                 .db
                 .write_blocking(Lane::Background, "management.hold_changed", |tx| {
@@ -1708,11 +1732,18 @@ impl Management {
                 self.setup.db.write_blocking(
                     Lane::Background,
                     "management.apply_work_release",
-                    |tx| Ok::<_, ManagementError>(jobs::release(tx, job_id, worker, now_unix())?),
+                    |tx| {
+                        Ok::<_, ManagementError>(jobs::release(
+                            tx,
+                            job_id,
+                            worker,
+                            self.setup.clock.now_secs(),
+                        )?)
+                    },
                 )?;
                 return Ok(());
             }
-            let now = now_unix();
+            let now = self.setup.clock.now_secs();
             let Some(ordinal) =
                 self.setup
                     .db
@@ -1728,7 +1759,7 @@ impl Management {
                             tx,
                             job_id,
                             worker,
-                            now_unix(),
+                            self.setup.clock.now_secs(),
                         )?)
                     },
                 )?;
@@ -1745,7 +1776,14 @@ impl Management {
                 self.setup.db.write_blocking(
                     Lane::Background,
                     "management.apply_work_yield",
-                    |tx| Ok::<_, ManagementError>(jobs::release(tx, job_id, worker, now_unix())?),
+                    |tx| {
+                        Ok::<_, ManagementError>(jobs::release(
+                            tx,
+                            job_id,
+                            worker,
+                            self.setup.clock.now_secs(),
+                        )?)
+                    },
                 )?;
                 return Ok(());
             };
@@ -1791,7 +1829,7 @@ impl Management {
             self.setup
                 .db
                 .write_blocking(Lane::Background, "management.finish_work", |tx| {
-                    let now = now_unix();
+                    let now = self.setup.clock.now_secs();
                     store::finish_work(tx, job_id, ordinal, failure.as_ref(), &result, now)?;
                     jobs::heartbeat(tx, job_id, worker, now)?;
                     Ok::<_, ManagementError>(())

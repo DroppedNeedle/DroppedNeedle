@@ -19,7 +19,7 @@ use super::reasons;
 use super::reidentify::evaluation;
 use super::store::{self, NewReidentification};
 use super::{choice, decisions, hand_match, history, reviews};
-use crate::clock::now_unix;
+use crate::clock::LibraryClock as _;
 use crate::identify::models::LocalAlbumFacts;
 use crate::identify::queue::queue_retry;
 use crate::identify::service::IdentifyService;
@@ -51,6 +51,7 @@ pub struct Operations {
     ids: Arc<dyn IdGenerator>,
     management: Live<LibraryManagement>,
     wakeups: WorkWakeups,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl Operations {
@@ -62,6 +63,7 @@ impl Operations {
             ids: setup.ids.clone(),
             management: setup.settings.management.clone(),
             wakeups: setup.wakeups.clone(),
+            clock: setup.clock.clone(),
         }
     }
 
@@ -113,7 +115,7 @@ impl Operations {
                     control,
                     expected_row_revision,
                     idempotency_key,
-                    now_unix(),
+                    self.clock.now_secs(),
                 )
             })?;
         if let Some(kind) = OperationKind::parse(&job.kind) {
@@ -168,7 +170,7 @@ impl Operations {
     ) -> Result<reviews::ReviewRow, OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.settle_review", |tx| {
-                reviews::settle(tx, review_id, action, actor, now_unix())
+                reviews::settle(tx, review_id, action, actor, self.clock.now_secs())
             })?;
         self.review(review_id)
     }
@@ -201,10 +203,11 @@ impl Operations {
                     "pending",
                     crate::identify::models::ReviewState::Dismissed,
                     actor,
+                    self.clock.now_secs(),
                 )? {
                     return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
                 }
-                store::create_reidentification(tx, &self.management, &new, now_unix())
+                store::create_reidentification(tx, &self.management, &new, self.clock.now_secs())
             })?;
         jobs::wake(&self.wakeups, OperationKind::ExplicitReidentification);
         Ok(job)
@@ -252,7 +255,7 @@ impl Operations {
                                     tx,
                                     &self.management,
                                     &new,
-                                    now_unix(),
+                                    self.clock.now_secs(),
                                 )
                                 .map(|_| ()),
                             )
@@ -334,7 +337,7 @@ impl Operations {
                                 &item.review_id,
                                 reviews::ReviewAction::Exclude,
                                 actor,
-                                now_unix(),
+                                self.clock.now_secs(),
                             )
                         },
                     ) {
@@ -386,7 +389,13 @@ impl Operations {
         tokio::task::spawn_blocking(move || {
             ops.db
                 .write_blocking(Lane::Foreground, "operations.choose_edition", |tx| {
-                    choice::choose(tx, &album, &candidate, actor.as_deref(), now_unix())
+                    choice::choose(
+                        tx,
+                        &album,
+                        &candidate,
+                        actor.as_deref(),
+                        ops.clock.now_secs(),
+                    )
                 })
         })
         .await
@@ -438,7 +447,14 @@ impl Operations {
         tokio::task::spawn_blocking(move || {
             ops.db
                 .write_blocking(Lane::Foreground, "operations.custom_edition", |tx| {
-                    decisions::custom_edition(tx, &album, &candidate, &guard, &actor, now_unix())
+                    decisions::custom_edition(
+                        tx,
+                        &album,
+                        &candidate,
+                        &guard,
+                        &actor,
+                        ops.clock.now_secs(),
+                    )
                 })
         })
         .await
@@ -459,7 +475,7 @@ impl Operations {
                     album_id,
                     expected_identity_revision,
                     actor,
-                    now_unix(),
+                    self.clock.now_secs(),
                 )
             })
     }
@@ -701,8 +717,8 @@ impl Operations {
                         &asked,
                         &release,
                         &candidate,
-                        now_unix(),
-                        crate::clock::now_ms() as i64,
+                        ops.clock.now_secs(),
+                        ops.clock.now_ms(),
                     )
                 })
         })
@@ -719,7 +735,7 @@ impl Operations {
     ) -> Result<(), OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.unmatch_file", |tx| {
-                hand_match::unmatch_file(tx, album_id, track_id, actor, now_unix())
+                hand_match::unmatch_file(tx, album_id, track_id, actor, self.clock.now_secs())
             })
     }
 
@@ -736,7 +752,7 @@ impl Operations {
         }
         self.db
             .write_blocking(Lane::Foreground, "operations.hand_back", |tx| {
-                choice::hand_back(tx, album_id, actor, now_unix())
+                choice::hand_back(tx, album_id, actor, self.clock.now_secs())
             })
     }
 
@@ -748,7 +764,7 @@ impl Operations {
         caller_user_id: &str,
     ) -> Result<Vec<history::HistoryEntry>, OperationError> {
         self.db.read_blocking("operations.album_history", |conn| {
-            history::album_history(conn, album_id, caller_user_id, now_unix())?
+            history::album_history(conn, album_id, caller_user_id, self.clock.now_secs())?
                 .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))
         })
     }
@@ -761,7 +777,7 @@ impl Operations {
         self.db.write_blocking(
             Lane::Foreground,
             "operations.undo_fold",
-            |tx| match undo_fold(tx, fold_id, Some(actor), now_unix())? {
+            |tx| match undo_fold(tx, fold_id, Some(actor), self.clock.now_secs())? {
                 FoldUndo::Restored => Ok(()),
                 FoldUndo::Stale => Err(OperationError::Conflict(reasons::FOLD_STALE)),
                 FoldUndo::Unknown => Err(OperationError::NotFound(reasons::FOLD_NOT_FOUND)),
@@ -776,7 +792,7 @@ impl Operations {
 
         self.db
             .write_blocking(Lane::Foreground, "operations.undo_artist_repair", |tx| {
-                match undo_artist_from_tracks(tx, repair_id, actor, now_unix())? {
+                match undo_artist_from_tracks(tx, repair_id, actor, self.clock.now_secs())? {
                     ArtistRepairUndo::Restored => Ok(()),
                     ArtistRepairUndo::Stale => {
                         Err(OperationError::Conflict(reasons::ARTIST_REPAIR_STALE))
@@ -792,7 +808,7 @@ impl Operations {
     pub fn confirm_match(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.confirm_match", |tx| {
-                choice::confirm(tx, album_id, actor, now_unix())
+                choice::confirm(tx, album_id, actor, self.clock.now_secs())
             })
     }
 
@@ -800,7 +816,7 @@ impl Operations {
     pub fn undo_edition_choice(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.undo_edition_choice", |tx| {
-                choice::undo(tx, album_id, actor, now_unix())
+                choice::undo(tx, album_id, actor, self.clock.now_secs())
             })
     }
 
@@ -811,7 +827,7 @@ impl Operations {
     pub async fn remap_next(&self) -> Result<bool, OperationError> {
         use choice::RemapOrigin;
 
-        let now = now_unix();
+        let now = self.clock.now_secs();
         let Some(pending) = self.db.read_blocking("operations.next_remap", |conn| {
             Ok::<_, OperationError>(choice::next_remap(conn, now)?)
         })?
@@ -829,7 +845,7 @@ impl Operations {
         let place_only = pending.origin == RemapOrigin::PlaceOnly;
         self.db
             .write_blocking(Lane::Background, "operations.remap", |tx| {
-                let now = now_unix();
+                let now = self.clock.now_secs();
                 // A person may have chosen again, or handed the album back,
                 // while MusicBrainz was asked: then this remap is stale.
                 if !choice::remap_still_wanted(tx, &pending)? {
@@ -936,7 +952,7 @@ impl Operations {
                     expected_album_revision,
                     expected_identity_revision,
                     user_id,
-                    now_unix(),
+                    self.clock.now_secs(),
                 )
             },
         )
@@ -1019,7 +1035,7 @@ impl Operations {
                 Ok::<_, OperationError>(jobs::recover_at_start(
                     tx,
                     OperationKind::ExplicitReidentification,
-                    now_unix(),
+                    self.clock.now_secs(),
                 )?)
             })
     }
@@ -1031,7 +1047,7 @@ impl Operations {
     pub fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
         self.db
             .write_blocking(Lane::Background, "operations.run_next", |tx| {
-                let now = now_unix();
+                let now = self.clock.now_secs();
                 let claimed =
                     jobs::claim(tx, OperationKind::ExplicitReidentification, worker, now)?;
                 let Some(job) = claimed else {
@@ -1066,7 +1082,7 @@ impl Operations {
                     tx,
                     &snap.local_album_id,
                     job.requested_by_user_id.as_deref(),
-                    crate::clock::now_ms() as i64,
+                    self.clock.now_ms(),
                 )?;
                 Ok(store::hand_over(tx, &job.id, worker, now)?)
             })

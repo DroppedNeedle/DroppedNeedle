@@ -40,6 +40,7 @@ use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
 use super::{Lane, RunStop, ScanStoreError, SqliteScanStore};
+use crate::clock::LibraryClock as _;
 use droppedneedle_providers::coverart::sniff_image_content_type;
 
 /// Folder image names, most deliberate first, matched case-insensitively
@@ -193,10 +194,7 @@ impl SqliteScanStore {
         if pending.is_empty() {
             return;
         }
-        let now = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs_f64())
-            .unwrap_or(0.0);
+        let now = self.clock.now_secs();
         let written = self.write_once(Lane::Background, "scan_album_art", |tx| {
             let mut changed = 0;
             let mut cleared = 0;

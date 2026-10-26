@@ -6,19 +6,21 @@ use std::collections::BTreeMap;
 use super::groups::{self, build};
 use super::models::{Group, GroupDetail, GroupPage, GroupState, Progress, ReconcileError};
 use super::{reasons, store};
-use crate::clock::now_unix;
+use crate::clock::LibraryClock as _;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::{Db, Lane};
 
 #[derive(Clone)]
 pub struct Reconcile {
     db: Db,
+    clock: std::sync::Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl Reconcile {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
             db: setup.db.clone(),
+            clock: setup.clock.clone(),
         }
     }
 
@@ -92,7 +94,7 @@ impl Reconcile {
         if expected.len() != ids.len() || ids.iter().any(|id| !expected.contains_key(id)) {
             return Err(ReconcileError::Conflict(reasons::GROUP_STALE));
         }
-        let now = now_unix();
+        let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Foreground, "reconcile.dismiss", |tx| {
                 store::dismiss(tx, &ids, expected, actor_user_id, now)

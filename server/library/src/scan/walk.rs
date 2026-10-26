@@ -32,6 +32,7 @@ use super::seams::Checkpoint;
 use super::sqlite_store::SqliteScanStore;
 use super::stop::RunStop;
 use super::store::{ClassifyInput, ScanStoreError};
+use crate::clock::LibraryClock as _;
 
 /// Bounded discovery queue (v2 `INVENTORY_QUEUE_SIZE`).
 pub const INVENTORY_QUEUE_SIZE: usize = 256;
@@ -265,15 +266,6 @@ fn send_with_stop(
     }
 }
 
-type Clock = Arc<dyn Fn() -> f64 + Send + Sync>;
-
-fn system_clock() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
 /// One-walk bounded-queue inventory scanner (v2 `LibraryInventoryScanner`).
 pub struct InventoryScanner {
     store: Arc<SqliteScanStore>,
@@ -286,11 +278,15 @@ pub struct InventoryScanner {
     detached_reap_multiplier: f64,
     pending_probes: Arc<AtomicUsize>,
     probe_max_workers: usize,
-    clock: Clock,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl InventoryScanner {
-    pub fn new(store: Arc<SqliteScanStore>, pool: BlockingPool) -> Self {
+    pub fn new(
+        store: Arc<SqliteScanStore>,
+        pool: BlockingPool,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
         Self {
             store,
             pool,
@@ -302,7 +298,7 @@ impl InventoryScanner {
             detached_reap_multiplier: DETACHED_WALKER_REAP_MULTIPLIER,
             pending_probes: Arc::new(AtomicUsize::new(0)),
             probe_max_workers: 1,
-            clock: Arc::new(system_clock),
+            clock,
         }
     }
 
@@ -392,7 +388,7 @@ impl InventoryScanner {
                 root_id: scope.root_id.clone(),
                 relative_path,
                 failure_code: failure_code.to_owned(),
-                recorded_at: (self.clock)(),
+                recorded_at: self.clock.now_secs(),
                 failure_detail,
                 phase: ScanPhase::Discovering,
             }],
@@ -414,7 +410,7 @@ impl InventoryScanner {
             expected_state,
             expected_revision,
             ScanState::Failed,
-            (self.clock)(),
+            self.clock.now_secs(),
             Some(code),
         ) {
             Err(ScanStoreError::StaleRevision { .. }) => Ok(self.store.get_run(run_id)?.0),
@@ -1125,7 +1121,7 @@ impl InventoryScanner {
             run_id,
             build_items()?,
             row_revision,
-            (self.clock)(),
+            self.clock.now_secs(),
             generation,
         ) {
             Ok((revision, refused)) => Ok((revision, refused == 0)),
@@ -1136,7 +1132,7 @@ impl InventoryScanner {
                     run_id,
                     build_items()?,
                     fresh,
-                    (self.clock)(),
+                    self.clock.now_secs(),
                     generation,
                 ) {
                     Ok((revision, refused)) => Ok((revision, refused == 0)),

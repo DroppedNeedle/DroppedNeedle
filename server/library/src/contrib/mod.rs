@@ -48,12 +48,14 @@ pub struct ContribProviders {
 }
 
 /// Build the contribution service and its verification worker over the
-/// application database, queueing verification on `queue`.
+/// application database, queueing verification on `queue`, dated by
+/// `clock`.
 pub fn assemble(
     db: &Db,
     queue: JobQueue,
     providers: ContribProviders,
     catalog: Arc<dyn seams::ContributionCatalog>,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 ) -> (
     Arc<service::ContributionService>,
     Arc<worker::VerificationWorker>,
@@ -63,7 +65,7 @@ pub fn assemble(
         service::ContributionService::new(
             store,
             Arc::new(super::adapters::MatchingAttachmentEvidence),
-            Arc::new(droppedneedle_kernel::clock::SystemClock),
+            clock,
         )
         .with_discogs(providers.discogs)
         .with_musicbrainz(providers.musicbrainz.clone())

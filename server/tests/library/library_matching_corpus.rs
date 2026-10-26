@@ -285,6 +285,7 @@ fn live_providers(replay: &Arc<Replay>) -> (ScratchDir, Arc<SqliteIdentifyStore>
     migrated_db(&path);
     let store = Arc::new(SqliteIdentifyStore::new(
         droppedneedle_kernel::db::Db::open_for_tests(&path).expect("store opens"),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     ));
     let providers = Arc::new(LiveProviders::new(
         droppedneedle_library::identify::sources::Prioritised::new(

@@ -202,7 +202,14 @@ pub fn custom_edition(
     }
     // Automatic management looks at the album again, as after a choice.
     crate::management::automatic::queue(tx, album_id, now)?;
-    settle_reviews(tx, album_id, "approved", Some(custom.candidate_key), actor)?;
+    settle_reviews(
+        tx,
+        album_id,
+        "approved",
+        Some(custom.candidate_key),
+        actor,
+        now,
+    )?;
     record_and_keep(
         tx,
         album_id,

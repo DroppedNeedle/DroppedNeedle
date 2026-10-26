@@ -50,6 +50,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{CancelFlag, Db, Durable};
 use droppedneedle_kernel::jobs::queue::JobQueue;
 
@@ -282,8 +283,9 @@ pub fn reconcile(
     db: &Db,
     sandbox: &Sandbox,
     jobs: &JobQueue,
+    clock: &dyn Clock,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(db, sandbox, jobs, Seams::default())
+    reconcile_with(db, sandbox, jobs, clock, Seams::default())
 }
 
 /// [`reconcile`] on a filesystem made to lack a placement step. Tests
@@ -293,22 +295,24 @@ pub fn reconcile_with_seams(
     db: &Db,
     sandbox: &Sandbox,
     jobs: &JobQueue,
+    clock: &dyn Clock,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(db, sandbox, jobs, seams)
+    reconcile_with(db, sandbox, jobs, clock, seams)
 }
 
 fn reconcile_with(
     db: &Db,
     sandbox: &Sandbox,
     jobs: &JobQueue,
+    clock: &dyn Clock,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
     gate(db)?;
     let bundles = active_bundles(db)?;
     let mut results = Vec::new();
     for bundle_id in bundles {
-        let action = match reconcile_bundle(db, sandbox, jobs, &bundle_id, seams) {
+        let action = match reconcile_bundle(db, sandbox, jobs, clock, &bundle_id, seams) {
             Ok(action) => action,
             Err(error) if error.is_interrupted() => {
                 tracing::warn!(bundle_id, %error, "publish recovery stopped: the database refused it");
@@ -337,6 +341,7 @@ fn reconcile_bundle(
     db: &Db,
     sandbox: &Sandbox,
     jobs: &JobQueue,
+    clock: &dyn Clock,
     bundle_id: &str,
     seams: Seams,
 ) -> Result<RecoveryAction, PublishError> {
@@ -352,11 +357,7 @@ fn reconcile_bundle(
             })
             .ok()
     });
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |span| {
-            i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
-        });
+    let now_ms = clock.now_ms();
     let temps = BTreeMap::new();
     let known = paths::Known::default();
     let run = Run {
@@ -366,6 +367,7 @@ fn reconcile_bundle(
         seams,
         bin_seams: Seams::default(),
         now_ms,
+        clock,
         adoption: AdoptionFrom::Provenance,
         known_removals: false,
         temps: &temps,

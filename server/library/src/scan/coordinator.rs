@@ -33,6 +33,7 @@ use super::stop::RunStop;
 use super::store::{CommitIndexedItem, EditionFill, IndexWindow, ScanStoreError};
 use super::walk::InventoryScanner;
 use super::watcher::WorkWakeups;
+use crate::clock::LibraryClock as _;
 
 /// Return freed scan heap to the OS after a terminal run. A 100k scan
 /// churns hundreds of megabytes of transient buffers (inventory pages,
@@ -240,15 +241,6 @@ impl ScanEventPublisher {
     }
 }
 
-type Clock = Arc<dyn Fn() -> f64 + Send + Sync>;
-
-fn system_clock() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
 fn default_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -263,7 +255,7 @@ pub struct LibraryScanCoordinator<T: TagReader> {
     resolvers: Arc<dyn ResolverSource>,
     events: Option<ScanEventPublisher>,
     wakeups: Option<WorkWakeups>,
-    clock: Clock,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     idgen: Arc<dyn Fn() -> String + Send + Sync>,
     pending_control: Mutex<HashSet<String>>,
     last_progress_log: Mutex<HashMap<String, f64>>,
@@ -300,8 +292,9 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         pool: BlockingPool,
         tags: Arc<T>,
         resolvers: Arc<dyn ResolverSource>,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     ) -> Self {
-        let inventory = InventoryScanner::new(Arc::clone(&store), pool.clone());
+        let inventory = InventoryScanner::new(Arc::clone(&store), pool.clone(), Arc::clone(&clock));
         Self {
             store,
             inventory,
@@ -311,7 +304,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             resolvers,
             events: None,
             wakeups: None,
-            clock: Arc::new(system_clock),
+            clock,
             idgen: Arc::new(default_id),
             pending_control: Mutex::new(HashSet::new()),
             last_progress_log: Mutex::new(HashMap::new()),
@@ -320,8 +313,12 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     }
 
     pub fn with_filesystem(mut self, fs: FsCoordinator) -> Self {
-        self.inventory = InventoryScanner::new(Arc::clone(&self.store), self.pool.clone())
-            .with_filesystem(fs.clone());
+        self.inventory = InventoryScanner::new(
+            Arc::clone(&self.store),
+            self.pool.clone(),
+            Arc::clone(&self.clock),
+        )
+        .with_filesystem(fs.clone());
         self.fs = Some(fs);
         self
     }
@@ -351,7 +348,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     }
 
     fn now(&self) -> f64 {
-        (self.clock)()
+        self.clock.now_secs()
     }
 
     fn drives(&self) -> std::sync::MutexGuard<'_, HashMap<String, RunStop>> {
@@ -1789,6 +1786,7 @@ mod tests {
             BlockingPool::new(2),
             Arc::new(NullTagReader::new()),
             Arc::new(StaticResolver::new(registry)),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
         );
         (dir, coordinator)
     }

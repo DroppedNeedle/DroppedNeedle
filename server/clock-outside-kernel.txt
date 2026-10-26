@@ -13,20 +13,6 @@ catalog/src/reads/discover/adapters/queue/mod.rs  to move: take time from the ke
 kernel/src/db/scratch.rs  unique temp folder name from the system time, not app time
 kernel/src/jobs/schedule.rs  seed for timer jitter, not a time anyone reads
 
-library/src/adapters.rs  to move: take time from the kernel clock
-library/src/clock.rs  to move: take time from the kernel clock
-library/src/identify/sqlite.rs  to move: take time from the kernel clock
-library/src/manage.rs  to move: take time from the kernel clock
-library/src/management/enrich.rs  to move: take time from the kernel clock
-library/src/mutations.rs  to move: take time from the kernel clock
-library/src/publish/planner.rs  to move: take time from the kernel clock
-library/src/publish/publisher.rs  to move: take time from the kernel clock
-library/src/publish/recovery.rs  to move: take time from the kernel clock
-library/src/scan/coordinator.rs  to move: take time from the kernel clock
-library/src/scan/sqlite_store/artwork.rs  to move: take time from the kernel clock
-library/src/scan/sqlite_store/lyrics.rs  to move: take time from the kernel clock
-library/src/scan/walk.rs  to move: take time from the kernel clock
-
 tool/src/export/exporter.rs  offline tool, not a server area
 tool/src/export/fernet.rs  offline tool, not a server area
 tool/src/import/pipeline.rs  offline tool, not a server area

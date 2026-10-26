@@ -278,7 +278,7 @@ pub(super) fn settle(tx: &Transaction<'_>, s: &Settle<'_>) -> rusqlite::Result<S
     if let Some(reason) = review
         && !dropped.is_empty()
     {
-        open_review(tx, s.dest, reason, &title, &dropped)?;
+        open_review(tx, s.dest, reason, &title, &dropped, s.now)?;
     }
     let checked: Vec<String> = if replaced {
         album_tracks(tx, s.dest)?
@@ -316,6 +316,7 @@ pub(super) fn drop_scattered(
     tx: &Transaction<'_>,
     album_id: &str,
     successor: &str,
+    now: f64,
 ) -> rusqlite::Result<Option<EditionChange>> {
     let Some(found) = identity(tx, album_id)? else {
         return Ok(None);
@@ -323,7 +324,14 @@ pub(super) fn drop_scattered(
     let title = album_title(tx, album_id)?;
     let dropped = vec![found.dropped()];
     drop_edition(tx, album_id)?;
-    open_review(tx, successor, reasons::EDITION_ALBUM_GONE, &title, &dropped)?;
+    open_review(
+        tx,
+        successor,
+        reasons::EDITION_ALBUM_GONE,
+        &title,
+        &dropped,
+        now,
+    )?;
     Ok(Some(EditionChange {
         album_id: album_id.to_owned(),
         album_title: title,
@@ -350,6 +358,7 @@ pub(crate) fn open_review(
     reason: Reason,
     title: &str,
     dropped: &[DroppedEdition],
+    now: f64,
 ) -> rusqlite::Result<()> {
     let mut seen = BTreeSet::new();
     let candidates: Vec<CandidateEvidence> = dropped
@@ -379,7 +388,7 @@ pub(crate) fn open_review(
         .collect();
     let candidates = serde_json::to_string(&candidates)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    let now_ms = crate::clock::now_ms() as i64;
+    let now_ms = crate::clock::ms(now);
     tx.execute(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, candidates_json, \
          state, created_ms, updated_ms) VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?5)",

@@ -16,7 +16,7 @@ use super::reasons::{self, ItemReason};
 use super::selection;
 use super::service::{JobSpec, Management, stale};
 use super::store::Snapshot;
-use crate::clock::now_unix;
+use crate::clock::LibraryClock as _;
 use crate::manage::BaselineSkip;
 use crate::publish::record::changed_since_written;
 use crate::publish::snapshots::{BlobStore, sha256_hex};
@@ -282,7 +282,7 @@ impl Management {
                 // As a many-album preview does: where the folder is managed
                 // automatically, the album is left unmanaged too.
                 if !changed.is_empty() && self.managed_automatically(&scope.album_id)? {
-                    let now = now_unix();
+                    let now = self.setup.clock.now_secs();
                     self.setup.db.write_blocking(
                         Lane::Background,
                         "management.restore_mark_changed",
@@ -420,7 +420,7 @@ impl Management {
                     actor,
                     impact.baseline_count,
                     detached,
-                    now_unix()
+                    self.setup.clock.now_secs()
                 ],
             )?;
             Ok(PurgeOutcome {

@@ -119,6 +119,8 @@ pub struct LibraryCore {
     pub(crate) placement: super::manage::RootPlacement,
     pub(crate) held_bundles: super::manage::HeldBundles,
     pub(crate) bins: super::publish::bin::BinSource,
+    /// Wall time: the kernel clock.
+    pub(crate) clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl LibraryCore {
@@ -146,7 +148,12 @@ impl LibraryCore {
             settings.library.clone(),
             download_trees,
         );
-        let publish = PublishCell::new(platform.db.clone(), bins.clone(), queue);
+        let publish = PublishCell::new(
+            platform.db.clone(),
+            bins.clone(),
+            queue,
+            platform.clock.clone(),
+        );
         Ok(Self {
             ids: platform.ids.clone(),
             library: settings.library,
@@ -159,6 +166,7 @@ impl LibraryCore {
             publish: Arc::new(std::sync::Mutex::new(publish)),
             held_bundles: super::manage::HeldBundles::new(platform.db.clone()),
             bins,
+            clock: platform.clock.clone(),
         })
     }
 
@@ -336,6 +344,7 @@ impl LibrarySetup {
             .unwrap_or_else(|| ContribProviders {
                 discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
                     providers.discogs.clone(),
+                    platform.clock.clone(),
                 )),
                 musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(
                     mb_client(RequestPriority::UserInitiated),
@@ -389,7 +398,7 @@ impl LibrarySetup {
     ) -> Result<Self, String> {
         let db = &platform.db;
         let settings = LibrarySettings::new(&platform.settings);
-        let scan_store = Arc::new(SqliteScanStore::new(db.clone()));
+        let scan_store = Arc::new(SqliteScanStore::new(db.clone(), platform.clock.clone()));
         let LibraryPorts {
             enrichment,
             scan_completed,
@@ -398,7 +407,7 @@ impl LibrarySetup {
         let registry = core.registry.clone();
         let root_dirs = core.root_dirs.clone();
         let fs = core.fs.clone();
-        let identify_store = Arc::new(SqliteIdentifyStore::new(db.clone()));
+        let identify_store = Arc::new(SqliteIdentifyStore::new(db.clone(), platform.clock.clone()));
         let pool = BlockingPool::new(4);
         let wakeups = core.wakeups.clone();
         let coordinator = Arc::new(
@@ -407,6 +416,7 @@ impl LibrarySetup {
                 pool.clone(),
                 Arc::new(LoftyTagReader),
                 registry.clone(),
+                platform.clock.clone(),
             )
             .with_filesystem(fs.clone())
             .with_wakeups(wakeups.clone())
@@ -445,6 +455,7 @@ impl LibrarySetup {
             Arc::new(super::adapters::IdentifyFollowUp::new(
                 identify_store.clone(),
             )),
+            platform.clock.clone(),
         );
         let fingerprints: Arc<dyn super::identify::sources::FingerprintSource> =
             Arc::new(super::identify::sources::AcoustIdFingerprints::new(
@@ -475,7 +486,7 @@ impl LibrarySetup {
             publish: core.publish.clone(),
             placement: core.placement.clone(),
             held_bundles: core.held_bundles.clone(),
-            leftover_files: super::manage::LeftoverFiles::new(db.clone()),
+            leftover_files: super::manage::LeftoverFiles::new(db.clone(), platform.clock.clone()),
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,

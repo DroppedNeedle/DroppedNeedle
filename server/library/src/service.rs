@@ -1,7 +1,7 @@
 //! Library service: roots, scans, identification, and reviews.
 use droppedneedle_kernel::db::Lane;
 
-use super::clock::now_ms;
+use super::clock::LibraryClock as _;
 use super::identify::models::{AlbumIdentity, IdentifyJob, IdentifyKind};
 use super::manage::publish_error;
 use super::scan::models::{
@@ -203,7 +203,7 @@ impl LibrarySetup {
             kind,
             &revision,
             Some(user_id),
-            now_ms(),
+            self.clock.now_ms_u64(),
             Lane::Foreground,
         )?)
     }

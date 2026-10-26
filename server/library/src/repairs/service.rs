@@ -21,7 +21,7 @@ use super::models::{
 use super::plays;
 use super::reasons;
 use super::store::{self, Phase, RepairSnapshot};
-use crate::clock::{now_ms, now_unix};
+use crate::clock::LibraryClock as _;
 use crate::identify::models::{IdentifyKind, LocalAlbumFacts, RecallResult};
 use crate::identify::service::IdentifyService;
 use crate::identify::sqlite::{SqliteIdentifyStore, album_input_revision};
@@ -93,6 +93,7 @@ pub struct Repairs {
     /// The worker hands its job back between albums once this is
     /// cancelled, so a stopping server never waits out a whole job.
     shutdown: Option<CancellationToken>,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl Repairs {
@@ -106,12 +107,13 @@ impl Repairs {
             coordinator: setup.coordinator.clone(),
             hygiene_checked: Arc::new(AtomicBool::new(false)),
             hygiene_scan: Arc::new(Mutex::new(None)),
-            hygiene_identified: Arc::new(Mutex::new(crate::clock::now_ms() as i64)),
+            hygiene_identified: Arc::new(Mutex::new(setup.clock.now_ms())),
             plays_scan: Arc::new(Mutex::new(None)),
             backfill_scan: Arc::new(Mutex::new(None)),
             management: setup.settings.management.clone(),
             wakeups: setup.wakeups.clone(),
             shutdown: None,
+            clock: setup.clock.clone(),
         }
     }
 
@@ -170,7 +172,7 @@ impl Repairs {
                         source_matcher_version: None,
                         target_matcher_version: HYGIENE_VERSION.to_owned(),
                     };
-                    store::create(tx, &new, now_unix()).map(|_| ())
+                    store::create(tx, &new, self.clock.now_secs()).map(|_| ())
                 });
         if settled(&queued) {
             *seen = newest;
@@ -207,7 +209,7 @@ impl Repairs {
         let job = self
             .db
             .write_blocking(Lane::Foreground, "repairs.create", |tx| {
-                store::create(tx, &new, now_unix())
+                store::create(tx, &new, self.clock.now_secs())
             })?;
         jobs::wake(&self.wakeups, OperationKind::Repair);
         Ok(job)
@@ -312,7 +314,13 @@ impl Repairs {
         let job = self
             .db
             .write_blocking(Lane::Foreground, "repairs.begin_apply", |tx| {
-                store::begin_apply(tx, job_id, purpose, expected_row_revision, now_unix())
+                store::begin_apply(
+                    tx,
+                    job_id,
+                    purpose,
+                    expected_row_revision,
+                    self.clock.now_secs(),
+                )
             })?;
         jobs::wake(&self.wakeups, OperationKind::Repair);
         Ok(job)
@@ -326,7 +334,7 @@ impl Repairs {
     ) -> Result<OperationJob, OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "repairs.discard", |tx| {
-                store::discard(tx, job_id, expected_row_revision, now_unix())
+                store::discard(tx, job_id, expected_row_revision, self.clock.now_secs())
             })
     }
 
@@ -376,7 +384,7 @@ impl Repairs {
                     source_matcher_version: None,
                     target_matcher_version: HYGIENE_VERSION.to_owned(),
                 };
-                store::create(tx, &new, now_unix()).map(|_| ())
+                store::create(tx, &new, self.clock.now_secs()).map(|_| ())
             });
         if settled(&queued) {
             self.hygiene_checked.store(true, Ordering::Relaxed);
@@ -505,7 +513,7 @@ impl Repairs {
                 IdentifyKind::Historical,
                 revision,
                 None,
-                now_ms(),
+                self.clock.now_ms_u64(),
                 Lane::Background,
             )?;
         }
@@ -516,7 +524,7 @@ impl Repairs {
                     tx,
                     &self.ids.new_id(),
                     key,
-                    now_unix(),
+                    self.clock.now_secs(),
                 )?)
             })
     }
@@ -557,7 +565,7 @@ impl Repairs {
                         source_matcher_version: None,
                         target_matcher_version: HYGIENE_VERSION.to_owned(),
                     };
-                    store::create(tx, &new, now_unix()).map(|_| ())
+                    store::create(tx, &new, self.clock.now_secs()).map(|_| ())
                 });
         if settled(&queued) {
             *seen = Some(run);
@@ -587,7 +595,7 @@ impl Repairs {
         let queued = self
             .db
             .write_blocking(Lane::Background, "repairs.queue_play_filing", |tx| {
-                plays::queue(tx, &self.ids.new_id(), after_scan, now_unix())?;
+                plays::queue(tx, &self.ids.new_id(), after_scan, self.clock.now_secs())?;
                 Ok::<_, OperationError>(())
             });
         if settled(&queued) {
@@ -610,7 +618,7 @@ impl Repairs {
             let left = self
                 .db
                 .write_blocking(Lane::Background, "repairs.file_plays", |tx| {
-                    let now = now_unix();
+                    let now = self.clock.now_secs();
                     if let Some(left) = halt(tx, job_id, worker, yielding, now)? {
                         return Ok::<_, OperationError>(Some(left));
                     }
@@ -688,7 +696,7 @@ impl Repairs {
                 Ok::<_, OperationError>(jobs::recover_at_start(
                     tx,
                     OperationKind::Repair,
-                    now_unix(),
+                    self.clock.now_secs(),
                 )?)
             })
     }
@@ -706,7 +714,12 @@ impl Repairs {
         let claimed = self
             .db
             .write_blocking(Lane::Background, "repairs.claim", |tx| {
-                Ok::<_, OperationError>(jobs::claim(tx, OperationKind::Repair, worker, now_unix())?)
+                Ok::<_, OperationError>(jobs::claim(
+                    tx,
+                    OperationKind::Repair,
+                    worker,
+                    self.clock.now_secs(),
+                )?)
             })?;
         let Some(job) = claimed else {
             return Ok(None);
@@ -727,7 +740,7 @@ impl Repairs {
         cause: String,
     ) -> Result<Option<OperationJob>, OperationError> {
         tracing::warn!(cause, job_id, "repair job waits: the database is busy");
-        let now = now_unix();
+        let now = self.clock.now_secs();
         let jitter = SplitMix64::new(SplitMix64::seed_from_time()).below_duration(BUSY_RETRY);
         let retry_at = now + (BUSY_RETRY + jitter).as_secs_f64();
         self.db
@@ -761,7 +774,7 @@ impl Repairs {
                         worker,
                         OperationState::Failed,
                         "MISSING_SNAPSHOT",
-                        now_unix(),
+                        self.clock.now_secs(),
                     )?)
                 },
             );
@@ -775,7 +788,7 @@ impl Repairs {
             let next = self
                 .db
                 .write_blocking(Lane::Background, "repairs.claim_album", |tx| {
-                    let now = now_unix();
+                    let now = self.clock.now_secs();
                     if let Some(left) = halt(tx, &job.id, worker, yielding, now)? {
                         return Ok::<_, OperationError>(Err(left));
                     }
@@ -795,7 +808,7 @@ impl Repairs {
                             if !jobs::holds(tx, &job.id, worker)? {
                                 return Ok(());
                             }
-                            let now = now_unix();
+                            let now = self.clock.now_secs();
                             let changed = hygiene::clean_album(tx, &album_id, &job.id, now)?;
                             let state = if changed.is_some() {
                                 WorkState::Succeeded
@@ -828,7 +841,7 @@ impl Repairs {
                                 ordinal,
                                 &album_id,
                                 actor.as_deref(),
-                                now_unix(),
+                                self.clock.now_secs(),
                             )
                         })?
                 }
@@ -839,7 +852,7 @@ impl Repairs {
                                 if !jobs::holds(tx, &job.id, worker)? {
                                     return Ok(());
                                 }
-                                let now = now_unix();
+                                let now = self.clock.now_secs();
                                 store::save_finding(
                                     tx,
                                     &job.id,
@@ -859,7 +872,7 @@ impl Repairs {
                             Lane::Background,
                             "repairs.provider_deferred",
                             |tx| {
-                                let now = now_unix();
+                                let now = self.clock.now_secs();
                                 jobs::release_until(
                                     tx,
                                     &job.id,

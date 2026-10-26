@@ -17,7 +17,6 @@
 //! exactly as the art sweep does.
 
 use std::collections::HashMap;
-use std::time::UNIX_EPOCH;
 
 use rusqlite::params;
 
@@ -127,10 +126,7 @@ impl SqliteScanStore {
         if pending.is_empty() {
             return;
         }
-        let now = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
-            .unwrap_or(0);
+        let now = self.clock.now_ms();
         let written = self.write_once(Lane::Background, "scan_lyrics", |tx| {
             let mut marked = 0;
             for checked in pending.iter() {

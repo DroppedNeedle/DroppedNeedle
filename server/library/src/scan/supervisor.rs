@@ -253,6 +253,7 @@ mod tests {
             BlockingPool::new(2),
             Arc::new(NullTagReader::new()),
             Arc::new(StaticResolver::new(registry)),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
         );
         (dir, coordinator)
     }

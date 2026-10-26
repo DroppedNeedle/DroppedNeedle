@@ -13,7 +13,7 @@ use super::models::{
 use super::profile;
 use super::service::{JobSpec, Management, stale};
 use super::store;
-use crate::clock::now_unix;
+use crate::clock::LibraryClock as _;
 use crate::management::settings::service::{ActivationProofPins, LibraryManagementService};
 use crate::management::settings::settings_revision;
 use crate::publish::snapshots::sha256_hex;
@@ -185,7 +185,7 @@ impl Management {
             .map_err(settings_error)?;
         // A dry run is never applied: once it has proved the settings it
         // is done, and no longer holds its albums as planned work.
-        let now = now_unix();
+        let now = self.setup.clock.now_secs();
         if let Err(error) = self.setup.db.write_blocking(
             Lane::Foreground,
             "management.complete_without_work",
@@ -204,7 +204,11 @@ impl Management {
             self.setup
                 .db
                 .write_blocking(Lane::Foreground, "management.wake", |conn| {
-                    Ok::<_, ManagementError>(super::automatic::wake(conn, None, now_unix())?)
+                    Ok::<_, ManagementError>(super::automatic::wake(
+                        conn,
+                        None,
+                        self.setup.clock.now_secs(),
+                    )?)
                 })
         {
             tracing::warn!(%error, "skipped albums not woken after activation");
@@ -265,7 +269,7 @@ impl Management {
             policy_revision: snapshot.policy_revision,
             preview_token: proof.preview_token.clone(),
             preview_hash: presented,
-            confirmed_at: now_unix(),
+            confirmed_at: self.setup.clock.now_secs(),
             confirmed_by: None,
         })
     }
