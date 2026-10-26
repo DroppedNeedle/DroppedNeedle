@@ -3702,3 +3702,91 @@ async fn a_confirmed_album_moves_to_the_edition_its_barcode_names() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Recalls a scripted answer that misses the held edition, and cannot
+/// fetch the held edition again (its stored document is stale and
+/// MusicBrainz does not answer).
+struct HeldUnanswered(RecallResult);
+
+impl identify::providers::IdentifyProviders for HeldUnanswered {
+    fn recall_candidates(
+        &self,
+        _facts: &LocalAlbumFacts,
+        _named_group: Option<&str>,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = identify::providers::RecallOutcome> + Send + '_>,
+    > {
+        let result = self.0.clone();
+        Box::pin(async move {
+            identify::providers::RecallOutcome {
+                result,
+                recall_criticality: None,
+            }
+        })
+    }
+
+    fn recall_release(
+        &self,
+        _facts: &LocalAlbumFacts,
+        _release_mbid: &str,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = identify::providers::RecallOutcome> + Send + '_>,
+    > {
+        Box::pin(async {
+            identify::providers::RecallOutcome {
+                result: RecallResult {
+                    provider_deferred: true,
+                    failure_code: Some("musicbrainz_unavailable".to_owned()),
+                    ..RecallResult::default()
+                },
+                recall_criticality: None,
+            }
+        })
+    }
+}
+
+/// An album whose held edition MusicBrainz cannot answer for stays on it:
+/// the attempt waits as a busy recall does, even when recall offers
+/// another edition of the group that fits.
+#[tokio::test]
+async fn a_held_edition_that_cannot_be_fetched_keeps_the_album() {
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts(
+        "album-1",
+        &[("t1", Some(RECORDING_1)), ("t2", Some(RECORDING_2))],
+    ));
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: "album-1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(GROUP_A.to_owned()),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
+    let service = IdentifyService::new(IdentifyDeps {
+        store: rig.store.clone(),
+        providers: Arc::new(HeldUnanswered(recall(vec![release(
+            GROUP_A,
+            RELEASE_A2,
+            &[RECORDING_1, RECORDING_2],
+        )]))),
+    });
+
+    let report = rig.attempt(&service, "job-1", "album-1").await;
+
+    let held = rig.store.album_identity("album-1").unwrap();
+    assert_eq!(
+        held.and_then(|row| row.release_mbid).as_deref(),
+        Some(RELEASE_A1)
+    );
+    assert_eq!(
+        report.map(|report| report.outcome),
+        Some(IdentificationOutcome::ProviderDeferred)
+    );
+    let job = rig.store.job("job-1").unwrap().expect("job");
+    assert_eq!(job.state, JobState::Deferred);
+}

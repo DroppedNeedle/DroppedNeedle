@@ -244,7 +244,14 @@ impl IdentifyService {
                 .providers
                 .recall_release(&facts, held, RequestPriority::BackgroundSync)
                 .await;
-            if !extra.result.provider_deferred {
+            // Without the held edition `keep` cannot hold the album, so a
+            // held release MusicBrainz cannot answer for defers the attempt
+            // as a busy recall does. A stale stored copy is not used: the
+            // move rules compare against what the held edition states now.
+            if extra.result.provider_deferred {
+                recall.provider_deferred = true;
+                recall.failure_code = extra.result.failure_code;
+            } else {
                 recall.releases.extend(extra.result.releases);
             }
         }
