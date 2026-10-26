@@ -35,10 +35,10 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import type { LibraryFileMeta, DownloadTask, HeldImport } from '$lib/types';
+	import type { LibraryFileMeta, DownloadTask, HeldFileInEntry } from '$lib/types';
 	import TrackRequestButton from '$lib/components/downloads/TrackRequestButton.svelte';
 	import TrackDownloadStatus from '$lib/components/downloads/TrackDownloadStatus.svelte';
-	import HeldTrackReview from '$lib/components/downloads/HeldTrackReview.svelte';
+	import HeldFileRow from '$lib/components/downloads/HeldFileRow.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { requestUpgradeTrack } from '$lib/queries/downloads/UpgradeQueries.svelte';
@@ -69,8 +69,8 @@
 		plexEnabled: boolean;
 		libraryTracksByRecording?: Map<string, LibraryFileMeta>;
 		libraryTracksByPosition?: Map<string, LibraryFileMeta>;
-		heldByRecording?: Map<string, HeldImport>;
-		heldByPosition?: Map<string, HeldImport>;
+		heldByRecording?: Map<string, HeldFileInEntry>;
+		heldByPosition?: Map<string, HeldFileInEntry>;
 		trackDownloadTasks?: Map<string, DownloadTask>;
 		/** The current edition's plan by disc and position; it decides which file holds a track. */
 		editionRows?: Map<string, EditionTrackRow> | null;
@@ -338,9 +338,7 @@
 										size="xs"
 										onclick={() => toggleHeld(row.globalIndex)}
 										aria-expanded={heldOpen.has(row.globalIndex)}
-										title={heldMeta.reason_kind === 'library'
-											? 'Waiting on the library'
-											: "Downloaded but couldn't verify - review it"}
+										title={heldMeta.file.reason_text}
 									>
 										<TriangleAlert class="size-3.5 text-warning" aria-hidden="true" /> held
 									</Button>
@@ -529,7 +527,12 @@
 				{#if heldMeta && heldOpen.has(row.globalIndex)}
 					<li class="list-row p-0">
 						<div class="w-full px-3 pb-3 sm:px-4">
-							<HeldTrackReview held={heldMeta} />
+							<HeldFileRow
+								entry={heldMeta.entry}
+								file={heldMeta.file}
+								showTitle={false}
+								showExpiry
+							/>
 						</div>
 					</li>
 				{/if}

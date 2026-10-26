@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
 
 import { renderWithQuery } from '$lib/test/render';
-import type { DownloadTask, HeldImport } from '$lib/types';
+import type { DownloadTask, HeldFile } from '$lib/types';
 
 import AlbumDownloadStatus from './AlbumDownloadStatus.svelte';
 
@@ -56,49 +56,44 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 	};
 }
 
-function held(id: number): HeldImport {
+function held(id: number): HeldFile {
 	return {
 		id,
-		release_group_mbid: 'rg',
+		original_name: `B/${id}.flac`,
 		release_mbid: null,
 		release_track_mbid: null,
 		recording_mbid: null,
 		track_number: id,
 		disc_number: 1,
 		track_title: `Track ${id}`,
-		artist_name: 'A',
-		album_title: 'B',
-		year: 2020,
-		original_filename: `${id}.flac`,
 		file_format: 'flac',
 		duration_seconds: 180,
 		expected_duration_seconds: null,
 		reason: 'target_occupied',
 		reason_detail: null,
+		reason_text: 'Another file already sits where this would go in your library.',
+		reason_action: 'Compare it with the one in your library.',
+		reason_kind: 'library',
 		source: 'soulseek',
 		source_task_id: 't',
 		created_at: id,
 		evidence_title: null,
 		evidence_artist: null,
 		evidence_score: null,
-		management_retry_count: 0,
-		management_next_retry_at: null,
-		reason_text: 'Another file already sits where this would go in your library.',
-		reason_action: 'Compare it with the one in your library.',
-		reason_kind: 'library',
-		origin: 'user'
+		actions: ['retry']
 	};
 }
 
 describe('AlbumDownloadStatus.svelte', () => {
-	it('says held files are waiting on the library, and counts them as kept', async () => {
+	it('counts the held files of the download and says why', async () => {
 		await renderWithQuery(AlbumDownloadStatus, {
 			task: task(),
-			managementHeld: [held(1), held(2)]
+			heldFiles: [held(1), held(2)]
 		});
 
+		await expect.element(page.getByText('2 files held', { exact: true })).toBeVisible();
 		await expect
-			.element(page.getByText('Waiting on the library · 2 files kept', { exact: true }))
+			.element(page.getByText('Another file already sits where this would go in your library.'))
 			.toBeVisible();
 	});
 });

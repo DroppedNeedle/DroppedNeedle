@@ -866,7 +866,7 @@ pub struct ImpactBucketCounts {
     pub remote_queued_zero_byte: i64,
     /// Downloading/processing rows (immutable under the new policy).
     pub transferring: i64,
-    /// Held imports awaiting a decision.
+    /// Held entries awaiting a decision.
     pub held_reviews: i64,
 }
 
@@ -929,7 +929,10 @@ impl PolicyImpactBuckets for SqliteImpactBuckets {
                 .await?,
                 held_reviews: one(
                     &self.pool,
-                    "SELECT COUNT(*) FROM held_imports WHERE status = 'held'",
+                    &format!(
+                        "SELECT COUNT(*) FROM acquire_held_entries WHERE state IN {}",
+                        droppedneedle_acquire::held::sql::OPEN
+                    ),
                 )
                 .await?,
             })

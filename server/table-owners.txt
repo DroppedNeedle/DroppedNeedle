@@ -98,6 +98,8 @@ import_runs
 [acquire]
 acquire_edition_acquires
 acquire_follow_cursors
+acquire_held_entries
+acquire_held_files
 artist_known_releases
 auto_download_approvals
 download_activity_global_revision
@@ -109,7 +111,6 @@ download_quarantine
 download_tasks
 drop_import_items
 drop_import_jobs
-held_imports
 personal_mix_approvals
 request_history
 request_history_dismissals

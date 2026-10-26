@@ -349,6 +349,12 @@ pub struct DownloadStore<'conn> {
 }
 
 impl<'conn> DownloadStore<'conn> {
+    /// The connection the store runs on, for the held list's rows in the
+    /// same transaction.
+    pub(crate) fn conn(&self) -> &'conn Connection {
+        self.conn
+    }
+
     /// Borrow a connection as a download journal.
     pub fn new(conn: &'conn Connection) -> Self {
         Self {
@@ -1113,81 +1119,9 @@ impl<'conn> DownloadStore<'conn> {
         Ok(removed as i64)
     }
 
-    /// Insert a held-import row.
-    #[allow(clippy::too_many_arguments)]
-    pub fn insert_held(
-        &self,
-        user_id: &str,
-        held_path: &str,
-        reason: &str,
-        source_task_id: Option<&str>,
-        release_group_mbid: Option<&str>,
-        now: f64,
-    ) -> Result<i64, StoreError> {
-        self.conn.execute(
-            sql::INSERT_HELD.text(),
-            rusqlite::params![
-                user_id,
-                held_path,
-                reason,
-                source_task_id,
-                release_group_mbid,
-                now,
-            ],
-        )?;
-        Ok(self.conn.last_insert_rowid())
-    }
-
     /// Every distinct reason spelling the journal stores.
     pub fn stored_reason_spellings(&self) -> Result<Vec<String>, StoreError> {
         self.rows(sql::STORED_REASONS.text(), [], |row| row.get(0))
-    }
-
-    /// True when the task left a track held for review. Auto-retry pauses
-    /// while this holds: re-downloading a held track would loop, and
-    /// discarding the held track clears the gate.
-    pub fn has_unresolved_held_for_task(&self, source_task_id: &str) -> Result<bool, StoreError> {
-        let count: i64 = self.conn.query_row(
-            sql::UNRESOLVED_HELD_FOR_TASK.text(),
-            rusqlite::params![source_task_id],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
-    }
-
-    /// Due library-hold units: `(task_id, user_id)` pairs whose held
-    /// rows of the Library kind have a retry time at or before now,
-    /// oldest first.
-    pub fn list_due_held_units(
-        &self,
-        now: f64,
-        limit: i64,
-    ) -> Result<Vec<(String, String)>, StoreError> {
-        self.rows(
-            sql::DUE_HELD_UNITS.text(),
-            rusqlite::params![now, limit],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-    }
-
-    /// Schedule the next library retry for held rows. Only `held` rows
-    /// of the Library kind move; anything else keeps its values.
-    pub fn schedule_held_retry(
-        &self,
-        held_ids: &[i64],
-        retry_count: i64,
-        next_retry_at: Option<f64>,
-    ) -> Result<(), StoreError> {
-        if held_ids.is_empty() {
-            return Ok(());
-        }
-        let text = sql::schedule_held_retry(ListLen::new(held_ids.len()));
-        let mut params: Vec<rusqlite::types::Value> =
-            vec![retry_count.into(), next_retry_at.into()];
-        params.extend(held_ids.iter().map(|id| (*id).into()));
-        self.conn
-            .execute(&text, rusqlite::params_from_iter(params))?;
-        Ok(())
     }
 
     /// Retryable tasks: the newest task per target (album, or track plus

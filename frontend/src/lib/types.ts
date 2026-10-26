@@ -2065,9 +2065,22 @@ export type DownloadListResponse = components['schemas']['DownloadListResponse']
 
 export type DownloadActivitySummary = components['schemas']['DownloadActivitySummaryResponse'];
 
-export type HeldImport = components['schemas']['HeldImportResponse'];
+/** One download or upload whose files wait for a decision. */
+export type HeldEntry = components['schemas']['HeldEntryResponse'];
 
-export type HeldListResponse = components['schemas']['HeldListResponse'];
+export type HeldFile = components['schemas']['HeldFileResponse'];
+
+export type HeldFileAction = components['schemas']['HeldFileAction'];
+
+/** A held file with the entry it belongs to, as an album page's track row shows it. */
+export interface HeldFileInEntry {
+	entry: HeldEntry;
+	file: HeldFile;
+}
+
+export type HeldActionResult = components['schemas']['HeldActionResponse'];
+
+export type HeldRecheckAllResult = components['schemas']['HeldRecheckAllResponse'];
 
 export interface DownloadSourceUpdate {
 	candidate_index: number | null;

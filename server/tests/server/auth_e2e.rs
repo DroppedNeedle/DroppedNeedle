@@ -1184,7 +1184,7 @@ const EXCEPTIONS: &[(&str, &str, Exception, &str)] = &[
     ),
     (
         "POST",
-        "/api/v3/import/items/{item_id}/match",
+        "/api/v3/held/{entry_id}/match",
         Exception::Body(item_match_body),
         "an empty object fails to decode before the handler runs",
     ),

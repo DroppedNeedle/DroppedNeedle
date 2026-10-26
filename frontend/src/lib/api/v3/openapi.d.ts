@@ -2041,188 +2041,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/downloads/held": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Held files the viewer may act on, newest first; one album's with
-         *     `release_group_mbid`. `GET /api/v3/downloads/held`.
-         */
-        get: operations["list_held_handler"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/downloads/held/management/{source_task_id}/discard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Delete every file of a download that waits on the library. Admin only.
-         *     `POST /api/v3/downloads/held/management/{source_task_id}/discard`.
-         */
-        post: operations["discard_local_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/downloads/held/management/{source_task_id}/retry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import every file of a download that waits on the library (a taken
-         *     destination, an old copy that could not be recycled). Admin only.
-         *     `POST /api/v3/downloads/held/management/{source_task_id}/retry`.
-         */
-        post: operations["retry_local_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/downloads/held/reverify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Re-check AcoustID holds in bulk (at most 25 checks a call; other holds
-         *     answer `skipped`). `POST /api/v3/downloads/held/reverify`.
-         */
-        post: operations["reverify_bulk_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/downloads/held/verdict/{source_task_id}/discard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Delete every file a download's checks held and clear its wrong-product
-         *     verdict. `POST /api/v3/downloads/held/verdict/{source_task_id}/discard`.
-         */
-        post: operations["discard_verdict_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/downloads/held/{held_id}/audio": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Play a held file for the review, with byte ranges so the player can
-         *     seek. `GET /api/v3/downloads/held/{held_id}/audio`.
-         */
-        get: operations["held_audio_handler"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/downloads/held/{held_id}/discard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Delete a held file; the album's automatic retry resumes.
-         *     `POST /api/v3/downloads/held/{held_id}/discard`.
-         */
-        post: operations["discard_held_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/downloads/held/{held_id}/import": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import a held file as it is, into the album's chosen edition. For an
-         *     upgrade, the library's copy is replaced only by a better file and goes
-         *     to the recycle bin. `POST /api/v3/downloads/held/{held_id}/import`.
-         */
-        post: operations["import_held_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/downloads/held/{held_id}/reverify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Fingerprint an AcoustID-held file again and import it when AcoustID
-         *     now agrees. `POST /api/v3/downloads/held/{held_id}/reverify`.
-         */
-        post: operations["reverify_held_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/downloads/quarantine": {
         parameters: {
             query?: never;
@@ -2820,6 +2638,167 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/held": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Entries waiting for your decision, newest first, with when each
+         *     expires. `GET /api/v3/held`.
+         */
+        get: operations["list_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/held/files/{file_id}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Play a held file, with byte ranges so the player can seek.
+         *     `GET /api/v3/held/files/{file_id}/audio`.
+         */
+        get: operations["audio_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/held/recheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-check AcoustID holds across entries (at most 25 checks a call).
+         *     `POST /api/v3/held/recheck`.
+         */
+        post: operations["recheck_all_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/held/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One entry with its held files. `GET /api/v3/held/{entry_id}`. */
+        get: operations["get_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/held/{entry_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete an entry's held files (all, or those named). For a download, the
+         *     album's automatic retry resumes. `POST /api/v3/held/{entry_id}/discard`.
+         */
+        post: operations["discard_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/held/{entry_id}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import an entry's held files (all, or those named), skipping the check
+         *     that held each. A file no better than your copy stays held until "Use
+         *     this file"; a lower-quality version replaces yours only by "Use this
+         *     version", and yours goes to the recycle bin.
+         *     `POST /api/v3/held/{entry_id}/import`.
+         */
+        post: operations["import_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/held/{entry_id}/match": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import an entry's held files as the album a curator picked: the app
+         *     pairs them with its tracks. `POST /api/v3/held/{entry_id}/match`.
+         */
+        post: operations["match_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/held/{entry_id}/recheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask AcoustID again about an entry's files it heard as another recording
+         *     or could not confirm; files it now confirms are imported.
+         *     `POST /api/v3/held/{entry_id}/recheck`.
+         */
+        post: operations["recheck_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/home": {
         parameters: {
             query?: never;
@@ -2919,46 +2898,6 @@ export interface paths {
         get: operations["your_top_albums"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/import/items/{item_id}/discard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Throw a review item's files away.
-         *     `POST /api/v3/import/items/{item_id}/discard`.
-         */
-        post: operations["discard_item_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/import/items/{item_id}/match": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import a review item as the album you picked.
-         *     `POST /api/v3/import/items/{item_id}/match`.
-         */
-        post: operations["match_item_handler"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13386,10 +13325,6 @@ export interface components {
         DropImportJobsResponse: {
             jobs: components["schemas"]["DropImportJobResponse"][];
         };
-        /** @description The album a person picked for a review item. */
-        DropImportMatchRequest: {
-            release_group_mbid: string;
-        };
         /** @description `drop_import_updated`: one of the user's drop-import jobs moved. */
         DropImportUpdated: {
             /** @description Id for de-duplication. */
@@ -13973,6 +13908,16 @@ export interface components {
          * @enum {string}
          */
         EnrichmentSource: "listenbrainz" | "lastfm" | "none";
+        /**
+         * @description Where an entry's files came from.
+         * @enum {string}
+         */
+        EntryOrigin: "download" | "upload";
+        /**
+         * @description Where an entry is in its life.
+         * @enum {string}
+         */
+        EntryState: "held" | "placing" | "resolved" | "expired";
         /** @description The `error` object inside every error response. */
         ErrorBody: {
             /** @description SCREAMING_SNAKE machine code. */
@@ -14613,42 +14558,61 @@ export interface components {
             /** @description Service state, `ok` when serving. */
             status: string;
         };
-        /** @description What an import or discard did. */
+        /** @description What an action did. */
         HeldActionResponse: {
-            /** @description Where the imported file now lives. */
-            final_path?: string | null;
-            /**
-             * @description A note when the outcome needs one (an upgrade's file that was no
-             *     better than the library's copy).
-             */
+            /** @description Files the library already held, so nothing was added. */
+            already_owned: number;
+            /** @description Files deleted. */
+            discarded: number;
+            /** @description Files now in the library. */
+            imported: number;
+            /** @description Why the first file still held stays, when one does. */
             message?: string | null;
-            /** @description `imported` or `discarded`. */
-            status: string;
+            /** @description Files still held. */
+            still_held: number;
         };
-        /** @description One file of a bulk re-check. */
-        HeldBulkReverifyItem: {
-            final_path?: string | null;
-            /** Format: int64 */
-            held_id: number;
-            /** @description Why a file was skipped or failed. */
-            message?: string | null;
-            release_group_mbid?: string | null;
-            /** @description `imported`, `still_held`, `skipped` or `error`. */
-            status: string;
-        };
-        /** @description Bulk re-check: these held ids, in order, or every held file. */
-        HeldBulkReverifyRequest: {
-            held_ids?: number[] | null;
-        };
-        /** @description A bulk re-check's results. */
-        HeldBulkReverifyResponse: {
-            results: components["schemas"]["HeldBulkReverifyItem"][];
-        };
-        /** @description One held file. */
-        HeldImportResponse: {
+        /** @description One entry of the held list: one download or upload, with its files. */
+        HeldEntryResponse: {
             album_title?: string | null;
             artist_name?: string | null;
-            /** Format: double */
+            /**
+             * Format: int64
+             * @description When it was made, in milliseconds.
+             */
+            created_at: number;
+            /**
+             * Format: int64
+             * @description The upload's drop import item.
+             */
+            drop_item_id?: number | null;
+            /**
+             * Format: int64
+             * @description When its held files are removed, in milliseconds.
+             */
+            expires_at: number;
+            files: components["schemas"]["HeldFileResponse"][];
+            /** Format: int64 */
+            id: number;
+            origin: components["schemas"]["EntryOrigin"];
+            /** @description The song, for a track download. */
+            recording_mbid?: string | null;
+            release_group_mbid?: string | null;
+            /** @description `held` while it waits, `placing` while an action runs on it. */
+            state: components["schemas"]["EntryState"];
+        };
+        /**
+         * @description What a person can do with one held file, besides listening and
+         *     discarding, which every file offers.
+         * @enum {string}
+         */
+        HeldFileAction: "import" | "retry" | "use_this_version" | "use_this_file" | "recheck" | "get_from_album";
+        /** @description One held file. */
+        HeldFileResponse: {
+            actions: components["schemas"]["HeldFileAction"][];
+            /**
+             * Format: int64
+             * @description When it was held, in milliseconds.
+             */
             created_at: number;
             /** Format: int64 */
             disc_number?: number | null;
@@ -14658,7 +14622,7 @@ export interface components {
             /** Format: double */
             evidence_score?: number | null;
             /**
-             * @description What the rejecting check saw: the title and artist AcoustID heard
+             * @description What the check that held it saw: the title and artist AcoustID heard
              *     or the file's tags name, and AcoustID's score.
              */
             evidence_title?: string | null;
@@ -14667,58 +14631,66 @@ export interface components {
             file_format?: string | null;
             /** Format: int64 */
             id: number;
-            /** Format: double */
-            management_next_retry_at?: number | null;
-            /** Format: int64 */
-            management_retry_count: number;
-            /**
-             * @description `user`, `upgrade`, ... An upgrade's file replaces the library's
-             *     copy only when it is better.
-             */
-            origin: string;
-            original_filename?: string | null;
+            /** @description Its name (and folder) as it came. */
+            original_name: string;
             reason: components["schemas"]["Reason"];
             /** @description What the person can do about it. */
             reason_action: string;
             /** @description Specifics: which file, which marker. */
             reason_detail?: string | null;
             /**
-             * @description `library` when our side held the file and it can be retried as it
-             *     is; `hold` when a person decides.
+             * @description `library` when our side held it and it is retried as it is; `hold`
+             *     when a person decides.
              */
             reason_kind: components["schemas"]["ReasonKind"];
             /** @description The reason as one plain sentence. */
             reason_text: string;
             recording_mbid?: string | null;
-            release_group_mbid?: string | null;
             release_mbid?: string | null;
             release_track_mbid?: string | null;
-            /** @description `soulseek`, `usenet` or `plugin:<key>`. */
+            /** @description `soulseek`, `usenet`, `plugin:<key>` or `upload`. */
             source: string;
             source_task_id?: string | null;
             /** Format: int64 */
             track_number?: number | null;
             track_title?: string | null;
-            /** Format: int64 */
-            year?: number | null;
         };
-        /** @description Held files, newest first. */
+        /** @description The files an action takes; every held file of the entry when left out. */
+        HeldFilesRequest: {
+            file_ids?: number[] | null;
+        };
+        /** @description Entries waiting for a decision, newest first. */
         HeldListResponse: {
-            items: components["schemas"]["HeldImportResponse"][];
+            entries: components["schemas"]["HeldEntryResponse"][];
         };
-        /** @description What a fingerprint re-check did. */
-        HeldReverifyResponse: {
-            final_path?: string | null;
-            /** @description `imported` when AcoustID now agrees, else `still_held`. */
-            status: string;
+        /** @description The album a curator picked, and the files it takes (all when left out). */
+        HeldMatchRequest: {
+            file_ids?: number[] | null;
+            release_group_mbid: string;
         };
-        /** @description A per-download held action's outcome. */
-        HeldUnitResponse: {
-            /** @description Files acted on. */
-            files: number;
-            /** @description `imported` or `discarded`. */
-            status: string;
+        /** @description Bulk re-check: these entries, in order, or every entry. */
+        HeldRecheckAllRequest: {
+            entry_ids?: number[] | null;
         };
+        /** @description A bulk re-check's results. */
+        HeldRecheckAllResponse: {
+            results: components["schemas"]["HeldRecheckItem"][];
+        };
+        /** @description One file of a bulk re-check. */
+        HeldRecheckItem: {
+            /** Format: int64 */
+            entry_id: number;
+            /** Format: int64 */
+            file_id: number;
+            /** @description Why it failed. */
+            message?: string | null;
+            status: components["schemas"]["HeldRecheckStatus"];
+        };
+        /**
+         * @description How one file of a bulk re-check went.
+         * @enum {string}
+         */
+        HeldRecheckStatus: "imported" | "still_held" | "error";
         /** @description One listening-history entry. */
         HistoryEntry: {
             /** @description Track album. */
@@ -28233,224 +28205,6 @@ export interface operations {
             };
         };
     };
-    list_held_handler: {
-        parameters: {
-            query?: {
-                /** @description Only this album's held files. */
-                release_group_mbid?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeldListResponse"];
-                };
-            };
-        };
-    };
-    discard_local_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Download task id */
-                source_task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeldUnitResponse"];
-                };
-            };
-        };
-    };
-    retry_local_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Download task id */
-                source_task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeldUnitResponse"];
-                };
-            };
-        };
-    };
-    reverify_bulk_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HeldBulkReverifyRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeldBulkReverifyResponse"];
-                };
-            };
-        };
-    };
-    discard_verdict_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Download task id */
-                source_task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeldUnitResponse"];
-                };
-            };
-        };
-    };
-    held_audio_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Held file id */
-                held_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The held file */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/octet-stream": unknown;
-                };
-            };
-            /** @description The requested byte range */
-            206: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/octet-stream": unknown;
-                };
-            };
-            /** @description The range lies outside the file */
-            416: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    discard_held_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Held file id */
-                held_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeldActionResponse"];
-                };
-            };
-        };
-    };
-    import_held_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Held file id */
-                held_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeldActionResponse"];
-                };
-            };
-        };
-    };
-    reverify_held_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Held file id */
-                held_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HeldReverifyResponse"];
-                };
-            };
-        };
-    };
     list_quarantine_handler: {
         parameters: {
             query?: {
@@ -29360,6 +29114,222 @@ export interface operations {
             };
         };
     };
+    list_handler: {
+        parameters: {
+            query?: {
+                /** @description Only this album's entries. */
+                release_group_mbid?: string;
+                /** @description Only entries holding files of this download. */
+                task_id?: string;
+                /** @description Admins: every user's entries. */
+                all?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldListResponse"];
+                };
+            };
+        };
+    };
+    audio_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Held file id */
+                file_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The held file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description The requested byte range */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description The range lies outside the file */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    recheck_all_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeldRecheckAllRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldRecheckAllResponse"];
+                };
+            };
+        };
+    };
+    get_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Held entry id */
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldEntryResponse"];
+                };
+            };
+        };
+    };
+    discard_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Held entry id */
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeldFilesRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldActionResponse"];
+                };
+            };
+        };
+    };
+    import_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Held entry id */
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeldFilesRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldActionResponse"];
+                };
+            };
+        };
+    };
+    match_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Held entry id */
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeldMatchRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldActionResponse"];
+                };
+            };
+        };
+    };
+    recheck_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Held entry id */
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeldFilesRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldActionResponse"];
+                };
+            };
+        };
+    };
     get_home: {
         parameters: {
             query?: never;
@@ -29639,54 +29609,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    discard_item_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Import item id */
-                item_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DropImportItemResponse"];
-                };
-            };
-        };
-    };
-    match_item_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Import item id */
-                item_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DropImportMatchRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DropImportItemResponse"];
                 };
             };
         };

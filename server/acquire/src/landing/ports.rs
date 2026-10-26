@@ -265,4 +265,15 @@ pub trait LandingLibrary: Send + Sync {
     /// library is over. An error means the publish journal could not be
     /// read, which is not an answer.
     fn publish_settled<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, String>>;
+
+    /// The content hashes (lower-case hex SHA-256) of the files that writes
+    /// staged under `staging` put into the library, once every write from
+    /// that staging folder is over; `None` while one still waits for
+    /// recovery. A file whose hash is listed is in the library, so a
+    /// person's import cut off by a restart never places it twice. An error
+    /// means the publish journal could not be read.
+    fn placed_sources<'a>(
+        &'a self,
+        staging: &'a str,
+    ) -> BoxFuture<'a, Result<Option<HashSet<String>>, String>>;
 }

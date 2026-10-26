@@ -1,14 +1,16 @@
 //! Acquisition's side of an album removal (v2 `purge_album_downloads`
 //! plus the wanted follow-up), run as the library's `library.album_removed`
 //! job, which the removal queues in its own commit: the album's failed
-//! downloads stop retrying, its held files, held rows and blocklist
-//! entries go, and its wanted watch stops or rearms.
+//! downloads stop retrying, its held downloads are discarded with their
+//! copies, its blocklist entries go, and its wanted watch stops or rearms.
+//! Uploads waiting in the held list are not touched.
 //!
 //! Safe to run again: only rows made at or before the removal are
 //! touched, so a request made since keeps its task, held files and watch.
-//! Held files are deleted before the one write that drops their rows and
-//! finishes the job, so a run that stops in between finds them again.
+//! Held copies are deleted before the one write that discards their rows
+//! and finishes the job, so a run that stops in between finds them again.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
@@ -21,6 +23,7 @@ use droppedneedle_kernel::jobs::queue::{
 use droppedneedle_library::mutations::{ALBUM_REMOVED, AlbumRemovedJob};
 
 use super::downloads::store::{DownloadStore, StoreError};
+use super::held::store::HeldRows;
 use super::requests::sqlite::{rearm_after_removal, stop_after_removal};
 
 /// How the clean-up runs: the queue's defaults.
@@ -33,6 +36,7 @@ const CLEANUP_FAILED: &str = "CLEANUP_FAILED";
 pub struct AcquireAlbumCleanup {
     db: Db,
     clock: Arc<dyn Clock>,
+    held_dir: PathBuf,
 }
 
 impl AcquireAlbumCleanup {
@@ -42,6 +46,7 @@ impl AcquireAlbumCleanup {
         Self {
             db: stores.db.db().clone(),
             clock: stores.db.clock().clone(),
+            held_dir: stores.folders.held.clone(),
         }
     }
 }
@@ -83,13 +88,14 @@ impl JobHandler for AcquireAlbumCleanup {
     fn run(&self, job: JobCtx) -> BoxFuture<'static, Outcome> {
         let db = self.db.clone();
         let clock = self.clock.clone();
+        let held_dir = self.held_dir.clone();
         Box::pin(async move {
             let Ok(removed) = job.payload::<AlbumRemovedJob>() else {
                 return Outcome::Fail {
                     code: PAYLOAD_INVALID,
                 };
             };
-            match clean_up(&db, clock, job, &removed).await {
+            match clean_up(&db, clock, &held_dir, job, &removed).await {
                 Ok(()) => Outcome::Done,
                 Err(error) if error.is_busy() => Outcome::Busy,
                 Err(error) => {
@@ -107,27 +113,19 @@ impl JobHandler for AcquireAlbumCleanup {
 async fn clean_up(
     db: &Db,
     clock: Arc<dyn Clock>,
+    held_dir: &std::path::Path,
     job: JobCtx,
     removed: &AlbumRemovedJob,
 ) -> Result<(), CleanupError> {
-    let (group, removed_at) = (removed.release_group_mbid.clone(), removed.removed_at);
-    let held_paths = db
+    let group = removed.release_group_mbid.clone();
+    let before = (removed.removed_at * 1000.0) as i64;
+    let held = db
         .read("downloads.removed_album_held", move |conn| {
-            Ok::<_, CleanupError>(DownloadStore::new(conn).held_paths_before(&group, removed_at)?)
+            Ok::<_, CleanupError>(HeldRows::new(conn).removed_album_files(&group, before)?)
         })
         .await?;
-    let unlinked = tokio::task::spawn_blocking(move || {
-        for path in &held_paths {
-            if let Err(error) = std::fs::remove_file(path)
-                && error.kind() != std::io::ErrorKind::NotFound
-            {
-                tracing::warn!(%error, "held file of a removed album was kept");
-            }
-        }
-    })
-    .await;
-    if let Err(error) = unlinked {
-        tracing::warn!(%error, "held file cleanup did not finish");
+    for (_, _, path) in &held {
+        super::held::remove_copy(held_dir, path).await;
     }
     let job_removed = removed.clone();
     let cleaned = db

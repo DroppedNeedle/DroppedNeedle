@@ -3,9 +3,8 @@
 //! v2 copies a file it will not import on its own to `<cache>/held` and
 //! records why in `held_imports`; a curator later imports or discards it.
 //! Only rows still waiting on that decision travel: their files go in the
-//! bundle and land in v3's own `<cache>/held` folder, and the row's
-//! `held_path` is rewritten to the new place. Rows already decided have
-//! no file left to act on and stay behind.
+//! bundle, land in v3's own `<cache>/held` folder and join v3's held list.
+//! Rows already decided have no file left to act on and stay behind.
 
 use super::{Column, FileSet, Source, TableSection, Target, col};
 

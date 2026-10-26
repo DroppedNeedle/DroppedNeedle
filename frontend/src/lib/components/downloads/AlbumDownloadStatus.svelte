@@ -14,7 +14,7 @@
 		retryDisplay
 	} from '$lib/queries/downloads/downloadStatus';
 	import { downloadStatusConfig } from '$lib/queries/downloads/downloadStatusConfig';
-	import type { DownloadTask, HeldImport } from '$lib/types';
+	import type { DownloadTask, HeldFile } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -29,10 +29,11 @@
 	// language as the Downloads page, so a download reads the same on both screens.
 	interface Props {
 		task: DownloadTask;
-		managementHeld?: HeldImport[];
+		/** Files of this download held for a decision. */
+		heldFiles?: HeldFile[];
 	}
 
-	let { task, managementHeld = [] }: Props = $props();
+	let { task, heldFiles = [] }: Props = $props();
 
 	const cancel = cancelDownload();
 	const retry = retryDownload();
@@ -47,10 +48,10 @@
 	const cfg = $derived(downloadStatusConfig[derivedStatus]);
 	const isSearching = $derived(derivedStatus === 'searching');
 	const isReview = $derived(derivedStatus === 'awaiting_review');
-	const isManagementHold = $derived(managementHeld.length > 0);
-	const managementDetail = $derived(managementHeld[0]?.reason_detail?.trim() || null);
+	const isHeld = $derived(heldFiles.length > 0);
+	const heldReason = $derived(heldFiles[0]?.reason_text ?? null);
 	const keptFileLabel = $derived(
-		`${managementHeld.length} ${managementHeld.length === 1 ? 'file' : 'files'} kept`
+		`${heldFiles.length} ${heldFiles.length === 1 ? 'file' : 'files'} held`
 	);
 	const isQueued = $derived(derivedStatus === 'queued');
 	const isDownloading = $derived(task.status === 'downloading');
@@ -84,7 +85,7 @@
 				<div
 					class="grid size-11 place-items-center rounded-full bg-base-300/70 text-base-content/70"
 				>
-					{#if isManagementHold}
+					{#if isHeld}
 						<FolderLock class="h-5 w-5 text-warning" aria-hidden="true" />
 					{:else}
 						<cfg.icon class="h-5 w-5" aria-hidden="true" />
@@ -94,11 +95,11 @@
 		</div>
 
 		<div class="min-w-0 flex-1">
-			{#if isManagementHold}
-				<p class="text-xs font-bold text-warning">Waiting on the library · {keptFileLabel}</p>
-				{#if managementDetail}
+			{#if isHeld}
+				<p class="text-xs font-bold text-warning">{keptFileLabel}</p>
+				{#if heldReason}
 					<p class="mt-1 line-clamp-2 text-xs leading-relaxed text-base-content/65">
-						{managementDetail}
+						{heldReason}
 					</p>
 				{/if}
 			{:else}
@@ -131,9 +132,7 @@
 
 		<div class="flex shrink-0 items-center gap-1.5">
 			{#if isReview}
-				<Button variant="primary" size="xs" href={withBasePath('/downloads')}>
-					{isManagementHold ? 'Review organizer' : 'Review'}
-				</Button>
+				<Button variant="primary" size="xs" href={withBasePath('/downloads')}>Review</Button>
 			{/if}
 			{#if canCancel(task)}
 				<Button

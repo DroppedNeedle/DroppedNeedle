@@ -13,6 +13,9 @@ use std::time::{Instant, SystemTime};
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
+use droppedneedle_acquire::held::store::{
+    EntryOrigin, GroupKey, HeldRoot, HeldRows, NewEntry, NewFile,
+};
 use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::worker::{
     DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
@@ -362,19 +365,35 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
     let ids: Vec<&str> = retryable.iter().map(|task| task.id.as_str()).collect();
     assert_eq!(ids, vec!["orig-r1"]);
 
-    // A held track pauses auto-retry for its task.
-    store
-        .insert_held(
-            "u1",
-            "/held/01.flac",
-            "verify_failed",
-            Some("orig-r1"),
-            Some("rg-retry"),
-            now,
+    // A held track pauses auto-retry for its task, while its entry is open.
+    let held = HeldRows::new(&conn);
+    let (entry, _) = held
+        .hold(
+            &NewEntry {
+                user_id: "u1".to_owned(),
+                origin: EntryOrigin::Download,
+                key: GroupKey::Album("rg-retry".to_owned()),
+                release_group_mbid: Some("rg-retry".to_owned()),
+                recording_mbid: None,
+                drop_item_id: None,
+                artist_name: None,
+                album_title: None,
+            },
+            &[NewFile {
+                source_task_id: Some("orig-r1".to_owned()),
+                ..NewFile::new(HeldRoot::Held, "01.flac", Reason::WeakMatch, "soulseek")
+            }],
+            1,
         )
         .unwrap();
-    assert!(store.has_unresolved_held_for_task("orig-r1").unwrap());
-    assert!(!store.has_unresolved_held_for_task("orig").unwrap());
+    assert!(held.task_holds("orig-r1").unwrap());
+    assert!(!held.task_holds("orig").unwrap());
+    held.release(entry, 2).unwrap();
+    assert!(held.claim(entry).unwrap());
+    assert!(
+        held.task_holds("orig-r1").unwrap(),
+        "an entry being acted on is open"
+    );
 
     // Retry spawns keep the original terminal and carry the generation.
     let spawn = plan_retry("orig-r1", TaskStatus::Failed, "retry", 1).unwrap();
@@ -384,51 +403,6 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
     let upgrade_spawn = plan_retry("up", TaskStatus::Failed, "upgrade", 0).unwrap();
     assert_eq!(upgrade_spawn.origin, "upgrade");
     assert!(plan_retry("live", TaskStatus::Downloading, "user", 0).is_none());
-}
-
-#[test]
-fn library_held_retry_sweep_fires_only_when_due() {
-    let dir = scratch_dir("held");
-    let conn = scratch_store(&dir);
-    let store = DownloadStore::new(&conn);
-    let now = 1_700_000_000.0;
-
-    let due = store
-        .insert_held(
-            "u1",
-            "/held/a.flac",
-            "target_occupied",
-            Some("t1"),
-            None,
-            now,
-        )
-        .unwrap();
-    let waiting = store
-        .insert_held(
-            "u1",
-            "/held/b.flac",
-            "target_occupied",
-            Some("t2"),
-            None,
-            now,
-        )
-        .unwrap();
-    let other = store
-        .insert_held("u1", "/held/c.flac", "verify_failed", Some("t3"), None, now)
-        .unwrap();
-    store
-        .schedule_held_retry(&[due], 1, Some(now - 5.0))
-        .unwrap();
-    store
-        .schedule_held_retry(&[waiting], 1, Some(now + 3600.0))
-        .unwrap();
-    // Reasons a person decides on never take a scheduled retry.
-    store
-        .schedule_held_retry(&[other], 1, Some(now - 5.0))
-        .unwrap();
-
-    let units = store.list_due_held_units(now, 10).unwrap();
-    assert_eq!(units, vec![("t1".to_string(), "u1".to_string())]);
 }
 
 #[test]

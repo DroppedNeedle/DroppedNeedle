@@ -15,6 +15,7 @@ use rusqlite::{OptionalExtension as _, Row, params};
 use super::sql;
 use super::state::TaskStatus;
 use super::store::{DownloadStore, NewTask, StoreError, TaskRow};
+use crate::held::store::{FileState, HeldRows};
 use crate::reason::Reason;
 use crate::requests::settle::relink;
 
@@ -69,38 +70,20 @@ pub enum Stopped {
 pub struct AlbumPurge {
     /// Failed or short tasks that will no longer retry.
     pub retries_cancelled: usize,
-    /// Held "couldn't verify" rows dropped.
+    /// Held downloads discarded.
     pub held_removed: usize,
 }
 
 impl DownloadStore<'_> {
-    /// The held files of an album removed at `removed_at` (unix seconds):
-    /// those of its held imports made at or before then. The clean-up
-    /// deletes them before [`Self::purge_album`] drops their rows, so a
-    /// clean-up that stops between the two finds them again.
-    pub fn held_paths_before(
-        &self,
-        release_group_mbid: &str,
-        removed_at: f64,
-    ) -> Result<Vec<String>, StoreError> {
-        let mut statement = self.conn.prepare(
-            "SELECT held_path FROM held_imports WHERE lower(release_group_mbid) = lower(?1) \
-             AND created_at <= ?2",
-        )?;
-        let held_paths = statement
-            .query_map(params![release_group_mbid, removed_at], |row| {
-                row.get::<_, String>(0)
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(held_paths)
-    }
-
     /// Download-side cleanup after an album left the library at
     /// `removed_at` (unix seconds; v2 `purge_album_downloads`): its failed
-    /// or short tasks stop retrying, its held imports and blocklist
-    /// entries go. Only rows made at or before the removal are touched, so
-    /// a request made since keeps its own. Live tasks are left alone; they
-    /// are cancelled per task so their transfers are torn down.
+    /// or short tasks stop retrying, its held downloads are discarded and
+    /// its blocklist entries go. Only rows made at or before the removal
+    /// are touched, so a request made since keeps its own; held files go
+    /// by when each was held, and uploads are never touched. Live tasks are
+    /// left alone; they are cancelled per task so their transfers are torn
+    /// down. The caller deletes the held copies first
+    /// ([`HeldRows::removed_album_files`]).
     pub fn purge_album(
         &self,
         release_group_mbid: &str,
@@ -124,11 +107,13 @@ impl DownloadStore<'_> {
             self.release_task_kept(task_id, now)?;
         }
         let retries_cancelled = cancelled.len();
-        let held_removed = self.conn.execute(
-            "DELETE FROM held_imports WHERE lower(release_group_mbid) = lower(?1) \
-             AND created_at <= ?2",
-            params![release_group_mbid, removed_at],
-        )?;
+        let held = HeldRows::new(self.conn);
+        let removed_ms = (removed_at * 1000.0) as i64;
+        let now_ms = (now * 1000.0) as i64;
+        let mut held_removed = 0;
+        for (file, entry, _) in held.removed_album_files(release_group_mbid, removed_ms)? {
+            held_removed += held.resolve(entry, &[file], FileState::Discarded, now_ms)?;
+        }
         self.conn.execute(
             "DELETE FROM download_quarantine WHERE lower(release_group_mbid) = lower(?1) \
              AND quarantined_at <= ?2",
@@ -431,10 +416,7 @@ impl DownloadStore<'_> {
             }
         }
 
-        let mut stmt = self.conn.prepare_cached(&sql::held_facts(len))?;
-        let mut rows = stmt.query(ids())?;
-        while let Some(row) = rows.next()? {
-            let task_id: String = row.get(0)?;
+        for task_id in HeldRows::new(self.conn).tasks_holding(task_ids)? {
             if let Some(entry) = facts.get_mut(&task_id) {
                 entry.held_for_review = true;
             }
@@ -482,9 +464,7 @@ impl DownloadStore<'_> {
                 .query_row(sql::ACTIVITY_COUNTS.text(), params![owner], |row| {
                     Ok((row.get(0)?, row.get(1)?))
                 })?;
-        let held_count: i64 =
-            self.conn
-                .query_row(sql::HELD_COUNT.text(), params![owner], |row| row.get(0))?;
+        let held_count = HeldRows::new(self.conn).count_open(owner)?;
         let mut stmt = self.conn.prepare_cached(sql::LANDED_ALBUMS.text())?;
         let landed = stmt
             .query_map(params![owner], |row| row.get::<_, String>(0))?

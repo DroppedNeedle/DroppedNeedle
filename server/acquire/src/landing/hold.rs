@@ -1,89 +1,99 @@
-//! Hold files for a person: copy each into the held directory and record
-//! it in `held_imports` with the evidence that stopped it (v2
-//! `_hold_for_review`). The copy lands and syncs before its row, so a row
-//! never points at a missing file; a track (or unpaired file) the task
-//! already holds keeps its first copy, whichever candidate brought it.
+//! Hold files for a person: copy each into the held folder and record it
+//! in the download's entry of the held list, with the evidence that
+//! stopped it (v2 `_hold_for_review`). The copy lands and syncs before its
+//! row, so a row never points at a missing file; a track (or unpaired
+//! file) the entry already holds keeps its first copy, whichever candidate
+//! or retry brought it.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use crate::downloads::journal::Journal;
-use crate::downloads::landing_rows::HeldFile;
+use droppedneedle_kernel::db::DbError;
 
-/// One file to hold and what to record about it.
+use crate::db::AcquireDb;
+use crate::held::store::{HeldRows, NewEntry, NewFile};
+
+/// One file to hold and what to record about it. `file.path` is filled
+/// with the copy's name once it is made.
 #[derive(Debug, Clone)]
 pub struct HoldItem {
     pub source: PathBuf,
-    pub row: HeldFile,
+    pub file: NewFile,
 }
 
-/// Hold every item. Returns how many were recorded (already-held files
-/// count). A failed copy or row is logged and skipped: the source stays
-/// where it is, so a reimport can still find it.
+/// Hold every item in `entry`. Returns how many were recorded (files the
+/// entry already holds count). A failed copy or row is logged and
+/// skipped: the source stays where it is, so a reimport can still find
+/// it.
 pub async fn hold(
-    journal: &Arc<Journal>,
+    db: &AcquireDb,
     held_dir: &Path,
+    entry: &NewEntry,
     items: Vec<HoldItem>,
-    now: f64,
 ) -> usize {
     let mut held = 0;
     for item in items {
         // Already held by an earlier candidate or pass: no second copy.
-        let probe = item.row.clone();
-        let known = journal
-            .read("downloads.held_known", move |store| {
-                store.held_row_for(&probe)
+        let (probe_entry, probe_file) = (entry.clone(), item.file.clone());
+        let known = db
+            .db()
+            .read("downloads.held_known", move |conn| {
+                Ok::<_, DbError>(HeldRows::new(conn).already_held(&probe_entry, &probe_file)?)
             })
             .await;
-        if matches!(known, Ok(Some(_))) {
+        if matches!(known, Ok(true)) {
             held += 1;
             continue;
         }
         let dir = held_dir.to_path_buf();
         let source = item.source.clone();
         let copied = tokio::task::spawn_blocking(move || copy_into(&dir, &source)).await;
-        let held_path = match copied {
-            Ok(Ok(path)) => path,
+        let name = match copied {
+            Ok(Ok(name)) => name,
             Ok(Err(error)) => {
-                tracing::warn!(file = %item.row.original_filename, %error, "held copy failed");
+                tracing::warn!(file = %item.file.original_name, %error, "held copy failed");
                 continue;
             }
             Err(error) => {
-                tracing::warn!(file = %item.row.original_filename, %error, "held copy join failed");
+                tracing::warn!(file = %item.file.original_name, %error, "held copy join failed");
                 continue;
             }
         };
-        let mut row = item.row;
-        row.held_path = held_path.to_string_lossy().into_owned();
-        let recorded = journal
-            .run("downloads.hold_file", move |store| {
-                store.record_held_file(&row, now)
+        let mut file = item.file;
+        file.path = name.clone();
+        let entry = entry.clone();
+        let clock = db.clock().clone();
+        let recorded = db
+            .write_background("downloads.hold_file", move |tx| {
+                let (_, held) = HeldRows::new(tx).hold(&entry, &[file], clock.now_ms())?;
+                Ok(held.first().copied().flatten())
             })
             .await;
         match recorded {
             Ok(Some(_)) => held += 1,
             Ok(None) => {
                 held += 1;
-                remove_copy(&held_path);
+                remove_copy(&held_dir.join(&name));
             }
             Err(error) => {
                 tracing::warn!(%error, "held row not recorded; copy removed");
-                remove_copy(&held_path);
+                remove_copy(&held_dir.join(&name));
             }
         }
     }
     held
 }
 
-/// Copy one file into the held directory under a fresh name, synced.
-fn copy_into(dir: &Path, source: &Path) -> std::io::Result<PathBuf> {
+/// Copy one file into the held folder under a fresh name, synced. Answers
+/// the copy's name, which is its path below the folder.
+fn copy_into(dir: &Path, source: &Path) -> std::io::Result<String> {
     std::fs::create_dir_all(dir)?;
     let name = source
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "held.bin".to_owned());
-    let dest = dir.join(format!("{}_{name}", uuid::Uuid::new_v4().simple()));
+    let name = format!("{}_{name}", uuid::Uuid::new_v4().simple());
+    let dest = dir.join(&name);
     let mut reader = std::fs::File::open(source)?;
     let mut writer = std::fs::File::create_new(&dest)?;
     let written = std::io::copy(&mut reader, &mut writer)
@@ -94,7 +104,7 @@ fn copy_into(dir: &Path, source: &Path) -> std::io::Result<PathBuf> {
         remove_copy(&dest);
         return Err(error);
     }
-    Ok(dest)
+    Ok(name)
 }
 
 fn remove_copy(path: &Path) {

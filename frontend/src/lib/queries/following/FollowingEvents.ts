@@ -4,6 +4,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 import { FollowQueryKeyFactory } from '$lib/queries/following/FollowQueryKeyFactory';
 import { WantedQueryKeyFactory } from '$lib/queries/wanted/WantedQueryKeyFactory';
+import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { DropImportQueryKeyFactory } from '$lib/queries/import/DropImportQueryKeyFactory';
 import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
 import {
@@ -217,9 +218,13 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 		toastStore.show({ message: `${album} is now in your library.`, type: 'success' });
 	}
 
-	// The user's own drop-import job progressed server-side - refresh the lists.
+	// The user's own drop-import job progressed server-side - refresh the lists,
+	// the held list included: an upload that waits for review joins it.
 	function handleDropImportUpdated(): void {
 		void invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix });
+		void invalidateQueriesWithPersister({
+			queryKey: DownloadQueryKeyFactory.heldPrefix(authStore.user?.id)
+		});
 	}
 
 	function start(): void {

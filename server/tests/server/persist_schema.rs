@@ -68,13 +68,13 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 167);
+    assert_eq!(table_names(&pool).await.len(), 168);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 61);
+    assert_eq!(triggers, 62);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -5753,8 +5753,7 @@ async fn acquire_reasons_are_typed_on_upgrade() {
     .await
     .unwrap();
 
-    apply_migrations(&pool).await.unwrap();
-    assert_migrated(&pool).await.unwrap();
+    migrator_through(83).run(&pool).await.unwrap();
 
     let outcomes: BTreeMap<String, Option<String>> = sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT id, outcome_code FROM download_tasks",
@@ -5852,6 +5851,145 @@ async fn queued_downloads_take_an_empty_plan_on_upgrade() {
         TaskPlan::decode(r#"{"hold_on_wrong_track": true}"#).is_err(),
         "a field the plan does not have is refused"
     );
+}
+
+/// Migration 0085 moves every file waiting for a decision into one list: a
+/// held download and an upload waiting for review become two entries with
+/// their files, times in milliseconds, paths below their folders, a stored
+/// reason this release does not hold files for read as held by an earlier
+/// version, a staged path outside its job's folder left out, an item with
+/// no file left settled, and nothing carried expires sooner than 90 days
+/// after the upgrade.
+/// Decided held rows go with their table.
+#[tokio::test]
+async fn held_files_and_waiting_uploads_become_one_list() {
+    let pool = scratch_pool().await;
+    migrator_through(84).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', 'now'); \
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
+             album_title, status, created_at, updated_at) \
+         VALUES ('t1', 'u1', 'RG-1', 'A', 'B', 'failed', 1, 1); \
+         INSERT INTO held_imports (user_id, release_group_mbid, held_path, original_filename, \
+             reason, source_task_id, status, created_at) VALUES \
+         ('u1', 'RG-1', '/data/cache/held/aa_01.flac', 'CD1/01.flac', 'weak_match', 't1', \
+             'held', 1700000000.5), \
+         ('u1', 'RG-1', '/data/cache/held/bb_02.flac', '02.flac', 'wrong_track', 't1', \
+             'held', 1700000001.0), \
+         ('u1', 'RG-1', '/data/cache/held/cc_03.flac', '03.flac', 'weak_match', 't1', \
+             'imported', 1600000000.0); \
+         INSERT INTO drop_import_jobs (id, user_id, user_name, status, created_at, \
+             upload_name, staging_dir) \
+         VALUES ('job1', 'u1', 'U', 'completed', 1700000000.0, 'x.zip', \
+             '/data/imports/drop/job1'); \
+         INSERT INTO drop_import_items (id, job_id, folder_name, status, staging_paths, \
+             updated_at, reason_code) \
+         VALUES (5, 'job1', 'Odds', 'needs_review', \
+             '[\"/data/imports/drop/job1/Odds/01.flac\",\"/data/imports/drop/job1/02.flac\",\
+             \"/elsewhere/03.flac\"]', \
+             1700000000.0, 'no_album_match'), \
+         (6, 'job1', 'Done', 'imported', '[]', 1700000000.0, NULL), \
+         (7, 'job1', 'Empty', 'needs_review', '[]', 1700000000.0, 'no_album_match');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let upgraded_at = now_ms();
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let entries: Vec<(String, String, Option<i64>, String, i64, i64)> = sqlx::query_as(
+        "SELECT origin, group_key, drop_item_id, state, created_at, expires_at \
+         FROM acquire_held_entries ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    let ninety_days = 90 * 86_400_000;
+    for (origin, key, item, state, created_at, expires_at) in &entries {
+        assert_eq!(state, "held");
+        assert!(
+            *expires_at >= upgraded_at + ninety_days,
+            "{key} expires {expires_at}, before 90 days after the upgrade"
+        );
+        match origin.as_str() {
+            "download" => {
+                assert_eq!((key.as_str(), *item), ("album:rg-1", None));
+                assert_eq!(*created_at, 1_700_000_000_500);
+            }
+            _ => {
+                assert_eq!((key.as_str(), *item), ("upload:5", Some(5)));
+                assert_eq!(*created_at, 1_700_000_000_000);
+            }
+        }
+    }
+    let files: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+        "SELECT root, path, original_name, reason, created_at FROM acquire_held_files \
+         ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        files,
+        vec![
+            (
+                "held".to_owned(),
+                "aa_01.flac".to_owned(),
+                "CD1/01.flac".to_owned(),
+                "weak_match".to_owned(),
+                1_700_000_000_500
+            ),
+            (
+                "held".to_owned(),
+                "bb_02.flac".to_owned(),
+                "02.flac".to_owned(),
+                "held_by_earlier_version".to_owned(),
+                1_700_000_001_000
+            ),
+            (
+                "drop".to_owned(),
+                "job1/Odds/01.flac".to_owned(),
+                "Odds/01.flac".to_owned(),
+                "no_album_match".to_owned(),
+                1_700_000_000_000
+            ),
+            (
+                "drop".to_owned(),
+                "job1/02.flac".to_owned(),
+                "02.flac".to_owned(),
+                "no_album_match".to_owned(),
+                1_700_000_000_000
+            ),
+        ]
+    );
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE name = 'held_imports'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(old, None, "held_imports is gone");
+    let empty: String = sqlx::query_scalar("SELECT status FROM drop_import_items WHERE id = 7")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        empty, "discarded",
+        "an item with no file to show is settled"
+    );
+    for table in ["acquire_held_entries", "acquire_held_files"] {
+        let sql: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+                .bind(table)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
+    }
 }
 
 /// Wall time in milliseconds, for checks against "due now".

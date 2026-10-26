@@ -40,9 +40,12 @@ vi.mock('$lib/queries/import/DropImportQueries.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/import/DropImportMutations.svelte', () => ({
-	uploadDropMutation: () => ({ mutate: vi.fn(), isPending: false }),
-	matchDropItemMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	discardDropItemMutation: () => ({ mutate: vi.fn(), isPending: false })
+	uploadDropMutation: () => ({ mutate: vi.fn(), isPending: false })
+}));
+
+vi.mock('$lib/queries/downloads/HeldQueries.svelte', async (importOriginal) => ({
+	...(await importOriginal<object>()),
+	getHeldEntriesQuery: () => ({ data: { entries: [] }, isSuccess: true })
 }));
 
 import DownloadsPage from './+page.svelte';

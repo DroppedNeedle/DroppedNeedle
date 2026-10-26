@@ -26,6 +26,9 @@ use droppedneedle_acquire::downloads::{
     state::TaskStatus,
     store::{NewTask, TaskOutcome},
 };
+use droppedneedle_acquire::held::store::{
+    EntryOrigin, GroupKey, HeldRoot, HeldRows, NewEntry, NewFile,
+};
 use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::requests::ledger::{RequestStatus, WantedWatch, WatchState};
 use droppedneedle_acquire::requests::models::RequestKind;
@@ -108,8 +111,9 @@ enum Owned {
     LiveRequest,
     /// A failed track request.
     TrackRequest,
-    /// A held file of its own, which a download's verdict discard clears.
-    HeldVerdict,
+    /// A held entry of one of two trusted users, which only a curator may
+    /// match to an album.
+    HeldMatch,
 }
 
 const ADMITTED: u16 = 0;
@@ -430,39 +434,41 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         403,
         ADMITTED,
     ),
-    // Held downloads: owner or admin.
+    // Held entries: owner or admin.
+    (Owned::Held, "GET", "/api/v3/held/{entry_id}", 404, ADMITTED),
     (
         Owned::Held,
         "GET",
-        "/api/v3/downloads/held/{held_id}/audio",
+        "/api/v3/held/files/{file_id}/audio",
         404,
         ADMITTED,
     ),
     (
         Owned::Held,
         "POST",
-        "/api/v3/downloads/held/{held_id}/reverify",
+        "/api/v3/held/{entry_id}/recheck",
         404,
         ADMITTED,
     ),
     (
         Owned::Held,
         "POST",
-        "/api/v3/downloads/held/{held_id}/import",
+        "/api/v3/held/{entry_id}/import",
         404,
         ADMITTED,
     ),
     (
         Owned::Held,
         "POST",
-        "/api/v3/downloads/held/{held_id}/discard",
+        "/api/v3/held/{entry_id}/discard",
         404,
         ADMITTED,
     ),
+    // Matching a held entry, between two trusted users: owner or admin.
     (
-        Owned::HeldVerdict,
+        Owned::HeldMatch,
         "POST",
-        "/api/v3/downloads/held/verdict/{source_task_id}/discard",
+        "/api/v3/held/{entry_id}/match",
         404,
         ADMITTED,
     ),
@@ -511,20 +517,6 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         404,
         ADMITTED,
     ),
-    (
-        Owned::Drop,
-        "POST",
-        "/api/v3/import/items/{item_id}/match",
-        404,
-        ADMITTED,
-    ),
-    (
-        Owned::Drop,
-        "POST",
-        "/api/v3/import/items/{item_id}/discard",
-        404,
-        ADMITTED,
-    ),
     // An edition's tag write, between two trusted users: writer or admin.
     (
         Owned::TagWrite,
@@ -565,7 +557,7 @@ const CALLER_KEYED_OPERATIONS: &[(&str, &str)] = &[
 /// `body_ids_never_reach_another_users_resources`. Joined by hand.
 const BODY_ID_OPERATIONS: &[(&str, &str)] = &[
     ("POST", "/api/v3/requests/batches/cancel"),
-    ("POST", "/api/v3/downloads/held/reverify"),
+    ("POST", "/api/v3/held/recheck"),
     ("POST", "/api/v3/discover/playlist-suggestions"),
 ];
 
@@ -924,7 +916,7 @@ fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
         ("POST", "/api/v3/playlists/{playlist_id}/tracks/remove") => {
             Some(json!({"track_ids": [id("track_id")]}))
         }
-        ("POST", "/api/v3/import/items/{item_id}/match") => {
+        ("POST", "/api/v3/held/{entry_id}/match") => {
             Some(json!({"release_group_mbid": "00000000-0000-0000-0000-0000000000aa"}))
         }
         ("POST", "/api/v3/downloads/tasks/{task_id}/next-source") => {
@@ -1167,7 +1159,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
             assert!(enrolled);
             ids.insert("musicbrainz_id", mbid);
         }
-        Owned::Task | Owned::Held | Owned::HeldVerdict => {
+        Owned::Task | Owned::Held | Owned::HeldMatch => {
             let task_id = format!("{:032x}", 0xa0000 + u64::from(n));
             let task = NewTask {
                 id: task_id.clone(),
@@ -1180,13 +1172,11 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
             };
             let user_id = owner.id.clone();
             let held = kind != Owned::Task;
-            let held_dir = app.config.root_app_dir.join("held");
+            let held_dir = app.config.cache_dir.join("held");
             std::fs::create_dir_all(&held_dir).expect("held folder");
-            let held_path = held_dir.join(format!("{n} One.flac"));
-            std::fs::write(&held_path, b"not really audio").expect("held file");
-            let held_path = held_path.to_string_lossy().into_owned();
-            let held_id = app
-                .state()
+            let held_name = format!("{n} One.flac");
+            std::fs::write(held_dir.join(&held_name), b"not really audio").expect("held file");
+            app.state()
                 .acquire
                 .journal
                 .run("test.seed_task", move |store| {
@@ -1196,25 +1186,44 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
                         TaskStatus::Failed,
                         1_700_000_000.0,
                         Some(TaskOutcome::new(Reason::DownloadFailed, "seeded")),
-                    )?;
-                    if held {
-                        return store
-                            .insert_held(
-                                &user_id,
-                                &held_path,
-                                "fingerprint_mismatch",
-                                Some(&task.id),
-                                Some(&task.release_group_mbid),
-                                1_700_000_000.0,
-                            )
-                            .map(Some);
-                    }
-                    Ok(None)
+                    )
                 })
                 .await
                 .expect("task seeds");
-            if let Some(held_id) = held_id {
-                ids.insert("held_id", held_id.to_string());
+            if held {
+                let (group, task) = (format!("00000000-0000-0000-0004-{n:012}"), task_id.clone());
+                let (entry_id, files) = app
+                    .state()
+                    .acquire
+                    .db
+                    .write("test.seed_held", move |tx| {
+                        Ok(HeldRows::new(tx).hold(
+                            &NewEntry {
+                                user_id,
+                                origin: EntryOrigin::Download,
+                                key: GroupKey::Album(group.clone()),
+                                release_group_mbid: Some(group),
+                                recording_mbid: None,
+                                drop_item_id: None,
+                                artist_name: Some("Someone".to_owned()),
+                                album_title: Some("Something".to_owned()),
+                            },
+                            &[NewFile {
+                                source_task_id: Some(task),
+                                ..NewFile::new(
+                                    HeldRoot::Held,
+                                    &held_name,
+                                    Reason::FingerprintMismatch,
+                                    "soulseek",
+                                )
+                            }],
+                            1_700_000_000_000,
+                        )?)
+                    })
+                    .await
+                    .expect("held seeds");
+                ids.insert("entry_id", entry_id.to_string());
+                ids.insert("file_id", files[0].expect("a new held file").to_string());
                 ids.insert("source_task_id", task_id);
             } else {
                 ids.insert("task_id", task_id);
@@ -1416,8 +1425,8 @@ async fn look(app: &TestApp, kind: Owned, owner: &Who, ids: &Ids) -> Value {
         ]),
         Owned::Wanted => read("/api/v3/requests/wanted".to_owned()).await,
         Owned::Task => read(fill("/api/v3/downloads/tasks/{task_id}", ids)).await,
-        Owned::Held | Owned::HeldVerdict => json!([
-            read("/api/v3/downloads/held".to_owned()).await,
+        Owned::Held | Owned::HeldMatch => json!([
+            read("/api/v3/held".to_owned()).await,
             read(format!("/api/v3/downloads/tasks/{}", ids["source_task_id"])).await,
         ]),
         Owned::SearchJob => read(fill("/api/v3/downloads/search/{job_id}", ids)).await,
@@ -1471,7 +1480,7 @@ async fn another_users_resources_stay_out_of_reach() {
         Owned::Wanted,
         Owned::Task,
         Owned::Held,
-        Owned::HeldVerdict,
+        Owned::HeldMatch,
         Owned::SearchJob,
         Owned::SpotifyJob,
         Owned::Drop,
@@ -1479,7 +1488,7 @@ async fn another_users_resources_stay_out_of_reach() {
     ];
     let mut wrong = Vec::new();
     for (n, kind) in (0u32..).step_by(2).zip(families) {
-        let (owner, other) = if matches!(kind, Owned::Drop | Owned::TagWrite) {
+        let (owner, other) = if matches!(kind, Owned::Drop | Owned::TagWrite | Owned::HeldMatch) {
             (&tia, &tom)
         } else {
             (&ada, &bob)
@@ -1777,13 +1786,13 @@ async fn body_ids_never_reach_another_users_resources() {
     // Re-checking held files in bulk.
     let ids = seed(&app, Owned::Held, &ada, 1).await;
     let before = look(&app, Owned::Held, &ada, &ids).await;
-    let held_id: i64 = ids["held_id"].parse().expect("numeric held id");
+    let entry_id: i64 = ids["entry_id"].parse().expect("numeric entry id");
     let (status, body) = call(
         &app,
         &bob,
         "POST",
-        "/api/v3/downloads/held/reverify",
-        Some(json!({"held_ids": [held_id]})),
+        "/api/v3/held/recheck",
+        Some(json!({"entry_ids": [entry_id]})),
     )
     .await;
     assert_eq!(

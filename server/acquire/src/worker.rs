@@ -1592,7 +1592,7 @@ impl DownloadWorker {
                 .step("downloads.retry", move |store| {
                     // Held tracks gate their task: re-downloading a held
                     // track loops.
-                    if store.has_unresolved_held_for_task(&source.id)? {
+                    if crate::held::store::HeldRows::new(store.conn()).task_holds(&source.id)? {
                         return Ok(false);
                     }
                     // The request follows its download onto the retry.

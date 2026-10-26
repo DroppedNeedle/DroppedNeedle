@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::SourceTag;
-use droppedneedle_acquire::downloads::held::HeldImports;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
 use droppedneedle_acquire::downloads::queue_rows::Viewer as HeldViewer;
@@ -389,13 +388,14 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         task.error_message
     );
     let held: Vec<String> = sqlx::query_scalar(
-        "SELECT held_path FROM held_imports WHERE source_task_id = 't-bad' AND status = 'held'",
+        "SELECT path FROM acquire_held_files WHERE source_task_id = 't-bad' AND state = 'held'",
     )
     .fetch_all(acquire.db.pool())
     .await
     .expect("held rows");
     assert_eq!(held.len(), 2);
-    assert!(held.iter().all(|path| Path::new(path).is_file()));
+    let held_dir = &acquire.held.folders().held;
+    assert!(held.iter().all(|path| held_dir.join(path).is_file()));
     let outcomes: Vec<String> =
         sqlx::query_scalar("SELECT outcome FROM download_import_decisions WHERE task_id = 't-bad'")
             .fetch_all(acquire.db.pool())
@@ -406,7 +406,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     // Every hold and decision stores a reason this version knows, and the
     // task's outcome is that hold, typed: the sentence comes from it.
     let codes: Vec<String> = sqlx::query_scalar(
-        "SELECT reason FROM held_imports WHERE source_task_id = 't-bad' \
+        "SELECT reason FROM acquire_held_files WHERE source_task_id = 't-bad' \
          UNION ALL SELECT reason_code FROM download_import_decisions WHERE task_id = 't-bad'",
     )
     .fetch_all(acquire.db.pool())
@@ -1101,7 +1101,8 @@ async fn a_file_whose_artist_tag_names_someone_else_is_held() {
     assert!(music.join("Portishead/Dummy/0101 Mysterons.flac").is_file());
     assert!(!music.join("Portishead/Dummy/0102 Sour Times.flac").exists());
     let held: Vec<(String, String)> = sqlx::query_as(
-        "SELECT reason, reason_detail FROM held_imports WHERE source_task_id = 't-other-artist'",
+        "SELECT reason, COALESCE(reason_detail, '') FROM acquire_held_files \
+         WHERE source_task_id = 't-other-artist'",
     )
     .fetch_all(acquire.db.pool())
     .await
@@ -1186,7 +1187,7 @@ async fn a_file_heard_as_another_recording_needs_the_tracks_length() {
             .is_file()
     );
     let held: Vec<(String,)> =
-        sqlx::query_as("SELECT reason FROM held_imports WHERE source_task_id = 't-heard'")
+        sqlx::query_as("SELECT reason FROM acquire_held_files WHERE source_task_id = 't-heard'")
             .fetch_all(acquire.db.pool())
             .await
             .expect("held rows");
@@ -1195,19 +1196,25 @@ async fn a_file_heard_as_another_recording_needs_the_tracks_length() {
 
 /// POST or GET one held-import route as `principal`.
 async fn held_call(
-    worker: &Arc<DownloadWorker>,
+    acquire: &droppedneedle_acquire::AcquireSetup,
     method: &str,
     uri: &str,
+    body: Option<serde_json::Value>,
     principal: &Principal,
 ) -> (axum::http::StatusCode, serde_json::Value) {
     use tower::ServiceExt as _;
-    let request = axum::http::Request::builder()
-        .method(method)
-        .uri(uri)
-        .body(axum::body::Body::empty())
-        .expect("request");
-    let router =
-        droppedneedle_acquire::downloads::downloads_router(worker.clone()).expect("router builds");
+    let mut request = axum::http::Request::builder().method(method).uri(uri);
+    let body = match body {
+        Some(body) => {
+            request = request.header("content-type", "application/json");
+            axum::body::Body::from(body.to_string())
+        }
+        None => axum::body::Body::empty(),
+    };
+    let request = request.body(body).expect("request");
+    let router = droppedneedle_acquire::held::http::routes()
+        .with_state(acquire.held.clone())
+        .into_router();
     let response = with_test_principal(router, principal.clone())
         .oneshot(request)
         .await
@@ -1242,6 +1249,7 @@ fn files_under(dir: &Path, extension: &str) -> Vec<PathBuf> {
 async fn held_files_import_as_upgrades_or_discard() {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u-ada", "Ada", "user").await.expect("user");
+    db.add_user("u-bob", "Bob", "user").await.expect("user");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
     let config = Arc::new(
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
@@ -1330,48 +1338,67 @@ async fn held_files_import_as_upgrades_or_discard() {
     let broken = held_dir.join("broken.flac");
     std::fs::write(&broken, b"not audio").expect("broken file");
     let (track_id, recording_id) = (first.id.clone(), first.recording_id.clone());
-    let seeded: Vec<i64> = acquire
+    let name = |path: &PathBuf| {
+        path.file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let (flac, spare, broken) = (name(&flac), name(&spare), name(&broken));
+    let seeded: Vec<(i64, i64)> = acquire
         .db
         .write("test.held", move |tx| {
             let mut ids = Vec::new();
-            for (user, path, reason, origin) in [
-                ("u-ada", &flac, "fingerprint_mismatch", "upgrade"),
-                ("u-bob", &flac, "fingerprint_mismatch", "upgrade"),
-                ("u-ada", &spare, "tag_mismatch", "user"),
-                ("u-ada", &broken, "fingerprint_mismatch", "upgrade"),
+            for (entry, user, path, reason) in [
+                (1, "u-ada", &flac, "fingerprint_mismatch"),
+                (2, "u-bob", &flac, "fingerprint_mismatch"),
+                (1, "u-ada", &spare, "tag_mismatch"),
+                (1, "u-ada", &broken, "fingerprint_mismatch"),
             ] {
                 tx.execute(
-                    "INSERT INTO held_imports (user_id, release_group_mbid, release_mbid, \
-                     release_track_mbid, recording_mbid, track_number, disc_number, held_path, \
-                     reason, source, source_task_id, origin, created_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, 1, 1, ?6, ?7, 'soulseek', 't-up', ?8, 1.0)",
-                    rusqlite::params![
-                        user,
-                        GOOD_GROUP,
-                        GOOD_RELEASE,
-                        track_id,
-                        recording_id,
-                        path.to_string_lossy(),
-                        reason,
-                        origin
-                    ],
+                    "INSERT OR IGNORE INTO acquire_held_entries (id, user_id, origin, group_key, \
+                     release_group_mbid, state, created_at, expires_at) \
+                     VALUES (?1, ?2, 'download', ?3, ?4, 'held', 1, 2)",
+                    rusqlite::params![entry, user, format!("album:{GOOD_GROUP}"), GOOD_GROUP],
                 )?;
-                ids.push(tx.last_insert_rowid());
+                tx.execute(
+                    "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
+                     release_mbid, release_track_mbid, recording_mbid, track_number, \
+                     disc_number, reason, source, source_task_id, state, created_at) \
+                     VALUES (?1, 'held', ?2, ?2, ?3, ?4, ?5, 1, 1, ?6, 'soulseek', 't-up', \
+                     'held', 1)",
+                    rusqlite::params![entry, path, GOOD_RELEASE, track_id, recording_id, reason],
+                )?;
+                ids.push((entry, tx.last_insert_rowid()));
             }
             Ok(ids)
         })
         .await
         .expect("held rows");
-    let review = worker(Vec::new());
     let ada = &test_principal("u-ada", Role::User, "sess-ada", SessionKind::Standard);
+    let only = |file: i64| Some(serde_json::json!({ "file_ids": [file] }));
 
-    let import = |id: i64| format!("/api/v3/downloads/held/{id}/import");
-    let (status, _) = held_call(&review, "POST", &import(seeded[1]), ada).await;
+    let import = |entry: i64| format!("/api/v3/held/{entry}/import");
+    let (status, _) = held_call(
+        &acquire,
+        "POST",
+        &import(seeded[1].0),
+        only(seeded[1].1),
+        ada,
+    )
+    .await;
     assert_eq!(status, 404, "someone else's held file is not found");
 
-    let (status, body) = held_call(&review, "POST", &import(seeded[0]), ada).await;
+    let (status, body) = held_call(
+        &acquire,
+        "POST",
+        &import(seeded[0].0),
+        only(seeded[0].1),
+        ada,
+    )
+    .await;
     assert_eq!(status, 200, "{body}");
-    assert_eq!(body["status"], "imported");
+    assert_eq!(body["imported"], 1, "{body}");
     let new_copy = music.join("Portishead/Dummy/0101 Mysterons.flac");
     assert!(new_copy.is_file(), "the FLAC replaced it: {body}");
     assert!(!old_copy.exists(), "the MP3 left the album folder");
@@ -1386,8 +1413,8 @@ async fn held_files_import_as_upgrades_or_discard() {
     .expect("catalog");
     assert_eq!(formats, vec!["flac".to_owned()]);
 
-    let discard = format!("/api/v3/downloads/held/{}/discard", seeded[2]);
-    let (status, body) = held_call(&review, "POST", &discard, ada).await;
+    let discard = format!("/api/v3/held/{}/discard", seeded[2].0);
+    let (status, body) = held_call(&acquire, "POST", &discard, only(seeded[2].1), ada).await;
     assert_eq!(status, 200, "{body}");
     assert!(
         !held_dir.join("spare.flac").exists(),
@@ -1396,7 +1423,14 @@ async fn held_files_import_as_upgrades_or_discard() {
 
     // An upgrade file whose quality cannot be read is refused, never taken
     // for "no better" and deleted: the file and its row stay.
-    let (status, body) = held_call(&review, "POST", &import(seeded[3]), ada).await;
+    let (status, body) = held_call(
+        &acquire,
+        "POST",
+        &import(seeded[3].0),
+        only(seeded[3].1),
+        ada,
+    )
+    .await;
     assert_eq!(status, 409, "{body}");
     assert!(
         held_dir.join("broken.flac").is_file(),
@@ -1404,18 +1438,255 @@ async fn held_files_import_as_upgrades_or_discard() {
     );
     assert!(new_copy.is_file(), "the library copy is untouched");
 
-    let (status, body) = held_call(&review, "GET", "/api/v3/downloads/held", ada).await;
+    let (status, body) = held_call(&acquire, "GET", "/api/v3/held", None, ada).await;
     assert_eq!(status, 200);
-    let left: Vec<i64> = body["items"]
+    let entries = body["entries"].as_array().cloned().unwrap_or_default();
+    assert_eq!(entries.len(), 1, "one entry for the album: {body}");
+    let left: Vec<i64> = entries[0]["files"]
         .as_array()
-        .map(|items| {
-            items
+        .map(|files| {
+            files
                 .iter()
-                .filter_map(|item| item["id"].as_i64())
+                .filter_map(|file| file["id"].as_i64())
                 .collect()
         })
         .unwrap_or_default();
-    assert_eq!(left, vec![seeded[3]], "{body}");
+    assert_eq!(left, vec![seeded[3].1], "{body}");
+}
+
+/// An import a restart cut off after the library took the file: once the
+/// library's writes settle, the prune marks that file imported and gives
+/// the entry back with the file that did not go in. Nothing is placed a
+/// second time.
+#[tokio::test]
+async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let release = release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons", "Sour Times"],
+        &[None, None],
+    );
+    let tracks = release.tracks.clone();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            every_priority(releases),
+            pool,
+        ))),
+    );
+    let held_dir = acquire.held.folders().held.clone();
+    let first = land_file(&held_dir, "first.flac", "flac_full_01.flac", "Mysterons", 1);
+    land_file(
+        &held_dir,
+        "second.flac",
+        "flac_full_02.flac",
+        "Sour Times",
+        2,
+    );
+    let bytes = std::fs::read(&first).expect("held copy");
+    let seeded: Vec<i64> = acquire
+        .db
+        .write("test.held", move |tx| {
+            tx.execute(
+                "INSERT INTO acquire_held_entries (id, user_id, origin, group_key, \
+                 release_group_mbid, state, created_at, expires_at) VALUES (1, 'u-ada', \
+                 'download', ?1, ?2, 'held', 1, 9999999999999)",
+                rusqlite::params![format!("album:{GOOD_GROUP}"), GOOD_GROUP],
+            )?;
+            let mut ids = Vec::new();
+            for (name, track) in [("first.flac", &tracks[0]), ("second.flac", &tracks[1])] {
+                tx.execute(
+                    "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
+                     release_mbid, release_track_mbid, recording_mbid, disc_number, \
+                     track_number, reason, source, state, created_at) VALUES (1, 'held', ?1, \
+                     ?1, ?2, ?3, ?4, 1, ?5, 'weak_match', 'soulseek', 'held', 1)",
+                    rusqlite::params![
+                        name,
+                        GOOD_RELEASE,
+                        track.id,
+                        track.recording_id,
+                        track.position
+                    ],
+                )?;
+                ids.push(tx.last_insert_rowid());
+            }
+            Ok(ids)
+        })
+        .await
+        .expect("held rows");
+    let viewer = HeldViewer {
+        user_id: "u-ada".to_owned(),
+        admin: false,
+    };
+    acquire
+        .held
+        .import(&viewer, 1, Some(vec![seeded[0]]), "u-ada")
+        .await
+        .expect("imported");
+    let placed = music.join("Portishead/Dummy/0101 Mysterons.flac");
+    assert!(placed.is_file(), "the file went in");
+
+    // The server stopped after the library took the file and before the
+    // held list recorded it: the entry is still claimed, the file still
+    // held, its copy still there.
+    std::fs::write(&first, &bytes).expect("held copy back");
+    acquire
+        .db
+        .write("test.crash", move |tx| {
+            tx.execute(
+                "UPDATE acquire_held_entries SET state = 'placing', resolved_at = NULL",
+                [],
+            )?;
+            tx.execute(
+                "UPDATE acquire_held_files SET state = 'held', resolved_at = NULL",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("cut off");
+
+    acquire.held.recover().await;
+    acquire.held.tend().await;
+    let states: Vec<(String, String)> = sqlx::query_as(
+        "SELECT f.state, e.state FROM acquire_held_files f \
+         JOIN acquire_held_entries e ON e.id = f.entry_id ORDER BY f.id",
+    )
+    .fetch_all(acquire.db.pool())
+    .await
+    .expect("held rows");
+    assert_eq!(
+        states,
+        vec![
+            ("imported".to_owned(), "held".to_owned()),
+            ("held".to_owned(), "held".to_owned()),
+        ],
+        "the file that went in is imported; the other waits"
+    );
+    assert!(!first.exists(), "the placed file's held copy is removed");
+    assert!(held_dir.join("second.flac").is_file());
+    let copies: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed' \
+         AND title = 'Mysterons'",
+    )
+    .fetch_one(acquire.db.pool())
+    .await
+    .expect("catalog");
+    assert_eq!(copies, 1, "placed once");
+    assert!(files_under(&music.join(".recycle"), "flac").is_empty());
+}
+
+/// The 90-day prune: an entry past its expiry loses its held copies and
+/// nothing else, a library file and a downloads folder file of the same
+/// name stay, an entry an action holds is skipped, and an expired upload
+/// leaves its drop item discarded.
+#[tokio::test]
+async fn expired_entries_lose_their_held_copies_and_nothing_else() {
+    let (acquire, dir, _auth) = bare_acquire().await;
+    let folders = acquire.held.folders().clone();
+    for (folder, name) in [
+        (folders.held.clone(), "old.flac"),
+        (folders.held.clone(), "busy.flac"),
+        (dir.join("music"), "old.flac"),
+        (dir.join("downloads"), "old.flac"),
+        (folders.drop.join("job-old"), "up.flac"),
+    ] {
+        std::fs::create_dir_all(&folder).expect("folder");
+        std::fs::write(folder.join(name), b"audio").expect("file");
+    }
+    let staging = folders.drop.join("job-old").to_string_lossy().into_owned();
+    acquire
+        .db
+        .write("test.held", move |tx| {
+            tx.execute_batch(
+                "INSERT INTO drop_import_jobs (id, user_id, user_name, status, created_at, \
+                 upload_name, staging_dir) VALUES ('job-old', 'u-ada', 'Ada', 'completed', 1.0, \
+                 'up.zip', 'STAGING'); \
+                 INSERT INTO drop_import_items (id, job_id, folder_name, status, updated_at) \
+                 VALUES (7, 'job-old', 'Up', 'needs_review', 1.0); \
+                 INSERT INTO acquire_held_entries (id, user_id, origin, group_key, state, \
+                 drop_item_id, created_at, expires_at) VALUES \
+                 (1, 'u-ada', 'download', 'album:rg-old', 'held', NULL, 1, 2), \
+                 (2, 'u-ada', 'download', 'album:rg-busy', 'placing', NULL, 1, 2), \
+                 (3, 'u-ada', 'upload', 'upload:7', 'held', 7, 1, 2), \
+                 (4, 'u-ada', 'download', 'album:rg-new', 'held', NULL, 1, 9999999999999); \
+                 INSERT INTO acquire_held_files (entry_id, root, path, original_name, source, \
+                 reason, state, created_at) VALUES \
+                 (1, 'held', 'old.flac', 'old.flac', 'soulseek', 'weak_match', 'held', 1), \
+                 (2, 'held', 'busy.flac', 'busy.flac', 'soulseek', 'weak_match', 'held', 1), \
+                 (3, 'drop', 'job-old/up.flac', 'up.flac', 'upload', 'no_album_match', 'held', 1), \
+                 (4, 'held', 'new.flac', 'new.flac', 'soulseek', 'weak_match', 'held', 1);"
+                    .replace("STAGING", &staging)
+                    .as_str(),
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("held rows");
+
+    assert_eq!(acquire.held.tend().await, 2);
+    let states: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, state FROM acquire_held_entries ORDER BY id")
+            .fetch_all(acquire.db.pool())
+            .await
+            .expect("entries");
+    assert_eq!(
+        states,
+        vec![
+            (1, "expired".to_owned()),
+            (2, "placing".to_owned()),
+            (3, "expired".to_owned()),
+            (4, "held".to_owned()),
+        ]
+    );
+    assert!(
+        !folders.held.join("old.flac").exists(),
+        "the held copy went"
+    );
+    assert!(dir.join("music/old.flac").is_file(), "a library file stays");
+    assert!(dir.join("downloads/old.flac").is_file(), "a download stays");
+    assert!(
+        folders.held.join("busy.flac").is_file(),
+        "an entry in use is skipped"
+    );
+    assert!(
+        !folders.drop.join("job-old/up.flac").exists(),
+        "the upload went"
+    );
+    let item: String = sqlx::query_scalar("SELECT status FROM drop_import_items WHERE id = 7")
+        .fetch_one(acquire.db.pool())
+        .await
+        .expect("item");
+    assert_eq!(item, "discarded");
+    assert_eq!(
+        acquire.held.tend().await,
+        0,
+        "a second pass changes nothing"
+    );
 }
 
 /// The test acquire bundle over `db`, finished downloads landing in
@@ -3967,7 +4238,7 @@ impl JoinRig {
     }
 
     async fn held_reasons(&self, task_id: &str) -> Vec<String> {
-        sqlx::query_scalar("SELECT reason FROM held_imports WHERE source_task_id = ?1")
+        sqlx::query_scalar("SELECT reason FROM acquire_held_files WHERE source_task_id = ?1")
             .bind(task_id)
             .fetch_all(self.acquire.db.pool())
             .await
@@ -4786,15 +5057,16 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     .expect("identity");
     assert_eq!(recording, RECORDING, "imported as the requested song");
     let held: Vec<(String, String)> =
-        sqlx::query_as("SELECT status, held_path FROM held_imports WHERE source_task_id = ?1")
+        sqlx::query_as("SELECT state, path FROM acquire_held_files WHERE source_task_id = ?1")
             .bind(&first)
             .fetch_all(acquire.db.pool())
             .await
             .expect("held rows");
     assert!(!held.is_empty(), "the first download held its file");
+    let held_dir = &acquire.held.folders().held;
     assert!(
         held.iter()
-            .all(|(status, path)| status == "discarded" && !Path::new(path).exists()),
+            .all(|(state, path)| state == "discarded" && !held_dir.join(path).exists()),
         "the album version hold is resolved: {held:?}"
     );
     let status: String =
@@ -5026,6 +5298,13 @@ impl LandingLibrary for Shaky {
 
     fn library_dirs(&self) -> Vec<PathBuf> {
         self.inner.library_dirs()
+    }
+
+    fn placed_sources<'a>(
+        &'a self,
+        staging: &'a str,
+    ) -> BoxFuture<'a, Result<Option<std::collections::HashSet<String>>, String>> {
+        self.inner.placed_sources(staging)
     }
 
     fn import(
@@ -5392,8 +5671,8 @@ impl IntakeCase {
             return Some(Seen::Deferred(Reason::from_stored(code)));
         }
         let held: Vec<String> = sqlx::query_scalar(
-            "SELECT reason FROM held_imports WHERE source_task_id = 't-intake' \
-             AND status = 'held'",
+            "SELECT reason FROM acquire_held_files WHERE source_task_id = 't-intake' \
+             AND state = 'held'",
         )
         .fetch_all(self.rig.acquire.db.pool())
         .await
@@ -5412,11 +5691,15 @@ impl IntakeCase {
             .expect("drop root")
             .join("job-intake");
         std::fs::create_dir_all(&staging).expect("staging");
-        let staged = staging.join(file.file_name().expect("name"));
+        let name = file
+            .file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned();
+        let staged = staging.join(&name);
         std::fs::copy(&file, &staged).expect("staged upload");
-        let paths = serde_json::json!([staged.to_string_lossy()]).to_string();
         let dir = staging.to_string_lossy().into_owned();
-        let item: i64 = self
+        let entry: i64 = self
             .rig
             .acquire
             .db
@@ -5429,52 +5712,69 @@ impl IntakeCase {
                 )?;
                 tx.execute(
                     "INSERT INTO drop_import_items (job_id, folder_name, status, files_total, \
-                     staging_paths, updated_at, reason_code) VALUES ('job-intake', 'Odds', \
-                     'needs_review', 1, ?1, 1.0, 'no_album_match')",
-                    [&paths],
+                     updated_at, reason_code) VALUES ('job-intake', 'Odds', 'needs_review', 1, \
+                     1.0, 'no_album_match')",
+                    [],
                 )?;
-                Ok(tx.last_insert_rowid())
+                let item = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO acquire_held_entries (user_id, origin, group_key, drop_item_id, \
+                     state, created_at, expires_at) VALUES ('u-ada', 'upload', ?1, ?2, 'held', \
+                     1, 2)",
+                    rusqlite::params![format!("upload:{item}"), item],
+                )?;
+                let entry = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
+                     source, reason, state, created_at) VALUES (?1, 'drop', ?2, ?3, 'upload', \
+                     'no_album_match', 'held', 1)",
+                    rusqlite::params![entry, format!("job-intake/{name}"), name],
+                )?;
+                Ok(entry)
             })
             .await
             .expect("drop item");
-        let viewer = droppedneedle_acquire::drop_import::Viewer {
+        let viewer = HeldViewer {
             user_id: "u-ada".to_owned(),
             admin: false,
         };
-        let matched = self
-            .rig
+        self.rig
             .acquire
-            .drops
-            .match_item(&viewer, item, &self.e.group)
+            .held
+            .match_album(&viewer, entry, &self.e.group, None, "u-ada")
             .await
             .expect("matched by hand");
-        if matched.status == "needs_review" {
-            assert!(staged.is_file(), "a waiting upload is kept");
-            return matched.reason_code.map(|reason| match reason {
-                Reason::LibraryChanged => Seen::Deferred(reason),
-                _ => Seen::Held(reason),
-            });
+        let (state, reason): (String, String) =
+            sqlx::query_as("SELECT state, reason FROM acquire_held_files WHERE entry_id = ?1")
+                .bind(entry)
+                .fetch_one(self.rig.acquire.db.pool())
+                .await
+                .expect("held file");
+        match state.as_str() {
+            "held" => {
+                assert!(staged.is_file(), "a waiting upload is kept");
+                let reason = Reason::from_stored(&reason);
+                Some(if reason == Reason::LibraryChanged {
+                    Seen::Deferred(reason)
+                } else {
+                    Seen::Held(reason)
+                })
+            }
+            "already_owned" => Some(Seen::AlreadyOwned),
+            _ => None,
         }
-        let left: Vec<String> = sqlx::query_scalar(
-            "SELECT reason_code FROM drop_import_items WHERE job_id = 'job-intake' \
-             AND id != ?1 AND status = 'needs_review'",
-        )
-        .bind(item)
-        .fetch_all(self.rig.acquire.db.pool())
-        .await
-        .expect("left over");
-        if let Some(code) = left.first() {
-            assert!(staged.is_file(), "a held upload is kept");
-            return Some(Seen::Held(Reason::from_stored(code)));
-        }
-        (matched.reason_code == Some(Reason::AlreadyOwned)).then_some(Seen::AlreadyOwned)
     }
 
     async fn through_held(&self, row: &Row, file: PathBuf) -> Option<Seen> {
         self.ask(row).await;
-        let held_dir = self.rig.downloads.parent().expect("scratch").join("held");
+        let held_dir = self.rig.acquire.held.folders().held.clone();
         std::fs::create_dir_all(&held_dir).expect("held dir");
-        let copy = held_dir.join(file.file_name().expect("name"));
+        let name = file
+            .file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned();
+        let copy = held_dir.join(&name);
         std::fs::copy(&file, &copy).expect("held copy");
         let track = &self.e.new.tracks[0];
         let (group, release, release_track, recording) = (
@@ -5483,50 +5783,52 @@ impl IntakeCase {
             track.id.clone(),
             track.recording_id.clone(),
         );
-        let path = copy.to_string_lossy().into_owned();
         let reason = row.held_for.code();
-        let origin = if row.upgrade { "upgrade" } else { "user" };
-        let id: i64 = self
+        let path = name.clone();
+        let entry: i64 = self
             .rig
             .acquire
             .db
             .write("test.held", move |tx| {
                 tx.execute(
-                    "INSERT INTO held_imports (user_id, release_group_mbid, release_mbid, \
-                     release_track_mbid, recording_mbid, track_number, disc_number, held_path, \
-                     reason, source, source_task_id, origin, created_at) VALUES ('u-ada', ?1, \
-                     ?2, ?3, ?4, 1, 1, ?5, ?6, 'soulseek', 't-intake', ?7, 1.0)",
-                    rusqlite::params![
-                        group,
-                        release,
-                        release_track,
-                        recording,
-                        path,
-                        reason,
-                        origin
-                    ],
+                    "INSERT INTO acquire_held_entries (user_id, origin, group_key, \
+                     release_group_mbid, state, created_at, expires_at) VALUES ('u-ada', \
+                     'download', ?1, ?2, 'held', 1, 2)",
+                    rusqlite::params![format!("album:{group}"), group],
                 )?;
-                Ok(tx.last_insert_rowid())
+                let entry = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
+                     release_mbid, release_track_mbid, recording_mbid, track_number, \
+                     disc_number, reason, source, source_task_id, state, created_at) \
+                     VALUES (?1, 'held', ?2, ?2, ?3, ?4, ?5, 1, 1, ?6, 'soulseek', 't-intake', \
+                     'held', 1)",
+                    rusqlite::params![entry, path, release, release_track, recording, reason],
+                )?;
+                Ok(entry)
             })
             .await
             .expect("held row");
-        let held = HeldImports::new(
-            self.rig.acquire.journal.clone(),
-            self.rig.worker(Vec::new(), false),
-        );
         let viewer = HeldViewer {
             user_id: "u-ada".to_owned(),
             admin: false,
         };
-        if held.import(&viewer, id, "u-ada").await.is_ok() {
+        if self
+            .rig
+            .acquire
+            .held
+            .import(&viewer, entry, None, "u-ada")
+            .await
+            .is_ok()
+        {
             assert!(!copy.exists(), "an imported held copy is removed");
             return None;
         }
         assert!(copy.is_file(), "a file that stays held is kept");
         let still: Vec<String> = sqlx::query_scalar(
-            "SELECT reason FROM held_imports WHERE held_path = ?1 AND status = 'held'",
+            "SELECT reason FROM acquire_held_files WHERE path = ?1 AND state = 'held'",
         )
-        .bind(copy.to_string_lossy().into_owned())
+        .bind(&name)
         .fetch_all(self.rig.acquire.db.pool())
         .await
         .expect("held rows");
@@ -5770,49 +6072,60 @@ async fn held_files_of_two_downloads_keep_their_own_plans() {
     .await;
     rig.ask("t-other", &f.group, &f.new.title, "user", None, None, &[])
         .await;
-    let held_dir = rig.downloads.parent().expect("scratch").join("held");
+    let held_dir = rig.acquire.held.folders().held.clone();
     std::fs::create_dir_all(&held_dir).expect("held dir");
-    let mut ids = Vec::new();
+    let mut entries = Vec::new();
     for (task, editions) in [("t-copy", &e), ("t-other", &f)] {
         let file = rig.landed(task, &editions.new, 0, FIXTURES[0]);
-        let copy = held_dir.join(format!("{task}.flac"));
-        std::fs::copy(&file, &copy).expect("held copy");
+        let name = format!("{task}.flac");
+        std::fs::copy(&file, held_dir.join(&name)).expect("held copy");
         let track = &editions.new.tracks[0];
         let values = (
             editions.group.clone(),
             editions.new.id.clone(),
             track.id.clone(),
             track.recording_id.clone(),
-            copy.to_string_lossy().into_owned(),
+            name,
             task.to_owned(),
         );
-        let id: i64 = rig
+        let entry: i64 = rig
             .acquire
             .db
             .write("test.held", move |tx| {
                 tx.execute(
-                    "INSERT INTO held_imports (user_id, release_group_mbid, release_mbid, \
-                     release_track_mbid, recording_mbid, track_number, disc_number, held_path, \
-                     reason, source, source_task_id, origin, created_at) VALUES ('u-ada', ?1, \
-                     ?2, ?3, ?4, 1, 1, ?5, 'tag_mismatch', 'soulseek', ?6, 'user', 1.0)",
-                    rusqlite::params![values.0, values.1, values.2, values.3, values.4, values.5],
+                    "INSERT INTO acquire_held_entries (user_id, origin, group_key, \
+                     release_group_mbid, state, created_at, expires_at) VALUES ('u-ada', \
+                     'download', ?1, ?2, 'held', 1, 2)",
+                    rusqlite::params![format!("album:{}", values.0), values.0],
                 )?;
-                Ok(tx.last_insert_rowid())
+                let entry = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
+                     release_mbid, release_track_mbid, recording_mbid, track_number, \
+                     disc_number, reason, source, source_task_id, state, created_at) \
+                     VALUES (?1, 'held', ?2, ?2, ?3, ?4, ?5, 1, 1, 'tag_mismatch', 'soulseek', \
+                     ?6, 'held', 1)",
+                    rusqlite::params![entry, values.4, values.1, values.2, values.3, values.5],
+                )?;
+                Ok(entry)
             })
             .await
             .expect("held row");
-        ids.push(id);
+        entries.push(entry);
     }
-    let held = HeldImports::new(rig.acquire.journal.clone(), rig.worker(Vec::new(), false));
     let viewer = HeldViewer {
         user_id: "u-ada".to_owned(),
         admin: false,
     };
-    let imported = held
-        .import_files(&viewer, &ids, "u-ada")
-        .await
-        .expect("both import");
-    assert_eq!(imported, 2);
+    for entry in entries {
+        let acted = rig
+            .acquire
+            .held
+            .import(&viewer, entry, None, "u-ada")
+            .await
+            .expect("imports");
+        assert_eq!(acted.imported, 1);
+    }
     let albums: Vec<(String, String)> = sqlx::query_as(
         "SELECT i.release_group_mbid, t.local_album_id FROM local_tracks t \
          JOIN local_track_external_identities x ON x.local_track_id = t.id \

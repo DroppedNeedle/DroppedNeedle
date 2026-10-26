@@ -250,6 +250,9 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
             droppedneedle_acquire::drop_import::http::routes(),
             |state| state.acquire.drops.clone(),
         )
+        .area(droppedneedle_acquire::held::http::routes(), |state| {
+            state.acquire.held.clone()
+        })
         .area(
             droppedneedle_acquire::imports::handlers::routes(),
             |state| state.acquire.imports.clone(),

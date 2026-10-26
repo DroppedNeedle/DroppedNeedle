@@ -23,10 +23,20 @@ export const DownloadQueryKeyFactory = {
 	albumTasks: (userId: string | null | undefined, mbid: string) =>
 		[...DownloadQueryKeyFactory.tasks(userId ?? undefined), 'album', mbid] as const,
 	quarantine: () => [...DownloadQueryKeyFactory.all, 'quarantine'] as const,
-	// nested under tasks() so invalidateTasks() prefix-invalidates held lists (all + per-album)
+	// nested under tasks() so invalidateTasks() prefix-invalidates every held list
 	heldPrefix: (userId?: string) => [...DownloadQueryKeyFactory.tasks(userId), 'held'] as const,
-	held: (userId?: string, mbid?: string) =>
-		[...DownloadQueryKeyFactory.heldPrefix(userId), mbid ?? 'all'] as const,
+	held: (
+		userId: string | undefined,
+		filters: { releaseGroupMbid?: string; taskId?: string; all?: boolean }
+	) =>
+		[
+			...DownloadQueryKeyFactory.heldPrefix(userId),
+			{
+				release_group_mbid: filters.releaseGroupMbid ?? null,
+				task_id: filters.taskId ?? null,
+				all: filters.all ?? false
+			}
+		] as const,
 	indexers: () => [...DownloadQueryKeyFactory.all, 'indexers'] as const,
 	searchBackend: () => [...DownloadQueryKeyFactory.indexers(), 'search-backend'] as const,
 	prowlarr: () => [...DownloadQueryKeyFactory.all, 'prowlarr'] as const,

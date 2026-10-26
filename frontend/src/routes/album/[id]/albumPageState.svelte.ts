@@ -22,7 +22,7 @@ import type {
 	LibraryAlbumStatus,
 	LibraryFileMeta,
 	DownloadTask,
-	HeldImport
+	HeldFileInEntry
 } from '$lib/types';
 import { libraryStore } from '$lib/stores/library';
 import { integrationStore } from '$lib/stores/integration';
@@ -75,7 +75,7 @@ import {
 } from '$lib/queries/albums/EditionQueries.svelte';
 import { editionTrackRows, unmatchedFiles } from './albumEdition';
 import { getAlbumDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
-import { getHeldImportsQuery } from '$lib/queries/downloads/HeldQueries.svelte';
+import { getHeldEntriesQuery } from '$lib/queries/downloads/HeldQueries.svelte';
 import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
@@ -227,33 +227,47 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	});
 	// tracks this album downloaded but couldn't auto-verify (held for "import anyway"),
 	// keyed both ways so a track row can find its held candidate the same way owned files match
-	const heldImportsQuery = getHeldImportsQuery(albumIdGetter, () => downloadClientConfigured);
-	const headerManagementHeld = $derived.by(() => {
+	const heldQuery = getHeldEntriesQuery(
+		() => ({ releaseGroupMbid: albumIdGetter() }),
+		() => downloadClientConfigured && !!albumIdGetter()
+	);
+	const heldFiles = $derived(
+		(heldQuery.data?.entries ?? []).flatMap((entry) =>
+			entry.files.map((file): HeldFileInEntry => ({ entry, file }))
+		)
+	);
+	const headerHeldFiles = $derived.by(() => {
 		if (!headerDownloadTask) return [];
-		return (heldImportsQuery.data?.items ?? []).filter(
-			(item) => item.source_task_id === headerDownloadTask?.id && item.reason_kind === 'library'
-		);
+		return heldFiles
+			.filter((held) => held.file.source_task_id === headerDownloadTask?.id)
+			.map((held) => held.file);
 	});
 	const heldByRecording = $derived.by(() => {
-		const m = new SvelteMap<string, HeldImport>();
-		for (const h of heldImportsQuery.data?.items ?? []) {
-			if (h.recording_mbid) m.set(h.recording_mbid, h);
+		const m = new SvelteMap<string, HeldFileInEntry>();
+		for (const held of heldFiles) {
+			if (held.file.recording_mbid) m.set(held.file.recording_mbid, held);
 		}
 		return m;
 	});
 	const heldByPosition = $derived.by(() => {
-		const m = new SvelteMap<string, HeldImport>();
-		for (const h of heldImportsQuery.data?.items ?? []) {
-			m.set(getDiscTrackKey({ disc_number: h.disc_number, track_number: h.track_number }), h);
+		const m = new SvelteMap<string, HeldFileInEntry>();
+		for (const held of heldFiles) {
+			m.set(
+				getDiscTrackKey({
+					disc_number: held.file.disc_number,
+					track_number: held.file.track_number
+				}),
+				held
+			);
 		}
 		return m;
 	});
-	// A held track resolving ("import anyway" / discard) shrinks the held set. Refetch
+	// A held file resolving (import or discard) shrinks the held set. Refetch
 	// library status + source matches so a newly-owned track's play button appears in place,
 	// without a manual refresh (mirrors the settled-download effect above).
 	let lastHeldItemCount = -1;
 	$effect(() => {
-		const count = heldImportsQuery.data?.items?.length ?? 0;
+		const count = heldFiles.length;
 		untrack(() => {
 			if (lastHeldItemCount !== -1 && count < lastHeldItemCount) {
 				void libraryStatusQuery.refetch();
@@ -1124,8 +1138,8 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		get headerDownloadTask() {
 			return headerDownloadTask;
 		},
-		get headerManagementHeld() {
-			return headerManagementHeld;
+		get headerHeldFiles() {
+			return headerHeldFiles;
 		},
 		get trackDownloadTasks() {
 			return trackDownloadTasks;

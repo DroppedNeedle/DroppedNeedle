@@ -3874,7 +3874,7 @@ async fn album_cleanup_survives_a_stop_after_the_removal() {
         .album_for_track(&track)
         .unwrap()
         .expect("album");
-    let held = rig.app.config.root_app_dir.join("held/01.flac");
+    let held = rig.app.config.cache_dir.join("held/01.flac");
     std::fs::create_dir_all(held.parent().expect("held folder")).expect("held folder");
     std::fs::write(&held, b"held").expect("held file");
     rig.scan_store
@@ -3889,13 +3889,16 @@ async fn album_cleanup_survives_a_stop_after_the_removal() {
              album_title, status, created_at, updated_at) \
              VALUES ('task-old', 'fan', 'rg-gone', 'Band', 'LP', 'failed', 1767225600.0, \
              1767225600.0); \
-             INSERT INTO held_imports (user_id, release_group_mbid, held_path, reason, \
-             created_at) VALUES ('fan', 'rg-gone', '{}', 'verify_failed', 1767225600.0); \
+             INSERT INTO acquire_held_entries (id, user_id, origin, group_key, \
+             release_group_mbid, state, created_at, expires_at) VALUES (1, 'fan', 'download', \
+             'album:rg-gone', 'rg-gone', 'held', 1767225600000, 9999999999999); \
+             INSERT INTO acquire_held_files (entry_id, root, path, original_name, source, \
+             reason, state, created_at) VALUES (1, 'held', '01.flac', '01.flac', 'soulseek', \
+             'weak_match', 'held', 1767225600000); \
              INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, \
              user_id, artist_name, album_title, kind, state, created_at, next_check_at) \
              VALUES ('rg-gone', 'rg-gone', 'fan', 'Band', 'LP', 'missing', 'watching', \
-             1767225600000, 1767225600000);",
-            held.display()
+             1767225600000, 1767225600000);"
         ))
         .expect("acquisition rows seeded");
 
@@ -3922,7 +3925,8 @@ async fn album_cleanup_survives_a_stop_after_the_removal() {
                     .query_i64(
                         "SELECT (SELECT status = 'cancelled' FROM download_tasks \
                          WHERE id = 'task-old') \
-                         AND (SELECT COUNT(*) FROM held_imports) = 0 \
+                         AND (SELECT COUNT(*) FROM acquire_held_files \
+                              WHERE state = 'held') = 0 \
                          AND (SELECT state = 'stopped' FROM wanted_watches) \
                          AND (SELECT COUNT(*) FROM durable_jobs \
                               WHERE kind = 'library.album_removed' AND state = 'done') = 1",

@@ -20,7 +20,7 @@ fn rows(db: &Path) -> Vec<String> {
     let mut lines = Vec::new();
     for sql in [
         "SELECT id || ' ' || status FROM download_tasks ORDER BY id",
-        "SELECT held_path FROM held_imports ORDER BY held_path",
+        "SELECT path || ' ' || state FROM acquire_held_files ORDER BY path",
         "SELECT identity FROM download_quarantine ORDER BY identity",
         "SELECT state FROM wanted_watches",
     ] {
@@ -65,7 +65,8 @@ async fn run_job(
 }
 
 /// A clean-up job acts only on what the album had when it was removed: a
-/// request made since keeps its task, held file and watch. Run again with
+/// request made since keeps its task, held file and watch, even in the
+/// same held entry. Run again with
 /// the same payload, as a restored backup re-runs a finished job, it
 /// changes nothing.
 #[tokio::test]
@@ -81,8 +82,10 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
         .as_secs_f64();
     let (before, after) = (removed_at - 60.0, removed_at + 60.0);
     let after_ms = millis(after);
-    let old_held = dir.join("held-old.flac");
-    let new_held = dir.join("held-new.flac");
+    let held_dir = platform.config.cache_dir.join("held");
+    std::fs::create_dir_all(&held_dir).expect("held folder");
+    let old_held = held_dir.join("held-old.flac");
+    let new_held = held_dir.join("held-new.flac");
     std::fs::write(&old_held, b"old").expect("old held file");
     std::fs::write(&new_held, b"new").expect("new held file");
     let conn = droppedneedle_kernel::db::open_connection(db.path()).expect("db opens");
@@ -91,9 +94,14 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
          status, created_at, updated_at) VALUES \
          ('task-old', 'fan', 'rg-1', 'Band', 'LP', 'failed', {before}, {before}), \
          ('task-new', 'fan', 'rg-1', 'Band', 'LP', 'failed', {after}, {after}); \
-         INSERT INTO held_imports (user_id, release_group_mbid, held_path, reason, created_at) \
-         VALUES ('fan', 'rg-1', '{old}', 'verify_failed', {before}), \
-         ('fan', 'rg-1', '{new}', 'verify_failed', {after}); \
+         INSERT INTO acquire_held_entries (id, user_id, origin, group_key, release_group_mbid, \
+         state, created_at, expires_at) \
+         VALUES (1, 'fan', 'download', 'album:rg-1', 'rg-1', 'held', {before_ms}, {after_ms}); \
+         INSERT INTO acquire_held_files (entry_id, root, path, original_name, source, reason, \
+         state, created_at) \
+         VALUES (1, 'held', 'held-old.flac', '01.flac', 'soulseek', 'weak_match', 'held', \
+         {before_ms}), \
+         (1, 'held', 'held-new.flac', '01.flac', 'soulseek', 'weak_match', 'held', {after_ms}); \
          INSERT INTO download_quarantine (identity, release_group_mbid, reason, quarantined_at) \
          VALUES ('peer-old', 'rg-1', 'corrupt', {before}), \
          ('peer-new', 'rg-1', 'corrupt', {after}); \
@@ -101,8 +109,7 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
          artist_name, album_title, kind, state, created_at, next_check_at) \
          VALUES ('rg-1', 'rg-1', 'fan', 'Band', 'LP', 'missing', 'watching', {after_ms}, \
          {after_ms});",
-        old = old_held.display(),
-        new = new_held.display(),
+        before_ms = millis(before),
     ))
     .expect("rows seeded");
 
@@ -129,7 +136,8 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
     let kept = vec![
         "task-new failed".to_owned(),
         "task-old cancelled".to_owned(),
-        new_held.display().to_string(),
+        "held-new.flac held".to_owned(),
+        "held-old.flac discarded".to_owned(),
         "peer-new".to_owned(),
         "watching".to_owned(),
     ];

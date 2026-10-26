@@ -421,7 +421,7 @@ impl Reason {
             }
             Self::NoTracks => "Review the held files, or let DroppedNeedle try another source.",
             Self::VersionLowerQuality => {
-                "Nothing to do. Discard the held file once you have heard it."
+                "Discard it, or choose Use this version to make it your copy; yours goes to the recycle bin."
             }
             Self::NoBetterThanYours => {
                 "Discard it, or choose Use this file to replace yours; yours goes to the recycle bin."
@@ -766,6 +766,9 @@ mod tests {
         Waited,
         /// Every source refused at enqueue: settled, nothing blocklisted.
         Unserved,
+        /// Held after a person's import or match, never by a landing:
+        /// nothing is said against a source.
+        PersonHeld,
         /// No landing or worker path produces it; the answer chosen.
         NotProduced(bool),
     }
@@ -776,7 +779,7 @@ mod tests {
                 Before::Held { local } => !local,
                 Before::Rejected(disposition) => disposition == Disposition::Permanent,
                 Before::FailedOver { blocklisted } => blocklisted,
-                Before::Waited | Before::Unserved => false,
+                Before::Waited | Before::Unserved | Before::PersonHeld => false,
                 Before::NotProduced(answer) => answer,
             }
         }
@@ -788,7 +791,7 @@ mod tests {
     /// sources disagreed: none do.
     #[test]
     fn against_source_keeps_what_each_outcome_did_before() {
-        use Before::{FailedOver, Held, NotProduced, Rejected, Unserved, Waited};
+        use Before::{FailedOver, Held, NotProduced, PersonHeld, Rejected, Unserved, Waited};
         use Disposition::{LocalFault, Permanent, Temporary};
         let table: &[(Reason, Before)] = &[
             (Reason::WeakMatch, Held { local: false }),
@@ -847,8 +850,8 @@ mod tests {
             (Reason::TrackNotFound, Unserved),
             // Uploads have no source; the queue's own states and the
             // reasons no code produces yet say nothing against one.
-            (Reason::FingerprintUnconfirmed, NotProduced(false)),
-            (Reason::NoBetterThanYours, NotProduced(false)),
+            (Reason::FingerprintUnconfirmed, PersonHeld),
+            (Reason::NoBetterThanYours, PersonHeld),
             (Reason::NoAlbumMatch, NotProduced(false)),
             (Reason::AlbumNotFound, NotProduced(false)),
             (Reason::TagsDisagree, NotProduced(false)),

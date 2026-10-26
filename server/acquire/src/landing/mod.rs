@@ -49,10 +49,13 @@ use self::ports::LandingLibrary;
 use self::probe::{LandedFile, Landing};
 use self::specs::{Check, Disposition, QualityPolicy, Rejection, Target, Verdict};
 use super::downloads::journal::Journal;
-use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
+use super::downloads::landing_rows::ImportDecisionRow;
 use super::downloads::plan::{PlannedAlbum, TaskPlan};
 use super::downloads::sources::SourceHandle;
 use super::downloads::store::{StoreError, TaskDetails, TaskRow};
+use crate::held::store::{
+    EntryOrigin, FileState, GroupKey, HeldRoot, HeldRows, NewEntry, NewFile, Pairing as HeldPairing,
+};
 use crate::intake;
 use crate::reason::Reason;
 use droppedneedle_kernel::runtime_config::Live;
@@ -394,25 +397,24 @@ impl LandingService {
             return;
         };
         let (user_id, task_id) = (task.user_id.clone(), task.id.clone());
-        let now = self.journal.db().now_unix_f64();
+        let clock = self.journal.db().clock().clone();
         let discarded = self
             .journal
-            .run("downloads.album_version_discard", move |store| {
-                let rows = store.held_for_recording(
-                    Reason::AlbumVersionOnly,
-                    &user_id,
-                    &recording,
-                    &task_id,
-                )?;
-                let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
-                store.resolve_held(&ids, "discarded", now)?;
-                Ok(rows)
+            .db()
+            .write_background("downloads.album_version_discard", move |tx| {
+                let rows = HeldRows::new(tx);
+                let files = rows.album_version_files(&user_id, &recording, &task_id)?;
+                let now = clock.now_ms();
+                for file in &files {
+                    rows.resolve(file.entry_id, &[file.id], FileState::Discarded, now)?;
+                }
+                Ok::<_, droppedneedle_kernel::db::DbError>(files)
             })
             .await;
         match discarded {
-            Ok(rows) => {
-                for row in rows {
-                    super::downloads::held::remove_held_copy(Path::new(&row.held_path)).await;
+            Ok(files) => {
+                for file in files {
+                    super::held::remove_copy(&self.held_dir, &file.path).await;
                 }
             }
             Err(error) => {
@@ -755,7 +757,8 @@ impl LandingService {
         }
     }
 
-    /// Hold files, each with the release track it was paired to.
+    /// Hold files, each with the release track it was paired to, in the
+    /// download's entry of the held list.
     async fn hold(
         &self,
         task: &TaskRow,
@@ -772,7 +775,7 @@ impl LandingService {
             .iter()
             .map(|item| {
                 let paired = found.zip(item.track);
-                self.hold_item(
+                hold_item(
                     task,
                     target,
                     item.file,
@@ -783,74 +786,24 @@ impl LandingService {
                 )
             })
             .collect();
-        let now = self.journal.db().now_unix_f64();
-        hold::hold(&self.journal, &self.held_dir, items, now).await
-    }
-
-    /// The held row for one file, with the release track it was paired
-    /// to when there is one. The file is named by its path inside the
-    /// download, so two discs' `01.flac` stay apart.
-    #[allow(clippy::too_many_arguments)]
-    fn hold_item(
-        &self,
-        task: &TaskRow,
-        target: &Target,
-        file: &LandedFile,
-        paired: Option<(&FoundRelease, usize)>,
-        root: &Path,
-        code: Reason,
-        detail: &str,
-    ) -> HoldItem {
-        let track = paired.map(|(found, index)| (&found.release, &found.release.tracks[index]));
-        let tag = &file.tag;
-        let relative = file
-            .path
-            .strip_prefix(root)
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| file.file_name());
-        HoldItem {
-            source: file.path.clone(),
-            row: HeldFile {
-                user_id: task.user_id.clone(),
-                held_path: String::new(),
-                original_filename: relative,
-                reason: code,
-                reason_detail: Some(detail.to_owned()),
-                source: task.source.clone(),
-                source_task_id: task.id.clone(),
-                origin: task.origin.clone(),
-                release_group_mbid: non_empty(&target.release_group_mbid),
-                release_mbid: track
-                    .map(|(release, _)| release.id.clone())
-                    .or_else(|| target.release_mbid.clone()),
-                release_track_mbid: track.map(|(_, track)| track.id.clone()),
-                recording_mbid: track
-                    .map(|(_, track)| track.recording_id.clone())
-                    .or_else(|| tag.musicbrainz_recording_id.clone()),
-                track_number: Some(i64::from(
-                    track.map_or(tag.track_number, |(_, track)| track.position),
-                ))
-                .filter(|number| *number > 0),
-                disc_number: Some(i64::from(
-                    track.map_or(tag.disc_number.max(1), |(_, track)| track.disc.max(1)),
-                )),
-                track_title: track
-                    .map(|(_, track)| track.title.clone())
-                    .or_else(|| non_empty(&tag.title)),
-                artist_name: non_empty(&target.artist_name),
-                artist_mbid: None,
-                album_title: non_empty(&target.album_title),
-                year: target.year.map(i64::from),
-                file_format: Some(file.format.as_str().to_owned()),
-                duration_seconds: file.header.duration_seconds,
-                expected_duration_seconds: track
-                    .and_then(|(_, track)| track.length_ms)
-                    .map(|ms| ms as f64 / 1000.0),
-                evidence_title: non_empty(&tag.title),
-                evidence_artist: non_empty(&tag.artist),
-                evidence_score: None,
-            },
-        }
+        let entry = NewEntry {
+            user_id: task.user_id.clone(),
+            origin: EntryOrigin::Download,
+            key: GroupKey::for_download(
+                &task.download_type,
+                task.recording_mbid.as_deref(),
+                Some(target.release_group_mbid.as_str()),
+                &task.id,
+            ),
+            release_group_mbid: non_empty(&target.release_group_mbid),
+            recording_mbid: (task.download_type == "track")
+                .then(|| task.recording_mbid.clone())
+                .flatten(),
+            drop_item_id: None,
+            artist_name: non_empty(&target.artist_name),
+            album_title: non_empty(&target.album_title),
+        };
+        hold::hold(self.journal.db(), &self.held_dir, &entry, items).await
     }
 
     /// Record the decision, then remove imported sources, and report.
@@ -1168,4 +1121,64 @@ fn checks_json(checks: &[Check]) -> String {
 fn non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// The held file for one landed file, with the release track it was
+/// paired to when there is one. The file is named by its path inside the
+/// download, so two discs' `01.flac` stay apart.
+fn hold_item(
+    task: &TaskRow,
+    target: &Target,
+    file: &LandedFile,
+    paired: Option<(&FoundRelease, usize)>,
+    root: &Path,
+    code: Reason,
+    detail: &str,
+) -> HoldItem {
+    let track = paired.map(|(found, index)| (&found.release, &found.release.tracks[index]));
+    let tag = &file.tag;
+    let relative = file
+        .path
+        .strip_prefix(root)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| file.file_name());
+    HoldItem {
+        source: file.path.clone(),
+        file: NewFile {
+            root: HeldRoot::Held,
+            path: String::new(),
+            original_name: relative,
+            pairing: HeldPairing {
+                release_mbid: track
+                    .map(|(release, _)| release.id.clone())
+                    .or_else(|| target.release_mbid.clone()),
+                release_track_mbid: track.map(|(_, track)| track.id.clone()),
+                recording_mbid: track
+                    .map(|(_, track)| track.recording_id.clone())
+                    .or_else(|| tag.musicbrainz_recording_id.clone()),
+                disc_number: Some(i64::from(
+                    track.map_or(tag.disc_number.max(1), |(_, track)| track.disc.max(1)),
+                )),
+                track_number: Some(i64::from(
+                    track.map_or(tag.track_number, |(_, track)| track.position),
+                ))
+                .filter(|number| *number > 0),
+                track_title: track
+                    .map(|(_, track)| track.title.clone())
+                    .or_else(|| non_empty(&tag.title)),
+                expected_duration_seconds: track
+                    .and_then(|(_, track)| track.length_ms)
+                    .map(|ms| ms as f64 / 1000.0),
+            },
+            file_format: Some(file.format.as_str().to_owned()),
+            duration_seconds: file.header.duration_seconds,
+            evidence_title: non_empty(&tag.title),
+            evidence_artist: non_empty(&tag.artist),
+            evidence_score: None,
+            source: task.source.clone(),
+            source_task_id: Some(task.id.clone()),
+            reason: code,
+            reason_detail: Some(detail.to_owned()).filter(|detail| !detail.is_empty()),
+        },
+    }
 }

@@ -143,8 +143,13 @@ many. Nothing else in the v2 database is changed.
 - The original of every file Library Management changed. "Restore original"
   in v3 puts such a file back where it was and gives it back the tags it had
   before v2 first touched it.
-- Downloads held back for review, with their files. They land in
-  the `held` folder of your v3 cache.
+- Downloads held back for review, with their files and the reason
+  they were held. They land in the `held` folder of your v3 cache and
+  join the list of held files on the Downloads page, one entry per album.
+  v2's "waiting on the library" holds read as a file already in the way;
+  a reason v3 does not use reads as held by an earlier version. Held
+  files and uploads waiting for you are kept at least 90 days after the
+  upgrade.
 - MusicBrainz contributions you had in progress, with their verification
   and the return link MusicBrainz calls when you save the release.
 - YouTube links you found or set for albums and tracks.

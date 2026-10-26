@@ -1,14 +1,19 @@
 //! Drop-import jobs and items in SQLite (`drop_import_jobs`,
-//! `drop_import_items`; reason columns from 0029).
+//! `drop_import_items`). An item's files waiting for a person live in its
+//! entry of the held list.
 //!
 //! Reads go through the reader pool, writes through the writer lane. Item
 //! transitions name the status they expect, so the background run and a
 //! person's match or discard never both act on one item.
 
+use std::path::{Path, PathBuf};
+
 use rusqlite::params;
 use sqlx::Row as _;
 
 use crate::db::AcquireDb;
+use crate::held::sql::OPEN;
+use crate::held::store::{EntryOrigin, GroupKey, HeldRows, NewEntry, NewFile};
 use crate::reason::Reason;
 
 /// Job lifecycle (v2 `JobStatus`).
@@ -59,7 +64,8 @@ pub struct ItemRecord {
     pub detail: Option<String>,
     /// Why the item stopped short, when it did.
     pub reason_code: Option<Reason>,
-    /// Staged files still waiting (review items); empty once settled.
+    /// The item's staged files while it is processed; empty once settled
+    /// (files still waiting are in the held list).
     pub staging_paths: Vec<String>,
 }
 
@@ -228,28 +234,12 @@ impl DropStore {
         let clock = self.db.clock().clone();
         self.db
             .write_background("drop_import.save_item", move |tx| {
-                let changed = tx.execute(
-                    "UPDATE drop_import_items SET status = ?3, release_group_mbid = ?4, \
-                     album_title = ?5, artist_name = ?6, files_total = ?7, files_imported = ?8, \
-                     detail = ?9, reason_code = ?10, staging_paths = ?11, \
-                     updated_at = ?12 WHERE id = ?1 AND status = ?2",
-                    params![
-                        item.id,
-                        expected,
-                        item.status,
-                        item.release_group_mbid,
-                        item.album_title,
-                        item.artist_name,
-                        item.files_total,
-                        item.files_imported,
-                        item.detail,
-                        item.reason_code.map(Reason::code),
-                        serde_json::to_string(&item.staging_paths)
-                            .unwrap_or_else(|_| "[]".to_owned()),
-                        crate::db::unix_secs_f64(clock.as_ref()),
-                    ],
-                )?;
-                Ok(changed == 1)
+                Ok(write_item(
+                    tx,
+                    &item,
+                    expected,
+                    crate::db::unix_secs_f64(clock.as_ref()),
+                )?)
             })
             .await
             .map_err(write_error)
@@ -335,36 +325,108 @@ impl DropStore {
 
     /// Startup: undo what a restart cut off. A hand match that was
     /// running (an item with a reason, or of a finished job) goes back to
-    /// review with its files; items of a job that was still being
-    /// worked on fail with `reason`, and so does the job. Answers how many
-    /// jobs failed.
-    pub async fn fail_stale_processing(&self, reason: Reason) -> Result<usize, StoreError> {
-        let (detail, code) = (reason.message(), reason.code());
+    /// review; items of a job that was still being worked on wait with
+    /// `reason`, and the job fails. An item back in review with no open
+    /// entry gets one for its staged files below `root`, so its upload
+    /// waits in the held list and is never lost to a restart. Answers how
+    /// many jobs failed.
+    pub async fn fail_stale_processing(
+        &self,
+        reason: Reason,
+        root: &Path,
+    ) -> Result<usize, StoreError> {
+        let root = root.to_path_buf();
         let clock = self.db.clock().clone();
         self.db
             .write_background("drop_import.fail_stale", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
-                tx.execute(
-                    "UPDATE drop_import_items SET status = 'needs_review', \
-                     detail = COALESCE(detail, ?1), reason_code = COALESCE(reason_code, ?2), \
-                     updated_at = ?3 \
-                     WHERE status = 'processing' AND (reason_code IS NOT NULL \
-                       OR job_id NOT IN (SELECT id FROM drop_import_jobs \
-                                         WHERE status = 'processing'))",
-                    params![detail, code, at],
+                let now = clock.now_ms();
+                let mut select = tx.prepare(
+                    "SELECT i.id, i.staging_paths, i.reason_code, i.release_group_mbid, \
+                     i.artist_name, i.album_title, j.user_id, j.status = 'processing', \
+                     EXISTS (SELECT 1 FROM auth_users u WHERE u.id = j.user_id) \
+                     FROM drop_import_items i JOIN drop_import_jobs j ON j.id = i.job_id \
+                     WHERE i.status = 'processing'",
                 )?;
-                // Items of a job still being worked on keep their files
-                // for review too: an upload is never lost to a restart.
-                tx.execute(
-                    "UPDATE drop_import_items SET status = 'needs_review', detail = ?1, \
-                     reason_code = ?2, updated_at = ?3 \
-                     WHERE status = 'processing'",
-                    params![detail, code, at],
-                )?;
+                type Cut = (
+                    i64,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    String,
+                    bool,
+                    bool,
+                );
+                let cut: Vec<Cut> = select
+                    .query_map([], |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                            row.get(8)?,
+                        ))
+                    })?
+                    .collect::<Result<_, _>>()?;
+                drop(select);
+                let rows = HeldRows::new(tx);
+                for (id, staged, code, group, artist, album, user_id, job_live, user_known) in cut {
+                    // A hand match keeps its own reason; an item of a job
+                    // still being worked on was cut off part way.
+                    let kept = code
+                        .filter(|_| !job_live)
+                        .map(|code| Reason::from_stored(&code));
+                    let waits = kept.unwrap_or(reason);
+                    tx.execute(
+                        "UPDATE drop_import_items SET status = 'needs_review', \
+                         detail = CASE WHEN ?4 THEN COALESCE(detail, ?1) ELSE ?1 END, \
+                         reason_code = ?2, updated_at = ?3 WHERE id = ?5",
+                        params![waits.message(), waits.code(), at, kept.is_some(), id],
+                    )?;
+                    if !user_known || rows.entry_of_item(id)?.is_some() {
+                        continue;
+                    }
+                    let files: Vec<NewFile> = serde_json::from_str::<Vec<String>>(&staged)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|path| {
+                            let path = PathBuf::from(path);
+                            let rel = path
+                                .strip_prefix(&root)
+                                .ok()?
+                                .to_string_lossy()
+                                .into_owned();
+                            Some(NewFile::upload(&rel, waits))
+                        })
+                        .collect();
+                    if files.is_empty() {
+                        continue;
+                    }
+                    rows.hold(
+                        &NewEntry {
+                            user_id,
+                            origin: EntryOrigin::Upload,
+                            key: GroupKey::Upload(id),
+                            release_group_mbid: group,
+                            recording_mbid: None,
+                            drop_item_id: Some(id),
+                            artist_name: artist,
+                            album_title: album,
+                        },
+                        &files,
+                        now,
+                    )?;
+                }
                 let jobs = tx.execute(
                     "UPDATE drop_import_jobs SET status = 'failed', error = ?1 \
                      WHERE status = 'processing'",
-                    params![detail],
+                    params![reason.message()],
                 )?;
                 Ok(jobs)
             })
@@ -385,41 +447,49 @@ impl DropStore {
         .map_err(read_error)
     }
 
-    /// Every job's staging folder, and whether it still holds files a
-    /// person has to review (or a job still being worked on).
+    /// Every job's staging folder, and whether it is kept: the job is
+    /// still being worked on, or one of its items is, or waits in an open
+    /// entry of the held list.
     pub async fn staging_dirs(&self) -> Result<Vec<(String, bool)>, StoreError> {
-        sqlx::query_as(
+        sqlx::query_as(&format!(
             "SELECT j.staging_dir, (j.status = 'processing' OR EXISTS (SELECT 1 \
-               FROM drop_import_items i WHERE i.job_id = j.id \
-               AND i.status IN ('needs_review', 'processing'))) FROM drop_import_jobs j",
-        )
+               FROM drop_import_items i WHERE i.job_id = j.id AND (i.status = 'processing' \
+               OR EXISTS (SELECT 1 FROM acquire_held_entries e WHERE e.drop_item_id = i.id \
+                 AND e.state IN {OPEN})))) FROM drop_import_jobs j"
+        ))
         .fetch_all(self.db.pool())
         .await
         .map_err(read_error)
     }
+}
 
-    /// Startup retention: delete review items whose job is older than
-    /// `cutoff` and answer their staged paths so the files go too.
-    pub async fn prune_stale_review_items(&self, cutoff: f64) -> Result<Vec<String>, StoreError> {
-        self.db
-            .write_background("drop_import.prune_review", move |tx| {
-                let mut select = tx.prepare(
-                    "SELECT i.id, i.staging_paths FROM drop_import_items i \
-                     JOIN drop_import_jobs j ON j.id = i.job_id \
-                     WHERE i.status = 'needs_review' AND j.created_at < ?1",
-                )?;
-                let rows: Vec<(i64, String)> = select
-                    .query_map(params![cutoff], |row| Ok((row.get(0)?, row.get(1)?)))?
-                    .collect::<Result<_, _>>()?;
-                drop(select);
-                let mut paths = Vec::new();
-                for (id, staged) in rows {
-                    tx.execute("DELETE FROM drop_import_items WHERE id = ?1", params![id])?;
-                    paths.extend(serde_json::from_str::<Vec<String>>(&staged).unwrap_or_default());
-                }
-                Ok(paths)
-            })
-            .await
-            .map_err(write_error)
-    }
+/// Write an item's settled state on `conn`, but only while it is still in
+/// `expected` status. Answers whether the write landed.
+pub(crate) fn write_item(
+    conn: &rusqlite::Connection,
+    item: &ItemRecord,
+    expected: &str,
+    at: f64,
+) -> rusqlite::Result<bool> {
+    let changed = conn.execute(
+        "UPDATE drop_import_items SET status = ?3, release_group_mbid = ?4, \
+         album_title = ?5, artist_name = ?6, files_total = ?7, files_imported = ?8, \
+         detail = ?9, reason_code = ?10, staging_paths = ?11, \
+         updated_at = ?12 WHERE id = ?1 AND status = ?2",
+        params![
+            item.id,
+            expected,
+            item.status,
+            item.release_group_mbid,
+            item.album_title,
+            item.artist_name,
+            item.files_total,
+            item.files_imported,
+            item.detail,
+            item.reason_code.map(Reason::code),
+            serde_json::to_string(&item.staging_paths).unwrap_or_else(|_| "[]".to_owned()),
+            at,
+        ],
+    )?;
+    Ok(changed == 1)
 }

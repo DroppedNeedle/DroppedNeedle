@@ -4,7 +4,7 @@
 		AlbumBasicInfo,
 		AlbumTracksInfo,
 		DownloadTask,
-		HeldImport,
+		HeldFile,
 		LibraryAlbumSummary
 	} from '$lib/types';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
@@ -44,7 +44,7 @@
 		requesting: boolean;
 		refreshing: boolean;
 		headerDownloadTask: DownloadTask | null;
-		managementHeld?: HeldImport[];
+		heldFiles?: HeldFile[];
 		downloadClientConfigured: boolean;
 
 		libraryInLibrary?: boolean;
@@ -75,7 +75,7 @@
 		requesting,
 		refreshing,
 		headerDownloadTask,
-		managementHeld = [],
+		heldFiles = [],
 		downloadClientConfigured,
 		libraryInLibrary = false,
 		libraryTrackCount = 0,
@@ -344,7 +344,7 @@
 
 			<div class="pt-4 flex flex-col gap-3">
 				{#if headerDownloadTask}
-					<AlbumDownloadStatus task={headerDownloadTask} {managementHeld} />
+					<AlbumDownloadStatus task={headerDownloadTask} {heldFiles} />
 				{/if}
 				<div class="flex flex-wrap items-start gap-3">
 					{#if inLibrary || libraryInLibrary}

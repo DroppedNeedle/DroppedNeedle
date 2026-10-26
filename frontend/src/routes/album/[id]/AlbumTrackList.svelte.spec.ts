@@ -5,10 +5,7 @@ import { render } from 'vitest-browser-svelte';
 // keep the Request button real; stub only its mutation hook so it renders without a QueryClient
 const downloadMutations = vi.hoisted(() => ({ requestMutate: vi.fn() }));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
-	requestTrack: () => ({ mutate: downloadMutations.requestMutate, isPending: false }),
-	importHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
-	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
-	reverifyHeldTrack: () => ({ mutate: vi.fn(), isPending: false })
+	requestTrack: () => ({ mutate: downloadMutations.requestMutate, isPending: false })
 }));
 
 // the per-track upgrade affordance's mutation hook (QueryClient-dependent)
@@ -78,7 +75,7 @@ import { buildRenderedTrackSections, buildSortedTrackMap } from './albumTrackRes
 import type {
 	AlbumBasicInfo,
 	AlbumTracksInfo,
-	HeldImport,
+	HeldFileInEntry,
 	JellyfinTrackInfo,
 	LibraryFileMeta,
 	LocalAlbumMatch,
@@ -143,8 +140,8 @@ const byPosition = new Map<string, LibraryFileMeta>([
 
 async function renderList(
 	over: {
-		heldByRecording?: Map<string, HeldImport>;
-		heldByPosition?: Map<string, HeldImport>;
+		heldByRecording?: Map<string, HeldFileInEntry>;
+		heldByPosition?: Map<string, HeldFileInEntry>;
 		byRecording?: Map<string, LibraryFileMeta>;
 		byPosition?: Map<string, LibraryFileMeta>;
 		releaseMbid?: string | null;
@@ -250,38 +247,46 @@ describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () =
 	});
 });
 
-function heldImport(over: Partial<HeldImport>): HeldImport {
-	return {
+function heldFile(over: Partial<HeldFileInEntry['file']>): HeldFileInEntry {
+	const file: HeldFileInEntry['file'] = {
 		id: 1,
-		release_group_mbid: 'rg-1',
+		original_name: '03 Genuinely Missing.flac',
 		release_mbid: null,
 		release_track_mbid: null,
 		recording_mbid: null,
 		track_number: 3,
 		disc_number: 1,
 		track_title: 'Genuinely Missing',
-		artist_name: 'Artist',
-		album_title: 'Album',
-		year: 2020,
-		original_filename: '03 Genuinely Missing.flac',
 		file_format: 'flac',
 		duration_seconds: 180,
 		expected_duration_seconds: null,
 		reason: 'fingerprint_mismatch',
 		reason_detail: null,
+		reason_text: 'The fingerprint did not match this track.',
+		reason_action: 'Listen to it and import it if it is right.',
+		reason_kind: 'hold',
 		source: 'soulseek',
 		source_task_id: 'task-1',
 		created_at: 1,
 		evidence_title: null,
 		evidence_artist: null,
 		evidence_score: null,
-		management_retry_count: 0,
-		management_next_retry_at: null,
-		reason_text: 'The fingerprint did not match this track.',
-		reason_action: 'Listen to it and import it if it is right.',
-		reason_kind: 'hold',
-		origin: 'user',
+		actions: ['import', 'recheck'],
 		...over
+	};
+	return {
+		entry: {
+			id: 1,
+			origin: 'download',
+			state: 'held',
+			release_group_mbid: 'rg-1',
+			artist_name: 'Artist',
+			album_title: 'Album',
+			created_at: 1,
+			expires_at: 2,
+			files: [file]
+		},
+		file
 	};
 }
 
@@ -293,14 +298,22 @@ describe('AlbumTrackList held toggle', () => {
 				{ position: 4, disc_number: 1, title: 'Unverified', length: 100000, recording_id: 'rec-4' }
 			],
 			heldByRecording: new Map([
-				['rec-3', heldImport({ id: 3, reason: 'target_occupied', reason_kind: 'library' })],
-				['rec-4', heldImport({ id: 4, reason_kind: 'hold' })]
+				[
+					'rec-3',
+					heldFile({
+						id: 3,
+						reason: 'target_occupied',
+						reason_kind: 'library',
+						reason_text: 'Another file sits where this would go.'
+					})
+				],
+				['rec-4', heldFile({ id: 4 })]
 			])
 		});
 
-		await expect.element(page.getByTitle('Waiting on the library')).toBeVisible();
+		await expect.element(page.getByTitle('Another file sits where this would go.')).toBeVisible();
 		await expect
-			.element(page.getByTitle("Downloaded but couldn't verify - review it"))
+			.element(page.getByTitle('The fingerprint did not match this track.'))
 			.toBeVisible();
 	});
 });

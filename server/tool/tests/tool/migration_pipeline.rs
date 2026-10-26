@@ -757,6 +757,142 @@ async fn run_pipeline_with(
     .await
 }
 
+/// Held downloads carry into the held list with their files: a track
+/// download's under its song, an album's under its album, v2's library
+/// holds as a taken destination and a reason v3 holds no file for as held
+/// by an earlier version, each kept at least 90 days after the carry.
+/// Decided rows stay behind, and a repeat import adds nothing.
+#[tokio::test]
+async fn held_downloads_carry_into_the_held_list() {
+    let root = scratch_dir("held");
+    let (fixture, _) = orphaned_export(&root);
+    let v2_cache = root.join("v2").join("cache");
+    let v2_db = v2_cache.join("library.db");
+    delete_orphan_rows(&v2_db).expect("repair runs");
+    let held_dir = v2_cache.join("held");
+    std::fs::create_dir_all(&held_dir).expect("v2 held folder");
+    std::fs::write(held_dir.join("album.flac"), b"album bytes").expect("held file");
+    std::fs::write(held_dir.join("track.flac"), b"track bytes").expect("held file");
+    let alice = &fixture.alice_id;
+    let v2 = rusqlite::Connection::open(&v2_db).expect("v2 db opens");
+    v2.execute_batch(&format!(
+        "ALTER TABLE download_tasks ADD COLUMN download_type TEXT NOT NULL DEFAULT 'album';
+         ALTER TABLE download_tasks ADD COLUMN recording_mbid TEXT;
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name,
+             album_title, status, created_at, updated_at, download_type, recording_mbid)
+         VALUES ('download-track', '{alice}', 'dddddddd-0000-4000-8000-000000000001',
+                 'Artist', 'Song', 'failed', 1700000000.0, 1700000000.0, 'track',
+                 'EEEEEEEE-0000-4000-8000-000000000001');
+         CREATE TABLE held_imports (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+             release_group_mbid TEXT, release_mbid TEXT, release_track_mbid TEXT,
+             recording_mbid TEXT, track_number INTEGER, disc_number INTEGER,
+             track_title TEXT, artist_name TEXT, artist_mbid TEXT, album_title TEXT,
+             year INTEGER, held_path TEXT NOT NULL, original_filename TEXT,
+             file_format TEXT, duration_seconds REAL, expected_duration_seconds REAL,
+             reason TEXT NOT NULL, reason_detail TEXT, evidence_title TEXT,
+             evidence_artist TEXT, evidence_score REAL,
+             source TEXT NOT NULL DEFAULT 'soulseek', source_task_id TEXT,
+             origin TEXT NOT NULL DEFAULT 'user', naming_template TEXT,
+             management_retry_count INTEGER NOT NULL DEFAULT 0,
+             management_next_retry_at REAL, status TEXT NOT NULL DEFAULT 'held',
+             created_at REAL NOT NULL, resolved_at REAL, file_cleanup_completed_at REAL);
+         INSERT INTO held_imports (user_id, release_group_mbid, recording_mbid, held_path,
+             original_filename, reason, source_task_id, status, created_at)
+         VALUES ('{alice}', 'DDDDDDDD-0000-4000-8000-000000000002', NULL,
+                 '/app/cache/held/album.flac', 'CD1/01.flac', 'management:occupied',
+                 'download-gone', 'held', 1600000000.25),
+                ('{alice}', 'dddddddd-0000-4000-8000-000000000001',
+                 'EEEEEEEE-0000-4000-8000-000000000001', '/app/cache/held/track.flac',
+                 '01 Song.flac', 'wrong_track', 'download-track', 'held', 1600000001.0),
+                ('{alice}', 'dddddddd-0000-4000-8000-000000000003', NULL,
+                 '/app/cache/held/done.flac', 'done.flac', 'weak_match', NULL, 'imported',
+                 1600000002.0);"
+    ))
+    .expect("v2 held rows seed");
+    drop(v2);
+    let export_path = root.join("export.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&root.join("v2"), PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
+    let text = std::fs::read_to_string(&export_path).expect("export reads back");
+    let (v3_root, pool) = seeded_target(&root).await;
+
+    let carried_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_millis();
+    run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    let entries: Vec<(String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT group_key, recording_mbid, expires_at FROM acquire_held_entries ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("entries read");
+    let keys: Vec<(&str, Option<&str>)> = entries
+        .iter()
+        .map(|(key, recording, _)| (key.as_str(), recording.as_deref()))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            ("album:dddddddd-0000-4000-8000-000000000002", None),
+            (
+                "track:eeeeeeee-0000-4000-8000-000000000001",
+                Some("eeeeeeee-0000-4000-8000-000000000001")
+            ),
+        ]
+    );
+    let ninety_days = 90 * 86_400_000;
+    for (key, _, expires_at) in &entries {
+        assert!(
+            i128::from(*expires_at) >= i128::try_from(carried_at).expect("now fits") + ninety_days,
+            "{key} expires before 90 days after the carry"
+        );
+    }
+    let files: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT path, original_name, reason, created_at FROM acquire_held_files ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("files read");
+    assert_eq!(
+        files,
+        vec![
+            (
+                "album.flac".to_owned(),
+                "CD1/01.flac".to_owned(),
+                "target_occupied".to_owned(),
+                1_600_000_000_250
+            ),
+            (
+                "track.flac".to_owned(),
+                "01 Song.flac".to_owned(),
+                "held_by_earlier_version".to_owned(),
+                1_600_000_001_000
+            ),
+        ]
+    );
+    let v3_held = v3_root.join("cache").join("held");
+    assert_eq!(
+        std::fs::read(v3_held.join("album.flac")).expect("album copy"),
+        b"album bytes"
+    );
+    assert_eq!(
+        std::fs::read(v3_held.join("track.flac")).expect("track copy"),
+        b"track bytes"
+    );
+
+    run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    let again: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM acquire_held_files")
+        .fetch_one(&pool)
+        .await
+        .expect("files recount");
+    assert_eq!(again, 2, "a repeat import adds nothing");
+}
+
 /// One user logs in with their v2 password through the production login
 /// path; success persists the Argon2id rehash, and a wrong password still
 /// fails.

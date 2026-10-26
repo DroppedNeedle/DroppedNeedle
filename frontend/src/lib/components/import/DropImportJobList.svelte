@@ -4,16 +4,17 @@
 		CircleAlert,
 		CircleQuestionMark,
 		LoaderCircle,
-		SkipForward,
-		Trash2
+		SkipForward
 	} from 'lucide-svelte';
-	import DropImportMatchModal from './DropImportMatchModal.svelte';
+	import { untrack } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
+	import HeldEntryCard from '$lib/components/downloads/HeldEntryCard.svelte';
+	import { getHeldEntriesQuery } from '$lib/queries/downloads/HeldQueries.svelte';
 	import { getDropImportJobsQuery } from '$lib/queries/import/DropImportQueries.svelte';
-	import { discardDropItemMutation } from '$lib/queries/import/DropImportMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { formatLastUpdated } from '$lib/utils/formatting';
-	import type { DropImportItem, DropImportItemStatus } from '$lib/queries/import/types';
-	import Button from '$lib/ui/Button.svelte';
+	import type { DropImportItemStatus } from '$lib/queries/import/types';
+	import type { HeldEntry } from '$lib/types';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
@@ -25,10 +26,37 @@
 		() => authStore.isTrusted,
 		() => showAll && authStore.isAdmin
 	);
-	const discard = discardDropItemMutation();
 	const jobs = $derived(jobsQuery.data?.jobs ?? []);
 
-	let matching = $state<DropImportItem | null>(null);
+	// An item waiting on a person is a held entry, shown with the queue's card.
+	const reviewIds = $derived(
+		jobs.flatMap((job) =>
+			job.items.filter((item) => item.status === 'needs_review').map((item) => item.id)
+		)
+	);
+	const heldQuery = getHeldEntriesQuery(
+		() => ({ all: showAll && authStore.isAdmin }),
+		() => authStore.isTrusted && reviewIds.length > 0
+	);
+	const entryByItem = $derived.by(() => {
+		const byItem = new SvelteMap<number, HeldEntry>();
+		for (const entry of heldQuery.data?.entries ?? []) {
+			if (entry.drop_item_id != null) byItem.set(entry.drop_item_id, entry);
+		}
+		return byItem;
+	});
+	// An item that has just gone into review made a new entry: fetch the list again,
+	// once for each new set of items in review.
+	let fetchedFor = '';
+	$effect(() => {
+		const key = reviewIds.join(',');
+		const missing = reviewIds.some((id) => !entryByItem.has(id));
+		untrack(() => {
+			if (!missing || key === fetchedFor || !heldQuery.isSuccess) return;
+			fetchedFor = key;
+			void heldQuery.refetch();
+		});
+	});
 
 	const badges: Record<DropImportItemStatus, { label: string; cls: string }> = {
 		processing: { label: 'Identifying…', cls: 'badge-info' },
@@ -38,16 +66,6 @@
 		failed: { label: 'Failed', cls: 'badge-error' },
 		discarded: { label: 'Discarded', cls: 'badge-ghost' }
 	};
-
-	// Retention: staged review items are hard-deleted 90 days after upload
-	// (backend DropImportService sweep), so surface the countdown from the job
-	// created_at. Mirrors the backend _REVIEW_RETENTION_DAYS - no new API.
-	const REVIEW_RETENTION_DAYS = 90;
-	const SECONDS_PER_DAY = 86400;
-	function reviewDaysLeft(createdAtSeconds: number): number {
-		const elapsedDays = (Date.now() / 1000 - createdAtSeconds) / SECONDS_PER_DAY;
-		return Math.max(0, Math.ceil(REVIEW_RETENTION_DAYS - elapsedDays));
-	}
 </script>
 
 {#if jobsQuery.isLoading}
@@ -84,13 +102,6 @@
 							<span class="badge badge-error" title={job.error ?? undefined}>Failed</span>
 						{/if}
 					</div>
-					{#if job.items.some((item) => item.status === 'needs_review')}
-						{@const daysLeft = reviewDaysLeft(job.created_at)}
-						<p class="mt-1 text-xs text-base-content/50">
-							Unmatched items are auto-removed 90 days after upload ({daysLeft}
-							{daysLeft === 1 ? 'day' : 'days'} left).
-						</p>
-					{/if}
 
 					{#if job.error}
 						<!-- a completed job carries notes here (a skipped corrupt archive),
@@ -104,10 +115,10 @@
 						<ul class="mt-3 space-y-2">
 							{#each job.items as item (item.id)}
 								{@const badge = badges[item.status]}
-								<li
-									class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-base-100/60 px-3 py-2"
-								>
-									<div class="min-w-0 flex-1">
+								{@const entry =
+									item.status === 'needs_review' ? entryByItem.get(item.id) : undefined}
+								<li class="rounded-xl bg-base-100/60 px-3 py-2">
+									<div class="min-w-0">
 										<div class="flex min-w-0 items-center gap-2">
 											{#if item.status === 'imported'}
 												<CircleCheckBig class="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
@@ -138,12 +149,12 @@
 											</p>
 											<span class="badge badge-sm {badge.cls} shrink-0">{badge.label}</span>
 										</div>
-										{#if item.detail}
+										{#if item.detail && !entry}
 											<p class="mt-0.5 truncate text-xs text-base-content/50" title={item.detail}>
 												{item.detail}
 											</p>
 										{/if}
-										{#if item.reason_action && item.status !== 'imported'}
+										{#if item.reason_action && item.status !== 'imported' && !entry}
 											<p
 												class="mt-0.5 truncate text-xs text-base-content/40"
 												data-testid="drop-import-reason-action"
@@ -153,19 +164,9 @@
 											</p>
 										{/if}
 									</div>
-									{#if item.status === 'needs_review'}
-										<div class="flex shrink-0 items-center gap-1">
-											<Button variant="primary" size="xs" onclick={() => (matching = item)}>
-												Match…
-											</Button>
-											<Button
-												variant="ghost"
-												size="xs"
-												icon={Trash2}
-												onclick={() => discard.mutate(item.id)}
-												disabled={discard.isPending}
-												aria-label="Discard {item.folder_name}"
-											/>
+									{#if entry}
+										<div class="mt-2">
+											<HeldEntryCard {entry} name={item.folder_name} compact />
 										</div>
 									{/if}
 								</li>
@@ -176,8 +177,4 @@
 			</Card>
 		{/each}
 	</div>
-{/if}
-
-{#if matching}
-	<DropImportMatchModal item={matching} onclose={() => (matching = null)} />
 {/if}

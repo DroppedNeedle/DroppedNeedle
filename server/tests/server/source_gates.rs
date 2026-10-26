@@ -497,15 +497,14 @@ const HTTP_SERVER: &str = "the HTTP server, joined by serve at the shutdown dead
 const OFFLINE_TOOL: &str = "the offline tool's file work, awaited";
 
 const SPAWN_SITES: &[(&str, usize, &str)] = &[
-    ("acquire/src/downloads/held.rs", 1, AWAITED),
     ("acquire/src/drop_import/http.rs", 1, UPLOAD_CLEANUP),
-    ("acquire/src/drop_import/mod.rs", 7, DROP_IMPORT_STEP),
+    ("acquire/src/drop_import/mod.rs", 6, DROP_IMPORT_STEP),
     ("acquire/src/drop_import/mod.rs", 1, DROP_IMPORT),
+    ("acquire/src/held/service.rs", 5, AWAITED),
     ("acquire/src/intake/dispose.rs", 1, AWAITED),
     ("acquire/src/landing/hold.rs", 1, AWAITED),
     ("acquire/src/landing/library.rs", 2, AWAITED),
     ("acquire/src/landing/mod.rs", 2, AWAITED),
-    ("acquire/src/library_removal.rs", 1, AWAITED),
     ("acquire/src/probes.rs", 2, AWAITED),
     ("acquire/src/requests/discovery.rs", 1, AWAITED),
     ("acquire/src/requests/mix.rs", 1, MIX_REFRESH),

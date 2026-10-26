@@ -2,8 +2,8 @@
 //! actions (cancel, retry, next source, reimport), the bulk actions
 //! (clear, stop all retries, retry all failed), the activity summary, the
 //! admin quarantine list, and manual album searches (start, view, pick,
-//! dismiss, cancel). The held-import and upgrade routes live in
-//! [`super::held_http`] and mount here.
+//! dismiss, cancel), and the quality-upgrade worklist and asks. Held files
+//! are in [`crate::held`].
 //!
 //! Every route sits inside the session gate. Tasks follow v2's ownership:
 //! admins see and act on every task, everyone else on their own (another
@@ -15,27 +15,27 @@ use std::sync::Arc;
 
 use axum::{
     Json,
+    body::Bytes,
     extract::{FromRef, Path, State},
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::held::HeldImports;
-use super::held_http::{self, ReviewState};
 use super::journal::Journal;
 use super::queue::{DownloadQueue, QueueError, TaskFile, TaskView};
 use super::queue_rows::{ListFilter, Viewer};
 use super::source_tag::SourceTag;
 use super::state::TaskStatus;
 use super::store::QuarantineRow;
-use super::upgrades::Upgrades;
+use super::upgrades::{UpgradeAsk, UpgradeError, UpgradeOutcome, Upgrades};
+use crate::dispatch::DispatchTarget;
 use crate::reason::{Reason, ReasonKind};
 use crate::requests::error::RequestsError;
 use crate::search_jobs::candidates::SearchCandidateView;
 use crate::search_jobs::{AlbumSearch, JobView, SearchJobError, SearchJobs, StartOutcome};
 use crate::worker::{DownloadWorker, ReimportError};
-use droppedneedle_auth::{Admin, Principal, User};
+use droppedneedle_auth::{Admin, Curator, Principal, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -801,21 +801,204 @@ pub async fn reimport_task_handler(
     }))
 }
 
-/// What the queue and held-import routes read, built once.
+/// One album below the quality cutoff.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct CutoffUnmetItem {
+    pub release_group_mbid: String,
+    /// The album's worst file tier.
+    pub current_tier: String,
+    pub track_count: i64,
+    pub artist_name: Option<String>,
+    pub artist_mbid: Option<String>,
+    pub album_title: Option<String>,
+    pub year: Option<i64>,
+}
+
+/// The upgrade worklist.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct CutoffUnmetResponse {
+    /// Empty while upgrades are switched off.
+    pub items: Vec<CutoffUnmetItem>,
+    /// The tier albums must reach.
+    pub cutoff: String,
+    pub upgrade_allowed: bool,
+}
+
+/// Upgrade one album.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct UpgradeAlbumRequest {
+    pub release_group_mbid: String,
+    pub artist_name: String,
+    pub album_title: String,
+    pub year: Option<i64>,
+    pub artist_mbid: Option<String>,
+}
+
+/// Upgrade one track.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct UpgradeTrackRequest {
+    pub recording_mbid: String,
+    pub artist_name: String,
+    pub track_title: String,
+    pub album_title: Option<String>,
+    pub duration_seconds: Option<f64>,
+    pub release_group_mbid: Option<String>,
+    pub artist_mbid: Option<String>,
+}
+
+/// What an upgrade ask did.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UpgradeRequestResponse {
+    /// `queued`, or `satisfied` when nothing needed queueing (the copy
+    /// meets the cutoff, upgrades are off, or it is already downloading).
+    pub status: String,
+    pub task_id: Option<String>,
+}
+
+impl From<UpgradeError> for ApiError {
+    fn from(error: UpgradeError) -> Self {
+        ApiError::from(match error {
+            UpgradeError::Unavailable(cause) => RequestsError::internal(&cause),
+        })
+    }
+}
+
+/// Albums below the quality cutoff, worst first; empty while upgrades are
+/// off. Admins and trusted users. `GET /api/v3/downloads/cutoff-unmet`.
+#[utoipa::path(
+    get,
+    tag = "downloads",
+    path = "/api/v3/downloads/cutoff-unmet",
+    responses((status = 200, body = CutoffUnmetResponse))
+)]
+pub async fn cutoff_unmet_handler(
+    State(upgrades): State<Upgrades>,
+    _curator: Curator,
+) -> Result<Json<CutoffUnmetResponse>, ApiError> {
+    let view = upgrades.cutoff_unmet().await?;
+    Ok(Json(CutoffUnmetResponse {
+        items: view
+            .items
+            .into_iter()
+            .map(|item| CutoffUnmetItem {
+                release_group_mbid: item.rg_mbid,
+                current_tier: item.current_tier.to_owned(),
+                track_count: item.track_count,
+                artist_name: Some(item.artist).filter(|name| !name.is_empty()),
+                artist_mbid: item.artist_mbid,
+                album_title: Some(item.title),
+                year: item.year,
+            })
+            .collect(),
+        cutoff: view.cutoff,
+        upgrade_allowed: view.upgrade_allowed,
+    }))
+}
+
+fn upgrade_response(outcome: UpgradeOutcome) -> UpgradeRequestResponse {
+    match outcome {
+        UpgradeOutcome::Queued(task_id) => UpgradeRequestResponse {
+            status: "queued".to_owned(),
+            task_id: Some(task_id),
+        },
+        UpgradeOutcome::Satisfied => UpgradeRequestResponse {
+            status: "satisfied".to_owned(),
+            task_id: None,
+        },
+    }
+}
+
+fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, ApiError> {
+    serde_json::from_slice(body).map_err(|cause| {
+        ApiError::from(RequestsError::InvalidInput {
+            message: format!("Invalid request body: {cause}"),
+        })
+    })
+}
+
+fn required(value: &str, name: &str) -> Result<String, ApiError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ApiError::from(RequestsError::InvalidInput {
+            message: format!("{name} is required"),
+        }));
+    }
+    Ok(value.to_owned())
+}
+
+/// Fetch a better copy of an album below the cutoff. Admins and trusted
+/// users. `POST /api/v3/downloads/upgrade/album`.
+#[utoipa::path(
+    post,
+    tag = "downloads",
+    path = "/api/v3/downloads/upgrade/album",
+    request_body = UpgradeAlbumRequest,
+    responses((status = 200, body = UpgradeRequestResponse))
+)]
+pub async fn upgrade_album_handler(
+    State(upgrades): State<Upgrades>,
+    curator: Curator,
+    body: Bytes,
+) -> Result<Json<UpgradeRequestResponse>, ApiError> {
+    // The role check, in the extractor, comes before the body parse, so a
+    // plain user always hears 403 whatever they sent.
+    let body: UpgradeAlbumRequest = parse_body(&body)?;
+    let outcome = upgrades
+        .request(UpgradeAsk {
+            user_id: curator.user_id().to_owned(),
+            target: DispatchTarget::Album {
+                release_group_mbid: required(&body.release_group_mbid, "release_group_mbid")?,
+            },
+            artist: body.artist_name,
+            title: body.album_title,
+        })
+        .await?;
+    Ok(Json(upgrade_response(outcome)))
+}
+
+/// Fetch a better copy of one track below the cutoff. Admins and trusted
+/// users. `POST /api/v3/downloads/upgrade/track`.
+#[utoipa::path(
+    post,
+    tag = "downloads",
+    path = "/api/v3/downloads/upgrade/track",
+    request_body = UpgradeTrackRequest,
+    responses((status = 200, body = UpgradeRequestResponse))
+)]
+pub async fn upgrade_track_handler(
+    State(upgrades): State<Upgrades>,
+    curator: Curator,
+    body: Bytes,
+) -> Result<Json<UpgradeRequestResponse>, ApiError> {
+    // The role check, in the extractor, comes before the body parse, so a
+    // plain user always hears 403 whatever they sent.
+    let body: UpgradeTrackRequest = parse_body(&body)?;
+    let outcome = upgrades
+        .request(UpgradeAsk {
+            user_id: curator.user_id().to_owned(),
+            target: DispatchTarget::Track {
+                recording_mbid: required(&body.recording_mbid, "recording_mbid")?,
+                album_version: false,
+            },
+            artist: body.artist_name,
+            title: body.track_title,
+        })
+        .await?;
+    Ok(Json(upgrade_response(outcome)))
+}
+
+/// What the queue and upgrade routes read, built once.
 #[derive(Clone)]
 pub struct DownloadsRoutes {
     queue: DownloadsState,
-    review: ReviewState,
+    upgrades: Upgrades,
 }
 
 impl DownloadsRoutes {
     /// The queue over `journal` and `worker`, upgrades through `upgrades`.
     pub fn new(journal: Arc<Journal>, worker: Arc<DownloadWorker>, upgrades: Upgrades) -> Self {
         Self {
-            review: ReviewState {
-                held: HeldImports::new(journal.clone(), worker.clone()),
-                upgrades,
-            },
+            upgrades,
             queue: DownloadsState {
                 queue: DownloadQueue::new(journal, worker.clone()),
                 worker,
@@ -830,27 +1013,16 @@ impl FromRef<DownloadsRoutes> for DownloadsState {
     }
 }
 
-impl FromRef<DownloadsRoutes> for ReviewState {
+impl FromRef<DownloadsRoutes> for Upgrades {
     fn from_ref(routes: &DownloadsRoutes) -> Self {
-        routes.review.clone()
+        routes.upgrades.clone()
     }
 }
 
-/// Queue, held-import and upgrade routes, in the group of each handler's
-/// caller extractor.
+/// Queue and upgrade routes, in the group of each handler's caller
+/// extractor.
 pub fn routes() -> Routes<DownloadsRoutes> {
-    use held_http::*;
-
     Routes::new()
-        .user(routes!(list_held_handler))
-        .user(routes!(reverify_bulk_handler))
-        .user(routes!(import_held_handler))
-        .user(routes!(discard_held_handler))
-        .user(routes!(reverify_held_handler))
-        .user(routes!(held_audio_handler))
-        .admin(routes!(retry_local_handler))
-        .admin(routes!(discard_local_handler))
-        .user(routes!(discard_verdict_handler))
         .curator(routes!(cutoff_unmet_handler))
         .curator(routes!(upgrade_album_handler))
         .curator(routes!(upgrade_track_handler))

@@ -2,7 +2,6 @@ import { createMutation } from '@tanstack/svelte-query';
 import { get } from 'svelte/store';
 
 import { api } from '$lib/api/client';
-import type { components } from '$lib/api/v3/openapi';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
@@ -20,7 +19,7 @@ import {
 } from '$lib/utils/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
-import { DOWNLOAD_HELD_ENDPOINTS, DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
+import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
 
 interface AlbumRequestInput {
 	release_group_mbid: string;
@@ -348,209 +347,12 @@ export function retryAllFailed() {
 	}));
 }
 
-// Held-track review actions. Both refresh the held list + the queue (invalidateTasks covers
-// the held query, nested under the tasks key); import also refreshes the album's library
-// status so the newly-placed track shows on the album page.
-interface HeldActionInput {
-	id: number;
-	release_group_mbid?: string | null;
-}
-
 function invalidateAlbum(releaseGroupMbid?: string | null) {
 	if (releaseGroupMbid) {
 		void invalidateQueriesWithPersister({
 			queryKey: LibraryQueryKeyFactory.album(releaseGroupMbid)
 		});
 	}
-}
-
-export function importHeldTrack() {
-	return createMutation(() => ({
-		mutationFn: (input: HeldActionInput) =>
-			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.import(input.id)),
-		onSuccess: (data: { message?: string | null }, input: HeldActionInput) => {
-			// An upgrade file no better than the library's copy is dropped and
-			// the copy kept; the server says so in `message`.
-			toastStore.show({
-				message: data.message ?? 'Imported',
-				type: data.message ? 'info' : 'success'
-			});
-			void invalidateTasks();
-			invalidateAlbum(input.release_group_mbid);
-		},
-		onError: (err: unknown) =>
-			toastStore.show({ message: errorMessage(err, 'Failed to import track'), type: 'error' })
-	}));
-}
-
-export function discardHeldTrack() {
-	return createMutation(() => ({
-		mutationFn: (input: HeldActionInput) =>
-			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.discard(input.id)),
-		onSuccess: () => {
-			toastStore.show({ message: 'Discarded', type: 'info' });
-			void invalidateTasks();
-		},
-		onError: (err: unknown) =>
-			toastStore.show({ message: errorMessage(err, 'Failed to discard track'), type: 'error' })
-	}));
-}
-
-// Re-run the fingerprint identity check on one held file. A confident result that no
-// longer disagrees imports through the same settle path as "import anyway"; anything
-// else stays held. invalidateTasks covers the held prefix nested under tasks; only an
-// import places a track, so the album key refreshes solely on 'imported'.
-export type HeldReverifyResponse = components['schemas']['HeldReverifyResponse'];
-
-export function reverifyHeldTrack() {
-	return createMutation(() => ({
-		mutationFn: (input: HeldActionInput) =>
-			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.reverify(input.id)),
-		onSuccess: (data: HeldReverifyResponse, input: HeldActionInput) => {
-			if (data.status === 'imported') {
-				toastStore.show({ message: 'Re-check confirmed it: imported', type: 'success' });
-				invalidateAlbum(input.release_group_mbid);
-			} else {
-				toastStore.show({ message: 'Still held after re-check', type: 'info' });
-			}
-			void invalidateTasks();
-			void invalidateQueriesWithPersister({
-				queryKey: DownloadQueryKeyFactory.heldPrefix(authStore.user?.id)
-			});
-		},
-		onError: (err: unknown) =>
-			toastStore.show({ message: errorMessage(err, 'Failed to re-check track'), type: 'error' })
-	}));
-}
-
-export type HeldBulkReverifyItem = components['schemas']['HeldBulkReverifyItem'];
-
-export type HeldBulkReverifyResponse = components['schemas']['HeldBulkReverifyResponse'];
-
-export interface HeldBulkReverifyInput {
-	held_ids?: number[] | null;
-}
-
-// Re-check held tracks in bulk. held_ids scopes the run (omitted sweeps everything the
-// caller may see); the 25-id cap is enforced server-side, so ids pass through untouched.
-export function reverifyHeldBulk() {
-	return createMutation(() => ({
-		mutationFn: (input: HeldBulkReverifyInput) =>
-			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.reverifyBulk(), {
-				held_ids: input.held_ids ?? null
-			}),
-		onSuccess: (data: HeldBulkReverifyResponse) => {
-			const imported = data.results.filter((r) => r.status === 'imported');
-			const stillHeld = data.results.filter((r) => r.status === 'still_held').length;
-			const skipped = data.results.filter((r) => r.status === 'skipped').length;
-			const failed = data.results.length - imported.length - stillHeld - skipped;
-			if (data.results.length === 0) {
-				toastStore.show({ message: 'Nothing to re-check', type: 'info' });
-			} else {
-				const parts = [
-					imported.length > 0 ? `${imported.length} imported` : null,
-					stillHeld > 0 ? `${stillHeld} still held` : null,
-					skipped > 0 ? `${skipped} skipped` : null,
-					failed > 0 ? `${failed} failed` : null
-				].filter((p): p is string => p !== null);
-				toastStore.show({
-					message: `Re-checked ${data.results.length}: ${parts.join(', ')}`,
-					type: imported.length > 0 ? 'success' : 'info'
-				});
-			}
-			void invalidateTasks();
-			void invalidateQueriesWithPersister({
-				queryKey: DownloadQueryKeyFactory.heldPrefix(authStore.user?.id)
-			});
-			for (const item of imported) {
-				invalidateAlbum(item.release_group_mbid);
-			}
-		},
-		onError: (err: unknown) =>
-			toastStore.show({ message: errorMessage(err, 'Failed to re-check tracks'), type: 'error' })
-	}));
-}
-
-interface HeldManagementActionInput {
-	taskId: string;
-	releaseGroupMbid?: string | null;
-}
-
-export function retryHeldManagementUnit() {
-	return createMutation(() => ({
-		mutationFn: (input: HeldManagementActionInput) =>
-			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.managementRetry(input.taskId)),
-		onSuccess: (data: { files: number }, input: HeldManagementActionInput) => {
-			toastStore.show({
-				message: `${data.files} secured ${data.files === 1 ? 'file' : 'files'} organized and imported`,
-				type: 'success'
-			});
-			void invalidateTasks();
-			// One organized import moves sidebar counts + recency lists; the touched
-			// album gets its own key below. Other library lists (paginated grids the
-			// retry cannot name) self-heal within the 1-minute global staleTime +
-			// refetch-on-mount window instead of wiping `library` ALL.
-			void invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.catalog.stats(authStore.user?.id)
-			});
-			void invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.catalog.recentlyAddedPrefix(authStore.user?.id)
-			});
-			invalidateAlbum(input.releaseGroupMbid);
-		},
-		onError: (err: unknown) => {
-			void invalidateTasks();
-			toastStore.show({
-				message: errorMessage(err, 'File organization still needs attention'),
-				type: 'error'
-			});
-		}
-	}));
-}
-
-export function discardHeldManagementUnit() {
-	return createMutation(() => ({
-		mutationFn: (input: HeldManagementActionInput) =>
-			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.managementDiscard(input.taskId)),
-		onSuccess: (data: { files: number }) => {
-			toastStore.show({
-				message: `${data.files} secured ${data.files === 1 ? 'file' : 'files'} discarded`,
-				type: 'info'
-			});
-			void invalidateTasks();
-		},
-		onError: (err: unknown) => {
-			void invalidateTasks();
-			toastStore.show({
-				message: errorMessage(err, 'Failed to discard secured files'),
-				type: 'error'
-			});
-		}
-	}));
-}
-
-// Wrong-product verdict action: discard every verification-held track for one download.
-// invalidateTasks covers the held prefix nested under tasks, so the verdict card and its
-// member rows disappear together.
-export function discardHeldVerdict() {
-	return createMutation(() => ({
-		mutationFn: (input: HeldManagementActionInput) =>
-			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.verdictDiscard(input.taskId)),
-		onSuccess: (data: { files: number }) => {
-			toastStore.show({
-				message: `${data.files} held ${data.files === 1 ? 'file' : 'files'} discarded`,
-				type: 'info'
-			});
-			void invalidateTasks();
-		},
-		onError: (err: unknown) => {
-			void invalidateTasks();
-			toastStore.show({
-				message: errorMessage(err, 'Failed to discard held files'),
-				type: 'error'
-			});
-		}
-	}));
 }
 
 interface ReimportInput {

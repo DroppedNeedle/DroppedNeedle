@@ -175,7 +175,7 @@
 				requesting={state.requesting}
 				refreshing={state.refreshing}
 				headerDownloadTask={state.headerDownloadTask}
-				managementHeld={state.headerManagementHeld}
+				heldFiles={state.headerHeldFiles}
 				downloadClientConfigured={$integrationStore.download_client}
 				libraryInLibrary={state.libraryInLibrary}
 				libraryTrackCount={state.libraryTrackCount}

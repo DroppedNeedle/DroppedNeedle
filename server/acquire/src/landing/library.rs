@@ -480,6 +480,35 @@ impl LandingLibrary for LibraryLanding {
                 .map_err(|error| error.to_string())
         })
     }
+
+    fn placed_sources<'a>(
+        &'a self,
+        staging: &'a str,
+    ) -> BoxFuture<'a, Result<Option<HashSet<String>>, String>> {
+        Box::pin(async move {
+            if !self.publish_settled(staging).await? {
+                return Ok(None);
+            }
+            // An import stages under `<hidden prefix>import/<name>/` below
+            // the library root (the held list's names need no escaping) and
+            // records the hash of each file it copied in as the row's
+            // source hash.
+            let folder = format!(
+                "{}import/{staging}/",
+                droppedneedle_library::publish::HIDDEN_PREFIX
+            );
+            let hashes: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT source_sha256 FROM library_publish_journal \
+                 WHERE substr(source_rel, 1, length(?1)) = ?1 AND source_sha256 IS NOT NULL \
+                   AND state IN ('committed', 'cleanup_pending', 'cleaned')",
+            )
+            .bind(folder)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| format!("publish journal unreadable: {error}"))?;
+            Ok(Some(hashes.into_iter().collect()))
+        })
+    }
 }
 
 #[cfg(test)]

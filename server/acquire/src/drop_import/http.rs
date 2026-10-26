@@ -1,5 +1,5 @@
-//! Drop-import HTTP: upload, the job list and one job, and the review
-//! actions (match, discard).
+//! Drop-import HTTP: upload, the job list and one job. Files an upload
+//! left waiting are acted on through the held list ([`crate::held`]).
 //!
 //! Curators only (admin or trusted), as in v2: importing writes into the
 //! shared library, the same trust as auto-acquiring. Plain users request
@@ -28,7 +28,7 @@ use crate::reason::Reason;
 use crate::requests::error::RequestsError;
 use droppedneedle_auth::Curator;
 use droppedneedle_kernel::error::{ApiError, PAYLOAD_TOO_LARGE};
-use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::extract::ValidQuery;
 use droppedneedle_kernel::mount::{Routes, routes};
 
 /// The largest upload accepted in one request (all files together).
@@ -76,12 +76,6 @@ pub struct DropImportJobResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DropImportJobsResponse {
     pub jobs: Vec<DropImportJobResponse>,
-}
-
-/// The album a person picked for a review item.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct DropImportMatchRequest {
-    pub release_group_mbid: String,
 }
 
 /// List filter.
@@ -167,13 +161,6 @@ fn unreadable(error: MultipartError) -> ApiError {
     } else {
         invalid("The upload was cut off or malformed.")
     }
-}
-
-/// Item ids are numbers; anything else names no item. Parsed after the
-/// role check, so a plain user always sees 403.
-fn item_number(raw: &str) -> Result<i64, ApiError> {
-    raw.parse()
-        .map_err(|_| ApiError::from(RequestsError::NotFound))
 }
 
 fn viewer(curator: &Curator) -> Viewer {
@@ -349,49 +336,6 @@ pub async fn get_job_handler(
     Ok(Json(service.get_job(&viewer, &job_id).await?.into()))
 }
 
-/// Import a review item as the album you picked.
-/// `POST /api/v3/import/items/{item_id}/match`.
-#[utoipa::path(
-    post,
-    tag = "imports",
-    path = "/api/v3/import/items/{item_id}/match",
-    params(("item_id" = i64, Path, description = "Import item id")),
-    request_body = DropImportMatchRequest,
-    responses((status = 200, body = DropImportItemResponse))
-)]
-pub async fn match_item_handler(
-    State(service): State<Arc<DropImports>>,
-    curator: Curator,
-    Path(item_id): Path<String>,
-    ValidJson(body): ValidJson<DropImportMatchRequest>,
-) -> Result<Json<DropImportItemResponse>, ApiError> {
-    let viewer = viewer(&curator);
-    let item_id = item_number(&item_id)?;
-    let item = service
-        .match_item(&viewer, item_id, &body.release_group_mbid)
-        .await?;
-    Ok(Json(item.into()))
-}
-
-/// Throw a review item's files away.
-/// `POST /api/v3/import/items/{item_id}/discard`.
-#[utoipa::path(
-    post,
-    tag = "imports",
-    path = "/api/v3/import/items/{item_id}/discard",
-    params(("item_id" = i64, Path, description = "Import item id")),
-    responses((status = 200, body = DropImportItemResponse))
-)]
-pub async fn discard_item_handler(
-    State(service): State<Arc<DropImports>>,
-    curator: Curator,
-    Path(item_id): Path<String>,
-) -> Result<Json<DropImportItemResponse>, ApiError> {
-    let viewer = viewer(&curator);
-    let item_id = item_number(&item_id)?;
-    Ok(Json(service.discard_item(&viewer, item_id).await?.into()))
-}
-
 /// Drop-import routes, for an admin or trusted user. The upload takes a
 /// body up to `MAX_UPLOAD_BYTES`.
 pub fn routes() -> Routes<Arc<DropImports>> {
@@ -401,6 +345,4 @@ pub fn routes() -> Routes<Arc<DropImports>> {
         .curator((schemas, paths, upload))
         .curator(routes!(list_jobs_handler))
         .curator(routes!(get_job_handler))
-        .curator(routes!(match_item_handler))
-        .curator(routes!(discard_item_handler))
 }

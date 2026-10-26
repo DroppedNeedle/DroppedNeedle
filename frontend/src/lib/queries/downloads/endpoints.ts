@@ -69,27 +69,32 @@ export const DOWNLOAD_SEARCH_ENDPOINTS = {
 	cancel: (jobId: string) => v3('/api/v3/downloads/search/{job_id}/cancel', byJob(jobId))
 } as const;
 
-// v3 held-import review URLs: the held list (all, or one album's), the
-// per-file actions and audio preview, and the per-download actions.
-const byHeld = (id: number) => ({ path: { held_id: id } });
-const bySourceTask = (taskId: string) => ({ path: { source_task_id: taskId } });
+// v3 held-file URLs: the list of entries waiting for a decision (one per
+// download or upload), each entry's actions, the bulk re-check and a held
+// file's audio for listening.
+const byEntry = (id: number) => ({ path: { entry_id: id } });
 
-export const DOWNLOAD_HELD_ENDPOINTS = {
-	list: (releaseGroupMbid?: string) =>
-		v3('/api/v3/downloads/held', {
-			query: { release_group_mbid: releaseGroupMbid || undefined }
+export interface HeldListFilters {
+	releaseGroupMbid?: string;
+	taskId?: string;
+	all?: boolean;
+}
+
+export const HELD_ENDPOINTS = {
+	list: (filters: HeldListFilters = {}) =>
+		v3('/api/v3/held', {
+			query: {
+				release_group_mbid: filters.releaseGroupMbid || undefined,
+				task_id: filters.taskId || undefined,
+				all: filters.all || undefined
+			}
 		}),
-	import: (id: number) => v3('/api/v3/downloads/held/{held_id}/import', byHeld(id)),
-	discard: (id: number) => v3('/api/v3/downloads/held/{held_id}/discard', byHeld(id)),
-	reverify: (id: number) => v3('/api/v3/downloads/held/{held_id}/reverify', byHeld(id)),
-	reverifyBulk: () => v3('/api/v3/downloads/held/reverify'),
-	audio: (id: number) => v3('/api/v3/downloads/held/{held_id}/audio', byHeld(id)),
-	managementRetry: (taskId: string) =>
-		v3('/api/v3/downloads/held/management/{source_task_id}/retry', bySourceTask(taskId)),
-	managementDiscard: (taskId: string) =>
-		v3('/api/v3/downloads/held/management/{source_task_id}/discard', bySourceTask(taskId)),
-	verdictDiscard: (taskId: string) =>
-		v3('/api/v3/downloads/held/verdict/{source_task_id}/discard', bySourceTask(taskId))
+	import: (id: number) => v3('/api/v3/held/{entry_id}/import', byEntry(id)),
+	match: (id: number) => v3('/api/v3/held/{entry_id}/match', byEntry(id)),
+	recheck: (id: number) => v3('/api/v3/held/{entry_id}/recheck', byEntry(id)),
+	discard: (id: number) => v3('/api/v3/held/{entry_id}/discard', byEntry(id)),
+	recheckAll: () => v3('/api/v3/held/recheck'),
+	audio: (fileId: number) => v3('/api/v3/held/files/{file_id}/audio', { path: { file_id: fileId } })
 } as const;
 
 // v3 quality-upgrade URLs: the below-cutoff worklist and the album and

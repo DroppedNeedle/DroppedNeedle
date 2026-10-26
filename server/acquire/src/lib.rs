@@ -12,6 +12,8 @@
 //! - [`follows`] owns the follows, their auto-download approvals and the
 //!   follow poll's cursors.
 //! - [`drop_import`] takes uploaded music into the library.
+//! - [`held`] keeps every file waiting for a person's decision in one
+//!   list, whichever door it came through.
 //! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
 //! - [`landing`] verifies a finished download, matches it to the
 //!   requested release, and publishes it into the library or holds it.
@@ -41,6 +43,7 @@ pub mod drop_import;
 pub mod edition;
 pub mod flows;
 pub mod follows;
+pub mod held;
 pub mod imports;
 pub mod intake;
 pub mod landing;
@@ -67,5 +70,9 @@ pub use wiring::AcquireSetup;
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![downloads::sql::registered(), requests::sql::registered()]
+    vec![
+        downloads::sql::registered(),
+        held::sql::registered(),
+        requests::sql::registered(),
+    ]
 }

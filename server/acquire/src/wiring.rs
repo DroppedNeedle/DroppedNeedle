@@ -34,6 +34,7 @@ use super::flows::seams::ReleasePoll;
 use super::flows::seams::TickSink;
 use super::flows::stores::{AdminDirectory, LibraryPresence, UpgradeWorklist};
 use super::follows::Follows;
+use super::held::{HeldFolders, HeldService};
 use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
 use super::imports::jobs::{SpotifyImportJobs, SpotifyImports};
 use super::imports::lidarr::LidarrClient;
@@ -107,6 +108,10 @@ pub struct SpotifyEndpoints {
 /// Health-probe refresh cadence.
 const PROBE_INTERVAL: Duration = Duration::from_secs(300);
 
+/// The held list's prune runs hourly, the first pass a minute after start.
+const HELD_PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
+const HELD_PRUNE_DELAY: Duration = Duration::from_secs(60);
+
 /// Job name of the probe refresh loop.
 pub const PROBE_JOB: &str = "acquire-probe-refresh";
 
@@ -120,6 +125,7 @@ pub const ACQUIRE_LOOPS: &[&str] = &[
     UPGRADE_JOB,
     SYNC_JOB,
     PRUNE_JOB,
+    super::held::PRUNE_JOB,
     super::worker::DOWNLOAD_WORKER_JOB,
     PROBE_JOB,
     SOURCE_WATCH_JOB,
@@ -448,6 +454,8 @@ pub struct AcquireSetup {
     pub search_jobs: Arc<SearchJobs>,
     /// Drop import: uploaded music into the library.
     pub drops: Arc<DropImports>,
+    /// The held list: every file waiting for a person's decision.
+    pub held: Arc<HeldService>,
     /// Runs the Spotify import jobs; registered on the jobs table.
     pub spotify_import_jobs: Arc<SpotifyImportJobs>,
 }
@@ -484,14 +492,14 @@ pub struct FlowsBundle {
 fn drop_imports(
     db: &AcquireDb,
     landing: &LandingService,
-    staging_root: &Path,
+    folders: &HeldFolders,
     events: &EventHub,
     flows: &FlowsBundle,
 ) -> Arc<DropImports> {
     Arc::new(DropImports::new(
         DropStore::new(db.clone()),
         landing.library().cloned(),
-        staging_root.join("drop"),
+        folders.drop.clone(),
         events.clone(),
         flows.ticks.clone(),
         flows.ledger.clone(),
@@ -512,6 +520,8 @@ pub struct AcquireStores {
     /// Where flow outcomes go: plugin events, user notices and the flow
     /// log. The journal announces fulfilled requests on it.
     pub ticks: Arc<dyn TickSink>,
+    /// The two folders held copies live in.
+    pub folders: HeldFolders,
 }
 
 impl AcquireStores {
@@ -521,15 +531,20 @@ impl AcquireStores {
         Self::over(
             AcquireDb::new(platform.db.clone(), platform.clock.clone()),
             ticks,
+            HeldFolders {
+                held: platform.config.cache_dir.join("held"),
+                drop: platform.config.imports_dir().join("drop"),
+            },
         )
     }
 
-    fn over(db: AcquireDb, ticks: Arc<dyn TickSink>) -> Self {
+    fn over(db: AcquireDb, ticks: Arc<dyn TickSink>, folders: HeldFolders) -> Self {
         Self {
             journal: Arc::new(Journal::new(db.clone(), ticks.clone())),
             wanted: WantedStore::new(db.clone()),
             db,
             ticks,
+            folders,
         }
     }
 }
@@ -775,7 +790,7 @@ impl AcquireSetup {
             core.journal.clone(),
             Some(ports.library),
             config_store.live(),
-            config.cache_dir.join("held"),
+            stores.folders.held.clone(),
         ));
 
         // Worker over the live sources and tuning.
@@ -798,7 +813,13 @@ impl AcquireSetup {
             search_quota,
             events.clone(),
         ));
-        let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
+        let drops = drop_imports(&db, &landing, &stores.folders, &events, &core.flows);
+        let held = Arc::new(HeldService::new(
+            core.journal.clone(),
+            worker.clone(),
+            drops.clone(),
+            stores.folders.clone(),
+        ));
 
         Ok(Self {
             db,
@@ -819,6 +840,7 @@ impl AcquireSetup {
             landing,
             search_jobs,
             drops,
+            held,
             spotify_import_jobs,
         })
     }
@@ -837,16 +859,21 @@ impl AcquireSetup {
         use droppedneedle_catalog::reads::collections::store::PlaylistStore;
         use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
+        // Under the scratch database's directory, so it goes with it.
+        let scratch = db
+            .path()
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "scratch database has no directory".to_owned())?;
+        let staging_root = scratch.join("staging");
         let stores = AcquireStores::over(
             db.clone(),
             Arc::new(super::plugin_events::FlowTicks::new(None, events.clone())),
+            HeldFolders {
+                held: scratch.join("held"),
+                drop: staging_root.join("drop"),
+            },
         );
-        // Under the scratch database's directory, so it goes with it.
-        let staging_root = db
-            .path()
-            .parent()
-            .map(|dir| dir.join("staging"))
-            .ok_or_else(|| "scratch database has no directory".to_owned())?;
         let settings = super::settings::scratch_settings(&staging_root.join("settings"))?;
         let factory = droppedneedle_kernel::http_client::HttpClientFactory::new()
             .map_err(|error| error.to_string())?;
@@ -930,16 +957,11 @@ impl AcquireSetup {
             base_path: String::new(),
             trusted_proxies: Default::default(),
         };
-        let held_dir = db
-            .path()
-            .parent()
-            .map(|dir| dir.join("held"))
-            .ok_or_else(|| "scratch database has no directory".to_owned())?;
         let landing = Arc::new(LandingService::new(
             core.journal.clone(),
             library,
             settings.live(),
-            held_dir,
+            stores.folders.held.clone(),
         ));
         let worker = Arc::new(
             DownloadWorker::fixed(
@@ -958,7 +980,13 @@ impl AcquireSetup {
             Arc::new(QuotaLedger::unlimited(db.clone())),
             events.clone(),
         ));
-        let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
+        let drops = drop_imports(&db, &landing, &stores.folders, &events, &core.flows);
+        let held = Arc::new(HeldService::new(
+            core.journal.clone(),
+            worker.clone(),
+            drops.clone(),
+            stores.folders.clone(),
+        ));
         let prune = Arc::new(PruneDeps {
             settings: settings.live(),
             ledger: core.requests.store.clone(),
@@ -987,11 +1015,12 @@ impl AcquireSetup {
             landing,
             search_jobs,
             drops,
+            held,
             spotify_import_jobs,
         })
     }
 
-    /// The state the queue and held-import routes read
+    /// The state the queue and upgrade routes read
     /// ([`super::downloads::routes`]).
     pub fn downloads_routes(&self) -> super::downloads::DownloadsRoutes {
         super::downloads::DownloadsRoutes::new(
@@ -1019,6 +1048,7 @@ impl AcquireSetup {
     /// keys, and a request's cancel or dispatch reuses its key or relinks.
     pub async fn run_recovery(&self) -> Result<super::worker::RecoveryReport, RecoveryError> {
         self.drops.sweep_stale().await;
+        self.held.recover().await;
         let report = run_startup_recovery(&self.journal)
             .await
             .map_err(RecoveryError::Failed)?;
@@ -1049,8 +1079,30 @@ impl AcquireSetup {
         spawn_sync_loop(supervisor, self.flows.sync_deps.clone())?;
         spawn_prune_loop(supervisor, self.prune.clone())?;
         super::worker::spawn_download_worker(self.worker.clone(), supervisor)?;
+        self.spawn_held_prune(supervisor)?;
         self.spawn_probe_loop(supervisor)?;
         self.spawn_source_watch(supervisor)
+    }
+
+    /// The held list's prune: a minute after start, then hourly, it
+    /// finishes actions a restart cut off and removes the held copies of
+    /// entries past their expiry.
+    fn spawn_held_prune(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+        let held = self.held.clone();
+        supervisor.periodic(
+            super::held::PRUNE_JOB,
+            Schedule::new(HELD_PRUNE_INTERVAL).with_initial_delay(HELD_PRUNE_DELAY),
+            FnTick(move |ctx: TickCtx| {
+                let held = held.clone();
+                async move {
+                    tokio::select! {
+                        () = ctx.token().cancelled() => {}
+                        _ = held.tend() => {}
+                    }
+                    Ok(Next::Continue)
+                }
+            }),
+        )
     }
 
     /// Probe refresh: one pass now, then one on every wake and at least
