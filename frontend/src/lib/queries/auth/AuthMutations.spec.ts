@@ -112,6 +112,27 @@ describe('auth mutations route through api.global', () => {
 		expect(mockV3Post).toHaveBeenCalledWith(AUTH_ENDPOINTS.oidcExchange, { code: 'abc' });
 	});
 
+	it('federated sign-ins hand the flat session user back as { user }', async () => {
+		const flat = { id: 'u1', display_name: 'Jane', role: 'user', token: 't' };
+		mockV3Post.mockResolvedValue(flat);
+		const { createOidcExchangeMutation, createJellyfinLoginMutation } =
+			await import('./AuthMutations.svelte');
+		createOidcExchangeMutation();
+		expect(await lastMutationFn()({ code: 'abc' })).toEqual({
+			user: { id: 'u1', display_name: 'Jane', role: 'user' },
+			token: 't'
+		});
+		createJellyfinLoginMutation();
+		const answer = (await lastMutationFn()({ username: 'jane', password: 'pw' })) as {
+			user: { id: string };
+		};
+		expect(answer.user.id).toBe('u1');
+
+		mockV3Post.mockResolvedValue({ user: { id: 'u2' } });
+		createOidcExchangeMutation();
+		expect(await lastMutationFn()({ code: 'abc' })).toEqual({ user: { id: 'u2' } });
+	});
+
 	it('password recovery posts the code and new password without a session', async () => {
 		mockV3Post.mockResolvedValue(undefined);
 		const { createPasswordRecoveryResetMutation } = await import('./AuthMutations.svelte');

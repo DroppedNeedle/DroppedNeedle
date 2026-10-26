@@ -14,9 +14,16 @@ import type {
 
 /** Recovery redemption is public; code generation uses the authenticated admin client. */
 
-// The federated sign-ins answer the session user, but the contract lists no
-// body for them, so the typed client infers void.
-const sessionResponse = (body: unknown): AuthSessionResponse => body as AuthSessionResponse;
+// The federated sign-ins answer the session user itself (plus `token` in
+// Bearer mode), not the login's `{ user, token }`, and the contract lists no
+// body for them, so the typed client infers void. Bring the answer into the
+// login's shape; one that already has it passes unchanged.
+const sessionResponse = (body: unknown): AuthSessionResponse => {
+	const answer = body as Partial<AuthSessionResponse> & { token?: string | null };
+	if (answer.user) return answer as AuthSessionResponse;
+	const { token, ...user } = answer;
+	return { user, token } as AuthSessionResponse;
+};
 
 export const createLocalLoginMutation = () =>
 	createMutation(() => ({
