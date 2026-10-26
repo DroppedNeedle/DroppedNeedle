@@ -327,6 +327,17 @@ pub struct RetryAnchor {
     pub updated_at: f64,
 }
 
+/// What starting a reimport did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReimportStart {
+    /// The task is processing and its attempt's files are kept for it.
+    Begun,
+    /// The task is missing, or not failed or partial.
+    NotReimportable,
+    /// Cleanup took the attempt's files first.
+    FilesGone,
+}
+
 /// The download journal over one SQLite connection.
 ///
 /// A write that settles a task also settles the requests linked to it, in
@@ -659,17 +670,61 @@ impl<'conn> DownloadStore<'conn> {
         )?)
     }
 
-    /// Start a reimport: a failed or short-landed task goes back to
-    /// `processing` with its error and completion cleared, so the import
-    /// can run against the files already on disk. This is the one write
-    /// out of a terminal status; `transition_task` still refuses all
-    /// others. Answers false when the task is missing or not terminal
-    /// failed or partial.
-    pub fn begin_reimport(&self, task_id: &str, now: f64) -> Result<bool, StoreError> {
-        let changed = self
-            .conn
+    /// Start a reimport: the attempt whose files it reads (`attempt_id`)
+    /// is taken back from cleanup, then a failed or
+    /// short-landed task goes back to `processing` with its error and
+    /// completion cleared, so the import can run against the files already
+    /// on disk. This is the one write out of a terminal status;
+    /// `transition_task` still refuses all others. Both moves compare and
+    /// set in one transaction, so cleanup and a reimport never both act
+    /// on one attempt.
+    pub fn begin_reimport(
+        &self,
+        task_id: &str,
+        attempt_id: &str,
+        now: f64,
+    ) -> Result<ReimportStart, StoreError> {
+        let reimportable = self
+            .get_task(task_id)?
+            .is_some_and(|task| matches!(task.status, TaskStatus::Failed | TaskStatus::Partial));
+        if !reimportable {
+            return Ok(ReimportStart::NotReimportable);
+        }
+        let claimed = self.conn.execute(
+            sql::CLAIM_REIMPORT.text(),
+            rusqlite::params![now, attempt_id],
+        )?;
+        if claimed == 0 {
+            return Ok(ReimportStart::FilesGone);
+        }
+        self.conn
             .execute(sql::BEGIN_REIMPORT.text(), rusqlite::params![now, task_id])?;
-        Ok(changed > 0)
+        Ok(ReimportStart::Begun)
+    }
+
+    /// Hand one task's kept files to cleanup (discard): the task was
+    /// stopped or its album removed.
+    pub fn release_task_kept(&self, task_id: &str, now: f64) -> Result<(), StoreError> {
+        self.conn.execute(
+            sql::RELEASE_TASK_KEPT.text(),
+            rusqlite::params![now, task_id],
+        )?;
+        Ok(())
+    }
+
+    /// Hand kept files to cleanup (discard): those of cancelled or removed
+    /// tasks, and those kept since before `kept_before` whose task is not
+    /// running. Answers each moved attempt as (attempt id, task id).
+    pub fn release_kept(
+        &self,
+        now: f64,
+        kept_before: f64,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        self.rows(
+            sql::RELEASE_KEPT.text(),
+            rusqlite::params![now, kept_before],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
     }
 
     /// Claim an idempotency key. Returns true on first claim; a repeat
@@ -899,9 +954,10 @@ impl<'conn> DownloadStore<'conn> {
         Ok(u64::try_from(count).unwrap_or(0))
     }
 
-    /// True when any non-terminal journal row still references this job.
-    /// The orphan reconciler treats "any row" as owned; only a clean
-    /// lookup with zero rows lets a folder be considered debris.
+    /// True when any journal row other than a completed one still
+    /// references this job, kept files included. The orphan reconciler
+    /// treats "any row" as owned; only a clean lookup with zero rows lets
+    /// a folder be considered debris.
     pub fn has_cleanup_debt(
         &self,
         source: &str,

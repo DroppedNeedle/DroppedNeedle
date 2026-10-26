@@ -71,6 +71,38 @@ droppedneedle_kernel::sql! {
                AND EXISTS (SELECT 1 FROM download_attempts a WHERE a.task_id = t.id \
                  AND a.handle_json != '' \
                  AND a.state IN ('preserved', 'cleanup_pending')))";
+    /// Take a reimport's attempt (`?2`) back from cleanup: kept files
+    /// stay kept while the reimport reads them. Nothing when cleanup holds
+    /// its lease or moved it on.
+    pub(super) CLAIM_REIMPORT = "UPDATE download_attempts \
+             SET state = 'preserved', disposition = 'preserve', \
+                 lease_owner = NULL, lease_expires_at = NULL, \
+                 updated_at = ?1, row_revision = row_revision + 1 \
+             WHERE id = ?2 \
+               AND state IN ('preserved', 'cleanup_pending') \
+               AND (lease_owner IS NULL OR lease_expires_at IS NULL \
+                    OR lease_expires_at <= ?1)";
+    /// Hand kept files to cleanup: those of a cancelled or removed task,
+    /// and those kept since before `?2` whose task is not running. Each
+    /// moved attempt as (id, task id).
+    pub(super) RELEASE_KEPT = "UPDATE download_attempts \
+             SET state = 'cleanup_pending', disposition = 'discard', \
+                 lease_owner = NULL, lease_expires_at = NULL, next_retry_at = ?1, \
+                 updated_at = ?1, row_revision = row_revision + 1 \
+             WHERE state = 'preserved' \
+               AND (NOT EXISTS (SELECT 1 FROM download_tasks t \
+                      WHERE t.id = download_attempts.task_id AND t.status != 'cancelled') \
+                    OR (COALESCE(completed_at, updated_at) < ?2 \
+                        AND NOT EXISTS (SELECT 1 FROM download_tasks t \
+                          WHERE t.id = download_attempts.task_id \
+                            AND t.status IN ('queued', 'downloading', 'processing')))) \
+             RETURNING id, task_id";
+    /// Hand one task's (`?2`) kept files to cleanup.
+    pub(super) RELEASE_TASK_KEPT = "UPDATE download_attempts \
+             SET state = 'cleanup_pending', disposition = 'discard', \
+                 lease_owner = NULL, lease_expires_at = NULL, next_retry_at = ?1, \
+                 updated_at = ?1, row_revision = row_revision + 1 \
+             WHERE task_id = ?2 AND state = 'preserved'";
     /// A failed or partial task back to processing for a reimport.
     pub(super) BEGIN_REIMPORT = "UPDATE download_tasks SET status = 'processing', \
              error_message = NULL, outcome_code = NULL, completed_at = NULL, last_polled_at = ?1, \
@@ -139,10 +171,10 @@ droppedneedle_kernel::sql! {
              WHERE state = 'needs_attention' \
                 OR (state IN ('cleanup_pending', 'workspace_removed') \
                     AND cleanup_failures >= 3)";
-    /// Live cleanup debt for one client job.
+    /// Live cleanup debt for one client job; kept files count.
     pub(super) CLEANUP_DEBT = "SELECT COUNT(*) FROM download_attempts \
              WHERE source = ?1 AND task_id = ?2 AND job_name = ?3 \
-               AND state NOT IN ('complete', 'preserved')";
+               AND state != 'complete'";
     /// Cancel a live task.
     pub(super) CANCEL_TASK = "UPDATE download_tasks \
              SET status = 'cancelled', last_polled_at = ?1, completed_at = ?1, \

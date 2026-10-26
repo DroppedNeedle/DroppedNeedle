@@ -44,6 +44,7 @@ pub mod follows;
 pub mod imports;
 pub mod intake;
 pub mod landing;
+pub mod library_ready;
 pub mod library_removal;
 pub mod plugin_events;
 pub mod plugin_source;

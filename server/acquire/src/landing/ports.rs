@@ -127,6 +127,9 @@ pub enum ImportFailure {
     /// The library's import naming script gave no usable path for a file.
     /// The download stays for a reimport once the script is fixed.
     NamingScript(String),
+    /// The library folder the files go to is not there (the folder). The
+    /// download waits until it is back.
+    FolderMissing(String),
 }
 
 impl ImportFailure {
@@ -134,7 +137,8 @@ impl ImportFailure {
         match self {
             ImportFailure::LocalFault(detail)
             | ImportFailure::Occupied(detail)
-            | ImportFailure::NamingScript(detail) => detail,
+            | ImportFailure::NamingScript(detail)
+            | ImportFailure::FolderMissing(detail) => detail,
         }
     }
 }
@@ -243,6 +247,15 @@ pub trait LandingLibrary: Send + Sync {
 
     /// The library root folders; landed paths inside them are refused.
     fn library_dirs(&self) -> Vec<PathBuf>;
+
+    /// The library folder a plain download goes to, which downloads wait
+    /// for ([`crate::library_ready`]): the first folder not set to
+    /// Excluded nor left out whose policy is Automatic, else the first not
+    /// set to Excluded. `None` when no folder takes imports. Blocking: it
+    /// resolves the folders.
+    fn import_folder(&self) -> Option<PathBuf> {
+        None
+    }
 
     /// Publish verified files into the library.
     fn import(&self, request: ImportRequest)

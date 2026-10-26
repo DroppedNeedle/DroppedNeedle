@@ -7,7 +7,10 @@
 //! [`DownloadWorker`] then runs the steady-state passes on one cadence:
 //!
 //! - enqueue: queued tasks below the concurrency cap search and enqueue
-//!   through the source order, journaling each attempt;
+//!   through the source order, journaling each attempt; nothing starts,
+//!   and no finished download lands, while the library folder downloads
+//!   go to is missing, read-only or not answering ([`crate::library_ready`],
+//!   checked once a pass under a timeout);
 //! - poll: live attempts report progress through the [`Watchdog`], whose
 //!   verdicts complete, fail over, or requeue their tasks. Each source is
 //!   polled side by side with the others, and a client that stops
@@ -15,7 +18,9 @@
 //! - retry: terminal tasks whose backoff elapsed spawn successors;
 //! - cleanup: claimed journal rows abort and discard client records and
 //!   settle; downloads whose cleanup keeps failing show on service health;
-//! - orphans (hourly): complete-dir debris with no owner is removed.
+//! - orphans (hourly): files kept for "Retry import" that are 90 days old,
+//!   or whose task was cancelled or cleared, go to cleanup; complete-dir
+//!   debris with no owner is removed.
 //!
 //! Sources and tuning are resolved at the start of every pass, so saved
 //! settings take effect on the next pass without a restart. The loop runs
@@ -40,6 +45,7 @@ use super::downloads::state::{AttemptState, TaskStatus};
 use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskOutcome, TaskRow};
 use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
 use super::landing::LandingService;
+use super::library_ready::LibraryWait;
 use super::readiness::SourceReadiness;
 use super::reason::{Reason, log_unknown_spellings};
 use super::search_jobs::review::ReviewMode;
@@ -71,6 +77,14 @@ pub const WORKER_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Orphan sweep runs every Nth pass (hourly at the 30s cadence).
 const ORPHAN_EVERY_NTH_PASS: u64 = 120;
+
+/// How long a pass waits for the library folder check before it counts
+/// the folder as not answering.
+const LIBRARY_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a failed download's files are kept for "Retry import" (90
+/// days).
+const KEPT_FILES_SECONDS: f64 = 90.0 * 86_400.0;
 
 /// Service health key of the cleanup warning.
 const CLEANUP_HEALTH_SERVICE: &str = "acquisition_cleanup";
@@ -382,6 +396,8 @@ impl Inputs {
 /// Everything one pass works with: settings and sources resolved once at
 /// the start of the pass.
 struct Pass {
+    /// Why downloads wait for the library this pass: none starts or lands.
+    library: Option<LibraryWait>,
     config: WorkerConfig,
     sources: SourceSet,
     watchdog: Watchdog,
@@ -508,6 +524,27 @@ pub struct DownloadWorker {
     health: Arc<ServiceHealth>,
     /// Whether a download source is on, over the same sources.
     readiness: SourceReadiness,
+    /// The library folder check: its last answer, and whether one runs.
+    library_check: Arc<Mutex<LibraryCheck>>,
+    /// The library wait last logged, so each change is logged once.
+    library_wait_logged: Mutex<Option<LibraryWait>>,
+}
+
+/// The kept answer of the library folder check.
+#[derive(Debug, Default)]
+struct LibraryCheck {
+    /// A check runs (or hangs) now; no second one starts beside it.
+    running: bool,
+    /// The folder the last finished check looked at.
+    folder: Option<PathBuf>,
+    /// Why downloads wait, as last found.
+    wait: Option<LibraryWait>,
+}
+
+fn lock_check(check: &Mutex<LibraryCheck>) -> std::sync::MutexGuard<'_, LibraryCheck> {
+    check
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl DownloadWorker {
@@ -556,6 +593,8 @@ impl DownloadWorker {
             targets: None,
             reviews: review::Reviews::default(),
             health,
+            library_check: Arc::new(Mutex::new(LibraryCheck::default())),
+            library_wait_logged: Mutex::new(None),
         }
     }
 
@@ -587,6 +626,66 @@ impl DownloadWorker {
     /// smoke and Discover read too.
     pub fn readiness(&self) -> &SourceReadiness {
         &self.readiness
+    }
+
+    /// Why downloads wait for the library, as the last pass found it.
+    /// `None` when they may go ahead, or when imports are not wired.
+    pub fn library_wait(&self) -> Option<LibraryWait> {
+        lock_check(&self.library_check).wait.clone()
+    }
+
+    /// Check the library folder downloads go to, at most one check at a
+    /// time and bounded by [`LIBRARY_CHECK_TIMEOUT`]. A check that does
+    /// not finish in time counts as not answering, and the next pass
+    /// starts none until it ends.
+    async fn check_library(&self) -> Option<LibraryWait> {
+        let library = self.landing.as_ref()?.library()?.clone();
+        {
+            let mut state = lock_check(&self.library_check);
+            if state.running {
+                return state.wait.clone();
+            }
+            state.running = true;
+        }
+        let shared = self.library_check.clone();
+        let check = tokio::task::spawn_blocking(move || {
+            let folder = library.import_folder();
+            let wait = folder.as_deref().and_then(super::library_ready::check);
+            let mut state = lock_check(&shared);
+            state.running = false;
+            state.folder = folder;
+            state.wait = wait;
+        });
+        let finished = tokio::time::timeout(LIBRARY_CHECK_TIMEOUT, check).await;
+        let mut state = lock_check(&self.library_check);
+        match finished {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "library folder check did not run");
+                state.running = false;
+                state.wait = Some(LibraryWait::NotAnswering(state.folder.clone()));
+            }
+            Err(_) if state.running => {
+                state.wait = Some(LibraryWait::NotAnswering(state.folder.clone()));
+            }
+            Err(_) => {}
+        }
+        state.wait.clone()
+    }
+
+    /// Log a change of the library wait once.
+    fn note_library_wait(&self, wait: Option<&LibraryWait>) {
+        let Ok(mut logged) = self.library_wait_logged.lock() else {
+            return;
+        };
+        if logged.as_ref() == wait {
+            return;
+        }
+        match wait {
+            Some(wait) => tracing::warn!("downloads wait for the library: {}", wait.sentence()),
+            None => tracing::info!("the library folder is back; downloads start again"),
+        }
+        *logged = wait.cloned();
     }
 
     /// The sources turned on right now, in the configured try order.
@@ -662,7 +761,10 @@ impl DownloadWorker {
         let Some(config) = self.inputs.config() else {
             return;
         };
+        let library = self.check_library().await;
+        self.note_library_wait(library.as_ref());
         let pass_ctx = Pass {
+            library,
             watchdog: Watchdog::new(config.watchdog.clone()),
             sources: self.inputs.sources(),
             config,
@@ -673,6 +775,7 @@ impl DownloadWorker {
         self.retry_pass(&pass_ctx).await;
         self.cleanup_pass(&pass_ctx).await;
         if pass.is_multiple_of(ORPHAN_EVERY_NTH_PASS) {
+            self.release_kept(&pass_ctx).await;
             self.orphan_pass(&pass_ctx).await;
         }
     }
@@ -688,6 +791,15 @@ impl DownloadWorker {
             + 'static,
     {
         logged(name, self.journal.run(name, op).await)
+    }
+
+    /// Record a poll that changed nothing.
+    async fn touch_poll(&self, task_id: &str, now: f64) {
+        let task_id = task_id.to_owned();
+        self.step("downloads.touch_poll", move |store| {
+            store.touch_poll(&task_id, now)
+        })
+        .await;
     }
 
     /// Run one journal read on the read pool, logging a failure with its
@@ -728,6 +840,11 @@ impl DownloadWorker {
             // No source is on: queued tasks wait untouched, with no look,
             // no enqueue key and no backoff spent, so the first pass after
             // one is turned on starts them.
+            return;
+        }
+        // The same while the library folder cannot take files: the
+        // download would only wait to land.
+        if pass.library.is_some() {
             return;
         }
         let Some(live) = self
@@ -1282,6 +1399,12 @@ impl DownloadWorker {
                 self.record_progress(pass, task, &progress).await;
                 return;
             }
+            WatchdogOutcome::Completed if self.landing.is_some() && pass.library.is_some() => {
+                // The files wait where they are until the library folder
+                // can take them; nothing is read or decided meanwhile.
+                self.touch_poll(&task.id, now).await;
+                return;
+            }
             WatchdogOutcome::Completed if self.landing.is_some() => {
                 self.start_landing(task, attempt, source, handle, now).await;
                 return;
@@ -1624,6 +1747,28 @@ impl DownloadWorker {
             store.record_cleanup_failure(&attempt_id, revision, code, now)
         })
         .await;
+    }
+
+    /// Hand kept files to cleanup once they are 90 days old or their task
+    /// was cancelled or cleared. A reimport that started first keeps them:
+    /// its task is processing, which this move skips.
+    async fn release_kept(&self, pass: &Pass) {
+        let now = pass.now;
+        let Some(released) = self
+            .step("downloads.release_kept", move |store| {
+                store.release_kept(now, now - KEPT_FILES_SECONDS)
+            })
+            .await
+        else {
+            return;
+        };
+        for (attempt_id, task_id) in released {
+            tracing::info!(
+                %task_id,
+                %attempt_id,
+                "files kept for a retry are no longer kept; they go to cleanup"
+            );
+        }
     }
 
     /// Walk the complete dirs and remove proven debris. Every ambiguous

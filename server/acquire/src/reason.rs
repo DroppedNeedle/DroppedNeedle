@@ -455,7 +455,7 @@ impl Reason {
                 "Fix the import naming script in Settings, Library, then try again."
             }
             Self::LibraryFolderMissing => {
-                "Check the library folder in Settings, Library. The import goes ahead once it is back."
+                "Check the library folder in Settings, Library, and that the server can write to it. Downloads go ahead by themselves once it is back."
             }
             Self::LocalFault => "Check free space and folder permissions, then retry import.",
             Self::FilesMissing => {
@@ -679,6 +679,27 @@ impl std::fmt::Display for Reason {
     }
 }
 
+/// What is wrong with the library folder a download waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderProblem {
+    Missing,
+    NotWritable,
+    NotAnswering,
+}
+
+/// The sentence of a download that waits for its library folder.
+pub fn library_folder_wait(folder: Option<&std::path::Path>, problem: FolderProblem) -> String {
+    let problem = match problem {
+        FolderProblem::Missing => "isn't there",
+        FolderProblem::NotWritable => "can't be written to",
+        FolderProblem::NotAnswering => "isn't answering",
+    };
+    match folder {
+        Some(folder) => format!("Waiting: library folder {} {problem}.", folder.display()),
+        None => format!("Waiting: the library folder {problem}."),
+    }
+}
+
 /// Log each stored spelling this version does not know, once per start.
 /// Readers take such a spelling as [`Reason::HeldByEarlierVersion`]
 /// without a word, so this is the one place it is logged.
@@ -802,6 +823,7 @@ mod tests {
             (Reason::SettingsUnreadable, Rejected(Temporary)),
             (Reason::LibraryChanged, Rejected(Temporary)),
             (Reason::NamingScriptFailed, Rejected(LocalFault)),
+            (Reason::LibraryFolderMissing, Rejected(LocalFault)),
             (Reason::LocalFault, Rejected(LocalFault)),
             (Reason::OutsideDownloadsFolder, Rejected(LocalFault)),
             (Reason::Stalled, FailedOver { blocklisted: true }),
@@ -835,7 +857,6 @@ mod tests {
             (Reason::Interrupted, NotProduced(false)),
             (Reason::ImportFailed, NotProduced(false)),
             (Reason::LibraryUnavailable, NotProduced(false)),
-            (Reason::LibraryFolderMissing, NotProduced(false)),
             (Reason::NoDownloadSource, NotProduced(false)),
             (Reason::HeldForReview, NotProduced(false)),
             (Reason::AlreadyOwned, NotProduced(false)),

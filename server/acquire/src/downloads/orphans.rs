@@ -51,7 +51,8 @@ pub fn job_name_parts(dir_name: &str) -> Option<(String, String)> {
 /// Ownership evidence for one candidate folder.
 #[derive(Debug, Clone, Copy)]
 pub struct OrphanEvidence {
-    /// Any attempt journal still references this job.
+    /// Any attempt journal still references this job, files kept for
+    /// "Retry import" included.
     pub has_cleanup_debt: bool,
     /// Owning task is still active (`queued`/`downloading`/`processing`).
     pub task_active: bool,

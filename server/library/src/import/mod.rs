@@ -189,6 +189,8 @@ pub enum ImportError {
     Occupied(String),
     /// The import naming script gave no usable path for a file.
     NamingScript(String),
+    /// The library folder the files go to is not there (the folder).
+    FolderMissing(String),
 }
 
 /// One planned file.
@@ -409,6 +411,7 @@ impl LibrarySetup {
                         root = root.id,
                         "a landing stopped: the library folder is not there"
                     );
+                    return ImportError::FolderMissing(root.path.display().to_string());
                 }
                 fault(error.to_string())
             })?;

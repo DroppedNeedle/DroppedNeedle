@@ -61,6 +61,9 @@ pub struct TaskView {
     pub attempt_total: i64,
     /// Why the task sits where it does, when it needs saying.
     pub reason: Option<Reason>,
+    /// The reason's sentence when it names more than the reason can (the
+    /// library folder a download waits for).
+    pub reason_text: Option<String>,
 }
 
 /// One file of a task's current source.
@@ -383,6 +386,7 @@ impl DownloadQueue {
             .map(|config| config.max_failover_attempts)
             .unwrap_or_default();
         let no_source = !self.worker.readiness().can_acquire();
+        let library_wait = self.worker.library_wait();
         Ok(rows
             .into_iter()
             .map(|row| {
@@ -391,6 +395,7 @@ impl DownloadQueue {
                     outcome: decision.outcome.as_str(),
                     code: decision.reason_code,
                 });
+                let mut reason_text = None;
                 let reason = task_reason(
                     row.task.status,
                     row.task.outcome_code,
@@ -398,8 +403,16 @@ impl DownloadQueue {
                     decision.as_ref(),
                 )
                 .or_else(|| {
-                    (no_source && row.task.status == TaskStatus::Queued)
-                        .then_some(Reason::NoDownloadSource)
+                    if row.task.status == TaskStatus::Queued && no_source {
+                        return Some(Reason::NoDownloadSource);
+                    }
+                    if row.task.status.is_terminal() {
+                        return None;
+                    }
+                    // Nothing starts or lands while the library waits.
+                    let wait = library_wait.as_ref()?;
+                    reason_text = Some(wait.sentence());
+                    Some(wait.reason())
                 });
                 // Tasks paused on a held-file review show no countdown: it
                 // would never fire.
@@ -414,6 +427,7 @@ impl DownloadQueue {
                     retry_ladder_minutes: ladder.clone(),
                     attempt_total,
                     reason,
+                    reason_text,
                 }
             })
             .collect())

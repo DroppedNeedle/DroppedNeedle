@@ -19,6 +19,8 @@ use droppedneedle_library::identify::sources::{
 use droppedneedle_library::import::{DownloadImport, ImportError, ImportSource};
 use droppedneedle_library::management::service::Management;
 use droppedneedle_library::matching::Release;
+use droppedneedle_library::publish::paths::{ResolvedRoot, left_out};
+use droppedneedle_library::scan::EffectivePolicy;
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_providers::RequestPriority;
 
@@ -399,6 +401,26 @@ impl LandingLibrary for LibraryLanding {
             .collect()
     }
 
+    fn import_folder(&self) -> Option<PathBuf> {
+        let registry = self.library.live_registry();
+        let usable: Vec<_> = registry
+            .roots()
+            .iter()
+            .filter(|root| root.policy != EffectivePolicy::Excluded)
+            .collect();
+        let resolved: Vec<ResolvedRoot> = registry
+            .roots()
+            .iter()
+            .map(|root| ResolvedRoot::of(&root.id, &root.path))
+            .collect();
+        let left_out = left_out(&resolved);
+        usable
+            .iter()
+            .find(|root| root.policy == EffectivePolicy::Automatic && !left_out.contains(&root.id))
+            .or_else(|| usable.first())
+            .map(|root| root.path.clone())
+    }
+
     fn import(
         &self,
         request: ImportRequest,
@@ -441,6 +463,9 @@ impl LandingLibrary for LibraryLanding {
                 Err(ImportError::LocalFault(detail)) => Err(ImportFailure::LocalFault(detail)),
                 Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),
                 Err(ImportError::NamingScript(detail)) => Err(ImportFailure::NamingScript(detail)),
+                Err(ImportError::FolderMissing(folder)) => {
+                    Err(ImportFailure::FolderMissing(folder))
+                }
             }
         })
     }

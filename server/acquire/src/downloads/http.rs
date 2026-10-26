@@ -190,6 +190,7 @@ impl From<TaskView> for DownloadTaskResponse {
             retry_ladder_minutes,
             attempt_total,
             reason,
+            reason_text,
         } = view;
         let (task, extras) = (row.task, row.extras);
         Self {
@@ -243,7 +244,13 @@ impl From<TaskView> for DownloadTaskResponse {
             held_for_review: facts.held_for_review,
             wrong_product_verdict_at: extras.wrong_product_verdict_at,
             wrong_product_detail: extras.wrong_product_detail,
-            reason: reason.map(DownloadTaskReason::from),
+            reason: reason.map(|reason| {
+                let mut view = DownloadTaskReason::from(reason);
+                if let Some(text) = reason_text {
+                    view.text = text;
+                }
+                view
+            }),
             decision: facts.decision.map(|decision| ImportDecisionView {
                 outcome: decision.outcome,
                 reason_code: decision.reason_code,

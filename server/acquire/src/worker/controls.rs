@@ -206,6 +206,7 @@ impl DownloadWorker {
             crate::downloads::queue::SETTINGS_UNREADABLE,
         ))?;
         let pass = Pass {
+            library: self.library_wait(),
             watchdog: Watchdog::new(config.watchdog.clone()),
             sources: self.inputs.sources(),
             config,

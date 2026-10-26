@@ -467,6 +467,7 @@ const DROP_IMPORT_STEP: &str = "blocking file work, awaited by the drop import t
 const DROP_IMPORT: &str = "a drop import a request starts; it logs its own end";
 const MIX_REFRESH: &str = "a personal-mix refresh a request starts; it logs its own end";
 const SEARCH: &str = "an acquire search a request starts; it logs its own end";
+const LIBRARY_CHECK: &str = "the library folder check, bounded by a timeout; one that hangs is left to end and none starts beside it";
 const WORKER_CHILD: &str = "a landing or review the download worker waits for";
 const REQUEST: &str = "blocking file or store work, awaited by the request that runs it";
 const CATALOG_WARM: &str =
@@ -512,6 +513,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/search_jobs/mod.rs", 1, SEARCH),
     ("acquire/src/slskd/repository.rs", 3, AWAITED),
     ("acquire/src/usenet/sabnzbd.rs", 6, AWAITED),
+    ("acquire/src/worker.rs", 1, LIBRARY_CHECK),
     ("acquire/src/worker/landings.rs", 2, WORKER_CHILD),
     ("acquire/src/worker/review.rs", 1, WORKER_CHILD),
     ("auth/src/avatars.rs", 2, REQUEST),

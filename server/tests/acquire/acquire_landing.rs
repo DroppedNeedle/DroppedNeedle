@@ -1927,6 +1927,396 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     }
 }
 
+/// A failed download's files kept for "Retry import" outlive the hourly
+/// sweep of finished download folders, however old the folder, and go to
+/// cleanup once they have been kept for 90 days.
+#[tokio::test]
+async fn a_failed_downloads_kept_folder_stays_until_it_expires() {
+    use droppedneedle_acquire::sources::SabnzbdSource;
+    use droppedneedle_acquire::usenet::policy::UsenetPolicy;
+    use droppedneedle_acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
+    use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
+    use std::time::{Duration, SystemTime};
+
+    const TASK: &str = "0123456789abcdef0123456789abcdee";
+
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library,
+            every_priority(Arc::new(Releases(Vec::new()))),
+            db.pool().clone(),
+        ))),
+    );
+    let complete = dir.join("complete");
+    let job = format!("droppedneedle-{TASK}-0");
+    let folder = complete.join(&job);
+    land_file(&folder, "01.flac", "flac_full_01.flac", "Mysterons", 1);
+    std::fs::File::open(&folder)
+        .and_then(|dir| dir.set_modified(SystemTime::now() - Duration::from_secs(7 * 3600)))
+        .expect("folder aged");
+    let handle = serde_json::to_string(&SourceHandle {
+        job_name: job.clone(),
+        ..SourceHandle::new(SourceTag::Usenet)
+    })
+    .expect("handle");
+    let now = db.now_unix_f64();
+    acquire
+        .journal
+        .run("test.seed", move |store| {
+            store.insert_task(&new_task(TASK, GOOD_GROUP), now)?;
+            store.insert_attempt(
+                "kept-a0",
+                TASK,
+                "usenet",
+                0,
+                &job,
+                &handle,
+                AttemptState::Preserved,
+                now,
+            )?;
+            store.transition_task(
+                TASK,
+                TaskStatus::Failed,
+                now,
+                Some(TaskOutcome::new(Reason::LocalFault, "kept for a retry")),
+            )
+        })
+        .await
+        .expect("seed");
+
+    let mock = SabnzbdMock::new();
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let policy = UsenetPolicy::v2_defaults();
+    let source = SabnzbdSource::new(
+        Arc::new(SabnzbdQueue::new(
+            SabnzbdClient::new(
+                reqwest::Client::new(),
+                &base,
+                "SABKEY",
+                3,
+                Duration::from_millis(1),
+            ),
+            &base,
+            "SABKEY",
+            complete.clone(),
+            policy.clone(),
+        )),
+        Vec::new(),
+        policy,
+        acquire.journal.clone(),
+        None,
+    );
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(Arc::new(source))],
+            WorkerConfig {
+                orphan_roots: vec![(SourceTag::Usenet, complete.clone())],
+                ..WorkerConfig::default()
+            },
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+
+    // Pass 0 is one of the passes the hourly sweep runs on.
+    worker.run_once(0).await;
+    assert!(folder.is_dir(), "kept files outlive the 6-hour sweep");
+    assert!(
+        acquire
+            .dispatch
+            .reimportable(TASK)
+            .await
+            .expect("reimportable"),
+        "and can still be imported again"
+    );
+
+    // Kept 90 days: the sweep hands them to cleanup, which removes them.
+    acquire
+        .db
+        .write("test.age", |tx| {
+            Ok(tx.execute(
+                "UPDATE download_attempts SET completed_at = 1.0, updated_at = 1.0",
+                [],
+            )?)
+        })
+        .await
+        .expect("attempt aged");
+    worker.run_once(0).await;
+    worker.run_once(0).await;
+    assert!(!folder.exists(), "expired kept files are cleaned up");
+    assert!(
+        !acquire
+            .dispatch
+            .reimportable(TASK)
+            .await
+            .expect("reimportable")
+    );
+}
+
+/// A download does not start, and a finished one does not land, while
+/// the library folder downloads go to is not there: both wait, the queue
+/// names the folder, and nothing is read or decided meanwhile. A landing
+/// that meets the folder gone anyway waits with `library_folder_missing`.
+/// Both go ahead by themselves once the folder is back.
+#[tokio::test]
+async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
+    use droppedneedle_acquire::downloads::queue::DownloadQueue;
+
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    std::fs::remove_dir(&music).expect("music root unmounted");
+
+    let downloads = dir.join("downloads");
+    let files = vec![
+        land_file(
+            &downloads.join("job"),
+            "01 - Mysterons.flac",
+            "flac_full_01.flac",
+            "Mysterons",
+            1,
+        ),
+        land_file(
+            &downloads.join("job"),
+            "02 - Sour Times.flac",
+            "flac_full_02.flac",
+            "Sour Times",
+            2,
+        ),
+    ];
+    let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons", "Sour Times"],
+        &lengths,
+    )]));
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            every_priority(releases),
+            db.pool().clone(),
+        ))),
+    );
+    let source = Arc::new(FixedSource::new(downloads.clone(), files.clone()));
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(source.clone())],
+            WorkerConfig::default(),
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    let queue = DownloadQueue::new(acquire.journal.clone(), worker.clone());
+    let viewer = HeldViewer {
+        user_id: "u-ada".to_owned(),
+        admin: true,
+    };
+
+    // "landing" finished its transfer before the folder went; "queued"
+    // has not started.
+    let handle = serde_json::to_string(&SourceHandle {
+        filenames: files
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        job_name: "fixed-landing-0".to_owned(),
+        ..SourceHandle::new(SourceTag::Plugin("fixed".to_owned()))
+    })
+    .expect("handle");
+    acquire
+        .journal
+        .run("test.seed", move |store| {
+            store.insert_task(&new_task("landing", GOOD_GROUP), 1.0)?;
+            store.insert_attempt(
+                "landing-a0",
+                "landing",
+                "plugin:fixed",
+                0,
+                "fixed-landing-0",
+                &handle,
+                AttemptState::InUse,
+                1.0,
+            )?;
+            store.transition_task("landing", TaskStatus::Downloading, 1.0, None)?;
+            store.insert_task(&new_task("queued", BAD_GROUP), 1.0)
+        })
+        .await
+        .expect("seed");
+
+    for pass in 1..=3 {
+        worker.run_once(pass).await;
+        worker.wait_for_landings().await;
+    }
+    let waiting = format!("Waiting: library folder {} isn't there.", music.display());
+    let queued = queue.get(&viewer, "queued").await.expect("queued task");
+    assert_eq!(queued.row.task.status, TaskStatus::Queued);
+    assert_eq!(queued.facts.attempts, 0, "nothing was fetched");
+    assert_eq!(queued.reason, Some(Reason::LibraryFolderMissing));
+    assert_eq!(queued.reason_text.as_deref(), Some(waiting.as_str()));
+    let landing = queue.get(&viewer, "landing").await.expect("landing task");
+    assert_eq!(landing.row.task.status, TaskStatus::Downloading, "it waits");
+    assert_eq!(landing.reason, Some(Reason::LibraryFolderMissing));
+    assert_eq!(landing.reason_text.as_deref(), Some(waiting.as_str()));
+    let decisions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_import_decisions")
+        .fetch_one(acquire.db.pool())
+        .await
+        .expect("decision count");
+    assert_eq!(decisions, 0, "nothing was landed while it waits");
+    assert!(
+        files.iter().all(|path| path.is_file()),
+        "files wait in place"
+    );
+
+    // A landing that meets the folder gone waits on it, naming it.
+    let task = acquire.journal.read_task("landing").await.unwrap().unwrap();
+    let landed = Landed {
+        mounts: vec![downloads.clone().into()],
+        files: files.iter().cloned().map(Reported::path).collect(),
+    };
+    let LandingResult::Rejected(rejection) = acquire
+        .landing
+        .land(&task, None, landed, false)
+        .await
+        .result
+    else {
+        panic!("the landing went ahead without its library folder");
+    };
+    assert_eq!(
+        (rejection.code, rejection.detail.as_str()),
+        (Reason::LibraryFolderMissing, music.to_str().unwrap())
+    );
+
+    // The folder is back: the landing imports and the queued task starts.
+    std::fs::create_dir_all(&music).expect("music root back");
+    worker.run_once(3).await;
+    worker.wait_for_landings().await;
+    let landed = acquire.journal.read_task("landing").await.unwrap().unwrap();
+    assert_eq!(
+        landed.status,
+        TaskStatus::Completed,
+        "{:?}",
+        landed.error_message
+    );
+    assert!(music.join("Portishead/Dummy/0101 Mysterons.flac").is_file());
+    let started = queue.get(&viewer, "queued").await.expect("queued task");
+    assert!(started.facts.attempts > 0, "the queued download started");
+}
+
+/// Downloads wait only for the folder they go to: a read-only first
+/// folder that keeps its own tags does not hold downloads bound for an
+/// Automatic folder after it.
+#[tokio::test]
+async fn a_read_only_archive_folder_does_not_hold_downloads() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let archive = dir.join("archive");
+    let music = dir.join("music");
+    for (name, folder, policy) in [
+        ("archive", &archive, EffectivePolicy::LocalMetadata),
+        ("music", &music, EffectivePolicy::Automatic),
+    ] {
+        std::fs::create_dir_all(folder).expect("root");
+        library
+            .add_root(
+                Some(name.to_owned()),
+                folder.to_string_lossy().into_owned(),
+                policy,
+            )
+            .expect("root adds");
+    }
+    std::fs::set_permissions(&archive, std::fs::Permissions::from_mode(0o555))
+        .expect("archive read-only");
+    let port: Arc<dyn LandingLibrary> = Arc::new(LibraryLanding::new(
+        library.clone(),
+        every_priority(Arc::new(Releases(Vec::new()))),
+        db.pool().clone(),
+    ));
+    assert_eq!(port.import_folder(), Some(music.clone()));
+    let acquire = acquire_over(&db, Some(port));
+    let downloads = dir.join("downloads");
+    std::fs::create_dir_all(&downloads).expect("downloads");
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(Arc::new(FixedSource::new(
+                downloads,
+                Vec::new(),
+            )))],
+            WorkerConfig::default(),
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t-archive", GOOD_GROUP), 1.0)
+        })
+        .await
+        .expect("task");
+    worker.run_once(1).await;
+    worker.wait_for_landings().await;
+    std::fs::set_permissions(&archive, std::fs::Permissions::from_mode(0o755))
+        .expect("archive writable again");
+    assert_eq!(worker.library_wait(), None);
+    let attempts = acquire
+        .journal
+        .run("test.attempts", |store| store.list_attempts("t-archive"))
+        .await
+        .expect("attempts");
+    assert!(!attempts.is_empty(), "the download started");
+}
+
 // Files fetched for a library copy: "Get missing tracks" and upgrades.
 
 const TITLES: [&str; 2] = ["Mysterons", "Sour Times"];

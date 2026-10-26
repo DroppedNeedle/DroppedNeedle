@@ -107,13 +107,23 @@ impl DownloadStore<'_> {
         removed_at: f64,
         now: f64,
     ) -> Result<AlbumPurge, StoreError> {
-        let retries_cancelled = self.conn.execute(
-            "UPDATE download_tasks SET status = 'cancelled', cancelled_at = ?2, \
-                 remote_queued = 0, updated_at = ?2 \
-             WHERE lower(release_group_mbid) = lower(?1) AND status IN ('failed', 'partial') \
-             AND created_at <= ?3",
-            params![release_group_mbid, now, removed_at],
-        )?;
+        let cancelled: Vec<String> = self
+            .conn
+            .prepare(
+                "UPDATE download_tasks SET status = 'cancelled', cancelled_at = ?2, \
+                     remote_queued = 0, updated_at = ?2 \
+                 WHERE lower(release_group_mbid) = lower(?1) AND status IN ('failed', 'partial') \
+                 AND created_at <= ?3 RETURNING id",
+            )?
+            .query_map(params![release_group_mbid, now, removed_at], |row| {
+                row.get(0)
+            })?
+            .collect::<Result<_, _>>()?;
+        // Files kept for "Retry import" go with the tasks that kept them.
+        for task_id in &cancelled {
+            self.release_task_kept(task_id, now)?;
+        }
+        let retries_cancelled = cancelled.len();
         let held_removed = self.conn.execute(
             "DELETE FROM held_imports WHERE lower(release_group_mbid) = lower(?1) \
              AND created_at <= ?2",
@@ -163,8 +173,8 @@ impl DownloadStore<'_> {
 
     /// Stop one task. A live task is cancelled (its attempts go to cleanup
     /// with a discard disposition). A failed or short task is marked
-    /// cancelled so the retry sweep skips it; its kept files stay for the
-    /// cleanup policy that already owns them. Either way the owner's
+    /// cancelled so the retry sweep skips it, and files kept for "Retry
+    /// import" go to cleanup. Either way the owner's
     /// wanted watch on the album stops too, so it cannot start the task
     /// again (v2 #255: one action, no hidden second switch).
     pub fn stop_task(&self, task: &TaskRow, now: f64) -> Result<Stopped, StoreError> {
@@ -186,6 +196,7 @@ impl DownloadStore<'_> {
                 if changed == 0 {
                     Stopped::AlreadySettled
                 } else {
+                    self.release_task_kept(&task.id, now)?;
                     Stopped::RetriesStopped
                 }
             }
@@ -233,7 +244,8 @@ impl DownloadStore<'_> {
 
     /// Delete finished (completed and cancelled) tasks, for one owner or,
     /// with `None`, for everyone. Attempt rows stay: their cleanup debt
-    /// outlives the queue row by design.
+    /// outlives the queue row by design, and files still kept for a
+    /// removed task go to cleanup at the next hourly sweep.
     pub fn clear_finished(&self, owner: Option<&str>) -> Result<i64, StoreError> {
         let removed = self.conn.execute(
             "DELETE FROM download_tasks WHERE status IN ('completed', 'cancelled') \

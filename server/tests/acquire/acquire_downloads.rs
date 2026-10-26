@@ -27,7 +27,7 @@ fn mount_gone() -> TaskOutcome<'static> {
 use downloads::quarantine::QuarantineReason;
 use downloads::recovery::{FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction};
 use downloads::state::{AttemptState, can_transition};
-use downloads::store::{NewTask, TaskOutcome};
+use downloads::store::{NewTask, ReimportStart, TaskOutcome};
 use downloads::{
     DownloadStore, OrphanDecision, OrphanEvidence, OrphanPolicy, PollSample, QuarantineDir,
     RetryPolicy, TaskStatus, Watchdog, WatchdogConfig, WatchdogOutcome,
@@ -811,17 +811,134 @@ fn reimport_starts_tasks_whose_files_remain() {
     assert!(!store.is_reimportable("live").unwrap());
     assert!(!store.is_reimportable("missing").unwrap());
 
-    assert!(store.begin_reimport("kept", now).unwrap());
+    assert_eq!(
+        store.begin_reimport("kept", "kept-a0", now).unwrap(),
+        ReimportStart::Begun
+    );
     let row = store.get_task("kept").unwrap().unwrap();
     assert_eq!(row.status, TaskStatus::Processing);
     assert!(row.error_message.is_none());
     assert!(row.completed_at.is_none());
-    assert!(
-        !store.begin_reimport("kept", now).unwrap(),
+    assert_eq!(
+        store.begin_reimport("kept", "kept-a0", now).unwrap(),
+        ReimportStart::NotReimportable,
         "already running"
     );
-    assert!(!store.begin_reimport("live", now).unwrap());
-    assert!(!store.begin_reimport("missing", now).unwrap());
+    assert_eq!(
+        store.begin_reimport("live", "live-a0", now).unwrap(),
+        ReimportStart::NotReimportable
+    );
+    assert_eq!(
+        store.begin_reimport("missing", "missing-a0", now).unwrap(),
+        ReimportStart::NotReimportable
+    );
+}
+
+// Files kept for "Retry import" go to cleanup after 90 days, or at once
+// when their task is stopped. A reimport and cleanup each take the
+// attempt by compare and set, so neither works on files the other has:
+// a reimport that started keeps them past the 90 days, a reimport takes
+// back files cleanup has not leased yet, and files cleanup has leased are
+// never reimported.
+#[test]
+fn kept_files_go_to_cleanup_without_racing_a_reimport() {
+    let dir = scratch_dir("kept-files");
+    let conn = scratch_store(&dir);
+    let store = DownloadStore::new(&conn);
+    let now = 100.0 * 86_400.0;
+    let kept_before = now - 90.0 * 86_400.0;
+    let handle = r#"{"source":"soulseek","username":"peer","filenames":["a.flac"],"job_name":""}"#;
+    for (id, state) in [
+        ("young", AttemptState::Preserved),
+        ("old", AttemptState::Preserved),
+        ("reimported", AttemptState::Preserved),
+        ("stopped", AttemptState::Preserved),
+        ("leased", AttemptState::CleanupPending),
+        ("taken", AttemptState::CleanupPending),
+    ] {
+        store.insert_task(&new_task(id), 1.0).unwrap();
+        store
+            .insert_attempt(
+                &format!("{id}-a0"),
+                id,
+                "soulseek",
+                0,
+                "",
+                handle,
+                state,
+                1.0,
+            )
+            .unwrap();
+        store
+            .transition_task(id, TaskStatus::Failed, 1.0, Some(mount_gone()))
+            .unwrap();
+    }
+    conn.execute(
+        "UPDATE download_attempts SET completed_at = ?1 WHERE task_id = 'young'",
+        [now - 89.0 * 86_400.0],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE download_attempts SET lease_owner = 'cleaner', lease_expires_at = ?1 \
+         WHERE task_id = 'leased'",
+        [now + 60.0],
+    )
+    .unwrap();
+    let state = |task: &str| {
+        let id = format!("{task}-a0");
+        store.get_attempt(&id).unwrap().unwrap().state
+    };
+
+    // A reimport that started first keeps its files past the 90 days.
+    assert_eq!(
+        store
+            .begin_reimport("reimported", "reimported-a0", now)
+            .unwrap(),
+        ReimportStart::Begun
+    );
+    conn.execute(
+        "UPDATE download_attempts SET completed_at = 1.0, updated_at = 1.0 \
+         WHERE task_id = 'reimported'",
+        [],
+    )
+    .unwrap();
+    // A reimport takes back files cleanup has not leased yet.
+    assert_eq!(
+        store.begin_reimport("taken", "taken-a0", now).unwrap(),
+        ReimportStart::Begun
+    );
+    assert_eq!(state("taken"), AttemptState::Preserved);
+    // Stopping a failed task hands its kept files to cleanup at once.
+    let stopped = store.get_task("stopped").unwrap().unwrap();
+    store.stop_task(&stopped, now).unwrap();
+    assert_eq!(state("stopped"), AttemptState::CleanupPending);
+
+    let released = store.release_kept(now, kept_before).unwrap();
+    assert_eq!(released, vec![("old-a0".to_owned(), "old".to_owned())]);
+    assert_eq!(state("young"), AttemptState::Preserved);
+    assert_eq!(state("reimported"), AttemptState::Preserved);
+    assert_eq!(state("old"), AttemptState::CleanupPending);
+    let old = store.get_attempt("old-a0").unwrap().unwrap();
+    assert_eq!(old.disposition, "discard");
+
+    // Files cleanup has leased are not reimported.
+    let claimed = store
+        .claim_cleanup_attempts("cleaner", now, 10, 60.0)
+        .unwrap();
+    assert!(claimed.iter().any(|attempt| attempt.id == "old-a0"));
+    for task in ["old", "leased"] {
+        assert_eq!(
+            store
+                .begin_reimport(task, &format!("{task}-a0"), now)
+                .unwrap(),
+            ReimportStart::FilesGone,
+            "{task}"
+        );
+        assert_eq!(
+            store.get_task(task).unwrap().unwrap().status,
+            TaskStatus::Failed
+        );
+    }
 }
 
 // A download whose temporary files keep failing to clear shows on service

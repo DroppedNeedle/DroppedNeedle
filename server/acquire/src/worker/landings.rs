@@ -20,7 +20,7 @@ use super::{Attempt, DownloadWorker, Pass, handled_count};
 use crate::downloads::quarantine::QuarantineReason;
 use crate::downloads::sources::{DownloadSource, SourceHandle};
 use crate::downloads::state::{AttemptState, TaskStatus};
-use crate::downloads::store::{AttemptRow, TaskOutcome, TaskRow};
+use crate::downloads::store::{AttemptRow, ReimportStart, TaskOutcome, TaskRow};
 use crate::landing::specs::Disposition;
 use crate::landing::{LandingReport, LandingResult};
 use crate::reason::Reason;
@@ -152,6 +152,11 @@ impl DownloadWorker {
         ) else {
             return false;
         };
+        if pass.library.is_some() {
+            // The landing waits for the library folder with the files.
+            self.touch_poll(&task.id, pass.now).await;
+            return true;
+        }
         let Some(slot) = self.claim(&task.id) else {
             return true;
         };
@@ -309,6 +314,13 @@ impl DownloadWorker {
                         rejection.quarantine,
                     )
                     .await;
+                }
+                (_, Origin::Poll) if rejection.code == Reason::LibraryFolderMissing => {
+                    // The files are fine and the folder may come back by
+                    // itself (a share mounting again): the landing waits
+                    // without using up its waits and lands again then.
+                    tracing::info!(task_id = %task.id, folder = %rejection.detail, "landing waits for the library folder");
+                    self.touch_poll(&task.id, now).await;
                 }
                 (Disposition::Temporary, Origin::Poll)
                     if rejection.code == Reason::JournalUnreadable =>
@@ -599,15 +611,23 @@ impl DownloadWorker {
         let now = self.now_unix_f64();
         let begun = {
             let task_id = task_id.to_owned();
+            let attempt_id = attempt.row.id.clone();
             self.journal
                 .run_foreground("downloads.reimport", move |store| {
-                    store.begin_reimport(&task_id, now)
+                    store.begin_reimport(&task_id, &attempt_id, now)
                 })
                 .await
                 .map_err(|error| ReimportError::Journal(error.to_string()))?
         };
-        if !begun {
-            return Ok(None);
+        match begun {
+            ReimportStart::Begun => {}
+            ReimportStart::NotReimportable => return Ok(None),
+            ReimportStart::FilesGone => {
+                return Err(ReimportError::Unavailable(
+                    "The download's files were cleaned up, so it can't be imported again."
+                        .to_owned(),
+                ));
+            }
         }
         let task = self
             .journal

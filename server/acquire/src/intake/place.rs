@@ -47,6 +47,9 @@ pub async fn place(
             }
             ImportFailure::Occupied(detail) => return deferred(Reason::LibraryChanged, detail),
             ImportFailure::LocalFault(detail) => return deferred(Reason::LocalFault, detail),
+            ImportFailure::FolderMissing(folder) => {
+                return deferred(Reason::LibraryFolderMissing, folder);
+            }
             ImportFailure::NamingScript(detail) => {
                 return deferred(Reason::NamingScriptFailed, detail);
             }
