@@ -11,8 +11,9 @@ use crate::session::login::{
 };
 use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
-use crate::session::store::{SessionKind, SessionRecord, SessionStore};
+use crate::session::store::{SessionKind, SessionRecord, SessionStore as _};
 use crate::session::tokens;
+use crate::sqlite::SqliteSessionStore;
 use crate::users::UsersDeps;
 use crate::users::models::UserResponse;
 use crate::users::{clock_now, services};
@@ -53,12 +54,12 @@ pub struct AuthSessionBody {
 /// the login service owns local login, and the users deps own user creation,
 /// the setup probe, logout revocation, and login enrichment.
 #[derive(Clone)]
-pub struct NativeAuthState<S, V, C> {
+pub struct NativeAuthState<C> {
     /// Token store (setup session mint).
-    pub sessions: S,
+    pub sessions: SqliteSessionStore,
     /// Local-login service.
-    pub login: LoginService<S, V, C>,
-    /// User stores, clock, ids, hasher (setup, probe, logout, enrichment).
+    pub login: LoginService<C>,
+    /// User stores, clock, ids, passwords (setup, probe, logout, enrichment).
     pub users: UsersDeps,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
@@ -72,24 +73,22 @@ pub struct NativeAuthState<S, V, C> {
     pub limits: Arc<RateLimiter>,
 }
 
-impl<S, V, C> NativeAuthState<S, V, C>
+impl<C> NativeAuthState<C>
 where
-    S: SessionStore,
-    V: crate::session::login::PasswordVerifier,
     C: crate::session::login::CredentialLookup,
 {
-    /// Wire the state from its ports. The login service is built here from
+    /// Wire the state from its parts. The login service is built here from
     /// the same handles so wiring passes each dependency once.
     pub fn new(
-        sessions: S,
-        verifier: V,
+        sessions: SqliteSessionStore,
+        passwords: crate::passwords::Passwords,
         credentials: C,
         users: UsersDeps,
         base_path: &str,
     ) -> Self {
         Self {
             sessions: sessions.clone(),
-            login: LoginService::new(sessions, verifier, credentials),
+            login: LoginService::new(sessions, passwords, credentials),
             users,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),

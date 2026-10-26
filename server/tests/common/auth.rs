@@ -14,8 +14,7 @@ use axum::{
     middleware::{self, Next},
     response::Response,
 };
-use droppedneedle_auth::federated::password_import::PasswordHasher as _;
-use droppedneedle_auth::prod::{Argon2idHasher, ProdAuth};
+use droppedneedle_auth::prod::{Passwords, ProdAuth};
 use droppedneedle_auth::session::middleware::SessionAuth;
 use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
 use droppedneedle_auth::session::tokens;
@@ -44,7 +43,7 @@ pub const PASSWORD: &str = "correct horse battery staple";
 /// seeding stays fast.
 pub fn password_hash() -> &'static str {
     static HASH: OnceLock<String> = OnceLock::new();
-    HASH.get_or_init(|| Argon2idHasher::new().hash_argon2id(PASSWORD))
+    HASH.get_or_init(|| Passwords::new().hash(PASSWORD).expect("password hashes"))
 }
 
 /// Production auth over a migrated database.

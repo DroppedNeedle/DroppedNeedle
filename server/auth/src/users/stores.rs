@@ -10,7 +10,6 @@ use std::pin::Pin;
 
 use thiserror::Error;
 
-use super::super::federated::password_import::PasswordHasher;
 use super::super::federated::users::ProviderBinding;
 use super::models::{
     AppPasswordRecord, LastFmConnection, LocalCredential, ManagedSession, RecoveryCode,
@@ -372,37 +371,6 @@ pub trait AvatarStore: Send + Sync {
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<LoadedAvatar>, StoreError>>;
-}
-
-/// Password hashing comes from the federated module:
-/// [`PasswordHasher`](super::super::federated::password_import::PasswordHasher)
-/// (bcrypt verify, Argon2id hash, dummy verify) with scheme dispatch on
-/// [`HashScheme`](super::super::federated::password_import::HashScheme).
-/// The users routes hold it as `Arc<dyn FalliblePasswordHasher>` in
-/// [`UsersDeps`](super::UsersDeps) and always writes the `argon2id` scheme
-/// tag on new hashes. Tests use the SHA-256 test hasher in `memory.rs`,
-/// never valid in production.
-///
-/// Every way Argon2id hashing can fail. The message goes to the log only;
-/// the request fails with a fixed 500.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum HashError {
-    /// The OS random source failed; no salt, no hash, no fallback.
-    #[error("random source unavailable")]
-    RngUnavailable,
-    /// Salt encoding or the Argon2id run itself failed.
-    #[error("password hash failed")]
-    HashFailed,
-}
-
-/// Password hashing with a fallible Argon2id entry point. The federated
-/// [`PasswordHasher`] port stays infallible (its contract), so production
-/// code here hashes only through [`try_hash_argon2id`](Self::try_hash_argon2id)
-/// and fails the request on error. A failed hash must never persist: there
-/// is no sentinel value that reads as "no hash".
-pub trait FalliblePasswordHasher: PasswordHasher {
-    /// Hash a password with Argon2id, or fail. No fallback value.
-    fn try_hash_argon2id(&self, password: &str) -> Result<String, HashError>;
 }
 
 /// Breach-corpus screening (Have-I-Been-Pwned), fail-open on errors.

@@ -921,10 +921,11 @@ async fn login_rehashes(
         db,
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
-    let hasher = droppedneedle_auth::passwords::Argon2idHasher::new();
-    let mut sessions = SqliteSessionStore::new(&auth_db);
-    sessions.set_rehash_queue(hasher.rehash_queue().clone());
-    let login = LoginService::new(sessions, hasher, SqliteCredentialLookup::new(&auth_db));
+    let login = LoginService::new(
+        SqliteSessionStore::new(&auth_db),
+        droppedneedle_auth::passwords::Passwords::new(),
+        SqliteCredentialLookup::new(&auth_db),
+    );
     let context = || LoginContext {
         user_agent: None,
         now_unix: 1_769_000_000,

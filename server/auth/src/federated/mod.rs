@@ -22,8 +22,8 @@
 //! - The production [`SessionIssuer`] wraps `tokens::mint_token`,
 //!   `tokens::hash_token`, `SessionStore::insert` (kind `Standard`), and a
 //!   `last_login_at` update.
-//! - The production [`password_import::PasswordHasher`] is
-//!   [`crate::passwords`], over the `bcrypt` and `argon2` crates.
+//! - Imported password hashes verify through [`crate::passwords::Passwords`],
+//!   over the `bcrypt` and `argon2` crates.
 //! - The user/provider tables adapter implements
 //!   [`users::FederatedUserStore`] and must seal `token_json` at rest with
 //!   the deployment key before writing `provider_data`.

@@ -801,7 +801,7 @@ fn admin_count(tx: &rusqlite::Transaction) -> Result<i64, super::WriteError> {
 
 /// Native login lookup over `auth_users` plus the `local` provider row.
 ///
-/// Returns the tagged stored hash (`scheme$hash`) for the session verifier;
+/// Returns the stored scheme tag and hash for the login to verify;
 /// unknown users, missing local rows, and corrupt documents all read as
 /// absent so the caller burns exactly one dummy verify.
 #[derive(Clone, Debug)]
@@ -845,7 +845,7 @@ impl CredentialLookup for SqliteCredentialLookup {
         Ok(Some(LocalCredential {
             user_id: row.get("id"),
             display_name: row.get("display_name"),
-            stored_hash: format!("{scheme}${hash}"),
+            password: crate::passwords::StoredPassword { scheme, hash },
         }))
     }
 }

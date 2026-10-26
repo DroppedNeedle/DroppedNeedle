@@ -12,14 +12,14 @@
 //! request's [`Principal`] in the extensions, which the role extractors read).
 //! `POST /api/v3/auth/password-recovery/reset` is in the public group; the
 //! origin check guards cookie mutations. Stores are the `sqlite.rs`
-//! adapters over the 0001 baseline tables; hashing is the production
-//! [`Argon2idHasher`][prod-hasher] (bcrypt verify, Argon2id hash,
-//! opportunistic rehash on login). The `auth_providers` scheme tag lives in
+//! adapters over the 0001 baseline tables; hashing is
+//! [`Passwords`][prod-hasher] (bcrypt verify, Argon2id hash, rehash of a
+//! weaker hash on login). The `auth_providers` scheme tag lives in
 //! the `provider_data` JSON (`{"password_hash", "scheme"}`); no migration
 //! added a scheme column.
 //!
 //! [wiring-setup]: super::wiring::AuthSetup
-//! [prod-hasher]: super::prod::Argon2idHasher
+//! [prod-hasher]: super::passwords::Passwords
 
 pub mod error;
 pub mod handlers;
@@ -43,9 +43,8 @@ pub use roles::{Admin, Curator, Principal, Role, RoleRequired, SessionKind, User
 
 use droppedneedle_kernel::{clock::Clock, ids::IdGenerator, runtime_config::crypto::Crypto};
 use stores::{
-    AppPasswordStore, AvatarStore, FalliblePasswordHasher, LastFmAuthClient, LastFmStore,
-    LastFmSwitch, PasswordScreen, RecoveryStore, SecurityPolicy, SessionManager, UserDirectory,
-    UserStore,
+    AppPasswordStore, AvatarStore, LastFmAuthClient, LastFmStore, LastFmSwitch, PasswordScreen,
+    RecoveryStore, SecurityPolicy, SessionManager, UserDirectory, UserStore,
 };
 
 /// Every dependency the users routes need, injected by constructor.
@@ -63,8 +62,8 @@ pub struct UsersDeps {
     pub recovery: Arc<dyn RecoveryStore>,
     /// Avatar image bytes.
     pub avatars: Arc<dyn AvatarStore>,
-    /// Password hashing and verification (fallible Argon2id entry point).
-    pub passwords: Arc<dyn FalliblePasswordHasher>,
+    /// Password hashing and verification.
+    pub passwords: super::passwords::Passwords,
     /// Breach-corpus screening.
     pub screen: Arc<dyn PasswordScreen>,
     /// Clock for issue/expiry stamps.

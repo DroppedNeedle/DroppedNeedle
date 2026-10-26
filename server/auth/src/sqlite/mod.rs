@@ -57,7 +57,7 @@ pub use lastfm::SqliteLastFmStore;
 pub use oidc::SqliteOidcStateStore;
 pub use recovery::SqliteRecoveryStore;
 pub use sessions::{
-    SqliteSessionIssuer, SqliteSessionManager, SqliteSessionStore, session_expires_at,
+    LoginWrite, SqliteSessionIssuer, SqliteSessionManager, SqliteSessionStore, session_expires_at,
 };
 pub use users::{SqliteCredentialLookup, SqliteUserStore};
 

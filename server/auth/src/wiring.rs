@@ -202,11 +202,7 @@ pub struct Upstreams {
 }
 
 /// Production login, logout and setup route state.
-pub type ProdNativeAuth = NativeAuthState<
-    SqliteSessionStore,
-    super::prod::Argon2idHasher,
-    super::prod::SqliteCredentialLookup,
->;
+pub type ProdNativeAuth = NativeAuthState<super::prod::SqliteCredentialLookup>;
 /// Production OIDC route state.
 pub type ProdOidcRoutes = OidcRouteState<
     SqliteFederatedStore,
@@ -304,7 +300,7 @@ impl AuthSetup {
             lastfm: Arc::new(auth.lastfm.clone()),
             recovery: Arc::new(auth.recovery.clone()),
             avatars: Arc::new(auth.avatars.clone()),
-            passwords: Arc::new(auth.hasher.clone()),
+            passwords: auth.passwords.clone(),
             screen: Arc::new(HibpScreen::new(Arc::new(PwnedPasswordsHttp {
                 client: http.clone(),
                 range_url: upstreams.pwned_passwords.clone(),
@@ -325,7 +321,7 @@ impl AuthSetup {
         let stated = StatedAddresses::new(config_store.live());
         let native = NativeAuthState::new(
             auth.sessions.clone(),
-            auth.hasher.clone(),
+            auth.passwords.clone(),
             auth.credentials.clone(),
             users.clone(),
             base_path,

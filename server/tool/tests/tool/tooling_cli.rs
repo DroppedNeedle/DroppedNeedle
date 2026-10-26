@@ -863,9 +863,7 @@ async fn reset_key_clears_every_secret_of_a_lost_key() {
 #[tokio::test]
 async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     use crate::common::auth::AuthRig;
-    use droppedneedle_auth::prod::{
-        Argon2idHasher, AuthDb, SqliteCredentialLookup, SqliteSessionStore,
-    };
+    use droppedneedle_auth::prod::{AuthDb, Passwords, SqliteCredentialLookup, SqliteSessionStore};
     use droppedneedle_auth::session::login::{
         LoginContext, LoginRequest, LoginService, TransportParam,
     };
@@ -987,7 +985,6 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
         runtime.db(),
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
-    let hasher = Argon2idHasher::new();
     // The rig's settings live apart from the imported ones, which are
     // sealed with the server's own key.
     let rig_settings = crate::common::ScratchDir::new("cli-rig-settings");
@@ -1019,7 +1016,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
 
     let login = LoginService::new(
         SqliteSessionStore::new(&auth_db),
-        hasher.clone(),
+        Passwords::new(),
         SqliteCredentialLookup::new(&auth_db),
     );
     let sign_in = || {

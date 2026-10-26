@@ -12,13 +12,15 @@
 //!   The handoff itself renders in the route layer
 //!   ([`crate::routes::login_handoff`]).
 //! - Password hashing runs on the blocking pool, never on an async worker.
+//! - The session row, a rehash of a stored hash weaker than the pin and
+//!   `last_login_at` are written in one transaction, and only while the
+//!   stored credential is still the one the password was checked against
+//!   ([`SqliteSessionStore::insert_login`]). If it changed in between, the
+//!   login checks the password once more against the current row; a second
+//!   change in that window answers busy. A session is never stored for a
+//!   credential the login did not verify.
 //! - A store outage is [`LoginError::Unavailable`], never a failed login. A
 //!   store too busy to answer in time is [`LoginError::Busy`], never either.
-//!
-//! Password hashing seam: production wires bcrypt verification for imported
-//! rows with opportunistic Argon2id rehash on success, rows tagged
-//! `bcrypt | argon2id`. This module defines the `PasswordVerifier` port;
-//! [`crate::passwords`] holds the production verifier.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -26,9 +28,11 @@ use thiserror::Error;
 
 use super::{
     extract::Transport,
-    store::{SessionKind, SessionRecord, SessionStore, SessionStoreError},
+    store::{SessionKind, SessionRecord, SessionStoreError},
     tokens,
 };
+use crate::passwords::{Passwords, StoredPassword, Verdict};
+use crate::sqlite::{LoginWrite, SqliteSessionStore};
 
 /// Login transport: cookie (browser default) or Bearer (devices and scripts).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -96,8 +100,8 @@ pub struct LocalCredential {
     pub user_id: String,
     /// Display name.
     pub display_name: String,
-    /// Tagged stored hash (`scheme + payload`; the verifier interprets it).
-    pub stored_hash: String,
+    /// The stored scheme tag and hash, as read.
+    pub password: StoredPassword,
 }
 
 /// User-lookup port. Production reads `auth_users` + the `local` provider row.
@@ -110,16 +114,6 @@ pub trait CredentialLookup: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<Option<LocalCredential>, LoginError>> + Send;
 }
 
-/// Password-hash port. Production verifies bcrypt/argon2id by scheme tag and
-/// rehashes legacy rows on success; the dummy path runs the same
-/// cost class so unknown users cost one verify, exactly like wrong passwords.
-pub trait PasswordVerifier: Clone + Send + Sync + 'static {
-    /// Verify a candidate against the tagged stored hash.
-    fn verify(&self, candidate: &str, stored: &str) -> bool;
-    /// Burn one verify-equivalent against a fixed dummy hash (unknown user).
-    fn dummy_verify(&self);
-}
-
 /// `Cache-Control` value on every login/token-mint response.
 pub const NO_STORE: &str = "no-store";
 
@@ -128,23 +122,25 @@ pub const INVALID_CREDENTIALS: &str = "Invalid username or password";
 
 /// Local-login service: lookup, verify-or-dummy, mint, hand off.
 #[derive(Debug, Clone)]
-pub struct LoginService<S, V, C> {
-    sessions: S,
-    verifier: V,
+pub struct LoginService<C> {
+    sessions: SqliteSessionStore,
+    passwords: Passwords,
     users: C,
 }
 
-impl<S, V, C> LoginService<S, V, C>
+/// Login attempts before a credential that keeps changing answers busy:
+/// the first, and one re-check after a change.
+const LOGIN_ATTEMPTS: usize = 2;
+
+impl<C> LoginService<C>
 where
-    S: SessionStore,
-    V: PasswordVerifier,
     C: CredentialLookup,
 {
-    /// Wire the service from its ports.
-    pub fn new(sessions: S, verifier: V, users: C) -> Self {
+    /// Wire the service from its parts.
+    pub fn new(sessions: SqliteSessionStore, passwords: Passwords, users: C) -> Self {
         Self {
             sessions,
-            verifier,
+            passwords,
             users,
         }
     }
@@ -157,50 +153,54 @@ where
         ctx: LoginContext,
     ) -> Result<LoginSuccess, LoginError> {
         let username_lc = request.username.trim().to_lowercase();
-        let credential = self.users.local_user(&username_lc).await?;
-        let verifier = self.verifier.clone();
-        let stored = credential.as_ref().map(|found| found.stored_hash.clone());
-        let password = request.password;
-        let verified = tokio::task::spawn_blocking(move || match stored {
-            Some(stored) => verifier.verify(&password, &stored),
-            None => {
-                verifier.dummy_verify();
-                false
-            }
-        })
-        .await
-        .map_err(|_| LoginError::Unavailable)?;
-        let Some(credential) = credential.filter(|_| verified) else {
-            return Err(LoginError::InvalidCredentials);
-        };
         let raw_token = tokens::mint_token().map_err(|_| LoginError::Unavailable)?;
-        let record = SessionRecord {
-            id: uuid_simple(&raw_token, ctx.now_unix),
-            user_id: credential.user_id.clone(),
-            token_hash: tokens::hash_token(&raw_token),
-            kind: SessionKind::Standard,
-            label: None,
-            issued_at: ctx.now_unix,
-            expires_at: tokens::expires_at(ctx.now_unix),
-            last_seen_at: ctx.now_unix,
-            revoked: false,
-            user_agent: ctx.user_agent,
-        };
-        self.sessions
-            .insert(record)
-            .await
-            .map_err(|error| match error {
-                SessionStoreError::Busy => LoginError::Busy,
-                SessionStoreError::Unavailable | SessionStoreError::Duplicate => {
-                    LoginError::Unavailable
+        for _ in 0..LOGIN_ATTEMPTS {
+            let credential = self.users.local_user(&username_lc).await?;
+            let passwords = self.passwords.clone();
+            let stored = credential.as_ref().map(|found| found.password.clone());
+            let password = request.password.clone();
+            let verdict =
+                tokio::task::spawn_blocking(move || passwords.verify(&password, stored.as_ref()))
+                    .await
+                    .map_err(|_| LoginError::Unavailable)?;
+            let (Some(credential), Verdict::Verified { rehash }) = (credential, verdict) else {
+                return Err(LoginError::InvalidCredentials);
+            };
+            let record = SessionRecord {
+                id: uuid_simple(&raw_token, ctx.now_unix),
+                user_id: credential.user_id.clone(),
+                token_hash: tokens::hash_token(&raw_token),
+                kind: SessionKind::Standard,
+                label: None,
+                issued_at: ctx.now_unix,
+                expires_at: tokens::expires_at(ctx.now_unix),
+                last_seen_at: ctx.now_unix,
+                revoked: false,
+                user_agent: ctx.user_agent.clone(),
+            };
+            let written = self
+                .sessions
+                .insert_login(record, &credential.password, rehash)
+                .await
+                .map_err(|error| match error {
+                    SessionStoreError::Busy => LoginError::Busy,
+                    SessionStoreError::Unavailable | SessionStoreError::Duplicate => {
+                        LoginError::Unavailable
+                    }
+                })?;
+            match written {
+                LoginWrite::Stored => {
+                    return Ok(LoginSuccess {
+                        user_id: credential.user_id,
+                        display_name: credential.display_name,
+                        transport: request.transport.into(),
+                        raw_token,
+                    });
                 }
-            })?;
-        Ok(LoginSuccess {
-            user_id: credential.user_id,
-            display_name: credential.display_name,
-            transport: request.transport.into(),
-            raw_token,
-        })
+                LoginWrite::CredentialChanged => continue,
+            }
+        }
+        Err(LoginError::Busy)
     }
 }
 

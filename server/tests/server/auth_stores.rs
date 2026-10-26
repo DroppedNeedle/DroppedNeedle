@@ -7,20 +7,20 @@
 //! the first federated admin) plus the sweeps that keep auth tables small.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
+use axum::http::StatusCode;
 use droppedneedle_auth::compat_auth::subsonic::md5_hex;
 use droppedneedle_auth::federated::oidc::OidcStateStore as _;
-use droppedneedle_auth::federated::password_import::PasswordHasher as _;
 use droppedneedle_auth::federated::users::{
     FederatedProfile, FederatedUserStore as _, find_or_create_federated_user,
 };
-use droppedneedle_auth::prod::{Argon2idHasher, OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST};
-use droppedneedle_auth::session::login::{
-    LoginContext, LoginError, LoginRequest, LoginService, PasswordVerifier, TransportParam,
+use droppedneedle_auth::prod::{
+    OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, Passwords, StoredPassword, Verdict, to_iso,
 };
 use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
 use droppedneedle_auth::session::tokens;
+use droppedneedle_auth::sqlite::{AuthDb, LoginWrite, SqliteUserStore};
 use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
 use droppedneedle_auth::users::models::{
     AppPasswordRecord, LocalCredential, PasswordReset, UserRecord,
@@ -30,11 +30,13 @@ use droppedneedle_auth::users::services::{self, verify_app_password};
 use droppedneedle_auth::users::stores::{
     AppPasswordStore as _, BoxFuture, RoleChange, SessionManager as _, UserDeletion, UserStore as _,
 };
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use rusqlite::params;
 
+use crate::auth_e2e::{E2e, call};
 use crate::common::auth::{AuthRig, password_hash, test_admin};
 
 /// Fixed test clock: 2023-11-14T22:13:20Z.
@@ -105,18 +107,36 @@ fn argon2id_params_match_the_owasp_pin() {
         (OWASP_M_COST_KIB, OWASP_T_COST, OWASP_P_COST),
         (19456, 2, 1)
     );
-    let hasher = Argon2idHasher::new();
-    let hash = hasher.hash_argon2id(LEGACY_PASSWORD);
+    let passwords = Passwords::new();
+    let hash = passwords.hash(LEGACY_PASSWORD).unwrap();
     assert!(
         hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
         "{hash}"
     );
-    assert_ne!(hash, hasher.hash_argon2id(LEGACY_PASSWORD), "salted");
-    assert!(hasher.verify_argon2id(LEGACY_PASSWORD, &hash));
+    assert_ne!(hash, passwords.hash(LEGACY_PASSWORD).unwrap(), "salted");
+    let stored = |scheme: &str, hash: &str| StoredPassword {
+        scheme: scheme.to_owned(),
+        hash: hash.to_owned(),
+    };
+    assert_eq!(
+        passwords.verify(LEGACY_PASSWORD, Some(&stored("argon2id", &hash))),
+        Verdict::Verified { rehash: None }
+    );
     // Scheme dispatch reads the tag only; untagged or unknown rows fail.
-    assert!(hasher.verify(LEGACY_PASSWORD, &format!("bcrypt${LEGACY_BCRYPT}")));
-    for stored in [LEGACY_BCRYPT.to_owned(), hash, String::new()] {
-        assert!(!hasher.verify(LEGACY_PASSWORD, &stored), "{stored}");
+    assert!(matches!(
+        passwords.verify(LEGACY_PASSWORD, Some(&stored("bcrypt", LEGACY_BCRYPT))),
+        Verdict::Verified { rehash: Some(_) }
+    ));
+    for (scheme, hash) in [
+        ("argon2id", LEGACY_BCRYPT),
+        ("bcrypt", hash.as_str()),
+        ("", ""),
+    ] {
+        assert_eq!(
+            passwords.verify(LEGACY_PASSWORD, Some(&stored(scheme, hash))),
+            Verdict::Wrong,
+            "{scheme} {hash}"
+        );
     }
 }
 
@@ -130,114 +150,156 @@ fn md5_keeps_rfc_and_v2_spot_values() {
     );
 }
 
-#[tokio::test]
-async fn v2_bcrypt_rows_log_in_and_rehash_to_argon2id() {
-    let fx = fixture("import").await;
-    fx.auth
-        .users
+/// A deployment with one local user whose `provider_data` is `local`.
+async fn deployment_with(tag: &str, local: String) -> E2e {
+    let e2e = E2e::open(tag).await;
+    let auth_db = AuthDb::new(e2e.db(), Arc::new(SystemClock));
+    SqliteUserStore::new(&auth_db)
         .insert(user_row("user-1", "ada", Role::User))
         .await
         .unwrap();
-    // v2 verbatim shape: {"password_hash": ...} with no scheme tag.
-    let legacy = serde_json::json!({ "password_hash": LEGACY_BCRYPT }).to_string();
-    fx.runtime()
-        .db()
+    e2e.db()
         .write(Lane::Foreground, "test.seed", move |tx| {
             tx.execute(
                 "INSERT INTO auth_providers (id, user_id, provider, provider_uid, provider_data, \
                  created_at) VALUES ('cred-1', 'user-1', 'local', 'ada', ?, '2023-11-14T22:13:20+00:00')",
-                params![legacy],
+                params![local],
             )?;
             Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .unwrap();
+    e2e
+}
 
-    let login = LoginService::new(
-        fx.auth.sessions.clone(),
-        fx.auth.hasher.clone(),
-        fx.auth.credentials.clone(),
+/// Sign in as `ada` through the login route; the answer's status.
+async fn sign_in(e2e: &E2e, password: &str) -> StatusCode {
+    let (status, _, _) = call(
+        e2e.router(),
+        "POST",
+        "/api/v3/auth/login",
+        &[],
+        Some(serde_json::json!({
+            "username": "ADA", "password": password, "transport": "bearer",
+        })),
+    )
+    .await;
+    status
+}
+
+/// `ada`'s local `provider_data` and `last_login_at`.
+async fn ada_row(e2e: &E2e) -> (serde_json::Value, Option<String>) {
+    let data: String = sqlx::query_scalar(
+        "SELECT provider_data FROM auth_providers WHERE user_id = 'user-1' AND provider = 'local'",
+    )
+    .fetch_one(e2e.pool())
+    .await
+    .unwrap();
+    let last_login: Option<String> =
+        sqlx::query_scalar("SELECT last_login_at FROM auth_users WHERE id = 'user-1'")
+            .fetch_one(e2e.pool())
+            .await
+            .unwrap();
+    (serde_json::from_str(&data).unwrap(), last_login)
+}
+
+#[tokio::test]
+async fn v2_bcrypt_rows_log_in_and_rehash_to_argon2id() {
+    // v2 verbatim shape: {"password_hash": ...} with no scheme tag.
+    let legacy = serde_json::json!({ "password_hash": LEGACY_BCRYPT }).to_string();
+    let e2e = deployment_with("bcrypt-login", legacy).await;
+    assert_eq!(
+        sign_in(&e2e, "wrong password here!").await,
+        StatusCode::UNAUTHORIZED
     );
-    let success = login
-        .login(
-            LoginRequest {
-                username: "ADA".to_owned(),
-                password: LEGACY_PASSWORD.to_owned(),
-                transport: TransportParam::Bearer,
-            },
-            LoginContext {
-                user_agent: None,
-                now_unix: TEST_NOW,
-            },
+    assert_eq!(ada_row(&e2e).await.0["password_hash"], LEGACY_BCRYPT);
+
+    assert_eq!(sign_in(&e2e, LEGACY_PASSWORD).await, StatusCode::OK);
+    let (stored, last_login) = ada_row(&e2e).await;
+    assert_eq!(
+        stored["scheme"], "argon2id",
+        "the login persisted the upgrade"
+    );
+    let hash = stored["password_hash"].as_str().unwrap();
+    assert!(
+        hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+        "{hash}"
+    );
+    assert!(last_login.is_some(), "the login stamped last_login_at");
+    assert_eq!(sign_in(&e2e, LEGACY_PASSWORD).await, StatusCode::OK);
+}
+
+/// The login write stores its session, rehash and `last_login_at` only
+/// while the credential is still the one the login verified. A password
+/// changed between the verify and the write keeps its new hash and gets
+/// no session for the old one.
+#[tokio::test]
+async fn login_write_needs_the_credential_it_verified() {
+    let fx = fixture("login-write").await;
+    let user = fx.seed_user("ada", Role::User).await;
+    let verified = StoredPassword {
+        scheme: "argon2id".to_owned(),
+        hash: password_hash().to_owned(),
+    };
+    let changed = Passwords::new().hash("a newer passphrase").unwrap();
+    let current = StoredPassword {
+        scheme: "argon2id".to_owned(),
+        hash: changed.clone(),
+    };
+    assert!(
+        fx.auth
+            .users
+            .change_local_hash(&user.id, password_hash(), "argon2id", &changed, "none")
+            .await
+            .unwrap()
+    );
+    let state = || async {
+        let tokens = count(
+            &fx,
+            "SELECT COUNT(*) FROM auth_tokens WHERE user_id = 'user-ada'",
+        )
+        .await;
+        let stored = fx
+            .auth
+            .users
+            .local_credential(&user.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let last_login: Option<String> =
+            sqlx::query_scalar("SELECT last_login_at FROM auth_users WHERE id = 'user-ada'")
+                .fetch_one(fx.runtime().db().sqlx())
+                .await
+                .unwrap();
+        (tokens, stored.hash, last_login)
+    };
+
+    let stale = fx
+        .auth
+        .sessions
+        .insert_login(
+            session_row("stale", &user.id, "stale-token", TEST_NOW),
+            &verified,
+            Some("a rehash of the old password".to_owned()),
         )
         .await
         .unwrap();
-    assert_eq!(success.user_id, "user-1");
-    let stored = fx
+    assert_eq!(stale, LoginWrite::CredentialChanged);
+    assert_eq!(state().await, (0, changed.clone(), None));
+
+    let rehash = Passwords::new().hash("a newer passphrase").unwrap();
+    let written = fx
         .auth
-        .users
-        .local_credential("user-1")
+        .sessions
+        .insert_login(
+            session_row("fresh", &user.id, "fresh-token", TEST_NOW),
+            &current,
+            Some(rehash.clone()),
+        )
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(stored.scheme, "argon2id", "the login persisted the upgrade");
-    assert!(Argon2idHasher::new().verify_argon2id(LEGACY_PASSWORD, &stored.hash));
-}
-
-/// The production verifier, counting what each login cost it.
-#[derive(Clone)]
-struct CountingVerifier {
-    hasher: Argon2idHasher,
-    verifies: Arc<AtomicUsize>,
-    dummies: Arc<AtomicUsize>,
-}
-
-impl PasswordVerifier for CountingVerifier {
-    fn verify(&self, candidate: &str, stored: &str) -> bool {
-        self.verifies.fetch_add(1, Ordering::SeqCst);
-        PasswordVerifier::verify(&self.hasher, candidate, stored)
-    }
-
-    fn dummy_verify(&self) {
-        self.dummies.fetch_add(1, Ordering::SeqCst);
-        PasswordVerifier::dummy_verify(&self.hasher);
-    }
-}
-
-/// An unknown user costs one dummy verify and fails exactly as a wrong
-/// password does, so neither the answer nor its cost names an account.
-#[tokio::test]
-async fn unknown_user_costs_one_dummy_and_matches_bad_password() {
-    let fx = fixture("dummy-verify").await;
-    fx.seed_user("ada", Role::User).await;
-    let verifier = CountingVerifier {
-        hasher: fx.auth.hasher.clone(),
-        verifies: Arc::default(),
-        dummies: Arc::default(),
-    };
-    let login = LoginService::new(
-        fx.auth.sessions.clone(),
-        verifier.clone(),
-        fx.auth.credentials.clone(),
-    );
-    let mut failures = Vec::new();
-    for (username, password) in [("nobody", "whatever"), ("ada", "wrong")] {
-        let request = LoginRequest {
-            username: username.to_owned(),
-            password: password.to_owned(),
-            transport: TransportParam::Cookie,
-        };
-        let context = LoginContext {
-            user_agent: None,
-            now_unix: TEST_NOW,
-        };
-        failures.push(login.login(request, context).await);
-    }
-    for failure in failures {
-        assert!(matches!(failure, Err(LoginError::InvalidCredentials)));
-    }
-    assert_eq!(verifier.dummies.load(Ordering::SeqCst), 1);
-    assert_eq!(verifier.verifies.load(Ordering::SeqCst), 1);
+    assert_eq!(written, LoginWrite::Stored);
+    assert_eq!(state().await, (1, rehash, Some(to_iso(TEST_NOW))));
 }
 
 #[tokio::test]

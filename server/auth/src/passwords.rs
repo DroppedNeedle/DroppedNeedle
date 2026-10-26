@@ -1,8 +1,8 @@
-//! Production password hashing: Argon2id native, bcrypt legacy, dummy unknown.
+//! Password hashing: Argon2id native, bcrypt legacy, dummy unknown.
 //!
 //! Scheme dispatch is always on the explicit tag, never by sniffing: rows carry
-//! `bcrypt` (v2 imports, verified then opportunistically rehashed) or `argon2id`
-//! (every v3 hash). Unknown users cost one dummy verify so bad-user and
+//! `bcrypt` (v2 imports) or `argon2id` (every v3 hash). A missing, unreadable
+//! or unknown-scheme credential costs one dummy verify, so bad-user and
 //! bad-password stay indistinguishable by status, body, and hash work.
 //!
 //! Argon2id parameters are pinned to the OWASP Password Storage Cheat Sheet
@@ -10,15 +10,20 @@
 //! iteration count of 2, and 1 lane of parallelism (`m=19456, t=2, p=1`),
 //! Argon2id version 1.3. The [`OWASP_*`] constants are the pin; the params test
 //! fails if the live parameters ever drift from them.
+//!
+//! A verify that succeeds against a hash weaker than the pin (bcrypt, or an
+//! Argon2 hash of another algorithm, an older version, or less memory or
+//! fewer iterations) returns a fresh hash at the pin, which the login writes
+//! in the same transaction as its session. A hash at or above the pin is
+//! never rehashed, so a login never weakens a stored hash.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use argon2::password_hash::SaltString;
 use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordHasher as _, PasswordVerifier as _};
+use thiserror::Error;
 
-use super::federated::password_import::{HashScheme, PasswordHasher};
-use super::session::login::PasswordVerifier as SessionPasswordVerifier;
-use super::users::stores::{FalliblePasswordHasher, HashError};
+use super::federated::password_import::HashScheme;
 
 /// OWASP minimum memory cost in KiB (19 MiB).
 pub const OWASP_M_COST_KIB: u32 = 19 * 1024;
@@ -27,10 +32,10 @@ pub const OWASP_T_COST: u32 = 2;
 /// OWASP minimum parallelism.
 pub const OWASP_P_COST: u32 = 1;
 
-/// Fixed dummy password. It never authenticates; [`Argon2idHasher::dummy_verify`]
-/// burns one native verify against [`DUMMY_HASH`] so unknown users cost what a
-/// current-scheme user costs. Legacy bcrypt rows cost a different (older) amount;
-/// that gap closes itself as logins rehash them to Argon2id.
+/// Fixed dummy password. It never authenticates; the dummy verify burns one
+/// native verify against [`DUMMY_HASH`] so a missing credential costs what a
+/// current-scheme user costs. Legacy bcrypt rows cost a different (older)
+/// amount; that gap closes itself as logins rehash them to Argon2id.
 const DUMMY_PASSWORD: &str = "droppedneedle-dummy-verify";
 
 /// Fixed dummy hash: Argon2id(m=19456, t=2, p=1) of [`DUMMY_PASSWORD`] under
@@ -38,89 +43,63 @@ const DUMMY_PASSWORD: &str = "droppedneedle-dummy-verify";
 /// `dummy_vector_regenerates`); safe to embed because it authenticates nothing.
 const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$ZG4tZHVtbXktc2FsdC0wMQ$BTpixShEELs7xt5OldVvrReW8gSKKFDGSZle7l8LuaI";
 
-/// A bcrypt success that still needs its Argon2id row persisted. The
-/// session insert drains the queue and applies the entry whose old hash
-/// matches the logging-in user's current row.
+/// Every way Argon2id hashing can fail. The message goes to the log only.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum HashError {
+    /// The OS random source failed; no salt, no hash, no fallback.
+    #[error("random source unavailable")]
+    RngUnavailable,
+    /// Salt encoding or the Argon2id run itself failed.
+    #[error("password hash failed")]
+    HashFailed,
+}
+
+/// A local credential as its row stores it: the scheme tag and the hash.
+/// The tag is kept as read, so an unknown one still reaches [`Passwords::verify`]
+/// and fails closed there.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingRehash {
-    /// The verified legacy bcrypt hash (match key, never persisted as new).
-    pub old_hash: String,
-    /// The replacement Argon2id hash, computed from the login password.
-    pub new_hash: String,
+pub struct StoredPassword {
+    /// Scheme tag (`bcrypt` or `argon2id`; anything else verifies as wrong).
+    pub scheme: String,
+    /// The stored hash string.
+    pub hash: String,
 }
 
-/// Sync bridge from the bool-only session verifier to the async login
-/// insert. `verify` is sync and store-blind, so a bcrypt success pushes the
-/// computed upgrade here and the post-login session insert persists it.
-/// Clones share one queue. Bounded: the oldest entry evicts past the cap,
-/// so a failed insert never grows this without limit.
-#[derive(Debug, Clone, Default)]
-pub struct RehashQueue {
-    inner: Arc<Mutex<Vec<PendingRehash>>>,
+/// What a password check found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    /// Wrong password, or no usable credential (after a dummy verify).
+    Wrong,
+    /// The password matched. `rehash` is a fresh Argon2id hash at the pin
+    /// when the stored one is weaker, for the caller to write.
+    Verified {
+        /// Replacement hash, tagged `argon2id`, or `None` when the stored
+        /// hash is at or above the pin (or the new hash could not be made).
+        rehash: Option<String>,
+    },
 }
 
-/// Cap on queued upgrades (one per legacy login; drained on insert).
-const REHASH_QUEUE_CAP: usize = 64;
-
-impl RehashQueue {
-    /// Queue one upgrade, evicting the oldest past the cap.
-    pub fn push(&self, pending: PendingRehash) {
-        let mut guard = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        if guard.len() >= REHASH_QUEUE_CAP {
-            guard.remove(0);
-        }
-        guard.push(pending);
-    }
-
-    /// Take every queued upgrade, leaving the queue empty.
-    pub fn drain(&self) -> Vec<PendingRehash> {
-        let mut guard = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        std::mem::take(&mut *guard)
-    }
-
-    /// Return unconsumed upgrades (a failed insert re-queues everything it
-    /// drained, so the next login for that user retries).
-    pub fn requeue(&self, pending: Vec<PendingRehash>) {
-        if pending.is_empty() {
-            return;
-        }
-        let mut guard = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        guard.extend(pending);
-        while guard.len() > REHASH_QUEUE_CAP {
-            guard.remove(0);
-        }
-    }
-}
-
-/// Production hasher: real Argon2id and bcrypt primitives behind both
-/// ports (the federated [`PasswordHasher`] and the session [`SessionPasswordVerifier`]).
-/// Verification is fail-closed everywhere: malformed hashes, overlong
-/// passwords, and unknown scheme tags all verify as false.
+/// Hashes and verifies passwords. Synchronous by design: hashing is CPU
+/// work, and callers run it on the blocking pool. Verification fails
+/// closed: malformed hashes, overlong passwords and unknown scheme tags all
+/// verify as wrong.
 #[derive(Clone)]
-pub struct Argon2idHasher {
+pub struct Passwords {
     argon2: Arc<Argon2<'static>>,
-    rehash: RehashQueue,
+    #[cfg(test)]
+    verifies: Arc<std::sync::atomic::AtomicUsize>,
 }
 
-impl std::fmt::Debug for Argon2idHasher {
+impl std::fmt::Debug for Passwords {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Argon2idHasher(..)")
+        f.write_str("Passwords(..)")
     }
 }
 
-impl Argon2idHasher {
-    /// Build the hasher with the pinned OWASP parameters. Construction is
-    /// infallible: the pinned constants are valid, and the crate default
-    /// (identical OWASP values in argon2 0.5) is the unreachable fallback.
+impl Passwords {
+    /// Build with the pinned OWASP parameters. Construction is infallible:
+    /// the pinned constants are valid, and the crate default (identical
+    /// OWASP values in argon2 0.5) is the unreachable fallback.
     pub fn new() -> Self {
         let params =
             Params::new(OWASP_M_COST_KIB, OWASP_T_COST, OWASP_P_COST, None).unwrap_or_default();
@@ -130,21 +109,14 @@ impl Argon2idHasher {
                 argon2::Version::V0x13,
                 params,
             )),
-            rehash: RehashQueue::default(),
+            #[cfg(test)]
+            verifies: Arc::default(),
         }
     }
 
-    /// The rehash queue this hasher pushes bcrypt upgrades to. Production
-    /// wiring hands the same queue to the session store, whose login insert
-    /// drains it; an unshared queue simply never drains.
-    pub fn rehash_queue(&self) -> &RehashQueue {
-        &self.rehash
-    }
-
-    /// Hash a password with Argon2id, or fail. This is the only hashing
-    /// entry point production code may use; the federated port method below
-    /// exists only because that trait is infallible.
-    pub fn try_hash_argon2id(&self, password: &str) -> Result<String, HashError> {
+    /// Hash a password with Argon2id at the pin, or fail. There is no
+    /// fallback value: a failed hash is never written.
+    pub fn hash(&self, password: &str) -> Result<String, HashError> {
         let mut salt_bytes = [0u8; 16];
         if getrandom::fill(&mut salt_bytes).is_err() {
             return Err(HashError::RngUnavailable);
@@ -157,175 +129,233 @@ impl Argon2idHasher {
             .map(|hash| hash.to_string())
             .map_err(|_| HashError::HashFailed)
     }
+
+    /// Check `password` against a stored credential. `None` (unknown user,
+    /// no local password, unreadable row) runs one dummy verify and answers
+    /// [`Verdict::Wrong`], as does an unknown scheme tag or a malformed hash.
+    /// Every call runs exactly one verify, real or dummy.
+    pub fn verify(&self, password: &str, stored: Option<&StoredPassword>) -> Verdict {
+        let Some(stored) = stored else {
+            self.dummy_verify();
+            return Verdict::Wrong;
+        };
+        match HashScheme::from_tag(&stored.scheme) {
+            Some(HashScheme::Bcrypt) => {
+                self.count_verify();
+                match bcrypt::verify(password, &stored.hash) {
+                    Ok(true) => Verdict::Verified {
+                        rehash: self.rehash(password),
+                    },
+                    Ok(false) => Verdict::Wrong,
+                    // A malformed bcrypt hash fails before any work; burn
+                    // the dummy so it costs what a wrong password costs.
+                    Err(_) => {
+                        self.dummy_work();
+                        Verdict::Wrong
+                    }
+                }
+            }
+            Some(HashScheme::Argon2id) => {
+                let Ok(parsed) = PasswordHash::new(&stored.hash) else {
+                    self.dummy_verify();
+                    return Verdict::Wrong;
+                };
+                self.count_verify();
+                if self
+                    .argon2
+                    .verify_password(password.as_bytes(), &parsed)
+                    .is_err()
+                {
+                    return Verdict::Wrong;
+                }
+                Verdict::Verified {
+                    rehash: if below_pin(&parsed) {
+                        self.rehash(password)
+                    } else {
+                        None
+                    },
+                }
+            }
+            None => {
+                self.dummy_verify();
+                Verdict::Wrong
+            }
+        }
+    }
+
+    /// A fresh hash for a verified password. A failure here never fails the
+    /// login that just succeeded: it logs and the next login tries again.
+    fn rehash(&self, password: &str) -> Option<String> {
+        match self.hash(password) {
+            Ok(hash) => Some(hash),
+            Err(error) => {
+                tracing::warn!(%error, "login rehash skipped: hash failed");
+                None
+            }
+        }
+    }
+
+    /// One verify against the fixed dummy hash, counted as one verify.
+    fn dummy_verify(&self) {
+        self.count_verify();
+        self.dummy_work();
+    }
+
+    /// The dummy's hash work: the same code path as a real native verify,
+    /// so the cost matches by construction. The result is discarded.
+    fn dummy_work(&self) {
+        if let Ok(parsed) = PasswordHash::new(DUMMY_HASH) {
+            let _ = self
+                .argon2
+                .verify_password(DUMMY_PASSWORD.as_bytes(), &parsed);
+        }
+    }
+
+    #[cfg(test)]
+    fn count_verify(&self) {
+        self.verifies
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(not(test))]
+    fn count_verify(&self) {}
 }
 
-impl Default for Argon2idHasher {
+impl Default for Passwords {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PasswordHasher for Argon2idHasher {
-    fn verify_bcrypt(&self, password: &str, hash: &str) -> bool {
-        bcrypt::verify(password, hash).unwrap_or(false)
+/// True when an Argon2 hash is weaker than the pin: another algorithm, a
+/// version below 0x13, or less memory or fewer iterations. Parallelism is
+/// not compared. Parameters that cannot be read count as weaker.
+fn below_pin(hash: &PasswordHash<'_>) -> bool {
+    if hash.algorithm != argon2::ARGON2ID_IDENT {
+        return true;
     }
-
-    fn verify_argon2id(&self, password: &str, hash: &str) -> bool {
-        let Ok(parsed) = PasswordHash::new(hash) else {
-            return false;
-        };
-        self.argon2
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok()
+    if hash
+        .version
+        .is_none_or(|version| version < argon2::Version::V0x13 as u32)
+    {
+        return true;
     }
-
-    /// Legacy infallible entry point, kept only because the federated
-    /// port requires it. Production code must use `try_hash_argon2id`
-    /// instead: on failure this logs and returns an empty string that no
-    /// caller may persist.
-    fn hash_argon2id(&self, password: &str) -> String {
-        self.try_hash_argon2id(password).unwrap_or_else(|error| {
-            tracing::error!(%error, "password hash failed; returning an unpersistable empty hash");
-            String::new()
-        })
-    }
-
-    fn dummy_verify(&self) {
-        // Same code path as a real native verify, so the cost matches by
-        // construction. The result is meaningless and discarded.
-        let _ = self.verify_argon2id(DUMMY_PASSWORD, DUMMY_HASH);
-    }
-}
-
-impl FalliblePasswordHasher for Argon2idHasher {
-    fn try_hash_argon2id(&self, password: &str) -> Result<String, HashError> {
-        Argon2idHasher::try_hash_argon2id(self, password)
-    }
-}
-
-impl SessionPasswordVerifier for Argon2idHasher {
-    fn verify(&self, candidate: &str, stored: &str) -> bool {
-        let Some((scheme, hash)) = stored.split_once('$') else {
-            PasswordHasher::dummy_verify(self);
-            return false;
-        };
-        match HashScheme::from_tag(scheme) {
-            Some(HashScheme::Bcrypt) => {
-                if !self.verify_bcrypt(candidate, hash) {
-                    return false;
-                }
-                // Opportunistic rehash: the bool-only port cannot return the
-                // upgrade, so queue it for the post-login session insert. A
-                // hashing failure here must never fail the login that just
-                // succeeded; it logs and retries on the next login.
-                match self.try_hash_argon2id(candidate) {
-                    Ok(new_hash) => self.rehash.push(PendingRehash {
-                        old_hash: hash.to_owned(),
-                        new_hash,
-                    }),
-                    Err(error) => tracing::error!(%error, "login rehash skipped: hash failed"),
-                }
-                true
-            }
-            Some(HashScheme::Argon2id) => self.verify_argon2id(candidate, hash),
-            None => {
-                PasswordHasher::dummy_verify(self);
-                false
-            }
-        }
-    }
-
-    fn dummy_verify(&self) {
-        PasswordHasher::dummy_verify(self);
+    match Params::try_from(hash) {
+        Ok(params) => params.m_cost() < OWASP_M_COST_KIB || params.t_cost() < OWASP_T_COST,
+        Err(_) => true,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::federated::password_import::{
-        LocalCredential, PasswordCheck, verify_and_maybe_rehash,
-    };
     use super::*;
+
+    const PASSWORD: &str = "correct horse battery staple";
+
+    fn stored(scheme: &str, hash: &str) -> StoredPassword {
+        StoredPassword {
+            scheme: scheme.to_owned(),
+            hash: hash.to_owned(),
+        }
+    }
+
+    fn verifies(passwords: &Passwords) -> usize {
+        passwords.verifies.load(std::sync::atomic::Ordering::SeqCst)
+    }
 
     #[test]
     fn params_match_the_owasp_pin() {
-        let hasher = Argon2idHasher::new();
-        let first = hasher.hash_argon2id("correct horse battery staple");
+        let passwords = Passwords::new();
+        let first = passwords.hash(PASSWORD).unwrap();
         assert!(
             first.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
             "{first}"
         );
         // Random salt: two hashes of one password differ, and both verify.
-        let second = hasher.hash_argon2id("correct horse battery staple");
+        let second = passwords.hash(PASSWORD).unwrap();
         assert_ne!(first, second);
-        assert!(hasher.verify_argon2id("correct horse battery staple", &first));
-        assert!(hasher.verify_argon2id("correct horse battery staple", &second));
-        assert!(!hasher.verify_argon2id("wrong password here!", &first));
-        assert!(!hasher.verify_argon2id("correct horse battery staple", "not-a-hash"));
+        for hash in [&first, &second] {
+            assert_eq!(
+                passwords.verify(PASSWORD, Some(&stored("argon2id", hash))),
+                Verdict::Verified { rehash: None },
+                "a hash at the pin is never rehashed"
+            );
+        }
+        assert_eq!(
+            passwords.verify("wrong password here!", Some(&stored("argon2id", &first))),
+            Verdict::Wrong
+        );
     }
 
     #[test]
     fn bcrypt_rows_verify_then_rehash_to_argon2id() {
-        let hasher = Argon2idHasher::new();
-        let legacy = bcrypt::hash("correct horse battery staple", 4).unwrap();
-        assert!(hasher.verify_bcrypt("correct horse battery staple", &legacy));
-        assert!(!hasher.verify_bcrypt("wrong password here!", &legacy));
-        let stored = LocalCredential::imported_bcrypt(legacy);
-        let PasswordCheck::Valid { upgraded } =
-            verify_and_maybe_rehash(&hasher, "correct horse battery staple", Some(&stored))
+        let passwords = Passwords::new();
+        let legacy = stored("bcrypt", &bcrypt::hash(PASSWORD, 4).unwrap());
+        let Verdict::Verified {
+            rehash: Some(upgraded),
+        } = passwords.verify(PASSWORD, Some(&legacy))
         else {
-            panic!("legacy row must verify");
+            panic!("a bcrypt success must rehash");
         };
-        let upgraded = upgraded.expect("bcrypt success must rehash");
-        assert_eq!(upgraded.scheme, HashScheme::Argon2id);
-        assert!(hasher.verify_argon2id("correct horse battery staple", &upgraded.hash));
+        assert!(upgraded.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
         assert_eq!(
-            verify_and_maybe_rehash(&hasher, "correct horse battery staple", None),
-            PasswordCheck::Invalid
+            passwords.verify(PASSWORD, Some(&stored("argon2id", &upgraded))),
+            Verdict::Verified { rehash: None }
+        );
+        assert_eq!(
+            passwords.verify("wrong password here!", Some(&legacy)),
+            Verdict::Wrong
         );
     }
 
     #[test]
     fn scheme_dispatch_never_sniffs() {
-        let hasher = Argon2idHasher::new();
-        let bcrypt_hash = bcrypt::hash("correct horse battery staple", 4).unwrap();
-        let argon_hash = hasher.hash_argon2id("correct horse battery staple");
-        assert!(SessionPasswordVerifier::verify(
-            &hasher,
-            "correct horse battery staple",
-            &format!("bcrypt${bcrypt_hash}")
-        ));
-        assert!(SessionPasswordVerifier::verify(
-            &hasher,
-            "correct horse battery staple",
-            &format!("argon2id${argon_hash}")
-        ));
-        // Bare hashes (no tag), unknown tags, and garbage all fail closed
-        // after dummy work, exactly like a wrong password.
-        for stored in [
-            bcrypt_hash.clone(),
-            argon_hash.clone(),
-            format!("scrypt${argon_hash}"),
-            "garbage".to_owned(),
-            String::new(),
+        let passwords = Passwords::new();
+        let bcrypt_hash = bcrypt::hash(PASSWORD, 4).unwrap();
+        let argon_hash = passwords.hash(PASSWORD).unwrap();
+        // A hash under the other scheme's tag, an unknown tag, and garbage
+        // all fail closed, exactly like a wrong password.
+        for (scheme, hash) in [
+            ("argon2id", bcrypt_hash.as_str()),
+            ("bcrypt", argon_hash.as_str()),
+            ("scrypt", argon_hash.as_str()),
+            ("argon2id", "garbage"),
+            ("", ""),
         ] {
-            assert!(
-                !SessionPasswordVerifier::verify(&hasher, "correct horse battery staple", &stored),
-                "{stored}"
+            assert_eq!(
+                passwords.verify(PASSWORD, Some(&stored(scheme, hash))),
+                Verdict::Wrong,
+                "{scheme} {hash}"
             );
         }
-        assert!(!SessionPasswordVerifier::verify(
-            &hasher,
-            "wrong password here!",
-            &format!("bcrypt${bcrypt_hash}")
-        ));
+    }
+
+    /// No credential, a wrong password and an unknown scheme each cost
+    /// exactly one verify, so neither the answer nor its cost names an
+    /// account.
+    #[test]
+    fn every_failure_costs_exactly_one_verify() {
+        let argon_hash = Passwords::new().hash(PASSWORD).unwrap();
+        for credential in [
+            None,
+            Some(stored("argon2id", &argon_hash)),
+            Some(stored("scrypt", &argon_hash)),
+            Some(stored("argon2id", "not-a-hash")),
+        ] {
+            let passwords = Passwords::new();
+            assert_eq!(
+                passwords.verify("wrong password here!", credential.as_ref()),
+                Verdict::Wrong
+            );
+            assert_eq!(verifies(&passwords), 1, "{credential:?}");
+        }
     }
 
     #[test]
     fn dummy_vector_regenerates() {
-        let hasher = Argon2idHasher::new();
+        let passwords = Passwords::new();
         let salt = SaltString::encode_b64(b"dn-dummy-salt-01").unwrap();
-        let regenerated = hasher
+        let regenerated = passwords
             .argon2
             .hash_password(DUMMY_PASSWORD.as_bytes(), &salt)
             .unwrap()

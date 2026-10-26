@@ -1,7 +1,7 @@
 //! Production auth adapters: the wiring surface the app owns.
 //!
 //! This module is the single import point for the production auth types:
-//! the Argon2id password hasher and the SQLite adapters over the 0001
+//! the password hasher and the SQLite adapters over the 0001
 //! baseline tables. The auth modules define ports; this module re-exports the production types
 //! behind them plus one bundle constructor, so app wiring touches one path.
 //!
@@ -12,9 +12,9 @@
 //! use droppedneedle_auth::prod::ProdAuth;
 //!
 //! let auth = ProdAuth::new(&platform);
-//! // Native login: LoginService::new(auth.sessions.clone(), auth.hasher.clone(), auth.credentials.clone())
+//! // Native login: LoginService::new(auth.sessions.clone(), auth.passwords.clone(), auth.credentials.clone())
 //! // UsersDeps: users/auth.sessions/auth.app_passwords/auth.recovery/auth.lastfm/auth.avatars,
-//! //   passwords: Arc::new(auth.hasher.clone())
+//! //   passwords: auth.passwords.clone()
 //! // Federated: auth.federated.clone() + auth.issuer.clone()
 //! // OIDC states: auth.oidc_states.clone()
 //! ```
@@ -29,9 +29,9 @@
 //!   in `auth_providers.provider_data` with `provider = 'local'`; no
 //!   migration adds a scheme column.
 //! - `last_seen_at` rewrites at most once per 5 minutes per token.
-//! - Bcrypt logins rehash through one shared queue: the verifier pushes the
-//!   upgrade, the session insert persists it in the same tx (see
-//!   [`RehashQueue`](super::passwords::RehashQueue)).
+//! - A login against a hash weaker than the pin writes the rehash in the
+//!   same transaction as its session (see
+//!   [`SqliteSessionStore::insert_login`]).
 //! - Federated `token_json` is sealed with the deployment key on every
 //!   write; no read path decrypts it.
 //! - App-password verification is decrypt-free (`secret_sha256` +
@@ -41,7 +41,7 @@
 
 pub use super::avatars::FileAvatarStore;
 pub use super::passwords::{
-    Argon2idHasher, OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, PendingRehash, RehashQueue,
+    OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, Passwords, StoredPassword, Verdict,
 };
 pub use super::sqlite::{
     AuthDb, SqliteAppPasswordStore, SqliteCredentialLookup, SqliteFederatedStore,
@@ -59,7 +59,7 @@ pub struct ProdAuth {
     /// Shared SQLite handle behind every adapter below.
     pub db: AuthDb,
     /// Argon2id native / bcrypt legacy / dummy unknown.
-    pub hasher: Argon2idHasher,
+    pub passwords: Passwords,
     /// Logins + middleware over `auth_tokens`.
     pub sessions: SqliteSessionStore,
     /// Session list/revoke surface over `auth_tokens`.
@@ -95,14 +95,9 @@ impl ProdAuth {
             platform.ids.clone(),
             platform.clock.clone(),
         );
-        let hasher = Argon2idHasher::new();
-        // Opportunistic rehash: the login verifier queues bcrypt upgrades
-        // and the session insert drains them. One shared queue or the login
-        // path silently stops rehashing.
-        let mut sessions = SqliteSessionStore::new(&db);
-        sessions.set_rehash_queue(hasher.rehash_queue().clone());
         Self {
-            sessions,
+            passwords: Passwords::new(),
+            sessions: SqliteSessionStore::new(&db),
             session_manager: SqliteSessionManager::new(&db, clock),
             users: SqliteUserStore::new(&db),
             federated: SqliteFederatedStore::new(&db, crypto, ids.clone()),
@@ -113,7 +108,6 @@ impl ProdAuth {
             lastfm: SqliteLastFmStore::new(&db),
             oidc_states: SqliteOidcStateStore::new(&db),
             avatars: FileAvatarStore::new(&platform.config.cache_dir),
-            hasher,
             db,
         }
     }

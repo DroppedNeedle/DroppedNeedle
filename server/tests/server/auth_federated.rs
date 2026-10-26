@@ -17,13 +17,12 @@ use droppedneedle_auth::federated::oidc::{
     AuthorizeParams, OidcConfig, RawClaims, authorize_url, form_encode, normalise_claims,
     pkce_challenge,
 };
-use droppedneedle_auth::federated::password_import::{
-    LocalCredential, PasswordCheck, SESSIONS_SURVIVE_IMPORT, verify_and_maybe_rehash,
-};
+use droppedneedle_auth::federated::password_import::SESSIONS_SURVIVE_IMPORT;
 use droppedneedle_auth::federated::plex::plex_auth_url;
 use droppedneedle_auth::federated::users::{
     FederatedProfile, derive_username, find_or_create_federated_user, username_base,
 };
+use droppedneedle_auth::prod::{StoredPassword, Verdict};
 use droppedneedle_auth::session::store::SessionStore as _;
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::users::roles::Role;
@@ -1202,12 +1201,13 @@ async fn old_sessions_die_on_import_while_new_logins_work() {
     assert!(!is_live(live).await);
 
     // A bcrypt hash of "pw" (cost 4), as a v2 export carries it.
-    let stored = LocalCredential::imported_bcrypt(
-        "$2b$04$jasNbzyCrlGnpLmSJ93S8e3y4R4XBRilquRHOhpR6sUbBsNGR4Bku".to_owned(),
-    );
+    let stored = StoredPassword {
+        scheme: "bcrypt".to_owned(),
+        hash: "$2b$04$jasNbzyCrlGnpLmSJ93S8e3y4R4XBRilquRHOhpR6sUbBsNGR4Bku".to_owned(),
+    };
     assert!(matches!(
-        verify_and_maybe_rehash(&rig.auth.hasher, "pw", Some(&stored)),
-        PasswordCheck::Valid { .. }
+        rig.auth.passwords.verify("pw", Some(&stored)),
+        Verdict::Verified { .. }
     ));
     let relogin = issuer.issue_session(&user.id, None).await.unwrap();
     assert!(is_live(relogin).await);

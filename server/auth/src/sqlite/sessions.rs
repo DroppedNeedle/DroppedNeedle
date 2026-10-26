@@ -12,7 +12,7 @@ use super::{
 };
 use crate::federated::password_import::HashScheme;
 use crate::federated::{FederatedError, SessionIssuer};
-use crate::passwords::{PendingRehash, RehashQueue};
+use crate::passwords::StoredPassword;
 use crate::session::store::{
     SessionKind, SessionRecord, SessionStore, SessionStoreError, ValidSession,
 };
@@ -38,101 +38,170 @@ const LAST_SEEN_TOUCH_SECS: i64 = 5 * 60;
 /// [`LAST_SEEN_TOUCH_SECS`]; the refresh is best-effort (a failed touch logs
 /// and the request still authenticates). Companion labels round-trip through
 /// the `user_agent` column with the shared `DroppedNeedle companion` prefix.
-/// Every insert also drains the rehash queue: a bcrypt login queued its
-/// Argon2id upgrade at verify time, and the matching entry persists here in
-/// the same transaction as the session row.
 #[derive(Clone, Debug)]
 pub struct SqliteSessionStore {
     db: AuthDb,
-    rehash: RehashQueue,
+}
+
+/// What [`SqliteSessionStore::insert_login`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginWrite {
+    /// The session, any rehash and `last_login_at` were written.
+    Stored,
+    /// The stored credential is no longer the one the login verified (or
+    /// is gone): nothing was written.
+    CredentialChanged,
 }
 
 impl SqliteSessionStore {
     /// Adapter over one handle.
     pub fn new(db: &AuthDb) -> Self {
-        Self {
-            db: db.clone(),
-            rehash: RehashQueue::default(),
-        }
+        Self { db: db.clone() }
     }
 
-    /// Share the production hasher's rehash queue with this store, so login
-    /// inserts persist bcrypt upgrades. An unshared store keeps its own
-    /// empty queue and inserts exactly as before.
-    pub fn set_rehash_queue(&mut self, queue: RehashQueue) {
-        self.rehash = queue;
-    }
-}
-
-impl SessionStore for SqliteSessionStore {
-    async fn insert(&self, record: SessionRecord) -> Result<(), SessionStoreError> {
-        let lane = self.db.lane();
-        let stored_agent = match (&record.kind, &record.label) {
-            (SessionKind::Companion, Some(label)) => {
-                Some(format!("{COMPANION_LABEL_PREFIX}{label}"))
-            }
-            _ => record.user_agent.clone(),
-        };
-        let kind = match record.kind {
-            SessionKind::Standard => "standard",
-            SessionKind::Companion => "companion",
-        };
-        let pending = self.rehash.drain();
-        // A failed transaction drops what it was given, so keep a copy for
-        // the requeue below. Almost always an empty vec (legacy logins only).
-        let retry = pending.clone();
-        let record_issued_at = record.issued_at;
-        let outcome: Result<Vec<PendingRehash>, super::WriteError> = lane
-            .write(Lane::Foreground, "auth.session.insert", move |tx| {
+    /// A password login's write: the session row, the rehash (if any) and
+    /// `last_login_at` (the session's `issued_at`) in one transaction, and
+    /// only while the user's local credential still has the scheme and hash
+    /// in `verified`. Otherwise nothing is written and the answer is
+    /// [`LoginWrite::CredentialChanged`]. A failed write rolls back all
+    /// three, so the stored hash is never half-changed.
+    pub async fn insert_login(
+        &self,
+        record: SessionRecord,
+        verified: &StoredPassword,
+        rehash: Option<String>,
+    ) -> Result<LoginWrite, SessionStoreError> {
+        let verified = verified.clone();
+        let issued_at = record.issued_at;
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.session.login", move |tx| {
+                let current: Option<Option<String>> = tx
+                    .query_row(
+                        "SELECT provider_data FROM auth_providers \
+                         WHERE user_id = ? AND provider = 'local'",
+                        rusqlite::params![record.user_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(op_error)?;
+                let unchanged = current
+                    .flatten()
+                    .as_deref()
+                    .and_then(parse_local_data)
+                    .is_some_and(|(scheme, hash)| {
+                        scheme == verified.scheme && hash == verified.hash
+                    });
+                if !unchanged {
+                    return Ok(LoginWrite::CredentialChanged);
+                }
+                insert_token_row(tx, &record)?;
+                if let Some(new_hash) = rehash {
+                    tx.execute(
+                        "UPDATE auth_providers SET provider_data = ? \
+                         WHERE user_id = ? AND provider = 'local'",
+                        rusqlite::params![
+                            render_local_data(HashScheme::Argon2id.as_tag(), &new_hash),
+                            record.user_id
+                        ],
+                    )
+                    .map_err(op_error)?;
+                }
                 tx.execute(
-                    "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
-                         last_seen_at, revoked, user_agent, session_kind) \
-                         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
-                    rusqlite::params![
-                        record.id,
-                        record.user_id,
-                        record.token_hash,
-                        to_iso(record.issued_at),
-                        to_iso(record.expires_at),
-                        to_iso(record.last_seen_at),
-                        stored_agent,
-                        kind,
-                    ],
+                    "UPDATE auth_users SET last_login_at = ? WHERE id = ?",
+                    rusqlite::params![to_iso(record.issued_at), record.user_id],
                 )
                 .map_err(op_error)?;
-                apply_pending_rehash(tx, &record.user_id, pending)
+                Ok(LoginWrite::Stored)
             })
             .await;
-        match outcome {
-            Ok(unmatched) => {
-                self.rehash.requeue(unmatched);
-            }
-            Err(error) if is_write_conflict(&error) => {
-                self.rehash.requeue(retry);
-                return Err(SessionStoreError::Duplicate);
-            }
-            // A write past its budget was rolled back whole: nothing of the
-            // sign-in was kept, so the client may simply try again.
-            Err(super::WriteError::Db(droppedneedle_kernel::db::DbError::TxTimeout { .. })) => {
-                self.rehash.requeue(retry);
-                return Err(SessionStoreError::Busy);
-            }
-            Err(error) => {
-                self.rehash.requeue(retry);
-                return Err(session_store_error("auth.session.insert", error));
-            }
+        let written = session_write_outcome("auth.session.login", outcome)?;
+        if written == LoginWrite::Stored {
+            self.sweep(issued_at).await;
         }
-        // Cleanup in a write of its own, so a large batch can never push
-        // the sign-in past its budget. The session is already stored, so a
-        // failed sweep is logged and the next sign-in tries again.
-        if let Err(error) = lane
+        Ok(written)
+    }
+
+    /// Delete a batch of dead tokens in a write of its own, so a large batch
+    /// can never push the sign-in past its budget. The session is already
+    /// stored, so a failed sweep is logged and the next sign-in tries again.
+    async fn sweep(&self, now_unix: i64) {
+        if let Err(error) = self
+            .db
+            .lane()
             .write(Lane::Foreground, "auth.session.sweep", move |tx| {
-                sweep_dead_tokens(tx, record_issued_at)
+                sweep_dead_tokens(tx, now_unix)
             })
             .await
         {
             tracing::warn!(%error, "dead session sweep failed");
         }
+    }
+}
+
+/// Insert one session row inside the caller's transaction. Companion
+/// labels are stored in `user_agent` behind the shared prefix.
+fn insert_token_row(
+    tx: &rusqlite::Transaction,
+    record: &SessionRecord,
+) -> Result<(), super::WriteError> {
+    let stored_agent = match (&record.kind, &record.label) {
+        (SessionKind::Companion, Some(label)) => Some(format!("{COMPANION_LABEL_PREFIX}{label}")),
+        _ => record.user_agent.clone(),
+    };
+    let kind = match record.kind {
+        SessionKind::Standard => "standard",
+        SessionKind::Companion => "companion",
+    };
+    tx.execute(
+        "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
+             last_seen_at, revoked, user_agent, session_kind) \
+             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+        rusqlite::params![
+            record.id,
+            record.user_id,
+            record.token_hash,
+            to_iso(record.issued_at),
+            to_iso(record.expires_at),
+            to_iso(record.last_seen_at),
+            stored_agent,
+            kind,
+        ],
+    )
+    .map_err(op_error)?;
+    Ok(())
+}
+
+/// Map a session write's outcome onto the session port's errors.
+fn session_write_outcome<R>(
+    operation: &str,
+    outcome: Result<R, super::WriteError>,
+) -> Result<R, SessionStoreError> {
+    match outcome {
+        Ok(value) => Ok(value),
+        Err(error) if is_write_conflict(&error) => Err(SessionStoreError::Duplicate),
+        // A write past its budget was rolled back whole: nothing of the
+        // sign-in was kept, so the client may simply try again.
+        Err(super::WriteError::Db(droppedneedle_kernel::db::DbError::TxTimeout { .. })) => {
+            Err(SessionStoreError::Busy)
+        }
+        Err(error) => Err(session_store_error(operation, error)),
+    }
+}
+
+impl SessionStore for SqliteSessionStore {
+    async fn insert(&self, record: SessionRecord) -> Result<(), SessionStoreError> {
+        let issued_at = record.issued_at;
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.session.insert", move |tx| {
+                insert_token_row(tx, &record)
+            })
+            .await;
+        session_write_outcome("auth.session.insert", outcome)?;
+        self.sweep(issued_at).await;
         Ok(())
     }
 
@@ -257,55 +326,6 @@ fn sweep_dead_tokens(tx: &rusqlite::Transaction, now_unix: i64) -> Result<(), su
     )
     .map_err(op_error)?;
     Ok(())
-}
-
-/// Persist the queued bcrypt upgrade for `user_id`, if any entry matches
-/// the current local row. Runs inside the session-insert transaction; the
-/// guard (scheme still `bcrypt`, hash still the verified one) makes a stale
-/// entry a no-op instead of a wrong write. Returns the entries that did not
-/// match (other users' upgrades, or a row that already moved on).
-fn apply_pending_rehash(
-    tx: &rusqlite::Transaction,
-    user_id: &str,
-    pending: Vec<PendingRehash>,
-) -> Result<Vec<PendingRehash>, super::WriteError> {
-    if pending.is_empty() {
-        return Ok(pending);
-    }
-    let current: Option<Option<String>> = tx
-        .query_row(
-            "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
-            rusqlite::params![user_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(op_error)?;
-    let Some(Some(data)) = current else {
-        return Ok(pending);
-    };
-    let Some((scheme, hash)) = parse_local_data(&data) else {
-        return Ok(pending);
-    };
-    if scheme != HashScheme::Bcrypt.as_tag() {
-        return Ok(pending);
-    }
-    let mut unmatched = Vec::with_capacity(pending.len());
-    for entry in pending {
-        if entry.old_hash == hash {
-            tx.execute(
-                "UPDATE auth_providers SET provider_data = ? \
-                 WHERE user_id = ? AND provider = 'local'",
-                rusqlite::params![
-                    render_local_data(HashScheme::Argon2id.as_tag(), &entry.new_hash),
-                    user_id
-                ],
-            )
-            .map_err(op_error)?;
-        } else {
-            unmatched.push(entry);
-        }
-    }
-    Ok(unmatched)
 }
 
 /// Absolute expiry for a session issued now (30 days, the session rule).

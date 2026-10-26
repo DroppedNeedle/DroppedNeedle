@@ -4,9 +4,9 @@
 //! thin. Nothing here touches HTTP types.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-use std::sync::Arc;
 
 use super::super::federated::password_import::HashScheme;
+use super::super::passwords::{StoredPassword, Verdict};
 use super::super::session::tokens;
 use super::error::UsersError;
 use super::models::{
@@ -169,9 +169,9 @@ async fn screen_password(deps: &UsersDeps, password: &str) -> Result<(), UsersEr
 /// Hash off the IO loop: Argon2id is slow by design. A hashing failure
 /// fails the request (fixed 500); no sentinel hash is ever persisted.
 async fn hash_password(deps: &UsersDeps, password: &str) -> Result<String, UsersError> {
-    let hasher = Arc::clone(&deps.passwords);
+    let passwords = deps.passwords.clone();
     let owned = password.to_owned();
-    tokio::task::spawn_blocking(move || hasher.try_hash_argon2id(&owned))
+    tokio::task::spawn_blocking(move || passwords.hash(&owned))
         .await
         .map_err(|cause| UsersError::internal(&format_args!("password hash panicked: {cause}")))?
         .map_err(|cause| UsersError::internal(&cause))
@@ -180,15 +180,17 @@ async fn hash_password(deps: &UsersDeps, password: &str) -> Result<String, Users
 /// Verify off the IO loop, for the same reason. Unknown scheme tags fail
 /// closed (dummy work, then false).
 async fn check_password(deps: &UsersDeps, password: &str, scheme: &str, hash: &str) -> bool {
-    let hasher = Arc::clone(&deps.passwords);
-    let (password, scheme, hash) = (password.to_owned(), scheme.to_owned(), hash.to_owned());
-    tokio::task::spawn_blocking(move || match HashScheme::from_tag(&scheme) {
-        Some(HashScheme::Bcrypt) => hasher.verify_bcrypt(&password, &hash),
-        Some(HashScheme::Argon2id) => hasher.verify_argon2id(&password, &hash),
-        None => {
-            hasher.dummy_verify();
-            false
-        }
+    let passwords = deps.passwords.clone();
+    let password = password.to_owned();
+    let stored = StoredPassword {
+        scheme: scheme.to_owned(),
+        hash: hash.to_owned(),
+    };
+    tokio::task::spawn_blocking(move || {
+        matches!(
+            passwords.verify(&password, Some(&stored)),
+            Verdict::Verified { .. }
+        )
     })
     .await
     .unwrap_or(false)
