@@ -137,10 +137,14 @@ impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
     fn catalog_roots<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogRoot>, String>> {
         Box::pin(async move {
             // SQLite fills the bare `relative_path` from the row that holds
-            // MIN(file_path), so both sample paths come from one row.
+            // MIN(file_path), so both sample paths come from one row. A root
+            // whose every row went missing on disk is left out: putting it
+            // back would bring no file back.
             let rows: Vec<(String, i64, String, String)> = sqlx::query_as(
                 "SELECT root_id, COUNT(*), MIN(file_path), relative_path \
-                 FROM local_tracks GROUP BY root_id ORDER BY root_id",
+                 FROM local_tracks GROUP BY root_id \
+                 HAVING SUM(availability IN ('indexed', 'excluded')) > 0 \
+                 ORDER BY root_id",
             )
             .fetch_all(&self.pool)
             .await

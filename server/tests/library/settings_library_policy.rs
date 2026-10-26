@@ -1,7 +1,8 @@
 //! Library policy routes over a real catalog database: a removed root is
 //! offered back with its path and restored through the revision-checked
-//! save, the save refuses to drop every root under a live catalog, and
-//! the previews count catalog rows the way v2 did.
+//! save, a removed root with no file left on disk is not, the save refuses
+//! to drop every root under a live catalog, and the previews count catalog
+//! rows the way v2 did.
 
 use crate::common::{FIXED_ID, FixedIdGenerator, ScratchDir};
 
@@ -205,4 +206,55 @@ async fn an_import_naming_script_is_checked_only_when_changed() {
         .await
         .expect("a save that leaves the script alone goes through");
     assert!(!kept.settings.enabled);
+}
+
+#[tokio::test]
+async fn removed_root_with_every_file_missing_is_not_offered() {
+    let scratch = ScratchDir::new("settings-library-policy-missing");
+    let music = scratch.join("music");
+    std::fs::create_dir_all(music.join("A")).expect("music dir builds");
+    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
+    // A root the settings no longer list whose files all went missing (they
+    // were moved under another root and rescanned there).
+    let seed = format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+           VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+           album_artist_id, grouping_source, created_at, updated_at)
+           VALUES ('al1', 'r-gone', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+           path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+           album_title, album_title_folded, file_format, ingest_source, imported_at,
+           membership_source, availability)
+           VALUES ('t1', 'al1', 'r-gone', '{root}/A/one.flac', 'A/one.flac', 'h1', 1, 0, 's',
+             'One', 'one', 'T', 't', 'flac', 'scan', 0, 'automatic', 'missing'),
+                  ('t2', 'al1', 'r-gone', '{root}/A/two.flac', 'A/two.flac', 'h2', 1, 0, 's',
+             'Two', 'two', 'T', 't', 'flac', 'scan', 0, 'automatic', 'missing');",
+        root = music.display()
+    );
+    runtime
+        .db()
+        .write(Lane::Foreground, "policy seed", move |tx| {
+            tx.execute_batch(&seed).map_err(DbError::from)
+        })
+        .await
+        .expect("catalog seeds");
+
+    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
+        .expect("settings bundle builds")
+        .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
+            pool: runtime.db().sqlx().clone(),
+        }));
+    let policy = settings.library_policy();
+
+    let offered = policy.restorable_roots().await.expect("restorable reads");
+    assert!(offered.restorable_roots.is_empty());
+    let refused = policy
+        .restore_roots(LibraryRestoreRootsRequest {
+            expected_policy_revision: offered.policy_revision,
+            paths: None,
+        })
+        .await
+        .expect_err("nothing to restore");
+    assert!(matches!(refused, SettingsError::InvalidInput { .. }));
 }

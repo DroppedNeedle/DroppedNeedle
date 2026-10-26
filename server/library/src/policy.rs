@@ -663,7 +663,8 @@ pub trait LibraryPolicyCatalog: Send + Sync {
     ) -> BoxFuture<'a, Result<ScopeTotals, String>>;
     /// Whether the catalog holds any tracks.
     fn has_tracks<'a>(&'a self) -> BoxFuture<'a, Result<bool, String>>;
-    /// Every root id the catalog holds rows for, sorted by id.
+    /// Every root id the catalog holds rows for, sorted by id, leaving out
+    /// a root none of whose rows is still on disk.
     fn catalog_roots<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogRoot>, String>>;
     /// Every track path, ordered by track id.
     fn track_paths<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogPath>, String>>;
