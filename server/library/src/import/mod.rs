@@ -224,11 +224,24 @@ impl LibrarySetup {
 
     /// Import a verified download as one staged bundle. With `join`, the
     /// files join the library album they were fetched for (see the module
-    /// doc). Blocking: callers run it off the async runtime.
+    /// doc). Each source is opened by its path. Blocking: callers run it
+    /// off the async runtime.
     pub fn import_download_joined(
         &self,
         import: &DownloadImport,
         join: Option<ImportJoin>,
+    ) -> Result<ImportedAlbum, ImportError> {
+        self.import_download_from(import, join, &|path| std::fs::File::open(path))
+    }
+
+    /// [`Self::import_download_joined`], with every source opened by
+    /// `open_source` for its copy into staging (a download's files are opened
+    /// beneath its client's folder, never through a link).
+    pub fn import_download_from(
+        &self,
+        import: &DownloadImport,
+        join: Option<ImportJoin>,
+        open_source: &dyn Fn(&Path) -> std::io::Result<std::fs::File>,
     ) -> Result<ImportedAlbum, ImportError> {
         let fault = |message: String| ImportError::LocalFault(message);
         if import.files.is_empty() && import.extras.is_empty() {
@@ -644,7 +657,9 @@ impl LibrarySetup {
                     .sandbox
                     .resolve_no_symlink(&root.id, &placement.staged_rel)
                     .map_err(|error| fault(error.to_string()))?;
-                let fingerprint = copy_in(&placement.source, &staged)
+                let source = open_source(&placement.source)
+                    .map_err(|error| fault(format!("copy into the library failed: {error}")))?;
+                let fingerprint = copy_in(source, &staged)
                     .map_err(|error| fault(format!("copy into the library failed: {error}")))?;
                 let track = &placement.track;
                 items.push(PlanItem {

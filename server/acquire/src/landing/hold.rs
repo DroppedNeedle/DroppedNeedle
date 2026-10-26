@@ -21,13 +21,15 @@ pub struct HoldItem {
     pub file: NewFile,
 }
 
-/// Hold every item in `entry`. Returns how many were recorded (files the
-/// entry already holds count). A failed copy or row is logged and
-/// skipped: the source stays where it is, so a reimport can still find
-/// it.
+/// Hold every item in `entry`, each source read beneath one of the
+/// client's `downloads_folders` (real paths). Returns how many were
+/// recorded (files the entry already holds count). A failed copy or row
+/// is logged and skipped: the source stays where it is, so a reimport
+/// can still find it.
 pub async fn hold(
     db: &AcquireDb,
     held_dir: &Path,
+    downloads_folders: &[PathBuf],
     entry: &NewEntry,
     items: Vec<HoldItem>,
 ) -> usize {
@@ -47,7 +49,8 @@ pub async fn hold(
         }
         let dir = held_dir.to_path_buf();
         let source = item.source.clone();
-        let copied = tokio::task::spawn_blocking(move || copy_into(&dir, &source)).await;
+        let folders = downloads_folders.to_vec();
+        let copied = tokio::task::spawn_blocking(move || copy_into(&dir, &folders, &source)).await;
         let name = match copied {
             Ok(Ok(name)) => name,
             Ok(Err(error)) => {
@@ -84,9 +87,11 @@ pub async fn hold(
     held
 }
 
-/// Copy one file into the held folder under a fresh name, synced. Answers
-/// the copy's name, which is its path below the folder.
-fn copy_into(dir: &Path, source: &Path) -> std::io::Result<String> {
+/// Copy one file, read beneath `folders`, into the held folder under a
+/// fresh name, synced. Answers the copy's name, which is its path below
+/// the folder.
+fn copy_into(dir: &Path, folders: &[PathBuf], source: &Path) -> std::io::Result<String> {
+    let mut reader = super::confine::open_beneath(folders, source)?;
     std::fs::create_dir_all(dir)?;
     let name = source
         .file_name()
@@ -94,7 +99,6 @@ fn copy_into(dir: &Path, source: &Path) -> std::io::Result<String> {
         .unwrap_or_else(|| "held.bin".to_owned());
     let name = format!("{}_{name}", uuid::Uuid::new_v4().simple());
     let dest = dir.join(&name);
-    let mut reader = std::fs::File::open(source)?;
     let mut writer = std::fs::File::create_new(&dest)?;
     let written = std::io::copy(&mut reader, &mut writer)
         .and_then(|_| writer.flush())

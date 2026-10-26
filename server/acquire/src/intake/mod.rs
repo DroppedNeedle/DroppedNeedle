@@ -53,6 +53,10 @@ pub enum Origin {
         /// the task id (a held file imported while its task may land
         /// again).
         staging: Option<String>,
+        /// The client's downloads folders (real paths) the files are read
+        /// beneath, never through a link below them. `None` when they sit
+        /// in the app's own held folder.
+        downloads_folders: Option<Vec<PathBuf>>,
     },
     Upload {
         drop_item_id: i64,

@@ -80,6 +80,10 @@ pub struct ImportRequest {
     /// Name of the hidden staging folder, when it must differ from the
     /// task id (a held file imported while its task may land again).
     pub staging: Option<String>,
+    /// The client's downloads folders (real paths) a download's files are
+    /// read beneath, never through a link below them. `None` for files in
+    /// the app's own folders, read by path.
+    pub read_beneath: Option<Vec<PathBuf>>,
     /// The matched release; files are tagged from it.
     pub release: Release,
     /// The library album the files were fetched for, which they join.

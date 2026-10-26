@@ -569,6 +569,7 @@ impl LandingService {
                 task_id: task.id.clone(),
                 upgrade,
                 staging: None,
+                downloads_folders: Some(landing.downloads_folders.clone()),
             },
             gate: intake::Gate::Automatic,
             owner: task.user_id.clone(),
@@ -803,7 +804,14 @@ impl LandingService {
             artist_name: non_empty(&target.artist_name),
             album_title: non_empty(&target.album_title),
         };
-        hold::hold(self.journal.db(), &self.held_dir, &entry, items).await
+        hold::hold(
+            self.journal.db(),
+            &self.held_dir,
+            &landing.downloads_folders,
+            &entry,
+            items,
+        )
+        .await
     }
 
     /// Record the decision, then remove imported sources, and report.
@@ -874,7 +882,8 @@ impl LandingService {
         }
         // Only after the decision is durable: a restart in between then
         // still finds the files, sees them in the library, and lands again.
-        intake::dispose::remove_sources(imported_sources, landing.downloads_folders.clone()).await;
+        intake::dispose::remove_downloaded(imported_sources, landing.downloads_folders.clone())
+            .await;
         tracing::info!(
             task_id = %task.id,
             outcome,

@@ -7,10 +7,21 @@
 //! link anywhere below that folder's root. The root is the admin's setting
 //! and may be a link. A subfolder set below it (slskd's downloads
 //! subfolder) lives in the volume the client writes, so it is checked like
-//! anything the client reports. This is a check made when the download
-//! lands, not a guard on every later read of the same path.
+//! anything the client reports.
+//!
+//! That check is made when the download lands. Whoever can write the
+//! client's folder could swap a folder there for a link after it, so the
+//! reads that move bytes out of the folder or remove a file in it
+//! ([`open_beneath`], [`remove_beneath`], [`remove_dir_beneath`]) open
+//! every component again with `O_NOFOLLOW`, one directory at a time, and
+//! never follow a link met on the way.
 
-use std::path::{Path, PathBuf};
+use std::ffi::{CString, OsStr};
+use std::fs::File;
+use std::io;
+use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+use std::os::unix::ffi::OsStrExt as _;
+use std::path::{Component, Path, PathBuf};
 
 use super::{Reported, lexical_absolute};
 
@@ -162,6 +173,143 @@ pub fn place(path: &Path, mounts: &[DownloadsFolder]) -> Place {
         None if unresolved => Place::Unknown,
         None => Place::Outside,
     }
+}
+
+/// Open `path` for reading, beneath whichever of `folders` holds it.
+///
+/// `folders` are real paths, as [`DownloadsFolder::resolve`] gives them,
+/// and `path` one that [`place`] kept. Each is opened again from `/`, one
+/// component at a time with `O_NOFOLLOW`: a real path holds no link, so a
+/// link met now was swapped in since the check, and the open fails. Only
+/// a regular file opens. Blocking.
+pub fn open_beneath(folders: &[PathBuf], path: &Path) -> io::Result<File> {
+    let (dir, name) = parent_beneath(folders, path)?;
+    // Non-blocking so a FIFO cannot hang the open; cleared once the file
+    // is known to be regular, as a FUSE mount may honour it on reads.
+    let fd = open_at(
+        &dir,
+        &name,
+        libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOCTTY,
+    )?;
+    let file = File::from(fd);
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    // SAFETY: `file` owns an open descriptor for the length of both calls.
+    let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
+    // SAFETY: as above; only the status flags change.
+    if flags < 0
+        || unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
+/// Remove the file at `path`, beneath whichever of `folders` holds it,
+/// with `unlinkat` on its folder opened as [`open_beneath`] opens it. A
+/// link at `path` itself is removed, never what it points at. Blocking.
+pub fn remove_beneath(folders: &[PathBuf], path: &Path) -> io::Result<()> {
+    unlink_beneath(folders, path, 0)
+}
+
+/// Remove the empty folder at `path`, beneath whichever of `folders`
+/// holds it, as [`remove_beneath`] removes a file. Blocking.
+pub fn remove_dir_beneath(folders: &[PathBuf], path: &Path) -> io::Result<()> {
+    unlink_beneath(folders, path, libc::AT_REMOVEDIR)
+}
+
+fn unlink_beneath(folders: &[PathBuf], path: &Path, flags: libc::c_int) -> io::Result<()> {
+    let (dir, name) = parent_beneath(folders, path)?;
+    // SAFETY: `dir` is an open descriptor and `name` a NUL-terminated
+    // string, both alive for the call.
+    let status = unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), flags) };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// How a folder on the way is opened: as a handle to walk from, which
+/// needs only search permission on it, as resolving its path did.
+const DIR_FLAGS: libc::c_int = libc::O_PATH | libc::O_DIRECTORY;
+
+/// The opened folder holding `path` and the name of `path` in it.
+/// `path` must lie strictly below one of `folders`.
+fn parent_beneath(folders: &[PathBuf], path: &Path) -> io::Result<(OwnedFd, CString)> {
+    let refused = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path is not below a downloads folder",
+        )
+    };
+    let (folder, below) = folders
+        .iter()
+        .find_map(|folder| Some((folder, path.strip_prefix(folder).ok()?)))
+        .ok_or_else(refused)?;
+    let mut parts = normal_parts(below).ok_or_else(refused)?;
+    let name = parts.pop().ok_or_else(refused)?;
+    if !folder.is_absolute() {
+        return Err(refused());
+    }
+    let mut dir = open_at_cwd(c"/")?;
+    for part in normal_parts(folder)
+        .ok_or_else(refused)?
+        .into_iter()
+        .chain(parts)
+    {
+        dir = open_at(&dir, &c_name(part)?, DIR_FLAGS)?;
+    }
+    Ok((dir, c_name(name)?))
+}
+
+/// The plain names of `path`, or `None` when it holds `.` or `..`.
+fn normal_parts(path: &Path) -> Option<Vec<&OsStr>> {
+    path.components()
+        .filter(|part| !matches!(part, Component::RootDir))
+        .map(|part| match part {
+            Component::Normal(name) => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+fn c_name(name: &OsStr) -> io::Result<CString> {
+    CString::new(name.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "name holds a NUL byte"))
+}
+
+fn open_at_cwd(path: &std::ffi::CStr) -> io::Result<OwnedFd> {
+    // SAFETY: `path` is a NUL-terminated string alive for the call.
+    let fd = unsafe { libc::openat(libc::AT_FDCWD, path.as_ptr(), DIR_FLAGS | libc::O_CLOEXEC) };
+    owned(fd)
+}
+
+/// `openat` one name in `dir`, never following a link.
+fn open_at(dir: &OwnedFd, name: &std::ffi::CStr, flags: libc::c_int) -> io::Result<OwnedFd> {
+    // SAFETY: `dir` is an open descriptor and `name` a NUL-terminated
+    // string, both alive for the call.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    owned(fd)
+}
+
+fn owned(fd: libc::c_int) -> io::Result<OwnedFd> {
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fd` was just returned by a successful `openat` and nothing
+    // else owns it.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
 #[cfg(test)]

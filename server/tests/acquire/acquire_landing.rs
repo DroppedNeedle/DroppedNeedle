@@ -2117,6 +2117,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
             task_id: TASK.to_owned(),
             origin: ImportOrigin::Download,
             staging: None,
+            read_beneath: None,
             release,
             join: None,
             files: vec![ImportFile {
@@ -4073,6 +4074,7 @@ async fn a_held_release_track_is_not_given_away() {
         task_id: "t-held".to_owned(),
         origin: ImportOrigin::Download,
         staging: None,
+        read_beneath: None,
         release: e.new.clone(),
         join: Some(droppedneedle_library::import::ImportJoin {
             album_id: album.clone(),
@@ -5105,6 +5107,198 @@ async fn a_flat_file_landed_alone_leaves_the_downloads_folder() {
     assert!(downloads.is_dir(), "the downloads folder stays");
 }
 
+/// Swaps a download's job folder for a link to a folder outside the
+/// downloads folder holding a file of the same name, once, as a machine
+/// that can write the client's folder could after the landing's check.
+#[derive(Clone)]
+struct Swap {
+    job: PathBuf,
+    stash: PathBuf,
+    outside: PathBuf,
+    done: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Swap {
+    fn run(&self) {
+        if self.done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        std::fs::rename(&self.job, &self.stash).expect("job folder moved away");
+        std::os::unix::fs::symlink(&self.outside, &self.job).expect("link swapped in");
+    }
+}
+
+/// MusicBrainz that swaps the folder at its first question, which the
+/// landing asks after its check and before it copies anything.
+struct SwapOnMatch {
+    inner: Releases,
+    swap: Swap,
+}
+
+impl ReleaseSource for SwapOnMatch {
+    fn search<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.swap.run();
+        self.inner.search(title, artist)
+    }
+
+    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        self.swap.run();
+        self.inner.release(mbid)
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        self.inner.canonical_recording(mbid)
+    }
+}
+
+/// When the job folder is swapped for a link.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SwapAt {
+    /// After the check, before the copy into staging or the held folder.
+    Match,
+    /// After the import, before its sources are removed.
+    Import,
+}
+
+/// Land one file from `downloads/job` for a fresh task, with the job
+/// folder swapped at `at`. With `other_artist` the file is held.
+/// Answers the bundle, the music folder, the file outside the downloads
+/// folder and the platform it runs on.
+async fn land_swapped(
+    at: SwapAt,
+    other_artist: bool,
+) -> (
+    droppedneedle_acquire::AcquireSetup,
+    PathBuf,
+    PathBuf,
+    droppedneedle_kernel::platform::Platform,
+) {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let downloads = dir.join("downloads");
+    let job = downloads.join("job");
+    let name = "01 - Mysterons.flac";
+    let file = land_file(&job, name, "flac_full_01.flac", "Mysterons", 1);
+    let outside = dir.join("outside");
+    let secret = land_file(&outside, name, "flac_full_01.flac", "Mysterons", 1);
+    let mut length = length_ms(&file);
+    if other_artist {
+        let other = TagEdit::new(TagField::Artist, vec!["Dan Romer".to_owned()]);
+        save_tags(&file, &[other]).expect("artist saves");
+        length = length.map(|ms| ms + 25_000);
+    }
+    let swap = Swap {
+        job,
+        stash: dir.join("stash"),
+        outside,
+        done: Default::default(),
+    };
+    let releases = Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons"],
+        &[length],
+    )]);
+    let source: Arc<dyn ReleaseSource> = match at {
+        SwapAt::Match => Arc::new(SwapOnMatch {
+            inner: releases,
+            swap: swap.clone(),
+        }),
+        SwapAt::Import => Arc::new(releases),
+    };
+    let port: Arc<dyn LandingLibrary> = Arc::new(Shaky {
+        inner: Arc::new(LibraryLanding::new(
+            library.clone(),
+            every_priority(source),
+            db.pool().clone(),
+        )),
+        changes: 0.into(),
+        after_import: (at == SwapAt::Import).then_some(swap),
+    });
+    let acquire = acquire_over(&db, Some(port));
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t-swap", GOOD_GROUP), 1.0)
+        })
+        .await
+        .expect("task");
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(Arc::new(FixedSource::new(
+                downloads,
+                vec![file],
+            )))],
+            WorkerConfig::default(),
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    worker.run_once(1).await;
+    worker.wait_for_landings().await;
+    (acquire, music, secret, platform)
+}
+
+// A machine that runs the download client can swap a folder in the
+// downloads folder for a link after the landing checked it. The copy into
+// the library, the held copy and the removal of imported sources never
+// follow it to a file outside.
+#[tokio::test]
+async fn a_link_swapped_in_after_the_check_is_never_followed() {
+    let (_acquire, music, secret, _platform) = land_swapped(SwapAt::Match, false).await;
+    assert!(
+        files_under(&music, "flac").is_empty(),
+        "nothing outside the downloads folder is imported"
+    );
+    assert!(secret.is_file());
+
+    let (acquire, _music, secret, _platform) = land_swapped(SwapAt::Match, true).await;
+    assert!(
+        files_under(&acquire.held.folders().held, "flac").is_empty(),
+        "nothing outside the downloads folder is held"
+    );
+    assert!(secret.is_file());
+
+    let (_acquire, music, secret, _platform) = land_swapped(SwapAt::Import, false).await;
+    assert_eq!(
+        files_under(&music, "flac").len(),
+        1,
+        "imported before the swap"
+    );
+    assert!(
+        secret.is_file(),
+        "removing the imported source leaves the file outside alone"
+    );
+}
+
 /// MusicBrainz for the intake table: every search returns every release,
 /// and a release group lists its releases.
 struct GroupListing(Vec<Release>);
@@ -5205,10 +5399,11 @@ impl FingerprintSource for Hears {
 
 /// The real library port, whose first `changes` imports find the library
 /// changed under them (a destination taken between the plan and the
-/// publish).
+/// publish), and which runs `after_import` once an import is done.
 struct Shaky {
     inner: Arc<dyn LandingLibrary>,
     changes: std::sync::atomic::AtomicUsize,
+    after_import: Option<Swap>,
 }
 
 impl LandingLibrary for Shaky {
@@ -5325,7 +5520,14 @@ impl LandingLibrary for Shaky {
                 ))
             });
         }
-        self.inner.import(request)
+        let Some(swap) = self.after_import.clone() else {
+            return self.inner.import(request);
+        };
+        Box::pin(async move {
+            let receipt = self.inner.import(request).await;
+            swap.run();
+            receipt
+        })
     }
 
     fn publish_settled<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
@@ -5450,6 +5652,7 @@ impl IntakeCase {
                 db.pool().clone(),
             )),
             changes: row.changes.into(),
+            after_import: None,
         });
         let acquire = acquire_over(&db, Some(port));
         let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
@@ -5645,6 +5848,7 @@ impl IntakeCase {
                     task_id: "t-intake".to_owned(),
                     upgrade: row.upgrade,
                     staging: None,
+                    downloads_folders: None,
                 }
             },
             gate: row.gate,

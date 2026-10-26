@@ -445,12 +445,15 @@ impl LandingLibrary for LibraryLanding {
                 actor: Some(request.actor),
             };
             let join = request.join;
-            let done =
-                tokio::task::spawn_blocking(move || library.import_download_joined(&import, join))
-                    .await
-                    .map_err(|error| {
-                        ImportFailure::LocalFault(format!("import did not run: {error}"))
-                    })?;
+            let beneath = request.read_beneath;
+            let done = tokio::task::spawn_blocking(move || match beneath {
+                Some(folders) => library.import_download_from(&import, join, &|path| {
+                    super::confine::open_beneath(&folders, path)
+                }),
+                None => library.import_download_joined(&import, join),
+            })
+            .await
+            .map_err(|error| ImportFailure::LocalFault(format!("import did not run: {error}")))?;
             match done {
                 Ok(album) => Ok(ImportReceipt {
                     bundle_id: album.bundle_id,

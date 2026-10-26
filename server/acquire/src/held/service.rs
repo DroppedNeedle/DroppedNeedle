@@ -891,6 +891,7 @@ impl HeldService {
                     .unwrap_or_else(|| staging_name(entry)),
                 upgrade: task.is_some_and(|task| task.origin == "upgrade"),
                 staging: Some(staging_name(entry)),
+                downloads_folders: None,
             },
         }
     }

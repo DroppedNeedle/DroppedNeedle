@@ -59,15 +59,17 @@ pub(crate) fn staging_settled(
     Ok(!unsettled)
 }
 
-/// Copy one landed file into the hidden import folder, synced, hashing
-/// the bytes as they stream through.
-pub(crate) fn copy_in(source: &Path, staged: &Path) -> std::io::Result<FileFingerprint> {
+/// Copy one landed file, opened by the caller, into the hidden import
+/// folder, synced, hashing the bytes as they stream through.
+pub(crate) fn copy_in(
+    mut reader: std::fs::File,
+    staged: &Path,
+) -> std::io::Result<FileFingerprint> {
     use sha2::Digest as _;
     use std::io::{Read as _, Write as _};
     if let Some(parent) = staged.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut reader = std::fs::File::open(source)?;
     let mut writer = std::fs::File::create(staged)?;
     let mut hasher = sha2::Sha256::new();
     let mut buffer = vec![0u8; 256 * 1024];

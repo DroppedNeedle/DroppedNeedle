@@ -466,18 +466,30 @@ async fn import(
         placement.held = planned.held;
         return Ok(placement);
     }
-    let (task_id, origin, staging) = match &batch.origin {
+    let (task_id, origin, staging, read_beneath) = match &batch.origin {
         Origin::Download {
-            task_id, staging, ..
-        } => (task_id.clone(), ImportOrigin::Download, staging.clone()),
-        Origin::Upload { drop_item_id } => {
-            (format!("drop-{drop_item_id}"), ImportOrigin::Drop, None)
-        }
+            task_id,
+            staging,
+            downloads_folders,
+            ..
+        } => (
+            task_id.clone(),
+            ImportOrigin::Download,
+            staging.clone(),
+            downloads_folders.clone(),
+        ),
+        Origin::Upload { drop_item_id } => (
+            format!("drop-{drop_item_id}"),
+            ImportOrigin::Drop,
+            None,
+            None,
+        ),
     };
     let request = ImportRequest {
         task_id: task_id.clone(),
         origin,
         staging,
+        read_beneath,
         release: batch.target.release.clone(),
         join: planned.join.clone(),
         files: planned
