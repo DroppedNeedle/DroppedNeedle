@@ -172,7 +172,8 @@ pub fn can_request_transition(from: RequestStatus, to: RequestStatus) -> bool {
 
 /// A wanted watch's state. The `wanted_watches.state` CHECK lists exactly
 /// these values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum WatchState {
     /// Checked on its schedule.
     Watching,

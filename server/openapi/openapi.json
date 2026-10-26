@@ -65758,8 +65758,8 @@
             "minimum": 0
           },
           "state": {
-            "type": "string",
-            "description": "Watch state: `watching`, `stopped` or `fulfilled`."
+            "$ref": "#/components/schemas/WatchState",
+            "description": "Watch state."
           },
           "user_id": {
             "type": [
@@ -65977,6 +65977,15 @@
             "default": true
           }
         }
+      },
+      "WatchState": {
+        "type": "string",
+        "description": "A wanted watch's state. The `wanted_watches.state` CHECK lists exactly\nthese values.",
+        "enum": [
+          "watching",
+          "stopped",
+          "fulfilled"
+        ]
       },
       "WavTagPolicy": {
         "type": "string",

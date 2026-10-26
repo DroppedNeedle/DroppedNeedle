@@ -37,6 +37,7 @@ use crate::requests::service::{FollowIntake, FollowRelease, RequestsService};
 use crate::requests::settle::announce_fulfilled;
 use crate::requests::sqlite::{RequestStore, WantedStore};
 use crate::search_jobs::store::JobStore;
+use crate::target::Targets;
 use droppedneedle_catalog::reads::catalog::mapping::{should_include_release, type_set};
 use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
 use droppedneedle_kernel::runtime_config::Live;
@@ -144,6 +145,8 @@ pub struct WantedDeps {
     pub downloads: Arc<DownloadDispatch>,
     /// Library presence for satisfaction checks.
     pub library: Arc<LibraryPresence>,
+    /// Release-group dates from MusicBrainz, for the recheck cadence.
+    pub targets: Arc<Targets>,
     /// Durable ticks.
     pub ticks: Arc<dyn TickSink>,
 }
@@ -210,22 +213,30 @@ async fn check_watch(
         summary.fulfilled += 1;
         return Ok(());
     }
-    let next = |streak: u32| {
-        at + u64::try_from(interval_seconds(
-            watch.first_release_date.as_deref(),
-            streak,
-            now,
-        ))
-        .unwrap_or(0)
-    };
-    match search_watch(deps, watch).await {
+    let searched = match search_watch(deps, watch).await {
         Ok(None) => {
             // No source is on, or the download settings do not read: the
             // watch stays due, unrecorded, and is checked once that
             // changes.
             tracing::debug!(key = %watch.key, "wanted check waits for a download source");
+            return Ok(());
         }
-        Ok(Some(candidates)) if !candidates.is_empty() => {
+        Ok(Some(candidates)) => Ok(candidates),
+        Err(cause) => Err(cause),
+    };
+    let date = watch_date(
+        &deps.targets,
+        &watch.key,
+        watch.first_release_date.as_deref(),
+        watch.year,
+    )
+    .await;
+    let next = |streak: u32| {
+        at + u64::try_from(interval_seconds(date.schedule.as_deref(), streak, now)).unwrap_or(0)
+    };
+    let found = date.found;
+    match searched {
+        Ok(candidates) if !candidates.is_empty() => {
             if !settings.auto_download_on_find {
                 deps.watches
                     .record_check(
@@ -234,6 +245,7 @@ async fn check_watch(
                         next(watch.quiet_streak),
                         at,
                         "found",
+                        found,
                     )
                     .await?;
                 deps.ticks.emit(
@@ -268,7 +280,7 @@ async fn check_watch(
                         .link_task(RequestKind::Album, &watch.key, &task_id, None)
                         .await?;
                     deps.watches
-                        .record_check(&watch.key, 0, next(0), at, "dispatched")
+                        .record_check(&watch.key, 0, next(0), at, "dispatched", found)
                         .await?;
                     if !outcome.started() {
                         // Another download of the album is already working.
@@ -287,16 +299,16 @@ async fn check_watch(
                 Err(cause) => {
                     tracing::warn!(key = %watch.key, %cause, "wanted dispatch failed");
                     deps.watches
-                        .record_check(&watch.key, 0, next(0), at, "error")
+                        .record_check(&watch.key, 0, next(0), at, "error", found)
                         .await?;
                     summary.errors += 1;
                 }
             }
         }
-        Ok(Some(_)) => {
+        Ok(_) => {
             let streak = watch.quiet_streak.saturating_add(1);
             deps.watches
-                .record_check(&watch.key, streak, next(streak), at, "quiet")
+                .record_check(&watch.key, streak, next(streak), at, "quiet", found)
                 .await?;
         }
         Err(cause) => {
@@ -304,7 +316,7 @@ async fn check_watch(
             // one bad want never kills the sweep (v2 `_record_error_cycle`).
             tracing::warn!(key = %watch.key, %cause, "wanted search failed");
             deps.watches
-                .record_check(&watch.key, 0, next(0), at, "error")
+                .record_check(&watch.key, 0, next(0), at, "error", found)
                 .await?;
             summary.errors += 1;
         }
@@ -390,6 +402,16 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
                     }
                 }
             }
+            let stored = match deps.watches.get(&row.key).await {
+                // Enrolment never touches a live or stopped watch.
+                Ok(Some(watch)) if watch.state != WatchState::Fulfilled => continue,
+                Ok(existing) => existing.and_then(|watch| watch.first_release_date),
+                Err(error) => {
+                    tracing::warn!(key = %row.key, ?error, "wanted enrolment watch read failed");
+                    continue;
+                }
+            };
+            let date = watch_date(&deps.targets, &row.key, stored.as_deref(), row.year).await;
             let watch = WantedWatch {
                 key: row.key.clone(),
                 user_id,
@@ -402,10 +424,10 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
                 kind: kind.to_owned(),
                 state: WatchState::Watching,
                 created_at: epoch(now),
-                first_release_date: None,
+                first_release_date: date.found,
                 check_count: 0,
                 quiet_streak: 0,
-                next_check_at: epoch(now + interval_seconds(None, 0, now)),
+                next_check_at: epoch(now + interval_seconds(date.schedule.as_deref(), 0, now)),
                 new_candidate_count: 0,
             };
             match deps.watches.enrol(watch).await {
@@ -425,6 +447,39 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
         }
     }
     enrolled
+}
+
+/// When a watch's album first came out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WatchDate {
+    /// A date MusicBrainz gave on this lookup, for the watch to keep.
+    pub found: Option<String>,
+    /// The date the recheck cadence reads: the stored or found date, else
+    /// the request's year. The year alone is never stored.
+    pub schedule: Option<String>,
+}
+
+/// A watch's release date: the one it holds, else the release group's
+/// first release date from MusicBrainz (one lookup), else the request's
+/// year, else none. A failed lookup finds nothing, so the next check
+/// tries again.
+pub async fn watch_date(
+    targets: &Targets,
+    release_group_mbid: &str,
+    stored: Option<&str>,
+    year: Option<i32>,
+) -> WatchDate {
+    if let Some(date) = stored {
+        return WatchDate {
+            found: None,
+            schedule: Some(date.to_owned()),
+        };
+    }
+    let found = targets.first_release_date(release_group_mbid).await;
+    let schedule = found
+        .clone()
+        .or_else(|| year.map(|year| format!("{year:04}")));
+    WatchDate { found, schedule }
 }
 
 /// Quiet streak at which old releases back off from 14 to 28 days (v2

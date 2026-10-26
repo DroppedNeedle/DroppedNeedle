@@ -1,5 +1,5 @@
 //! What acquisition asks MusicBrainz: which releases carry a recording,
-//! and the tracklist of one release. [`AlbumLookup`] is the port;
+//! the tracklist of one release, and when a release group first came out. [`AlbumLookup`] is the port;
 //! [`MusicBrainzAlbums`] answers it over the shared client. Lookups are
 //! identity critical: an outage is an error, never an empty answer that
 //! would read as "no album".
@@ -102,6 +102,14 @@ pub trait AlbumLookup: Send + Sync {
         &'a self,
         release_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<AlbumRelease>, LookupError>>;
+
+    /// A release group's first release date as MusicBrainz gives it
+    /// (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`); `None` when the group is
+    /// unknown or undated.
+    fn first_release_date<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, LookupError>>;
 }
 
 /// [`AlbumLookup`] over the MusicBrainz client.
@@ -163,6 +171,22 @@ impl AlbumLookup for MusicBrainzAlbums {
                 .await
                 .map_err(|error| LookupError(error.to_string()))?;
             Ok(found.and_then(|lookup| album_release(lookup.entity)))
+        })
+    }
+
+    fn first_release_date<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, LookupError>> {
+        Box::pin(async move {
+            let found = self
+                .client
+                .lookup_release_group(release_group_mbid, &[], Criticality::IdentityCritical)
+                .await
+                .map_err(|error| LookupError(error.to_string()))?;
+            Ok(found
+                .and_then(|lookup| lookup.entity.first_release_date)
+                .filter(|date| !date.trim().is_empty()))
         })
     }
 }
@@ -242,8 +266,8 @@ pub fn album_release(release: MbRelease) -> Option<AlbumRelease> {
     })
 }
 
-/// Fixed answers for tests: recordings and releases by MBID. A missing
-/// entry reads as "MusicBrainz does not know it".
+/// Fixed answers for tests: recordings, releases and release-group dates
+/// by MBID. A missing entry reads as "MusicBrainz does not know it".
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct FixedAlbums {
@@ -251,6 +275,8 @@ pub struct FixedAlbums {
     pub recordings: std::collections::HashMap<String, Vec<ReleaseCandidate>>,
     /// Release MBID to the release.
     pub releases: std::collections::HashMap<String, AlbumRelease>,
+    /// Release-group MBID to its first release date.
+    pub first_release_dates: std::collections::HashMap<String, String>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -267,5 +293,12 @@ impl AlbumLookup for FixedAlbums {
         release_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<AlbumRelease>, LookupError>> {
         Box::pin(async move { Ok(self.releases.get(release_mbid).cloned()) })
+    }
+
+    fn first_release_date<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, LookupError>> {
+        Box::pin(async move { Ok(self.first_release_dates.get(release_group_mbid).cloned()) })
     }
 }

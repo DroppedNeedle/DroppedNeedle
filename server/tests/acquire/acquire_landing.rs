@@ -2735,6 +2735,14 @@ impl droppedneedle_acquire::target::lookup::AlbumLookup for Lookup {
             });
         Box::pin(async move { Ok(found) })
     }
+
+    fn first_release_date<'a>(
+        &'a self,
+        _release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, droppedneedle_acquire::target::lookup::LookupError>>
+    {
+        Box::pin(async { Ok(None) })
+    }
 }
 
 /// The real worker, landing, publisher and catalog over one scratch

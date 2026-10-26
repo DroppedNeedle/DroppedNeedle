@@ -23257,8 +23257,8 @@ export interface components {
              * @description Epoch seconds when the next check is due, when scheduled.
              */
             next_check_at?: number | null;
-            /** @description Watch state: `watching`, `stopped` or `fulfilled`. */
-            state: string;
+            /** @description Watch state. */
+            state: components["schemas"]["WatchState"];
             /** @description Owner id (admins see every row). */
             user_id?: string | null;
             /** @description Owner display name (admins only; the "watched for" chip). */
@@ -23368,6 +23368,12 @@ export interface components {
              */
             watch_partial_albums: boolean;
         };
+        /**
+         * @description A wanted watch's state. The `wanted_watches.state` CHECK lists exactly
+         *     these values.
+         * @enum {string}
+         */
+        WatchState: "watching" | "stopped" | "fulfilled";
         /**
          * @description WAV tag policy.
          * @enum {string}

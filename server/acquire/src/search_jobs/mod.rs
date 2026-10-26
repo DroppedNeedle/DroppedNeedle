@@ -535,7 +535,12 @@ impl SearchJobs {
         match existing.as_ref().map(|watch| watch.state) {
             None | Some(WatchState::Fulfilled) => {
                 let at = i64::try_from(now).unwrap_or(i64::MAX);
-                let next = crate::flows::loops::interval_seconds(None, 0, at);
+                let stored = existing
+                    .as_ref()
+                    .and_then(|watch| watch.first_release_date.as_deref());
+                let date =
+                    crate::flows::loops::watch_date(&self.targets, &group, stored, row.year).await;
+                let next = crate::flows::loops::interval_seconds(date.schedule.as_deref(), 0, at);
                 self.wanted
                     .enrol(WantedWatch {
                         key: group.clone(),
@@ -549,7 +554,7 @@ impl SearchJobs {
                         kind: "missing".to_owned(),
                         state: WatchState::Watching,
                         created_at: now,
-                        first_release_date: None,
+                        first_release_date: date.found,
                         check_count: 0,
                         quiet_streak: 0,
                         next_check_at: now.saturating_add(u64::try_from(next).unwrap_or(0)),

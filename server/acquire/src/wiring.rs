@@ -598,6 +598,8 @@ struct CorePorts {
     readiness: Option<AcquireReadiness>,
     release_poll: Arc<dyn ReleasePoll>,
     mix: Option<MixInputs>,
+    /// MusicBrainz reads the wanted watcher dates its watches with.
+    targets: Arc<Targets>,
 }
 
 /// The pieces shared by the production and test bundles.
@@ -655,6 +657,7 @@ fn core(
         settings,
         ticks,
         ports.release_poll,
+        ports.targets,
     ));
     Core {
         requests,
@@ -741,6 +744,7 @@ impl AcquireSetup {
                         playlists: collections.playlists.clone(),
                     }
                 }),
+                targets: clients.targets().clone(),
             },
             events.clone(),
         );
@@ -909,6 +913,7 @@ impl AcquireSetup {
                 readiness: None,
                 release_poll: Arc::new(super::search::NoReleasePoll),
                 mix: None,
+                targets: clients.targets().clone(),
             },
             events.clone(),
         );
@@ -1212,6 +1217,7 @@ fn flows_bundle(
     settings: &ConfigStore,
     ticks: Arc<dyn TickSink>,
     release_poll: Arc<dyn ReleasePoll>,
+    targets: Arc<Targets>,
 ) -> FlowsBundle {
     let watches = requests.wanted.clone();
     let ledger = requests.store.clone();
@@ -1226,6 +1232,7 @@ fn flows_bundle(
         sources,
         downloads: dispatch.clone(),
         library: library.clone(),
+        targets,
         ticks: ticks.clone(),
     });
     let follow_deps = Arc::new(FollowDeps {

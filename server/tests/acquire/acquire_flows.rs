@@ -270,6 +270,10 @@ async fn wanted_with_slskd(db: &AcquireDb, slskd_on: bool) -> Wanted {
             sources,
             downloads: dispatch(db, &settings),
             library: library.clone(),
+            targets: Arc::new(Targets::new(
+                Arc::new(Journal::new(db.clone(), quiet_ticks())),
+                None,
+            )),
             ticks: ticks(&events),
         },
         library,

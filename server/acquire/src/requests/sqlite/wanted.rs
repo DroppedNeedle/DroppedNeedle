@@ -216,7 +216,8 @@ impl WantedStore {
                 let rearmed = tx.execute(
                     "UPDATE wanted_watches SET state = ?2, user_id = ?3, kind = ?4, \
                      created_at = ?5, check_count = 0, quiet_streak = 0, last_checked_at = NULL, \
-                     next_check_at = ?6, last_outcome = NULL, new_candidate_count = 0 \
+                     next_check_at = ?6, last_outcome = NULL, new_candidate_count = 0, \
+                     first_release_date = COALESCE(?8, first_release_date) \
                      WHERE release_group_mbid_lower = ?1 AND state = ?7",
                     params![
                         key,
@@ -226,6 +227,7 @@ impl WantedStore {
                         ms_from_secs(watch.created_at),
                         ms_from_secs(watch.next_check_at),
                         WatchState::Fulfilled,
+                        watch.first_release_date,
                     ],
                 )?;
                 Ok(rearmed > 0)
@@ -234,7 +236,8 @@ impl WantedStore {
             .map_err(|error| lane_error("wanted.enrol", error))
     }
 
-    /// Record one check: the new quiet streak and next due time.
+    /// Record one check: the new quiet streak and next due time, and the
+    /// release date when this check found one (a stored date is kept).
     pub async fn record_check(
         &self,
         key: &str,
@@ -242,6 +245,7 @@ impl WantedStore {
         next_check_at: u64,
         now: u64,
         outcome: &str,
+        first_release_date: Option<String>,
     ) -> Result<(), RequestsError> {
         let key = key.to_lowercase();
         let outcome = outcome.to_owned();
@@ -250,13 +254,15 @@ impl WantedStore {
                 tx.execute(
                     "UPDATE wanted_watches SET check_count = check_count + 1, \
                      quiet_streak = ?2, next_check_at = ?3, last_checked_at = ?4, \
-                     last_outcome = ?5 WHERE release_group_mbid_lower = ?1",
+                     last_outcome = ?5, first_release_date = COALESCE(?6, first_release_date) \
+                     WHERE release_group_mbid_lower = ?1",
                     params![
                         key,
                         quiet_streak,
                         ms_from_secs(next_check_at),
                         ms_from_secs(now),
-                        outcome
+                        outcome,
+                        first_release_date
                     ],
                 )?;
                 Ok(())

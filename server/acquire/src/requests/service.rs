@@ -1489,7 +1489,7 @@ impl RequestsService {
                 artist_name: watch.artist_name,
                 album_title: watch.album_title,
                 kind: watch.kind,
-                state: watch.state.as_str().to_owned(),
+                state: watch.state,
                 check_count: watch.check_count,
                 next_check_at: Some(watch.next_check_at),
                 new_candidate_count: watch.new_candidate_count,

@@ -1,16 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import AlbumImage from './AlbumImage.svelte';
-	import {
-		CircleCheck,
-		CircleStop,
-		Moon,
-		Play,
-		Radar,
-		RefreshCw,
-		Sparkles,
-		X
-	} from 'lucide-svelte';
+	import { CircleCheck, CircleStop, Play, Radar, RefreshCw, Sparkles, X } from 'lucide-svelte';
 	import type { WantedWatchItem } from '$lib/queries/wanted/types';
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -43,7 +34,6 @@
 	const checkedLabel = $derived(
 		item.check_count > 0 ? `checked ${item.check_count}×` : 'not checked yet'
 	);
-	const isPaused = $derived(item.state === 'paused' || item.state === 'stopped');
 </script>
 
 <Card padding="none">
@@ -84,17 +74,10 @@
 					{/if}
 					<span class="text-base-content/20">•</span>
 					<span class="text-base-content/40">{checkedLabel}</span>
-				{:else if item.state === 'dormant'}
-					<span class="text-base-content/50 flex items-center gap-1">
-						<Moon class="h-3 w-3" />
-						Dormant
-					</span>
-					<span class="text-base-content/20">•</span>
-					<span class="text-base-content/40">paused after a year of looking</span>
-				{:else if isPaused}
+				{:else if item.state === 'stopped'}
 					<span class="text-base-content/50 flex items-center gap-1">
 						<CircleStop class="h-3 w-3" />
-						{item.state === 'stopped' ? 'Stopped' : 'Paused'}
+						Stopped
 					</span>
 					<span class="text-base-content/20">•</span>
 					<span class="text-base-content/40">not being searched</span>
@@ -160,7 +143,7 @@
 						<span class="hidden sm:inline">Stop</span>
 					</Button>
 				{/if}
-			{:else if (item.state === 'dormant' || isPaused) && onresume}
+			{:else if item.state === 'stopped' && onresume}
 				<Button
 					variant="outline"
 					size="sm"

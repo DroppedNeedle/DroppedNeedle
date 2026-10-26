@@ -389,8 +389,8 @@ pub struct WantedItem {
     pub album_title: String,
     /// `missing` (whole album) or `partial` (filling gaps).
     pub kind: String,
-    /// Watch state: `watching`, `stopped` or `fulfilled`.
-    pub state: String,
+    /// Watch state.
+    pub state: super::ledger::WatchState,
     /// Passed checks so far.
     pub check_count: u32,
     /// Epoch seconds when the next check is due, when scheduled.

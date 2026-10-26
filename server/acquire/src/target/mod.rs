@@ -118,6 +118,20 @@ impl Targets {
         }
     }
 
+    /// When a release group first came out, as MusicBrainz dates it.
+    /// `None` when MusicBrainz is not wired, does not know or date the
+    /// group, or the lookup failed (logged); nothing is guessed.
+    pub async fn first_release_date(&self, release_group_mbid: &str) -> Option<String> {
+        let lookup = self.lookup.as_ref()?;
+        match lookup.first_release_date(release_group_mbid).await {
+            Ok(date) => date,
+            Err(error) => {
+                tracing::warn!(release_group_mbid, %error, "release group date unavailable");
+                None
+            }
+        }
+    }
+
     /// One edition's audio tracklist, for ranking a manual search. Empty
     /// when MusicBrainz is not wired, down, or does not know the release;
     /// folders are then judged on their file counts.
