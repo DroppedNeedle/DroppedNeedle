@@ -2554,8 +2554,10 @@ class NativeLibraryStore(PersistenceBase):
     ) -> tuple[str | None, str | None]:
         """Pin release plus the group it was pinned under.
 
-        The display pick drops pins whose group no longer matches the
-        album's identity (re-identified to another group since pinning).
+        A copy's own pin wins; without one the pin of the copy's release group
+        applies (chosen before the first import). The display pick drops pins
+        whose group no longer matches the album's identity (re-identified to
+        another group since pinning).
         """
 
         def operation(connection: sqlite3.Connection) -> tuple[str | None, str | None]:
@@ -2567,9 +2569,11 @@ class NativeLibraryStore(PersistenceBase):
                 "FROM library_album_release_pins WHERE local_album_id = ?",
                 (album_id,),
             ).fetchone()
-            if row is None:
-                return (None, None)
-            return (str(row["release_mbid"]), str(row["release_group_mbid"]))
+            if row is not None:
+                return (str(row["release_mbid"]), str(row["release_group_mbid"]))
+            group = self._album_pin_group_tx(connection, album_id)
+            release = self._release_group_pin_tx(connection, group)
+            return (release, group) if release is not None else (None, None)
 
         return await self._read(operation)
 
@@ -2586,47 +2590,218 @@ class NativeLibraryStore(PersistenceBase):
                 raise ResourceNotFoundError(
                     f"Album {album_identifier} is not in the local library"
                 )
-            identity = connection.execute(
-                "SELECT release_group_mbid FROM local_album_external_identities "
-                "WHERE local_album_id = ? AND provider = 'musicbrainz'",
-                (album_id,),
-            ).fetchone()
-            if identity is None:
-                raise ResourceNotFoundError(
-                    f"Album {album_identifier} has no MusicBrainz identity"
-                )
-            connection.execute(
-                "INSERT INTO library_album_release_pins "
-                "(local_album_id, release_group_mbid, release_mbid, "
-                "set_by_user_id, set_at) VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(local_album_id) DO UPDATE SET "
-                "release_group_mbid = excluded.release_group_mbid, "
-                "release_mbid = excluded.release_mbid, "
-                "set_by_user_id = excluded.set_by_user_id, "
-                "set_at = excluded.set_at",
-                (
-                    album_id,
-                    str(identity["release_group_mbid"]),
-                    release_mbid,
-                    set_by_user_id,
-                    set_at,
-                ),
+            self._set_album_release_pin_tx(
+                connection,
+                album_identifier,
+                album_id,
+                release_mbid,
+                set_by_user_id,
+                set_at,
             )
 
         await self._write(operation)
 
+    @classmethod
+    def _set_album_release_pin_tx(
+        cls,
+        connection: sqlite3.Connection,
+        album_identifier: str,
+        album_id: str,
+        release_mbid: str,
+        set_by_user_id: str | None,
+        set_at: str,
+    ) -> None:
+        """Pin one copy; its pin replaces the release-group pin (hand-over).
+
+        ``album_identifier`` is the caller's id, used only in the error text.
+        """
+        identity = connection.execute(
+            "SELECT release_group_mbid FROM local_album_external_identities "
+            "WHERE local_album_id = ? AND provider = 'musicbrainz'",
+            (album_id,),
+        ).fetchone()
+        if identity is None:
+            raise ResourceNotFoundError(
+                f"Album {album_identifier} has no MusicBrainz identity"
+            )
+        connection.execute(
+            "INSERT INTO library_album_release_pins "
+            "(local_album_id, release_group_mbid, release_mbid, "
+            "set_by_user_id, set_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(local_album_id) DO UPDATE SET "
+            "release_group_mbid = excluded.release_group_mbid, "
+            "release_mbid = excluded.release_mbid, "
+            "set_by_user_id = excluded.set_by_user_id, "
+            "set_at = excluded.set_at",
+            (
+                album_id,
+                str(identity["release_group_mbid"]),
+                release_mbid,
+                set_by_user_id,
+                set_at,
+            ),
+        )
+        cls._delete_release_group_pin_tx(connection, str(identity["release_group_mbid"]))
+
     async def clear_target_album_release_pin(self, album_identifier: str) -> bool:
+        """Clear one copy's pin and its release group's pin (no stale fallback)."""
+
         def operation(connection: sqlite3.Connection) -> bool:
             album_id = self._resolve_target_album_pin_id(connection, album_identifier)
             if album_id is None:
                 return False
-            cursor = connection.execute(
-                "DELETE FROM library_album_release_pins WHERE local_album_id = ?",
-                (album_id,),
-            )
-            return cursor.rowcount > 0
+            return self._clear_album_pins_tx(connection, album_id)
 
         return await self._write(operation)
+
+    async def get_target_edition_pin(self, album_identifier: str) -> str | None:
+        """A copy's own pin, else the pin of its release group.
+
+        The fallback keeps a pin chosen before download applying after the
+        first files import, until a per-copy pin replaces it.
+        """
+
+        def operation(connection: sqlite3.Connection) -> str | None:
+            album_id = self._resolve_target_album_pin_id(connection, album_identifier)
+            if album_id is None:
+                return self._release_group_pin_tx(connection, album_identifier)
+            row = connection.execute(
+                "SELECT release_mbid FROM library_album_release_pins "
+                "WHERE local_album_id = ?",
+                (album_id,),
+            ).fetchone()
+            if row is not None:
+                return str(row["release_mbid"])
+            return self._release_group_pin_tx(
+                connection, self._album_pin_group_tx(connection, album_id)
+            )
+
+        return await self._read(operation)
+
+    async def set_target_edition_pin(
+        self,
+        album_identifier: str,
+        release_mbid: str,
+        set_by_user_id: str | None,
+        set_at: str,
+    ) -> None:
+        """Pin one copy, or the release group while it has no real local copy."""
+
+        def operation(connection: sqlite3.Connection) -> None:
+            album_id = self._resolve_target_album_pin_id(connection, album_identifier)
+            if album_id is None or not self._album_has_indexed_tracks_tx(
+                connection, album_id
+            ):
+                # A leftover shell with no indexed tracks (#382) is not a copy
+                # worth pinning: the group pin also reaches the next real one.
+                if album_id is not None:
+                    connection.execute(
+                        "DELETE FROM library_album_release_pins "
+                        "WHERE local_album_id = ?",
+                        (album_id,),
+                    )
+                connection.execute(
+                    "INSERT INTO library_release_group_pins "
+                    "(release_group_mbid, release_mbid, set_by_user_id, set_at) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(release_group_mbid) DO UPDATE SET "
+                    "release_mbid = excluded.release_mbid, "
+                    "set_by_user_id = excluded.set_by_user_id, "
+                    "set_at = excluded.set_at",
+                    (album_identifier.casefold(), release_mbid, set_by_user_id, set_at),
+                )
+                return
+            self._set_album_release_pin_tx(
+                connection,
+                album_identifier,
+                album_id,
+                release_mbid,
+                set_by_user_id,
+                set_at,
+            )
+
+        await self._write(operation)
+
+    async def clear_target_edition_pin(self, album_identifier: str) -> bool:
+        """Clear the copy's pin (if resolvable) and the release-group pin."""
+
+        def operation(connection: sqlite3.Connection) -> bool:
+            try:
+                album_id = self._resolve_target_album_pin_id(
+                    connection, album_identifier
+                )
+            except ConflictError:
+                # Several copies: their own pins stay, but the group pin is
+                # keyed by the identifier and must not be stranded.
+                if self._delete_release_group_pin_tx(connection, album_identifier):
+                    return True
+                raise
+            if album_id is None:
+                return self._delete_release_group_pin_tx(connection, album_identifier)
+            return self._clear_album_pins_tx(connection, album_id)
+
+        return await self._write(operation)
+
+    @classmethod
+    def _clear_album_pins_tx(cls, connection: sqlite3.Connection, album_id: str) -> bool:
+        cleared = (
+            connection.execute(
+                "DELETE FROM library_album_release_pins WHERE local_album_id = ?",
+                (album_id,),
+            ).rowcount
+            > 0
+        )
+        group = cls._album_pin_group_tx(connection, album_id)
+        return cls._delete_release_group_pin_tx(connection, group) or cleared
+
+    @staticmethod
+    def _release_group_pin_tx(
+        connection: sqlite3.Connection, release_group_mbid: str | None
+    ) -> str | None:
+        if not release_group_mbid:
+            return None
+        row = connection.execute(
+            "SELECT release_mbid FROM library_release_group_pins "
+            "WHERE release_group_mbid = ?",
+            (release_group_mbid.casefold(),),
+        ).fetchone()
+        return str(row["release_mbid"]) if row is not None else None
+
+    @staticmethod
+    def _delete_release_group_pin_tx(
+        connection: sqlite3.Connection, release_group_mbid: str | None
+    ) -> bool:
+        if not release_group_mbid:
+            return False
+        return (
+            connection.execute(
+                "DELETE FROM library_release_group_pins WHERE release_group_mbid = ?",
+                (release_group_mbid.casefold(),),
+            ).rowcount
+            > 0
+        )
+
+    @staticmethod
+    def _album_pin_group_tx(connection: sqlite3.Connection, album_id: str) -> str | None:
+        row = connection.execute(
+            "SELECT release_group_mbid FROM local_album_external_identities "
+            "WHERE local_album_id = ? AND provider = 'musicbrainz'",
+            (album_id,),
+        ).fetchone()
+        return str(row["release_group_mbid"]) if row is not None else None
+
+    @staticmethod
+    def _album_has_indexed_tracks_tx(
+        connection: sqlite3.Connection, album_id: str
+    ) -> bool:
+        return (
+            connection.execute(
+                "SELECT 1 FROM local_tracks "
+                "WHERE local_album_id = ? AND availability = 'indexed' LIMIT 1",
+                (album_id,),
+            ).fetchone()
+            is not None
+        )
 
     @staticmethod
     def _resolve_target_album_pin_id(

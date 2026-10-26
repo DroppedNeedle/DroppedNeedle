@@ -3310,3 +3310,61 @@ async def test_album_detail_drops_pin_from_another_group(target_services) -> Non
     assert detail is not None
     assert detail.display_release_mbid is None
     assert detail.pick_basis is None
+
+
+def _insert_group_pin(store, group: str, release: str) -> None:
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_release_group_pins VALUES (?, ?, 'user-1', 't')",
+            (group.casefold(), release),
+        )
+        connection.commit()
+
+
+@pytest.mark.asyncio
+async def test_album_detail_follows_the_group_pin_without_a_copy_pin(
+    target_services,
+) -> None:
+    """A pin chosen before download shows as the pick once the copy exists."""
+    store, _view, _favorites, _history, _root = target_services
+    _insert_group_pin(store, RELEASE_GROUP_MBID, PINNED_RELEASE_MBID)
+
+    detail = await TargetNativeLibraryService(store).album_detail(IDENTIFIED_ALBUM_ID)
+
+    assert detail is not None
+    assert detail.display_release_mbid == PINNED_RELEASE_MBID
+    assert detail.pick_basis == "pin"
+
+
+@pytest.mark.asyncio
+async def test_album_detail_copy_pin_wins_over_the_group_pin(target_services) -> None:
+    store, _view, _favorites, _history, _root = target_services
+    _insert_group_pin(store, RELEASE_GROUP_MBID, "82000000-0000-4000-8000-000000000002")
+    await store.set_target_album_release_pin(
+        IDENTIFIED_ALBUM_ID, PINNED_RELEASE_MBID, "user-1", "2026-09-09"
+    )
+
+    detail = await TargetNativeLibraryService(store).album_detail(IDENTIFIED_ALBUM_ID)
+
+    assert detail is not None
+    assert detail.display_release_mbid == PINNED_RELEASE_MBID
+    assert detail.pick_basis == "pin"
+
+
+@pytest.mark.asyncio
+async def test_album_detail_drops_a_group_pin_of_another_group(target_services) -> None:
+    store, _view, _favorites, _history, _root = target_services
+    _insert_group_pin(store, RELEASE_GROUP_MBID, PINNED_RELEASE_MBID)
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            "UPDATE local_album_external_identities SET release_group_mbid = ? "
+            "WHERE local_album_id = ?",
+            ("0f0f0f0f-0000-4000-8000-000000000000", IDENTIFIED_ALBUM_ID),
+        )
+        connection.commit()
+
+    detail = await TargetNativeLibraryService(store).album_detail(IDENTIFIED_ALBUM_ID)
+
+    assert detail is not None
+    assert detail.display_release_mbid is None
+    assert detail.pick_basis is None

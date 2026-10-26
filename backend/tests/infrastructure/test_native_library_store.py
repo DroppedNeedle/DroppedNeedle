@@ -1029,6 +1029,7 @@ async def test_schema_is_idempotent_and_contains_complete_target_surface(
         "library_playlists",
         "library_playlist_tracks",
         "library_album_release_pins",
+        "library_release_group_pins",
         "library_compat_bookmarks",
         "library_compat_play_queues",
         "library_compat_play_queue_items",
@@ -1549,6 +1550,209 @@ async def test_target_release_pins_ignore_empty_historical_provider_match(
     assert await store.get_target_album_release_pin("shared-rg") == "release-active"
     assert await store.clear_target_album_release_pin("shared-rg") is True
     assert await store.get_target_album_release_pin("shared-rg") is None
+
+
+@pytest.mark.asyncio
+async def test_target_edition_pin_without_local_copy_pins_the_release_group(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    """#460: the per-copy table cannot hold a pin for an unowned group."""
+    with pytest.raises(ResourceNotFoundError, match="not in the local library"):
+        await store.set_target_album_release_pin(
+            "Unowned-RG", "release-a", "admin", "t1"
+        )
+
+    assert await store.get_target_edition_pin("unowned-rg") is None
+    await store.set_target_edition_pin("Unowned-RG", "release-a", "admin", "t1")
+    assert await store.get_target_edition_pin("unowned-rg") == "release-a"
+    assert await store.get_target_edition_pin("UNOWNED-RG") == "release-a"
+    await store.set_target_edition_pin("unowned-rg", "release-b", "admin", "t2")
+    assert await store.get_target_edition_pin("unowned-rg") == "release-b"
+    assert (
+        _scalar(
+            db_path,
+            "SELECT COUNT(*) FROM library_release_group_pins "
+            "WHERE release_group_mbid = 'unowned-rg'",
+        )
+        == 1
+    )
+    assert _scalar(db_path, "SELECT COUNT(*) FROM library_album_release_pins") == 0
+
+    assert await store.clear_target_edition_pin("Unowned-RG") is True
+    assert await store.get_target_edition_pin("unowned-rg") is None
+    assert await store.clear_target_edition_pin("unowned-rg") is False
+
+
+@pytest.mark.asyncio
+async def test_target_edition_pin_copy_pin_wins_and_group_pin_applies_after_import(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.set_target_edition_pin("copy-rg", "group-release", "admin", "t1")
+
+    await store.create_catalog_membership(_membership("copy"))
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES ('album-copy', 'musicbrainz', 'copy-rg', 'manual', 2)"
+        )
+
+    # The pin chosen before download keeps applying once the first copy lands.
+    assert await store.get_target_edition_pin("copy-rg") == "group-release"
+    assert await store.get_target_edition_pin("album-copy") == "group-release"
+    # ...but the per-copy methods never read it (no cross-read).
+    assert await store.get_target_album_release_pin("album-copy") is None
+
+    # A per-copy pin replaces the group pin (hand-over): none survives stale.
+    await store.set_target_edition_pin("copy-rg", "copy-release", "admin", "t2")
+    assert await store.get_target_album_release_pin("album-copy") == "copy-release"
+    assert await store.get_target_edition_pin("copy-rg") == "copy-release"
+    assert (
+        _scalar(db_path, "SELECT COUNT(*) FROM library_release_group_pins") == 0
+    )
+
+    assert await store.clear_target_edition_pin("copy-rg") is True
+    assert await store.get_target_edition_pin("copy-rg") is None
+    assert await store.get_target_album_release_pin("album-copy") is None
+
+
+@pytest.mark.asyncio
+async def test_target_copy_pin_set_and_clear_remove_the_release_group_pin(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_catalog_membership(_membership("copy"))
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES ('album-copy', 'musicbrainz', 'copy-rg', 'manual', 2)"
+        )
+
+    # Per-copy set (the per-local-album route) hands over from the group pin.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_release_group_pins VALUES "
+            "('copy-rg', 'old-group-release', 'admin', 't0')"
+        )
+    await store.set_target_album_release_pin(
+        "album-copy", "copy-release", "admin", "t2"
+    )
+    assert _scalar(db_path, "SELECT COUNT(*) FROM library_release_group_pins") == 0
+    assert await store.get_target_edition_pin("copy-rg") == "copy-release"
+
+    # Per-copy clear ("Automatic") must not let a group pin take over again.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_release_group_pins VALUES "
+            "('copy-rg', 'old-group-release', 'admin', 't3')"
+        )
+    assert await store.clear_target_album_release_pin("album-copy") is True
+    assert _scalar(db_path, "SELECT COUNT(*) FROM library_release_group_pins") == 0
+    assert await store.get_target_edition_pin("copy-rg") is None
+    assert await store.get_target_album_release_pin_with_group("album-copy") == (
+        None,
+        None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_target_album_pin_with_group_falls_back_to_the_group_pin(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_catalog_membership(_membership("copy"))
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES ('album-copy', 'musicbrainz', 'copy-rg', 'manual', 2)"
+        )
+        connection.execute(
+            "INSERT INTO library_release_group_pins VALUES "
+            "('copy-rg', 'group-release', 'admin', 't1')"
+        )
+
+    assert await store.get_target_album_release_pin_with_group("album-copy") == (
+        "group-release",
+        "copy-rg",
+    )
+    # The plain per-copy getter keeps the no-cross-read rule.
+    assert await store.get_target_album_release_pin("album-copy") is None
+
+
+@pytest.mark.asyncio
+async def test_target_edition_pin_several_copies_still_conflict(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.set_target_edition_pin("shared-rg", "group-release", "admin", "t1")
+    await store.create_catalog_membership(_membership("pin-a"))
+    await store.create_catalog_membership(_membership("pin-b"))
+    with sqlite3.connect(db_path) as connection:
+        connection.executemany(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES (?, 'musicbrainz', 'shared-rg', 'manual', 2)",
+            [("album-pin-a",), ("album-pin-b",)],
+        )
+
+    with pytest.raises(ConflictError, match="multiple local albums"):
+        await store.get_target_edition_pin("shared-rg")
+    with pytest.raises(ConflictError, match="multiple local albums"):
+        await store.set_target_edition_pin("shared-rg", "wrong", "admin", "t2")
+    # Clearing still drops the group pin keyed by the identifier, and the
+    # write is committed (not rolled back by the conflict path).
+    assert await store.clear_target_edition_pin("shared-rg") is True
+    assert _scalar(db_path, "SELECT COUNT(*) FROM library_release_group_pins") == 0
+    # With no group pin left there is nothing to clear: the conflict stands.
+    with pytest.raises(ConflictError, match="multiple local albums"):
+        await store.clear_target_edition_pin("shared-rg")
+
+
+@pytest.mark.asyncio
+async def test_target_edition_pin_goes_to_the_group_for_a_fileless_ghost_album(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_catalog_membership(_membership("ghost", with_track=False))
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES ('album-ghost', 'musicbrainz', 'ghost-rg', 'manual', 2)"
+        )
+
+    # The only match is a leftover with no indexed tracks: pin the group.
+    await store.set_target_edition_pin("ghost-rg", "ghost-release", "admin", "t1")
+    assert _scalar(db_path, "SELECT COUNT(*) FROM library_album_release_pins") == 0
+    assert await store.get_target_edition_pin("ghost-rg") == "ghost-release"
+
+    # The next real copy of the group sees it.
+    await store.create_catalog_membership(_membership("real"))
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES ('album-real', 'musicbrainz', 'ghost-rg', 'manual', 2)"
+        )
+    assert await store.get_target_edition_pin("ghost-rg") == "ghost-release"
+    assert await store.get_target_album_release_pin_with_group("album-real") == (
+        "ghost-release",
+        "ghost-rg",
+    )
+
+    assert await store.clear_target_edition_pin("ghost-rg") is True
+    assert await store.get_target_edition_pin("ghost-rg") is None
+
+
+@pytest.mark.asyncio
+async def test_target_edition_pin_ignores_legacy_release_group_pins(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO album_release_pins VALUES "
+            "('legacy-rg', 'legacy-release', 'admin', 'legacy-time')"
+        )
+
+    assert await store.get_target_edition_pin("legacy-rg") is None
 
 
 def test_foreign_keys_checks_and_uniqueness_are_enforced(

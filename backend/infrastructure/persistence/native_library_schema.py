@@ -180,6 +180,13 @@ CREATE TABLE IF NOT EXISTS library_album_release_pins (
     set_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS library_release_group_pins (
+    release_group_mbid TEXT PRIMARY KEY,
+    release_mbid TEXT NOT NULL,
+    set_by_user_id TEXT,
+    set_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS library_compat_bookmarks (
     user_id TEXT NOT NULL,
     local_track_id TEXT NOT NULL REFERENCES local_tracks(id) ON DELETE RESTRICT,

@@ -1016,3 +1016,289 @@ async def test_target_wiring_pinned_release_id_resolves_single_and_degrades_on_s
     # No-cross-read rule: the pin on copy A never leaks into copy B's read.
     assert await service.get_edition_pin_for_local_album("album-a") == REL_DELUXE
     assert await service.get_edition_pin_for_local_album("album-b") is None
+
+
+# ---------------------------------------------------------------------------
+# Release-group pin for an album with no local copy (#460)
+# ---------------------------------------------------------------------------
+
+
+def _make_target_pinned_service(tmp_path: Path):
+    """The native-build wiring: ``_release_pins`` is the target adapter."""
+    from infrastructure.persistence.native_library_store import NativeLibraryStore
+    from services.native.target_reference_adapters import TargetAlbumReleasePinStore
+
+    service, library_db, _legacy_pins, memory_cache, disk_cache = _make_album_service(
+        tmp_path
+    )
+    db_path = tmp_path / "target.db"
+    store = NativeLibraryStore(db_path=db_path, write_lock=threading.Lock())
+    service._release_pins = TargetAlbumReleasePinStore(store)
+    service._native_library_store = store
+    return service, store, db_path, library_db, memory_cache, disk_cache
+
+
+@pytest.mark.asyncio
+async def test_pin_before_download_applies_to_selection_and_acquisition(
+    tmp_path: Path,
+):
+    service, _store, _db, _library_db, memory_cache, disk_cache = (
+        _make_target_pinned_service(tmp_path)
+    )
+    service._mb_repo.get_release_by_id = AsyncMock(
+        side_effect=lambda release_id, **_kwargs: _release_payload(
+            release_id, 20 if release_id == REL_DELUXE else 12
+        )
+    )
+    service._apply_audiodb_album_images = AsyncMock(
+        side_effect=lambda info, *_args, **_kwargs: info
+    )
+    service._save_album_to_cache = AsyncMock()
+    # Without a pin the XW release outranks the standard edition.
+    unpinned = await service.resolve_edition(RG)
+    assert unpinned == REL_DELUXE
+    other = REL_STD
+
+    # #460: this raised "Album <rg> is not in the local library".
+    await service.set_edition_pin(RG, other, "admin-1")
+
+    assert await service._pinned_release_id(RG) == other
+    editions = await service.list_editions(RG)
+    assert editions["pinned_release_mbid"] == other
+    assert editions["selected_release_mbid"] == other
+    assert editions["selected_basis"] == "pin"
+    assert await service.resolve_edition(RG) == other
+    tracks = await service.get_album_tracks_info(RG)
+    assert tracks.selected_release_mbid == other
+    assert tracks.total_tracks == 12
+    disk_cache.delete_album.assert_awaited_with(RG)
+    assert {item.args[0] for item in memory_cache.delete.await_args_list} >= {
+        f"{ALBUM_TRACKS_INFO_PREFIX}{RG}",
+    }
+
+    assert await service.clear_edition_pin(RG) is True
+    assert await service._pinned_release_id(RG) is None
+    assert await service.resolve_edition(RG) == REL_DELUXE
+
+
+@pytest.mark.asyncio
+async def test_pin_before_download_is_validated_against_the_group(tmp_path: Path):
+    service, _store, db_path, *_ = _make_target_pinned_service(tmp_path)
+
+    with pytest.raises(ResourceNotFoundError):
+        await service.set_edition_pin(
+            RG, "44444444-4444-4444-8444-444444444444", "admin-1"
+        )
+    assert await service._pinned_release_id(RG) is None
+    with sqlite3.connect(db_path) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM library_release_group_pins"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_pin_before_download_survives_first_import_until_copy_pin_replaces_it(
+    tmp_path: Path,
+):
+    service, _store, db_path, *_ = _make_target_pinned_service(tmp_path)
+    await service.set_edition_pin(RG, REL_DELUXE, "admin-1")
+
+    _seed_target_copy(db_path, "album-a", "track-a", RG)
+    assert await service._pinned_release_id(RG) == REL_DELUXE
+    # The per-copy read never sees the group pin.
+    assert await service.get_edition_pin_for_local_album("album-a") is None
+
+    await service.set_edition_pin_for_local_album("album-a", REL_STD, "admin-1")
+    assert await service._pinned_release_id(RG) == REL_STD
+
+    assert await service.clear_edition_pin(RG) is True
+    assert await service._pinned_release_id(RG) is None
+
+
+def _group_pin_count(db_path: Path) -> int:
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute(
+            "SELECT COUNT(*) FROM library_release_group_pins"
+        ).fetchone()[0]
+
+
+@pytest.mark.asyncio
+async def test_copy_pin_set_and_clear_remove_the_pre_download_group_pin(
+    tmp_path: Path,
+):
+    service, _store, db_path, *_ = _make_target_pinned_service(tmp_path)
+    await service.set_edition_pin(RG, REL_DELUXE, "admin-1")
+    _seed_target_copy(db_path, "album-a", "track-a", RG)
+    assert _group_pin_count(db_path) == 1
+
+    # Choosing for the copy hands over: no stale group pin survives.
+    await service.set_edition_pin_for_local_album("album-a", REL_STD, "admin-1")
+    assert _group_pin_count(db_path) == 0
+
+    # "Automatic" on the copy page must not fall back to an old group pin.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_release_group_pins VALUES (?, ?, 'admin-1', 't')",
+            (RG, REL_DELUXE),
+        )
+        connection.commit()
+    assert await service.get_edition_pin_for_local_album("album-a") == REL_STD
+    assert await service.clear_edition_pin_for_local_album("album-a") is True
+    assert _group_pin_count(db_path) == 0
+    assert await service._pinned_release_id(RG) is None
+
+
+@pytest.mark.asyncio
+async def test_clearing_a_group_pin_works_with_several_copies(tmp_path: Path):
+    service, _store, db_path, *_ = _make_target_pinned_service(tmp_path)
+    await service.set_edition_pin(RG, REL_DELUXE, "admin-1")
+    _seed_target_copy(db_path, "album-a", "track-a", RG)
+    _seed_target_copy(db_path, "album-b", "track-b", RG)
+
+    assert await service.clear_edition_pin(RG) is True
+    assert _group_pin_count(db_path) == 0
+    # Nothing left to clear: the shared group stays a conflict.
+    with pytest.raises(ConflictError):
+        await service.clear_edition_pin(RG)
+
+
+@pytest.mark.asyncio
+async def test_pin_on_a_fileless_ghost_album_reaches_the_next_real_copy(
+    tmp_path: Path,
+):
+    service, _store, db_path, *_ = _make_target_pinned_service(tmp_path)
+    _seed_target_copy(db_path, "album-ghost", "track-ghost", RG)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE local_tracks SET availability = 'missing'")
+        connection.commit()
+
+    await service.set_edition_pin(RG, REL_DELUXE, "admin-1")
+
+    assert _group_pin_count(db_path) == 1
+    assert await service.get_edition_pin_for_local_album("album-ghost") is None
+    assert await service._pinned_release_id(RG) == REL_DELUXE
+    _seed_target_copy(db_path, "album-real", "track-real", RG)
+    assert await service._pinned_release_id(RG) == REL_DELUXE
+
+
+@pytest.mark.asyncio
+async def test_group_pin_is_stored_and_cleared_under_the_canonical_id(
+    tmp_path: Path,
+):
+    service, _store, db_path, _library_db, memory_cache, _disk_cache = (
+        _make_target_pinned_service(tmp_path)
+    )
+    redirected = "99999999-9999-4999-8999-999999999999"
+    # MusicBrainz serves the merged group under its canonical id.
+    service._mb_repo.get_release_group_by_id = AsyncMock(return_value=_rg_payload())
+
+    await service.set_edition_pin(redirected, REL_STD, "admin-1")
+
+    with sqlite3.connect(db_path) as connection:
+        keys = [
+            row[0]
+            for row in connection.execute(
+                "SELECT release_group_mbid FROM library_release_group_pins"
+            )
+        ]
+    assert keys == [RG]
+    # The reader (canonical id from the fetched group) sees the pin.
+    assert await service._pinned_release_id(RG) == REL_STD
+    assert (await service.list_editions(redirected))["pinned_release_mbid"] == REL_STD
+    assert {item.args[0] for item in memory_cache.delete.await_args_list} >= {
+        f"{ALBUM_TRACKS_INFO_PREFIX}{RG}",
+        f"{ALBUM_TRACKS_INFO_PREFIX}{redirected}",
+    }
+
+    assert await service.clear_edition_pin(redirected) is True
+    assert _group_pin_count(db_path) == 0
+
+
+@pytest.mark.asyncio
+async def test_pin_before_download_conflicts_once_several_copies_share_the_group(
+    tmp_path: Path,
+):
+    service, _store, db_path, *_ = _make_target_pinned_service(tmp_path)
+    await service.set_edition_pin(RG, REL_DELUXE, "admin-1")
+    _seed_target_copy(db_path, "album-a", "track-a", RG)
+    _seed_target_copy(db_path, "album-b", "track-b", RG)
+
+    with pytest.raises(ConflictError):
+        await service.set_edition_pin(RG, REL_STD, "admin-1")
+    # Reads degrade like any shared group; the stored group pin is untouched.
+    assert await service._pinned_release_id(RG) is None
+
+
+@pytest.mark.asyncio
+async def test_acquire_edition_and_album_request_use_the_pre_download_pin(
+    tmp_path: Path,
+):
+    from services.native.download_service import DownloadService
+
+    album_service, _store, _db, *_ = _make_target_pinned_service(tmp_path)
+
+    def release_with_track_ids(release_id: str, **_kwargs) -> dict:
+        payload = _release_payload(release_id, 3)
+        for track in payload["media"][0]["tracks"]:
+            track["id"] = f"release-track-{track['position']}"
+        return payload
+
+    album_service._mb_repo.get_release_by_id = AsyncMock(
+        side_effect=release_with_track_ids
+    )
+    album_service._apply_audiodb_album_images = AsyncMock(
+        side_effect=lambda info, *_args, **_kwargs: info
+    )
+    album_service._save_album_to_cache = AsyncMock()
+    await album_service.set_edition_pin(RG, REL_STD, "admin-1")
+
+    mb = MagicMock()
+    mb.get_release_by_id = AsyncMock(return_value={"id": REL_STD})
+    meta = MagicMock()
+    meta.artist_name = "Radiohead"
+    meta.artist_id = "art-1"
+    meta.title = "OK Computer"
+    mb.get_release_group = AsyncMock(return_value=meta)
+    library = AsyncMock()
+    library.get_file_rows_for_album.return_value = []
+    library.has_album.return_value = False
+    library.album_quality_tier.return_value = None
+    task_store = AsyncMock()
+    task_store.get_active_task_for_album.return_value = None
+    task_store.create_task.return_value = SimpleNamespace(id="task-1")
+    service = DownloadService(
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        library,
+        task_store,
+        AsyncMock(),
+        MagicMock(),
+        musicbrainz=mb,
+        album_service=album_service,
+        release_pin_store=album_service._release_pins,
+    )
+    service.request_track = AsyncMock(return_value="task-fill")
+
+    import services.album_utils as album_utils
+
+    original = album_utils.extract_tracks
+    album_utils.extract_tracks = lambda release: (
+        [_mb_track(1, "rec-1", "Airbag")],
+        0,
+    )
+    try:
+        result = await service.acquire_edition("admin-1", RG)
+    finally:
+        album_utils.extract_tracks = original
+    assert result["release_mbid"] == REL_STD
+    assert service.request_track.await_args.kwargs["release_mbid"] == REL_STD
+
+    # A plain request carries no release: the pin becomes the task's edition.
+    await service.request_album("admin-1", RG, "Radiohead", "OK Computer", year=1997)
+    created = task_store.create_task.await_args.kwargs
+    assert created["release_mbid"] == REL_STD
+    assert created["track_count"] == 3
