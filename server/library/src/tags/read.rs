@@ -157,12 +157,11 @@ pub fn read_scan_metadata(
         };
         return Ok((tag, header));
     }
-    let tagged = lofty::read_from_path(path).map_err(|error| {
+    let tagged = read_lenient(path).map_err(|error| {
         // An I/O failure (a file vanishing mid-scan, a contended disk) is
         // worth a retry; anything else is a broken file.
-        let io = std::error::Error::source(&error)
-            .and_then(|source| source.downcast_ref::<std::io::Error>())
-            .map(|source| std::io::Error::new(source.kind(), source.to_string()));
+        let io =
+            io_source(&error).map(|source| std::io::Error::new(source.kind(), source.to_string()));
         match io {
             Some(source) => TagsError::Io {
                 path: path.display().to_string(),
@@ -201,12 +200,38 @@ pub fn read_scan_metadata(
     Ok((tag, header))
 }
 
+/// The file as the catalog reads it. lofty's default mode comes first,
+/// so a file that reads there reads exactly as before. Only when that
+/// fails on the file's content is it read again in `Relaxed` mode, which
+/// drops an item lofty cannot parse (a `TDRL` holding a web address
+/// rather than a date) instead of failing the whole file, so the track is
+/// still listed. Writes keep the default mode and refuse such a file.
+fn read_lenient(path: &Path) -> Result<TaggedFile, lofty::error::FileParseError> {
+    match lofty::read_from_path(path) {
+        Err(error) if io_source(&error).is_none() => {
+            tracing::debug!(path = %path.display(), %error, "tags read again in relaxed mode");
+            lofty::probe::Probe::open(path)?
+                .options(
+                    lofty::config::ParseOptions::new()
+                        .parsing_mode(lofty::config::ParsingMode::Relaxed),
+                )
+                .read()
+        }
+        read => read,
+    }
+}
+
+/// The I/O error under a lofty read failure, if that is what it was.
+fn io_source(error: &lofty::error::FileParseError) -> Option<&std::io::Error> {
+    std::error::Error::source(error).and_then(|source| source.downcast_ref::<std::io::Error>())
+}
+
 /// Read the tag half only. The probe half lives in [`super::probe`].
 pub fn read_tag_only(path: &Path, format: AudioFormat) -> Result<AudioTag, TagsError> {
     if format == AudioFormat::Aac {
         return read_ape_tag(path);
     }
-    let tagged = lofty::read_from_path(path).map_err(|error| TagsError::TagRead {
+    let tagged = read_lenient(path).map_err(|error| TagsError::TagRead {
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
@@ -289,7 +314,7 @@ pub fn read_cover_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
     // WMA is unrecognized even here: v2 returned None by falling through,
     // v3 rejects the extension before any reader runs.
     format_for_path(path)?;
-    let tagged = lofty::read_from_path(path).map_err(|error| TagsError::TagRead {
+    let tagged = read_lenient(path).map_err(|error| TagsError::TagRead {
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
