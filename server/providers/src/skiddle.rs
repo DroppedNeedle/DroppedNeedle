@@ -2,31 +2,25 @@
 //!
 //! Port of v2's Skiddle repository and models. Every request goes through
 //! the executor at the `skiddle` rate row, which retries, rests on a rate
-//! limit and types each failure as a [`ProviderError`]; Skiddle's own
-//! `error != 0` envelope on HTTP 200 is a payload failure that carries
-//! only the code. The API key travels as the `api_key` query pair, so it is
-//! never in an error or a log line.
+//! limit and types each failure as a [`ProviderError`]. Every answer carries
+//! Skiddle's error code: a non-zero code, or none, is a payload failure that
+//! keeps only the code. The API key travels as the `api_key` query pair, so
+//! it is never in an error or a log line.
 //!
-//! Wire quirks, verified against the live API on 2026-07-06 and preserved
-//! here with the v2 decode fixtures as reference
-//! (its `sk_*.json` event fixtures):
-//!
-//! - `cancelled` is the string `'0'`/`'1'`, never a boolean.
-//! - Ids are strings, venue coordinates are floats.
-//! - Empty strings stand in for absent values (`ticketUrl`,
-//!   `cancellationDate`, `rescheduledDate`).
-//! - Key casing is mixed (`eventname` vs `ticketUrl` vs `EventCode`).
-//! - `totalcount` is an int on the artists endpoint but a string on events
-//!   (`"392"`), so both shapes decode.
+//! The wire shapes, their quirks and the recordings they were checked
+//! against are in `skiddle/models.rs`.
 
 use std::time::Duration;
-
-use serde::{Deserialize, Serialize};
 
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, payload, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+
+mod models;
+
+use models::{Answer, ArtistsAnswer, EventsAnswer, KeyCheck};
+pub use models::{SkiddleArtist, SkiddleEvent, SkiddleEventArtist, SkiddleVenue};
 
 /// Provider key used in [ProviderError] and logs, and its rate row.
 pub const SOURCE: &str = "skiddle";
@@ -46,141 +40,6 @@ pub static SPEC: Spec = Spec {
     retry_after_cap: MAX_RETRY_AFTER,
     classify: standard_classify,
 };
-
-/// One matching act. `id` is the required identity field: a result without
-/// one fails the whole decode rather than materializing as an empty act.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct SkiddleArtist {
-    /// Skiddle artist id, a string on the wire.
-    pub id: String,
-    /// Act name.
-    #[serde(default)]
-    pub name: String,
-    /// Spotify URI, shared by duplicate listings of one act.
-    #[serde(default)]
-    pub spotifyartisturl: Option<String>,
-}
-
-/// `totalcount` arrives as an int on the artists endpoint and a string on
-/// events; both decode since the value is never consumed.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum TotalCount {
-    /// Numeric count, as sent by the artists endpoint.
-    Int(i64),
-    /// String count such as `"392"`, as sent by the events endpoint.
-    Text(String),
-}
-
-impl Default for TotalCount {
-    fn default() -> Self {
-        Self::Int(0)
-    }
-}
-
-/// Top-level artists payload, including Skiddle's own error envelope.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-struct SkiddleArtistsResponse {
-    #[serde(default)]
-    error: i64,
-    #[serde(default)]
-    totalcount: TotalCount,
-    #[serde(default)]
-    results: Vec<SkiddleArtist>,
-}
-
-/// Event venue. Coordinates are floats on this API.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct SkiddleVenue {
-    /// Venue name.
-    #[serde(default)]
-    pub name: Option<String>,
-    /// Town or city.
-    #[serde(default)]
-    pub town: Option<String>,
-    /// Region such as "Merseyside".
-    #[serde(default)]
-    pub region: Option<String>,
-    /// ISO country code such as "GB".
-    #[serde(default)]
-    pub country: Option<String>,
-    /// Latitude in degrees.
-    #[serde(default)]
-    pub latitude: Option<f64>,
-    /// Longitude in degrees.
-    #[serde(default)]
-    pub longitude: Option<f64>,
-}
-
-/// One act on an event lineup. Small gigs carry no lineup at all.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct SkiddleEventArtist {
-    /// Skiddle artist id.
-    #[serde(default)]
-    pub artistid: Option<String>,
-    /// Act name.
-    #[serde(default)]
-    pub name: Option<String>,
-}
-
-/// One upcoming event. `id` is the required identity field.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct SkiddleEvent {
-    /// Skiddle event id, a string on the wire.
-    pub id: String,
-    /// Event title.
-    #[serde(default)]
-    pub eventname: String,
-    /// Venue-local date, YYYY-MM-DD.
-    #[serde(default)]
-    pub date: Option<String>,
-    /// ISO start datetime.
-    #[serde(default)]
-    pub startdate: Option<String>,
-    /// Cancellation flag: the string `'0'` or `'1'`, never a boolean.
-    #[serde(default)]
-    pub cancelled: Option<String>,
-    /// Reschedule date, or an empty string when unset.
-    #[serde(default, rename = "rescheduledDate")]
-    pub rescheduled_date: Option<String>,
-    /// Skiddle listing page; the fallback when no ticket URL is set.
-    #[serde(default)]
-    pub link: Option<String>,
-    /// Ticket URL, or an empty string when unset.
-    #[serde(default, rename = "ticketUrl")]
-    pub ticket_url: Option<String>,
-    /// Event venue.
-    #[serde(default)]
-    pub venue: Option<SkiddleVenue>,
-    /// Tagged lineup, empty for small gigs.
-    #[serde(default)]
-    pub artists: Vec<SkiddleEventArtist>,
-}
-
-impl SkiddleEvent {
-    /// True only when the wire flag is exactly the string `'1'`.
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.as_deref() == Some("1")
-    }
-
-    /// True when a reschedule date is set (blank and missing count as unset).
-    pub fn is_rescheduled(&self) -> bool {
-        self.rescheduled_date
-            .as_deref()
-            .is_some_and(|date| !date.trim().is_empty())
-    }
-}
-
-/// Top-level events payload, including Skiddle's own error envelope.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-struct SkiddleEventsResponse {
-    #[serde(default)]
-    error: i64,
-    #[serde(default)]
-    totalcount: TotalCount,
-    #[serde(default)]
-    results: Vec<SkiddleEvent>,
-}
 
 /// The Skiddle client, built once with the providers. The key is an
 /// argument of each call, read from settings by the caller.
@@ -228,9 +87,8 @@ impl SkiddleClient {
         let reply = self
             .get(key, &["artists"], &[("name", name)], priority)
             .await?;
-        let decoded: SkiddleArtistsResponse = decode(&reply)?;
-        envelope(decoded.error)?;
-        Ok(decoded.results)
+        let answer: ArtistsAnswer = decode(&reply)?;
+        results(answer)
     }
 
     /// Upcoming events tagged with one Skiddle artist id (`a=` filter).
@@ -252,9 +110,8 @@ impl SkiddleClient {
                 priority,
             )
             .await?;
-        let decoded: SkiddleEventsResponse = decode(&reply)?;
-        envelope(decoded.error)?;
-        Ok(decoded.results)
+        let answer: EventsAnswer = decode(&reply)?;
+        results(answer)
     }
 
     /// Check that `key` is accepted: one small events search, sent once,
@@ -269,10 +126,6 @@ impl SkiddleClient {
         key: &str,
         priority: RequestPriority,
     ) -> Result<(), ProviderError> {
-        #[derive(Deserialize)]
-        struct KeyCheck {
-            error: Option<i64>,
-        }
         let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
         let request = Request::get(
             base,
@@ -283,14 +136,8 @@ impl SkiddleClient {
         .trailing_slash()
         .idempotent(false);
         let reply = self.executor.send(request, priority).await?;
-        match decode::<KeyCheck>(&reply)?.error {
-            Some(code) => envelope(code),
-            None => Err(payload(
-                SOURCE,
-                PayloadKind::Contract,
-                "skiddle answered no error code",
-            )),
-        }
+        let answer: KeyCheck = decode(&reply)?;
+        check_code(answer.error)
     }
 
     /// One GET of `segments` under the root, with the key as a query pair.
@@ -312,15 +159,27 @@ impl SkiddleClient {
     }
 }
 
-/// Skiddle's own failure envelope on HTTP 200. Only the code is kept: the
-/// message is the provider's text and is not ours to log.
-fn envelope(code: i64) -> Result<(), ProviderError> {
-    if code == 0 {
-        return Ok(());
+/// Skiddle's error code, which every answer carries. Zero is success. Any
+/// other code is Skiddle's own failure, and only the code is kept: the
+/// message is the provider's text and is not ours to log. An answer without
+/// a code is not proof of anything.
+fn check_code(error: Option<i64>) -> Result<(), ProviderError> {
+    match error {
+        Some(0) => Ok(()),
+        Some(code) => Err(contract(&format!("skiddle answered error {code}"))),
+        None => Err(contract("skiddle answered no error code")),
     }
-    Err(payload(
-        SOURCE,
-        PayloadKind::Contract,
-        &format!("skiddle answered error {code}"),
-    ))
+}
+
+/// The results of a search answer. A success with no results list is a
+/// broken answer, not an empty one.
+fn results<T>(answer: Answer<T>) -> Result<Vec<T>, ProviderError> {
+    check_code(answer.error)?;
+    answer
+        .results
+        .ok_or_else(|| contract("skiddle answered no results"))
+}
+
+fn contract(message: &str) -> ProviderError {
+    payload(SOURCE, PayloadKind::Contract, message)
 }

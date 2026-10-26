@@ -42,6 +42,8 @@ enum Provider {
     AudioDbAlbumMbid,
     AudioDbArtistSearch,
     AudioDbAlbumSearch,
+    SkiddleArtists,
+    SkiddleEvents,
     DiscogsRelease(&'static str),
     DiscogsSearch,
     MusicBrainzRelease(&'static str, &'static [&'static str]),
@@ -643,6 +645,27 @@ const ROWS: &[Row] = &[
         kind: PayloadKind::Decode,
         identity: "/topartists",
     },
+    Row {
+        name: "skiddle /artists/, act id",
+        provider: Provider::SkiddleArtists,
+        body: include_str!("../fixtures/skiddle/artists_search.json"),
+        kind: PayloadKind::Decode,
+        identity: "/results/0/id",
+    },
+    Row {
+        name: "skiddle /artists/, act name",
+        provider: Provider::SkiddleArtists,
+        body: include_str!("../fixtures/skiddle/artists_search.json"),
+        kind: PayloadKind::Decode,
+        identity: "/results/0/name",
+    },
+    Row {
+        name: "skiddle /events/search/, event id",
+        provider: Provider::SkiddleEvents,
+        body: include_str!("../fixtures/skiddle/events_for_artist.json"),
+        kind: PayloadKind::Decode,
+        identity: "/results/0/id",
+    },
 ];
 
 /// Serves `body` from the provider's address and reads it through the
@@ -862,6 +885,48 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .search_album("", "Radiohead", "OK Computer", PRIORITY)
                 .await?;
             Ok(album.is_some())
+        }
+        Provider::SkiddleArtists => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer(
+                "http://fake/skiddle/artists/",
+                200,
+                &[],
+                body.as_bytes().to_vec(),
+            );
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    skiddle: "http://fake/skiddle".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let acts = providers
+                .skiddle
+                .search_artists("k", "Orbital", PRIORITY)
+                .await?;
+            Ok(!acts.is_empty())
+        }
+        Provider::SkiddleEvents => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer(
+                "http://fake/skiddle/events/search/",
+                200,
+                &[],
+                body.as_bytes().to_vec(),
+            );
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    skiddle: "http://fake/skiddle".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let events = providers
+                .skiddle
+                .events_for_artist("k", "123487626", PRIORITY)
+                .await?;
+            Ok(!events.is_empty())
         }
         Provider::DiscogsRelease(release_id) => {
             let wire = Arc::new(ScriptedWire::new());

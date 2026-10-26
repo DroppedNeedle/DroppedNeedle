@@ -199,68 +199,111 @@ async fn geocoding_refused_request_is_a_failure_not_absence() {
 // Skiddle
 // ---------------------------------------------------------------------------
 
-/// Live shape (`sk_byartist.json`, 2026-07-06): STRING `totalcount`,
-/// `'0'` cancelled flag, empty-string absences, float venue coordinates,
-/// mixed key casing (`eventname` vs `ticketUrl`).
+/// A recorded events answer for one act: two gigs with lineups, `cancelled`
+/// as the string `'0'`, and empty strings for absent ticket URLs and
+/// reschedule dates.
 #[tokio::test]
-async fn skiddle_events_decode_live_shape() {
+async fn skiddle_events_decode_recorded_answer() {
     let (wire, providers) = scripted();
-    json_answer(
-        &wire,
-        "skiddle/events/search/",
-        json!({
-            "error": 0, "totalcount": "4", "pagecount": 4,
-            "results": [{
-                "id": "41414028", "EventCode": "FEST",
-                "eventname": "Reading Festival",
-                "cancelled": "0", "cancellationDate": "",
-                "rescheduledDate": "",
-                "link": "https://www.skiddle.com/festivals/Reading/",
-                "ticketUrl": "",
-                "date": "2026-08-27",
-                "startdate": "2026-08-27T11:00:00+00:00",
-                "venue": {"id": 8138, "name": "Little John's Farm",
-                          "town": "Reading", "region": "Berkshire",
-                          "country": "GB",
-                          "latitude": 51.456062, "longitude": -0.991697},
-                "artists": [{"artistid": "123611539", "name": "Sombr"}],
-            }],
-        }),
+    wire.answer(
+        &url("skiddle/events/search/"),
+        200,
+        &[],
+        include_str!("../fixtures/skiddle/events_for_artist.json"),
     );
 
     let events = providers
         .skiddle
-        .events_for_artist("k", "123568993", USER)
+        .events_for_artist("k", "123487626", USER)
         .await
         .unwrap();
 
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     let event = &events[0];
-    assert_eq!(event.eventname, "Reading Festival");
-    assert_eq!(event.date.as_deref(), Some("2026-08-27"));
-    assert_eq!(
-        event.startdate.as_deref(),
-        Some("2026-08-27T11:00:00+00:00")
-    );
+    assert_eq!(event.id, "42612509");
+    assert_eq!(event.date.as_deref(), Some("2026-10-30"));
     assert!(!event.is_cancelled());
     assert!(!event.is_rescheduled());
     assert_eq!(event.ticket_url.as_deref(), Some(""));
-    assert!(event.link.as_deref().unwrap().starts_with("https://"));
-    let venue = event.venue.as_ref().unwrap();
-    assert_eq!(venue.name.as_deref(), Some("Little John's Farm"));
-    assert_eq!(venue.town.as_deref(), Some("Reading"));
-    assert_eq!(venue.region.as_deref(), Some("Berkshire"));
-    assert_eq!(venue.country.as_deref(), Some("GB"));
-    assert!((venue.latitude.unwrap() - 51.456062).abs() < 1e-9);
-    assert!((venue.longitude.unwrap() - -0.991697).abs() < 1e-9);
-    assert_eq!(event.artists.len(), 1);
-    assert_eq!(event.artists[0].artistid.as_deref(), Some("123611539"));
-    assert_eq!(event.artists[0].name.as_deref(), Some("Sombr"));
+    assert_eq!(
+        event.venue.as_ref().and_then(|venue| venue.town.as_deref()),
+        Some("Whitstable")
+    );
+    assert_eq!(event.artists.len(), 3);
+    assert_eq!(event.artists[0].artistid.as_deref(), Some("123487626"));
     let calls = sent_to(&wire, "skiddle/events/search/");
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].query("a").as_deref(), Some("123568993"));
+    assert_eq!(calls[0].query("a").as_deref(), Some("123487626"));
     assert_eq!(calls[0].query("description").as_deref(), Some("1"));
     assert_eq!(calls[0].query("api_key").as_deref(), Some("k"));
+}
+
+/// An empty results list is no match. An answer without Skiddle's error code,
+/// or a success without its results, is a payload failure, not an empty list.
+#[tokio::test]
+async fn skiddle_answers_need_their_code_and_results() {
+    let (wire, providers) = scripted();
+    wire.answer(
+        &url("skiddle/artists/"),
+        200,
+        &[],
+        include_str!("../fixtures/skiddle/artists_no_match.json"),
+    );
+    assert!(
+        providers
+            .skiddle
+            .search_artists("k", "zzqxkvwnomatch", USER)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    for body in [json!({"results": []}), json!({"error": 0})] {
+        let (wire, providers) = scripted();
+        json_answer(&wire, "skiddle/artists/", body.clone());
+        assert!(
+            matches!(
+                providers.skiddle.search_artists("k", "x", USER).await,
+                Err(ProviderError::Payload {
+                    kind: PayloadKind::Contract,
+                    ..
+                })
+            ),
+            "{body}"
+        );
+    }
+}
+
+/// A key Skiddle does not know comes back as HTTP 400 with its error
+/// envelope. The status decides the failure, so the envelope is never decoded.
+#[tokio::test]
+async fn skiddle_bad_key_is_a_bad_request() {
+    let (wire, providers) = scripted();
+    wire.answer(
+        &url("skiddle/artists/"),
+        400,
+        &[],
+        include_str!("../fixtures/skiddle/artists_bad_key.json"),
+    );
+
+    assert!(matches!(
+        providers.skiddle.search_artists("k", "Orbital", USER).await,
+        Err(ProviderError::BadRequest { status: 400, .. })
+    ));
+}
+
+/// The key check reads only the error code of a recorded answer.
+#[tokio::test]
+async fn skiddle_key_check_accepts_a_recorded_answer() {
+    let (wire, providers) = scripted();
+    wire.answer(
+        &url("skiddle/events/search/"),
+        200,
+        &[],
+        include_str!("../fixtures/skiddle/events_key_check.json"),
+    );
+
+    providers.skiddle.check_key("k", USER).await.unwrap();
 }
 
 /// Skiddle's own failure envelope arrives on HTTP 200 with `error != 0`;

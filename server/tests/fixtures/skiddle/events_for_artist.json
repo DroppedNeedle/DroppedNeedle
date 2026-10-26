@@ -1,0 +1,225 @@
+{
+  "error": 0,
+  "totalcount": "2",
+  "pagecount": 2,
+  "results": [
+    {
+      "id": "42612509",
+      "listingid": "2310438",
+      "isSBT": false,
+      "uniquelistingidentifier": "2310438",
+      "hascollapsedresults": false,
+      "countcollapsedresults": 0,
+      "EventCode": "LIVE",
+      "eventname": "Phil Hartnoll (Orbital) LIVE in Whitstable",
+      "cancelled": "0",
+      "cancellationDate": "",
+      "cancellationType": "",
+      "cancellationReason": "",
+      "rescheduledDate": "",
+      "venue": {
+        "id": 134476,
+        "name": "The Whitstable Soundhouse",
+        "address": "St Mary's Parish Hall, Oxford St,",
+        "town": "Whitstable",
+        "postcode_lookup": "Canterbury",
+        "postcode": "CT51DD",
+        "region": "Kent",
+        "country": "GB",
+        "phone": "",
+        "latitude": 51.3564359,
+        "longitude": 1.0243745,
+        "type": "live",
+        "rating": 4,
+        "reviewCount": 15
+      },
+      "imageurl": "https://d31fr2pwly4c4s.cloudfront.net/5/8/9/2310438_b50bd3e1_phil-hartnoll-orbital-live-in-whitstable_th.jpg",
+      "largeimageurl": "https://d31fr2pwly4c4s.cloudfront.net/5/8/9/2310438_b50bd3e1_phil-hartnoll-orbital-live-in-whitstable.jpg",
+      "xlargeimageurl": "https://d31fr2pwly4c4s.cloudfront.net/5/8/9/2310438_b50bd3e1_phil-hartnoll-orbital-live-in-whitstable_1024.jpg",
+      "xlargeimageurlWebP": "https://d31fr2pwly4c4s.cloudfront.net/5/8/9/2310438_b50bd3e1_phil-hartnoll-orbital-live-in-whitstable_1024.webp",
+      "link": "https://www.skiddle.com/whats-on/Canterbury/The-Whitstable-Soundhouse/Phil-Hartnoll-Orbital-LIVE-in-Whitstable/42612509/",
+      "date": "2026-10-30",
+      "startdate": "2026-10-30T19:00:00+00:00",
+      "enddate": "2026-10-30T23:00:00+00:00",
+      "description": "Placeholder event description.",
+      "openingtimes": {
+        "doorsopen": "19:00",
+        "doorsclose": "23:00",
+        "lastentry": ""
+      },
+      "minage": "18",
+      "imgoing": null,
+      "goingtos": 0,
+      "goingtocount": "0",
+      "tickets": true,
+      "ticketpricing": {
+        "minPrice": 23,
+        "maxPrice": 23
+      },
+      "entryprice": "",
+      "eventvisibility": "public",
+      "ticketUrl": "",
+      "hotSeller": false,
+      "rep": {
+        "enabled": false
+      },
+      "headerHex": "#080808",
+      "currency": "GBP",
+      "artists": [
+        {
+          "artistid": "123487626",
+          "name": "Orbital",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/6/123487626_267.jpg",
+          "spotifyartisturl": "spotify:artist:3csPCeXsj2wezyvkRFzvmV"
+        },
+        {
+          "artistid": "123532324",
+          "name": "Nanoplex",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/4/123532324_1_1024.jpg",
+          "spotifyartisturl": "spotify:artist:5tZbQxgnfYq4YG8culq20b"
+        },
+        {
+          "artistid": "123534184",
+          "name": "Phil Hartnoll",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/4/123534184_1_1024.jpg",
+          "spotifyartisturl": "spotify:artist:7LF86DTjBnfwF8mvKupvfs"
+        }
+      ],
+      "genres": [
+        {
+          "genreid": "7",
+          "name": "Breaks"
+        },
+        {
+          "genreid": "9",
+          "name": "Techno"
+        },
+        {
+          "genreid": "15",
+          "name": "Acid House"
+        },
+        {
+          "genreid": "112",
+          "name": "Electro"
+        }
+      ],
+      "healthAndSafety": []
+    },
+    {
+      "id": "42530116",
+      "listingid": "2292337",
+      "isSBT": false,
+      "uniquelistingidentifier": "2292337",
+      "hascollapsedresults": false,
+      "countcollapsedresults": 0,
+      "EventCode": "CLUB",
+      "eventname": "30 Years Of Glade: Winter Solstice",
+      "cancelled": "0",
+      "cancellationDate": "",
+      "cancellationType": "",
+      "cancellationReason": "",
+      "rescheduledDate": "",
+      "venue": {
+        "id": 126537,
+        "name": "The Prospect Building",
+        "address": "45 Feeder Rd",
+        "town": "Bristol",
+        "postcode_lookup": "Bristol",
+        "postcode": "BS2 0QD",
+        "region": "Bristol",
+        "country": "GB",
+        "phone": "",
+        "latitude": 51.4493081,
+        "longitude": -2.5730764,
+        "type": "Nightclub",
+        "rating": 4,
+        "reviewCount": 1445
+      },
+      "imageurl": "https://d31fr2pwly4c4s.cloudfront.net/9/b/a/2292337_b8daddf6_30-years-of-glade-winter-solstice_th.jpg",
+      "largeimageurl": "https://d31fr2pwly4c4s.cloudfront.net/9/b/a/2292337_b8daddf6_30-years-of-glade-winter-solstice.jpg",
+      "xlargeimageurl": "https://d31fr2pwly4c4s.cloudfront.net/9/b/a/2292337_b8daddf6_30-years-of-glade-winter-solstice_1024.jpg",
+      "xlargeimageurlWebP": "https://d31fr2pwly4c4s.cloudfront.net/9/b/a/2292337_b8daddf6_30-years-of-glade-winter-solstice_1024.webp",
+      "link": "https://www.skiddle.com/whats-on/Bristol/The-Prospect-Building/30-Years-Of-Glade-Winter-Solstice/42530116/",
+      "date": "2026-12-18",
+      "startdate": "2026-12-18T19:00:00+00:00",
+      "enddate": "2026-12-19T04:00:00+00:00",
+      "description": "Placeholder event description.",
+      "openingtimes": {
+        "doorsopen": "19:00",
+        "doorsclose": "04:00",
+        "lastentry": ""
+      },
+      "minage": "18",
+      "imgoing": null,
+      "goingtos": 0,
+      "goingtocount": "0",
+      "tickets": true,
+      "ticketpricing": {
+        "minPrice": 0,
+        "maxPrice": 0
+      },
+      "entryprice": "",
+      "eventvisibility": "public",
+      "ticketUrl": "",
+      "hotSeller": false,
+      "rep": {
+        "enabled": false
+      },
+      "headerHex": "#383838",
+      "currency": "GBP",
+      "artists": [
+        {
+          "artistid": "123487626",
+          "name": "Orbital",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/6/123487626_267.jpg",
+          "spotifyartisturl": "spotify:artist:3csPCeXsj2wezyvkRFzvmV"
+        },
+        {
+          "artistid": "123461728",
+          "name": "Leftfield",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/8/123461728_2_1024.jpg",
+          "spotifyartisturl": "spotify:artist:72hqBMsw7x5jnfxxwkii8L"
+        },
+        {
+          "artistid": "123556801",
+          "name": "HAAi",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/1/123556801_1_1024.jpg",
+          "spotifyartisturl": "spotify:artist:0pkLgeB9j465x1QB2kRoy4"
+        },
+        {
+          "artistid": "123532356",
+          "name": "Special Request",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/6/123532356_267.jpg",
+          "spotifyartisturl": "spotify:artist:59xdAObFYuaKO2phzzz07H"
+        },
+        {
+          "artistid": "123461448",
+          "name": "Hannah Holland",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/8/123461448_267.jpg",
+          "spotifyartisturl": "spotify:artist:3paxIyAbBuTSw8RDF22vHs"
+        },
+        {
+          "artistid": "123497822",
+          "name": "Channel One Sound System",
+          "image": "https://d1mdxzfl9p8pzo.cloudfront.net/2/123497822_1_1024.jpg",
+          "spotifyartisturl": null
+        }
+      ],
+      "genres": [
+        {
+          "genreid": "61",
+          "name": "Electronic"
+        },
+        {
+          "genreid": "103",
+          "name": "Dub"
+        }
+      ],
+      "healthAndSafety": []
+    }
+  ],
+  "elastic": {
+    "timing": 2
+  },
+  "requestId": "api_6adf3f7740ebc8.33396484"
+}

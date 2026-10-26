@@ -1,0 +1,75 @@
+{
+  "error": 0,
+  "totalcount": "15000",
+  "pagecount": 1,
+  "results": [
+    {
+      "id": "42082054",
+      "listingid": "2204499",
+      "isSBT": true,
+      "uniquelistingidentifier": "nl5f74nN5X",
+      "hascollapsedresults": false,
+      "countcollapsedresults": 0,
+      "EventCode": "EXPER",
+      "eventname": "Horror Car Wash",
+      "cancelled": "0",
+      "cancellationDate": "",
+      "cancellationType": "",
+      "cancellationReason": "",
+      "rescheduledDate": "",
+      "venue": {
+        "id": 8109,
+        "name": "Sunderland Live",
+        "address": "Rainton Business Park, Mercantile Road, ",
+        "town": "Houghton-le-Spring",
+        "postcode_lookup": "Durham",
+        "postcode": "DH4 5PH",
+        "region": "County Durham",
+        "country": "GB",
+        "phone": "0191 580 2666",
+        "latitude": 54.832922,
+        "longitude": -1.479534,
+        "type": "live",
+        "rating": 3,
+        "reviewCount": 6063
+      },
+      "imageurl": "https://d31fr2pwly4c4s.cloudfront.net/c/7/a/2204491_8550b892_horror-car-wash_th.jpg",
+      "largeimageurl": "https://d31fr2pwly4c4s.cloudfront.net/c/7/a/2204491_8550b892_horror-car-wash.jpg",
+      "xlargeimageurl": "https://d31fr2pwly4c4s.cloudfront.net/c/7/a/2204491_8550b892_horror-car-wash_1024.jpg",
+      "xlargeimageurlWebP": "https://d31fr2pwly4c4s.cloudfront.net/c/7/a/2204491_8550b892_horror-car-wash_1024.webp",
+      "link": "https://www.skiddle.com/whats-on/Durham/Sunderland-Live/Horror-Car-Wash/42082054/",
+      "date": "2026-10-26",
+      "startdate": "2026-10-26T17:00:00+00:00",
+      "enddate": "2026-10-26T21:00:00+00:00",
+      "description": "Placeholder event description.",
+      "openingtimes": {
+        "doorsopen": "17:00",
+        "doorsclose": "21:00",
+        "lastentry": ""
+      },
+      "minage": "",
+      "imgoing": null,
+      "goingtos": 0,
+      "goingtocount": "0",
+      "tickets": true,
+      "ticketpricing": {
+        "minPrice": 25,
+        "maxPrice": 25
+      },
+      "entryprice": "",
+      "eventvisibility": "public",
+      "ticketUrl": "",
+      "hotSeller": true,
+      "rep": {
+        "enabled": false
+      },
+      "headerHex": "",
+      "currency": "GBP",
+      "healthAndSafety": []
+    }
+  ],
+  "elastic": {
+    "timing": 125
+  },
+  "requestId": "api_6adf3f688d2c82.09667141"
+}
