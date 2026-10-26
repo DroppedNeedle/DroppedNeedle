@@ -1297,25 +1297,33 @@ class AlbumService:
     ) -> None:
         """Pin an edition (admin/trusted; the route guards the role). Validates the
         release belongs to this group before pinning, then busts the album caches."""
-        release_group_id = await self._provider_album_id(release_group_id)
-        release_group_id = validate_mbid(release_group_id, "album")
+        requested_id = validate_mbid(await self._provider_album_id(release_group_id), "album")
         if self._release_pins is None:
             raise ResourceNotFoundError("Edition pinning is unavailable")
+        # Pins live under the canonical id, which is what _effective_release_id reads
+        # (the requested id differs after an MB merge or when given a release id).
+        release_group_id, _release_alias = await self.resolve_album_identity(requested_id)
         editions = await self.list_editions(release_group_id)
         if not any(item["release_mbid"] == release_mbid for item in editions["items"]):
             raise ResourceNotFoundError("That edition does not belong to this album")
         await self._release_pins.set(release_group_id, release_mbid, user_id)
-        await self._bust_album_caches(release_group_id)
+        await self._bust_pin_caches(requested_id, release_group_id)
 
     async def clear_edition_pin(self, release_group_id: str) -> bool:
-        release_group_id = await self._provider_album_id(release_group_id)
-        release_group_id = validate_mbid(release_group_id, "album")
+        requested_id = validate_mbid(await self._provider_album_id(release_group_id), "album")
         if self._release_pins is None:
             return False
+        release_group_id, _release_alias = await self.resolve_album_identity(requested_id)
         cleared = await self._release_pins.clear(release_group_id)
         if cleared:
-            await self._bust_album_caches(release_group_id)
+            await self._bust_pin_caches(requested_id, release_group_id)
         return cleared
+
+    async def _bust_pin_caches(self, requested_id: str, canonical_id: str) -> None:
+        """Bust under the canonical id and the requested one the page may be cached by."""
+        await self._bust_album_caches(canonical_id)
+        if requested_id.casefold() != canonical_id.casefold():
+            await self._bust_album_caches(requested_id)
 
     async def _local_album_release_group_id(self, local_album_id: str) -> str:
         """Resolve one local copy to its provider release group, direct-id only.

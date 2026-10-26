@@ -37,13 +37,17 @@ class TargetDiscoveryBatchLibraryService:
 
 
 class TargetAlbumReleasePinStore:
-    """Edition pins keyed through target local album identity."""
+    """Edition pins keyed through target local album identity.
+
+    A release group with no local copy is pinned at group level instead, so
+    the edition can be chosen before the album is downloaded.
+    """
 
     def __init__(self, store: NativeLibraryStore) -> None:
         self._store = store
 
     async def get(self, album_identifier: str) -> str | None:
-        return await self._store.get_target_album_release_pin(album_identifier)
+        return await self._store.get_target_edition_pin(album_identifier)
 
     async def set(
         self,
@@ -51,7 +55,7 @@ class TargetAlbumReleasePinStore:
         release_mbid: str,
         set_by_user_id: str | None = None,
     ) -> None:
-        await self._store.set_target_album_release_pin(
+        await self._store.set_target_edition_pin(
             album_identifier,
             release_mbid,
             set_by_user_id,
@@ -59,7 +63,7 @@ class TargetAlbumReleasePinStore:
         )
 
     async def clear(self, album_identifier: str) -> bool:
-        return await self._store.clear_target_album_release_pin(album_identifier)
+        return await self._store.clear_target_edition_pin(album_identifier)
 
 
 class TargetGenreIndex:

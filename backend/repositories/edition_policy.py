@@ -13,16 +13,27 @@ Pin wiring (LibraryFindings-All E-03) - this module ranks; pins live elsewhere:
   the release-group-keyed ``AlbumReleasePinStore``.
 - Target ``AlbumService`` (``get_target_album_service``): ``self._release_pins``
   is the ``TargetAlbumReleasePinStore`` adapter over the native library store,
-  which resolves a release-group MBID to the single local album carrying it
-  and raises ``ConflictError`` when several indexed copies share it.
+  keyed by the canonical release-group MBID. It resolves that MBID to the
+  single local album carrying it and raises ``ConflictError`` when several
+  indexed copies share it. A group with no local copy (or only a leftover
+  album with no indexed tracks) is pinned in ``library_release_group_pins``
+  instead (#460).
 - ``DownloadService`` (``get_target_download_service``): ``self._pins`` is the
   same target adapter.
+
+Release-group pin rules (target wiring): it is the user's choice made before
+any real copy exists. Reads use a copy's own pin, else the group pin, so it
+keeps applying after the first import. Setting a copy's pin (either route)
+deletes the group pin; clearing a copy's pin, or the group's, deletes both.
+Clearing a group shared by several copies still deletes the group pin and only
+raises ``ConflictError`` when there was none.
 
 Method table: ``_effective_release_id``/``_pinned_release_id`` read
 ``self._release_pins``; the per-copy ``get/set/clear_edition_pin_for_local_album``
 methods hit the native store direct (``get/set/clear_target_album_release_pin``).
-No-cross-read rule: a per-album pin never influences ``_effective_release_id``,
-and an RG pin never influences the per-copy methods.
+No-cross-read rule: a per-album pin never influences ``_effective_release_id``
+of a shared group, and the per-copy getter never reads the group pin (the
+local album detail page does, through ``get_target_album_release_pin_with_group``).
 
 D2 ruling (FINAL 2026-09-07, recorded in LibraryAudit DECISIONS-LIVE.md):
 the display lane (``get_ranked_releases``) keeps its XW-first ordering and
