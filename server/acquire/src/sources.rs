@@ -506,7 +506,8 @@ impl SabnzbdSource {
 
     /// Search every indexer, then gate: an NZB URL is required, a
     /// positive password flag rejects (aggregators use negative for
-    /// unknown, which never rejects), and retention plus size caps apply.
+    /// unknown, which never rejects), retention plus size caps apply, and
+    /// a release whose category names a tier outside the band is skipped.
     /// Album results are ordered against the target's tracklist.
     /// Blocklisted releases are left to the caller, which needs the count
     /// found before them.
@@ -526,6 +527,7 @@ impl SabnzbdSource {
             .filter(|hit| hit.usenet.password <= 0)
             .filter(|hit| self.policy.within_retention(hit.usenet.usenet_date, now))
             .filter(|hit| self.policy.within_size_cap(hit.usenet.size_bytes))
+            .filter(|hit| self.policy.accepts_categories(&hit.usenet.category_ids))
             .collect();
         match query {
             IndexerQuery::Album(target) => order_releases(hits, target),

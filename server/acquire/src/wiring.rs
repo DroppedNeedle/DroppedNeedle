@@ -341,7 +341,15 @@ impl LiveClients {
         // does not read; nothing searches or downloads.
         let readable = settings.policy.is_some();
         let usenet_policy = usenet_policy_from(&settings.policy.clone().unwrap_or_default());
-        let slskd_repo = slskd_repository(http, &settings.slskd, &self.slskd_downloads);
+        // Without a readable policy nothing searches; the repository then
+        // only answers the probes.
+        let slskd_policy = settings
+            .policy
+            .as_ref()
+            .map(SlskdPolicy::from_saved)
+            .unwrap_or_default();
+        let slskd_repo =
+            slskd_repository(http, &settings.slskd, &self.slskd_downloads, slskd_policy);
         let sab_queue = sabnzbd_queue(http, &settings.sabnzbd, &usenet_policy);
         let newznab = Arc::new(newznab_indexer(http, &settings.indexers));
         let prowlarr = Arc::new(prowlarr_indexer(http, &settings.prowlarr));
@@ -1279,11 +1287,13 @@ fn utc_ymd(days: u64) -> String {
 }
 
 /// slskd repository, when the section configures one. The mount is
-/// `SLSKD_DOWNLOADS_PATH` plus the confined subpath from settings.
+/// `SLSKD_DOWNLOADS_PATH` plus the confined subpath from settings, and
+/// `policy` holds the saved quality band and recipe the picks follow.
 fn slskd_repository(
     http: &reqwest::Client,
     section: &SlskdConnection,
     downloads: &Path,
+    policy: SlskdPolicy,
 ) -> Option<Arc<SlskdRepository<ReqwestSlskdHttp>>> {
     if section.url.is_empty() || section.api_key.expose().is_empty() {
         return None;
@@ -1299,7 +1309,7 @@ fn slskd_repository(
         &section.url,
         section.api_key.expose(),
         mount,
-        SlskdPolicy::default(),
+        policy,
     );
     if !section.slskd_incomplete_mount.trim().is_empty() {
         repo = repo.with_incomplete_mount(PathBuf::from(section.slskd_incomplete_mount.trim()));

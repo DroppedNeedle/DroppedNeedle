@@ -2,8 +2,8 @@
 //!
 //! The client surface is [`SlskdRepository`]: album and track acquisition
 //! search over the query ladders, download enqueue/status keyed by
-//! `(username, filenames)`, and the mount diagnosis. Quality tiers, the
-//! closed quality recipe, and timeouts come from [`DownloadPolicy`]. The
+//! `(username, filenames)`, and the mount diagnosis. The quality band, the
+//! saved recipe and the search timings come from [`DownloadPolicy`]. The
 //! in-repo [`MockSlskd`] server is the executable record of the
 //! live-verified quirks; the `acquire_slskd` contract tests run against it
 //! on loopback and never touch a live slskd instance.
@@ -24,9 +24,7 @@ pub use models::{
     SlskdEnqueueResponse, SlskdFile, SlskdOptions, SlskdSearchResponse, SlskdTransfer,
     SlskdUserSearchResponse,
 };
-pub use policy::{
-    DownloadPolicy, QualityRecipeEntry, RecipeError, lossless_detail_step, validate_quality_recipe,
-};
+pub use policy::DownloadPolicy;
 pub use query::{album_query_ladder, sanitize_query, stripped_album_title, track_query_ladder};
 pub use repository::{
     EnqueueFile, MountDiagnosis, SearchResult, ServiceStatus, SlskdRepository, TaskHandle,

@@ -1,4 +1,4 @@
-//! Usenet policy: quality tiers, search recipe, timeouts, retention.
+//! Usenet policy: quality tiers, timeouts, retention.
 //!
 //! Ported from v2's `DownloadPolicySettings` and quality tiers. This struct
 //! holds the subset the Usenet clients consume, with v2's defaults; the
@@ -126,6 +126,16 @@ impl UsenetPolicy {
     /// Whether `tier` sits inside the accepted contiguous band.
     pub fn accepts_tier(&self, tier: QualityTier) -> bool {
         tier.rank() >= self.quality_min.rank() && tier.rank() <= self.quality_max.rank()
+    }
+
+    /// Whether a release's Newznab categories leave it inside the band:
+    /// lossless (3040) needs a band that reaches lossless, MP3 (3010) one
+    /// that reaches below it. Other categories, and none, say nothing.
+    pub fn accepts_categories(&self, category_ids: &[i32]) -> bool {
+        let lossless_out =
+            category_ids.contains(&3040) && self.quality_max != QualityTier::Lossless;
+        let lossy_out = category_ids.contains(&3010) && self.quality_min == QualityTier::Lossless;
+        !(lossless_out || lossy_out)
     }
 
     /// Retention gate: `None` age is unknown, never rejected; otherwise the

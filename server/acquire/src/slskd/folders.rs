@@ -9,8 +9,12 @@
 //!
 //! 1. completeness: how many of the release's tracks the folder holds;
 //! 2. durations: how many paired files have a length off the release's;
-//! 3. quality: the worst file's place in the quality recipe;
+//! 3. quality: folders whose quality the search shows first, then the
+//!    worst file's place in the quality recipe;
 //! 4. speed: a free upload slot, a short queue, a fast uploader.
+//!
+//! A folder whose quality the search shows outside the band the landing
+//! keeps is left out, so it is never fetched only to be refused.
 //!
 //! This is soularr's folder check and Lidarr's import matching moved in
 //! front of the download, with v2's pairing rules (a hard length miss
@@ -20,9 +24,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::policy::{DownloadPolicy, NOT_IMPORTABLE_EXTENSIONS};
+use super::policy::{DownloadPolicy, NOT_IMPORTABLE_EXTENSIONS, search_tier};
 use super::repository::SearchResult;
 use crate::downloads::plan::{ExpectedTrack, TrackPosition};
+use crate::landing::quality::worst;
 use droppedneedle_library::matching::strings::{fold, string_dist};
 
 /// Audio containers a folder is judged on (WMA is not supported).
@@ -70,6 +75,8 @@ pub struct FolderPick {
     /// Worst recipe rank of the files to fetch (`usize::MAX` when one
     /// is outside the recipe).
     pub quality: usize,
+    /// The search does not show the quality of some files to fetch.
+    pub unknown_quality: bool,
     /// Wanted tracks (single track or a subset of the album) asked of a
     /// folder that holds little of the album.
     pub lone_track: bool,
@@ -112,6 +119,7 @@ pub fn rank_folders(
             .then(b.coverage.cmp(&a.coverage))
             .then(b.held.cmp(&a.held))
             .then(a.duration_misses.cmp(&b.duration_misses))
+            .then(a.unknown_quality.cmp(&b.unknown_quality))
             .then(a.quality.cmp(&b.quality))
             .then(b.has_free_slot.cmp(&a.has_free_slot))
             .then(a.queue_length.cmp(&b.queue_length))
@@ -178,7 +186,8 @@ fn paired_discs(files: &[&SearchResult], tracklist: &[ExpectedTrack]) -> BTreeSe
         .collect()
 }
 
-/// Score one folder, or `None` when it cannot serve the request.
+/// Score one folder, or `None` when it cannot serve the request or its
+/// worst known quality is outside the band.
 fn judge(
     username: String,
     folder: String,
@@ -232,9 +241,15 @@ fn judge(
     if to_fetch.is_empty() {
         return None;
     }
-    let quality = to_fetch
-        .iter()
-        .filter(|hit| is_audio(&hit.extension))
+    let audio_to_fetch = || to_fetch.iter().filter(|hit| is_audio(&hit.extension));
+    let tiers: Vec<Option<&str>> = audio_to_fetch()
+        .map(|hit| search_tier(&hit.extension, hit.bitrate, hit.bit_depth))
+        .collect();
+    if worst(tiers.iter().flatten().copied()).is_some_and(|tier| !policy.in_band(tier)) {
+        return None;
+    }
+    let unknown_quality = tiers.iter().any(Option::is_none);
+    let quality = audio_to_fetch()
         .map(|hit| {
             policy
                 .recipe_rank(&hit.extension, hit.bitrate, hit.bit_depth, hit.sample_rate)
@@ -242,10 +257,7 @@ fn judge(
         })
         .max()
         .unwrap_or(usize::MAX);
-    let held = to_fetch
-        .iter()
-        .filter(|hit| is_audio(&hit.extension))
-        .count();
+    let held = audio_to_fetch().count();
     let lone_track =
         !request.wanted.is_empty() && total > 1 && coverage < (total.div_ceil(2)).max(2);
     let first = files.first()?;
@@ -257,6 +269,7 @@ fn judge(
         total,
         duration_misses,
         quality,
+        unknown_quality,
         lone_track,
         held,
         has_free_slot: first.has_free_slot,

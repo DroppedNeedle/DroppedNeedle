@@ -7,23 +7,37 @@
 //! serialization), search fan-out tests (ladder fallback past silent
 //! specific rungs, multi-peer fan-out), correlation tests
 //! (accepted-filenames handles, latest-attempt status, truncated stubs),
-//! and policy tests (recipe validation/ranking, lossless ladder, query
-//! construction). No live contact ever.
+//! and policy tests (recipe ranking, query construction). No live
+//! contact ever.
 
 use droppedneedle_acquire::client_error::{ClientError, Service};
 use droppedneedle_acquire::slskd;
 
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::downloads::SourceTag;
+use droppedneedle_acquire::downloads::journal::Journal;
+use droppedneedle_acquire::downloads::sources::{DownloadSource as _, SourceHandle};
+use droppedneedle_acquire::downloads::store::NewTask;
+use droppedneedle_acquire::readiness::SourceReadiness;
+use droppedneedle_acquire::target::{SearchTarget, Targets};
+use droppedneedle_acquire::wiring::{ClientLives, LiveClients, WorkerSettings};
+use droppedneedle_acquire::worker::{DownloadWorker, SourceList};
+use droppedneedle_kernel::events::EventHub;
+use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
+use droppedneedle_kernel::runtime_config::sections::{
+    DownloadPolicy as KernelPolicy, QualityRecipeEntry,
+};
 
 use crate::common::bundles::quiet_ticks;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use slskd::{
-    DownloadPolicy, EnqueueFile, HttpFault, HttpReply, Locator, QualityRecipeEntry,
-    ReqwestSlskdHttp, SlskdClient, SlskdHttp, SlskdRepository, SlskdSearchResponse,
-    SlskdUserSearchResponse, TaskHandle, aggregate_status, album_query_ladder, match_transfers,
-    validate_quality_recipe,
+    DownloadPolicy, EnqueueFile, HttpFault, HttpReply, Locator, ReqwestSlskdHttp, SlskdClient,
+    SlskdHttp, SlskdRepository, SlskdSearchResponse, SlskdUserSearchResponse, TaskHandle,
+    aggregate_status, album_query_ladder, match_transfers,
 };
 
 fn test_policy() -> DownloadPolicy {
@@ -582,45 +596,17 @@ async fn wrong_key_health_message_is_uniform_and_leaks_nothing() {
 // Policy tests (tiers, recipe, timeouts).
 
 #[test]
-fn recipe_validation_rejects_duplicates_and_overlaps() {
-    let flac_cd = QualityRecipeEntry::new("flac", "cd", None, None, None, None).expect("valid");
-    // Duplicate standard entries rejected (v2 `validate_quality_recipe`).
-    assert!(validate_quality_recipe(&[flac_cd.clone(), flac_cd.clone()]).is_err());
-    // MP3 ranges must not overlap.
-    let low =
-        QualityRecipeEntry::new("mp3", "custom", Some(192), Some(255), None, None).expect("valid");
-    let overlapping =
-        QualityRecipeEntry::new("mp3", "custom", Some(200), Some(256), None, None).expect("valid");
-    assert!(validate_quality_recipe(&[low, overlapping]).is_err());
-    // Closed formats only.
-    assert!(QualityRecipeEntry::new("ogg", "cd", None, None, None, None).is_err());
-    // FLAC entries cannot define a bitrate; MP3 entries cannot define FLAC
-    // resolution (v2).
-    assert!(
-        QualityRecipeEntry::new("flac", "custom", Some(1), None, Some(16), Some(44100)).is_err()
-    );
-    assert!(
-        QualityRecipeEntry::new("mp3", "custom", Some(192), Some(255), Some(16), None).is_err()
-    );
-    // Standard MP3 entries canonicalise to their fixed bounds (v2).
-    let high = QualityRecipeEntry::new("mp3", "320_plus", None, None, None, None).expect("valid");
-    assert_eq!(
-        (high.min_bitrate_kbps, high.max_bitrate_kbps),
-        (Some(320), None)
-    );
-}
-
-#[test]
 fn recipe_ranking_prefers_flac_then_320_with_dsd_rejected() {
     let policy = DownloadPolicy::default();
 
-    // FLAC (bitrate unknown, not a fidelity axis in v2) outranks 320 MP3.
+    // With no saved recipe the band's tiers rank, best first: FLAC
+    // (bitrate unknown, not a fidelity axis) outranks 320 MP3.
     let flac = policy.recipe_rank("flac", None, Some(16), Some(44100));
     let mp3 = policy.recipe_rank("mp3", Some(320), None, None);
     let low_mp3 = policy.recipe_rank("mp3", Some(128), None, None);
     assert_eq!(flac, Some(0));
     assert_eq!(mp3, Some(1));
-    // 128 kbps is outside the default 320_plus entry.
+    // 128 kbps is outside the default band.
     assert_eq!(low_mp3, None);
     // DSD must not spend bandwidth even when a noisy title claims
     // "lossless" (v2 `NOT_IMPORTABLE_EXTENSIONS`).
@@ -904,11 +890,7 @@ fn slskd_http_debug_redacts_key() {
 // result shrinks, so no candidate is skipped.
 #[tokio::test]
 async fn failover_walks_every_peer() {
-    use droppedneedle_acquire::db::AcquireDb;
-    use droppedneedle_acquire::downloads::journal::Journal;
-    use droppedneedle_acquire::downloads::sources::DownloadSource as _;
     use droppedneedle_acquire::downloads::state::AttemptState;
-    use droppedneedle_acquire::downloads::store::NewTask;
     use droppedneedle_acquire::sources::SlskdSource;
 
     let mock = MockSlskd::start().await.expect("mock starts");
@@ -981,5 +963,165 @@ async fn failover_walks_every_peer() {
         peers.len(),
         "no peer is tried twice: {peers:?}"
     );
-    assert_eq!(peers.len(), 3, "every canned peer is tried: {peers:?}");
+    // Charlie's 128 kbps MP3 is below the default band, so it is never
+    // offered; every other canned peer is tried.
+    assert_eq!(
+        distinct,
+        ["alice", "bob"],
+        "every peer in the band is tried"
+    );
+}
+
+// Quality policy at the pick, through the production client builder.
+
+/// A complete two-track album folder: FLAC 16-bit, or MP3 at 320 kbps.
+fn album_peer(username: &str, extension: &str) -> serde_json::Value {
+    let files: Vec<serde_json::Value> = ["Alpha", "Beta"]
+        .iter()
+        .enumerate()
+        .map(|(index, title)| {
+            let mut file = serde_json::json!({
+                "filename": format!("@@music\\Artist\\Album\\0{} {title}.{extension}", index + 1),
+                "size": 30_000_000, "extension": extension, "length": 200 + index,
+            });
+            if extension == "flac" {
+                file["bitDepth"] = 16.into();
+                file["sampleRate"] = 44_100.into();
+            } else {
+                file["bitRate"] = 320.into();
+            }
+            file
+        })
+        .collect();
+    serde_json::json!({"username": username, "hasFreeUploadSlot": true, "uploadSpeed": 1_000_000,
+        "queueLength": 0, "fileCount": files.len(), "lockedFileCount": 0,
+        "files": files, "lockedFiles": [], "token": 1})
+}
+
+/// A saved policy keeping one tier, with a one-entry recipe.
+fn one_tier_policy(tier: &str, format: &str, quality: &str) -> KernelPolicy {
+    KernelPolicy {
+        quality_min: tier.to_owned(),
+        quality_max: tier.to_owned(),
+        quality_cutoff: tier.to_owned(),
+        flac_mp3_only: true,
+        quality_recipe: vec![QualityRecipeEntry {
+            format: format.to_owned(),
+            quality: quality.to_owned(),
+            min_bitrate_kbps: (format == "mp3").then_some(320),
+            max_bitrate_kbps: None,
+            bit_depth: None,
+            sample_rate_hz: None,
+        }],
+        ..KernelPolicy::default()
+    }
+}
+
+/// The peer the worker enqueued `task_id` from.
+async fn enqueued_peer(journal: &Journal, task_id: &str) -> String {
+    let handles = journal
+        .read_source_handles(task_id, &SourceTag::Soulseek)
+        .await
+        .expect("handles read");
+    assert_eq!(handles.len(), 1, "one enqueue: {handles:?}");
+    let handle: SourceHandle = serde_json::from_str(&handles[0]).expect("handle decodes");
+    handle.username
+}
+
+async fn seed_album_task(journal: &Journal, task_id: &'static str) {
+    journal
+        .run("test.seed", move |store| {
+            store.insert_task(
+                &NewTask {
+                    id: task_id.to_owned(),
+                    user_id: "u1".to_owned(),
+                    artist_name: "Artist".to_owned(),
+                    album_title: "Album".to_owned(),
+                    release_group_mbid: "33333333-3333-4333-8333-333333333333".to_owned(),
+                    origin: "user".to_owned(),
+                    retry_count: 0,
+                },
+                1_000.0,
+            )
+        })
+        .await
+        .expect("task seeds");
+}
+
+// Under a saved MP3-only policy the worker fetches the MP3 folder and a
+// search never offers the FLAC one. A FLAC-only policy saved afterwards
+// steers the next search, with no restart.
+#[tokio::test]
+async fn soulseek_picks_follow_the_saved_quality_policy() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(vec![
+        album_peer("lossless", "flac"),
+        album_peer("lossy", "mp3"),
+    ]);
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u1", "U", "user").await.expect("user seeds");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let settings =
+        droppedneedle_acquire::settings::scratch_settings(&dir.join("settings")).expect("settings");
+    settings
+        .save_secret_blocking(SlskdConnection {
+            enabled: true,
+            url: mock.base_url(),
+            api_key: MOCK_API_KEY.into(),
+            ..SlskdConnection::default()
+        })
+        .expect("slskd connection saves");
+    settings
+        .save_blocking(one_tier_policy("mp3_320", "mp3", "320_plus"))
+        .expect("an MP3-only policy saves");
+
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
+        .expect("http client factory")
+        .shared()
+        .clone();
+    let clients = Arc::new(LiveClients::new(
+        http,
+        ClientLives::new(&settings),
+        dir.join("slskd"),
+        journal.clone(),
+        Arc::new(Targets::new(journal.clone(), None)),
+        None,
+    ));
+    let worker_settings = Arc::new(WorkerSettings::new(&settings, clients));
+    let worker = Arc::new(DownloadWorker::new(
+        journal.clone(),
+        worker_settings.clone(),
+        SourceReadiness::unprobed(SourceList::Live(worker_settings)),
+        EventHub::new(),
+        Default::default(),
+    ));
+    let target = SearchTarget {
+        artist: "Artist".to_owned(),
+        album_title: "Album".to_owned(),
+        year: None,
+        tracklist: Vec::new(),
+        wanted: Vec::new(),
+        track: None,
+    };
+
+    seed_album_task(&journal, "task-mp3-only").await;
+    worker.run_once(1).await;
+    assert_eq!(enqueued_peer(&journal, "task-mp3-only").await, "lossy");
+    let sources = worker.sources_now();
+    let offered: Vec<String> = sources[0]
+        .search(&target)
+        .await
+        .expect("search runs")
+        .into_iter()
+        .filter_map(|candidate| candidate.view.username)
+        .collect();
+    assert_eq!(offered, ["lossy"], "the FLAC folder is not offered");
+
+    settings
+        .save_blocking(one_tier_policy("lossless", "flac", "cd"))
+        .expect("a FLAC-only policy saves");
+    seed_album_task(&journal, "task-flac-only").await;
+    worker.run_once(2).await;
+    assert_eq!(enqueued_peer(&journal, "task-flac-only").await, "lossless");
 }

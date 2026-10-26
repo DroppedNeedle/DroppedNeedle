@@ -316,8 +316,7 @@
 					</p>
 				{:else}
 					<p class="mt-1 text-xs text-base-content/70">
-						Choose a replacement preset below to create a valid FLAC and MP3 recipe. Active tasks
-						keep their saved policy.
+						Choose a replacement preset below to create a valid FLAC and MP3 recipe.
 					</p>
 				{/if}
 			</div>
@@ -387,7 +386,7 @@
 			<div>
 				<h4 class="font-semibold">Try in this order</h4>
 				<p class="text-sm text-base-content/60">
-					The first match wins. Reordering changes preference only, never entry contents.
+					Soulseek prefers earlier entries when copies are equally complete.
 				</p>
 			</div>
 			<span class="text-xs uppercase tracking-[0.12em] text-base-content/45"

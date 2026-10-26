@@ -376,10 +376,10 @@ fn folder_note(pick: &FolderPick) -> (CandidateTier, CandidateNote) {
         };
         return possible("lengths", text);
     }
-    if pick.quality == usize::MAX {
+    if pick.unknown_quality {
         return possible(
             "quality",
-            "Some files are outside your quality settings.".to_owned(),
+            "The search does not show the quality of some files.".to_owned(),
         );
     }
     (
