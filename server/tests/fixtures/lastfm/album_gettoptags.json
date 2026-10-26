@@ -1,0 +1,60 @@
+{
+  "toptags": {
+    "tag": [
+      {
+        "count": 100,
+        "name": "alternative rock",
+        "url": "https://www.last.fm/tag/alternative+rock"
+      },
+      {
+        "count": 66,
+        "name": "alternative",
+        "url": "https://www.last.fm/tag/alternative"
+      },
+      {
+        "count": 35,
+        "name": "1997",
+        "url": "https://www.last.fm/tag/1997"
+      },
+      {
+        "count": 32,
+        "name": "rock",
+        "url": "https://www.last.fm/tag/rock"
+      },
+      {
+        "count": 15,
+        "name": "favourite albums",
+        "url": "https://www.last.fm/tag/favourite+albums"
+      },
+      {
+        "count": 13,
+        "name": "art rock",
+        "url": "https://www.last.fm/tag/art+rock"
+      },
+      {
+        "count": 10,
+        "name": "90s",
+        "url": "https://www.last.fm/tag/90s"
+      },
+      {
+        "count": 2,
+        "name": "Masterpiece",
+        "url": "https://www.last.fm/tag/Masterpiece"
+      },
+      {
+        "count": 2,
+        "name": "experimental",
+        "url": "https://www.last.fm/tag/experimental"
+      },
+      {
+        "count": 2,
+        "name": "electronic",
+        "url": "https://www.last.fm/tag/electronic"
+      }
+    ],
+    "@attr": {
+      "artist": "Radiohead",
+      "album": "OK Computer"
+    }
+  }
+}

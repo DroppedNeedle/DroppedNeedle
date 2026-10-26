@@ -1,0 +1,59 @@
+{
+  "toptags": {
+    "tag": [
+      {
+        "count": 100,
+        "name": "rock",
+        "url": "https://www.last.fm/tag/rock"
+      },
+      {
+        "count": 54,
+        "name": "alternative",
+        "url": "https://www.last.fm/tag/alternative"
+      },
+      {
+        "count": 34,
+        "name": "alternative rock",
+        "url": "https://www.last.fm/tag/alternative+rock"
+      },
+      {
+        "count": 24,
+        "name": "indie",
+        "url": "https://www.last.fm/tag/indie"
+      },
+      {
+        "count": 11,
+        "name": "electronic",
+        "url": "https://www.last.fm/tag/electronic"
+      },
+      {
+        "count": 4,
+        "name": "british",
+        "url": "https://www.last.fm/tag/british"
+      },
+      {
+        "count": 3,
+        "name": "experimental",
+        "url": "https://www.last.fm/tag/experimental"
+      },
+      {
+        "count": 1,
+        "name": "indie rock",
+        "url": "https://www.last.fm/tag/indie+rock"
+      },
+      {
+        "count": 1,
+        "name": "britpop",
+        "url": "https://www.last.fm/tag/britpop"
+      },
+      {
+        "count": 1,
+        "name": "art rock",
+        "url": "https://www.last.fm/tag/art+rock"
+      }
+    ],
+    "@attr": {
+      "artist": "Radiohead"
+    }
+  }
+}

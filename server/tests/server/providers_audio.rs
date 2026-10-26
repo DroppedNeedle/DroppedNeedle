@@ -510,23 +510,15 @@ async fn lastfm_request_token_signs_without_session() {
     );
 }
 
+fn lastfm_recording(body: &str) -> serde_json::Value {
+    serde_json::from_str(body).expect("recording parses")
+}
+
 #[tokio::test]
 async fn lastfm_artist_info_found_with_lenient_counts() {
-    let (wire, providers) = lastfm_providers(&serde_json::json!({
-        "artist": {
-            "name": "Radiohead",
-            "mbid": "",
-            "url": "https://last.fm/a",
-            "stats": {"listeners": "1234567", "playcount": 890},
-            "bio": {"summary": "Oxford band"},
-            "tags": {"tag": [{"name": "rock", "url": "https://t"}]},
-            "similar": {"artist": [
-                {"name": "Thom Yorke", "mbid": "", "match": "0.92", "url": "https://s"},
-                {"name": "Atoms", "match": 0.5}
-            ]},
-            "futureField": "ignored"
-        }
-    }));
+    let (wire, providers) = lastfm_providers(&lastfm_recording(include_str!(
+        "../fixtures/lastfm/artist_getinfo.json"
+    )));
 
     let info = providers
         .lastfm
@@ -536,17 +528,68 @@ async fn lastfm_artist_info_found_with_lenient_counts() {
         .expect("artist info found");
 
     assert_eq!(info.name, "Radiohead");
-    assert_eq!(info.mbid, None, "blank mbid reads absent");
-    assert_eq!(info.listeners, 1234567, "string counts parse");
-    assert_eq!(info.playcount, 890);
-    assert_eq!(info.bio_summary, "Oxford band");
-    assert_eq!(info.tags.len(), 1);
-    assert_eq!(info.similar.len(), 2);
-    assert!((info.similar[0].score - 0.92).abs() < f64::EPSILON);
+    assert_eq!(
+        info.mbid.as_deref(),
+        Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
+    );
+    assert_eq!(info.listeners, 8_489_583, "string counts parse");
+    assert_eq!(info.playcount, 1_431_560_207);
+    assert!(info.bio_summary.starts_with("Placeholder summary."));
+    assert_eq!(info.tags.len(), 5);
+    assert_eq!(info.similar.len(), 5);
+    assert_eq!(info.similar[0].name, "Thom Yorke");
+    assert_eq!(
+        info.similar[0].mbid, None,
+        "info's similar rows carry no id"
+    );
     let sent = wire.sent();
     assert_eq!(sent[0].query("method").as_deref(), Some("artist.getInfo"));
     assert_eq!(sent[0].query("artist").as_deref(), Some("Radiohead"));
     assert_eq!(sent[0].query("api_sig"), None, "info reads are unsigned");
+}
+
+/// Last.fm's recorded error answers read as their typed outcome, whatever
+/// status they came with: an unknown artist (error 6 in a 200) and an
+/// unknown user (error 6 in a 404) are absence, a refused key (error 10 in
+/// a 403) is unauthorized.
+#[tokio::test]
+async fn lastfm_recorded_errors_read_as_typed_outcomes() {
+    let serve = |status: u16, body: &str| {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.on(
+            Method::Get,
+            lastfm::DEFAULT_BASE_URL,
+            json_answer(status, &lastfm_recording(body)),
+        );
+        audio_providers(&wire)
+    };
+
+    let unknown_artist = serve(
+        200,
+        include_str!("../fixtures/lastfm/artist_not_found.json"),
+    )
+    .lastfm
+    .artist_info(&lastfm_creds(), "nobody", None, PRIORITY)
+    .await;
+    assert!(matches!(unknown_artist, Ok(None)), "{unknown_artist:?}");
+
+    let unknown_user = serve(404, include_str!("../fixtures/lastfm/user_not_found.json"))
+        .lastfm
+        .user_top_albums(&lastfm_creds(), "nobody", "overall", 3, PRIORITY)
+        .await;
+    assert!(
+        matches!(&unknown_user, Ok(rows) if rows.is_empty()),
+        "{unknown_user:?}"
+    );
+
+    let refused = serve(403, include_str!("../fixtures/lastfm/invalid_key.json"))
+        .lastfm
+        .artist_info(&lastfm_creds(), "Radiohead", None, PRIORITY)
+        .await;
+    assert!(
+        matches!(refused, Err(ProviderError::Unauthorized { .. })),
+        "{refused:?}"
+    );
 }
 
 #[tokio::test]

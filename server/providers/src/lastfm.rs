@@ -1,8 +1,8 @@
 //! Last.fm metadata client with per-user credentials.
 //!
-//! Ports the read paths of v2's Last.fm repository, its wire models, and
-//! the genre surface verified against production on 2026-07-22, plus the
-//! two signed account-linking calls and the signed scrobble posts.
+//! The read paths, the two signed account-linking calls and the signed
+//! scrobble posts. Every answer decodes through the wire shapes in
+//! `models`, where each endpoint notes what it was verified against.
 //!
 //! Credentials are per user, always. `LastFmCredentials` mirrors the
 //! plaintext projection of the per-user store (`auth::users::models`
@@ -19,6 +19,8 @@
 //! into a typed [`ProviderError`] (see [`classify`]).
 
 use std::time::Duration;
+
+use serde::de::DeserializeOwned;
 
 mod models;
 
@@ -98,15 +100,14 @@ pub fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
 /// The code of a Last.fm error envelope: `None` when the body is not one,
 /// `Some(None)` when it is one without a usable code.
 fn envelope_code(body: &[u8]) -> Option<Option<i64>> {
-    #[derive(serde::Deserialize)]
-    struct Envelope {
-        error: serde_json::Value,
-    }
     if !body.windows(7).any(|window| window == b"\"error\"") {
         return None;
     }
-    let envelope: Envelope = serde_json::from_slice(body).ok()?;
-    Some(envelope.error.as_i64())
+    let envelope: models::WireError = serde_json::from_slice(body).ok()?;
+    match envelope.error {
+        models::WireErrorCode::Code(code) => Some(Some(code)),
+        models::WireErrorCode::Other(_) => Some(None),
+    }
 }
 
 /// One user's Last.fm credentials, plaintext in memory only. This mirrors the
@@ -311,18 +312,16 @@ impl LastFmClient {
         creds: &LastFmCredentials,
         priority: RequestPriority,
     ) -> Result<AuthToken, ProviderError> {
-        let payload = self
+        let wire: models::WireToken = self
             .read(
                 self.call("auth.getToken", creds, &[], Signed::Yes)?,
                 priority,
             )
             .await?;
-        match payload.get("token").and_then(serde_json::Value::as_str) {
-            Some(token) if !token.is_empty() => Ok(AuthToken {
-                token: token.to_owned(),
-            }),
-            _ => Err(shape("Last.fm auth.getToken answer has no token")),
+        if wire.token.is_empty() {
+            return Err(shape("Last.fm auth.getToken answer has no token"));
         }
+        Ok(AuthToken { token: wire.token })
     }
 
     /// `auth.getSession` with the user's key pair and an approved token.
@@ -338,32 +337,21 @@ impl LastFmClient {
         token: &str,
         priority: RequestPriority,
     ) -> Result<Session, ProviderError> {
-        let payload = self
+        let wire: models::WireSessionReply = self
             .read(
                 self.call("auth.getSession", creds, &[("token", token)], Signed::Yes)?,
                 priority,
             )
             .await?;
-        // v2 reads `data["session"]` but falls back to the top level.
-        let session = payload
-            .get("session")
-            .and_then(serde_json::Value::as_object)
-            .or(payload.as_object());
-        let text = |key: &str| {
-            session
-                .and_then(|session| session.get(key))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_owned()
-        };
-        let (name, key) = (text("name"), text("key"));
-        if name.is_empty() || key.is_empty() {
+        let (models::WireSessionReply::Nested { session }
+        | models::WireSessionReply::Flat(session)) = wire;
+        if session.name.is_empty() || session.key.is_empty() {
             return Err(shape("Last.fm auth.getSession answer has no name or key"));
         }
         Ok(Session {
-            name,
-            key,
-            subscriber: lenient_int(session.and_then(|session| session.get("subscriber"))),
+            name: session.name,
+            key: session.key,
+            subscriber: count(session.subscriber.as_ref()),
         })
     }
 
@@ -428,13 +416,18 @@ impl LastFmClient {
             Some(mbid) => ("mbid", mbid),
             None => ("artist", artist),
         };
-        let Some(payload) = self
-            .read_found("artist.getInfo", creds, &[(key, value)], priority)
+        let Some(wire) = self
+            .read_found::<models::WireArtistInfoReply>(
+                "artist.getInfo",
+                creds,
+                &[(key, value)],
+                priority,
+            )
             .await?
         else {
             return Ok(None);
         };
-        parse_artist_info(&payload)
+        artist_info(wire.artist)
             .map(Some)
             .ok_or_else(|| shape("Last.fm artist.getInfo answer has no name"))
     }
@@ -457,13 +450,13 @@ impl LastFmClient {
             Some(mbid) => vec![("mbid", mbid)],
             None => vec![("artist", artist), ("album", album)],
         };
-        let Some(payload) = self
-            .read_found("album.getInfo", creds, &params, priority)
+        let Some(wire) = self
+            .read_found::<models::WireAlbumInfoReply>("album.getInfo", creds, &params, priority)
             .await?
         else {
             return Ok(None);
         };
-        parse_album_info(&payload)
+        album_info(wire.album)
             .map(Some)
             .ok_or_else(|| shape("Last.fm album.getInfo answer has no name"))
     }
@@ -487,19 +480,11 @@ impl LastFmClient {
             Some(mbid) => vec![("mbid", mbid), ("limit", &limit_text)],
             None => vec![("artist", artist), ("limit", &limit_text)],
         };
-        let Some(payload) = self
-            .read_found("artist.getSimilar", creds, &params, priority)
+        Ok(self
+            .read_found::<models::WireSimilarReply>("artist.getSimilar", creds, &params, priority)
             .await?
-        else {
-            return Ok(Vec::new());
-        };
-        let artists = payload
-            .get("similarartists")
-            .and_then(|similar| similar.get("artist"))
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(artists.iter().map(parse_similar_artist).collect())
+            .map(|wire| similar_artists(&wire.similarartists))
+            .unwrap_or_default())
     }
 
     /// `artist.getTopTracks`, most played first.
@@ -517,7 +502,7 @@ impl LastFmClient {
     ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            ("artist.getTopTracks", "toptracks", "track"),
+            "artist.getTopTracks",
             creds,
             &artist_params(artist, mbid, &limit_text),
             priority,
@@ -540,7 +525,7 @@ impl LastFmClient {
     ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            ("artist.getTopAlbums", "topalbums", "album"),
+            "artist.getTopAlbums",
             creds,
             &artist_params(artist, mbid, &limit_text),
             priority,
@@ -562,7 +547,7 @@ impl LastFmClient {
     ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            ("chart.getTopArtists", "artists", "artist"),
+            "chart.getTopArtists",
             creds,
             &[("limit", &limit_text)],
             priority,
@@ -586,7 +571,7 @@ impl LastFmClient {
     ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            ("user.getTopAlbums", "topalbums", "album"),
+            "user.getTopAlbums",
             creds,
             &[
                 ("user", username),
@@ -614,7 +599,7 @@ impl LastFmClient {
     ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            ("user.getTopArtists", "topartists", "artist"),
+            "user.getTopArtists",
             creds,
             &[
                 ("user", username),
@@ -639,7 +624,7 @@ impl LastFmClient {
         priority: RequestPriority,
     ) -> Result<Vec<TopItem>, ProviderError> {
         self.list_items(
-            ("user.getWeeklyArtistChart", "weeklyartistchart", "artist"),
+            "user.getWeeklyArtistChart",
             creds,
             &[("user", username)],
             priority,
@@ -660,7 +645,7 @@ impl LastFmClient {
         priority: RequestPriority,
     ) -> Result<Vec<TopItem>, ProviderError> {
         self.list_items(
-            ("user.getWeeklyAlbumChart", "weeklyalbumchart", "album"),
+            "user.getWeeklyAlbumChart",
             creds,
             &[("user", username)],
             priority,
@@ -682,7 +667,7 @@ impl LastFmClient {
     ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            ("tag.getTopArtists", "topartists", "artist"),
+            "tag.getTopArtists",
             creds,
             &[("tag", tag), ("limit", &limit_text)],
             priority,
@@ -705,7 +690,7 @@ impl LastFmClient {
     ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            ("user.getLovedTracks", "lovedtracks", "track"),
+            "user.getLovedTracks",
             creds,
             &[("user", username), ("limit", &limit_text)],
             priority,
@@ -727,26 +712,24 @@ impl LastFmClient {
     ) -> Result<Vec<RecentTrack>, ProviderError> {
         let limit_text = limit.to_string();
         let params = [("user", username), ("limit", limit_text.as_str())];
-        let Some(payload) = self
-            .read_found("user.getRecentTracks", creds, &params, priority)
+        let Some(wire) = self
+            .read_found::<models::WireRecentReply>("user.getRecentTracks", creds, &params, priority)
             .await?
         else {
             return Ok(Vec::new());
         };
-        let items = payload
-            .get("recenttracks")
-            .and_then(|list| list.get("track"))
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(items.iter().filter_map(parse_recent_track).collect())
+        Ok(wire
+            .recenttracks
+            .track
+            .iter()
+            .flat_map(models::OneOrMany::iter)
+            .filter_map(recent_track)
+            .collect())
     }
 
-    /// Weighted artist tags from the live-verified genre surface
-    /// (`artist.getTopTags` with `autocorrect=0`; verified against
-    /// production on 2026-07-22, see `lastfm_MANAGEMENT_API_NOTES.md`).
-    /// Unknown artists (error 6) answer empty, exactly like v2's empty
-    /// candidate tuple: no tags is an answer, not a fault.
+    /// Weighted artist tags (`artist.getTopTags` with `autocorrect=0`).
+    /// Unknown artists (error 6) answer empty: no tags is an answer, not a
+    /// fault.
     ///
     /// # Errors
     ///
@@ -759,14 +742,13 @@ impl LastFmClient {
     ) -> Result<Vec<WeightedTag>, ProviderError> {
         let params = [("artist", artist), ("autocorrect", "0")];
         Ok(self
-            .read_found("artist.getTopTags", creds, &params, priority)
+            .read_found::<models::WireTopTagsReply>("artist.getTopTags", creds, &params, priority)
             .await?
-            .map(|payload| top_tags(&payload))
+            .map(|wire| top_tags(&wire.toptags))
             .unwrap_or_default())
     }
 
-    /// Weighted album tags from the live-verified genre surface
-    /// (`album.getTopTags` with `autocorrect=0`; same verification).
+    /// Weighted album tags (`album.getTopTags` with `autocorrect=0`).
     /// Unknown albums answer empty.
     ///
     /// # Errors
@@ -781,41 +763,44 @@ impl LastFmClient {
     ) -> Result<Vec<WeightedTag>, ProviderError> {
         let params = [("artist", artist), ("album", album), ("autocorrect", "0")];
         Ok(self
-            .read_found("album.getTopTags", creds, &params, priority)
+            .read_found::<models::WireTopTagsReply>("album.getTopTags", creds, &params, priority)
             .await?
-            .map(|payload| top_tags(&payload))
+            .map(|wire| top_tags(&wire.toptags))
             .unwrap_or_default())
     }
 
-    /// One unsigned list read: the rows under `envelope.key`, blank names
-    /// dropped. A missing list, or an unknown entity, reads as empty.
+    /// One unsigned list read: its rows, blank names dropped. An empty
+    /// list, or an unknown entity, reads as empty.
     async fn list_items(
-        &self,
-        (method, envelope, key): (&str, &str, &str),
-        creds: &LastFmCredentials,
-        params: &[(&str, &str)],
-        priority: RequestPriority,
-    ) -> Result<Vec<TopItem>, ProviderError> {
-        let Some(payload) = self.read_found(method, creds, params, priority).await? else {
-            return Ok(Vec::new());
-        };
-        let items = payload
-            .get(envelope)
-            .and_then(|list| list.get(key))
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(items.iter().filter_map(parse_top_item).collect())
-    }
-
-    /// One unsigned read; `None` when Last.fm does not know the entity.
-    async fn read_found(
         &self,
         method: &str,
         creds: &LastFmCredentials,
         params: &[(&str, &str)],
         priority: RequestPriority,
-    ) -> Result<Option<serde_json::Value>, ProviderError> {
+    ) -> Result<Vec<TopItem>, ProviderError> {
+        let Some(wire) = self
+            .read_found::<models::WireTopReply>(method, creds, params, priority)
+            .await?
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(wire
+            .list
+            .rows
+            .iter()
+            .flat_map(models::OneOrMany::iter)
+            .filter_map(top_item)
+            .collect())
+    }
+
+    /// One unsigned read; `None` when Last.fm does not know the entity.
+    async fn read_found<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        creds: &LastFmCredentials,
+        params: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<Option<T>, ProviderError> {
         let request = self.call(method, creds, params, Signed::No)?;
         match self.read(request, priority).await {
             Ok(payload) => Ok(Some(payload)),
@@ -880,11 +865,11 @@ impl LastFmClient {
 
     /// Send one call and decode its JSON body. An answer that does not
     /// decode is noted for the request.
-    async fn read(
+    async fn read<T: DeserializeOwned>(
         &self,
         request: Request,
         priority: RequestPriority,
-    ) -> Result<serde_json::Value, ProviderError> {
+    ) -> Result<T, ProviderError> {
         let reply = self.send(request, priority).await?;
         reply
             .json()
@@ -983,31 +968,16 @@ fn artist_params<'a>(
     }
 }
 
-/// Decode the `toptags.tag` list into weighted tags. A missing `toptags`
-/// object reads as empty (v2's tolerant structs default it); blank names
-/// are filtered before projecting.
-fn top_tags(payload: &serde_json::Value) -> Vec<WeightedTag> {
-    let tags = match payload
-        .get("toptags")
-        .and_then(|toptags| toptags.get("tag"))
-    {
-        None | Some(serde_json::Value::Null) => return Vec::new(),
-        Some(serde_json::Value::Array(tags)) => tags.clone(),
-        // Last.fm sometimes answers a single object where a list belongs;
-        // accept it rather than failing the whole read.
-        Some(single) => vec![single.clone()],
-    };
-    tags.iter()
-        .filter_map(serde_json::Value::as_object)
+/// The weighted tags, blank names dropped.
+fn top_tags(wire: &models::WireTopTags) -> Vec<WeightedTag> {
+    wire.tag
+        .iter()
+        .flat_map(models::OneOrMany::iter)
         .filter_map(|tag| {
-            let name = tag
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .trim();
+            let name = tag.name.trim();
             (!name.is_empty()).then(|| WeightedTag {
                 name: name.to_owned(),
-                weight: lenient_int(tag.get("count")),
+                weight: count(tag.count.as_ref()),
             })
         })
         .collect()
@@ -1067,269 +1037,172 @@ pub fn api_sig(params: &[(String, String)], shared_secret: &str) -> String {
     format!("{:x}", md5::compute(signed.as_bytes()))
 }
 
-/// Parse a string-or-number count leniently: integers pass
-/// through, numeric strings parse, floats truncate, and anything else reads
-/// as zero. Counts are telemetry, not identity, so leniency here is
-/// intended.
-fn lenient_int(value: Option<&serde_json::Value>) -> i64 {
-    match value {
-        None | Some(serde_json::Value::Null) => 0,
-        Some(serde_json::Value::Number(number)) => number
-            .as_i64()
-            .or_else(|| number.as_f64().map(|float| float as i64))
-            .unwrap_or(0),
-        Some(serde_json::Value::String(text)) => text.trim().parse::<i64>().unwrap_or(0),
-        Some(_) => 0,
-    }
-}
-
-/// Parse a string-or-number score the same lenient way.
-fn lenient_float(value: Option<&serde_json::Value>) -> f64 {
-    match value {
-        None | Some(serde_json::Value::Null) => 0.0,
-        Some(serde_json::Value::Number(number)) => number.as_f64().unwrap_or(0.0),
-        Some(serde_json::Value::String(text)) => text.trim().parse::<f64>().unwrap_or(0.0),
-        Some(_) => 0.0,
-    }
+/// A count, 0 when Last.fm sent none or sent text that is not a number.
+fn count(value: Option<&models::Lenient>) -> i64 {
+    value.and_then(models::Lenient::value).unwrap_or(0)
 }
 
 /// Pick the artwork URL: `extralarge` wins, otherwise the last image wins.
-fn pick_image(images: Option<&serde_json::Value>) -> String {
-    let images = match images.and_then(serde_json::Value::as_array) {
-        Some(images) if !images.is_empty() => images,
-        _ => return String::new(),
+fn pick_image(images: Option<&models::OneOrMany<models::WireImage>>) -> String {
+    let Some(images) = images else {
+        return String::new();
     };
-    for image in images {
-        let size = image
-            .get("size")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-        if size == "extralarge" {
-            return image
-                .get("#text")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_owned();
-        }
-    }
     images
-        .last()
-        .and_then(|image| image.get("#text"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
-        .to_owned()
+        .iter()
+        .find(|image| image.size.as_deref() == Some("extralarge"))
+        .or_else(|| images.iter().last())
+        .and_then(|image| image.url.clone())
+        .unwrap_or_default()
 }
 
 /// A MusicBrainz id from Last.fm, lowercase. Blank, missing or malformed
 /// ids read as absent: callers put them into request paths.
-fn mbid_or_none(value: Option<&serde_json::Value>) -> Option<String> {
-    blank_to_none(value)
-        .filter(|id| super::musicbrainz::is_valid_mbid(id))
-        .map(|id| id.to_ascii_lowercase())
-}
-
-/// A blank-or-missing MusicBrainz id reads as absent.
-fn blank_to_none(value: Option<&serde_json::Value>) -> Option<String> {
+fn mbid_or_none(value: Option<&str>) -> Option<String> {
     value
-        .and_then(serde_json::Value::as_str)
         .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
+        .filter(|id| super::musicbrainz::is_valid_mbid(id))
+        .map(str::to_ascii_lowercase)
 }
 
-/// Parse the tag list shape (`tags.tag`, tolerating a lone object).
-fn parse_tags(entity: &serde_json::Map<String, serde_json::Value>) -> Vec<Tag> {
-    let tags = match entity.get("tags").and_then(|tags| tags.get("tag")) {
-        None | Some(serde_json::Value::Null) => return Vec::new(),
-        Some(serde_json::Value::Array(tags)) => tags.clone(),
-        Some(single) => vec![single.clone()],
-    };
-    tags.iter()
-        .filter_map(|tag| {
-            let tag = tag.as_object()?;
-            Some(Tag {
-                name: tag
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-                url: tag
-                    .get("url")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-            })
+/// The tags of an info answer.
+fn tags(wire: Option<&models::Section<models::WireTagList>>) -> Vec<Tag> {
+    wire.and_then(models::Section::get)
+        .and_then(|list| list.tag.as_ref())
+        .iter()
+        .flat_map(|tags| tags.iter())
+        .map(|tag| Tag {
+            name: tag.name.clone().unwrap_or_default(),
+            url: tag.url.clone().unwrap_or_default(),
         })
         .collect()
 }
 
-/// Parse `artist.getInfo`. The artist name is
-/// required; a payload missing it fails instead of yielding an empty
-/// success.
-fn parse_artist_info(payload: &serde_json::Value) -> Option<ArtistInfo> {
-    let artist = payload.get("artist")?.as_object()?;
-    let name = artist.get("name")?.as_str()?;
-    if name.trim().is_empty() {
+/// `artist.getInfo`'s artist; `None` when its name is blank.
+fn artist_info(artist: models::WireArtistInfo) -> Option<ArtistInfo> {
+    if artist.name.trim().is_empty() {
         return None;
     }
-    let stats = artist.get("stats");
-    let stats = stats.and_then(serde_json::Value::as_object);
-    let bio_text = |key: &str| {
-        artist
-            .get("bio")
-            .and_then(|bio| bio.get(key))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_owned()
-    };
-    let bio_summary = bio_text("summary");
-    let bio_content = bio_text("content");
-    let similar = artist
-        .get("similar")
-        .and_then(|similar| similar.get("artist"))
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let stats = artist.stats.as_ref().and_then(models::Section::get);
+    let bio = artist.bio.as_ref().and_then(models::Section::get);
     Some(ArtistInfo {
-        name: name.to_owned(),
-        mbid: mbid_or_none(artist.get("mbid")),
-        listeners: lenient_int(stats.and_then(|stats| stats.get("listeners"))),
-        playcount: lenient_int(stats.and_then(|stats| stats.get("playcount"))),
-        url: artist
-            .get("url")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        bio_summary,
-        bio_content,
-        tags: parse_tags(artist),
-        similar: similar.iter().map(parse_similar_artist).collect(),
+        mbid: mbid_or_none(artist.mbid.as_deref()),
+        listeners: count(stats.and_then(|stats| stats.listeners.as_ref())),
+        playcount: count(stats.and_then(|stats| stats.playcount.as_ref())),
+        url: artist.url.unwrap_or_default(),
+        bio_summary: bio.and_then(|bio| bio.summary.clone()).unwrap_or_default(),
+        bio_content: bio.and_then(|bio| bio.content.clone()).unwrap_or_default(),
+        tags: tags(artist.tags.as_ref()),
+        similar: artist
+            .similar
+            .as_ref()
+            .and_then(models::Section::get)
+            .map(similar_artists)
+            .unwrap_or_default(),
+        name: artist.name,
     })
 }
 
-/// Parse `album.getInfo`. The title is required.
-fn parse_album_info(payload: &serde_json::Value) -> Option<AlbumInfo> {
-    let album = payload.get("album")?.as_object()?;
-    let name = album.get("name")?.as_str()?;
-    if name.trim().is_empty() {
+/// `album.getInfo`'s album; `None` when its title is blank.
+fn album_info(album: models::WireAlbumInfo) -> Option<AlbumInfo> {
+    if album.name.trim().is_empty() {
         return None;
     }
-    let tracks = match album.get("tracks").and_then(|tracks| tracks.get("track")) {
-        None | Some(serde_json::Value::Null) => Vec::new(),
-        Some(serde_json::Value::Array(tracks)) => tracks
-            .iter()
-            .filter_map(|track| {
-                let track = track.as_object()?;
-                Some(AlbumTrack {
-                    name: track
-                        .get("name")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                    duration_secs: lenient_int(track.get("duration")),
-                    rank: lenient_int(track.get("@attr").and_then(|attr| attr.get("rank"))),
-                    url: track
-                        .get("url")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                })
-            })
-            .collect(),
-        Some(_) => Vec::new(),
-    };
+    let tracks = album
+        .tracks
+        .as_ref()
+        .and_then(models::Section::get)
+        .and_then(|list| list.track.as_ref())
+        .iter()
+        .flat_map(|tracks| tracks.iter())
+        .map(|track| AlbumTrack {
+            name: track.name.clone().unwrap_or_default(),
+            duration_secs: count(track.duration.as_ref()),
+            rank: count(track.attr.as_ref().and_then(|attr| attr.rank.as_ref())),
+            url: track.url.clone().unwrap_or_default(),
+        })
+        .collect();
     Some(AlbumInfo {
-        name: name.to_owned(),
         artist_name: album
-            .get("artist")
-            .and_then(serde_json::Value::as_str)
+            .artist
+            .as_ref()
+            .and_then(models::WireNameRef::name)
             .unwrap_or("")
             .to_owned(),
-        mbid: mbid_or_none(album.get("mbid")),
-        listeners: lenient_int(album.get("listeners")),
-        playcount: lenient_int(album.get("playcount")),
-        url: album
-            .get("url")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        image_url: pick_image(album.get("image")),
+        mbid: mbid_or_none(album.mbid.as_deref()),
+        listeners: count(album.listeners.as_ref()),
+        playcount: count(album.playcount.as_ref()),
+        image_url: pick_image(album.image.as_ref()),
         summary: album
-            .get("wiki")
-            .and_then(|wiki| wiki.get("summary"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        tags: parse_tags(album),
+            .wiki
+            .as_ref()
+            .and_then(models::Section::get)
+            .and_then(|wiki| wiki.summary.clone())
+            .unwrap_or_default(),
+        tags: tags(album.tags.as_ref()),
         tracks,
+        url: album.url.unwrap_or_default(),
+        name: album.name,
     })
 }
 
-/// Parse one top-tracks or top-albums row. A blank name skips the row.
-fn parse_top_item(item: &serde_json::Value) -> Option<TopItem> {
-    let item = item.as_object()?;
-    let name = item.get("name")?.as_str()?.trim();
+/// One top-list row; a blank name skips it.
+fn top_item(item: &models::WireTopItem) -> Option<TopItem> {
+    let name = item.name.trim();
     if name.is_empty() {
         return None;
     }
-    let artist_name = match item.get("artist") {
-        // Charts send `{"#text": ...}` where top lists send `{"name": ...}`.
-        Some(serde_json::Value::Object(artist)) => artist
-            .get("name")
-            .or_else(|| artist.get("#text"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(""),
-        Some(serde_json::Value::String(artist)) => artist.as_str(),
-        _ => "",
-    };
     Some(TopItem {
         name: name.to_owned(),
-        artist_name: artist_name.to_owned(),
-        mbid: mbid_or_none(item.get("mbid")),
-        playcount: lenient_int(item.get("playcount")),
-        image_url: pick_image(item.get("image")),
+        artist_name: item
+            .artist
+            .as_ref()
+            .and_then(models::WireNameRef::name)
+            .unwrap_or("")
+            .to_owned(),
+        mbid: mbid_or_none(item.mbid.as_deref()),
+        playcount: count(item.playcount.as_ref()),
+        image_url: pick_image(item.image.as_ref()),
     })
 }
 
-fn parse_recent_track(item: &serde_json::Value) -> Option<RecentTrack> {
-    let item = item.as_object()?;
-    let name = item.get("name")?.as_str()?.trim();
+/// One scrobble; a blank title skips it.
+fn recent_track(item: &models::WireRecentTrack) -> Option<RecentTrack> {
+    let name = item.name.trim();
     if name.is_empty() {
         return None;
     }
-    let text_of = |key: &str| {
-        item.get(key)
-            .and_then(|value| value.get("#text").or_else(|| value.get("name")))
-            .and_then(serde_json::Value::as_str)
+    let text_of = |value: Option<&models::WireNameRef>| {
+        value
+            .and_then(models::WireNameRef::text)
             .unwrap_or("")
             .trim()
             .to_owned()
     };
     Some(RecentTrack {
         name: name.to_owned(),
-        artist_name: text_of("artist"),
-        album_name: text_of("album"),
-        album_mbid: mbid_or_none(item.get("album").and_then(|album| album.get("mbid"))),
-        image_url: pick_image(item.get("image")),
+        artist_name: text_of(item.artist.as_ref()),
+        album_name: text_of(item.album.as_ref()),
+        album_mbid: mbid_or_none(item.album.as_ref().and_then(models::WireNameRef::mbid)),
+        image_url: pick_image(item.image.as_ref()),
     })
 }
 
-fn parse_similar_artist(item: &serde_json::Value) -> SimilarArtist {
-    let item = item.as_object();
-    SimilarArtist {
-        name: item
-            .and_then(|artist| artist.get("name"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        mbid: item.and_then(|artist| mbid_or_none(artist.get("mbid"))),
-        score: lenient_float(item.and_then(|artist| artist.get("match"))),
-        url: item
-            .and_then(|artist| artist.get("url"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-    }
+/// A list of similar artists.
+fn similar_artists(list: &models::WireSimilarList) -> Vec<SimilarArtist> {
+    list.artist
+        .iter()
+        .flat_map(models::OneOrMany::iter)
+        .map(|artist| SimilarArtist {
+            name: artist.name.clone(),
+            mbid: mbid_or_none(artist.mbid.as_deref()),
+            score: artist
+                .score
+                .as_ref()
+                .and_then(models::Lenient::fraction)
+                .unwrap_or(0.0),
+            url: artist.url.clone().unwrap_or_default(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1365,16 +1238,15 @@ mod tests {
 
     #[test]
     fn malformed_mbids_read_as_absent() {
-        let items = serde_json::json!([
+        let list: models::WireSimilarList = serde_json::from_value(serde_json::json!({"artist": [
             {"name": "A", "mbid": "A74B1B7F-71A5-4011-9441-D0B5E4122711"},
             {"name": "B", "mbid": "../../release/x"},
             {"name": "C", "mbid": " "},
-        ]);
-        let ids: Vec<Option<String>> = items
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|item| parse_similar_artist(item).mbid)
+        ]}))
+        .unwrap();
+        let ids: Vec<Option<String>> = similar_artists(&list)
+            .into_iter()
+            .map(|artist| artist.mbid)
             .collect();
         assert_eq!(
             ids,
