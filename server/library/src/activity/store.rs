@@ -214,10 +214,17 @@ pub fn identification_snapshot(
     {
         // A running job whose lease ran out is not running: its worker is
         // gone and the next claim picks it up again, so it counts as queued.
+        // A failure the album's later success settled is not counted, the
+        // same rule as the latest failure below.
         let mut stmt = conn.prepare(
-            "SELECT CASE WHEN state = 'running' AND NOT (lease_expires_ms > ?1) \
-             THEN 'queued' ELSE state END AS live_state, COUNT(*) \
-             FROM library_identify_jobs GROUP BY live_state",
+            "SELECT CASE WHEN j.state = 'running' AND NOT (j.lease_expires_ms > ?1) \
+             THEN 'queued' ELSE j.state END AS live_state, COUNT(*) \
+             FROM library_identify_jobs j \
+             WHERE NOT (j.state IN ('failed','attention') \
+                 AND EXISTS (SELECT 1 FROM library_identify_jobs later \
+                     WHERE later.local_album_id = j.local_album_id \
+                     AND later.state = 'succeeded' AND later.updated_ms > j.updated_ms)) \
+             GROUP BY live_state",
         )?;
         let rows = stmt.query_map(params![now_ms], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
@@ -280,10 +287,16 @@ pub fn identification_snapshot(
          AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
              WHERE r.local_album_id = j.local_album_id AND r.state = 'pending')",
     )?;
+    // A failure the album's own later success settled (a retry after its
+    // files moved mid-attempt) needs nobody's attention.
     snapshot.failure = conn
         .query_row(
-            "SELECT id, updated_ms FROM library_identify_jobs \
-             WHERE state IN ('failed','attention') ORDER BY updated_ms DESC, id DESC LIMIT 1",
+            "SELECT j.id, j.updated_ms FROM library_identify_jobs j \
+             WHERE j.state IN ('failed','attention') \
+             AND NOT EXISTS (SELECT 1 FROM library_identify_jobs later \
+                 WHERE later.local_album_id = j.local_album_id \
+                 AND later.state = 'succeeded' AND later.updated_ms > j.updated_ms) \
+             ORDER BY j.updated_ms DESC, j.id DESC LIMIT 1",
             [],
             |row| Ok((row.get::<_, String>(0)?, seconds(row.get::<_, i64>(1)?))),
         )
