@@ -817,30 +817,32 @@ fn nd_in_folders(
         .collect()
 }
 
+/// Songs carry a disc cover id, `dc-<album id>:<disc>_<stamp>`, as 0.62.0
+/// sends them.
 fn nd_songs() -> Vec<Value> {
     vec![
         json!({
             "id": "nd-t-1", "title": "Meridian Dawn", "album": ALBUM_ONE, "albumId": "nd-al-1",
             "artist": ARTIST_ONE, "artistId": "nd-ar-1", "track": 1, "discNumber": 1,
-            "year": 2024, "duration": 180, "suffix": "flac", "coverArt": "nd-al-1",
+            "year": 2024, "duration": 180, "suffix": "flac", "coverArt": "dc-nd-al-1:1_0",
             "musicBrainzId": "22222222-2222-2222-2222-222222222222",
         }),
         json!({
             "id": "nd-t-2", "title": "Meridian Dusk", "album": ALBUM_ONE, "albumId": "nd-al-1",
             "artist": ARTIST_ONE, "artistId": "nd-ar-1", "track": 2, "discNumber": 1,
-            "year": 2024, "duration": 180, "suffix": "flac", "coverArt": "nd-al-1",
+            "year": 2024, "duration": 180, "suffix": "flac", "coverArt": "dc-nd-al-1:1_0",
             "musicBrainzId": "",
         }),
         json!({
             "id": "nd-t-3", "title": "Tide Glass", "album": ALBUM_TWO, "albumId": "nd-al-2",
             "artist": ARTIST_ONE, "artistId": "nd-ar-1", "track": 1, "discNumber": 1,
-            "year": 2022, "duration": 180, "suffix": "mp3", "coverArt": "nd-al-2",
+            "year": 2022, "duration": 180, "suffix": "mp3", "coverArt": "dc-nd-al-2:1_0",
             "musicBrainzId": "",
         }),
         json!({
             "id": "nd-t-4", "title": "Satellite Fold", "album": ALBUM_THREE, "albumId": "nd-al-3",
             "artist": ARTIST_TWO, "artistId": "nd-ar-2", "track": 1, "discNumber": 1,
-            "year": 2020, "duration": 200, "suffix": "mp3", "coverArt": "nd-al-3",
+            "year": 2020, "duration": 200, "suffix": "mp3", "coverArt": "dc-nd-al-3:1_0",
             "musicBrainzId": "",
         }),
     ]

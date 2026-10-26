@@ -17,6 +17,14 @@
 //!   query spelled `""`.
 //! - Album sort names map `name`/`date_added`/`year` to Subsonic list types
 //!   with client-side reversal for descending name and ascending recency.
+//! - Verified against a throwaway Navidrome 0.62.0 (2026-10-26), two
+//!   libraries, a `cover.png` in one album folder: the hub, album list,
+//!   album and tracks, album and playlist covers, `getMusicFolders` and a
+//!   saved folder narrowing albums, tracks and hub, and a ranged stream
+//!   with HEAD all worked. Song cover ids are `dc-<album id>:1_0` (colon
+//!   included). An album with no art still answers its own placeholder
+//!   image (200, `image/webp`), and an unknown cover id answers a Subsonic
+//!   error as JSON with HTTP 200, which the image route treats as missing.
 //!
 //! Payloads decode into the typed shapes in [`super::navidrome_models`]; a
 //! payload missing an item id is an upstream error, not an empty item.
@@ -1150,11 +1158,13 @@ fn known_name(name: &str) -> bool {
     !name.is_empty() && name != "Unknown"
 }
 
-/// The image address the browser asks for. Only an id the image route
-/// would accept gets one, so a server's id cannot steer the browser to
-/// another path of the app.
+/// The image address the browser asks for. Only a plain id gets one, so a
+/// server's id cannot steer the browser to another path of the app. A
+/// colon is allowed besides: song cover ids are `dc-<album id>:<disc>_<stamp>`,
+/// and the id goes to Navidrome as a query value, never a path.
 fn cover_url(cover_art: Option<&str>) -> Option<String> {
-    let cover = request_id(cover_art?).ok()?;
+    let cover = cover_art?;
+    request_id(&cover.replace(':', "_")).ok()?;
     Some(format!("/api/v3/remotes/navidrome/images/{cover}"))
 }
 
@@ -1288,7 +1298,7 @@ mod tests {
 
     #[test]
     fn image_addresses_need_a_plain_id() {
-        for hostile in ["../../settings", "al-1?size=1", "al-1/../x", ""] {
+        for hostile in ["../../settings", "al-1?size=1", "al-1/../x", "", "a:/b"] {
             assert_eq!(cover_url(Some(hostile)), None, "{hostile:?}");
         }
         assert_eq!(

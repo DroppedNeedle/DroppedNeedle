@@ -1299,6 +1299,26 @@ async fn routes_serve_optional_features_per_source() {
     }
 }
 
+/// A real Navidrome 0.62.0 gives each song a disc cover id with a colon
+/// in it (`dc-<album id>:1_0`). A track row still gets an image, and the
+/// image route serves it.
+#[tokio::test]
+async fn navidrome_track_rows_show_the_disc_cover() {
+    let (app, _rig) = connected_testbed().await;
+    let (status, body) = get_json(
+        app.clone(),
+        "/api/v3/remotes/navidrome/albums/nd-al-1/tracks",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let image = body["items"][0]["image_url"].as_str().unwrap_or_default();
+    assert_eq!(image, "/api/v3/remotes/navidrome/images/dc-nd-al-1:1_0");
+
+    let (status, _, bytes) = get_bytes(app, image).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
+}
+
 /// Jellyfin art as a real 10.10.6 server holds it: a track whose album
 /// folder has the cover has no image of its own, and a playlist has one
 /// drawn from its members. A track row points at its album's cover, a
