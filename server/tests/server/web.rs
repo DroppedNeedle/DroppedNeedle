@@ -169,7 +169,7 @@ async fn api_json_is_no_store_and_a_handlers_own_cache_rule_is_kept() {
             None,
         )
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(text(&headers, "x-cover-state"), Some("missing"));
     assert_eq!(text(&headers, "cache-control"), Some("no-store"));
 }

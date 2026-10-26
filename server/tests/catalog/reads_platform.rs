@@ -173,14 +173,15 @@ async fn release_group_cover_hit_serves_bytes_and_revalidates() {
 }
 
 #[tokio::test]
-async fn release_group_cover_miss_answers_404_without_a_body() {
+async fn release_group_cover_miss_answers_204_without_a_body() {
     let (status, headers, body) = get(
         covers_app(covers_fixture()),
         "/api/v3/covers/release-group/unknown",
         &[],
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(header(&headers, "x-cover-state"), Some("missing"));
     assert_eq!(header(&headers, "content-type"), None);
     assert_eq!(header(&headers, "cache-control"), Some("no-store"));
     assert!(body.is_empty());

@@ -92,6 +92,37 @@ pub async fn license<P: Principal, S: Store, B: AudioBackend>(
     Ok(Outcome::keyed("license", SLicense { valid: true }.render()))
 }
 
+/// Podcasts: none on this server. An empty list rather than an unknown
+/// method, so clients that ask on start show an empty section.
+pub async fn podcasts<P: Principal, S: Store, B: AudioBackend>(
+    _ctx: &'_ Ctx<'_, P, S, B>,
+) -> Result<Outcome, SubsonicError> {
+    Ok(Outcome::keyed(
+        "podcasts",
+        obj(vec![("channel", Val::List(Vec::new()))]),
+    ))
+}
+
+/// Newest podcast episodes: none, as for [`podcasts`].
+pub async fn newest_podcasts<P: Principal, S: Store, B: AudioBackend>(
+    _ctx: &'_ Ctx<'_, P, S, B>,
+) -> Result<Outcome, SubsonicError> {
+    Ok(Outcome::keyed(
+        "newestPodcasts",
+        obj(vec![("episode", Val::List(Vec::new()))]),
+    ))
+}
+
+/// Internet radio stations: none on this server, an empty list.
+pub async fn internet_radio_stations<P: Principal, S: Store, B: AudioBackend>(
+    _ctx: &'_ Ctx<'_, P, S, B>,
+) -> Result<Outcome, SubsonicError> {
+    Ok(Outcome::keyed(
+        "internetRadioStations",
+        obj(vec![("internetRadioStation", Val::List(Vec::new()))]),
+    ))
+}
+
 /// Advertised OpenSubsonic extensions, all v1. Public (no auth).
 /// The set is owned by `compat::shared::extensions`: every served
 /// extension.

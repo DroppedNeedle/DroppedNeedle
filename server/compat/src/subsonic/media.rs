@@ -147,6 +147,18 @@ pub async fn library_picture<S: Store>(
 pub async fn cover_art<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
+    // A target that is not (or no longer) in the library gets the neutral
+    // placeholder, as a playlist without a cover does: a cover is never a
+    // reason for a client to see an error.
+    match cover_art_target(ctx).await {
+        Err(error) if error.code == NOT_FOUND => placeholder("").ok_or(error),
+        other => other,
+    }
+}
+
+async fn cover_art_target<P: Principal, S: Store, B: AudioBackend>(
+    ctx: &'_ Ctx<'_, P, S, B>,
+) -> Result<Outcome, SubsonicError> {
     let sid = ctx.p("id")?.unwrap_or_default();
     // Unknown prefix -> 70 -> 404-as-text on the binary path.
     let (kind, internal) = decode(&sid)?;

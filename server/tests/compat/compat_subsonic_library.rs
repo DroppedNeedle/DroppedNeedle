@@ -1106,7 +1106,7 @@ async fn cover_art_buckets_caching_and_misses() {
     assert_eq!(playlist.content_type(), "image/png");
     // A known album without art gets a WebP placeholder drawn from its id:
     // the same id always gets the same bytes, another album other colours.
-    // Unknown ids 404 text.
+    // Unknown ids get the neutral placeholder, never a 404.
     let ids = Ids::read(&client).await;
     let mut drawn = Vec::new();
     for id in [
@@ -1129,11 +1129,11 @@ async fn cover_art_buckets_caching_and_misses() {
     }
     assert_eq!(drawn[0], drawn[1], "one album, one placeholder");
     assert_ne!(drawn[0], drawn[2], "two albums, two placeholders");
-    for id in ["al-nope", "xx-1"] {
+    for id in ["al-nope", "xx-1", ""] {
         let answer = client.get("getCoverArt", &[("id", id)]).await;
         assert_eq!(
             (answer.status, answer.content_type()),
-            (StatusCode::NOT_FOUND, "text/plain"),
+            (StatusCode::OK, "image/webp"),
             "{id}"
         );
     }
@@ -1236,6 +1236,39 @@ async fn an_unlinked_artist_shows_their_album_mosaic() {
         (bare.status, bare.content_type()),
         (StatusCode::OK, "image/webp")
     );
+    rig.stop().await;
+}
+
+/// Podcasts and internet radio are not served, yet a signed-in client
+/// that asks gets an empty list, not an unknown method; without
+/// credentials the answer is still the sign-in error over HTTP 200.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn podcasts_and_radio_are_empty_lists() {
+    let rig = CompatApp::start("compat-sub-podcasts").await;
+    let client = Client::player(&rig);
+    for (endpoint, key, list) in [
+        ("getPodcasts", "podcasts", "channel"),
+        ("getNewestPodcasts", "newestPodcasts", "episode"),
+        (
+            "getInternetRadioStations",
+            "internetRadioStations",
+            "internetRadioStation",
+        ),
+    ] {
+        let answer = client.ok(endpoint, &[]).await;
+        assert_eq!(
+            answer[key][list],
+            serde_json::json!([]),
+            "{endpoint}: {answer}"
+        );
+        let xml = client.get(endpoint, &[]).await;
+        assert_eq!(xml.status, StatusCode::OK, "{endpoint}");
+        assert!(xml.text().contains("status=\"ok\""), "{endpoint}");
+        let anonymous = unsigned(&rig, "GET", endpoint, &[]).await;
+        assert_code(&anonymous, 10, endpoint);
+    }
+    let anonymous = unsigned(&rig, "GET", "getCoverArt", &[("id", "al-nope")]).await;
+    assert_code(&anonymous, 10, "getCoverArt");
     rig.stop().await;
 }
 

@@ -393,11 +393,13 @@ fn warming_response() -> Response {
         .into_response()
 }
 
-/// No art: a 404 with no body, so the browser draws nothing and the web UI
-/// keeps its own fallback.
+/// No art: a 204 with no body, so the browser draws nothing and the web UI
+/// keeps its own fallback. Not a 404: a grid of albums without art would
+/// otherwise read as path probing to a WAF in front of the server (one 404
+/// per tile), and a missing picture is an answer, not an unknown address.
 fn missing_response() -> Response {
     (
-        StatusCode::NOT_FOUND,
+        StatusCode::NO_CONTENT,
         [
             (header::CACHE_CONTROL, NO_STORE),
             (header::HeaderName::from_static("x-cover-state"), "missing"),
@@ -463,7 +465,7 @@ fn lookup_response(lookup: CoverLookup, headers: &HeaderMap) -> Response {
         (status = 304, description = "Cover unchanged"),
         (status = 400, description = "Unsupported size"),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "No art for this release group"),
+        (status = 204, description = "No art for this release group"),
     )
 )]
 pub async fn cover_from_release_group(
@@ -498,7 +500,7 @@ pub async fn cover_from_release_group(
         (status = 304, description = "Cover unchanged"),
         (status = 400, description = "Unsupported size"),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "No art for this release"),
+        (status = 204, description = "No art for this release"),
     )
 )]
 pub async fn cover_from_release(
@@ -533,7 +535,7 @@ pub async fn cover_from_release(
         (status = 304, description = "Image unchanged"),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "No image for this artist"),
+        (status = 204, description = "No image for this artist"),
     )
 )]
 pub async fn artist_cover(
@@ -596,7 +598,7 @@ pub async fn artist_cover_credit(
         (status = 304, description = "Image unchanged"),
         (status = 400, description = "Bad query string or unsupported size"),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "The album has no local art"),
+        (status = 204, description = "The album has no local art"),
     )
 )]
 pub async fn album_artwork(
@@ -645,7 +647,7 @@ pub async fn album_artwork(
         (status = 304, description = "Image unchanged"),
         (status = 400, description = "Bad query string or unsupported size"),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "None of the artist's albums has art"),
+        (status = 204, description = "None of the artist's albums has art"),
     )
 )]
 pub async fn library_artist_artwork(

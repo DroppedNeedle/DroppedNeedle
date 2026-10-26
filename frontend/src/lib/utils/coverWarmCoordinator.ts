@@ -66,6 +66,11 @@ async function poll(key: string, entry: WarmEntry) {
 			return;
 		}
 
+		if (isMissingStatus(response.status)) {
+			notify(entry, { status: 'failed' });
+			return;
+		}
+
 		if (response.ok && response.headers.get('x-cover-source') !== 'placeholder') {
 			const objectUrl = URL.createObjectURL(await response.blob());
 			notify(entry, { status: 'ready', url: objectUrl });
@@ -89,22 +94,32 @@ async function poll(key: string, entry: WarmEntry) {
 
 // The browser keeps 250 resource timing entries by default and then drops new
 // ones; the app's own scripts and a long grid pass that, which would turn the
-// 404 check below off. Raised once, when this module loads.
+// missing-art check below off. Raised once, when this module loads.
 const RESOURCE_TIMING_ENTRIES = 1000;
 if (typeof performance !== 'undefined') {
 	performance.setResourceTimingBufferSize?.(RESOURCE_TIMING_ENTRIES);
 }
 
 /**
- * True when the browser saw `url` answer 404: the server's word that there is
- * no art, so polling would only ask again. Browsers without the status in
- * their resource timing entries report false and keep polling.
+ * The server's word that there is no art: 204 (a cover endpoint's miss) or
+ * 404 (an unknown address). Polling would only ask again.
+ */
+function isMissingStatus(status: number): boolean {
+	return status === 204 || status === 404;
+}
+
+/**
+ * True when the browser saw `url` answer that there is no art. Browsers
+ * without the status in their resource timing entries report false and keep
+ * polling.
  */
 export function coverAnsweredMissing(url: string): boolean {
 	if (typeof performance === 'undefined' || !url) return false;
 	const entries = performance.getEntriesByName(url, 'resource');
 	const last = entries[entries.length - 1];
-	return Boolean(last && 'responseStatus' in last && last.responseStatus === 404);
+	return Boolean(
+		last && 'responseStatus' in last && isMissingStatus(last.responseStatus as number)
+	);
 }
 
 export function watchWarmingCover(url: string, listener: Listener): () => void {

@@ -253,7 +253,7 @@ async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
             assert_eq!(status, StatusCode::ACCEPTED, "{name}: still warming");
         } else {
             assert!(
-                matches!(status, StatusCode::NOT_FOUND | StatusCode::ACCEPTED),
+                matches!(status, StatusCode::NO_CONTENT | StatusCode::ACCEPTED),
                 "{name}: no cover to serve, got {status}"
             );
         }
@@ -498,13 +498,13 @@ async fn an_unlinked_artist_with_one_cover_shows_it() {
     assert_eq!(header(&headers, "x-cover-source"), Some("folder"));
 }
 
-/// No album with art (the rig's album has none): 404, and the page shows
+/// No album with art (the rig's album has none): 204, and the page shows
 /// its placeholder.
 #[tokio::test]
 async fn an_unlinked_artist_with_no_covers_has_no_picture() {
     let rig = rig(None).await;
     let (status, _, _) = get(rig.app(true), "/api/v3/library/artists/a1/artwork").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
 /// A cover one pixel wide and thousands tall is cut to its centre square

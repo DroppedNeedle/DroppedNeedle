@@ -26,7 +26,7 @@
 //! | getRandomSongs | randomSongs | yes | filters |
 //! | getMusicDirectory | directory | yes | 1 -> artists; artist -> albums; album -> songs |
 //! | search3/search2 | searchResult3/2 | yes | missing/empty/`""` query = match-all |
-//! | getCoverArt | bytes | yes | RG art/artist image/playlist file; miss -> WebP; size buckets |
+//! | getCoverArt | bytes | yes | RG art/artist image/playlist file; miss or unknown id -> WebP; size buckets |
 //! | stream/download | bytes | yes | decide() policy; ranges; 416; HEAD |
 //! | getTranscodeDecision | transcodeDecision | yes | POST-only, JSON-only |
 //! | getTranscodeStream | bytes | yes | signed params |
@@ -51,6 +51,8 @@
 //! | getScanStatus/startScan | scanStatus | yes | startScan admin-only -> 50 |
 //! | getTopSongs | topSongs | yes | exact artist-name match else 70 |
 //! | getSimilarSongs[2] | similarSongs[2] | yes | takes an artist id |
+//! | getPodcasts/getNewestPodcasts | podcasts/newestPodcasts | yes | always empty: no podcasts here |
+//! | getInternetRadioStations | internetRadioStations | yes | always empty: no radio here |
 //!
 //! # Quirk citations (all ported, none dropped)
 //!
@@ -69,7 +71,11 @@
 //!   `error.stream-unknown-id`): an unknown method is a plain 404 text in
 //!   every format; a `stream` failure with code 70 (an unknown id, or no
 //!   audio behind a known one) is the envelope over HTTP 200. `download`
-//!   and `getCoverArt` misses were not recorded, so they stay text 404s.
+//!   misses were not recorded, so they stay text 404s. A `getCoverArt`
+//!   miss, an unknown id included, is the neutral placeholder: clients keep
+//!   ids of albums a rescan merged and ask for their art for a long time,
+//!   and a stream of 404s from a signed-in client reads as path probing to
+//!   a WAF in front of the server.
 //! - Navidrome 0.62.0 ratings (recording `navidrome-0.62.0-ratings`): a
 //!   song, album or ID3 artist carries the caller's `userRating` and the
 //!   mean of every user's as `averageRating` (whole means as integers).
@@ -679,6 +685,9 @@ pub fn is_known_endpoint(name: &str) -> bool {
             | "gettopsongs"
             | "getsimilarsongs2"
             | "getsimilarsongs"
+            | "getpodcasts"
+            | "getnewestpodcasts"
+            | "getinternetradiostations"
     )
 }
 
@@ -733,6 +742,9 @@ async fn run_handler<P: Principal, S: Store, B: AudioBackend>(
         "getlyricsbysongid" => library::lyrics_by_song_id(ctx).await?,
         "getlyrics" => library::lyrics(ctx).await?,
         "getgenres" => library::genres(ctx).await?,
+        "getpodcasts" => browse::podcasts(ctx).await?,
+        "getnewestpodcasts" => browse::newest_podcasts(ctx).await?,
+        "getinternetradiostations" => browse::internet_radio_stations(ctx).await?,
         "getsongsbygenre" => library::songs_by_genre(ctx).await?,
         "getuser" => library::user(ctx).await?,
         "getscanstatus" => library::scan_status(ctx).await?,
