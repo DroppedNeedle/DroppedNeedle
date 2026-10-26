@@ -1363,19 +1363,22 @@ fn save_pure_v23_stays_v23() {
 }
 
 #[test]
-fn save_refuses_fixture_with_empty_values() {
+fn save_drops_the_empty_values_of_a_fixture() {
     // flac_no_tags.flac is not tag-free: it carries empty TITLE/ARTIST/
-    // ALBUM values, which lofty would drop on save.
-    let (refusal, before, after) = save_refused(
-        "flac_no_tags.flac",
-        "no-tags",
-        &[TagEdit::set_title("Fresh Title")],
+    // ALBUM values, which read as absent and go with the save.
+    let (_scratch, path) = temp_copy("flac_no_tags.flac", "no-tags");
+    let fields = tags::read_fields(&path).unwrap();
+    for field in [TagField::Title, TagField::Artist, TagField::Album] {
+        assert!(!fields.contains_key(&field), "{field:?}");
+    }
+    assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
+    tags::save_tags(&path, &[TagEdit::set_title("Fresh Title")]).unwrap();
+    assert_eq!(
+        vorbis_values(&path, "TITLE"),
+        vec!["Fresh Title".to_owned()]
     );
-    assert!(
-        matches!(refusal, Refusal::EmptyVorbisValue { .. }),
-        "{refusal:?}"
-    );
-    assert_eq!(before, after);
+    assert!(vorbis_values(&path, "ARTIST").is_empty());
+    assert!(vorbis_values(&path, "ALBUM").is_empty());
 }
 
 #[test]
@@ -2127,20 +2130,36 @@ fn id3_raw_frames_scrub_and_restore() {
     assert_eq!(restored.get("id3:WOAR"), Some(&vec![link]));
 }
 
+/// An empty comment reads as absent, so a save drops it and keeps every
+/// other comment, and a replay of the read document (what an undo
+/// writes) saves cleanly.
 #[test]
-fn save_refuses_empty_vorbis_values() {
+fn save_drops_empty_vorbis_values() {
     let (_scratch, path) = temp_copy("management_full.flac", "empty-vorbis");
-    flac_inject_pairs(&path, &[("ZZZ_EMPTY_TEST", "")]);
-    let before = std::fs::read(&path).unwrap();
-    let refusal = match tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]) {
-        Err(TagsError::SaveRefused { refusal, .. }) => refusal,
-        other => panic!("expected EmptyVorbisValue, got {other:?}"),
-    };
-    assert!(
-        matches!(refusal, Refusal::EmptyVorbisValue { .. }),
-        "{refusal:?}"
+    flac_inject_pairs(&path, &[("ZZZ_EMPTY_TEST", ""), ("LYRICS", "")]);
+    let before = tags::save::read_document(&path).unwrap();
+    assert!(!before.native.contains_key("vorbis:ZZZ_EMPTY_TEST"));
+    assert!(!before.values.contains_key(&TagField::Lyrics));
+    let pairs_before: Vec<(String, String)> = vorbis_pairs(&path)
+        .into_iter()
+        .filter(|(key, value)| !value.is_empty() && key != "TITLE")
+        .collect();
+    assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
+    tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
+    assert!(vorbis_key_values(&path, "ZZZ_EMPTY_TEST").is_empty());
+    assert!(vorbis_key_values(&path, "LYRICS").is_empty());
+    assert_eq!(
+        vorbis_key_values(&path, "TITLE"),
+        vec!["WRAP TITLE".to_owned()]
     );
-    assert_eq!(before, std::fs::read(&path).unwrap());
+    let pairs_after: Vec<(String, String)> = vorbis_pairs(&path)
+        .into_iter()
+        .filter(|(key, _)| key != "TITLE")
+        .collect();
+    assert_eq!(pairs_after, pairs_before);
+    let title = before.values[&TagField::Title].clone();
+    tags::save_tags(&path, &[TagEdit::new(TagField::Title, title.clone())]).unwrap();
+    assert_eq!(vorbis_key_values(&path, "TITLE"), title);
 }
 
 #[test]

@@ -164,8 +164,6 @@ pub enum Refusal {
     ReadOnlyFormat { format: String, reason: String },
     #[error("unencodable {field:?}: {reason}")]
     UnencodableItem { field: TagField, reason: String },
-    #[error("empty Vorbis value present under '{key}'; lofty drops empties on save")]
-    EmptyVorbisValue { key: String },
     #[error("post-save verify found an out-of-edit delta: {detail}")]
     VerifyMismatch { detail: String },
     #[error("no byte inventory possible: {detail}")]

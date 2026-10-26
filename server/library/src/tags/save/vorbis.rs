@@ -32,8 +32,11 @@ impl TagFormat for Vorbis {
     type Truth = VorbisTruth;
     type Edit = VorbisEdit;
 
+    /// An empty comment holds nothing and lofty drops it on save, so it
+    /// reads as absent: reads, saves, their verify and an undo's replay
+    /// all see the tag without it.
     fn parse(format: AudioFormat, bytes: &[u8]) -> Result<Option<VorbisTruth>, Refusal> {
-        parse_vorbis_truth(format, bytes)
+        Ok(parse_vorbis_truth(format, bytes)?.map(without_empty_values))
     }
 
     fn list(truth: VorbisTruth, document: &mut FieldDocument) -> Result<(), Refusal> {
@@ -48,11 +51,6 @@ impl TagFormat for Vorbis {
     }
 
     fn prepare(truth: VorbisTruth) -> Result<VorbisTruth, Refusal> {
-        if let Some(key) = empty_key(&truth) {
-            return Err(Refusal::EmptyVorbisValue {
-                key: key.to_owned(),
-            });
-        }
         if let Some((upper, variants)) = mixed_spelling(&truth) {
             return Err(Refusal::NoByteInventory {
                 detail: format!("comment key '{upper}' has mixed spellings {variants:?}"),
@@ -64,11 +62,6 @@ impl TagFormat for Vorbis {
     /// Every item is listed or owned by a field, so nothing is left
     /// alone; a comment the save would refuse is named instead.
     fn kept(truth: VorbisTruth) -> Result<TagsKept, Refusal> {
-        if let Some(key) = empty_key(&truth) {
-            return Ok(TagsKept::refused(format!(
-                "The file's {key} tag is empty, and the tag writer cannot keep an empty tag."
-            )));
-        }
         if let Some((upper, variants)) = mixed_spelling(&truth) {
             return Ok(TagsKept::refused(format!(
                 "The file spells its {upper} tag more than one way ({}), so saving its tags would merge them.",
@@ -207,13 +200,11 @@ impl TagFormat for Vorbis {
     }
 }
 
-/// The first key holding an empty value, which lofty drops on save.
-fn empty_key(truth: &VorbisTruth) -> Option<&str> {
+/// The tag without its empty comments (`LYRICS=`, `BAND=`), which lofty
+/// drops on save.
+fn without_empty_values(mut truth: VorbisTruth) -> VorbisTruth {
+    truth.pairs.retain(|(_, value)| !value.is_empty());
     truth
-        .pairs
-        .iter()
-        .find(|(_, value)| value.is_empty())
-        .map(|(key, _)| key.as_str())
 }
 
 /// The first key spelled more than one way (`title` plus `TITLE`), with
