@@ -306,7 +306,7 @@ pub(super) fn date_parts(value: &str) -> Option<DateParts<'_>> {
 }
 
 /// The year of a date, or the value as it is when it is not a date.
-pub(super) fn year_of(value: &str) -> String {
+pub(crate) fn year_of(value: &str) -> String {
     match date_parts(value) {
         Some((year, _, _)) => year.to_owned(),
         None => value.to_owned(),

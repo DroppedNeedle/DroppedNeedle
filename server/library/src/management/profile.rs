@@ -703,10 +703,17 @@ pub fn plan_tags(
     desired.retain(|_, values| !values.is_empty());
     if id3v23 {
         // Compare in the form the file can hold, or every plan would see
-        // a change.
+        // a change: one "/"-joined value, and only the year of the
+        // original date (`TORY`).
         for (name, values) in desired.iter_mut() {
-            if values.len() > 1 && TagField::from_name(name).is_some_and(joined_on_v23) {
+            let field = TagField::from_name(name);
+            if values.len() > 1 && field.is_some_and(joined_on_v23) {
                 *values = vec![values.join("/")];
+            }
+            if field == Some(TagField::OriginalDate) {
+                for value in values.iter_mut() {
+                    *value = crate::tags::save::year_of(value);
+                }
             }
         }
     }
@@ -1785,6 +1792,48 @@ mod tests {
                 .any(|name| matches!(name.as_str(), "composer" | "producer"));
             assert_eq!(
                 credits_changed,
+                pass == 0,
+                "pass {pass}: {:?}",
+                plan.updates
+            );
+            doc.managed = plan.desired.clone();
+        }
+    }
+
+    /// ID3v2.3 keeps only the year of the original date (`TORY`). Planned
+    /// in that form, a second plan finds nothing to change.
+    #[test]
+    fn id3v23_original_date_is_planned_as_its_year() {
+        let (mut release, _) = classical();
+        release.original_date = Some("2015-01-12".to_owned());
+        let settings = settings::initial_settings("");
+        let pinned = pin(&settings, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
+        let mut doc: TagDocument = serde_json::from_value(serde_json::json!({
+            "managed": {},
+            "custom": {}
+        }))
+        .expect("document");
+        for pass in 0..2 {
+            let plan = plan_tags(
+                &pinned,
+                &CompiledScripts::new(&pinned),
+                &FileInput {
+                    release: &release,
+                    track: &release.tracks[0],
+                    doc: &doc,
+                    format: "mp3",
+                    id3v23: true,
+                    writable: true,
+                    overrides: &Overrides::default(),
+                    extras: &AlbumExtras::default(),
+                    track_id: "track",
+                    lyrics: &LyricsAnswer::Off,
+                },
+            )
+            .expect("planned");
+            assert_eq!(plan.desired["original_date"], vec!["2015"], "pass {pass}");
+            assert_eq!(
+                plan.updates.contains_key("original_date"),
                 pass == 0,
                 "pass {pass}: {:?}",
                 plan.updates

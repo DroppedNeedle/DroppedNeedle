@@ -62,7 +62,7 @@ pub use id3_upgrade::{id3_lands_as_v23, id3_upgrade_notes};
 pub use kept::{LeftAlone, TagsKept, tags_kept};
 pub use v2_captured::{CapturedAtom, CapturedTags, CapturedValue, document_from_captured};
 
-pub(crate) use id3::mixed_v23_date;
+pub(crate) use id3::{mixed_v23_date, year_of};
 
 use std::fs::{self, File, OpenOptions};
 use std::io::ErrorKind;
