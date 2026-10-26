@@ -8,7 +8,10 @@
 //! rebuild minutes later does not pay the 1/s ListenBrainz pacing again.
 //! ListenBrainz switching a popularity endpoint off (its "disabled due to high load"
 //! answer and its anti-scraper refusal) marks popularity as down for a few
-//! minutes, which lets Last.fm stand in (v2 `lb_popularity_degraded`).
+//! minutes, which lets Last.fm stand in (v2 `lb_popularity_degraded`). So
+//! does a popularity read turned down for its rate, for the wait it names:
+//! the build stops asking instead of spending every shelf's time bound on
+//! retries.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -34,7 +37,8 @@ use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
 use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
 use droppedneedle_providers::{CacheKey, ProviderError, Providers, RequestPriority, Source};
 
-/// How long a popularity refusal keeps Last.fm standing in.
+/// How long a popularity refusal, or a rate limit that names no wait,
+/// keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
 /// Cache lifetime of per-user listening statistics.
 pub(in crate::reads::discover::adapters) const USER_STATS_TTL: Duration =
@@ -136,9 +140,11 @@ impl LiveSources {
         }
     }
 
-    fn mark_popularity_down(&self) {
+    /// Mark popularity down for `wait`; a later end already set stays.
+    fn mark_popularity_down(&self, wait: Duration) {
         if let Ok(mut until) = self.popularity_down_until.lock() {
-            *until = Some(Instant::now() + POPULARITY_DOWN_FOR);
+            let end = Instant::now() + wait;
+            *until = Some(until.map_or(end, |current| current.max(end)));
         }
     }
 
@@ -150,13 +156,16 @@ impl LiveSources {
     }
 
     /// [`listenbrainz_result`](Self::listenbrainz_result) for a popularity
-    /// read: ListenBrainz switching it off marks popularity as down.
+    /// read: ListenBrainz switching it off, or turning it down for its
+    /// rate, marks popularity as down (see [`popularity_down_for`]).
     pub(in crate::reads::discover::adapters) fn popularity_result<T>(
         &self,
         result: Result<T, ProviderError>,
     ) -> SourceResult<T> {
-        if matches!(result, Err(ProviderError::Disabled { .. })) {
-            self.mark_popularity_down();
+        if let Err(error) = &result
+            && let Some(wait) = popularity_down_for(error)
+        {
+            self.mark_popularity_down(wait);
         }
         self.listenbrainz_result(result)
     }
@@ -1042,5 +1051,61 @@ impl QueueSources for LiveSources {
                 .await
                 .map_err(ProviderFailure::Provider)
         })
+    }
+}
+
+/// How long a failed popularity read keeps popularity down: a refusal for
+/// [`POPULARITY_DOWN_FOR`]; a rate limit for the wait it names, else as
+/// long as a refusal (a 429 without ListenBrainz's rate headers comes from
+/// in front of the service and does not clear in seconds). Other failures
+/// leave it up.
+fn popularity_down_for(error: &ProviderError) -> Option<Duration> {
+    match error {
+        ProviderError::Disabled { .. } => Some(POPULARITY_DOWN_FOR),
+        ProviderError::RateLimited { retry_after, .. } => {
+            Some(retry_after.unwrap_or(POPULARITY_DOWN_FOR))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_keeps_popularity_down_for_the_window() {
+        let refused = ProviderError::Disabled {
+            provider: "listenbrainz",
+            message: "ListenBrainz switched this endpoint off upstream (401)".to_owned(),
+        };
+        assert_eq!(popularity_down_for(&refused), Some(POPULARITY_DOWN_FOR));
+    }
+
+    #[test]
+    fn a_rate_limit_keeps_popularity_down_for_the_wait_it_names() {
+        let limited = ProviderError::RateLimited {
+            provider: "listenbrainz",
+            retry_after: Some(Duration::from_secs(7)),
+        };
+        assert_eq!(popularity_down_for(&limited), Some(Duration::from_secs(7)));
+    }
+
+    #[test]
+    fn a_rate_limit_naming_no_wait_keeps_popularity_down_for_the_window() {
+        let limited = ProviderError::RateLimited {
+            provider: "listenbrainz",
+            retry_after: None,
+        };
+        assert_eq!(popularity_down_for(&limited), Some(POPULARITY_DOWN_FOR));
+    }
+
+    #[test]
+    fn an_outage_leaves_popularity_up() {
+        let unavailable = ProviderError::Unavailable {
+            provider: "listenbrainz",
+            retry_after: None,
+        };
+        assert_eq!(popularity_down_for(&unavailable), None);
     }
 }
