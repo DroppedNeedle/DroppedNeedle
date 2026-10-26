@@ -1,18 +1,8 @@
-import {
-	fetchJellyfinAlbumMatch,
-	fetchLocalAlbumMatch,
-	fetchNavidromeAlbumMatch,
-	fetchPlexAlbumMatch
-} from '$lib/queries/albumMatch';
+import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch';
 import type { QueueItem } from '$lib/player/types';
 import type { SourceType } from '$lib/player/types';
 import type { ReleaseGroup } from '$lib/types';
-import {
-	buildQueueItemsFromLocal,
-	buildQueueItemsFromNavidrome,
-	buildQueueItemsFromJellyfin,
-	buildQueueItemsFromPlex
-} from '$lib/player/queueHelpers';
+import { buildQueueItemsFromLocal, buildRemoteQueueItems } from '$lib/player/queueHelpers';
 import type { TrackMeta } from '$lib/player/queueHelpers';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
@@ -56,28 +46,14 @@ async function fetchAlbumTracksForSource(
 	const hints = { title: release.title, artist: artistName };
 
 	try {
-		switch (source) {
-			case 'local': {
-				const match = await fetchLocalAlbumMatch(mbid, signal);
-				if (!match?.found || !match.tracks.length) return [];
-				return buildQueueItemsFromLocal(match.tracks, meta);
-			}
-			case 'navidrome': {
-				const match = await fetchNavidromeAlbumMatch(mbid, hints, signal);
-				if (!match?.found || !match.tracks.length) return [];
-				return buildQueueItemsFromNavidrome(match.tracks, meta);
-			}
-			case 'jellyfin': {
-				const match = await fetchJellyfinAlbumMatch(mbid, signal);
-				if (!match?.found || !match.tracks.length) return [];
-				return buildQueueItemsFromJellyfin(match.tracks, meta);
-			}
-			case 'plex': {
-				const match = await fetchPlexAlbumMatch(mbid, hints, signal);
-				if (!match?.found || !match.tracks.length) return [];
-				return buildQueueItemsFromPlex(match.tracks, meta);
-			}
+		if (source === 'local') {
+			const match = await fetchLocalAlbumMatch(mbid, signal);
+			if (!match?.found || !match.tracks.length) return [];
+			return buildQueueItemsFromLocal(match.tracks, meta);
 		}
+		const match = await fetchRemoteAlbumMatch(source, mbid, hints, signal);
+		if (!match.found || !match.tracks.length) return [];
+		return buildRemoteQueueItems(match.tracks, meta);
 	} catch {
 		if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 		return [];

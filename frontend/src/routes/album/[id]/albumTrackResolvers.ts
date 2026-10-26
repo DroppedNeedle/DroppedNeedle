@@ -7,7 +7,7 @@ export type RenderedTrackSection = {
 };
 
 export function buildSortedTrackMap<
-	T extends { track_number: number; disc_number?: number | null }
+	T extends { track_number?: number | null; disc_number?: number | null }
 >(tracks: T[]): Map<string, T> {
 	return new Map(
 		[...tracks]
@@ -17,7 +17,9 @@ export function buildSortedTrackMap<
 	);
 }
 
-export function resolveSourceTrack<T extends { track_number: number; disc_number?: number | null }>(
+export function resolveSourceTrack<
+	T extends { track_number?: number | null; disc_number?: number | null }
+>(
 	discNumber: number | undefined,
 	position: number,
 	rowIndex: number,

@@ -7,7 +7,6 @@
 		refreshRemoteSource,
 		remoteErrorCode
 	} from '$lib/queries/remotes/RemoteQueries.svelte';
-	import type { RemoteDialogAlbum } from '$lib/queries/remotes/remoteSources';
 	import type { RemoteAlbum } from '$lib/queries/remotes/types';
 	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';
 	import AlbumGrid from '$lib/components/AlbumGrid.svelte';
@@ -40,7 +39,7 @@
 	const caps = $derived(remote.capabilities);
 	const base = $derived(`/library/${remote.source}`);
 
-	let selectedAlbum = $state<RemoteDialogAlbum | null>(null);
+	let selectedAlbum = $state<RemoteAlbum | null>(null);
 	let modalOpen = $state(false);
 	let refreshing = $state(false);
 
@@ -115,12 +114,7 @@
 	}
 
 	function openAlbum(album: RemoteAlbum) {
-		selectedAlbum = remote.dialogAlbum(album);
-		modalOpen = true;
-	}
-
-	function openDialogAlbum(album: unknown) {
-		selectedAlbum = album as RemoteDialogAlbum;
+		selectedAlbum = album;
 		modalOpen = true;
 	}
 </script>
@@ -163,11 +157,7 @@
 			<HubPageSkeleton />
 		{/snippet}
 		{#snippet children(hub)}
-			<FeaturedAlbumHero
-				albums={hub.recently_played.map(remote.dialogAlbum)}
-				idKey={remote.idKey}
-				onAlbumClick={openDialogAlbum}
-			/>
+			<FeaturedAlbumHero albums={hub.recently_played} onAlbumClick={openAlbum} />
 
 			{#if caps.similarAlbums}
 				<HubSimilarAlbums
@@ -192,10 +182,9 @@
 					<HubShelf title="Recently Added" seeAllHref={recentlyAddedHref}>
 						{#if hub.recently_added.length > 0}
 							<AlbumGrid
-								albums={hub.recently_added.map(remote.dialogAlbum)}
-								idKey={remote.idKey}
+								albums={hub.recently_added}
 								seeAllHref={recentlyAddedHref}
-								onAlbumClick={openDialogAlbum}
+								onAlbumClick={openAlbum}
 							/>
 						{:else}
 							<p class="text-sm text-base-content/50">Nothing new yet.</p>

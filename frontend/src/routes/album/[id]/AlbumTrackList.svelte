@@ -3,15 +3,10 @@
 		AlbumBasicInfo,
 		YouTubeTrackLink,
 		YouTubeQuotaStatus,
-		JellyfinAlbumMatch,
-		JellyfinTrackInfo,
 		LocalAlbumMatch,
-		LocalTrackInfo,
-		NavidromeAlbumMatch,
-		NavidromeTrackInfo,
-		PlexAlbumMatch,
-		PlexTrackInfo
+		LocalTrackInfo
 	} from '$lib/types';
+	import type { RemoteMatch, RemoteTrack } from '$lib/queries/remotes/types';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import type { RenderedTrackSection } from './albumTrackResolvers';
 	import type { EditionTrackRow } from './albumEdition';
@@ -48,18 +43,18 @@
 		album: AlbumBasicInfo;
 		renderedTrackSections: RenderedTrackSection[];
 		trackLinkMap: Map<string, YouTubeTrackLink>;
-		jellyfinMatch: JellyfinAlbumMatch | null;
+		jellyfinMatch: RemoteMatch | null;
 		localMatch: LocalAlbumMatch | null;
-		navidromeMatch: NavidromeAlbumMatch | null;
-		plexMatch: PlexAlbumMatch | null;
-		jellyfinTrackMap: Map<string, JellyfinTrackInfo>;
+		navidromeMatch: RemoteMatch | null;
+		plexMatch: RemoteMatch | null;
+		jellyfinTrackMap: Map<string, RemoteTrack>;
 		localTrackMap: Map<string, LocalTrackInfo>;
-		navidromeTrackMap: Map<string, NavidromeTrackInfo>;
-		plexTrackMap: Map<string, PlexTrackInfo>;
-		jellyfinTracks: JellyfinTrackInfo[];
+		navidromeTrackMap: Map<string, RemoteTrack>;
+		plexTrackMap: Map<string, RemoteTrack>;
+		jellyfinTracks: RemoteTrack[];
 		localTracks: LocalTrackInfo[];
-		navidromeTracks: NavidromeTrackInfo[];
-		plexTracks: PlexTrackInfo[];
+		navidromeTracks: RemoteTrack[];
+		plexTracks: RemoteTrack[];
 		trackLinks: YouTubeTrackLink[];
 		youtubeEnabled: boolean;
 		youtubeApiConfigured: boolean;
@@ -91,9 +86,9 @@
 		getTrackContextMenuItems: (
 			track: { position: number; disc_number?: number | null; title: string },
 			resolvedLocal: LocalTrackInfo | null,
-			resolvedJellyfin: JellyfinTrackInfo | null,
-			resolvedNavidrome: NavidromeTrackInfo | null,
-			resolvedPlex: PlexTrackInfo | null
+			resolvedJellyfin: RemoteTrack | null,
+			resolvedNavidrome: RemoteTrack | null,
+			resolvedPlex: RemoteTrack | null
 		) => MenuItem[];
 	}
 

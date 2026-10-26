@@ -231,8 +231,6 @@ export type AlbumTracksInfo = {
 	selected_release_mbid?: string | null;
 };
 
-export type JellyfinConnectionSettings = components['schemas']['JellyfinConnection'];
-
 export type OIDCConnectionSettings = components['schemas']['OidcConnection'];
 
 export type HomeArtist = {
@@ -634,293 +632,7 @@ export type RequestHistoryResponse = {
 	total_pages: number;
 };
 
-export type JellyfinTrackInfo = {
-	jellyfin_id: string;
-	title: string;
-	track_number: number;
-	disc_number?: number | null;
-	duration_seconds: number;
-	album_name: string;
-	artist_name: string;
-	album_id?: string;
-	codec?: string | null;
-	bitrate?: number | null;
-	image_url?: string | null;
-	recording_mbid?: string | null;
-};
-
-export type JellyfinAlbumMatch = {
-	found: boolean;
-	jellyfin_album_id?: string | null;
-	tracks: JellyfinTrackInfo[];
-};
-
-export type JellyfinAlbumSummary = {
-	jellyfin_id: string;
-	name: string;
-	artist_name: string;
-	year?: number | null;
-	track_count: number;
-	image_url?: string | null;
-	musicbrainz_id?: string | null;
-	artist_musicbrainz_id?: string | null;
-	play_count?: number;
-};
-
-export type JellyfinPaginatedResponse = {
-	items: JellyfinAlbumSummary[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
-export type JellyfinLibraryStats = {
-	total_tracks: number;
-	total_albums: number;
-	total_artists: number;
-};
-
-export type JellyfinArtistSummary = {
-	jellyfin_id: string;
-	name: string;
-	image_url?: string | null;
-	album_count: number;
-	musicbrainz_id?: string | null;
-	play_count?: number;
-};
-
-export type JellyfinArtistPage = {
-	items: JellyfinArtistSummary[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
-export type JellyfinArtistIndexEntry = {
-	name: string;
-	artists: JellyfinArtistSummary[];
-};
-
-export type JellyfinArtistIndexResponse = {
-	index: JellyfinArtistIndexEntry[];
-};
-
-export type JellyfinTrackPage = {
-	items: JellyfinTrackInfo[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
-// mirrors backend api/v1/schemas/settings.py (NavidromeConnectionSettings, NavidromePlaylistSyncResult)
-export type NavidromePlaylistSyncScope = 'public' | 'all';
-
-export type NavidromeConnectionSettings = components['schemas']['NavidromeConnection'];
-
 export type NavidromePlaylistSyncResult = components['schemas']['PlaylistSyncResult'];
-
-export type NavidromeTrackInfo = {
-	navidrome_id: string;
-	title: string;
-	track_number: number;
-	disc_number?: number | null;
-	duration_seconds: number;
-	album_name: string;
-	artist_name: string;
-	codec?: string | null;
-	bitrate?: number | null;
-	image_url?: string | null;
-	recording_mbid?: string | null;
-};
-
-export type NavidromeAlbumSummary = {
-	navidrome_id: string;
-	name: string;
-	artist_name: string;
-	year?: number | null;
-	track_count: number;
-	image_url?: string | null;
-	musicbrainz_id?: string | null;
-	artist_musicbrainz_id?: string | null;
-};
-
-export type NavidromeAlbumDetail = NavidromeAlbumSummary & {
-	tracks: NavidromeTrackInfo[];
-};
-
-export type NavidromeAlbumMatch = {
-	found: boolean;
-	navidrome_album_id?: string | null;
-	tracks: NavidromeTrackInfo[];
-};
-
-export type NavidromeArtistSummary = {
-	navidrome_id: string;
-	name: string;
-	image_url?: string | null;
-	album_count: number;
-	musicbrainz_id?: string | null;
-};
-
-export type NavidromeSearchResponse = {
-	albums: NavidromeAlbumSummary[];
-	artists: NavidromeArtistSummary[];
-	tracks: NavidromeTrackInfo[];
-};
-
-export type NavidromeArtistIndexEntry = {
-	name: string;
-	artists: NavidromeArtistSummary[];
-};
-
-export type NavidromeArtistIndexResponse = {
-	index: NavidromeArtistIndexEntry[];
-};
-
-export type NavidromeArtistPage = {
-	items: NavidromeArtistSummary[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
-export type NavidromeTrackPage = {
-	items: NavidromeTrackInfo[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
-export type NavidromeGenreSongsResponse = {
-	songs: NavidromeTrackInfo[];
-	genre: string;
-};
-
-export type NavidromeLibraryStats = {
-	total_tracks: number;
-	total_albums: number;
-	total_artists: number;
-};
-
-export type NavidromeMusicFolder = {
-	id: string;
-	name: string;
-};
-
-export type NavidromeFolderPreferenceMode = 'all' | 'selected';
-
-export type NavidromeFolderPreference = {
-	mode: NavidromeFolderPreferenceMode;
-	selected_folder_ids: string[];
-	available_folders: NavidromeMusicFolder[];
-	stale_folder_ids: string[];
-	source_available: boolean;
-	scope_revision: string;
-};
-
-export type NavidromeFolderPreferenceUpdate = {
-	mode: NavidromeFolderPreferenceMode;
-	selected_folder_ids: string[];
-};
-
-export type NavidromePaginatedResponse = {
-	items: NavidromeAlbumSummary[];
-	total: number;
-};
-
-export type PlexConnectionSettings = components['schemas']['PlexConnection'];
-
-export type PlexTrackInfo = {
-	plex_id: string;
-	title: string;
-	track_number: number;
-	duration_seconds: number;
-	disc_number: number;
-	album_name: string;
-	artist_name: string;
-	codec?: string | null;
-	bitrate?: number | null;
-	audio_channels?: number | null;
-	container?: string | null;
-	part_key?: string | null;
-	image_url?: string | null;
-	recording_mbid?: string | null;
-};
-
-export type PlexAlbumSummary = {
-	plex_id: string;
-	name: string;
-	artist_name: string;
-	year?: number | null;
-	track_count: number;
-	image_url?: string | null;
-	musicbrainz_id?: string | null;
-	artist_musicbrainz_id?: string | null;
-	last_viewed_at?: number;
-};
-
-export type PlexAlbumDetail = PlexAlbumSummary & {
-	tracks: PlexTrackInfo[];
-	genres: string[];
-};
-
-export type PlexAlbumMatch = {
-	found: boolean;
-	plex_album_id?: string | null;
-	tracks: PlexTrackInfo[];
-};
-
-export type PlexArtistSummary = {
-	plex_id: string;
-	name: string;
-	image_url?: string | null;
-	musicbrainz_id?: string | null;
-};
-
-export type PlexSearchResponse = {
-	albums: PlexAlbumSummary[];
-	artists: PlexArtistSummary[];
-	tracks: PlexTrackInfo[];
-};
-
-export type PlexLibraryStats = {
-	total_tracks: number;
-	total_albums: number;
-	total_artists: number;
-};
-
-export type PlexPaginatedResponse = {
-	items: PlexAlbumSummary[];
-	total: number;
-};
-
-export type PlexArtistPage = {
-	items: PlexArtistSummary[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
-export type PlexArtistIndexEntry = {
-	name: string;
-	artists: PlexArtistSummary[];
-};
-
-export type PlexArtistIndexResponse = {
-	index: PlexArtistIndexEntry[];
-};
-
-export type PlexTrackPage = {
-	items: PlexTrackInfo[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
-export type PlexLibrarySection = {
-	key: string;
-	title: string;
-};
 
 export type BrowseHeroCard = {
 	label: string;
@@ -942,53 +654,6 @@ export type ArtistIndexArtist = {
 export type ArtistIndexEntry = {
 	name: string;
 	artists: ArtistIndexArtist[];
-};
-
-export type PlexHubResponse = {
-	stats: PlexLibraryStats | null;
-	recently_played: PlexAlbumSummary[];
-	recently_added: PlexAlbumSummary[];
-	all_albums_preview: PlexAlbumSummary[];
-	genres: string[];
-};
-
-export type PlexDiscoveryAlbum = {
-	plex_id: string;
-	name: string;
-	artist_name: string;
-	year?: number | null;
-	image_url?: string | null;
-};
-
-export type PlexDiscoveryHub = {
-	title: string;
-	hub_type: string;
-	albums: PlexDiscoveryAlbum[];
-};
-
-export type PlexDiscoveryResponse = {
-	hubs: PlexDiscoveryHub[];
-};
-
-export type NavidromeHubResponse = {
-	stats: NavidromeLibraryStats | null;
-	recently_played: NavidromeAlbumSummary[];
-	favorites: NavidromeAlbumSummary[];
-	favorite_artists: NavidromeArtistSummary[];
-	favorite_tracks: NavidromeTrackInfo[];
-	all_albums_preview: NavidromeAlbumSummary[];
-	genres: string[];
-};
-
-export type JellyfinHubResponse = {
-	stats: JellyfinLibraryStats | null;
-	recently_played: JellyfinAlbumSummary[];
-	recently_added: JellyfinAlbumSummary[];
-	favorites: JellyfinAlbumSummary[];
-	most_played_artists: JellyfinArtistSummary[];
-	most_played_albums: JellyfinAlbumSummary[];
-	all_albums_preview: JellyfinAlbumSummary[];
-	genres: string[];
 };
 
 export type LocalTrackInfo = {
@@ -1196,68 +861,6 @@ export type SourcePlaylistDetail = {
 	tracks: SourcePlaylistTrack[];
 };
 
-export type PlexSessionInfo = {
-	session_id: string;
-	user_name: string;
-	track_title: string;
-	artist_name: string;
-	album_name: string;
-	cover_url: string;
-	player_device: string;
-	player_platform: string;
-	player_state: string;
-	is_direct_play: boolean;
-	progress_ms: number;
-	duration_ms: number;
-	audio_codec: string;
-	audio_channels: number;
-	bitrate: number;
-};
-
-export type PlexSessionsResponse = {
-	sessions: PlexSessionInfo[];
-	available: boolean;
-};
-
-export type NavidromeNowPlayingEntry = {
-	user_name: string;
-	minutes_ago: number;
-	player_name: string;
-	track_name: string;
-	artist_name: string;
-	album_name: string;
-	album_id: string;
-	cover_art_id: string;
-	duration_seconds: number;
-	estimated_position_seconds?: number;
-};
-
-export type NavidromeNowPlayingResponse = {
-	entries: NavidromeNowPlayingEntry[];
-};
-
-export type JellyfinSessionInfo = {
-	session_id: string;
-	user_name: string;
-	device_name: string;
-	client_name: string;
-	track_name: string;
-	artist_name: string;
-	album_name: string;
-	album_id: string;
-	cover_url: string;
-	position_seconds: number;
-	duration_seconds: number;
-	is_paused: boolean;
-	play_method: string;
-	audio_codec: string;
-	bitrate: number;
-};
-
-export type JellyfinSessionsResponse = {
-	sessions: JellyfinSessionInfo[];
-};
-
 export type NowPlayingSession = {
 	id: string;
 	user_name: string;
@@ -1279,69 +882,15 @@ export type NowPlayingSession = {
 	redacted?: boolean;
 };
 
-export type NavidromeArtistInfo = {
-	navidrome_id: string;
-	name: string;
-	biography: string;
-	image_url: string;
-	similar_artists: NavidromeArtistSummary[];
-};
-
-export type PlexHistoryEntry = {
-	rating_key: string;
-	track_title: string;
-	artist_name: string;
-	album_name: string;
-	cover_url: string;
-	viewed_at: string;
-	device_name: string;
-};
-
-export type PlexHistoryResponse = {
-	entries: PlexHistoryEntry[];
-	total: number;
-	limit: number;
-	offset: number;
-	available: boolean;
-};
-
 export type LyricLine = {
 	text: string;
 	start_seconds: number | null;
-};
-
-export type NavidromeLyricsResponse = {
-	text: string;
-	is_synced: boolean;
-	lines: LyricLine[];
 };
 
 export type LocalLyricsResponse = {
 	text: string;
 	is_synced: boolean;
 	lines: LyricLine[];
-};
-
-export type JellyfinLyricsLine = {
-	text: string;
-	start_seconds: number | null;
-};
-
-export type JellyfinLyricsResponse = {
-	lines: JellyfinLyricsLine[];
-	is_synced: boolean;
-	lyrics_text: string;
-};
-
-export type JellyfinFavoritesExpanded = {
-	albums: JellyfinAlbumSummary[];
-	artists: JellyfinArtistSummary[];
-};
-
-export type JellyfinFilterFacets = {
-	years: number[];
-	tags: string[];
-	studios: string[];
 };
 
 export type AlbumSort = 'recent' | 'title' | 'artist';
@@ -2001,15 +1550,6 @@ export interface PluginSourcesResponse {
 // Alias used by acquisition surfaces; same wire shape as PluginSourcesResponse.
 export type PluginSourceListResponse = PluginSourcesResponse;
 
-// Hand-mirrors backend PluginStreamRef (infrastructure/plugins/protocols.py).
-// Exactly one of path/url is set; url may carry transcode hints.
-export interface PluginStreamRef {
-	path: string;
-	url: string;
-	content_type: string;
-	duration_seconds: number | null;
-}
-
 // Hand-mirrors backend PluginRouteRequest/PluginRouteResponse
 // (infrastructure/plugins/protocols.py). Typed transport for one /ext/ call.
 export interface PluginRouteRequest {
@@ -2155,15 +1695,7 @@ export interface TrackRequestResponse {
 export type QuarantineListResponse = components['schemas']['QuarantineListResponse'];
 
 // Connect Apps (inbound OpenSubsonic + Jellyfin compatibility)
-export interface ConnectAppsSettings {
-	subsonic_enabled: boolean;
-	jellyfin_enabled: boolean;
-	transcoding_enabled: boolean;
-	transcode_default_format: 'mp3' | 'opus';
-	transcode_max_bitrate_kbps: number;
-	advertise_server_name: string;
-	advertise_server_version: string;
-}
+export type ConnectAppsSettings = components['schemas']['ConnectApps'];
 
 export type AppPasswordView = components['schemas']['AppPasswordView'];
 

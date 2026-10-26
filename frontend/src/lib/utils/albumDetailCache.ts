@@ -10,11 +10,9 @@ import type {
 	SimilarAlbumsResponse,
 	YouTubeLink,
 	YouTubeTrackLink,
-	JellyfinAlbumMatch,
-	LocalAlbumMatch,
-	NavidromeAlbumMatch,
-	PlexAlbumMatch
+	LocalAlbumMatch
 } from '$lib/types';
+import type { RemoteMatch } from '$lib/queries/remotes/types';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { clearLocalStorageNamespace, createLocalStorageCache } from '$lib/utils/localStorageCache';
 
@@ -41,10 +39,10 @@ type AlbumYouTubeCachePayload = {
 };
 
 type AlbumSourceMatchCachePayload = {
-	jellyfin: JellyfinAlbumMatch | null;
+	jellyfin: RemoteMatch | null;
 	local: LocalAlbumMatch | null;
-	navidrome: NavidromeAlbumMatch | null;
-	plex: PlexAlbumMatch | null;
+	navidrome: RemoteMatch | null;
+	plex: RemoteMatch | null;
 };
 
 export const albumBasicCache = createLocalStorageCache<AlbumBasicInfo>(

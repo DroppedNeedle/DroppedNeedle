@@ -2,21 +2,6 @@
 // (v3 HEAD). Producers (album/library routes) still emit these; the catalog
 // slices re-home them when those surfaces migrate to v3 views. Player files
 // import from here, never from $lib/types.
-export type JellyfinTrackInfo = {
-	jellyfin_id: string;
-	title: string;
-	track_number: number;
-	disc_number?: number | null;
-	duration_seconds: number;
-	album_name: string;
-	artist_name: string;
-	album_id?: string;
-	codec?: string | null;
-	bitrate?: number | null;
-	image_url?: string | null;
-	recording_mbid?: string | null;
-};
-
 export type LocalTrackInfo = {
 	track_file_id: string;
 	title: string;
@@ -27,37 +12,6 @@ export type LocalTrackInfo = {
 	format: string;
 	bitrate?: number | null;
 	date_added?: string | null;
-};
-
-export type NavidromeTrackInfo = {
-	navidrome_id: string;
-	title: string;
-	track_number: number;
-	disc_number?: number | null;
-	duration_seconds: number;
-	album_name: string;
-	artist_name: string;
-	codec?: string | null;
-	bitrate?: number | null;
-	image_url?: string | null;
-	recording_mbid?: string | null;
-};
-
-export type PlexTrackInfo = {
-	plex_id: string;
-	title: string;
-	track_number: number;
-	duration_seconds: number;
-	disc_number: number;
-	album_name: string;
-	artist_name: string;
-	codec?: string | null;
-	bitrate?: number | null;
-	audio_channels?: number | null;
-	container?: string | null;
-	part_key?: string | null;
-	image_url?: string | null;
-	recording_mbid?: string | null;
 };
 
 export type YouTubeTrackLink = {
@@ -104,12 +58,6 @@ export interface TargetNativeTrack {
 
 export type NativeTrackListItem = TargetNativeTrack;
 
-export type JellyfinAlbumMatch = {
-	found: boolean;
-	jellyfin_album_id?: string | null;
-	tracks: JellyfinTrackInfo[];
-};
-
 export type LocalAlbumMatch = {
 	found: boolean;
 	musicbrainz_id?: string | null;
@@ -117,18 +65,6 @@ export type LocalAlbumMatch = {
 	total_size_bytes: number;
 	primary_format?: string | null;
 	download_allowed?: boolean;
-};
-
-export type NavidromeAlbumMatch = {
-	found: boolean;
-	navidrome_album_id?: string | null;
-	tracks: NavidromeTrackInfo[];
-};
-
-export type PlexAlbumMatch = {
-	found: boolean;
-	plex_album_id?: string | null;
-	tracks: PlexTrackInfo[];
 };
 
 export type PlaybackState =

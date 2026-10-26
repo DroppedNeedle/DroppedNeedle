@@ -15,8 +15,8 @@ const invalidateOwnAppPasswords = () =>
 
 export function saveConnectAppsSettings() {
 	return createMutation(() => ({
-		mutationFn: async (settings: ConnectAppsSettings) =>
-			(await api.global.v3.PUT(CONNECT_APPS_ENDPOINTS.settings(), settings)) as ConnectAppsSettings,
+		mutationFn: (settings: ConnectAppsSettings) =>
+			api.global.v3.PUT(CONNECT_APPS_ENDPOINTS.settings(), settings),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({ queryKey: ConnectAppsQueryKeyFactory.settings() })
 	}));

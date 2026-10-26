@@ -21,11 +21,12 @@ describe('SourceAlbumModal', () => {
 			open: true,
 			sourceType: 'plex',
 			album: {
-				plex_id: 'plex-1',
-				name: 'Night Garden',
+				id: 'plex-1',
+				source: 'plex',
+				title: 'Night Garden',
 				artist_name: 'KIRA',
 				track_count: 0,
-				musicbrainz_id: ALBUM_MBID
+				release_group_mbid: ALBUM_MBID
 			},
 			onclose: () => {}
 		});

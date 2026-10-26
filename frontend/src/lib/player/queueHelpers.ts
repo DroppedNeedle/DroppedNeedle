@@ -1,13 +1,11 @@
 import type {
-	JellyfinTrackInfo,
 	LocalTrackInfo,
 	NativeTrackListItem,
-	NavidromeTrackInfo,
-	PlexTrackInfo,
 	QueueItem,
 	SourceType,
 	YouTubeTrackLink
 } from '$lib/player/types';
+import type { RemoteTrack } from '$lib/queries/remotes/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
 import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import { getCoverUrl } from '$lib/utils/errorHandling';
@@ -24,6 +22,14 @@ export function normalizeCodec(codec: string | undefined | null): string {
 	return raw;
 }
 
+// Remote views carry no codec, so a remote item takes the missing-codec default.
+export const REMOTE_FORMAT = normalizeCodec(null);
+
+/** The key a remote track streams by: Plex streams a media part, the others the item. */
+export function remoteStreamKey(track: RemoteTrack): string | null {
+	return track.source === 'plex' ? (track.part_key ?? null) : track.id;
+}
+
 export interface TrackMeta {
 	albumId: string;
 	albumName: string;
@@ -37,10 +43,10 @@ export interface TrackSourceData {
 	discNumber?: number;
 	trackTitle: string;
 	trackLength?: number;
-	jellyfinTrack?: JellyfinTrackInfo | null;
-	navidromeTrack?: NavidromeTrackInfo | null;
+	jellyfinTrack?: RemoteTrack | null;
+	navidromeTrack?: RemoteTrack | null;
 	localTrack?: LocalTrackInfo | null;
-	plexTrack?: PlexTrackInfo | null;
+	plexTrack?: RemoteTrack | null;
 }
 
 export function normalizeDiscNumber(discNumber: number | null | undefined): number {
@@ -78,35 +84,16 @@ export function selectBestSource(
 			format
 		};
 	}
-	if (data.navidromeTrack) {
-		const format = normalizeCodec(data.navidromeTrack.codec);
-		return {
-			sourceType: 'navidrome',
-			trackSourceId: data.navidromeTrack.navidrome_id,
-			streamUrl: gatewayStreamUrl('navidrome', data.navidromeTrack.navidrome_id),
-			format
-		};
-	}
-	if (data.jellyfinTrack) {
-		const format = normalizeCodec(data.jellyfinTrack.codec);
-		return {
-			sourceType: 'jellyfin',
-			trackSourceId: data.jellyfinTrack.jellyfin_id,
-			streamUrl: gatewayStreamUrl('jellyfin', data.jellyfinTrack.jellyfin_id),
-			format
-		};
-	}
-	if (data.plexTrack) {
-		if (!data.plexTrack.part_key) return null;
-		const format = normalizeCodec(data.plexTrack.codec);
-		return {
-			sourceType: 'plex',
-			trackSourceId: data.plexTrack.part_key,
-			streamUrl: gatewayStreamUrl('plex', data.plexTrack.part_key),
-			format
-		};
-	}
-	return null;
+	const remote = data.navidromeTrack ?? data.jellyfinTrack ?? data.plexTrack;
+	if (!remote) return null;
+	const key = remoteStreamKey(remote);
+	if (!key) return null;
+	return {
+		sourceType: remote.source,
+		trackSourceId: key,
+		streamUrl: gatewayStreamUrl(remote.source, key),
+		format: REMOTE_FORMAT
+	};
 }
 
 /**
@@ -137,8 +124,8 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 
 	const sourceIds: Partial<Record<import('$lib/player/types').SourceType, string>> = {};
 	if (data.localTrack) sourceIds.local = String(data.localTrack.track_file_id);
-	if (data.navidromeTrack) sourceIds.navidrome = data.navidromeTrack.navidrome_id;
-	if (data.jellyfinTrack) sourceIds.jellyfin = data.jellyfinTrack.jellyfin_id;
+	if (data.navidromeTrack) sourceIds.navidrome = data.navidromeTrack.id;
+	if (data.jellyfinTrack) sourceIds.jellyfin = data.jellyfinTrack.id;
 	if (data.plexTrack?.part_key) sourceIds.plex = data.plexTrack.part_key;
 
 	const recordingIds: Partial<Record<SourceType, string>> = {
@@ -164,61 +151,36 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 		sourceIds,
 		recordingIds: Object.keys(recordingIds).length > 0 ? recordingIds : undefined,
 		duration: data.trackLength,
-		plexRatingKey: data.plexTrack?.plex_id
+		plexRatingKey: data.plexTrack?.id
 	};
 }
 
-export function buildQueueItemsFromJellyfin(
-	tracks: JellyfinTrackInfo[],
-	meta: TrackMeta
-): QueueItem[] {
+/** Queue items for one album's remote tracks; a track that cannot stream is left out. */
+export function buildRemoteQueueItems(tracks: RemoteTrack[], meta: TrackMeta): QueueItem[] {
 	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
-	return tracks.map((t) => {
-		const format = normalizeCodec(t.codec);
-		return {
-			trackSourceId: t.jellyfin_id,
-			trackName: t.title,
-			artistName: meta.artistName,
-			trackNumber: t.track_number,
-			discNumber: normalizeDiscNumber(t.disc_number),
-			albumId: meta.albumId,
-			albumName: meta.albumName,
-			coverUrl: normalizedCoverUrl,
-			sourceType: 'jellyfin' as const,
-			artistId: meta.artistId,
-			streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
-			format,
-			availableSources: ['jellyfin'] as SourceType[],
-			recordingIds: recordingFor('jellyfin', t.recording_mbid),
-			duration: t.duration_seconds
-		};
-	});
-}
-
-export function buildQueueItemsFromNavidrome(
-	tracks: NavidromeTrackInfo[],
-	meta: TrackMeta
-): QueueItem[] {
-	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
-	return tracks.map((t) => {
-		const format = normalizeCodec(t.codec);
-		return {
-			trackSourceId: t.navidrome_id,
-			trackName: t.title,
-			artistName: meta.artistName,
-			trackNumber: t.track_number,
-			discNumber: normalizeDiscNumber(t.disc_number),
-			albumId: meta.albumId,
-			albumName: meta.albumName,
-			coverUrl: normalizedCoverUrl,
-			sourceType: 'navidrome' as const,
-			artistId: meta.artistId,
-			streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
-			format,
-			availableSources: ['navidrome'] as SourceType[],
-			recordingIds: recordingFor('navidrome', t.recording_mbid),
-			duration: t.duration_seconds
-		};
+	return tracks.flatMap((t) => {
+		const key = remoteStreamKey(t);
+		if (!key) return [];
+		return [
+			{
+				trackSourceId: key,
+				trackName: t.title,
+				artistName: meta.artistName,
+				trackNumber: t.track_number ?? 0,
+				discNumber: normalizeDiscNumber(t.disc_number),
+				albumId: meta.albumId,
+				albumName: meta.albumName,
+				coverUrl: normalizedCoverUrl,
+				sourceType: t.source,
+				artistId: meta.artistId,
+				streamUrl: gatewayStreamUrl(t.source, key),
+				format: REMOTE_FORMAT,
+				availableSources: [t.source] as SourceType[],
+				recordingIds: recordingFor(t.source, t.recording_mbid),
+				duration: t.duration_secs ?? 0,
+				plexRatingKey: t.source === 'plex' ? t.id : undefined
+			}
+		];
 	});
 }
 
@@ -241,33 +203,6 @@ export function buildQueueItemsFromLocal(tracks: LocalTrackInfo[], meta: TrackMe
 		availableSources: ['local'] as SourceType[],
 		duration: t.duration_seconds ?? undefined
 	}));
-}
-
-export function buildQueueItemsFromPlex(tracks: PlexTrackInfo[], meta: TrackMeta): QueueItem[] {
-	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
-	return tracks
-		.filter((t) => t.part_key)
-		.map((t) => {
-			const format = normalizeCodec(t.codec);
-			return {
-				trackSourceId: t.part_key!,
-				trackName: t.title,
-				artistName: meta.artistName,
-				trackNumber: t.track_number,
-				discNumber: normalizeDiscNumber(t.disc_number),
-				albumId: meta.albumId,
-				albumName: meta.albumName,
-				coverUrl: normalizedCoverUrl,
-				sourceType: 'plex' as const,
-				artistId: meta.artistId,
-				streamUrl: gatewayStreamUrl('plex', t.part_key!),
-				format,
-				availableSources: ['plex'] as SourceType[],
-				recordingIds: recordingFor('plex', t.recording_mbid),
-				duration: t.duration_seconds,
-				plexRatingKey: t.plex_id
-			};
-		});
 }
 
 export function buildQueueItemFromYouTube(track: YouTubeTrackLink, meta: TrackMeta): QueueItem {
@@ -341,25 +276,6 @@ export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null
 	};
 }
 
-export function buildDiscoveryQueueFromNavidrome(tracks: NavidromeTrackInfo[]): QueueItem[] {
-	return tracks.map((t) => ({
-		trackSourceId: t.navidrome_id,
-		trackName: t.title,
-		artistName: t.artist_name,
-		trackNumber: t.track_number,
-		discNumber: normalizeDiscNumber(t.disc_number),
-		albumId: '',
-		albumName: t.album_name,
-		coverUrl: t.image_url ?? null,
-		sourceType: 'navidrome' as const,
-		streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
-		format: normalizeCodec(t.codec),
-		availableSources: ['navidrome'] as SourceType[],
-		recordingIds: recordingFor('navidrome', t.recording_mbid),
-		duration: t.duration_seconds
-	}));
-}
-
 export function buildDiscoveryQueueFromLocal(tracks: NativeTrackListItem[]): QueueItem[] {
 	return tracks.map((t) => ({
 		trackSourceId: t.id,
@@ -380,42 +296,28 @@ export function buildDiscoveryQueueFromLocal(tracks: NativeTrackListItem[]): Que
 	}));
 }
 
-export function buildDiscoveryQueueFromJellyfin(tracks: JellyfinTrackInfo[]): QueueItem[] {
-	return tracks.map((t) => ({
-		trackSourceId: t.jellyfin_id,
-		trackName: t.title,
-		artistName: t.artist_name,
-		trackNumber: t.track_number,
-		discNumber: normalizeDiscNumber(t.disc_number),
-		albumId: t.album_id ?? '',
-		albumName: t.album_name,
-		coverUrl: t.image_url ?? null,
-		sourceType: 'jellyfin' as const,
-		streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
-		format: normalizeCodec(t.codec),
-		availableSources: ['jellyfin'] as SourceType[],
-		recordingIds: recordingFor('jellyfin', t.recording_mbid),
-		duration: t.duration_seconds
-	}));
-}
-
-export function buildDiscoveryQueueFromPlex(tracks: PlexTrackInfo[]): QueueItem[] {
-	return tracks
-		.filter((t) => t.part_key)
-		.map((t) => ({
-			trackSourceId: t.part_key!,
-			trackName: t.title,
-			artistName: t.artist_name,
-			trackNumber: t.track_number,
-			discNumber: normalizeDiscNumber(t.disc_number),
-			albumId: '',
-			albumName: t.album_name,
-			coverUrl: t.image_url ?? null,
-			sourceType: 'plex' as const,
-			streamUrl: gatewayStreamUrl('plex', t.part_key!),
-			format: normalizeCodec(t.codec),
-			availableSources: ['plex'] as SourceType[],
-			recordingIds: recordingFor('plex', t.recording_mbid),
-			duration: t.duration_seconds
-		}));
+/** Queue items for loose remote tracks (a list, a mix, a genre), each with its own album. */
+export function buildRemoteDiscoveryQueue(tracks: RemoteTrack[]): QueueItem[] {
+	return tracks.flatMap((t) => {
+		const key = remoteStreamKey(t);
+		if (!key) return [];
+		return [
+			{
+				trackSourceId: key,
+				trackName: t.title,
+				artistName: t.artist_name,
+				trackNumber: t.track_number ?? 0,
+				discNumber: normalizeDiscNumber(t.disc_number),
+				albumId: t.source === 'jellyfin' ? (t.album_id ?? '') : '',
+				albumName: t.album_name,
+				coverUrl: t.image_url ?? null,
+				sourceType: t.source,
+				streamUrl: gatewayStreamUrl(t.source, key),
+				format: REMOTE_FORMAT,
+				availableSources: [t.source] as SourceType[],
+				recordingIds: recordingFor(t.source, t.recording_mbid),
+				duration: t.duration_secs ?? 0
+			}
+		];
+	});
 }

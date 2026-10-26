@@ -3,29 +3,15 @@ import type { Component } from 'svelte';
 import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 import PlexIcon from '$lib/components/PlexIcon.svelte';
-import { launchJellyfinPlayback } from '$lib/player/launchJellyfinPlayback';
-import { launchNavidromePlayback } from '$lib/player/launchNavidromePlayback';
-import { launchPlexPlayback } from '$lib/player/launchPlexPlayback';
+import { launchRemotePlayback } from '$lib/player/launchRemotePlayback';
 import {
-	buildDiscoveryQueueFromJellyfin,
-	buildDiscoveryQueueFromNavidrome,
-	buildDiscoveryQueueFromPlex,
-	buildQueueItemsFromJellyfin,
-	buildQueueItemsFromNavidrome,
-	buildQueueItemsFromPlex
+	buildRemoteDiscoveryQueue,
+	buildRemoteQueueItems,
+	remoteStreamKey
 } from '$lib/player/queueHelpers';
 import type { PlaybackMeta, QueueItem } from '$lib/player/types';
-import type { JellyfinAlbumSummary, NavidromeAlbumSummary, PlexAlbumSummary } from '$lib/types';
 
-import {
-	toJellyfinAlbum,
-	toJellyfinTrack,
-	toNavidromeAlbum,
-	toNavidromeTrack,
-	toPlexAlbum,
-	toPlexTrack
-} from './remoteAdapters';
-import type { RemoteAlbum, RemoteSource, RemoteTrack } from './types';
+import type { RemoteSource, RemoteTrack } from './types';
 
 export interface RemoteSortOption {
 	value: string;
@@ -98,13 +84,7 @@ export interface RemoteSourceDescriptor {
 	albumQueue: (tracks: RemoteTrack[], meta: PlaybackMeta) => QueueItem[];
 	/** Plays an album's tracks from the start. */
 	playAlbum: (tracks: RemoteTrack[], shuffle: boolean, meta: PlaybackMeta) => void;
-	/** The album dialog's and the shared shelves' album shape. */
-	dialogAlbum: (album: RemoteAlbum) => RemoteDialogAlbum;
-	/** The id field of `dialogAlbum`'s shape. */
-	idKey: string;
 }
-
-export type RemoteDialogAlbum = JellyfinAlbumSummary | NavidromeAlbumSummary | PlexAlbumSummary;
 
 const NONE: RemoteCapabilities = {
 	activity: false,
@@ -125,6 +105,16 @@ const NONE: RemoteCapabilities = {
 
 const byTrackNumber = (tracks: RemoteTrack[]) =>
 	[...tracks].sort((a, b) => (a.track_number ?? 0) - (b.track_number ?? 0));
+
+// Every source plays through the same helpers: each track carries its own source.
+const PLAYBACK = {
+	playKey: remoteStreamKey,
+	queue: buildRemoteDiscoveryQueue,
+	albumQueue: (tracks: RemoteTrack[], meta: PlaybackMeta) =>
+		buildRemoteQueueItems(byTrackNumber(tracks), meta),
+	playAlbum: (tracks: RemoteTrack[], shuffle: boolean, meta: PlaybackMeta) =>
+		launchRemotePlayback(byTrackNumber(tracks), 0, shuffle, meta)
+} satisfies Pick<RemoteSourceDescriptor, 'playKey' | 'queue' | 'albumQueue' | 'playAlbum'>;
 
 export const remoteSources: Record<RemoteSource, RemoteSourceDescriptor> = {
 	plex: {
@@ -165,15 +155,7 @@ export const remoteSources: Record<RemoteSource, RemoteSourceDescriptor> = {
 			recommendations: true,
 			recentlyAdded: true
 		},
-		// Plex streams a track's media part, so a track without one cannot play.
-		playKey: (track) => track.part_key ?? null,
-		queue: (tracks) => buildDiscoveryQueueFromPlex(tracks.map(toPlexTrack)),
-		albumQueue: (tracks, meta) =>
-			buildQueueItemsFromPlex(byTrackNumber(tracks).map(toPlexTrack), meta),
-		playAlbum: (tracks, shuffle, meta) =>
-			launchPlexPlayback(byTrackNumber(tracks).map(toPlexTrack), 0, shuffle, meta),
-		dialogAlbum: toPlexAlbum,
-		idKey: 'plex_id'
+		...PLAYBACK
 	},
 	jellyfin: {
 		source: 'jellyfin',
@@ -214,14 +196,7 @@ export const remoteSources: Record<RemoteSource, RemoteSourceDescriptor> = {
 			recentlyAdded: true,
 			multiGenre: true
 		},
-		playKey: (track) => track.id,
-		queue: (tracks) => buildDiscoveryQueueFromJellyfin(tracks.map(toJellyfinTrack)),
-		albumQueue: (tracks, meta) =>
-			buildQueueItemsFromJellyfin(byTrackNumber(tracks).map(toJellyfinTrack), meta),
-		playAlbum: (tracks, shuffle, meta) =>
-			launchJellyfinPlayback(byTrackNumber(tracks).map(toJellyfinTrack), 0, shuffle, meta),
-		dialogAlbum: toJellyfinAlbum,
-		idKey: 'jellyfin_id'
+		...PLAYBACK
 	},
 	navidrome: {
 		source: 'navidrome',
@@ -249,14 +224,7 @@ export const remoteSources: Record<RemoteSource, RemoteSourceDescriptor> = {
 			multiGenre: true,
 			folders: true
 		},
-		playKey: (track) => track.id,
-		queue: (tracks) => buildDiscoveryQueueFromNavidrome(tracks.map(toNavidromeTrack)),
-		albumQueue: (tracks, meta) =>
-			buildQueueItemsFromNavidrome(byTrackNumber(tracks).map(toNavidromeTrack), meta),
-		playAlbum: (tracks, shuffle, meta) =>
-			launchNavidromePlayback(byTrackNumber(tracks).map(toNavidromeTrack), 0, shuffle, meta),
-		dialogAlbum: toNavidromeAlbum,
-		idKey: 'navidrome_id'
+		...PLAYBACK
 	}
 };
 

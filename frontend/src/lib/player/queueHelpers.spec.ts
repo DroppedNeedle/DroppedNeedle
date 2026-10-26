@@ -4,17 +4,15 @@ vi.mock('$lib/utils/errorHandling', () => ({
 	getCoverUrl: (url: string | null, albumId: string) => url ?? `/cover/${albumId}`
 }));
 
-import type { JellyfinTrackInfo, LocalTrackInfo, NativeTrackListItem } from '$lib/player/types';
+import type { LocalTrackInfo, NativeTrackListItem } from '$lib/player/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
-import type { components } from '$lib/api/v3/openapi';
+import type { RemoteSource, RemoteTrack } from '$lib/queries/remotes/types';
 import type { TrackMeta, TrackSourceData } from './queueHelpers';
 import {
 	selectBestSource,
 	buildQueueItem,
-	buildQueueItemsFromJellyfin,
 	buildQueueItemsFromLocal,
-	buildQueueItemsFromNavidrome,
-	buildQueueItemsFromPlex,
+	buildRemoteQueueItems,
 	buildDiscoveryQueueFromLocal,
 	buildQueueItemFromYouTube,
 	compareDiscTrack,
@@ -22,11 +20,6 @@ import {
 	normalizeCodec,
 	playlistTrackToQueueItem
 } from './queueHelpers';
-import {
-	toJellyfinTrack,
-	toNavidromeTrack,
-	toPlexTrack
-} from '$lib/queries/remotes/remoteAdapters';
 
 const baseMeta: TrackMeta = {
 	albumId: 'album-1',
@@ -45,14 +38,14 @@ const localTrack: LocalTrackInfo = {
 	duration_seconds: 240
 };
 
-const jellyfinTrack: JellyfinTrackInfo = {
-	jellyfin_id: 'jf-123',
+const jellyfinTrack: RemoteTrack = {
+	id: 'jf-123',
+	source: 'jellyfin',
 	title: 'JF Song',
 	track_number: 2,
-	duration_seconds: 180,
+	duration_secs: 180,
 	album_name: 'Test Album',
-	artist_name: 'Artist A',
-	codec: 'opus'
+	artist_name: 'Artist A'
 };
 
 describe('selectBestSource', () => {
@@ -135,18 +128,10 @@ describe('disc-aware track helpers', () => {
 	});
 });
 
-describe('buildQueueItemsFromJellyfin', () => {
-	it('normalizes codec for stream URL', () => {
+describe('buildRemoteQueueItems', () => {
+	it('streams a Jellyfin track by its item id', () => {
 		expect.assertions(1);
-		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: 'ALAC' };
-		const items = buildQueueItemsFromJellyfin([track], baseMeta);
-		expect(items[0].streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
-	});
-
-	it('defaults to aac for unknown codecs', () => {
-		expect.assertions(1);
-		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: 'unknown_codec' };
-		const items = buildQueueItemsFromJellyfin([track], baseMeta);
+		const items = buildRemoteQueueItems([jellyfinTrack], baseMeta);
 		expect(items[0].streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
 	});
 });
@@ -174,13 +159,6 @@ describe('normalizeCodec', () => {
 		expect(normalizeCodec(null)).toBe('aac');
 		expect(normalizeCodec(undefined)).toBe('aac');
 		expect(normalizeCodec('')).toBe('aac');
-	});
-
-	it('carries the honest codec onto queue items', () => {
-		expect.assertions(1);
-		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: 'wma' };
-		const items = buildQueueItemsFromJellyfin([track], baseMeta);
-		expect(items[0].format).toBe('wma');
 	});
 });
 
@@ -355,8 +333,7 @@ describe('playlistTrackToQueueItem', () => {
 });
 
 describe('remote recording ids', () => {
-	type RemoteSource = components['schemas']['SourceName'];
-	const view = (source: RemoteSource): components['schemas']['RemotesTrackView'] => ({
+	const view = (source: RemoteSource): RemoteTrack => ({
 		id: 'item-1',
 		title: 'Song',
 		album_name: 'Album',
@@ -366,15 +343,11 @@ describe('remote recording ids', () => {
 		recording_mbid: 'rec-1'
 	});
 
-	it.each([
-		['jellyfin', () => buildQueueItemsFromJellyfin([toJellyfinTrack(view('jellyfin'))], baseMeta)],
-		[
-			'navidrome',
-			() => buildQueueItemsFromNavidrome([toNavidromeTrack(view('navidrome'))], baseMeta)
-		],
-		['plex', () => buildQueueItemsFromPlex([toPlexTrack(view('plex'))], baseMeta)]
-	] as const)('%s keeps the recording it gave under its own source', (source, build) => {
-		const [item] = build();
-		expect(item.recordingIds).toStrictEqual({ [source]: 'rec-1' });
-	});
+	it.each(['jellyfin', 'navidrome', 'plex'] as const)(
+		'%s keeps the recording it gave under its own source',
+		(source) => {
+			const [item] = buildRemoteQueueItems([view(source)], baseMeta);
+			expect(item.recordingIds).toStrictEqual({ [source]: 'rec-1' });
+		}
+	);
 });

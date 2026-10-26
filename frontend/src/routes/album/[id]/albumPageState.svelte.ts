@@ -10,20 +10,15 @@ import type {
 	YouTubeTrackLink,
 	YouTubeLink,
 	YouTubeQuotaStatus,
-	JellyfinAlbumMatch,
-	JellyfinTrackInfo,
 	LocalAlbumMatch,
 	LocalTrackInfo,
-	NavidromeAlbumMatch,
-	NavidromeTrackInfo,
-	PlexAlbumMatch,
-	PlexTrackInfo,
 	LastFmAlbumEnrichment,
 	LibraryAlbumStatus,
 	LibraryFileMeta,
 	DownloadTask,
 	HeldFileInEntry
 } from '$lib/types';
+import type { RemoteMatch, RemoteTrack } from '$lib/queries/remotes/types';
 import { libraryStore } from '$lib/stores/library';
 import { integrationStore } from '$lib/stores/integration';
 import { ApiError } from '$lib/api/client';
@@ -41,10 +36,8 @@ import {
 import { hydrateDetailCacheEntry } from '$lib/utils/detailCacheHydration';
 import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
 import type { QueueItem } from '$lib/player/types';
-import { launchJellyfinPlayback } from '$lib/player/launchJellyfinPlayback';
+import { launchRemotePlayback } from '$lib/player/launchRemotePlayback';
 import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
-import { launchNavidromePlayback } from '$lib/player/launchNavidromePlayback';
-import { launchPlexPlayback } from '$lib/player/launchPlexPlayback';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 import {
 	fetchAlbumBasic,
@@ -52,10 +45,8 @@ import {
 	fetchDiscovery,
 	fetchYouTubeAlbumLink,
 	fetchYouTubeTrackLinks,
-	fetchJellyfinMatch,
 	fetchLocalMatch,
-	fetchNavidromeMatch,
-	fetchPlexMatch,
+	fetchRemoteMatch,
 	fetchLastFm,
 	refreshAlbum
 } from './albumFetchers';
@@ -108,10 +99,10 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	let trackLinks = $state<YouTubeTrackLink[]>([]);
 	let albumLink = $state<YouTubeLink | null>(null);
 	let quota = $state<YouTubeQuotaStatus | null>(null);
-	let jellyfinMatch = $state<JellyfinAlbumMatch | null>(null);
+	let jellyfinMatch = $state<RemoteMatch | null>(null);
 	let localMatch = $state<LocalAlbumMatch | null>(null);
-	let navidromeMatch = $state<NavidromeAlbumMatch | null>(null);
-	let plexMatch = $state<PlexAlbumMatch | null>(null);
+	let navidromeMatch = $state<RemoteMatch | null>(null);
+	let plexMatch = $state<RemoteMatch | null>(null);
 	let loadingJellyfin = $state(false);
 	let loadingLocal = $state(false);
 	let loadingNavidrome = $state(false);
@@ -545,7 +536,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 			if (integrations.jellyfin)
 				void doFetchSourceMatch(
 					signal,
-					() => fetchJellyfinMatch(albumId, signal),
+					() => fetchRemoteMatch('jellyfin', albumId, {}, signal),
 					(v) => (jellyfinMatch = v),
 					(v) => (loadingJellyfin = v),
 					'Jellyfin',
@@ -577,7 +568,8 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 				void doFetchSourceMatch(
 					signal,
 					() =>
-						fetchNavidromeMatch(
+						fetchRemoteMatch(
+							'navidrome',
 							albumId,
 							{ albumTitle: album?.title, artistName: album?.artist_name },
 							signal
@@ -592,7 +584,8 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 				void doFetchSourceMatch(
 					signal,
 					() =>
-						fetchPlexMatch(
+						fetchRemoteMatch(
+							'plex',
 							albumId,
 							{ albumTitle: album?.title, artistName: album?.artist_name },
 							signal
@@ -813,9 +806,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	function getTrackContextMenuItems(
 		track: { position: number; disc_number?: number | null; title: string },
 		resolvedLocal: LocalTrackInfo | null,
-		resolvedJellyfin: JellyfinTrackInfo | null,
-		resolvedNavidrome: NavidromeTrackInfo | null = null,
-		resolvedPlex: PlexTrackInfo | null = null
+		resolvedJellyfin: RemoteTrack | null,
+		resolvedNavidrome: RemoteTrack | null = null,
+		resolvedPlex: RemoteTrack | null = null
 	): MenuItem[] {
 		if (!album) return [];
 		return getTrackContextMenuItemsImpl(
@@ -919,7 +912,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 
 	const jellyfinCallbacks: SourceCallbacks = buildSourceCallbacks(
 		() => jellyfinMatch,
-		launchJellyfinPlayback,
+		launchRemotePlayback,
 		'jellyfin',
 		albumGetter,
 		tracksGetters,
@@ -937,7 +930,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	);
 	const navidromeCallbacks: SourceCallbacks = buildSourceCallbacks(
 		() => navidromeMatch,
-		launchNavidromePlayback,
+		launchRemotePlayback,
 		'navidrome',
 		albumGetter,
 		tracksGetters,
@@ -946,7 +939,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	);
 	const plexCallbacks: SourceCallbacks = buildSourceCallbacks(
 		() => plexMatch,
-		launchPlexPlayback,
+		launchRemotePlayback,
 		'plex',
 		albumGetter,
 		tracksGetters,

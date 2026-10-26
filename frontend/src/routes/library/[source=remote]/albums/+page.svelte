@@ -12,7 +12,7 @@
 		getRemoteRecentQuery,
 		getRemoteStatsQuery
 	} from '$lib/queries/remotes/RemoteQueries.svelte';
-	import { defaultSortOrder, type RemoteDialogAlbum } from '$lib/queries/remotes/remoteSources';
+	import { defaultSortOrder } from '$lib/queries/remotes/remoteSources';
 	import type { RemoteAlbum } from '$lib/queries/remotes/types';
 	import type { PlaybackMeta, QueueItem } from '$lib/player/types';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -60,7 +60,7 @@
 	let search = $state(initialSearch);
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
-	let selectedAlbum = $state<RemoteDialogAlbum | null>(null);
+	let selectedAlbum = $state<RemoteAlbum | null>(null);
 	let detailOpen = $state(false);
 	let playingId = $state<string | null>(null);
 	let menuLoadingId = $state<string | null>(null);
@@ -134,7 +134,7 @@
 	}
 
 	function openDetail(album: RemoteAlbum) {
-		selectedAlbum = remote.dialogAlbum(album);
+		selectedAlbum = album;
 		detailOpen = true;
 	}
 

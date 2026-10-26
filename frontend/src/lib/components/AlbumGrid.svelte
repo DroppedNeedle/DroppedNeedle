@@ -4,28 +4,18 @@
 	import { reveal } from '$lib/actions/reveal';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
-
-	interface AlbumItem {
-		name: string;
-		artist_name: string;
-		image_url?: string | null;
-		year?: number | null;
-		musicbrainz_id?: string | null;
-		[key: string]: unknown;
-	}
+	import type { RemoteAlbum } from '$lib/queries/remotes/types';
 
 	interface Props {
-		albums: AlbumItem[];
-		idKey: string;
+		albums: RemoteAlbum[];
 		maxItems?: number;
 		seeAllHref?: string;
 		seeAllLabel?: string;
-		onAlbumClick?: (album: AlbumItem) => void;
+		onAlbumClick?: (album: RemoteAlbum) => void;
 	}
 
 	let {
 		albums,
-		idKey,
 		maxItems = 12,
 		seeAllHref,
 		seeAllLabel = 'View all',
@@ -34,16 +24,12 @@
 
 	let visible = $derived(albums.slice(0, maxItems));
 
-	function getId(album: AlbumItem): string {
-		return String(album[idKey] ?? album.name);
-	}
-
 	let hoveredIdx = $state<number | null>(null);
 </script>
 
 <div use:reveal={{ stagger: 60 }}>
 	<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-		{#each visible as album, i (getId(album))}
+		{#each visible as album, i (album.id)}
 			{@const isSibling = hoveredIdx !== null && hoveredIdx !== i}
 			<button
 				class="group cursor-pointer text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
@@ -55,7 +41,7 @@
 						: 'scale(1)'}; {hoveredIdx === i ? 'z-index: 1;' : ''} {isSibling
 					? 'opacity: 0.8;'
 					: ''}"
-				aria-label="Open {album.name} by {album.artist_name}"
+				aria-label="Open {album.title} by {album.artist_name}"
 				onpointerenter={() => (hoveredIdx = i)}
 				onpointerleave={() => (hoveredIdx = null)}
 				onclick={() => onAlbumClick?.(album)}
@@ -67,16 +53,16 @@
 						: ''}"
 				>
 					<AlbumImage
-						mbid={album.musicbrainz_id ?? getId(album)}
+						mbid={album.release_group_mbid ?? album.id}
 						customUrl={album.image_url}
-						alt={album.name}
+						alt={album.title}
 						size="full"
 						requestSize={250}
 						rounded="none"
 						className="h-full w-full"
 					/>
 				</div>
-				<p class="mt-1.5 line-clamp-1 text-sm font-medium">{album.name}</p>
+				<p class="mt-1.5 line-clamp-1 text-sm font-medium">{album.title}</p>
 				<p class="line-clamp-1 text-xs text-base-content/50">{album.artist_name}</p>
 			</button>
 		{/each}

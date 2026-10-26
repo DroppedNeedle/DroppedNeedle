@@ -5,11 +5,9 @@
 		YouTubeTrackLink,
 		YouTubeLink,
 		YouTubeQuotaStatus,
-		JellyfinAlbumMatch,
-		LocalAlbumMatch,
-		NavidromeAlbumMatch,
-		PlexAlbumMatch
+		LocalAlbumMatch
 	} from '$lib/types';
+	import type { RemoteMatch } from '$lib/queries/remotes/types';
 	import type { SourceCallbacks } from './albumPageState.svelte';
 	import AlbumYouTubeBar from '$lib/components/AlbumYouTubeBar.svelte';
 	import AlbumSourceBar from '$lib/components/AlbumSourceBar.svelte';
@@ -23,10 +21,10 @@
 		tracksInfo: AlbumTracksInfo;
 		trackLinks: YouTubeTrackLink[];
 		albumLink: YouTubeLink | null;
-		jellyfinMatch: JellyfinAlbumMatch | null;
+		jellyfinMatch: RemoteMatch | null;
 		localMatch: LocalAlbumMatch | null;
-		navidromeMatch: NavidromeAlbumMatch | null;
-		plexMatch: PlexAlbumMatch | null;
+		navidromeMatch: RemoteMatch | null;
+		plexMatch: RemoteMatch | null;
 		loadingJellyfin: boolean;
 		loadingLocal: boolean;
 		loadingNavidrome: boolean;

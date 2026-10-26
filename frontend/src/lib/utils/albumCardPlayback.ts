@@ -1,23 +1,13 @@
-import {
-	fetchJellyfinAlbumMatch,
-	fetchLocalAlbumMatch,
-	fetchNavidromeAlbumMatch,
-	fetchPlexAlbumMatch
-} from '$lib/queries/albumMatch';
+import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch';
 import { get } from 'svelte/store';
 import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import { integrationStore } from '$lib/stores/integration';
 import { playerStore } from '$lib/stores/player.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
-import { normalizeCodec, recordingFor } from '$lib/player/queueHelpers';
+import { recordingFor, REMOTE_FORMAT, remoteStreamKey } from '$lib/player/queueHelpers';
 import { getCoverUrl } from '$lib/utils/errorHandling';
-import type { QueueItem } from '$lib/player/types';
-import type {
-	JellyfinTrackInfo,
-	LocalTrackInfo,
-	NavidromeTrackInfo,
-	PlexTrackInfo
-} from '$lib/player/types';
+import type { LocalTrackInfo, QueueItem } from '$lib/player/types';
+import type { RemoteSource, RemoteTrack } from '$lib/queries/remotes/types';
 
 export interface AlbumCardMeta {
 	mbid: string;
@@ -46,63 +36,29 @@ function buildLocalItems(tracks: LocalTrackInfo[], meta: AlbumCardMeta): QueueIt
 	}));
 }
 
-function buildNavidromeItems(tracks: NavidromeTrackInfo[], meta: AlbumCardMeta): QueueItem[] {
+function buildRemoteItems(tracks: RemoteTrack[], meta: AlbumCardMeta): QueueItem[] {
 	const cover = getCoverUrl(meta.coverUrl, meta.mbid);
-	return tracks.map((t) => ({
-		trackSourceId: t.navidrome_id,
-		trackName: t.title,
-		artistName: meta.artistName,
-		trackNumber: t.track_number,
-		albumId: meta.mbid,
-		albumName: meta.albumName,
-		coverUrl: cover,
-		sourceType: 'navidrome' as const,
-		artistId: meta.artistId,
-		streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
-		format: normalizeCodec(t.codec),
-		recordingIds: recordingFor('navidrome', t.recording_mbid)
-	}));
-}
-
-function buildJellyfinItems(tracks: JellyfinTrackInfo[], meta: AlbumCardMeta): QueueItem[] {
-	const cover = getCoverUrl(meta.coverUrl, meta.mbid);
-	return tracks.map((t) => ({
-		trackSourceId: t.jellyfin_id,
-		trackName: t.title,
-		artistName: meta.artistName,
-		trackNumber: t.track_number,
-		albumId: meta.mbid,
-		albumName: meta.albumName,
-		coverUrl: cover,
-		sourceType: 'jellyfin' as const,
-		artistId: meta.artistId,
-		streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
-		format: normalizeCodec(t.codec),
-		recordingIds: recordingFor('jellyfin', t.recording_mbid)
-	}));
-}
-
-function buildPlexItems(tracks: PlexTrackInfo[], meta: AlbumCardMeta): QueueItem[] {
-	const cover = getCoverUrl(meta.coverUrl, meta.mbid);
-	return tracks
-		.filter((t) => t.part_key)
-		.map((t) => {
-			return {
-				trackSourceId: t.part_key!,
+	return tracks.flatMap((t) => {
+		const key = remoteStreamKey(t);
+		if (!key) return [];
+		return [
+			{
+				trackSourceId: key,
 				trackName: t.title,
 				artistName: meta.artistName,
-				trackNumber: t.track_number,
+				trackNumber: t.track_number ?? 0,
 				albumId: meta.mbid,
 				albumName: meta.albumName,
 				coverUrl: cover,
-				sourceType: 'plex' as const,
+				sourceType: t.source,
 				artistId: meta.artistId,
-				streamUrl: gatewayStreamUrl('plex', t.part_key!),
-				format: normalizeCodec(t.codec),
-				recordingIds: recordingFor('plex', t.recording_mbid),
-				plexRatingKey: t.plex_id
-			};
-		});
+				streamUrl: gatewayStreamUrl(t.source, key),
+				format: REMOTE_FORMAT,
+				recordingIds: recordingFor(t.source, t.recording_mbid),
+				plexRatingKey: t.source === 'plex' ? t.id : undefined
+			}
+		];
+	});
 }
 
 export async function fetchAlbumQueueItems(
@@ -124,43 +80,14 @@ export async function fetchAlbumQueueItems(
 		);
 	}
 
-	if (status.navidrome) {
+	const remotes: RemoteSource[] = ['navidrome', 'jellyfin', 'plex'];
+	for (const source of remotes) {
+		if (!status[source]) continue;
 		probes.push(
-			fetchNavidromeAlbumMatch(meta.mbid, hints, signal)
+			fetchRemoteAlbumMatch(source, meta.mbid, hints, signal)
 				.then((data) => {
-					if (!data?.found || data.tracks.length === 0) return null;
-					return {
-						source: 'navidrome' as const,
-						items: buildNavidromeItems(data.tracks, meta)
-					};
-				})
-				.catch(() => null)
-		);
-	}
-
-	if (status.jellyfin) {
-		probes.push(
-			fetchJellyfinAlbumMatch(meta.mbid, signal)
-				.then((data) => {
-					if (!data?.found || data.tracks.length === 0) return null;
-					return {
-						source: 'jellyfin' as const,
-						items: buildJellyfinItems(data.tracks, meta)
-					};
-				})
-				.catch(() => null)
-		);
-	}
-
-	if (status.plex) {
-		probes.push(
-			fetchPlexAlbumMatch(meta.mbid, hints, signal)
-				.then((data) => {
-					if (!data?.found || data.tracks.length === 0) return null;
-					return {
-						source: 'plex' as const,
-						items: buildPlexItems(data.tracks, meta)
-					};
+					if (!data.found || data.tracks.length === 0) return null;
+					return { source, items: buildRemoteItems(data.tracks, meta) };
 				})
 				.catch(() => null)
 		);

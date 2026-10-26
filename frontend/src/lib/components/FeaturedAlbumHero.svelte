@@ -1,23 +1,14 @@
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
-
-	interface AlbumSummary {
-		name: string;
-		artist_name: string;
-		image_url?: string | null;
-		year?: number | null;
-		musicbrainz_id?: string | null;
-		[key: string]: unknown;
-	}
+	import type { RemoteAlbum } from '$lib/queries/remotes/types';
 
 	interface Props {
-		albums: AlbumSummary[];
-		idKey: string;
-		onAlbumClick?: (album: AlbumSummary) => void;
+		albums: RemoteAlbum[];
+		onAlbumClick?: (album: RemoteAlbum) => void;
 	}
 
-	let { albums, idKey, onAlbumClick }: Props = $props();
+	let { albums, onAlbumClick }: Props = $props();
 
 	let hero = $derived(albums[0] ?? null);
 	let thumbnails = $derived(albums.slice(1, 9));
@@ -45,10 +36,6 @@
 			extractColor(img);
 		}
 	}
-
-	function getId(album: AlbumSummary): string {
-		return String(album[idKey] ?? album.name);
-	}
 </script>
 
 {#if hero}
@@ -59,7 +46,7 @@
 		>
 			{#if hero.image_url}
 				<img
-					src={getCoverUrl(hero.image_url, hero.musicbrainz_id ?? getId(hero))}
+					src={getCoverUrl(hero.image_url, hero.release_group_mbid ?? hero.id)}
 					alt=""
 					aria-hidden="true"
 					crossorigin="anonymous"
@@ -84,14 +71,14 @@
 					class="shrink-0 overflow-hidden rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] transition-transform duration-500 hover:scale-[1.03]"
 					style:transform-style="preserve-3d"
 					style:transform="perspective(600px) rotateY(-2deg)"
-					aria-label="Play {hero.name} by {hero.artist_name}"
+					aria-label="Play {hero.title} by {hero.artist_name}"
 					onclick={() => onAlbumClick?.(hero)}
 				>
 					<div class="h-[120px] w-[120px] sm:h-[150px] sm:w-[150px]">
 						<AlbumImage
-							mbid={hero.musicbrainz_id ?? getId(hero)}
+							mbid={hero.release_group_mbid ?? hero.id}
 							customUrl={hero.image_url}
-							alt={hero.name}
+							alt={hero.title}
 							size="full"
 							requestSize={250}
 							rounded="none"
@@ -106,7 +93,7 @@
 						Continue Listening
 					</p>
 					<h3 class="line-clamp-2 text-xl font-bold text-base-content sm:text-2xl">
-						{hero.name}
+						{hero.title}
 					</h3>
 					<p class="line-clamp-1 text-sm text-base-content/70">{hero.artist_name}</p>
 					{#if hero.year}
@@ -121,17 +108,17 @@
 				data-lazy-strip
 				class="-mt-5 flex gap-3 overflow-x-auto px-6 pb-4 pt-5 scrollbar-hide [mask-image:linear-gradient(to_bottom,transparent,black_30%)]"
 			>
-				{#each thumbnails as album (getId(album))}
+				{#each thumbnails as album (album.id)}
 					<button
 						class="shrink-0 overflow-hidden rounded-lg ring-2 ring-base-100/30 transition-all duration-300 ease-[var(--ease-overshoot)] hover:scale-105 hover:ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-						aria-label="Play {album.name}"
+						aria-label="Play {album.title}"
 						onclick={() => onAlbumClick?.(album)}
 					>
 						<div class="h-[72px] w-[72px] sm:h-[80px] sm:w-[80px]">
 							<AlbumImage
-								mbid={album.musicbrainz_id ?? getId(album)}
+								mbid={album.release_group_mbid ?? album.id}
 								customUrl={album.image_url}
-								alt={album.name}
+								alt={album.title}
 								size="full"
 								requestSize={250}
 								rounded="none"

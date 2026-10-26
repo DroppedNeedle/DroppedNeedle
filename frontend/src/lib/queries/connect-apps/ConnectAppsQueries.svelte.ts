@@ -3,7 +3,6 @@ import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { ConnectAppsSettings } from '$lib/types';
 
 import { ConnectAppsQueryKeyFactory } from './ConnectAppsQueryKeyFactory';
 import { CONNECT_APPS_ENDPOINTS } from './endpoints';
@@ -12,11 +11,7 @@ const settingsQueryOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: ConnectAppsQueryKeyFactory.settings(),
-		// The contract types the enums as plain strings; the page model narrows them.
-		queryFn: async ({ signal }) =>
-			(await api.global.v3.GET(CONNECT_APPS_ENDPOINTS.settings(), {
-				signal
-			})) as ConnectAppsSettings
+		queryFn: ({ signal }) => api.global.v3.GET(CONNECT_APPS_ENDPOINTS.settings(), { signal })
 	});
 
 export const getConnectAppsSettingsQuery = () => createQuery(() => settingsQueryOptions());

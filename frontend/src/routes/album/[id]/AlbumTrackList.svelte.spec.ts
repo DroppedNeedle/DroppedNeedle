@@ -76,13 +76,11 @@ import type {
 	AlbumBasicInfo,
 	AlbumTracksInfo,
 	HeldFileInEntry,
-	JellyfinTrackInfo,
 	LibraryFileMeta,
 	LocalAlbumMatch,
-	LocalTrackInfo,
-	NavidromeTrackInfo,
-	PlexTrackInfo
+	LocalTrackInfo
 } from '$lib/types';
+import type { RemoteTrack } from '$lib/queries/remotes/types';
 
 const TRACKS: AlbumTracksInfo['tracks'] = [
 	{ position: 1, disc_number: 1, title: 'Matched By MBID', length: 100000, recording_id: 'rec-1' },
@@ -204,9 +202,9 @@ async function renderList(
 			? (
 					track: { position: number; disc_number?: number | null; title: string },
 					local: LocalTrackInfo | null,
-					jellyfin: JellyfinTrackInfo | null,
-					navidrome: NavidromeTrackInfo | null,
-					plex: PlexTrackInfo | null
+					jellyfin: RemoteTrack | null,
+					navidrome: RemoteTrack | null,
+					plex: RemoteTrack | null
 				) => realMenuItems(track, album, local, jellyfin, navidrome, plex, null)
 			: () => []
 	};
