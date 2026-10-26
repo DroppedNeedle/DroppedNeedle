@@ -73,17 +73,23 @@ pub fn format_for_path(path: &Path) -> Result<AudioFormat, TagsError> {
         .and_then(|raw| raw.to_str())
         .unwrap_or("")
         .to_lowercase();
-    match extension.as_str() {
-        "flac" => Ok(AudioFormat::Flac),
-        "mp3" => Ok(AudioFormat::Mp3),
-        "ogg" | "oga" => Ok(AudioFormat::Ogg),
-        "opus" => Ok(AudioFormat::Opus),
-        "m4a" | "m4b" | "mp4" => Ok(AudioFormat::M4a),
-        "aac" => Ok(AudioFormat::Aac),
-        "wav" | "wave" => Ok(AudioFormat::Wav),
-        other => Err(TagsError::UnrecognizedExtension {
-            extension: other.to_owned(),
-        }),
+    format_for_extension(&extension).ok_or(TagsError::UnrecognizedExtension { extension })
+}
+
+/// The container a lowercase extension, without its dot, is read as, or
+/// `None` when no reader takes it. Soulseek folders count a file as audio
+/// exactly when this returns a container.
+#[must_use]
+pub fn format_for_extension(extension: &str) -> Option<AudioFormat> {
+    match extension {
+        "flac" => Some(AudioFormat::Flac),
+        "mp3" => Some(AudioFormat::Mp3),
+        "ogg" | "oga" => Some(AudioFormat::Ogg),
+        "opus" => Some(AudioFormat::Opus),
+        "m4a" | "m4b" | "mp4" => Some(AudioFormat::M4a),
+        "aac" => Some(AudioFormat::Aac),
+        "wav" | "wave" => Some(AudioFormat::Wav),
+        _ => None,
     }
 }
 

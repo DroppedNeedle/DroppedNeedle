@@ -24,16 +24,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::policy::{DownloadPolicy, NOT_IMPORTABLE_EXTENSIONS, search_tier};
+use super::policy::{DownloadPolicy, search_tier};
 use super::repository::SearchResult;
 use crate::downloads::plan::{ExpectedTrack, TrackPosition};
 use crate::landing::quality::worst;
 use droppedneedle_library::matching::strings::{fold, string_dist};
-
-/// Audio containers a folder is judged on (WMA is not supported).
-const AUDIO_EXTENSIONS: [&str; 12] = [
-    "flac", "mp3", "m4a", "aac", "ogg", "opus", "wav", "aif", "aiff", "alac", "ape", "wv",
-];
+use droppedneedle_library::tags::{AudioFormat, format_for_extension};
 
 /// Words that say nothing about which song a file is.
 const FILLER_WORDS: [&str; 7] = [
@@ -241,18 +237,22 @@ fn judge(
     if to_fetch.is_empty() {
         return None;
     }
-    let audio_to_fetch = || to_fetch.iter().filter(|hit| is_audio(&hit.extension));
+    let audio_to_fetch = || {
+        to_fetch
+            .iter()
+            .filter_map(|hit| landing_format(&hit.extension).map(|format| (format, hit)))
+    };
     let tiers: Vec<Option<&str>> = audio_to_fetch()
-        .map(|hit| search_tier(&hit.extension, hit.bitrate, hit.bit_depth))
+        .map(|(format, hit)| search_tier(format, hit.bitrate, hit.bit_depth))
         .collect();
     if worst(tiers.iter().flatten().copied()).is_some_and(|tier| !policy.in_band(tier)) {
         return None;
     }
     let unknown_quality = tiers.iter().any(Option::is_none);
     let quality = audio_to_fetch()
-        .map(|hit| {
+        .map(|(format, hit)| {
             policy
-                .recipe_rank(&hit.extension, hit.bitrate, hit.bit_depth, hit.sample_rate)
+                .recipe_rank(format, hit.bitrate, hit.bit_depth, hit.sample_rate)
                 .unwrap_or(usize::MAX)
         })
         .max()
@@ -278,10 +278,15 @@ fn judge(
     })
 }
 
+/// The container name the landing reads a file by (`wave` is `wav`), or
+/// `None` when the landing cannot read it.
+fn landing_format(extension: &str) -> Option<&'static str> {
+    format_for_extension(&extension.to_ascii_lowercase()).map(AudioFormat::as_str)
+}
+
+/// A file is audio exactly when the landing can read it.
 fn is_audio(extension: &str) -> bool {
-    let extension = extension.to_ascii_lowercase();
-    AUDIO_EXTENSIONS.contains(&extension.as_str())
-        && !NOT_IMPORTABLE_EXTENSIONS.contains(&extension.as_str())
+    landing_format(extension).is_some()
 }
 
 /// The album folder of a remote path (a disc subfolder collapses into its

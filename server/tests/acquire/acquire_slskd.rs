@@ -974,7 +974,7 @@ async fn failover_walks_every_peer() {
 
 // Quality policy at the pick, through the production client builder.
 
-/// A complete two-track album folder: FLAC 16-bit, or MP3 at 320 kbps.
+/// A complete two-track album folder: FLAC or APE at 16-bit, or MP3 at 320 kbps.
 fn album_peer(username: &str, extension: &str) -> serde_json::Value {
     let files: Vec<serde_json::Value> = ["Alpha", "Beta"]
         .iter()
@@ -984,7 +984,7 @@ fn album_peer(username: &str, extension: &str) -> serde_json::Value {
                 "filename": format!("@@music\\Artist\\Album\\0{} {title}.{extension}", index + 1),
                 "size": 30_000_000, "extension": extension, "length": 200 + index,
             });
-            if extension == "flac" {
+            if matches!(extension, "flac" | "ape") {
                 file["bitDepth"] = 16.into();
                 file["sampleRate"] = 44_100.into();
             } else {
@@ -1124,4 +1124,42 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
     seed_album_task(&journal, "task-flac-only").await;
     worker.run_once(2).await;
     assert_eq!(enqueued_peer(&journal, "task-flac-only").await, "lossless");
+}
+
+// A file counts as audio only when the landing can read it. APE has no
+// reader there, so an APE folder is never offered, alone or beside a FLAC
+// folder of the same album.
+#[tokio::test]
+async fn soulseek_counts_only_readable_files_as_audio() {
+    use droppedneedle_acquire::sources::SlskdSource;
+
+    let mock = MockSlskd::start().await.expect("mock starts");
+    let db = AcquireDb::scratch().expect("scratch db");
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
+    let source = SlskdSource::new(Arc::new(repository(&mock)), journal);
+    let target = SearchTarget {
+        artist: "Artist".to_owned(),
+        album_title: "Album".to_owned(),
+        year: None,
+        tracklist: Vec::new(),
+        wanted: Vec::new(),
+        track: None,
+    };
+
+    mock.script_responses(vec![
+        album_peer("monkeys", "ape"),
+        album_peer("lossless", "flac"),
+    ]);
+    let offered: Vec<String> = source
+        .search(&target)
+        .await
+        .expect("search runs")
+        .into_iter()
+        .filter_map(|candidate| candidate.view.username)
+        .collect();
+    assert_eq!(offered, ["lossless"], "the APE folder is not offered");
+
+    mock.script_responses(vec![album_peer("monkeys", "ape")]);
+    let offered = source.search(&target).await.expect("search runs");
+    assert!(offered.is_empty(), "an APE-only folder is never offered");
 }
