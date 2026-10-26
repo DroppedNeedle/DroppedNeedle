@@ -138,8 +138,9 @@ impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
         Box::pin(async move {
             // SQLite fills the bare `relative_path` from the row that holds
             // MIN(file_path), so both sample paths come from one row.
-            let rows: Vec<(String, i64, String, String)> = sqlx::query_as(
-                "SELECT root_id, COUNT(*), MIN(file_path), relative_path \
+            let rows: Vec<(String, i64, String, String, bool)> = sqlx::query_as(
+                "SELECT root_id, COUNT(*), MIN(file_path), relative_path, \
+                 SUM(availability IN ('indexed', 'excluded')) > 0 \
                  FROM local_tracks GROUP BY root_id ORDER BY root_id",
             )
             .fetch_all(&self.pool)
@@ -148,11 +149,20 @@ impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
             Ok(rows
                 .into_iter()
                 .map(
-                    |(root_id, track_count, sample_file_path, sample_relative_path)| CatalogRoot {
+                    |(
                         root_id,
+                        track_count,
                         sample_file_path,
                         sample_relative_path,
-                        track_count,
+                        any_on_disk,
+                    )| {
+                        CatalogRoot {
+                            root_id,
+                            sample_file_path,
+                            sample_relative_path,
+                            track_count,
+                            any_on_disk,
+                        }
                     },
                 )
                 .collect())

@@ -637,6 +637,8 @@ pub struct CatalogRoot {
     pub sample_relative_path: String,
     /// Rows under the root.
     pub track_count: i64,
+    /// Whether any row is still on disk (indexed or excluded).
+    pub any_on_disk: bool,
 }
 
 /// One catalog track path, for the path-mapping dry run.
@@ -868,7 +870,7 @@ pub fn apply_preview(
 /// directory names or the file path does not end with it, fall back to
 /// the file's directory, which the restore dialog lets the user correct.
 /// None when the stored file path is not absolute.
-fn recovered_root_path(root: &CatalogRoot) -> Option<PathBuf> {
+pub fn recovered_root_path(root: &CatalogRoot) -> Option<PathBuf> {
     let file = Path::new(&root.sample_file_path);
     let relative = Path::new(&root.sample_relative_path);
     let plain = relative.components().next().is_some()
@@ -1090,6 +1092,7 @@ mod tests {
             sample_file_path: file.to_owned(),
             sample_relative_path: relative.to_owned(),
             track_count,
+            any_on_disk: true,
         }
     }
 

@@ -23,7 +23,7 @@ use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::policy::{
-    self as library_policy, LibraryPolicyCatalog, ResolvedLibraryPolicy,
+    self as library_policy, CatalogRoot, LibraryPolicyCatalog, ResolvedLibraryPolicy,
 };
 use droppedneedle_library::settings_models::{
     LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse,
@@ -150,11 +150,7 @@ impl LibraryPolicyService {
     /// Roots the catalog still holds tracks for but the settings no
     /// longer list.
     pub async fn restorable_roots(&self) -> Result<LibraryRestorableRootsResponse, SettingsError> {
-        let catalog = self.catalog()?;
-        let roots = catalog
-            .catalog_roots()
-            .await
-            .map_err(|cause| self.catalog_error(cause))?;
+        let roots = self.offerable_roots().await?;
         self.with_saved(move |saved| {
             Ok(LibraryRestorableRootsResponse {
                 restorable_roots: library_policy::restorable_roots(&saved.settings, &roots),
@@ -171,11 +167,7 @@ impl LibraryPolicyService {
         &self,
         request: LibraryRestoreRootsRequest,
     ) -> Result<LibrarySettingsResponse, SettingsError> {
-        let catalog = self.catalog()?;
-        let roots = catalog
-            .catalog_roots()
-            .await
-            .map_err(|cause| self.catalog_error(cause))?;
+        let roots = self.offerable_roots().await?;
         let paths: BTreeMap<String, String> = request.paths.unwrap_or_default();
         let expected = request.expected_policy_revision;
         self.settings
@@ -186,6 +178,25 @@ impl LibraryPolicyService {
                 library_policy::normalize(&restored)
             })
             .await
+    }
+
+    /// The catalog's roots that putting back could bring files back to.
+    /// A root whose every row is missing is left out only when its folder
+    /// is gone too; files back on disk that no scan has seen yet keep it.
+    /// The folder is checked here, before any settings write.
+    async fn offerable_roots(&self) -> Result<Vec<CatalogRoot>, SettingsError> {
+        let roots = self
+            .catalog()?
+            .catalog_roots()
+            .await
+            .map_err(|cause| self.catalog_error(cause))?;
+        let mut offerable = Vec::with_capacity(roots.len());
+        for root in roots {
+            if root.any_on_disk || !folder_is_gone(&root).await {
+                offerable.push(root);
+            }
+        }
+        Ok(offerable)
     }
 
     /// Path-mapping dry run: does every catalog file map to exactly one
@@ -232,5 +243,18 @@ impl LibraryPolicyService {
             .has_tracks()
             .await
             .map_err(|cause| self.catalog_error(cause))
+    }
+}
+
+/// Whether the folder a root's rows place it at is known to be absent. A
+/// path that cannot be recovered or a stat that fails for another reason
+/// says nothing, so the root stays offered.
+async fn folder_is_gone(root: &CatalogRoot) -> bool {
+    let Some(path) = library_policy::recovered_root_path(root) else {
+        return false;
+    };
+    match tokio::fs::metadata(&path).await {
+        Ok(meta) => !meta.is_dir(),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
     }
 }
