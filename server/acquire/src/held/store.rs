@@ -16,6 +16,26 @@ use crate::reason::Reason;
 /// arrived: 90 days.
 pub const KEEP_MS: i64 = 90 * 86_400_000;
 
+/// The gaps between automatic retries of an entry whose files our side
+/// could not take: 5 and 15 minutes, half an hour, then 1, 2, 4, 8 and 24
+/// hours, then daily until the entry expires.
+const RETRY_GAPS_MS: [i64; 8] = [
+    5 * 60_000,
+    15 * 60_000,
+    30 * 60_000,
+    3_600_000,
+    2 * 3_600_000,
+    4 * 3_600_000,
+    8 * 3_600_000,
+    24 * 3_600_000,
+];
+
+/// The gap before the next retry, after `tries` retries in a row.
+pub fn retry_gap(tries: i64) -> i64 {
+    let step = usize::try_from(tries).unwrap_or(0);
+    RETRY_GAPS_MS[step.min(RETRY_GAPS_MS.len() - 1)]
+}
+
 /// Where an entry's files came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -258,6 +278,9 @@ pub struct Entry {
     pub state: EntryState,
     pub created_at: i64,
     pub expires_at: i64,
+    /// When the held loop next retries its files our side could not take;
+    /// `None` for at its next pass.
+    pub retry_at: Option<i64>,
     pub files: Vec<HeldFile>,
 }
 
@@ -276,6 +299,7 @@ impl Entry {
             state: EntryState::parse(&row.get::<_, String>(9)?),
             created_at: row.get(10)?,
             expires_at: row.get(11)?,
+            retry_at: row.get(12)?,
             files: Vec::new(),
         })
     }
@@ -782,6 +806,37 @@ impl<'c> HeldRows<'c> {
         Ok(Some(copies))
     }
 
+    /// Entries waiting for a person whose automatic retry is due at `now`,
+    /// longest waiting first: id and owner.
+    pub fn due_retries(&self, now: i64, limit: i64) -> rusqlite::Result<Vec<(i64, String)>> {
+        let mut statement = self.conn.prepare_cached(sql::DUE_RETRIES.text())?;
+        let rows = statement
+            .query_map(params![now, limit], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        Ok(rows)
+    }
+
+    /// After an automatic retry: an entry that still has a file it
+    /// retries by itself counts one more try and waits for the next gap;
+    /// one with none left starts again from the first try. Answers when
+    /// the next try is.
+    pub fn schedule_retry(&self, entry_id: i64, now: i64) -> rusqlite::Result<Option<i64>> {
+        let state: Option<(bool, i64)> = self
+            .conn
+            .query_row(sql::RETRY_STATE.text(), params![entry_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?;
+        let (tries, at) = match state {
+            None => return Ok(None),
+            Some((true, tries)) => (tries + 1, Some(now + retry_gap(tries))),
+            Some((false, _)) => (0, None),
+        };
+        self.conn
+            .execute(sql::SET_RETRY.text(), params![entry_id, tries, at])?;
+        Ok(at)
+    }
+
     /// Entries an action had claimed.
     pub fn placing(&self) -> rusqlite::Result<Vec<Entry>> {
         let mut statement = self.conn.prepare_cached(sql::PLACING_ENTRIES.text())?;
@@ -815,6 +870,27 @@ mod tests {
         assert_eq!(key("album", Some("rec"), Some("RG")).text(), "album:rg");
         assert_eq!(key("album", None, Some(" ")).text(), "task:t1");
         assert_eq!(GroupKey::Upload(7).text(), "upload:7");
+    }
+
+    #[test]
+    fn retries_wait_longer_each_time_up_to_a_day() {
+        let minutes: Vec<i64> = (0..10).map(|tries| retry_gap(tries) / 60_000).collect();
+        assert_eq!(minutes, [5, 15, 30, 60, 120, 240, 480, 1440, 1440, 1440]);
+    }
+
+    #[test]
+    fn the_library_reasons_in_sql_are_the_library_kind() {
+        let listed: Vec<&str> = sql::LIBRARY_REASONS
+            .trim_matches(|c| c == '(' || c == ')')
+            .split(',')
+            .map(|code| code.trim().trim_matches('\''))
+            .collect();
+        let library: Vec<&str> = Reason::ALL
+            .iter()
+            .filter(|reason| reason.kind() == crate::reason::ReasonKind::Library)
+            .map(|reason| reason.code())
+            .collect();
+        assert_eq!(listed, library);
     }
 
     #[test]

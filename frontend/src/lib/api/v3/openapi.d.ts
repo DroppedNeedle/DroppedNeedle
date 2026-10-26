@@ -14638,6 +14638,13 @@ export interface components {
             files: components["schemas"]["HeldFileResponse"][];
             /** Format: int64 */
             id: number;
+            /**
+             * Format: int64
+             * @description When DroppedNeedle next retries the files offering Retry by itself,
+             *     in milliseconds. `None` when no file offers Retry, or when the next
+             *     try is at the held loop's next pass (within five minutes).
+             */
+            next_retry_at?: number | null;
             origin: components["schemas"]["EntryOrigin"];
             /** @description The song, for a track download. */
             recording_mbid?: string | null;

@@ -112,4 +112,33 @@ describe('the held list on the Downloads queue', () => {
 			await expect.element(card.getByRole('button', { name: 'Discard all' })).toBeVisible();
 		}
 	});
+
+	it('shows when a file the library could not take is tried again, and while it is', async () => {
+		const at = new Date();
+		at.setHours(23, 59, 59, 0);
+		const occupied = (id: number) =>
+			file(id, {
+				release_track_mbid: `track-${id}`,
+				reason: 'target_occupied',
+				reason_text: 'Another file already sits where this would go in your library.',
+				reason_kind: 'library',
+				actions: ['retry']
+			});
+		fakeApi({
+			'GET /api/v3/downloads/tasks': { items: [], page: 1, page_size: 100 },
+			'GET /api/v3/held': {
+				entries: [
+					{ ...download, files: [occupied(1), file(2)], next_retry_at: at.getTime() },
+					{ ...upload, state: 'placing', files: [occupied(3)] }
+				]
+			}
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+		const waiting = page.getByRole('article').filter({ hasText: 'Drift' });
+		await expect.element(waiting.getByText(`Tries again by itself at ${time}`)).toBeVisible();
+		const placing = page.getByRole('article').filter({ hasText: 'Tidewater' });
+		await expect.element(placing.getByText('Retrying now')).toBeVisible();
+	});
 });

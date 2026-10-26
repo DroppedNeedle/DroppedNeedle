@@ -984,3 +984,543 @@ async fn failing_cleanup_shows_on_service_health_until_it_clears() {
     worker.run_once(4).await;
     assert!(health.current(Instant::now()).is_empty());
 }
+
+const HELD_GROUP: &str = "6d0b7a1e-0000-4000-8000-0000000000a1";
+const HELD_RELEASE: &str = "6d0b7a1e-0000-4000-8000-0000000000a2";
+
+const LIVE_GROUP: &str = "6d0b7a1e-0000-4000-8000-0000000000a3";
+const LIVE_RELEASE: &str = "6d0b7a1e-0000-4000-8000-0000000000a4";
+const MYSTERONS: &str = "6d0b7a1e-0000-4000-8000-0000000000c0";
+const SOUR_TIMES: &str = "6d0b7a1e-0000-4000-8000-0000000000c1";
+
+/// MusicBrainz as a fixed set of releases.
+struct Releases(Vec<droppedneedle_library::matching::Release>);
+
+impl droppedneedle_library::identify::sources::ReleaseSource for Releases {
+    fn search<'a>(
+        &'a self,
+        _title: &'a str,
+        _artist: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<
+            Vec<droppedneedle_library::identify::sources::ReleaseHit>,
+            droppedneedle_library::identify::sources::SourceError,
+        >,
+    > {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn release<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<
+            Option<droppedneedle_library::matching::Release>,
+            droppedneedle_library::identify::sources::SourceError,
+        >,
+    > {
+        let found = self
+            .0
+            .iter()
+            .find(|release| release.answers_to(mbid))
+            .cloned();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        _mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<String>, droppedneedle_library::identify::sources::SourceError>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+/// Portishead's "Dummy" with two tracks.
+fn held_release() -> droppedneedle_library::matching::Release {
+    portishead(
+        HELD_RELEASE,
+        HELD_GROUP,
+        "Dummy",
+        &[(MYSTERONS, "Mysterons"), (SOUR_TIMES, "Sour Times")],
+    )
+}
+
+/// A Portishead album with the tracks `(recording, title)`; each track's
+/// id is made from the release's, so no two releases share one.
+fn portishead(
+    id: &str,
+    group: &str,
+    title: &str,
+    tracks: &[(&str, &str)],
+) -> droppedneedle_library::matching::Release {
+    use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
+    Release {
+        id: id.to_owned(),
+        release_group_id: group.to_owned(),
+        title: title.to_owned(),
+        artists: vec![CreditedArtist {
+            id: "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11".to_owned(),
+            name: "Portishead".to_owned(),
+            sort_name: Some("Portishead".to_owned()),
+            join: String::new(),
+        }],
+        status: Some("Official".to_owned()),
+        media: vec![ReleaseMedium {
+            position: 1,
+            format: Some("CD".to_owned()),
+            title: None,
+            track_count: tracks.len() as u32,
+        }],
+        tracks: tracks
+            .iter()
+            .enumerate()
+            .map(|(index, (recording, title))| ReleaseTrack {
+                isrcs: Vec::new(),
+                genres: Vec::new(),
+                id: format!("{}b{}{index}", &id[..id.len() - 3], &id[id.len() - 1..]),
+                recording_id: (*recording).to_owned(),
+                title: (*title).to_owned(),
+                artists: Vec::new(),
+                disc: 1,
+                position: index as u32 + 1,
+                absolute_position: index as u32 + 1,
+                length_ms: None,
+            })
+            .collect(),
+        ..Release::default()
+    }
+}
+
+/// A held copy in `dir`: a library fixture tagged as track `track`.
+fn held_copy(dir: &std::path::Path, name: &str, fixture: &str, title: &str, track: u32) {
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    std::fs::create_dir_all(dir).expect("held dir");
+    let path = dir.join(name);
+    let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/library")
+        .join(fixture);
+    std::fs::copy(source, &path).expect("copy fixture");
+    let edits = vec![
+        TagEdit::new(TagField::Title, vec![title.to_owned()]),
+        TagEdit::new(TagField::Artist, vec!["Portishead".to_owned()]),
+        TagEdit::new(TagField::AlbumArtist, vec!["Portishead".to_owned()]),
+        TagEdit::new(TagField::Album, vec!["Dummy".to_owned()]),
+        TagEdit::new(TagField::TrackNumber, vec![track.to_string()]),
+    ];
+    save_tags(&path, &edits).expect("tags save");
+}
+
+/// Hold the files `(path, track, reason)` in a new download entry of
+/// u-ada's under `key`, in `state`. Answers the entry.
+async fn seed_held(
+    db: &AcquireDb,
+    key: &str,
+    state: &str,
+    files: Vec<(&str, droppedneedle_library::matching::ReleaseTrack, Reason)>,
+) -> i64 {
+    seed_held_on(db, key, HELD_GROUP, HELD_RELEASE, state, files).await
+}
+
+/// [`seed_held`] for an entry about album `group` whose files are paired
+/// to tracks of `release`.
+async fn seed_held_on(
+    db: &AcquireDb,
+    key: &str,
+    group: &'static str,
+    release: &'static str,
+    state: &str,
+    files: Vec<(&str, droppedneedle_library::matching::ReleaseTrack, Reason)>,
+) -> i64 {
+    let (key, state) = (key.to_owned(), state.to_owned());
+    let files: Vec<(String, String, String, u32, &'static str)> = files
+        .into_iter()
+        .map(|(path, track, reason)| {
+            (
+                path.to_owned(),
+                track.id,
+                track.recording_id,
+                track.position,
+                reason.code(),
+            )
+        })
+        .collect();
+    db.write("test.held", move |tx| {
+        tx.execute(
+            "INSERT INTO acquire_held_entries (user_id, origin, group_key, \
+             release_group_mbid, state, created_at, expires_at) VALUES ('u-ada', \
+             'download', ?1, ?2, ?3, 1, 9999999999999)",
+            rusqlite::params![key, group, state],
+        )?;
+        let entry = tx.last_insert_rowid();
+        for (path, track, recording, position, reason) in &files {
+            tx.execute(
+                "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
+                 release_mbid, release_track_mbid, recording_mbid, disc_number, \
+                 track_number, reason, source, state, created_at) VALUES (?1, 'held', ?2, \
+                 ?2, ?3, ?4, ?5, 1, ?6, ?7, 'soulseek', 'held', 1)",
+                rusqlite::params![entry, path, release, track, recording, position, reason],
+            )?;
+        }
+        Ok(entry)
+    })
+    .await
+    .expect("held rows")
+}
+
+/// An entry's state, tries and next try.
+async fn retry_of(db: &AcquireDb, entry: i64) -> (String, i64, Option<i64>) {
+    sqlx::query_as("SELECT state, retry_tries, retry_at FROM acquire_held_entries WHERE id = ?1")
+        .bind(entry)
+        .fetch_one(db.pool())
+        .await
+        .expect("entry")
+}
+
+/// A held file's state and reason, by its path.
+async fn held_file(db: &AcquireDb, path: &str) -> (String, String) {
+    sqlx::query_as("SELECT state, reason FROM acquire_held_files WHERE path = ?1")
+        .bind(path)
+        .fetch_one(db.pool())
+        .await
+        .expect("held file")
+}
+
+/// A file held because its place in the library was taken is retried by
+/// itself, exactly as its owner pressing Retry: at the first pass, then 5
+/// and 15 minutes later while the place stays taken, and it goes in at the
+/// pass after the place is freed. A file a person decides on, in the same
+/// entry, is never touched, and an entry a person is acting on is skipped.
+const MINUTE: i64 = 60_000;
+
+/// The held list over a real library on a scratch database, with
+/// MusicBrainz as `releases` and the clock in the test's hands.
+struct HeldRig {
+    clock: Arc<droppedneedle_kernel::clock::ManualClock>,
+    db: AcquireDb,
+    acquire: droppedneedle_acquire::AcquireSetup,
+    music: std::path::PathBuf,
+    held_dir: std::path::PathBuf,
+    _platform: droppedneedle_kernel::platform::Platform,
+    _scratch: AcquireDb,
+}
+
+impl HeldRig {
+    async fn new(releases: Vec<droppedneedle_library::matching::Release>) -> Self {
+        use droppedneedle_kernel::clock::ManualClock;
+        use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+
+        let scratch = AcquireDb::scratch().expect("scratch db");
+        let clock = Arc::new(ManualClock::at(1_800_000_000_000));
+        let db = AcquireDb::new(scratch.db().clone(), clock.clone());
+        db.add_user("u-ada", "Ada", "user").await.expect("user");
+        let dir = scratch.path().parent().expect("scratch dir").to_path_buf();
+        let config = Arc::new(
+            ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+                .expect("config"),
+        );
+        let platform = crate::common::TestPlatform::on(db.db(), &dir)
+            .settings(config)
+            .build()
+            .await;
+        let (library, _) = crate::common::library::library_at(&platform);
+        let music = dir.join("music");
+        std::fs::create_dir_all(&music).expect("music root");
+        library
+            .add_root(
+                Some("music".to_owned()),
+                music.to_string_lossy().into_owned(),
+                droppedneedle_library::scan::EffectivePolicy::Automatic,
+            )
+            .expect("root adds");
+        let landing = droppedneedle_acquire::landing::library::LibraryLanding::new(
+            library.clone(),
+            crate::common::library::every_priority(Arc::new(Releases(releases))),
+            db.pool().clone(),
+        );
+        let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
+            db.clone(),
+            Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+            droppedneedle_kernel::events::EventHub::new(),
+            Some(Arc::new(landing)),
+        )
+        .expect("acquire bundle");
+        let held_dir = acquire.held.folders().held.clone();
+        Self {
+            clock,
+            db,
+            acquire,
+            music,
+            held_dir,
+            _platform: platform,
+            _scratch: scratch,
+        }
+    }
+}
+
+#[tokio::test]
+async fn held_files_the_library_could_not_take_are_retried_by_themselves() {
+    use droppedneedle_kernel::clock::Clock as _;
+
+    let rig = HeldRig::new(vec![held_release()]).await;
+    let tracks = held_release().tracks;
+    let (clock, db, acquire, music, held_dir) =
+        (&rig.clock, &rig.db, &rig.acquire, &rig.music, &rig.held_dir);
+    held_copy(held_dir, "taken.flac", "flac_full_01.flac", "Mysterons", 1);
+    held_copy(held_dir, "weak.flac", "flac_full_02.flac", "Sour Times", 2);
+    held_copy(held_dir, "free.flac", "flac_full_02.flac", "Sour Times", 2);
+    held_copy(
+        held_dir,
+        "claimed.flac",
+        "flac_full_02.flac",
+        "Sour Times",
+        2,
+    );
+    let album = music.join("Portishead/Dummy");
+    std::fs::create_dir_all(&album).expect("album folder");
+    let taken = album.join("0101 Mysterons.flac");
+    std::fs::write(&taken, b"someone else's file").expect("stray file");
+
+    let waiting = seed_held(
+        db,
+        &format!("album:{HELD_GROUP}"),
+        "held",
+        vec![
+            ("taken.flac", tracks[0].clone(), Reason::TargetOccupied),
+            ("weak.flac", tracks[1].clone(), Reason::WeakMatch),
+        ],
+    )
+    .await;
+    let claimed = seed_held(
+        db,
+        "task:t-claimed",
+        "placing",
+        vec![("claimed.flac", tracks[1].clone(), Reason::TargetOccupied)],
+    )
+    .await;
+    let fresh = seed_held(
+        db,
+        "task:t-fresh",
+        "held",
+        vec![("free.flac", tracks[1].clone(), Reason::TargetOccupied)],
+    )
+    .await;
+
+    let start = clock.now_ms();
+    acquire.held.tend().await;
+    assert_eq!(
+        held_file(db, "free.flac").await.0,
+        "imported",
+        "a fresh hold whose place is free goes in at the first pass"
+    );
+    assert!(album.join("0102 Sour Times.flac").is_file());
+    assert_eq!(retry_of(db, fresh).await, ("resolved".to_owned(), 0, None));
+    assert_eq!(
+        retry_of(db, waiting).await,
+        ("held".to_owned(), 1, Some(start + 5 * MINUTE)),
+        "a place still taken waits five minutes"
+    );
+    assert_eq!(
+        held_file(db, "taken.flac").await,
+        ("held".to_owned(), "target_occupied".to_owned())
+    );
+    assert_eq!(
+        std::fs::read(&taken).expect("stray file"),
+        b"someone else's file",
+        "the file in the way is never overwritten"
+    );
+    assert_eq!(
+        held_file(db, "weak.flac").await,
+        ("held".to_owned(), "weak_match".to_owned()),
+        "a file a person decides on is not retried"
+    );
+    assert!(held_dir.join("weak.flac").is_file());
+    assert_eq!(
+        retry_of(db, claimed).await,
+        ("placing".to_owned(), 0, None),
+        "an entry a person is acting on is skipped"
+    );
+    assert!(held_dir.join("claimed.flac").is_file());
+
+    acquire.held.tend().await;
+    assert_eq!(
+        retry_of(db, waiting).await,
+        ("held".to_owned(), 1, Some(start + 5 * MINUTE)),
+        "nothing is retried before its time"
+    );
+
+    clock.advance(5 * MINUTE);
+    acquire.held.tend().await;
+    assert_eq!(
+        retry_of(db, waiting).await,
+        ("held".to_owned(), 2, Some(start + 20 * MINUTE)),
+        "the next gap is fifteen minutes"
+    );
+
+    std::fs::remove_file(&taken).expect("place freed");
+    clock.advance(15 * MINUTE);
+    acquire.held.tend().await;
+    assert_eq!(held_file(db, "taken.flac").await.0, "imported");
+    assert!(taken.is_file(), "the held file took its place");
+    assert!(!held_dir.join("taken.flac").exists());
+    assert_eq!(
+        retry_of(db, waiting).await,
+        ("held".to_owned(), 0, None),
+        "with nothing left to retry the entry waits for its person"
+    );
+    assert_eq!(
+        held_file(db, "weak.flac").await,
+        ("held".to_owned(), "weak_match".to_owned())
+    );
+}
+
+/// A download a curator matched to another album, then held because its
+/// place there was taken, is retried onto that album: never back onto the
+/// album it was downloaded for, though the same recording is on both.
+#[tokio::test]
+async fn a_matched_download_is_retried_onto_its_match() {
+    let dummy = held_release();
+    let live = portishead(
+        LIVE_RELEASE,
+        LIVE_GROUP,
+        "Roseland",
+        &[(MYSTERONS, "Mysterons")],
+    );
+    let rig = HeldRig::new(vec![dummy.clone(), live.clone()]).await;
+    let dummy_dir = rig.music.join("Portishead/Dummy");
+
+    // The library holds its copy of Dummy, so Dummy has a chosen edition.
+    held_copy(
+        &rig.held_dir,
+        "sour.flac",
+        "flac_full_02.flac",
+        "Sour Times",
+        2,
+    );
+    seed_held(
+        &rig.db,
+        "task:t-sour",
+        "held",
+        vec![("sour.flac", dummy.tracks[1].clone(), Reason::TargetOccupied)],
+    )
+    .await;
+    rig.acquire.held.tend().await;
+    assert!(dummy_dir.join("0102 Sour Times.flac").is_file());
+
+    held_copy(
+        &rig.held_dir,
+        "matched.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let taken = rig.music.join("Portishead/Roseland/0101 Mysterons.flac");
+    std::fs::create_dir_all(taken.parent().expect("album folder")).expect("album folder");
+    std::fs::write(&taken, b"someone else's file").expect("stray file");
+    seed_held_on(
+        &rig.db,
+        &format!("album:{HELD_GROUP}"),
+        HELD_GROUP,
+        LIVE_RELEASE,
+        "held",
+        vec![(
+            "matched.flac",
+            live.tracks[0].clone(),
+            Reason::TargetOccupied,
+        )],
+    )
+    .await;
+
+    rig.acquire.held.tend().await;
+    assert!(
+        !dummy_dir.join("0101 Mysterons.flac").exists(),
+        "never placed on the album the curator matched it away from"
+    );
+    assert_eq!(
+        held_file(&rig.db, "matched.flac").await,
+        ("held".to_owned(), "target_occupied".to_owned())
+    );
+
+    std::fs::remove_file(&taken).expect("place freed");
+    rig.clock.advance(5 * MINUTE);
+    rig.acquire.held.tend().await;
+    assert_eq!(held_file(&rig.db, "matched.flac").await.0, "imported");
+    assert!(taken.is_file(), "placed on the album it was matched to");
+    assert!(!dummy_dir.join("0101 Mysterons.flac").exists());
+}
+
+/// A pass that finds the database busy, or no library set up yet, spends
+/// no try: the entry waits for the next pass as it was, never left claimed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_database_or_no_library_spends_no_retry() {
+    use droppedneedle_kernel::db::{DbConfig, DbError, Lane, LaneLimits, open_runtime};
+
+    let dir = scratch_dir("held-retry-busy");
+    let path = dir.join("app.db");
+    crate::common::migrated_db(&path);
+    let runtime = open_runtime(&DbConfig::new(&path).with_lane_limits(LaneLimits {
+        foreground_wait: std::time::Duration::from_millis(200),
+        watch_tick: std::time::Duration::from_millis(10),
+        ..LaneLimits::default()
+    }))
+    .await
+    .expect("runtime opens");
+    let db = AcquireDb::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
+        db.clone(),
+        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+        droppedneedle_kernel::events::EventHub::new(),
+        None,
+    )
+    .expect("acquire bundle");
+    let track = held_release().tracks[0].clone();
+    let entry = seed_held(
+        &db,
+        "task:t-busy",
+        "held",
+        vec![("taken.flac", track, Reason::TargetOccupied)],
+    )
+    .await;
+
+    let (entered, inside) = std::sync::mpsc::channel();
+    let (let_go, release) = std::sync::mpsc::channel::<()>();
+    let writer = {
+        let db = runtime.db().clone();
+        std::thread::spawn(move || {
+            let _ = db.write_blocking(Lane::Foreground, "test.hold", |_| {
+                let _ = entered.send(());
+                let _ = release.recv();
+                Ok::<_, DbError>(())
+            });
+        })
+    };
+    inside
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the writer is held");
+    acquire.held.tend().await;
+    drop(let_go);
+    writer.join().expect("writer joins");
+    assert_eq!(
+        retry_of(&db, entry).await,
+        ("held".to_owned(), 0, None),
+        "a busy database spends no try"
+    );
+
+    acquire.held.tend().await;
+    assert_eq!(
+        retry_of(&db, entry).await,
+        ("held".to_owned(), 0, None),
+        "no library set up spends no try"
+    );
+    drop(acquire);
+    runtime.shutdown().await;
+}

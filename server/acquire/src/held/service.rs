@@ -9,7 +9,8 @@
 //! Discard deletes the held copies. Each acts on the whole entry or the
 //! files named, one batch per download they came from, and claims the
 //! entry first (`held` to `placing`), so a second action, or the prune,
-//! never runs on it at once.
+//! never runs on it at once. The loop also presses Retry by itself on
+//! files our side could not take, at growing gaps.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -36,8 +37,8 @@ use crate::reason::{Reason, ReasonKind};
 use crate::worker::DownloadWorker;
 use droppedneedle_library::matching::Release;
 
-/// Job name of the loop that removes expired entries' copies and finishes
-/// actions a restart cut off.
+/// Job name of the loop that removes expired entries' copies, finishes
+/// actions a restart cut off and retries files our side could not take.
 pub const PRUNE_JOB: &str = "acquire-held-prune";
 
 /// Fingerprint checks one bulk re-check runs at most (v2
@@ -46,6 +47,9 @@ pub const BULK_RECHECK_LIMIT: usize = 25;
 
 /// Entries one prune pass expires at most; the rest wait for the next.
 const PRUNE_BATCH: i64 = 200;
+
+/// Entries one pass retries at most; the rest wait for the next.
+const RETRY_BATCH: i64 = 20;
 
 /// Why an action on the held list did not happen. The sentences are shown
 /// as they are.
@@ -57,10 +61,20 @@ pub enum HeldError {
     /// The action cannot run now; the sentence says what to do.
     #[error("{0}")]
     Refused(String),
+    /// Another action runs on the entry now.
+    #[error("This entry is already being handled. Wait a moment and refresh.")]
+    InUse,
+    /// No library folder takes imports yet.
+    #[error("Imports are not set up yet. Add a library folder in settings, then try again.")]
+    NotSetUp,
     /// The request asked for something that cannot be: the sentence says
     /// what.
     #[error("{0}")]
     Invalid(String),
+    /// The database was busy; nothing was changed and the action can run
+    /// again.
+    #[error("held list busy: {0}")]
+    Busy(String),
     /// The store or the library could not be read or written.
     #[error("held list unavailable: {0}")]
     Unavailable(String),
@@ -68,7 +82,11 @@ pub enum HeldError {
 
 impl From<DbError> for HeldError {
     fn from(error: DbError) -> Self {
-        Self::Unavailable(error.to_string())
+        match error {
+            DbError::Busy { operation } => Self::Busy(operation),
+            DbError::LaneClosed => Self::Busy("lane closed".to_owned()),
+            other => Self::Unavailable(other.to_string()),
+        }
     }
 }
 
@@ -80,7 +98,10 @@ impl From<rusqlite::Error> for HeldError {
 
 impl From<crate::downloads::store::StoreError> for HeldError {
     fn from(error: crate::downloads::store::StoreError) -> Self {
-        Self::Unavailable(error.to_string())
+        match error {
+            crate::downloads::store::StoreError::Db(error) => Self::from(error),
+            other => Self::Unavailable(other.to_string()),
+        }
     }
 }
 
@@ -96,7 +117,6 @@ impl From<DropError> for HeldError {
 }
 
 const GONE: &str = "That held entry was not found. It may have been handled already.";
-const BUSY: &str = "This entry is already being handled. Wait a moment and refresh.";
 
 /// What an action did with the files it was given.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -187,12 +207,7 @@ impl HeldService {
         self.worker
             .landing()
             .and_then(|landing| landing.library().cloned())
-            .ok_or_else(|| {
-                HeldError::Refused(
-                    "Imports are not set up yet. Add a library folder in settings, then try again."
-                        .to_owned(),
-                )
-            })
+            .ok_or(HeldError::NotSetUp)
     }
 
     /// Open entries with their held files, newest first: the viewer's own,
@@ -235,7 +250,7 @@ impl HeldService {
                 Ok(rows.entry(entry_id)?)
             })
             .await?;
-        claimed.ok_or_else(|| HeldError::Refused(BUSY.to_owned()))
+        claimed.ok_or(HeldError::InUse)
     }
 
     /// Give an entry back after an action: waiting again, or resolved
@@ -315,9 +330,22 @@ impl HeldService {
         file_ids: Option<Vec<i64>>,
         actor: &str,
     ) -> Result<Acted, HeldError> {
+        self.import_for(viewer, entry_id, file_ids, actor, Asker::Person)
+            .await
+    }
+
+    /// [`Self::import`] for a person or for the held loop's retry.
+    async fn import_for(
+        &self,
+        viewer: &Viewer,
+        entry_id: i64,
+        file_ids: Option<Vec<i64>>,
+        actor: &str,
+        asker: Asker,
+    ) -> Result<Acted, HeldError> {
         let entry = self.claim(viewer, entry_id).await?;
         let result = match Self::chosen(&entry, file_ids.as_deref()) {
-            Ok(files) => self.place(&entry, files, actor).await,
+            Ok(files) => self.place(&entry, files, actor, asker).await,
             Err(error) => Err(error),
         };
         self.release(entry_id).await;
@@ -540,7 +568,7 @@ impl HeldService {
             return results;
         }
         let ids: Vec<i64> = confirmed.iter().map(|file| file.id).collect();
-        match self.place(entry, confirmed, actor).await {
+        match self.place(entry, confirmed, actor, Asker::Person).await {
             Ok(_) => {
                 let still: HashSet<i64> = self
                     .read("held.recheck_left", {
@@ -698,6 +726,7 @@ impl HeldService {
         entry: &Entry,
         files: Vec<HeldFile>,
         actor: &str,
+        asker: Asker,
     ) -> Result<Acted, HeldError> {
         let mut groups: Vec<Vec<HeldFile>> = Vec::new();
         for file in files {
@@ -711,7 +740,8 @@ impl HeldService {
         }
         let mut acted = Acted::default();
         for group in groups {
-            self.place_group(entry, group, actor, &mut acted).await?;
+            self.place_group(entry, group, actor, asker, &mut acted)
+                .await?;
         }
         Ok(acted)
     }
@@ -721,6 +751,7 @@ impl HeldService {
         entry: &Entry,
         files: Vec<HeldFile>,
         actor: &str,
+        asker: Asker,
         acted: &mut Acted,
     ) -> Result<(), HeldError> {
         let library = self.library()?;
@@ -742,7 +773,7 @@ impl HeldService {
         let first = &files[0];
         let (task, target) = self.task_target(first).await?;
         let (release, join) = self
-            .release_for(&library, entry, first, target.as_ref())
+            .release_for(&library, entry, first, target.as_ref(), asker.priority())
             .await?;
         let mut batch_files = Vec::with_capacity(files.len());
         let mut pairing = intake::Pairing::default();
@@ -907,14 +938,7 @@ impl HeldService {
         let Some(task_id) = file.source_task_id.clone() else {
             return Ok((None, None));
         };
-        let unavailable =
-            |error: crate::downloads::store::StoreError| HeldError::Unavailable(error.to_string());
-        let Some(task) = self
-            .journal
-            .read_task(&task_id)
-            .await
-            .map_err(unavailable)?
-        else {
+        let Some(task) = self.journal.read_task(&task_id).await? else {
             return Ok((None, None));
         };
         let (details, plan) = self
@@ -922,21 +946,23 @@ impl HeldService {
             .read("downloads.held_plan", move |store| {
                 Ok((store.task_details(&task_id)?, store.task_plan(&task_id)?))
             })
-            .await
-            .map_err(unavailable)?;
+            .await?;
         let target = crate::landing::target_for(&task, &details, &plan);
         Ok((Some(task), Some(target)))
     }
 
     /// The release the files go into and the copy they join: the planned
     /// copy's release when the download was fetched for one, else the
-    /// album's chosen edition, else the one the file was paired to.
+    /// album's chosen edition, else the one the file was paired to. A file
+    /// paired to another album than that (a curator's Match) goes on the
+    /// album it was paired to, never back onto the one it was taken from.
     async fn release_for(
         &self,
         library: &Arc<dyn LandingLibrary>,
         entry: &Entry,
         file: &HeldFile,
         target: Option<&specs::Target>,
+        priority: RequestPriority,
     ) -> Result<(Release, Option<PlannedAlbum>), HeldError> {
         let unmatched = || {
             HeldError::Refused(
@@ -945,6 +971,11 @@ impl HeldService {
                     .to_owned(),
             )
         };
+        let paired = file
+            .pairing
+            .release_mbid
+            .clone()
+            .filter(|mbid| !mbid.is_empty());
         let planned = target.and_then(|target| target.planned_album.clone());
         let release_mbid = match &planned {
             Some(planned) => planned.release_mbid.clone(),
@@ -956,38 +987,35 @@ impl HeldService {
                 Some(group) => library
                     .chosen_edition(group)
                     .await
-                    .or_else(|| file.pairing.release_mbid.clone())
-                    .filter(|mbid| !mbid.is_empty())
+                    .or_else(|| paired.clone())
                     .ok_or_else(unmatched)?,
-                None => file
-                    .pairing
-                    .release_mbid
-                    .clone()
-                    .filter(|mbid| !mbid.is_empty())
-                    .ok_or_else(unmatched)?,
+                None => paired.clone().ok_or_else(unmatched)?,
             },
         };
-        let release = match library
-            .release(&release_mbid, RequestPriority::UserInitiated)
-            .await
-        {
-            Ok(Some(release)) => release,
-            Ok(None) => {
-                return Err(HeldError::Refused(
-                    "The album's edition is no longer on MusicBrainz. Choose another edition \
-                     on the album page, then import again."
-                        .to_owned(),
-                ));
+        let release = read_release(library, entry, &release_mbid, priority).await?;
+        // A paired edition MusicBrainz no longer has leaves the chosen one.
+        // One it could not be asked about refuses for now: the pairing may
+        // name another album, so the chosen one is never assumed.
+        if let Some(paired) = paired.filter(|mbid| !release.answers_to(mbid)) {
+            match library.release(&paired, priority).await {
+                Ok(Some(other))
+                    if !other
+                        .release_group_id
+                        .eq_ignore_ascii_case(&release.release_group_id) =>
+                {
+                    return Ok((other, None));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(entry_id = entry.id, ?error, "paired release lookup failed");
+                    return Err(HeldError::Refused(
+                        "MusicBrainz could not be reached to read the matched album's \
+                         tracklist. Try again in a minute."
+                            .to_owned(),
+                    ));
+                }
             }
-            Err(error) => {
-                tracing::warn!(entry_id = entry.id, ?error, "release lookup failed");
-                return Err(HeldError::Refused(
-                    "MusicBrainz could not be reached to read the album's tracklist. \
-                     Try again in a minute."
-                        .to_owned(),
-                ));
-            }
-        };
+        }
         Ok((release, planned))
     }
 
@@ -1269,12 +1297,89 @@ impl HeldService {
         }
     }
 
-    /// One pass of the prune loop: finish actions a restart cut off, then
-    /// remove the held copies of entries past their expiry. Answers how
-    /// many entries expired.
+    /// One pass of the prune loop: finish actions a restart cut off,
+    /// remove the held copies of entries past their expiry, then retry the
+    /// files our side could not take where their next try is due. Answers
+    /// how many entries expired.
     pub async fn tend(&self) -> usize {
         self.finish_cut_off().await;
-        self.expire_due().await
+        let expired = self.expire_due().await;
+        self.retry_due().await;
+        expired
+    }
+
+    /// Retry each due entry's files held for a library reason, exactly as
+    /// its owner pressing Retry would. An entry whose files still cannot
+    /// go in waits longer before its next try; a busy database, imports
+    /// not set up yet, or a person acting on the entry spend no try.
+    async fn retry_due(&self) {
+        let now = self.now();
+        let due = match self
+            .read("held.retry_due", move |rows| {
+                rows.due_retries(now, RETRY_BATCH)
+            })
+            .await
+        {
+            Ok(due) => due,
+            Err(error) => {
+                tracing::warn!(%error, "held entries to retry unreadable; the retry waits");
+                return;
+            }
+        };
+        for (entry_id, owner) in due {
+            let files = match self
+                .read("held.retry_files", move |rows| rows.entry(entry_id))
+                .await
+            {
+                Ok(Some(entry)) => entry
+                    .files
+                    .iter()
+                    .filter(|file| retries_by_itself(file))
+                    .map(|file| file.id)
+                    .collect::<Vec<_>>(),
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::warn!(entry_id, %error, "held entry to retry unreadable");
+                    continue;
+                }
+            };
+            if files.is_empty() {
+                continue;
+            }
+            let viewer = Viewer {
+                user_id: owner.clone(),
+                admin: false,
+            };
+            match self
+                .import_for(&viewer, entry_id, Some(files), &owner, Asker::Loop)
+                .await
+            {
+                Ok(acted) => {
+                    tracing::info!(entry_id, imported = acted.imported, "held files retried");
+                }
+                Err(HeldError::Busy(operation)) => {
+                    tracing::info!(entry_id, operation, "held retry waits for a busy database");
+                    continue;
+                }
+                Err(HeldError::NotSetUp) => return,
+                Err(HeldError::InUse | HeldError::NotFound(_)) => continue,
+                Err(HeldError::Refused(message) | HeldError::Invalid(message)) => {
+                    tracing::info!(entry_id, message, "held files still held after a retry");
+                }
+                Err(HeldError::Unavailable(cause)) => {
+                    tracing::warn!(entry_id, %cause, "held retry failed");
+                }
+            }
+            let now = self.now();
+            if let Err(error) = self
+                .write("held.retry_schedule", move |rows, _| {
+                    Ok(rows.schedule_retry(entry_id, now)?)
+                })
+                .await
+            {
+                tracing::warn!(entry_id, %error, "held retry not rescheduled; the next pass tries again");
+            }
+        }
     }
 
     /// An action a restart cut off: once every library write from its
@@ -1428,6 +1533,49 @@ fn staging_name(entry: &Entry) -> String {
     }
 }
 
+/// Who asked for an import: a person pressing a button, or the held loop
+/// retrying by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asker {
+    Person,
+    Loop,
+}
+
+impl Asker {
+    /// A person waits on the answer; the loop is background work.
+    fn priority(self) -> RequestPriority {
+        match self {
+            Self::Person => RequestPriority::UserInitiated,
+            Self::Loop => RequestPriority::BackgroundSync,
+        }
+    }
+}
+
+/// One release's tracklist, or the refusal that says why it cannot be read.
+async fn read_release(
+    library: &Arc<dyn LandingLibrary>,
+    entry: &Entry,
+    release_mbid: &str,
+    priority: RequestPriority,
+) -> Result<Release, HeldError> {
+    match library.release(release_mbid, priority).await {
+        Ok(Some(release)) => Ok(release),
+        Ok(None) => Err(HeldError::Refused(
+            "The album's edition is no longer on MusicBrainz. Choose another edition \
+             on the album page, then import again."
+                .to_owned(),
+        )),
+        Err(error) => {
+            tracing::warn!(entry_id = entry.id, ?error, "release lookup failed");
+            Err(HeldError::Refused(
+                "MusicBrainz could not be reached to read the album's tracklist. \
+                 Try again in a minute."
+                    .to_owned(),
+            ))
+        }
+    }
+}
+
 /// Whether a file's hold is one AcoustID can settle on a second ask.
 fn rechecks(file: &HeldFile) -> bool {
     matches!(
@@ -1488,4 +1636,10 @@ fn track_on(release: &Release, pairing: &Pairing) -> Option<usize> {
 /// imported past the check that held it.
 pub fn is_retry(reason: Reason) -> bool {
     reason.kind() == ReasonKind::Library
+}
+
+/// Whether a held file offers Retry, and so is retried by itself: held
+/// for a library reason and paired with a track.
+pub fn retries_by_itself(file: &HeldFile) -> bool {
+    is_retry(file.reason) && file.is_paired()
 }

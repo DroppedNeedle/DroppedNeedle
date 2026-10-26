@@ -46152,6 +46152,14 @@
             "type": "integer",
             "format": "int64"
           },
+          "next_retry_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When DroppedNeedle next retries the files offering Retry by itself,\nin milliseconds. `None` when no file offers Retry, or when the next\ntry is at the held loop's next pass (within five minutes)."
+          },
           "origin": {
             "$ref": "#/components/schemas/EntryOrigin"
           },

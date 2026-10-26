@@ -10,7 +10,7 @@ droppedneedle_kernel::sql! {
     /// Every entry column, in the order `Entry::from_row` reads them.
     pub(super) fragment ENTRY_ROW = "SELECT id, user_id, origin, group_key, release_group_mbid, \
              recording_mbid, drop_item_id, artist_name, album_title, state, created_at, \
-             expires_at FROM acquire_held_entries";
+             expires_at, retry_at FROM acquire_held_entries";
     /// Every file column, in the order `HeldFile::from_row` reads them.
     pub(super) fragment FILE_ROW = "SELECT id, entry_id, root, path, original_name, release_mbid, \
              release_track_mbid, recording_mbid, disc_number, track_number, track_title, \
@@ -25,9 +25,10 @@ droppedneedle_kernel::sql! {
              release_group_mbid, recording_mbid, drop_item_id, artist_name, album_title, state, \
              created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'held', ?9, ?10)";
     /// Push entry `?1`'s expiry out to `?2`, never earlier, and fill its
-    /// card text where it has none.
+    /// card text where it has none. A file joined it, so its automatic
+    /// retry starts again from the first try.
     pub(super) EXTEND_ENTRY = "UPDATE acquire_held_entries \
-             SET expires_at = MAX(expires_at, ?2), \
+             SET expires_at = MAX(expires_at, ?2), retry_tries = 0, retry_at = NULL, \
                  release_group_mbid = COALESCE(release_group_mbid, ?3), \
                  artist_name = COALESCE(artist_name, ?4), album_title = COALESCE(album_title, ?5) \
              WHERE id = ?1";
@@ -118,6 +119,32 @@ droppedneedle_kernel::sql! {
     /// each copy is.
     pub(super) DISCARD_ALL_FILES = "UPDATE acquire_held_files SET state = 'discarded', \
              resolved_at = ?2 WHERE entry_id = ?1 AND state = 'held' RETURNING root, path";
+    /// The reasons our side holds a file for, which it retries by itself
+    /// (`Reason::kind` is `Library`).
+    pub fragment LIBRARY_REASONS = "('target_occupied', 'upgrade_blocked', 'library_changed', \
+             'library_unavailable', 'naming_script_failed', 'library_folder_missing', \
+             'local_fault')";
+    /// Held file `f` is retried by itself: held for a library reason and
+    /// paired with a track, as the Retry button needs.
+    pub(super) fragment RETRIES = "(f.state = 'held' AND f.reason IN " + LIBRARY_REASONS + " \
+             AND (COALESCE(f.release_track_mbid, '') != '' \
+                  OR COALESCE(f.recording_mbid, '') != ''))";
+    /// Entries waiting for a person with a file retried by itself, due at
+    /// `?1`, longest waiting first, at most `?2`: id and owner.
+    pub(super) DUE_RETRIES = "SELECT e.id, e.user_id FROM acquire_held_entries e \
+             WHERE e.state = 'held' AND (e.retry_at IS NULL OR e.retry_at <= ?1) \
+               AND EXISTS (SELECT 1 FROM acquire_held_files f \
+                   WHERE f.entry_id = e.id AND " + RETRIES + ") \
+             ORDER BY COALESCE(e.retry_at, 0), e.id LIMIT ?2";
+    /// Whether entry `?1` still has a file retried by itself, and its
+    /// tries so far.
+    pub(super) RETRY_STATE = "SELECT EXISTS (SELECT 1 FROM acquire_held_files f \
+             WHERE f.entry_id = ?1 AND " + RETRIES + "), retry_tries \
+             FROM acquire_held_entries WHERE id = ?1";
+    /// Entry `?1` was retried `?2` times in a row; the next try is at `?3`
+    /// (NULL with no tries: at the next pass).
+    pub(super) SET_RETRY = "UPDATE acquire_held_entries SET retry_tries = ?2, retry_at = ?3 \
+             WHERE id = ?1";
     /// Entries an action had claimed.
     pub(super) PLACING_ENTRIES = ENTRY_ROW + " WHERE state = 'placing' ORDER BY id";
     /// Every copy in the held folder an open entry still names.

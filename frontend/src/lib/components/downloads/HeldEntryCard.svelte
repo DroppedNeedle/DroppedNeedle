@@ -19,7 +19,7 @@
 	import { albumHref } from '$lib/utils/entityRoutes';
 
 	import HeldFileRow from './HeldFileRow.svelte';
-	import { keptUntil } from './heldExpiry';
+	import { keptUntil, nextTry } from './heldExpiry';
 
 	interface Props {
 		entry: HeldEntry;
@@ -84,6 +84,13 @@
 	const canMatch = $derived(authStore.isTrusted);
 
 	const expiry = $derived(keptUntil(entry.expires_at));
+	const retrying = $derived(
+		entry.files.some((file) => file.actions.includes('retry'))
+			? entry.state === 'placing'
+				? 'Retrying now'
+				: nextTry(entry.next_retry_at)
+			: null
+	);
 
 	const forFiles = (fileIds: number[]) => ({
 		entryId: entry.id,
@@ -147,6 +154,15 @@
 			<p class="text-xs text-base-content/60">
 				{subtitle} · <span class="whitespace-nowrap">{expiry}</span>
 			</p>
+			{#if retrying}
+				<p class="mt-0.5 flex items-center gap-1.5 text-xs text-base-content/60">
+					<RefreshCw
+						class="size-3 shrink-0 {entry.state === 'placing' ? 'animate-spin' : ''}"
+						aria-hidden="true"
+					/>
+					<span>{retrying}</span>
+				</p>
+			{/if}
 			{#if single && files[0]}
 				<div class="mt-3 border-t border-base-content/8 pt-3">
 					<HeldFileRow {entry} file={files[0]}>

@@ -108,8 +108,10 @@ pub struct SpotifyEndpoints {
 /// Health-probe refresh cadence.
 const PROBE_INTERVAL: Duration = Duration::from_secs(300);
 
-/// The held list's prune runs hourly, the first pass a minute after start.
-const HELD_PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
+/// The held list's loop runs every five minutes, the first pass a minute
+/// after start: often enough for the first automatic retry, five minutes
+/// after a hold.
+const HELD_PRUNE_INTERVAL: Duration = Duration::from_secs(300);
 const HELD_PRUNE_DELAY: Duration = Duration::from_secs(60);
 
 /// Job name of the probe refresh loop.
@@ -1092,9 +1094,10 @@ impl AcquireSetup {
         self.spawn_source_watch(supervisor)
     }
 
-    /// The held list's prune: a minute after start, then hourly, it
-    /// finishes actions a restart cut off and removes the held copies of
-    /// entries past their expiry.
+    /// The held list's loop: a minute after start, then every five
+    /// minutes, it finishes actions a restart cut off, removes the held
+    /// copies of entries past their expiry and retries the files our side
+    /// could not take whose next try is due.
     fn spawn_held_prune(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
         let held = self.held.clone();
         supervisor.periodic(

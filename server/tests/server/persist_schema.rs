@@ -74,7 +74,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 64);
+    assert_eq!(triggers, 65);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -6136,6 +6136,133 @@ async fn journal_writes_stamp_the_scan_fence_on_upgrade() {
         "a scope with a walk revision judges the track it did not see"
     );
     runtime.shutdown().await;
+}
+
+/// Migration 0087 gives held entries an automatic retry: an open entry
+/// carried over has no tries and no next try, so the first pass retries
+/// it, and a change of its next try moves the download activity revision.
+/// The held files table is rebuilt to take a new reason: a held file comes
+/// through with its reason, pairing and evidence, and its triggers still
+/// move the revision.
+#[tokio::test]
+async fn held_entries_gain_an_automatic_retry_on_upgrade() {
+    let pool = scratch_pool().await;
+    migrator_through(86).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', 'now'); \
+         INSERT INTO acquire_held_entries (id, user_id, origin, group_key, state, \
+             created_at, expires_at) \
+         VALUES (1, 'u1', 'download', 'album:rg', 'held', 1, 2); \
+         INSERT INTO acquire_held_files (id, entry_id, root, path, original_name, \
+             release_mbid, release_track_mbid, recording_mbid, disc_number, track_number, \
+             track_title, file_format, duration_seconds, expected_duration_seconds, \
+             evidence_title, evidence_artist, evidence_score, source, source_task_id, \
+             reason, reason_detail, state, created_at) \
+         VALUES (7, 1, 'held', 'aa_01.flac', 'CD1/01.flac', 'rel', 'rt', 'rec', 1, 1, \
+             'Mysterons', 'flac', 301.5, 302.0, 'Heard', 'Someone', 0.82, 'soulseek', 't1', \
+             'fingerprint_mismatch', 'heard another', 'held', 5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let retry: (i64, Option<i64>) =
+        sqlx::query_as("SELECT retry_tries, retry_at FROM acquire_held_entries WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(retry, (0, None));
+    let revision = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT revision FROM download_activity_global_revision WHERE singleton = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let before = revision().await;
+    sqlx::raw_sql("UPDATE acquire_held_entries SET retry_at = 5 WHERE id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(revision().await, before + 1, "the list shows the next try");
+
+    type Kept = (
+        i64,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        i64,
+    );
+    let kept: Kept = sqlx::query_as(
+        "SELECT entry_id, path, state, reason, reason_detail, source_task_id, created_at \
+         FROM acquire_held_files WHERE id = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        (
+            1,
+            "aa_01.flac".to_owned(),
+            "held".to_owned(),
+            "fingerprint_mismatch".to_owned(),
+            Some("heard another".to_owned()),
+            Some("t1".to_owned()),
+            5,
+        )
+    );
+    type Paired = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<f64>,
+        Option<String>,
+        Option<String>,
+        Option<f64>,
+    );
+    let paired: Paired = sqlx::query_as(
+        "SELECT release_mbid, release_track_mbid, recording_mbid, track_number, track_title, \
+         duration_seconds, evidence_title, evidence_artist, evidence_score \
+         FROM acquire_held_files WHERE id = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        paired,
+        (
+            Some("rel".to_owned()),
+            Some("rt".to_owned()),
+            Some("rec".to_owned()),
+            Some(1),
+            Some("Mysterons".to_owned()),
+            Some(301.5),
+            Some("Heard".to_owned()),
+            Some("Someone".to_owned()),
+            Some(0.82),
+        )
+    );
+    let before = revision().await;
+    sqlx::raw_sql("UPDATE acquire_held_files SET reason = 'owned_elsewhere' WHERE id = 7")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        revision().await,
+        before + 1,
+        "the new reason is taken and the list moves"
+    );
 }
 
 /// Wall time in milliseconds, for checks against "due now".

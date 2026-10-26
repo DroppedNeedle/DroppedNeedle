@@ -17,7 +17,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::service::{Acted, HeldError, HeldService, is_retry};
+use super::service::{Acted, HeldError, HeldService, is_retry, retries_by_itself};
 use super::store::{Entry, EntryOrigin, EntryState, HeldFile};
 use crate::downloads::queue_rows::Viewer;
 use crate::reason::{Reason, ReasonKind};
@@ -37,7 +37,8 @@ use droppedneedle_media::stream::routes::{
 pub enum HeldFileAction {
     /// Import it, skipping the check that held it.
     Import,
-    /// Our side could not take it: try again as it is.
+    /// Our side could not take it: try again as it is. The app also tries
+    /// again by itself.
     Retry,
     /// Make this lower-quality version your copy; yours goes to the
     /// recycle bin.
@@ -158,12 +159,18 @@ pub struct HeldEntryResponse {
     pub created_at: i64,
     /// When its held files are removed, in milliseconds.
     pub expires_at: i64,
+    /// When DroppedNeedle next retries the files offering Retry by itself,
+    /// in milliseconds. `None` when no file offers Retry, or when the next
+    /// try is at the held loop's next pass (within five minutes).
+    pub next_retry_at: Option<i64>,
     pub files: Vec<HeldFileResponse>,
 }
 
 impl From<Entry> for HeldEntryResponse {
     fn from(entry: Entry) -> Self {
+        let retries = entry.files.iter().any(retries_by_itself);
         Self {
+            next_retry_at: entry.retry_at.filter(|_| retries),
             id: entry.id,
             origin: entry.origin,
             state: entry.state,
@@ -290,7 +297,11 @@ impl From<HeldError> for ApiError {
         ApiError::from(match error {
             HeldError::NotFound(_) => RequestsError::NotFound,
             HeldError::Refused(message) => RequestsError::Conflict { message },
+            error @ (HeldError::InUse | HeldError::NotSetUp) => RequestsError::Conflict {
+                message: error.to_string(),
+            },
             HeldError::Invalid(message) => RequestsError::InvalidInput { message },
+            HeldError::Busy(operation) => RequestsError::Busy { operation },
             HeldError::Unavailable(cause) => RequestsError::internal(&cause),
         })
     }
