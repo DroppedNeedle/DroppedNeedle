@@ -61,6 +61,32 @@ pub trait CutoffList: Send + Sync {
         &'a self,
         cutoff: &'a str,
     ) -> BoxFuture<'a, Result<Vec<UpgradeItem>, StoreFailure>>;
+
+    /// Release groups the sweep leaves alone at `now` (unix seconds): an
+    /// open held entry awaits a decision, or the last upgrade finished less
+    /// than its back-off ago.
+    fn resting(&self, now: i64) -> BoxFuture<'_, Result<HashSet<String>, StoreFailure>>;
+
+    /// When the newest upgrade task was made (unix seconds), the sweep's
+    /// last run across a restart.
+    fn last_upgrade_at(&self) -> BoxFuture<'_, Result<Option<i64>, StoreFailure>>;
+}
+
+const DAY: i64 = 86_400;
+/// Five doublings of a day pass the 30-day cap.
+const BACKOFF_MAX_DOUBLINGS: u32 = 5;
+const BACKOFF_CAP: i64 = 30 * DAY;
+
+/// The wait after an album's newest finished upgrade: a day, doubled for
+/// each failed or cancelled upgrade directly before it, at most 30 days.
+/// `history` is the album's finished upgrades, newest first.
+fn upgrade_backoff(history: &[&str]) -> i64 {
+    let streak = history
+        .iter()
+        .take_while(|status| matches!(**status, "failed" | "cancelled"))
+        .count();
+    let doublings = u32::try_from(streak.saturating_sub(1)).unwrap_or(u32::MAX);
+    (DAY << doublings.min(BACKOFF_MAX_DOUBLINGS)).min(BACKOFF_CAP)
 }
 
 /// One indexed track of an identified album, with its quality facts.
@@ -239,12 +265,69 @@ fn meets(rank: Option<usize>, cutoff: &str) -> bool {
     }
 }
 
+impl UpgradeWorklist {
+    /// Release groups the upgrade sweep skips at `now`: those with an open
+    /// held entry, and those whose newest finished upgrade task is younger
+    /// than its back-off.
+    pub async fn list_resting(&self, now: i64) -> Result<HashSet<String>, StoreFailure> {
+        let mut resting: HashSet<String> = sqlx::query_scalar(
+            "SELECT DISTINCT lower(release_group_mbid) FROM acquire_held_entries \
+             WHERE state IN ('held', 'placing') AND release_group_mbid IS NOT NULL",
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| read_failure("upgrades.held_groups", error))?
+        .into_iter()
+        .collect();
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT lower(release_group_mbid), status, \
+                    CAST(COALESCE(completed_at, cancelled_at, updated_at) AS INTEGER) \
+             FROM download_tasks \
+             WHERE origin = 'upgrade' AND release_group_mbid <> '' \
+               AND status IN ('completed', 'partial', 'failed', 'cancelled') \
+             ORDER BY 1, created_at DESC, rowid DESC",
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| read_failure("upgrades.history", error))?;
+        for album in rows.chunk_by(|a, b| a.0 == b.0) {
+            let Some((rg_mbid, _, finished_at)) = album.first() else {
+                continue;
+            };
+            let history: Vec<&str> = album.iter().map(|row| row.1.as_str()).collect();
+            if now - finished_at < upgrade_backoff(&history) {
+                resting.insert(rg_mbid.clone());
+            }
+        }
+        Ok(resting)
+    }
+
+    /// When the newest upgrade task was made, in unix seconds.
+    pub async fn newest_upgrade_at(&self) -> Result<Option<i64>, StoreFailure> {
+        sqlx::query_scalar(
+            "SELECT CAST(max(created_at) AS INTEGER) FROM download_tasks \
+             WHERE origin = 'upgrade'",
+        )
+        .fetch_one(self.db.pool())
+        .await
+        .map_err(|error| read_failure("upgrades.last_run", error))
+    }
+}
+
 impl CutoffList for UpgradeWorklist {
     fn cutoff_unmet<'a>(
         &'a self,
         cutoff: &'a str,
     ) -> BoxFuture<'a, Result<Vec<UpgradeItem>, StoreFailure>> {
         Box::pin(self.list_cutoff_unmet(cutoff))
+    }
+
+    fn resting(&self, now: i64) -> BoxFuture<'_, Result<HashSet<String>, StoreFailure>> {
+        Box::pin(self.list_resting(now))
+    }
+
+    fn last_upgrade_at(&self) -> BoxFuture<'_, Result<Option<i64>, StoreFailure>> {
+        Box::pin(self.newest_upgrade_at())
     }
 }
 

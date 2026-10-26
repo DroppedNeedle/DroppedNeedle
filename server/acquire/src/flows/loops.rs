@@ -929,7 +929,9 @@ pub struct SweepDeps {
 /// and the scan is enabled, walk the cutoff-unmet worklist and enqueue at
 /// most `max_per_run` origin-`upgrade` grabs owned by the oldest admin.
 /// An album with a live download is not grabbed again and does not count
-/// as enqueued; a poison item never
+/// as enqueued. An album with an open held entry waits for its decision,
+/// and one whose last upgrade finished inside its back-off waits that
+/// out; a poison item never
 /// starves its siblings (v2 `run_background_upgrade_sweep`).
 pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
     let Some(policy) = deps.policy.read() else {
@@ -954,9 +956,20 @@ pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
             return summary;
         }
     };
+    let resting = match deps.worklist.resting(now).await {
+        Ok(resting) => resting,
+        Err(error) => {
+            tracing::warn!(?error, "upgrade sweep could not read its back-off");
+            summary.errors += 1;
+            return summary;
+        }
+    };
     for item in items {
         if summary.enqueued >= policy.max_per_run {
             break;
+        }
+        if resting.contains(&item.rg_mbid) {
+            continue;
         }
         let dispatch = album_dispatch(
             &owner,
@@ -1232,6 +1245,15 @@ impl Tick for IntervalTick<SweepDeps> {
             return Ok(Next::Continue);
         };
         let hours = UpgradePolicy::from_policy(&policy).interval_hours.max(1);
+        if self.last.is_none() {
+            match self.deps.worklist.last_upgrade_at().await {
+                Ok(last) => self.last = last,
+                Err(error) => {
+                    tracing::warn!(?error, "upgrade sweep could not read its last run");
+                    return Ok(Next::Continue);
+                }
+            }
+        }
         let Some(now) = self.due(hours) else {
             return Ok(Next::Continue);
         };
@@ -1292,7 +1314,8 @@ pub fn spawn_follow_loop(
 }
 
 /// Run the background upgrade sweep: a startup delay, then an hourly check
-/// that sweeps once the policy's interval (default 12h) has passed.
+/// that sweeps once the policy's interval (default 12h) has passed since
+/// the last sweep, which a restart reads from the newest upgrade task.
 pub fn spawn_sweep_loop(
     supervisor: &Supervisor,
     deps: Arc<SweepDeps>,

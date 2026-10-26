@@ -77,7 +77,7 @@ Entries are kept for 90 days after they were made, or after their newest file ar
 
 ## Upgrades
 
-With upgrades switched on in the download settings, admins and trusted users see the albums whose worst file is below your quality cutoff and can ask for a better copy of an album or a single track. Asking for one that already meets the cutoff queues nothing. The background upgrade scan, when switched on, works through the same list on its own, under the oldest admin account.
+With upgrades switched on in the download settings, admins and trusted users see the albums whose worst file is below your quality cutoff and can ask for a better copy of an album or a single track. Asking for one that already meets the cutoff queues nothing. The background upgrade scan, when switched on, works through the same list on its own, under the oldest admin account. It leaves an album alone while files downloaded for it are held for your decision. After an upgrade finishes, the album waits a day before the scan tries it again; each failed or cancelled try in a row doubles that wait, up to 30 days. Changing the quality settings does not reset these waits.
 
 ## The Downloads page
 
