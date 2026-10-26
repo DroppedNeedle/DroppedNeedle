@@ -329,6 +329,15 @@ fn jf_track(id: &str, title: &str, album: &str, album_id: &str, artist: &str, in
     })
 }
 
+/// A track with no art of its own, as Jellyfin 10.10.6 lists one whose
+/// album folder holds the cover: no Primary tag, the album's tag beside it.
+fn with_album_art(mut track: Value) -> Value {
+    let album_tag = format!("{}-tag", track["AlbumId"].as_str().unwrap_or_default());
+    track["ImageTags"] = json!({});
+    track["AlbumPrimaryImageTag"] = json!(album_tag);
+    track
+}
+
 fn jf_tracks() -> Vec<Value> {
     vec![
         jf_track(
@@ -339,14 +348,14 @@ fn jf_tracks() -> Vec<Value> {
             ARTIST_ONE,
             1,
         ),
-        jf_track(
+        with_album_art(jf_track(
             "jf-t-2",
             "Meridian Dusk",
             ALBUM_ONE,
             "jf-al-1",
             ARTIST_ONE,
             2,
-        ),
+        )),
         jf_track("jf-t-3", "Tide Glass", ALBUM_TWO, "jf-al-2", ARTIST_ONE, 1),
         jf_track(
             "jf-t-4",
@@ -599,7 +608,7 @@ async fn jf_mix(State(recorder): State<MockRecorder>, headers: HeaderMap) -> Res
 fn jf_playlist_meta() -> Value {
     json!({
         "Id": "jf-pl-1", "Name": "Road Mix", "Type": "Playlist",
-        "ChildCount": 2, "ImageTags": {},
+        "ChildCount": 2, "ImageTags": {"Primary": "jf-pl-1-tag"},
     })
 }
 
@@ -614,7 +623,7 @@ async fn jf_playlist_items(
     if id != "jf-pl-1" {
         return StatusCode::NOT_FOUND.into_response();
     }
-    Json(json!({"Items": [jf_tracks()[0].clone(), jf_tracks()[1].clone()]})).into_response()
+    Json(json!({"Items": [jf_tracks()[1].clone(), jf_tracks()[0].clone()]})).into_response()
 }
 
 async fn jf_lyrics(
@@ -682,10 +691,12 @@ async fn jf_image(
     if !jf_authorized(&headers, &recorder) {
         return jf_unauthorized();
     }
-    if jf_known_item(&id).is_none() {
-        return StatusCode::NOT_FOUND.into_response();
+    // Jellyfin 10.10.6 answers 404 with a JSON body for an item without a
+    // Primary image, a track whose only art is its album's included.
+    match jf_known_item(&id) {
+        Some(item) if item["ImageTags"].get("Primary").is_some() => image_bytes(),
+        _ => (StatusCode::NOT_FOUND, Json(json!({"title": "Not Found"}))).into_response(),
     }
-    image_bytes()
 }
 
 fn image_bytes() -> Response {

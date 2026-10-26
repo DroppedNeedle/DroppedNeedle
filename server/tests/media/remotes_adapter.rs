@@ -1299,6 +1299,43 @@ async fn routes_serve_optional_features_per_source() {
     }
 }
 
+/// Jellyfin art as a real 10.10.6 server holds it: a track whose album
+/// folder has the cover has no image of its own, and a playlist has one
+/// drawn from its members. A track row points at its album's cover, a
+/// playlist cover is the playlist's own, and an item with no image is
+/// absent (404), never a server failure.
+#[tokio::test]
+async fn jellyfin_art_follows_the_servers_image_tags() {
+    let (app, _rig) = connected_testbed().await;
+    let (status, body) = get_json(
+        app.clone(),
+        "/api/v3/remotes/jellyfin/albums/jf-al-1/tracks",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let dusk = body["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|track| track["id"] == "jf-t-2")
+        .unwrap_or_else(|| panic!("no jf-t-2 in {body}"));
+    assert_eq!(
+        dusk["image_url"],
+        "/api/v3/remotes/jellyfin/images/jf-al-1?tag=jf-al-1-tag"
+    );
+
+    let (status, _, bytes) = get_bytes(
+        app.clone(),
+        "/api/v3/remotes/jellyfin/covers/playlists/jf-pl-1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
+
+    let (status, body) = get_json(app.clone(), "/api/v3/remotes/jellyfin/images/jf-t-2").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
 #[tokio::test]
 async fn routes_serve_images_with_cache_contract() {
     let (app, _rig) = connected_testbed().await;

@@ -335,11 +335,15 @@ impl Answer {
 
     /// The image body of a successful answer, read under
     /// [`MAX_IMAGE_BYTES`], with its content type or
-    /// `fallback_content_type` when it names none.
+    /// `fallback_content_type` when it names none. A 404 is an item with
+    /// no image, which is absence.
     pub(crate) async fn image(
         self,
         fallback_content_type: &str,
     ) -> Result<(Vec<u8>, String), AdapterError> {
+        if self.response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(AdapterError::NotFound);
+        }
         self.success()?;
         let content_type = self
             .response

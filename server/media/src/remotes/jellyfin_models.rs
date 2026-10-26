@@ -88,6 +88,8 @@ pub struct Item {
     pub provider_ids: HashMap<String, Option<String>>,
     /// Image tags by kind.
     pub image_tags: HashMap<String, String>,
+    /// The album's primary image tag (tracks).
+    pub album_primary_image_tag: Option<String>,
     /// The calling user's play data.
     pub user_data: Option<UserData>,
 }
@@ -157,6 +159,8 @@ struct RawItem {
     #[serde(default)]
     image_tags: HashMap<String, String>,
     #[serde(default)]
+    album_primary_image_tag: Option<String>,
+    #[serde(default)]
     user_data: Option<UserData>,
 }
 
@@ -187,6 +191,7 @@ impl TryFrom<RawItem> for Item {
             run_time_ticks: raw.run_time_ticks,
             provider_ids: raw.provider_ids,
             image_tags: raw.image_tags,
+            album_primary_image_tag: raw.album_primary_image_tag,
             user_data: raw.user_data,
         })
     }

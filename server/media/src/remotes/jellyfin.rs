@@ -14,6 +14,10 @@
 //! - Playlist membership comes from `/Playlists/{id}/Items` filtered to
 //!   `Type == "Audio"`; most-played lists sort by `PlayCount` and drop
 //!   zero-play rows client-side.
+//! - Art (verified against Jellyfin 10.10.6, 2026-10-26): a track whose
+//!   album folder holds the cover has no Primary tag of its own, only
+//!   `AlbumPrimaryImageTag`; a playlist has a Primary image drawn from its
+//!   members; `/Items/{id}/Images/Primary` for an item without one is 404.
 //!
 //! Payloads decode into the typed shapes in [`super::jellyfin_models`]; a
 //! payload missing an item id is an upstream error, not an empty item.
@@ -994,19 +998,15 @@ impl JellyfinAdapter {
         self.post_json(endpoint, body).await
     }
 
-    /// Playlist cover: the first Audio member's primary image, matching the
-    /// v2 playlist-image route which proxies a member item's image.
+    /// Playlist cover: the playlist's own primary image, which Jellyfin
+    /// draws from its members' art. A member track usually has no image of
+    /// its own, only its album's.
     pub async fn playlist_cover_bytes(
         &self,
         id: &str,
         size: i64,
     ) -> Result<(Vec<u8>, String), AdapterError> {
-        let detail = self
-            .playlist_detail(id)
-            .await?
-            .ok_or(AdapterError::NotFound)?;
-        let first = detail.tracks.first().ok_or(AdapterError::NotFound)?;
-        self.image_bytes(&first.id, size).await
+        self.image_bytes(id, size).await
     }
 
     /// The first `/Search/Hints` album carrying `mbid` as its
@@ -1191,9 +1191,18 @@ fn artist_view(item: &Item) -> ArtistView {
 }
 
 fn track_view(item: &Item) -> TrackView {
+    let album_art = item
+        .album_id
+        .as_deref()
+        .zip(item.album_primary_image_tag.as_deref())
+        .filter(|_| item.primary_tag().is_none());
+    let image_url = match album_art {
+        Some((album_id, tag)) => image_url_for(album_id, Some(tag)),
+        None => image_url_for(&item.id, item.primary_tag()),
+    };
     TrackView {
         source: SourceName::Jellyfin,
-        image_url: image_url_for(&item.id, item.primary_tag()),
+        image_url,
         id: item.id.clone(),
         title: item.name.clone().unwrap_or_else(|| "Unknown".to_owned()),
         album_name: item.album.clone().unwrap_or_default(),
