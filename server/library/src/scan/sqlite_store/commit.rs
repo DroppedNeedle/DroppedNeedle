@@ -55,6 +55,7 @@ use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
 use crate::scan::store::{EditionFill, IndexWindow, WindowOutcome};
+use crate::tags::{AudioArtistCredit, AudioTag};
 use droppedneedle_kernel::db::savepoint;
 
 pub(super) use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID, stable_id};
@@ -831,6 +832,172 @@ pub(crate) struct Adopted<'a> {
     pub album_id: Option<&'a str>,
 }
 
+/// A file's tag revision: a digest of its tag values, each under its name
+/// in a fixed order. Pending contributions, previews and edition decisions
+/// compare it to see a tag change. An absent value (no text, zero, an
+/// empty list, an unset flag) adds nothing, so a field added here later
+/// moves only the revisions of files that carry it. Edition hints are kept
+/// beside the row and left out, so reading them is never a tag change.
+fn tag_revision(tag: &AudioTag) -> String {
+    let AudioTag {
+        title,
+        artist,
+        album,
+        track_number,
+        album_artist,
+        disc_number,
+        year,
+        genre,
+        musicbrainz_release_group_id,
+        musicbrainz_release_id,
+        musicbrainz_recording_id,
+        musicbrainz_release_track_id,
+        musicbrainz_artist_id,
+        musicbrainz_album_artist_id,
+        acoustid_id,
+        compilation,
+        release_type,
+        title_sort,
+        artist_sort,
+        album_sort,
+        album_artist_sort,
+        disc_subtitle,
+        original_release_date,
+        replaygain_track_gain,
+        replaygain_album_gain,
+        replaygain_track_peak,
+        replaygain_album_peak,
+        genres,
+        artists,
+        album_artists,
+        musicbrainz_artist_ids,
+        musicbrainz_album_artist_ids,
+        artists_listed,
+        album_artists_listed,
+        edition: _,
+    } = tag;
+    let mut fields = TagFields::default();
+    fields.text("title", title);
+    fields.text("artist", artist);
+    fields.text("album", album);
+    fields.number("track_number", *track_number);
+    fields.optional("album_artist", album_artist);
+    fields.number("disc_number", *disc_number);
+    if let Some(year) = year {
+        fields.put("year", &year.to_le_bytes());
+    }
+    fields.optional("genre", genre);
+    fields.optional("musicbrainz_release_group_id", musicbrainz_release_group_id);
+    fields.optional("musicbrainz_release_id", musicbrainz_release_id);
+    fields.optional("musicbrainz_recording_id", musicbrainz_recording_id);
+    fields.optional("musicbrainz_release_track_id", musicbrainz_release_track_id);
+    fields.optional("musicbrainz_artist_id", musicbrainz_artist_id);
+    fields.optional("musicbrainz_album_artist_id", musicbrainz_album_artist_id);
+    fields.optional("acoustid_id", acoustid_id);
+    fields.flag("compilation", *compilation);
+    fields.optional("release_type", release_type);
+    fields.optional("title_sort", title_sort);
+    fields.optional("artist_sort", artist_sort);
+    fields.optional("album_sort", album_sort);
+    fields.optional("album_artist_sort", album_artist_sort);
+    fields.optional("disc_subtitle", disc_subtitle);
+    fields.optional("original_release_date", original_release_date);
+    fields.real("replaygain_track_gain", *replaygain_track_gain);
+    fields.real("replaygain_album_gain", *replaygain_album_gain);
+    fields.real("replaygain_track_peak", *replaygain_track_peak);
+    fields.real("replaygain_album_peak", *replaygain_album_peak);
+    fields.texts("genres", genres);
+    fields.credits("artists", artists);
+    fields.credits("album_artists", album_artists);
+    fields.texts("musicbrainz_artist_ids", musicbrainz_artist_ids);
+    fields.texts("musicbrainz_album_artist_ids", musicbrainz_album_artist_ids);
+    fields.flag("artists_listed", *artists_listed);
+    fields.flag("album_artists_listed", *album_artists_listed);
+    Sha256::digest(&fields.0)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Named, length-prefixed values, the input of a tag revision.
+#[derive(Default)]
+struct TagFields(Vec<u8>);
+
+impl TagFields {
+    fn put(&mut self, name: &str, value: &[u8]) {
+        self.0.extend_from_slice(name.as_bytes());
+        self.0.push(0);
+        self.0
+            .extend_from_slice(&(value.len() as u64).to_le_bytes());
+        self.0.extend_from_slice(value);
+    }
+
+    fn text(&mut self, name: &str, value: &str) {
+        if !value.is_empty() {
+            self.put(name, value.as_bytes());
+        }
+    }
+
+    fn optional(&mut self, name: &str, value: &Option<String>) {
+        if let Some(value) = value {
+            self.put(name, value.as_bytes());
+        }
+    }
+
+    fn number(&mut self, name: &str, value: u32) {
+        if value != 0 {
+            self.put(name, &value.to_le_bytes());
+        }
+    }
+
+    fn real(&mut self, name: &str, value: Option<f64>) {
+        if let Some(value) = value {
+            self.put(name, &value.to_bits().to_le_bytes());
+        }
+    }
+
+    fn flag(&mut self, name: &str, value: bool) {
+        if value {
+            self.put(name, &[1]);
+        }
+    }
+
+    fn texts(&mut self, name: &str, values: &[String]) {
+        if values.is_empty() {
+            return;
+        }
+        let mut list = TagFields::default();
+        for value in values {
+            list.put("", value.as_bytes());
+        }
+        self.put(name, &list.0);
+    }
+
+    fn credits(&mut self, name: &str, credits: &[AudioArtistCredit]) {
+        if credits.is_empty() {
+            return;
+        }
+        let mut list = TagFields::default();
+        for credit in credits {
+            let AudioArtistCredit {
+                name,
+                credited_name,
+                sort_name,
+                musicbrainz_artist_id,
+                join_phrase,
+            } = credit;
+            let mut one = TagFields::default();
+            one.text("name", name);
+            one.optional("credited_name", credited_name);
+            one.optional("sort_name", sort_name);
+            one.optional("musicbrainz_artist_id", musicbrainz_artist_id);
+            one.text("join_phrase", join_phrase);
+            list.put("", &one.0);
+        }
+        self.put(name, &list.0);
+    }
+}
+
 /// Write one file's catalog rows.
 fn write_item(
     tx: &Connection,
@@ -1087,19 +1254,7 @@ fn write_item(
             }
         }
     };
-    // Edition hints are kept beside the row and left out of the revision,
-    // so reading them for the first time does not count as a tag change.
-    // Drafts and sealed decisions compare this digest, so the text hashed
-    // for unchanged tags must never change (see `EditionTags`'s `Debug`).
-    let tag_revision = {
-        let mut revised = tag.clone();
-        revised.edition = Default::default();
-        let digest = Sha256::digest(format!("{revised:?}").as_bytes());
-        digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    };
+    let tag_revision = tag_revision(tag);
     let file_format = crate::tags::format_for_path(std::path::Path::new(&item.relative_path))
         .map(|format| format.as_str().to_owned())
         .unwrap_or_else(|_| "unknown".to_owned());

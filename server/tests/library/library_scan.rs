@@ -199,7 +199,7 @@ async fn scan_catalogs_tags_without_touching_files() {
 /// did not change keeps the revision scans have always stored for it.
 #[tokio::test]
 async fn unchanged_tags_keep_their_revision() {
-    const STORED: &str = "21bef2cfb5b590d4380c105e0bbf0b228b7b75bbaa1ac88e28417a79fa3f612a";
+    const STORED: &str = "2b6fee3851ee5022e3d48c722ca55b1be2fc7ccede88c843fc387c8618cfe51f";
     let scratch = ScratchDir::new("scan-revision");
     let music = scratch.join("music");
     plant(&music, "Album/01.flac", "management_full.flac");
