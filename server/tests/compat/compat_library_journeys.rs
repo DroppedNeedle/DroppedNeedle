@@ -757,30 +757,19 @@ async fn song_paths_never_carry_the_host_path() {
 }
 
 /// Identity, Range and HEAD semantics on the scanned files, identical on
-/// both protocols: HEAD answers exactly what GET would, minus the body.
+/// the native, Subsonic and Jellyfin stream routes: the same status,
+/// Content-Range, Content-Length, Accept-Ranges and bytes for every range,
+/// and HEAD answers exactly what GET would, minus the body. Only a 416's
+/// body is each protocol's own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn streaming_ranges_and_head_on_both_protocols() {
+async fn streaming_ranges_and_head_on_every_stream_route() {
     let rig = CompatApp::start("compat-ranges").await;
     let app = &rig.app;
     let auth = rig.subsonic_auth("matrix");
     let key = format!("api_key={}", rig.secret);
+    let session = player_web_session(&rig).await;
+    let bearer = [("authorization", session.as_str())];
 
-    let (_, found) = app
-        .call(
-            "GET",
-            &rest("search3?query=One&songCount=5", &auth),
-            &[],
-            None,
-        )
-        .await;
-    let mp3 = named(
-        &found["subsonic-response"]["searchResult3"]["song"],
-        "title",
-        "One",
-    )["id"]
-        .as_str()
-        .expect("song id")
-        .to_owned();
     let (_, items) = app
         .call(
             "GET",
@@ -789,35 +778,83 @@ async fn streaming_ranges_and_head_on_both_protocols() {
             None,
         )
         .await;
-    let flac = named(&items["Items"], "Name", "Airbag")["Id"]
-        .as_str()
-        .expect("track id")
-        .to_owned();
+    let mut flac = String::new();
+    let mut cases = Vec::new();
+    for (title, file, content_type) in [
+        ("One", "one", "audio/mpeg"),
+        ("Airbag", "airbag", "audio/flac"),
+    ] {
+        let (_, found) = app
+            .call(
+                "GET",
+                &rest(&format!("search3?query={title}&songCount=5"), &auth),
+                &[],
+                None,
+            )
+            .await;
+        let song = named(
+            &found["subsonic-response"]["searchResult3"]["song"],
+            "title",
+            title,
+        )["id"]
+            .as_str()
+            .expect("song id")
+            .to_owned();
+        let local = song.strip_prefix("tr-").expect("a track id").to_owned();
+        let item = named(&items["Items"], "Name", title)["Id"]
+            .as_str()
+            .expect("track id")
+            .to_owned();
+        if title == "Airbag" {
+            flac = item.clone();
+        }
+        cases.push((
+            [
+                (
+                    "native",
+                    format!("/api/v3/stream/local/{local}"),
+                    &bearer[..],
+                ),
+                (
+                    "subsonic",
+                    format!("/subsonic/rest/stream?id={song}&{auth}"),
+                    &[][..],
+                ),
+                (
+                    "jellyfin",
+                    format!("/jellyfin/Audio/{item}/stream?{key}"),
+                    &[][..],
+                ),
+            ],
+            rig.file(file),
+            content_type,
+        ));
+    }
 
-    let cases = [
-        (
-            format!("/subsonic/rest/stream?id={mp3}&{auth}"),
-            rig.file("one"),
-            "audio/mpeg",
-        ),
-        (
-            format!("/jellyfin/Audio/{flac}/stream?{key}"),
-            rig.file("airbag"),
-            "audio/flac",
-        ),
-    ];
-    for (url, file, content_type) in &cases {
+    for (routes, file, content_type) in &cases {
         let total = file.len() as u64;
-        let (status, headers, bytes) = app.raw("GET", url, &[], None).await;
-        assert_eq!(status, StatusCode::OK, "{url}");
-        assert_eq!(header_str(&headers, "content-type"), *content_type);
-        assert_eq!(header_str(&headers, "accept-ranges"), "bytes");
-        assert_eq!(header_str(&headers, "content-length"), total.to_string());
-        assert_eq!(&bytes, file);
-        let (status, headers, bytes) = app.raw("HEAD", url, &[], None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(header_str(&headers, "content-length"), total.to_string());
-        assert!(bytes.is_empty());
+        for (route, url, headers) in routes {
+            let (status, got, bytes) = app.raw("GET", url, headers, None).await;
+            let case = format!("{route} {content_type}");
+            assert_eq!(status, StatusCode::OK, "{case}");
+            assert_eq!(header_str(&got, "content-type"), *content_type, "{case}");
+            assert_eq!(header_str(&got, "accept-ranges"), "bytes", "{case}");
+            assert_eq!(
+                header_str(&got, "content-length"),
+                total.to_string(),
+                "{case}"
+            );
+            assert_eq!(header_str(&got, "content-encoding"), "identity", "{case}");
+            assert_eq!(&bytes, file, "{case}");
+            let (status, got, bytes) = app.raw("HEAD", url, headers, None).await;
+            assert_eq!(status, StatusCode::OK, "HEAD {case}");
+            assert_eq!(
+                header_str(&got, "content-length"),
+                total.to_string(),
+                "HEAD {case}"
+            );
+            assert!(bytes.is_empty(), "HEAD {case}");
+        }
 
         let last = total - 1;
         let unsatisfiable = format!("bytes */{total}");
@@ -845,35 +882,56 @@ async fn streaming_ranges_and_head_on_both_protocols() {
         ];
         for method in ["GET", "HEAD"] {
             for (range, want, content_range, span) in &ranges {
-                let (status, headers, bytes) =
-                    app.raw(method, url, &[("Range", range)], None).await;
-                let case = format!("{method} {content_type} {range:?}");
-                assert_eq!(status.as_u16(), *want, "{case}");
-                assert_eq!(
-                    header_str(&headers, "content-range"),
-                    *content_range,
-                    "{case}"
-                );
-                let len = span.end - span.start;
-                if *want == 206 {
+                let mut answers = Vec::new();
+                for (route, url, headers) in routes {
+                    let mut headers = headers.to_vec();
+                    headers.push(("Range", range));
+                    let (status, got, bytes) = app.raw(method, url, &headers, None).await;
+                    let case = format!("{method} {route} {content_type} {range:?}");
+                    assert_eq!(status.as_u16(), *want, "{case}");
+                    assert_eq!(header_str(&got, "content-range"), *content_range, "{case}");
+                    if *want == 416 {
+                        // Each protocol answers its own error body.
+                        if method == "GET" && *route == "native" {
+                            let error: Value = serde_json::from_slice(&bytes).expect("envelope");
+                            assert_eq!(error["error"]["code"], json!("RANGE_NOT_SATISFIABLE"));
+                        } else {
+                            assert!(bytes.is_empty(), "{case}");
+                        }
+                        continue;
+                    }
+                    let len = span.end - span.start;
                     assert_eq!(
-                        header_str(&headers, "content-length"),
+                        header_str(&got, "content-length"),
                         len.to_string(),
                         "{case}"
                     );
-                }
-                if method == "GET" {
-                    assert_eq!(
+                    assert_eq!(header_str(&got, "accept-ranges"), "bytes", "{case}");
+                    if method == "GET" {
+                        assert_eq!(
+                            bytes,
+                            file[span.start as usize..span.end as usize],
+                            "{case}"
+                        );
+                    } else {
+                        assert!(bytes.is_empty(), "{case}");
+                    }
+                    answers.push((
+                        status,
+                        header_str(&got, "content-range"),
+                        header_str(&got, "content-length"),
+                        header_str(&got, "accept-ranges"),
                         bytes,
-                        file[span.start as usize..span.end as usize],
-                        "{case}"
-                    );
-                } else {
-                    assert!(bytes.is_empty(), "{case}");
+                    ));
                 }
+                assert!(
+                    answers.windows(2).all(|pair| pair[0] == pair[1]),
+                    "{method} {content_type} {range:?}: the routes differ"
+                );
             }
         }
     }
+    let airbag = cases[1].1.clone();
 
     // An unknown Subsonic id is the envelope with code 70 over 200;
     // Jellyfin's unknown ids are plain 404s.
@@ -898,13 +956,16 @@ async fn streaming_ranges_and_head_on_both_protocols() {
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(bytes.is_empty());
+    let (status, headers, _) = app.raw("GET", &cases[1].0[0].1, &[], None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(header_str(&headers, "www-authenticate").starts_with("Bearer"));
 
     // The container suffix is cosmetic and `universal` serves the same bytes.
     for tail in ["stream.mp3", "universal"] {
         let uri = format!("/jellyfin/Audio/{flac}/{tail}?{key}");
         let (status, _, bytes) = app.raw("GET", &uri, &[], None).await;
         assert_eq!(status, StatusCode::OK, "{tail}");
-        assert_eq!(bytes, cases[1].1, "{tail}");
+        assert_eq!(bytes, airbag, "{tail}");
     }
     rig.stop().await;
 }
@@ -2587,7 +2648,7 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
 async fn player_web_session(rig: &CompatApp) -> String {
     let (status, body) = rig
         .app
-        .call(
+        .call_through_busy(
             "POST",
             "/api/v3/auth/login",
             &[],

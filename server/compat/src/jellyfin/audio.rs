@@ -454,24 +454,15 @@ where
     }
 }
 
-/// The format of the bytes an outcome serves, from its content type: the
-/// reverse of `content_type_for_format`. Empty when it names none.
+/// The format of the bytes an outcome serves, from its content type.
+/// Empty when it names none.
 fn served_format(outcome: &ByteOutcome) -> &'static str {
     let content_type = outcome
         .headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
         .map_or("", |(_, value)| value.as_str());
-    match content_type {
-        "audio/flac" => "flac",
-        "audio/mpeg" => "mp3",
-        "audio/ogg" => "ogg",
-        "audio/mp4" => "m4a",
-        "audio/aac" => "aac",
-        "audio/wav" => "wav",
-        "audio/opus" => "opus",
-        _ => "",
-    }
+    droppedneedle_media::stream::routes::extension_for_content_type(content_type).unwrap_or("")
 }
 
 /// HEAD for one item: the status and headers a direct GET would answer.

@@ -324,7 +324,7 @@ impl TestApp {
 
     /// [`TestApp::call`], asked again while the app answers busy: see
     /// [`super::through_busy`].
-    async fn call_through_busy(
+    pub async fn call_through_busy(
         &self,
         method: &str,
         uri: &str,
@@ -365,7 +365,7 @@ impl TestApp {
         let headers = [("authorization", admin.as_str())];
         let before = self.finished_scans(&headers).await;
         let (status, body) = self
-            .call(
+            .call_through_busy(
                 "POST",
                 "/api/v3/library/roots",
                 &headers,

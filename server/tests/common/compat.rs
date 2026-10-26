@@ -141,24 +141,26 @@ impl CompatApp {
         Self::signed_in(app, music, json!({ "tracks": [] })).await
     }
 
-    /// Turn both protocols on and give the player an app password.
+    /// Turn both protocols on and give the player an app password. A slow
+    /// host can answer these busy, so each is asked again until it is
+    /// carried out.
     async fn signed_in(app: TestApp, music: PathBuf, layout: Value) -> Self {
         let admin = app.login_admin().await;
         let admin = [("authorization", admin.as_str())];
         let (status, mut apps) = app
-            .call("GET", "/api/v3/settings/connect-apps", &admin, None)
+            .call_through_busy("GET", "/api/v3/settings/connect-apps", &admin, None)
             .await;
         assert_eq!(status, StatusCode::OK, "{apps}");
         apps["subsonic_enabled"] = json!(true);
         apps["jellyfin_enabled"] = json!(true);
         let (status, saved) = app
-            .call("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
+            .call_through_busy("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
             .await;
         assert_eq!(status, StatusCode::OK, "{saved}");
 
         let player = app.login_user(PLAYER).await;
         let (status, created) = app
-            .call(
+            .call_through_busy(
                 "POST",
                 "/api/v3/me/app-passwords",
                 &[("authorization", player.authorization.as_str())],

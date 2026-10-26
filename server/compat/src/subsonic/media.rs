@@ -14,6 +14,7 @@ use super::stream::{
     transcode_hint,
 };
 use super::{AVATAR_FORBIDDEN_MESSAGE, Ctx, Outcome};
+use droppedneedle_media::stream::leases::RETRY_AFTER_SECONDS;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// Audio as a binary outcome: bytes in memory, or a live stream.
@@ -60,7 +61,7 @@ pub fn serve_outcome(served: Result<ServedAudio, ServeError>) -> Result<Outcome,
         Err(ServeError::CapacityFull) => Ok(Outcome::Binary {
             status: 429,
             content_type: "text/plain".to_owned(),
-            headers: vec![("Retry-After".to_owned(), "1".to_owned())],
+            headers: vec![("Retry-After".to_owned(), RETRY_AFTER_SECONDS.to_string())],
             body: Vec::new(),
         }),
         Err(ServeError::Subsonic(err)) => Err(err),
@@ -361,7 +362,7 @@ pub async fn serve_transcode<P: Principal, S: Store, B: AudioBackend>(
             return Ok(Outcome::Binary {
                 status: 429,
                 content_type: "text/plain".to_owned(),
-                headers: vec![("Retry-After".to_owned(), "1".to_owned())],
+                headers: vec![("Retry-After".to_owned(), RETRY_AFTER_SECONDS.to_string())],
                 body: Vec::new(),
             });
         }

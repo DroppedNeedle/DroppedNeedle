@@ -224,15 +224,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         } = read;
         match plan {
             StreamPlan::Direct { .. } => {
-                let probe = path.clone();
-                // A stat is blocking file I/O, and the workspace's tokio has
-                // no `fs` feature, so it runs on the blocking pool.
-                let metadata = tokio::task::spawn_blocking(move || std::fs::metadata(probe))
-                    .await
-                    .map_err(|cause| StreamFault::Internal {
-                        cause: cause.to_string(),
-                    })?
-                    .map_err(io_fault)?;
+                let metadata = tokio::fs::metadata(&path).await.map_err(io_fault)?;
                 if !metadata.is_file() {
                     return Err(StreamFault::NotFound);
                 }

@@ -1,14 +1,17 @@
-//! Streaming seam: range math, content types, the `decide()` policy,
-//! and the audio backend trait.
+//! Streaming seam: the `decide()` policy, the audio backend trait, and
+//! original-byte serving over the stream routes' range framing.
 //!
 //! The stream engine owns real bytes; the compat adapters implement
-//! [`AudioBackend`] on top of it. Everything else here (byte-exact range
-//! handling, the Feishin bitrate-0 quirk, download filenames) is ported
-//! from v2 and covered by goldens.
+//! [`AudioBackend`] on top of it. Everything else here (the Feishin
+//! bitrate-0 quirk, download filenames) is ported from v2 and covered by
+//! goldens.
 //!
 //! v2: the compat transcode service (`decide()`), the local files service
 //! (ranges, HEAD, MIME), and the Subsonic router (`_serve_file`, `_stream`,
 //! `_download`, `_cover_size`).
+
+use axum::http::HeaderMap;
+use droppedneedle_media::stream::routes::{DirectSpan, content_type_for_extension};
 
 use super::error::{GENERIC, SubsonicError};
 pub use crate::body::AudioBody;
@@ -19,21 +22,6 @@ pub const MIN_BITRATE_KBPS: i64 = 32;
 pub const UNSET_BITRATE_KBPS: i64 = 1_000_000_000;
 /// Max `timeOffset` / transcode `offset` seconds.
 pub const MAX_OFFSET_SECONDS: f64 = 604_800.0;
-
-/// Content type for an audio suffix (v2 `LocalFilesService` table).
-pub fn content_type_for(suffix: &str) -> Option<&'static str> {
-    match suffix.to_lowercase().as_str() {
-        "flac" => Some("audio/flac"),
-        "mp3" => Some("audio/mpeg"),
-        "ogg" => Some("audio/ogg"),
-        "m4a" => Some("audio/mp4"),
-        "aac" => Some("audio/aac"),
-        "wav" => Some("audio/wav"),
-        "wma" => Some("audio/x-ms-wma"),
-        "opus" => Some("audio/opus"),
-        _ => None,
-    }
-}
 
 /// Transcode output MIME/suffix (v2 `out_media_type`/`out_suffix`).
 /// The one copy: `opus` maps to the ogg pair, every other format
@@ -139,82 +127,6 @@ pub fn estimate_transcode_length(
 ) -> i64 {
     let remaining = (duration_seconds - start_seconds).max(0.0);
     (bitrate_kbps as f64 * 1000.0 / 8.0 * remaining) as i64
-}
-
-/// Parsed single range: (start, end-inclusive).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ByteRange {
-    /// First byte.
-    pub start: u64,
-    /// Last byte, inclusive.
-    pub end: u64,
-}
-
-/// Range outcome: full body, partial body, or 416.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RangeOutcome {
-    /// No (valid) range: whole body, 200.
-    Full,
-    /// Satisfiable range: partial body, 206.
-    Partial(ByteRange),
-    /// Unsatisfiable: 416 with `Content-Range: bytes */N`, no body.
-    Unsatisfiable,
-}
-
-/// Byte-exact range parsing (v2 `stream_track`): single-range `bytes=`
-/// only. `bytes=N-M`, open `bytes=N-`, and suffix `bytes=-N` all return
-/// 206. Multi-range, malformed, empty, or unsatisfiable (start >= size,
-/// `bytes=-0`, zero-length file) returns 416.
-pub fn parse_range(header: Option<&str>, file_size: u64) -> RangeOutcome {
-    let Some(header) = header else {
-        return RangeOutcome::Full;
-    };
-    let header = header.trim();
-    let Some(spec) = header.strip_prefix("bytes=") else {
-        return RangeOutcome::Unsatisfiable;
-    };
-    if spec.contains(',') || spec.is_empty() || file_size == 0 {
-        return RangeOutcome::Unsatisfiable;
-    }
-    let (start_part, end_part) = match spec.split_once('-') {
-        Some(parts) => parts,
-        None => return RangeOutcome::Unsatisfiable,
-    };
-    if start_part.is_empty() {
-        let suffix: u64 = match end_part.parse() {
-            Ok(0) | Err(_) => return RangeOutcome::Unsatisfiable,
-            Ok(n) => n,
-        };
-        let take = suffix.min(file_size);
-        return RangeOutcome::Partial(ByteRange {
-            start: file_size - take,
-            end: file_size - 1,
-        });
-    }
-    let start: u64 = match start_part.parse() {
-        Ok(n) => n,
-        Err(_) => return RangeOutcome::Unsatisfiable,
-    };
-    if start >= file_size {
-        return RangeOutcome::Unsatisfiable;
-    }
-    if end_part.is_empty() {
-        return RangeOutcome::Partial(ByteRange {
-            start,
-            end: file_size - 1,
-        });
-    }
-    let end: u64 = match end_part.parse() {
-        Ok(n) => n,
-        Err(_) => return RangeOutcome::Unsatisfiable,
-    };
-    if end < start {
-        return RangeOutcome::Unsatisfiable;
-    }
-    RangeOutcome::Partial(ByteRange {
-        start,
-        end: end.min(file_size - 1),
-    })
 }
 
 /// Download filename: sanitize the stem (`[^A-Za-z0-9._ -]` -> `_`,
@@ -496,11 +408,12 @@ impl From<BackendError> for ServeError {
     }
 }
 
-/// Serve original bytes with HEAD/range/416 handling (v2 `_serve_file`
-/// minus the lease plumbing, which lives behind [`AudioBackend`]).
-/// HEAD answers the same status and headers GET would (200/206/416;
-/// HEAD honors Range, like the stream engine), always with an empty
-/// body. GET opens the backend exactly once
+/// Serve original bytes (v2 `_serve_file` minus the lease plumbing, which
+/// lives behind [`AudioBackend`]). Ranges, lengths and the 200/206/416
+/// verdict come from the stream routes' [`DirectSpan`], so they match the
+/// native and Jellyfin routes. HEAD answers the status and headers GET
+/// would (HEAD honors Range, like the stream engine) with an empty body,
+/// from facts alone. GET opens the backend exactly once
 /// ([`AudioBackend::open_original`]) and streams the asked span.
 pub async fn serve_original<B: AudioBackend>(
     backend: &B,
@@ -509,105 +422,42 @@ pub async fn serve_original<B: AudioBackend>(
     head_only: bool,
     content_disposition: Option<String>,
 ) -> Result<ServedAudio, ServeError> {
-    if head_only {
-        return serve_head(backend, file_id, range_header, content_disposition).await;
-    }
-    let opened = backend
-        .open_original(file_id)
-        .await?
-        .ok_or_else(|| SubsonicError::code_only(super::error::NOT_FOUND))?;
-    let size = opened.facts.size;
-    let content_type = content_type_for(&opened.facts.suffix).ok_or_else(|| {
-        SubsonicError::new(
-            GENERIC,
-            format!("Cannot stream .{} files", opened.facts.suffix),
-        )
-    })?;
-    let mut headers = vec![
-        ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-        ("Content-Encoding".to_owned(), "identity".to_owned()),
-    ];
-    if let Some(disposition) = content_disposition {
-        headers.push(("Content-Disposition".to_owned(), disposition));
-    }
-    match parse_range(range_header, size) {
-        RangeOutcome::Full => {
-            headers.push(("Content-Length".to_owned(), size.to_string()));
-            Ok(ServedAudio {
-                status: 200,
-                content_type: content_type.to_owned(),
-                headers,
-                body: opened.read(0, size),
-            })
-        }
-        RangeOutcome::Partial(range) => {
-            let len = range.end - range.start + 1;
-            headers.push(("Content-Length".to_owned(), len.to_string()));
-            headers.push((
-                "Content-Range".to_owned(),
-                format!("bytes {}-{}/{}", range.start, range.end, size),
-            ));
-            Ok(ServedAudio {
-                status: 206,
-                content_type: content_type.to_owned(),
-                headers,
-                body: opened.read(range.start, len),
-            })
-        }
-        RangeOutcome::Unsatisfiable => Err(ServeError::RangeUnsatisfiable(size)),
-    }
-}
-
-/// HEAD over original bytes: facts only (no object read), then the same
-/// 200/206/416 outcome GET would answer, with an empty body.
-async fn serve_head<B: AudioBackend>(
-    backend: &B,
-    file_id: &str,
-    range_header: Option<&str>,
-    content_disposition: Option<String>,
-) -> Result<ServedAudio, ServeError> {
-    let facts = backend
-        .audio_facts(file_id)
-        .await?
-        .ok_or_else(|| SubsonicError::code_only(super::error::NOT_FOUND))?;
-    let content_type = content_type_for(&facts.suffix).ok_or_else(|| {
+    let not_found = || SubsonicError::code_only(super::error::NOT_FOUND);
+    let (facts, opened) = if head_only {
+        let facts = backend.audio_facts(file_id).await?.ok_or_else(not_found)?;
+        (facts, None)
+    } else {
+        let opened = backend
+            .open_original(file_id)
+            .await?
+            .ok_or_else(not_found)?;
+        (opened.facts.clone(), Some(opened))
+    };
+    let content_type = content_type_for_extension(&facts.suffix).ok_or_else(|| {
         SubsonicError::new(GENERIC, format!("Cannot stream .{} files", facts.suffix))
     })?;
-    let mut headers = vec![
-        ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-        ("Content-Encoding".to_owned(), "identity".to_owned()),
-    ];
+    let span = DirectSpan::for_request(range_header, facts.size)
+        .ok_or(ServeError::RangeUnsatisfiable(facts.size))?;
+    let mut framing = HeaderMap::new();
+    span.write_headers(&mut framing);
+    let mut headers = vec![("Content-Encoding".to_owned(), "identity".to_owned())];
+    headers.extend(framing.iter().filter_map(|(name, value)| {
+        Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+    }));
     if let Some(disposition) = content_disposition {
         headers.push(("Content-Disposition".to_owned(), disposition));
     }
-    match parse_range(range_header, facts.size) {
-        RangeOutcome::Full => {
-            headers.push(("Content-Length".to_owned(), facts.size.to_string()));
+    let body = match opened {
+        Some(opened) => opened.read(span.start, span.len),
+        None => {
             headers.push(("Content-Type".to_owned(), content_type.to_owned()));
-            Ok(ServedAudio {
-                status: 200,
-                content_type: content_type.to_owned(),
-                headers,
-                body: AudioBody::empty(),
-            })
+            AudioBody::empty()
         }
-        RangeOutcome::Partial(range) => {
-            headers.push((
-                "Content-Length".to_owned(),
-                (range.end - range.start + 1).to_string(),
-            ));
-            headers.push((
-                "Content-Range".to_owned(),
-                format!("bytes {}-{}/{}", range.start, range.end, facts.size),
-            ));
-            headers.push(("Content-Type".to_owned(), content_type.to_owned()));
-            Ok(ServedAudio {
-                status: 206,
-                content_type: content_type.to_owned(),
-                headers,
-                body: AudioBody::empty(),
-            })
-        }
-        RangeOutcome::Unsatisfiable => Err(ServeError::RangeUnsatisfiable(facts.size)),
-    }
+    };
+    Ok(ServedAudio {
+        status: span.status().as_u16(),
+        content_type: content_type.to_owned(),
+        headers,
+        body,
+    })
 }

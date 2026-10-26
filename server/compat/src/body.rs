@@ -2,14 +2,14 @@
 //!
 //! Audio either sits in memory (covers, test doubles, whole remote reads)
 //! or streams: file bytes read by range, or transcode output chunk by
-//! chunk. A streaming body carries the stream lease inside it, so the slot
-//! stays held until the last byte is sent or the client goes away.
+//! chunk. A streaming body from the stream framing carries the stream lease
+//! inside it, so the slot stays held until the last byte is sent or the
+//! client goes away.
 
 use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt as _;
 
-use droppedneedle_media::stream::leases::OwnedDirectLease;
 use droppedneedle_media::stream::routes::ChunkStream;
 
 /// A chunk stream that can sit in cloneable protocol values: it is taken
@@ -18,12 +18,8 @@ use droppedneedle_media::stream::routes::ChunkStream;
 pub struct LiveBody(Arc<Mutex<Option<ChunkStream>>>);
 
 impl LiveBody {
-    /// Wrap a stream, holding `lease` until the stream ends or drops.
-    pub fn new(chunks: ChunkStream, lease: Option<OwnedDirectLease>) -> Self {
-        let chunks = match lease {
-            Some(lease) => lease.hold(chunks),
-            None => chunks,
-        };
+    /// Wrap a stream.
+    pub fn new(chunks: ChunkStream) -> Self {
         Self(Arc::new(Mutex::new(Some(chunks))))
     }
 
@@ -96,23 +92,5 @@ impl AudioBody {
             Self::Bytes(bytes) => Ok(bytes),
             Self::Live(live) => live.collect().await,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use droppedneedle_media::stream::leases::DirectGate;
-
-    #[tokio::test]
-    async fn the_lease_lasts_until_the_stream_is_gone() {
-        let gate = Arc::new(DirectGate::new());
-        let lease = gate.acquire_owned("u1").await.expect("slot");
-        let chunks =
-            futures_util::stream::iter(vec![Ok(b"ab".to_vec()), Ok(b"c".to_vec())]).boxed();
-        let body = LiveBody::new(chunks, Some(lease));
-        assert_eq!(gate.active(), 1, "held while the body waits");
-        assert_eq!(body.collect().await.expect("reads"), b"abc");
-        assert_eq!(gate.active(), 0, "released once the stream is done");
     }
 }

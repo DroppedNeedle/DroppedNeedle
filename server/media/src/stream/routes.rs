@@ -1,9 +1,9 @@
 //! Stream-gateway routes: one source-keyed GET/HEAD surface over the engine.
 //!
 //! This file owns the HTTP layer only: route shapes, the typed query, range
-//! parsing, byte-exact 200/206/416/HEAD headers, and the error mapping. Byte
-//! sourcing, leases, and transcode execution live in the engine behind the
-//! [`StreamEngine`] seam below.
+//! parsing, byte-exact 200/206/416/HEAD framing for every stream route, and
+//! the error mapping. Byte sourcing, leases, and transcode execution live in
+//! the engine behind the [`StreamEngine`] seam below.
 //!
 //! # Routes (relative; `MediaSetup` nests these under `/api/v3`)
 //!
@@ -29,30 +29,32 @@
 //! # Seams
 //!
 //! * Engine: [`StreamEngine`] is the engine seam; [`super::gateway::Gateway`]
-//!   implements it (leases + `Transcoder` + direct/transcode reads). The
-//!   range/HEAD/error/header logic stays in this file.
+//!   implements it (leases + `Transcoder` + direct/transcode reads).
 //! * Streaming reads: routes call [`StreamEngine::open_stream`], which
 //!   hands back a [`MediaBody`]: a local file read by range on demand, a
 //!   transcode read chunk by chunk, or in-memory bytes. HEAD never reads a
-//!   body and never starts ffmpeg. The 206/416 decisions stay here.
+//!   body and never starts ffmpeg.
+//! * Framing: [`frame`] turns one opened object, the `Range` header and
+//!   HEAD into status, headers and body. The native, Subsonic and Jellyfin
+//!   stream routes and the track download all frame through it or through
+//!   [`DirectSpan`], so ranges, lengths and HEAD answer the same everywhere;
+//!   each protocol keeps only its own error body.
 //! * Mounting: [`routes`] mounts [`stream_get_route`] and
 //!   [`stream_head_route`], the production forms of the generic handlers,
 //!   for any signed-in user. Playback
 //!   reporting (`start`/`progress`/`stop`/`scrobble`/`now-playing`/`stopped`)
 //!   lives in `playback`, not this router.
-//! * [`content_type_for_extension`] ports the v2 `CONTENT_TYPE_MAP` minus
-//!   WMA, which v3 does not support. The engine resolves the
+//! * [`content_type_for_extension`] is the one audio content-type table
+//!   (v2's minus WMA, which v3 does not support). The engine resolves the
 //!   final content type (upstream wins for remotes); local reads go through
 //!   this table.
 //!
-//! # v2 parity notes
+//! # Ranges
 //!
-//! Range parsing ports `LocalFilesService.stream_track` rule for rule:
-//! single `bytes=start-end` only (suffix and open forms included), end
-//! clamped to size-1, suffix longer than the file clamped to the whole file,
-//! anything else 416, except a multi-range request, which is answered whole
-//! with 200 (RFC 9110 lets a server ignore Range). The 416 carries `Content-Range: bytes */N` (v2 compat
-//! routers), and 429 carries `Retry-After: 1` (v2 subsonic router).
+//! One `bytes=start-end` range only (suffix and open forms included), end
+//! clamped to size-1, suffix longer than the file clamped to the whole
+//! file. Anything else, a multi-range request included, is 416 with
+//! `Content-Range: bytes */N`. A 429 carries `Retry-After: 1`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -289,20 +291,34 @@ pub trait StreamEngine: Send + Sync {
 // Content types (v2 table minus WMA, which never streams)
 // ---------------------------------------------------------------------------
 
-/// Content type for a local file extension, e.g. `.flac` or `flac`.
-/// Case-insensitive. `None` (including `.wma`) means the format never
-/// streams and the engine answers [`StreamFault::InvalidInput`].
+/// Every audio format that streams, by extension, with its content type.
+const AUDIO_TYPES: [(&str, &str); 7] = [
+    ("flac", "audio/flac"),
+    ("mp3", "audio/mpeg"),
+    ("ogg", "audio/ogg"),
+    ("m4a", "audio/mp4"),
+    ("aac", "audio/aac"),
+    ("wav", "audio/wav"),
+    ("opus", "audio/opus"),
+];
+
+/// Content type for an audio file extension, e.g. `.flac` or `flac`.
+/// Case-insensitive. `None` means the format never streams and the engine
+/// answers [`StreamFault::InvalidInput`].
 pub fn content_type_for_extension(extension: &str) -> Option<&'static str> {
-    match extension.trim_start_matches('.').to_lowercase().as_str() {
-        "flac" => Some("audio/flac"),
-        "mp3" => Some("audio/mpeg"),
-        "ogg" => Some("audio/ogg"),
-        "m4a" => Some("audio/mp4"),
-        "aac" => Some("audio/aac"),
-        "wav" => Some("audio/wav"),
-        "opus" => Some("audio/opus"),
-        _ => None,
-    }
+    let extension = extension.trim_start_matches('.');
+    AUDIO_TYPES
+        .iter()
+        .find(|(known, _)| known.eq_ignore_ascii_case(extension))
+        .map(|(_, content_type)| *content_type)
+}
+
+/// The extension of a content type from [`content_type_for_extension`].
+pub fn extension_for_content_type(content_type: &str) -> Option<&'static str> {
+    AUDIO_TYPES
+        .iter()
+        .find(|(_, known)| *known == content_type)
+        .map(|(extension, _)| *extension)
 }
 
 // ---------------------------------------------------------------------------
@@ -311,21 +327,11 @@ pub fn content_type_for_extension(extension: &str) -> Option<&'static str> {
 
 /// Inclusive resolved byte range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ByteRange {
+struct ByteRange {
     /// First byte offset.
-    pub start: u64,
+    start: u64,
     /// Last byte offset, inclusive.
-    pub end: u64,
-}
-
-impl ByteRange {
-    /// Length of the slice in bytes. Ranges are never empty by
-    /// construction (`parse_range` only returns `start <= end`), so there
-    /// is no `is_empty`.
-    #[allow(clippy::len_without_is_empty)]
-    pub fn len(self) -> u64 {
-        self.end - self.start + 1
-    }
+    end: u64,
 }
 
 /// Parse a single `Range` header against `total_len`, v2 rule for rule:
@@ -333,12 +339,11 @@ impl ByteRange {
 /// (clamped to the whole file when longer). `None` means 416: no match,
 /// both bounds empty, suffix of 0, start past the end, or an empty object.
 /// Multi-range and unit forms other than `bytes=` never match.
-pub fn parse_range(header: &str, total_len: u64) -> Option<ByteRange> {
+fn parse_range(header: &str, total_len: u64) -> Option<ByteRange> {
     if total_len == 0 {
         return None;
     }
-    // Surrounding whitespace is insignificant (the Subsonic code trims
-    // too, so `"bytes=0-1 "` is a 206 on every path, never a 416).
+    // Surrounding whitespace is insignificant: `"bytes=0-1 "` seeks.
     let spec = header.trim().strip_prefix("bytes=")?;
     let (start_str, end_str) = spec.split_once('-')?;
     if start_str.is_empty() && end_str.is_empty() {
@@ -664,46 +669,145 @@ async fn serve<E: StreamEngine>(
         .await
         .map_err(|fault| map_fault(fault, source))?;
 
-    // The direct lease the open took rides inside the body, so the slot
-    // stays held until the last byte is sent or the client goes away.
-    let mut media = media;
-    let lease = media.lease.take();
+    let framed = frame(
+        media,
+        range_header(headers),
+        head_only,
+        query.estimate_content_length,
+    )?;
+    let body = match framed.body {
+        FramedBody::Empty => Body::empty(),
+        FramedBody::Bytes(bytes) => Body::from(bytes),
+        FramedBody::Stream(chunks) => Body::from_stream(chunks),
+    };
+    let mut response = (framed.status, body).into_response();
+    response.headers_mut().extend(framed.headers);
+    Ok(response)
+}
+
+/// The `Range` header as text. One that is not visible ASCII reads as an
+/// empty value, which no range matches (416).
+pub fn range_header(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::RANGE)
+        .map(|value| value.to_str().unwrap_or(""))
+}
+
+/// A framed stream answer: status, framing headers and body.
+#[derive(Debug)]
+pub struct Framed {
+    /// 200 or 206.
+    pub status: StatusCode,
+    /// `Content-Type`, `Content-Encoding`, `Accept-Ranges`, and
+    /// `Content-Length` and `Content-Range` where they apply; a transcode
+    /// adds `Cache-Control`.
+    pub headers: HeaderMap,
+    /// What to send.
+    pub body: FramedBody,
+}
+
+/// The body of a [`Framed`] answer. A stream carries the open's direct
+/// lease inside, so the slot stays held until the last byte is sent or
+/// the client goes away.
+pub enum FramedBody {
+    /// Nothing (HEAD, or a transcode HEAD answered without ffmpeg).
+    Empty,
+    /// Bytes already in memory, sent whole.
+    Bytes(Vec<u8>),
+    /// Bytes read as the response goes out.
+    Stream(ChunkStream),
+}
+
+impl std::fmt::Debug for FramedBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("Empty"),
+            Self::Bytes(bytes) => write!(f, "Bytes({} bytes)", bytes.len()),
+            Self::Stream(_) => f.write_str("Stream"),
+        }
+    }
+}
+
+/// Frame one opened object for the wire, the same way on every stream
+/// route. A direct object honours one `Range` (206) or answers whole (200);
+/// any other range, multi-range included, is
+/// [`StreamError::Unsatisfiable`], which each protocol renders as its own
+/// 416. A transcode is 200 with no ranges and no caching, sized only when
+/// `want_estimate` and the engine estimated it. HEAD gets GET's status and
+/// headers with no body.
+pub fn frame(
+    media: StreamMedia,
+    range: Option<&str>,
+    head_only: bool,
+    want_estimate: bool,
+) -> Result<Framed, StreamError> {
+    let StreamMedia {
+        content_type,
+        total_len,
+        transcoded,
+        estimated_len,
+        body,
+        lease,
+    } = media;
     let hold = move |chunks: ChunkStream| match lease {
         Some(lease) => lease.hold(chunks),
         None => chunks,
     };
-    if media.transcoded {
-        return transcode_response(media, hold, query.estimate_content_length, head_only);
-    }
-
-    let span = DirectSpan::for_request(headers.get(header::RANGE), media.total_len).ok_or(
-        StreamError::Unsatisfiable {
-            total_len: media.total_len,
-        },
-    )?;
-
-    let content_type: HeaderValue = upstream_content_type(&media.content_type);
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::CONTENT_TYPE, content_type);
-    response_headers.insert(
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, upstream_content_type(&content_type));
+    headers.insert(
         header::CONTENT_ENCODING,
         HeaderValue::from_static("identity"),
     );
-    span.write_headers(&mut response_headers);
+    if transcoded {
+        headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("none"));
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        let estimated = estimated_len.filter(|_| want_estimate);
+        if let Some(len) = estimated {
+            headers.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+        } else if let (true, MediaBody::Bytes(bytes)) = (head_only, &body) {
+            // An in-memory body knows its length: pin it on HEAD for GET/HEAD
+            // parity (GET's buffered body gets it stamped).
+            headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+        }
+        // A live transcode has no known size, so GET without an estimate
+        // carries no Content-Length and streams chunked.
+        let body = if head_only {
+            FramedBody::Empty
+        } else {
+            match body {
+                MediaBody::Bytes(bytes) => FramedBody::Bytes(bytes),
+                MediaBody::Chunks(chunks) => FramedBody::Stream(hold(chunks)),
+                MediaBody::File(path) => FramedBody::Stream(hold(file_range(path, 0, total_len))),
+                MediaBody::Spans(open) => FramedBody::Stream(hold(open(0, total_len))),
+                MediaBody::Empty => FramedBody::Empty,
+            }
+        };
+        return Ok(Framed {
+            status: StatusCode::OK,
+            headers,
+            body,
+        });
+    }
+    let span = DirectSpan::for_request(range, total_len)
+        .ok_or(StreamError::Unsatisfiable { total_len })?;
+    span.write_headers(&mut headers);
     let body = if head_only {
-        Body::empty()
+        FramedBody::Empty
     } else {
-        direct_body(media.body, span.start, span.len, hold)?
+        direct_body(body, span.start, span.len, hold)?
     };
-
-    let mut response = (span.status(), body).into_response();
-    response.headers_mut().extend(response_headers);
-    Ok(response)
+    Ok(Framed {
+        status: span.status(),
+        headers,
+        body,
+    })
 }
 
 /// The bytes a direct (untranscoded) response sends: the whole object, or
-/// the one span a `Range` header asked for. Streaming and local file
-/// downloads both frame their bodies with this.
+/// the one span a `Range` header asked for. [`frame`], the Subsonic stream
+/// and download routes and local file downloads all frame their bodies
+/// with this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirectSpan {
     /// First byte sent.
@@ -718,25 +822,20 @@ pub struct DirectSpan {
 
 impl DirectSpan {
     /// Apply the [`parse_range`] rules to an optional `Range` header. No
-    /// header, or a multi-range ask (answered whole, which RFC 9110
-    /// allows), sends everything. `None` means 416.
-    pub fn for_request(range: Option<&HeaderValue>, total_len: u64) -> Option<Self> {
-        let whole = Self {
-            start: 0,
-            len: total_len,
-            total_len,
-            partial: false,
+    /// header sends everything. `None` means 416, a multi-range ask
+    /// included.
+    pub fn for_request(range: Option<&str>, total_len: u64) -> Option<Self> {
+        let Some(text) = range else {
+            return Some(Self {
+                start: 0,
+                len: total_len,
+                total_len,
+                partial: false,
+            });
         };
-        let Some(value) = range else {
-            return Some(whole);
-        };
-        let text = value.to_str().unwrap_or("");
-        if is_multi_range(text) {
-            return Some(whole);
-        }
         parse_range(text, total_len).map(|resolved| Self {
             start: resolved.start,
-            len: resolved.len(),
+            len: resolved.end - resolved.start + 1,
             total_len,
             partial: true,
         })
@@ -766,12 +865,19 @@ impl DirectSpan {
     }
 }
 
-/// True for a `bytes=` request naming more than one range.
-fn is_multi_range(header: &str) -> bool {
-    header
-        .trim()
-        .strip_prefix("bytes=")
-        .is_some_and(|spec| spec.contains(','))
+/// `len` bytes from `start` of a direct object's body, holding `lease`
+/// until a streamed body ends. For a caller that framed the span itself
+/// with [`DirectSpan`].
+pub fn read_span(
+    body: MediaBody,
+    lease: Option<super::leases::OwnedDirectLease>,
+    start: u64,
+    len: u64,
+) -> Result<FramedBody, StreamError> {
+    direct_body(body, start, len, move |chunks| match lease {
+        Some(lease) => lease.hold(chunks),
+        None => chunks,
+    })
 }
 
 /// Body for `len` bytes of a direct object starting at `start`.
@@ -780,7 +886,7 @@ fn direct_body(
     start: u64,
     len: u64,
     hold: impl FnOnce(ChunkStream) -> ChunkStream,
-) -> Result<Body, StreamError> {
+) -> Result<FramedBody, StreamError> {
     match body {
         MediaBody::Bytes(bytes) => {
             let from = usize::try_from(start).unwrap_or(usize::MAX);
@@ -789,15 +895,15 @@ fn direct_body(
                 .and_then(|len| from.checked_add(len))
                 .unwrap_or(usize::MAX);
             if from == 0 && to == bytes.len() {
-                return Ok(Body::from(bytes));
+                return Ok(FramedBody::Bytes(bytes));
             }
             let slice = bytes
                 .get(from..to)
                 .ok_or_else(|| StreamError::internal("engine short-read the ranged object"))?;
-            Ok(Body::from(slice.to_vec()))
+            Ok(FramedBody::Bytes(slice.to_vec()))
         }
-        MediaBody::File(path) => Ok(Body::from_stream(hold(file_range(path, start, len)))),
-        MediaBody::Spans(open) => Ok(Body::from_stream(hold(open(start, len)))),
+        MediaBody::File(path) => Ok(FramedBody::Stream(hold(file_range(path, start, len)))),
+        MediaBody::Spans(open) => Ok(FramedBody::Stream(hold(open(start, len)))),
         MediaBody::Chunks(_) | MediaBody::Empty => {
             Err(StreamError::internal("engine returned no direct body"))
         }
@@ -807,117 +913,55 @@ fn direct_body(
 /// Read size of one file chunk.
 const FILE_CHUNK: u64 = 64 * 1024;
 
-/// Stream `len` bytes of `path` from `start`, one chunk per blocking read.
-/// A file that ends early fails the stream instead of sending short.
+/// Stream `len` bytes of `path` from `start`. The file is opened when the
+/// stream is first polled. A file that ends early fails the stream instead
+/// of sending short.
 pub fn file_range(path: PathBuf, start: u64, len: u64) -> ChunkStream {
+    use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
+
     struct Cursor {
         path: PathBuf,
-        file: Option<std::fs::File>,
-        offset: u64,
+        file: Option<tokio::fs::File>,
+        start: u64,
         remaining: u64,
+    }
+    async fn next(mut cursor: Cursor) -> std::io::Result<(Vec<u8>, Cursor)> {
+        let mut file = match cursor.file.take() {
+            Some(file) => file,
+            None => {
+                let mut file = tokio::fs::File::open(&cursor.path).await?;
+                file.seek(std::io::SeekFrom::Start(cursor.start)).await?;
+                file
+            }
+        };
+        let want = usize::try_from(cursor.remaining.min(FILE_CHUNK)).unwrap_or(0);
+        let mut buf = vec![0u8; want];
+        let read = file.read(&mut buf).await?;
+        if read == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "file ended before the advertised length",
+            ));
+        }
+        buf.truncate(read);
+        cursor.remaining = cursor.remaining.saturating_sub(read as u64);
+        cursor.file = Some(file);
+        Ok((buf, cursor))
     }
     let cursor = Cursor {
         path,
         file: None,
-        offset: start,
+        start,
         remaining: len,
     };
     futures_util::stream::unfold(Some(cursor), |state| async move {
-        let mut cursor = state?;
-        if cursor.remaining == 0 {
-            return None;
-        }
-        // File reads block, and the workspace's tokio has no `fs` feature,
-        // so each chunk is read on the blocking pool.
-        let read = tokio::task::spawn_blocking(move || {
-            use std::io::{Read as _, Seek as _, SeekFrom};
-            let mut file = match cursor.file.take() {
-                Some(file) => file,
-                None => {
-                    let mut file = std::fs::File::open(&cursor.path)?;
-                    file.seek(SeekFrom::Start(cursor.offset))?;
-                    file
-                }
-            };
-            let want = usize::try_from(cursor.remaining.min(FILE_CHUNK)).unwrap_or(0);
-            let mut buf = vec![0u8; want];
-            let read = file.read(&mut buf)?;
-            buf.truncate(read);
-            cursor.file = Some(file);
-            Ok::<_, std::io::Error>((cursor, buf))
+        let cursor = state.filter(|cursor| cursor.remaining > 0)?;
+        Some(match next(cursor).await {
+            Ok((buf, cursor)) => (Ok(buf), Some(cursor)),
+            Err(error) => (Err(error), None),
         })
-        .await;
-        match read {
-            Ok(Ok((_, buf))) if buf.is_empty() => Some((
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "file ended before the advertised length",
-                )),
-                None,
-            )),
-            Ok(Ok((mut cursor, buf))) => {
-                let read = buf.len() as u64;
-                cursor.offset += read;
-                cursor.remaining = cursor.remaining.saturating_sub(read);
-                Some((Ok(buf), Some(cursor)))
-            }
-            Ok(Err(error)) => Some((Err(error), None)),
-            Err(error) => Some((Err(std::io::Error::other(error.to_string())), None)),
-        }
     })
     .boxed()
-}
-
-/// Transcode landing: 200, no ranges, no caching, identity encoding, and the
-/// estimated length only when the client asked for it (v2 headers).
-fn transcode_response(
-    media: StreamMedia,
-    hold: impl FnOnce(ChunkStream) -> ChunkStream,
-    want_estimate: bool,
-    head_only: bool,
-) -> Result<Response, StreamError> {
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        header::CONTENT_TYPE,
-        upstream_content_type(&media.content_type),
-    );
-    response_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("none"));
-    response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response_headers.insert(
-        header::CONTENT_ENCODING,
-        HeaderValue::from_static("identity"),
-    );
-    let estimated = if want_estimate {
-        media.estimated_len
-    } else {
-        None
-    };
-    if let Some(len) = estimated {
-        response_headers.insert(header::CONTENT_LENGTH, header_value(&len.to_string())?);
-    } else if let (true, MediaBody::Bytes(bytes)) = (head_only, &media.body) {
-        // An in-memory body knows its length: pin it on HEAD for GET/HEAD
-        // parity (GET's buffered body gets it stamped).
-        response_headers.insert(
-            header::CONTENT_LENGTH,
-            header_value(&bytes.len().to_string())?,
-        );
-    }
-    let body = if head_only {
-        Body::empty()
-    } else {
-        match media.body {
-            MediaBody::Bytes(bytes) => Body::from(bytes),
-            MediaBody::Chunks(chunks) => Body::from_stream(hold(chunks)),
-            MediaBody::File(path) => Body::from_stream(hold(file_range(path, 0, media.total_len))),
-            MediaBody::Spans(open) => Body::from_stream(hold(open(0, media.total_len))),
-            MediaBody::Empty => Body::empty(),
-        }
-    };
-    let mut response = (StatusCode::OK, body).into_response();
-    response.headers_mut().extend(response_headers);
-    // A live transcode has no known size, so GET without an estimate
-    // carries no Content-Length and streams chunked.
-    Ok(response)
 }
 
 /// Map an engine fault to the wire. Messages stay fixed or user-safe; only
@@ -936,12 +980,6 @@ fn map_fault(fault: StreamFault, source: AudioSource) -> StreamError {
         StreamFault::Upstream { source, cause } => StreamError::Upstream { source, cause },
         StreamFault::Internal { cause } => StreamError::Internal { cause },
     }
-}
-
-/// Fallible header construction without panics: only ASCII digits and fixed
-/// tokens reach here, so failure is an internal error by construction.
-fn header_value(text: &str) -> Result<HeaderValue, StreamError> {
-    HeaderValue::from_str(text).map_err(|_| StreamError::internal("stream header failed to render"))
 }
 
 /// Upstream content type, infallible: remotes resolve their own type, and an
@@ -967,19 +1005,47 @@ mod tests {
     }
 
     #[test]
-    fn transcode_response_sets_length_only_with_estimate() {
-        let estimated = transcode_response(transcode_media(), |c| c, true, false).expect("renders");
+    fn transcode_sets_length_only_with_estimate() {
+        let estimated = frame(transcode_media(), None, false, true).expect("frames");
         assert_eq!(
-            estimated.headers().get(header::CONTENT_LENGTH),
+            estimated.headers.get(header::CONTENT_LENGTH),
             Some(&HeaderValue::from_static("25"))
         );
 
-        let plain = transcode_response(transcode_media(), |c| c, false, false).expect("renders");
-        assert_eq!(plain.headers().get(header::CONTENT_LENGTH), None);
+        let plain = frame(transcode_media(), None, false, false).expect("frames");
+        assert_eq!(plain.headers.get(header::CONTENT_LENGTH), None);
         assert_eq!(
-            plain.headers().get(header::ACCEPT_RANGES),
+            plain.headers.get(header::ACCEPT_RANGES),
             Some(&HeaderValue::from_static("none"))
         );
+    }
+
+    #[tokio::test]
+    async fn the_lease_lasts_until_the_framed_stream_is_gone() {
+        let gate = Arc::new(super::super::leases::DirectGate::new());
+        let lease = gate.acquire_owned("u1").await.expect("slot");
+        let media = StreamMedia {
+            content_type: "audio/mpeg".to_owned(),
+            total_len: 3,
+            transcoded: false,
+            estimated_len: None,
+            body: MediaBody::Spans(Box::new(|_, _| {
+                futures_util::stream::iter(vec![Ok(b"ab".to_vec()), Ok(b"c".to_vec())]).boxed()
+            })),
+            lease: Some(lease),
+        };
+        let framed = frame(media, None, false, false).expect("frames");
+        assert_eq!(gate.active(), 1, "held while the body waits");
+        let FramedBody::Stream(mut chunks) = framed.body else {
+            panic!("a span streams");
+        };
+        let mut read = Vec::new();
+        while let Some(chunk) = chunks.next().await {
+            read.extend(chunk.expect("reads"));
+        }
+        assert_eq!(read, b"abc");
+        drop(chunks);
+        assert_eq!(gate.active(), 0, "released once the stream is done");
     }
 
     #[test]
@@ -1028,7 +1094,7 @@ mod tests {
     }
 
     #[test]
-    fn content_types_cover_audio_minus_wma() {
+    fn content_types_cover_streamable_audio_only() {
         for (extension, media_type) in [
             (".flac", "audio/flac"),
             ("mp3", "audio/mpeg"),
@@ -1040,8 +1106,10 @@ mod tests {
             (".MP3", "audio/mpeg"),
         ] {
             assert_eq!(content_type_for_extension(extension), Some(media_type));
+            let bare = extension.trim_start_matches('.').to_lowercase();
+            assert_eq!(extension_for_content_type(media_type), Some(bare.as_str()));
         }
-        assert_eq!(content_type_for_extension(".wma"), None);
+        assert_eq!(content_type_for_extension(".WMA"), None);
         assert_eq!(content_type_for_extension(".zip"), None);
         assert_eq!(content_type_for_extension(""), None);
     }

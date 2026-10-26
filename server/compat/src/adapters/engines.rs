@@ -7,7 +7,9 @@
 //! output chunk by chunk, and HEAD answers from file metadata without
 //! reading a byte or starting ffmpeg. The direct lease the open took moves
 //! into the body, so it stays held until the last byte is sent or the
-//! client goes away. Range rules stay in each protocol layer.
+//! client goes away. Ranges, lengths and the 200/206/416 verdict come from
+//! the stream routes' framing, the same as the native route; each protocol
+//! only renders its own errors.
 //!
 //! Compat file ids pass through as local stream keys. Unknown ids
 //! fail exactly like native unknown ids (404/70), and exhausted leases
@@ -15,73 +17,57 @@
 
 use std::sync::Arc;
 
+use axum::http::HeaderMap;
+use futures_util::StreamExt as _;
+
 use crate::body::{AudioBody, LiveBody};
 use crate::jellyfin::seams::{ByteOutcome, StreamEngine as JellyfinStreamEngine};
 use crate::subsonic::stream::{AudioBackend, AudioFacts, BackendError, OpenedAudio, StreamPlan};
-use droppedneedle_media::stream::leases::OwnedDirectLease;
+use droppedneedle_media::stream::leases::RETRY_AFTER_SECONDS;
 use droppedneedle_media::stream::routes::{
-    AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
-    file_range,
+    AudioSource, FramedBody, StreamEngine, StreamError, StreamFault, StreamMedia, StreamOpen,
+    StreamParams, extension_for_content_type, frame, read_span,
 };
-
-/// Suffix for an engine-resolved content type (direct-file facts only).
-fn suffix_for_content_type(content_type: &str) -> String {
-    let suffix = match content_type {
-        "audio/flac" => "flac",
-        "audio/mpeg" => "mp3",
-        "audio/ogg" => "ogg",
-        "audio/mp4" => "m4a",
-        "audio/aac" => "aac",
-        "audio/wav" => "wav",
-        "audio/x-ms-wma" => "wma",
-        "audio/opus" => "opus",
-        _ => "bin",
-    };
-    suffix.to_owned()
-}
 
 /// Audio facts for one opened object (direct-file facts only: the
 /// engine reports no source bitrate or duration at this layer).
 fn facts_for(media: &StreamMedia) -> AudioFacts {
     AudioFacts {
         size: media.total_len,
-        suffix: suffix_for_content_type(&media.content_type),
+        suffix: extension_for_content_type(&media.content_type)
+            .unwrap_or("bin")
+            .to_owned(),
         bitrate_kbps: None,
         duration_seconds: None,
     }
 }
 
-/// `len` bytes from `start` of an opened body. File spans, remote spans
-/// and transcode chunks stream with the lease inside; in-memory bytes are sliced (the
-/// lease then ends with the open, as the bytes are already read).
-fn span(body: MediaBody, lease: Option<OwnedDirectLease>, start: u64, len: u64) -> AudioBody {
+/// A framed body as a protocol body. A body that could not be read fails
+/// as a stream, so the client sees a cut-off answer, never a short one.
+fn audio_body(body: Result<FramedBody, StreamError>) -> AudioBody {
     match body {
-        MediaBody::File(path) => {
-            AudioBody::Live(LiveBody::new(file_range(path, start, len), lease))
+        Ok(FramedBody::Empty) => AudioBody::empty(),
+        Ok(FramedBody::Bytes(bytes)) => AudioBody::Bytes(bytes),
+        Ok(FramedBody::Stream(chunks)) => AudioBody::Live(LiveBody::new(chunks)),
+        Err(error) => {
+            tracing::error!(?error, "compat audio body could not be read");
+            let failed = futures_util::stream::once(async {
+                Err(std::io::Error::other("audio body could not be read"))
+            })
+            .boxed();
+            AudioBody::Live(LiveBody::new(failed))
         }
-        MediaBody::Chunks(chunks) => AudioBody::Live(LiveBody::new(chunks, lease)),
-        MediaBody::Spans(open) => AudioBody::Live(LiveBody::new(open(start, len), lease)),
-        MediaBody::Bytes(bytes) => {
-            let from = usize::try_from(start)
-                .unwrap_or(usize::MAX)
-                .min(bytes.len());
-            let to = from
-                .saturating_add(usize::try_from(len).unwrap_or(usize::MAX))
-                .min(bytes.len());
-            AudioBody::Bytes(bytes[from..to].to_vec())
-        }
-        MediaBody::Empty => AudioBody::empty(),
     }
 }
 
-/// The whole of an opened body.
-fn whole(media: StreamMedia) -> AudioBody {
-    let len = if media.transcoded {
-        u64::MAX
-    } else {
-        media.total_len
-    };
-    span(media.body, media.lease, 0, len)
+/// Framing headers as protocol header pairs.
+fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+        })
+        .collect()
 }
 
 /// Map an engine fault onto the Subsonic backend error. The message is
@@ -208,7 +194,7 @@ impl<E: StreamEngine + 'static> AudioBackend for GatewayAudio<E> {
                 let facts = facts_for(&media);
                 let StreamMedia { body, lease, .. } = media;
                 Ok(Some(OpenedAudio::new(facts, move |start, len| {
-                    span(body, lease, start, len)
+                    audio_body(read_span(body, lease, start, len))
                 })))
             }
             Err(StreamFault::NotFound) => Ok(None),
@@ -236,7 +222,8 @@ impl<E: StreamEngine + 'static> AudioBackend for GatewayAudio<E> {
         .await
         .map_err(backend_error)?;
         let content_type = media.content_type.clone();
-        Ok((whole(media), content_type))
+        let body = frame(media, None, false, false).map(|framed| framed.body);
+        Ok((audio_body(body), content_type))
     }
 }
 
@@ -264,17 +251,7 @@ fn status(code: u16, headers: Vec<(String, String)>) -> ByteOutcome {
     }
 }
 
-/// Headers of a whole transcode landing: never ranged, never sized.
-fn landing_headers(content_type: String) -> Vec<(String, String)> {
-    vec![
-        ("Content-Type".to_owned(), content_type),
-        ("Accept-Ranges".to_owned(), "none".to_owned()),
-        ("Cache-Control".to_owned(), "no-store".to_owned()),
-        ("Content-Encoding".to_owned(), "identity".to_owned()),
-    ]
-}
-
-impl<E> GatewayStream<E> {
+impl<E: StreamEngine + 'static> GatewayStream<E> {
     /// Wrap the engine. Leases run under `compat:jellyfin` until the audio
     /// routes scope the engine to the authenticated caller.
     pub fn new(engine: Arc<E>) -> Self {
@@ -284,16 +261,17 @@ impl<E> GatewayStream<E> {
         }
     }
 
-    async fn open_media(
+    /// Open and frame one object, rendering failures in Jellyfin's shapes:
+    /// 416 with the file's type, `Content-Range: bytes */N` and
+    /// `Accept-Ranges`; 429 with `Retry-After`; anything else 404.
+    async fn framed(
         &self,
         file_id: &str,
         params: StreamParams,
+        range: Option<&str>,
         head_only: bool,
-    ) -> Result<StreamMedia, ByteOutcome>
-    where
-        E: StreamEngine + 'static,
-    {
-        open(
+    ) -> ByteOutcome {
+        let media = match open(
             self.engine.as_ref(),
             &self.lease_user,
             file_id,
@@ -301,97 +279,43 @@ impl<E> GatewayStream<E> {
             head_only,
         )
         .await
-        .map_err(|fault| match fault {
-            StreamFault::Capacity => status(429, vec![("Retry-After".to_owned(), "1".to_owned())]),
-            StreamFault::Upstream { source, cause } => {
-                tracing::warn!(source = source.as_str(), %cause, "jellyfin audio upstream failed");
-                status(404, Vec::new())
-            }
-            StreamFault::Internal { cause } => {
-                tracing::error!(%cause, "jellyfin audio backend failed");
-                status(404, Vec::new())
-            }
-            _ => status(404, Vec::new()),
-        })
-    }
-
-    /// GET and HEAD of the original: the same status and headers, and for
-    /// GET the asked span streamed.
-    async fn original(&self, file_id: &str, range: Option<&str>, head_only: bool) -> ByteOutcome
-    where
-        E: StreamEngine + 'static,
-    {
-        let media = match self
-            .open_media(file_id, StreamParams::default(), head_only)
-            .await
         {
             Ok(media) => media,
-            Err(outcome) => return outcome,
+            Err(StreamFault::Capacity) => {
+                return status(
+                    429,
+                    vec![("Retry-After".to_owned(), RETRY_AFTER_SECONDS.to_string())],
+                );
+            }
+            Err(StreamFault::Upstream { source, cause }) => {
+                tracing::warn!(source = source.as_str(), %cause, "jellyfin audio upstream failed");
+                return status(404, Vec::new());
+            }
+            Err(StreamFault::Internal { cause }) => {
+                tracing::error!(%cause, "jellyfin audio backend failed");
+                return status(404, Vec::new());
+            }
+            Err(_) => return status(404, Vec::new()),
         };
-        // Transcode landings never serve ranges; the policy layer only
-        // calls `direct` for direct plans, so a landing here is served
-        // whole with the transcode header set.
-        if media.transcoded {
-            let headers = landing_headers(media.content_type.clone());
-            let body = if head_only {
-                AudioBody::empty()
-            } else {
-                whole(media)
-            };
-            return ByteOutcome {
-                status: 200,
-                headers,
-                body,
-            };
-        }
-        let total = media.total_len;
-        let span_asked = match range {
-            None => None,
-            Some(header) => match droppedneedle_media::stream::routes::parse_range(header, total) {
-                Some(resolved) => Some(resolved),
-                None => {
-                    // Jellyfin's 416 also carries the file's type and Accept-Ranges.
-                    return status(
-                        416,
-                        vec![
-                            ("Content-Type".to_owned(), media.content_type.clone()),
-                            ("Content-Range".to_owned(), format!("bytes */{total}")),
-                            ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                        ],
-                    );
-                }
+        let content_type = media.content_type.clone();
+        match frame(media, range, head_only, false) {
+            Ok(framed) => ByteOutcome {
+                status: framed.status.as_u16(),
+                headers: header_pairs(&framed.headers),
+                body: audio_body(Ok(framed.body)),
             },
-        };
-        let (code, start, len, content_range) = match span_asked {
-            None => (200, 0, total, None),
-            Some(resolved) => (
-                206,
-                resolved.start,
-                resolved.len(),
-                Some(format!(
-                    "bytes {}-{}/{}",
-                    resolved.start, resolved.end, total
-                )),
+            Err(StreamError::Unsatisfiable { total_len }) => status(
+                416,
+                vec![
+                    ("Content-Type".to_owned(), content_type),
+                    ("Content-Range".to_owned(), format!("bytes */{total_len}")),
+                    ("Accept-Ranges".to_owned(), "bytes".to_owned()),
+                ],
             ),
-        };
-        let mut headers = vec![
-            ("Content-Type".to_owned(), media.content_type.clone()),
-            ("Content-Length".to_owned(), len.to_string()),
-        ];
-        if let Some(content_range) = content_range {
-            headers.push(("Content-Range".to_owned(), content_range));
-        }
-        headers.push(("Accept-Ranges".to_owned(), "bytes".to_owned()));
-        headers.push(("Content-Encoding".to_owned(), "identity".to_owned()));
-        let body = if head_only {
-            AudioBody::empty()
-        } else {
-            span(media.body, media.lease, start, len)
-        };
-        ByteOutcome {
-            status: code,
-            headers,
-            body,
+            Err(error) => {
+                tracing::error!(?error, "jellyfin audio could not be framed");
+                status(404, Vec::new())
+            }
         }
     }
 }
@@ -405,13 +329,17 @@ impl<E: StreamEngine + 'static> JellyfinStreamEngine for GatewayStream<E> {
     }
 
     async fn direct(&self, file_id: &str, range: Option<&str>) -> ByteOutcome {
-        self.original(file_id, range, false).await
+        self.framed(file_id, StreamParams::default(), range, false)
+            .await
     }
 
     async fn head(&self, file_id: &str, range: Option<&str>) -> ByteOutcome {
-        self.original(file_id, range, true).await
+        self.framed(file_id, StreamParams::default(), range, true)
+            .await
     }
 
+    /// Estimate off on Jellyfin: a transcode never carries a
+    /// Content-Length.
     async fn transcode(
         &self,
         file_id: &str,
@@ -424,17 +352,7 @@ impl<E: StreamEngine + 'static> JellyfinStreamEngine for GatewayStream<E> {
             Some(i64::from(bitrate_kbps)),
             start_seconds,
         );
-        let media = match self.open_media(file_id, params, false).await {
-            Ok(media) => media,
-            Err(outcome) => return outcome,
-        };
-        // Estimate off on Jellyfin: never a Content-Length (the router
-        // streams the body unsized).
-        ByteOutcome {
-            status: 200,
-            headers: landing_headers(media.content_type.clone()),
-            body: whole(media),
-        }
+        self.framed(file_id, params, None, false).await
     }
 }
 

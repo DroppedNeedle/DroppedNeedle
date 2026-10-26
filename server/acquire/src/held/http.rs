@@ -26,7 +26,9 @@ use droppedneedle_auth::{Curator, Principal, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
-use droppedneedle_media::stream::routes::{DirectSpan, content_type_for_extension, file_range};
+use droppedneedle_media::stream::routes::{
+    DirectSpan, content_type_for_extension, file_range, range_header,
+};
 
 /// What a person can do with one held file, besides listening and
 /// discarding, which every file offers.
@@ -519,7 +521,7 @@ pub async fn audio_handler(
         return Err(ApiError::from(RequestsError::NotFound));
     };
     let total = meta.len();
-    let Some(span) = DirectSpan::for_request(headers.get(header::RANGE), total) else {
+    let Some(span) = DirectSpan::for_request(range_header(&headers), total) else {
         let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
         if let Ok(value) = HeaderValue::from_str(&format!("bytes */{total}")) {
             response.headers_mut().insert(header::CONTENT_RANGE, value);

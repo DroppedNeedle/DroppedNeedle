@@ -659,19 +659,11 @@ pub trait StreamEngine: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = ByteOutcome> + Send;
 }
 
-/// Content-Type per extension, v2's list verbatim.
+/// Content-Type per extension, from the stream routes' table (unknown ->
+/// octet-stream).
 pub fn content_type_for_format(format: Option<&str>) -> &'static str {
-    match format.unwrap_or("").to_lowercase().as_str() {
-        "flac" => "audio/flac",
-        "mp3" => "audio/mpeg",
-        "ogg" | "oga" => "audio/ogg",
-        "m4a" => "audio/mp4",
-        "aac" => "audio/aac",
-        "wav" => "audio/wav",
-        "wma" => "audio/x-ms-wma",
-        "opus" => "audio/opus",
-        _ => "application/octet-stream",
-    }
+    droppedneedle_media::stream::routes::content_type_for_extension(format.unwrap_or(""))
+        .unwrap_or("application/octet-stream")
 }
 
 // ===== Playback sessions seam =====

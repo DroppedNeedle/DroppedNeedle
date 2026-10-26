@@ -42,7 +42,7 @@ use utoipa::ToSchema;
 use super::gateway::OUTSIDE_MESSAGE;
 use super::local_files::{AlbumFiles, CatalogFile, LibraryFiles, LocateError, PathRefusal};
 use super::routes::{
-    ChunkStream, DirectSpan, content_type_for_extension, file_range, unsatisfiable,
+    ChunkStream, DirectSpan, content_type_for_extension, file_range, range_header, unsatisfiable,
 };
 use droppedneedle_auth::{Role, User};
 use droppedneedle_kernel::error::ApiError;
@@ -222,13 +222,11 @@ pub async fn download_track(
             }
             LocateError::Internal(cause) => DownloadError::internal(cause),
         })?;
-    let probe = path.clone();
-    let size = tokio::task::spawn_blocking(move || std::fs::metadata(probe))
+    let size = tokio::fs::metadata(&path)
         .await
-        .map_err(DownloadError::internal)?
         .map_err(|_| DownloadError::NotFound("Track file not found on disk"))?
         .len();
-    let span = DirectSpan::for_request(request_headers.get(header::RANGE), size)
+    let span = DirectSpan::for_request(range_header(&request_headers), size)
         .ok_or(DownloadError::Unsatisfiable { total_len: size })?;
     let content_type = path
         .extension()

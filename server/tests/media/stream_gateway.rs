@@ -223,7 +223,7 @@ async fn full_get_returns_exact_bytes_with_identity_headers() {
 }
 
 // ---------------------------------------------------------------------------
-// Range matrix: suffix/open/closed land 206; multi-range answers whole
+// Range matrix: suffix/open/closed land 206; multi-range answers 416
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -253,13 +253,15 @@ async fn ranges_return_exact_slices() {
 }
 
 #[tokio::test]
-async fn multi_range_answers_the_whole_object() {
+async fn multi_range_answers_416_like_every_stream_route() {
     let (_engine, router) = local_app(".mp3", 256);
-    let (status, headers, body) =
+    let (status, headers, _) =
         get(router, "/stream/local/song", &[("range", "bytes=0-1,5-6")]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, fixture_bytes(256));
-    assert_eq!(header(&headers, "content-range"), None);
+    assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        header(&headers, "content-range"),
+        Some("bytes */256".to_owned())
+    );
 }
 
 // ---------------------------------------------------------------------------

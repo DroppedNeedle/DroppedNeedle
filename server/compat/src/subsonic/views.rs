@@ -11,19 +11,11 @@ use super::models::{
     SAlbumID3, SArtist, SArtistID3, SChild, SDiscTitle, SGenre, SItemDate, SItemGenre, SReplayGain,
 };
 
-/// MIME per extension (v2 `_MIME`; unknown -> octet-stream).
+/// MIME per extension, from the stream routes' table (unknown ->
+/// octet-stream).
 pub fn mime_for(file_format: &str) -> &'static str {
-    match file_format.to_lowercase().as_str() {
-        "flac" => "audio/flac",
-        "mp3" => "audio/mpeg",
-        "ogg" => "audio/ogg",
-        "opus" => "audio/opus",
-        "m4a" => "audio/mp4",
-        "aac" => "audio/aac",
-        "wav" => "audio/wav",
-        "wma" => "audio/x-ms-wma",
-        _ => "application/octet-stream",
-    }
+    droppedneedle_media::stream::routes::content_type_for_extension(file_format)
+        .unwrap_or("application/octet-stream")
 }
 
 /// Unix seconds -> `YYYY-MM-DDTHH:MM:SSZ` (v2 `iso`).
