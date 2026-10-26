@@ -51,10 +51,12 @@ impl Default for HttpSettings {
 
 impl HttpSettings {
     /// The User-Agent every outbound request carries. MusicBrainz asks for
-    /// an application name, version and contact address.
+    /// an application name, version and contact address. musicbrainz.org's
+    /// edge drops connections whose User-Agent starts with `DroppedNeedle/`,
+    /// so the name is `DroppedNeedleApp`, as v2 sends it since 2.6.1.
     pub fn user_agent(&self) -> String {
         format!(
-            "DroppedNeedle/{} ( {} ; +https://github.com/DroppedNeedle/DroppedNeedle )",
+            "DroppedNeedleApp/{} ({}; https://www.droppedneedle.com)",
             env!("CARGO_PKG_VERSION"),
             self.contact_email
         )
@@ -283,7 +285,7 @@ mod tests {
 
         let (head, status) = one_request(factory.no_redirect().clone(), redirect).await;
         assert_eq!(status, 302, "the no-redirect client hands back the 3xx");
-        assert!(head.contains("user-agent: droppedneedle/"));
+        assert!(head.contains("user-agent: droppedneedleapp/"));
         assert!(head.contains("ops@example.org"));
 
         let ok: &[u8] = b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
