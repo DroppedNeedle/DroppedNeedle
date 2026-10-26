@@ -13,7 +13,7 @@ PNPM  ?= pnpm
 COMPOSE_FILE ?= docker-compose.yml
 
 .PHONY: help check \
-	server-run server-test server-lint server-fmt server-fmt-check contract-check contract-write \
+	server-run server-test server-lint library-file-gate server-fmt server-fmt-check contract-check contract-write \
 	frontend-install frontend-browser-install frontend-dev frontend-build frontend-check \
 	frontend-lint frontend-format-check frontend-test frontend-test-server frontend-test-client \
 	image rebuild container-e2e
@@ -21,7 +21,7 @@ COMPOSE_FILE ?= docker-compose.yml
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  %-24s %s\n", $$1, $$2}'
 
-check: server-fmt-check server-lint server-test contract-check frontend-check frontend-lint frontend-format-check frontend-test ## Run the local CI gates (not audit, deny or container E2E)
+check: server-fmt-check library-file-gate server-lint server-test contract-check frontend-check frontend-lint frontend-format-check frontend-test ## Run the local CI gates (not audit, deny or container E2E)
 
 server-run: ## Run the server against ./dev-data (PORT defaults to 8688)
 	mkdir -p "$(ROOT_DIR)/dev-data"
@@ -29,6 +29,9 @@ server-run: ## Run the server against ./dev-data (PORT defaults to 8688)
 
 server-test: ## Run the full Rust test suite
 	cd "$(SERVER_DIR)" && $(CARGO) test --workspace
+
+library-file-gate: ## Refuse file changes in the library outside the publisher
+	"$(SERVER_DIR)/scripts/library-file-gate.sh"
 
 server-lint: ## Run clippy with warnings as errors
 	cd "$(SERVER_DIR)" && $(CARGO) clippy --workspace --all-targets -- -D warnings

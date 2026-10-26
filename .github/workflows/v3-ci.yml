@@ -164,6 +164,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Refuse file changes in the library outside the publisher
+        run: ./scripts/library-file-gate.sh
+
   audit:
     name: Audit
     needs: changes
