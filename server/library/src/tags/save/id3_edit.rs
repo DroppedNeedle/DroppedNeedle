@@ -442,10 +442,20 @@ pub(super) fn apply(
         Some(tag) => tag.major == 3,
         None => matches!(native.original_version(), Id3v2Version::V3),
     };
+    // lofty checks the file's type from its bytes before it writes, and
+    // looks for the first MPEG frame at most `max_junk_bytes` past the
+    // tag; padding left after a tag's size can be longer than its default.
+    let parse = lofty::config::ParseOptions::new().max_junk_bytes(MAX_PADDING_AFTER_TAG);
     native
-        .save_to_path(temp, WriteOptions::new().use_id3v23(pin_v23))
+        .save_to_path(
+            temp,
+            WriteOptions::new().use_id3v23(pin_v23).parse_options(parse),
+        )
         .map_err(save_failed)
 }
+
+/// How far past an ID3v2 tag a save still finds the first MPEG frame.
+const MAX_PADDING_AFTER_TAG: usize = 64 * 1024;
 
 /// Timestamp ids that alias across ID3 versions: the merge emits v2.4
 /// ids that the writer converts on v2.3 saves, so each family is cleared

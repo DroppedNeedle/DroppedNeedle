@@ -133,15 +133,16 @@ pub(super) fn read_pictures(
             Ok(with_info(file.vorbis_comments().pictures()))
         }
         AudioFormat::Mp3 | AudioFormat::M4a => {
-            let tag_type = if format == AudioFormat::Mp3 {
-                TagType::Id3v2
+            let (tag_type, file_type) = if format == AudioFormat::Mp3 {
+                (TagType::Id3v2, lofty::file::FileType::Mpeg)
             } else {
-                TagType::Mp4Ilst
+                (TagType::Mp4Ilst, lofty::file::FileType::Mp4)
             };
-            let tagged = lofty::probe::Probe::new(&mut reader)
+            // The format is known, as it is to the save's own read from the
+            // path; guessing it from the bytes fails on an MP3 whose ID3v2
+            // tag is followed by padding outside its size.
+            let tagged = lofty::probe::Probe::with_file_type(&mut reader, file_type)
                 .options(options)
-                .guess_file_type()
-                .map_err(failed)?
                 .read()
                 .map_err(failed)?;
             let mut out: Vec<PictureSpec> = tagged
