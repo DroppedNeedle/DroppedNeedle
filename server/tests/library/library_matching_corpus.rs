@@ -37,8 +37,11 @@ use serde::Deserialize;
 
 use crate::common::{ScratchDir, migrated_db};
 
-/// The whole corpus must replay within this.
-const BUDGET: Duration = Duration::from_secs(30);
+/// The whole corpus must replay within this. It is timed while the rest
+/// of the library binary runs beside it: about 10 s on a quiet host and
+/// about 30 s on a CI runner, so this catches a slowdown of several
+/// times, such as lookups being paced again, not a few seconds.
+const BUDGET: Duration = Duration::from_secs(60);
 
 fn corpus_path(name: &str) -> String {
     format!(
