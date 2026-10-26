@@ -26,7 +26,9 @@ test('a scanned library folder shows its album, and the album plays', async ({ p
 	await addRoot.getByRole('button', { name: 'Add root', exact: true }).click();
 	await page.getByRole('button', { name: 'Preview and save settings' }).click();
 	await page.getByRole('dialog').getByRole('button', { name: 'Save policies' }).click();
-	await expect(page.getByText('0 indexed · 0 on disk')).toBeVisible();
+	// The new folder may already be scanned by itself, so its counts are not
+	// checked here.
+	await expect(page.getByRole('heading', { name: 'Journey music' })).toBeVisible();
 
 	await page.getByRole('button', { name: 'Scan for changes' }).click();
 	await expect(page.getByText('2 indexed · 2 on disk')).toBeVisible();
