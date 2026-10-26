@@ -304,11 +304,18 @@ fn parse_bind_host(raw: Option<&str>) -> Result<BindHost, ConfigError> {
         .map_err(|_| ConfigError::InvalidBindHost(text.to_owned()))
 }
 
+/// Audio decoders log a line per damaged frame or odd tag at info and warn
+/// (symphonia's "count1 overrun, malformed bitstream" and "invalid language
+/// code", lofty's bitrate and duration estimates): tens of thousands of lines
+/// an hour while a library is analysed, none a person can act on. `LOG_LEVEL` keeps them at error;
+/// `RUST_LOG` replaces the whole filter as before.
+const QUIET_DECODERS: &str = "symphonia=error,lofty=error";
+
 /// Map v2's `LOG_LEVEL` names onto a tracing filter. `CRITICAL` has no
 /// tracing level of its own and maps to `error`.
 fn log_filter_for(raw: Option<&str>) -> Result<String, ConfigError> {
     let Some(text) = raw else {
-        return Ok("info".to_owned());
+        return Ok(format!("info,{QUIET_DECODERS}"));
     };
     let level = match text.to_ascii_uppercase().as_str() {
         "TRACE" => "trace",
@@ -318,7 +325,7 @@ fn log_filter_for(raw: Option<&str>) -> Result<String, ConfigError> {
         "ERROR" | "CRITICAL" => "error",
         _ => return Err(ConfigError::InvalidLogLevel(text.to_owned())),
     };
-    Ok(level.to_owned())
+    Ok(format!("{level},{QUIET_DECODERS}"))
 }
 
 /// Seconds as a decimal number (`10`, `2.5`), above zero.
@@ -483,7 +490,7 @@ mod tests {
         );
         assert_eq!(config.static_dir, Path::new("/srv/dn/static"));
         assert_eq!(config.base_path, "/music");
-        assert_eq!(config.log_filter, "warn");
+        assert_eq!(config.log_filter, "warn,symphonia=error,lofty=error");
         assert_eq!(config.http.timeout, Duration::from_millis(2500));
         assert_eq!(config.shutdown_grace, Duration::from_secs(3));
         assert!(
@@ -516,5 +523,17 @@ mod tests {
         ] {
             assert!(load(&[bad]).is_err(), "{bad:?} should fail");
         }
+    }
+
+    #[test]
+    fn log_level_keeps_audio_decoders_at_error() {
+        assert_eq!(
+            log_filter_for(None).unwrap(),
+            "info,symphonia=error,lofty=error"
+        );
+        assert_eq!(
+            log_filter_for(Some("DEBUG")).unwrap(),
+            "debug,symphonia=error,lofty=error"
+        );
     }
 }
