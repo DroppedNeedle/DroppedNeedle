@@ -13,7 +13,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
+	import { navidromeFolderScope } from '$lib/queries/remotes/RemoteQueries.svelte';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
 	import {
 		Play,
@@ -59,7 +59,7 @@
 	const lyricsQuery = getLyricsQuery(
 		() => playerStore.nowPlaying,
 		() => authStore.user?.id,
-		() => getNavidromeFolderScopeRevision(authStore.user?.id ?? '')
+		() => navidromeFolderScope(authStore.user?.id)
 	);
 	const supportsLyrics = $derived(lyricsQuery.isSuccess && lyricsQuery.data !== null);
 

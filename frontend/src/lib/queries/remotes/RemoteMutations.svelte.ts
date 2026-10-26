@@ -3,7 +3,8 @@ import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import { clearNavidromeLocalCaches } from '$lib/utils/navidromeLibraryCache';
+import { CACHE_KEYS } from '$lib/constants';
+import { clearLocalStorageNamespace } from '$lib/utils/localStorageCache';
 
 import { LibraryQueryKeyFactory } from '../library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '../QueryClient';
@@ -26,9 +27,9 @@ export const createSaveRemoteFoldersMutation = () =>
 		onSuccess: async (_data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
 			// a folder-scope change reshapes every navidrome read: drop the
-			// folder-scoped local caches, sweep the whole adapter prefix, and
-			// bust the unified catalog built on top of it
-			clearNavidromeLocalCaches();
+			// album source matches, sweep the whole adapter prefix, and bust
+			// the unified catalog built on top of it
+			clearLocalStorageNamespace(CACHE_KEYS.ALBUM_SOURCE_MATCH_CACHE);
 			await invalidateQueriesWithPersister({
 				queryKey: RemoteQueryKeyFactory.source(context.userId, 'navidrome')
 			});

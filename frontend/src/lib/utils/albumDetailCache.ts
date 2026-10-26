@@ -1,7 +1,7 @@
 import { userStorageSegment } from '$lib/queries/userKeySegment';
 import { CACHE_KEYS, CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
+import { navidromeFolderScope } from '$lib/queries/remotes/RemoteQueries.svelte';
 import type {
 	AlbumBasicInfo,
 	AlbumTracksInfo,
@@ -84,11 +84,7 @@ export const albumSourceMatchCache = createLocalStorageCache<AlbumSourceMatchCac
 );
 
 export function albumSourceMatchCacheKey(albumId: string): string {
-	return [
-		userStorageSegment(authStore.user?.id),
-		getNavidromeFolderScopeRevision(authStore.user?.id ?? ''),
-		albumId
-	]
+	return [userStorageSegment(authStore.user?.id), navidromeFolderScope(authStore.user?.id), albumId]
 		.map(encodeURIComponent)
 		.join(':');
 }

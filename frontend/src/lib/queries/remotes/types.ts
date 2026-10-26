@@ -14,3 +14,4 @@ export type RemoteLyrics = components['schemas']['RemotesLyricsView'];
 export type RemoteMatch = components['schemas']['MatchView'];
 export type RemoteFolders = components['schemas']['FolderResolutionView'];
 export type RemoteFolderSave = components['schemas']['FolderSave'];
+export type RemoteFavorites = components['schemas']['FavoritesView'];

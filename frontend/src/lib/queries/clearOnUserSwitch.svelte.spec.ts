@@ -82,7 +82,7 @@ describe('clear-on-user-switch', () => {
 		}
 	});
 
-	it('attempts every user namespace and Navidrome helper after first and middle removal failures', () => {
+	it('attempts every user and remote library namespace after first and middle removal failures', () => {
 		const userNamespaces = [
 			CACHE_KEYS.DISCOVER_QUEUE,
 			CACHE_KEYS.TIME_RANGE_OVERVIEW_CACHE,
@@ -90,13 +90,17 @@ describe('clear-on-user-switch', () => {
 			CACHE_KEYS.ALBUM_TRACKS_CACHE,
 			CACHE_KEYS.ALBUM_DISCOVERY_CACHE
 		] as const;
-		const navidromeNamespaces = [
+		const remoteNamespaces = [
+			CACHE_KEYS.ALBUM_SOURCE_MATCH_CACHE,
+			CACHE_KEYS.JELLYFIN_SIDEBAR,
+			CACHE_KEYS.JELLYFIN_ALBUMS_LIST,
 			CACHE_KEYS.NAVIDROME_SIDEBAR,
 			CACHE_KEYS.NAVIDROME_ALBUMS_LIST,
 			CACHE_KEYS.NAVIDROME_FOLDER_SCOPE,
-			CACHE_KEYS.ALBUM_SOURCE_MATCH_CACHE
+			CACHE_KEYS.PLEX_SIDEBAR,
+			CACHE_KEYS.PLEX_ALBUMS_LIST
 		] as const;
-		const namespaces = [...userNamespaces, ...navidromeNamespaces];
+		const namespaces = [...userNamespaces, ...remoteNamespaces];
 		const seededKeys = namespaces;
 		const failedKeys: Set<string> = new Set([userNamespaces[0], userNamespaces[3]]);
 		for (const key of seededKeys) localStorage.setItem(key, 'cached');

@@ -1,6 +1,15 @@
 import { CACHE_KEYS } from '$lib/constants';
 import { clearLocalStorageNamespace } from '$lib/utils/localStorageCache';
-import { clearNavidromeLocalCaches } from '$lib/utils/navidromeLibraryCache';
+
+const REMOTE_LIBRARY_NAMESPACES = [
+	CACHE_KEYS.JELLYFIN_SIDEBAR,
+	CACHE_KEYS.JELLYFIN_ALBUMS_LIST,
+	CACHE_KEYS.NAVIDROME_SIDEBAR,
+	CACHE_KEYS.NAVIDROME_ALBUMS_LIST,
+	CACHE_KEYS.NAVIDROME_FOLDER_SCOPE,
+	CACHE_KEYS.PLEX_SIDEBAR,
+	CACHE_KEYS.PLEX_ALBUMS_LIST
+];
 
 // Clear user-dependent localStorage caches that TanStack's user-switch reset does not own.
 // Album basic/tracks/discovery entries include ownership/request/personalized overlays, so
@@ -13,7 +22,9 @@ export function clearUserScopedLocalCaches(): void {
 		() => clearLocalStorageNamespace(CACHE_KEYS.ALBUM_BASIC_CACHE),
 		() => clearLocalStorageNamespace(CACHE_KEYS.ALBUM_TRACKS_CACHE),
 		() => clearLocalStorageNamespace(CACHE_KEYS.ALBUM_DISCOVERY_CACHE),
-		clearNavidromeLocalCaches
+		() => clearLocalStorageNamespace(CACHE_KEYS.ALBUM_SOURCE_MATCH_CACHE),
+		// Remote library lists that earlier builds kept here; nothing writes them now.
+		...REMOTE_LIBRARY_NAMESPACES.map((namespace) => () => clearLocalStorageNamespace(namespace))
 	];
 
 	for (const clear of cleanup) {
