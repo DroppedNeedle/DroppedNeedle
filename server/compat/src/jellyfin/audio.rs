@@ -634,6 +634,7 @@ where
         }
     }
     let settings = state.settings.jellyfin();
+    let ceiling = max_bps.and_then(ceiling_kbps);
     // The same decision the stream gateway makes, on the same catalog facts.
     let plan = decide(
         &TrackInfo {
@@ -642,7 +643,7 @@ where
             duration_seconds: track.duration_seconds.unwrap_or(0.0),
         },
         None,
-        max_bps.and_then(ceiling_kbps),
+        ceiling,
         false,
         0.0,
         &settings.transcode_policy(),
@@ -668,8 +669,14 @@ where
         // Root-relative yet inside the deployment prefix: players resolve
         // against the advertised origin, so a bare path would escape the
         // base path under non-empty BASE_PATH deployments (v2 `_playback_info`).
+        // The ceiling rides along: the client follows this address alone, and
+        // /universal reads MaxStreamingBitrate as its ceiling.
+        let cap = match max_bps {
+            Some(bps) if ceiling.is_some() => format!("&MaxStreamingBitrate={bps}"),
+            _ => String::new(),
+        };
         src.transcoding_url = Some(format!(
-            "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={codec}&Container={codec}&PlaySessionId={psid}&api_key={}",
+            "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={codec}&Container={codec}{cap}&PlaySessionId={psid}&api_key={}",
             state.listener.base_path, authed.principal.token,
         ));
         src.transcoding_container = Some(out.container().to_owned());

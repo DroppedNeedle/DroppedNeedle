@@ -1132,6 +1132,49 @@ async fn transcodes_alike_on_every_stream_route() {
     rig.stop().await;
 }
 
+/// PlaybackInfo's transcoding address carries the bitrate ceiling its
+/// decision used, so a client that follows the address alone gets the
+/// transcode at that bitrate rather than the source file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transcode_address_carries_the_ceiling() {
+    let rig = CompatApp::transcoding("compat-transcode-address").await;
+    let app = &rig.app;
+    let auth = rig.subsonic_auth("matrix");
+    let key = format!("api_key={}", rig.secret);
+    let (_, items) = app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items?includeItemTypes=Audio&Recursive=true&{key}"),
+            &[],
+            None,
+        )
+        .await;
+    let (_, _, item, kbps) = stream_ids(&rig, &auth, &items, "One").await;
+    let ceiling = kbps / 2;
+    let (status, info) = app
+        .call(
+            "GET",
+            &format!(
+                "/jellyfin/Items/{item}/PlaybackInfo?maxStreamingBitrate={}&{key}",
+                ceiling * 1000
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    let address = info["MediaSources"][0]["TranscodingUrl"]
+        .as_str()
+        .expect("transcoding url");
+    let (status, _, bytes) = app.raw("GET", address, &[], None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        bytes,
+        format!("ffmpeg stand-in: mp3 {}k\n", ceiling.clamp(64, 320)).into_bytes()
+    );
+    rig.stop().await;
+}
+
 /// Media paths skip the token buckets but not the auth-failure lockout, so
 /// guessing passwords over `stream` still trips the backoff.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
