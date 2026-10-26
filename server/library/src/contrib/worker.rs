@@ -31,6 +31,7 @@ use super::rules::verification_retry_delay_seconds;
 use super::seams::*;
 use super::service::ContributionService;
 use super::sqlite::SqliteContributions;
+use super::transition::Finish;
 
 pub const MAX_AUTOMATIC_WINDOW_SECONDS: f64 = 2.0 * 60.0 * 60.0;
 pub const MAX_AUTOMATIC_ATTEMPTS: u32 = 10;
@@ -305,24 +306,22 @@ impl VerificationWorker {
             },
         };
         let expected_album_revision = context.album.as_ref().map(|a| a.row_revision).unwrap_or(0);
-        let result = self
+        let finish = Finish {
+            expected_row_revision: contribution.row_revision,
+            expected_album_revision,
+            attempt,
+            outcome,
+            failure_code,
+            identities,
+            policy_revision: self.store.input_revisions(&context.tracks).2,
+        };
+        let (result, invalidation) = self
             .store
-            .finish_verification(
-                &job.contribution_id,
-                job.complete.clone(),
-                contribution.row_revision,
-                expected_album_revision,
-                &attempt,
-                outcome,
-                failure_code.as_deref(),
-                &identities,
-                now,
-            )
+            .finish_verification(&job.contribution_id, job.complete.clone(), finish, now)
             .await?;
-        if result == VerificationOutcome::Linked {
-            let (_, _, policy) = self.store.input_revisions(&context.tracks);
+        if let Some(invalidation) = &invalidation {
             self.service
-                .after_linked(&contribution, &policy, now)
+                .after_linked(&contribution, invalidation, now)
                 .await?;
         }
         Ok(Verdict::done(result))
@@ -382,19 +381,18 @@ impl VerificationWorker {
             completed_at: now,
         };
         let expected_album_revision = context.album.as_ref().map(|a| a.row_revision).unwrap_or(0);
-        let result = self
+        let finish = Finish {
+            expected_row_revision: contribution.row_revision,
+            expected_album_revision,
+            attempt,
+            outcome: VerificationOutcome::NeedsReview,
+            failure_code: Some(failure_code.to_owned()),
+            identities: FinishIdentities::default(),
+            policy_revision: self.store.input_revisions(&context.tracks).2,
+        };
+        let (result, _) = self
             .store
-            .finish_verification(
-                &job.contribution_id,
-                job.complete.clone(),
-                contribution.row_revision,
-                expected_album_revision,
-                &attempt,
-                VerificationOutcome::NeedsReview,
-                Some(failure_code),
-                &FinishIdentities::default(),
-                now,
-            )
+            .finish_verification(&job.contribution_id, job.complete.clone(), finish, now)
             .await?;
         Ok(Verdict::done(result))
     }

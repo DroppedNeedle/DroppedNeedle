@@ -9,12 +9,13 @@
 //! contribution's own write.
 //!
 //! Every call is one short read or write on the shared database. Writes
-//! run on the writer lane in the caller's class, read the row,
-//! apply the same guards v2's store applied, and write the row back under
-//! its row revision, so a check and its write can never interleave with
-//! another writer. Linking a release commits the album (and, when free, the
-//! artist) MusicBrainz identity as a manual decision in that same
-//! transaction, so a crash leaves either both or neither.
+//! run on the writer lane in the caller's class: they read the row, run
+//! [`transition`] on it, write the result back under the revision they
+//! read and run its effects, all in one transaction, so a check and its
+//! write can never interleave with another writer. Linking a release
+//! commits the album (and, when free, the artist) MusicBrainz identity as
+//! a manual decision in that same transaction, so a crash leaves either
+//! both or neither.
 
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
@@ -25,6 +26,9 @@ use super::error::ContribError;
 use super::models::*;
 use super::rules::album_input_revisions;
 use super::seams::*;
+use super::transition::{
+    ContributionUpdate, Effect, Finish, Invalidation, Update, transition, verification_outcome,
+};
 use super::worker::{Completion, VERIFY};
 use crate::identity;
 use crate::identity::sql::PERSONS;
@@ -119,20 +123,6 @@ fn to_json<T: serde::Serialize>(value: &T) -> Result<String, ContribError> {
 fn from_json<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, ContribError> {
     serde_json::from_str(raw)
         .map_err(|_| ContribError::Data("Unsupported persisted contribution document.".into()))
-}
-
-fn terminal(state: ContributionState) -> bool {
-    matches!(
-        state,
-        ContributionState::Linked | ContributionState::Cancelled | ContributionState::Stale
-    )
-}
-
-fn editable(state: ContributionState) -> bool {
-    matches!(
-        state,
-        ContributionState::Draft | ContributionState::Ready | ContributionState::NeedsReview
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +259,14 @@ fn load_row(
         return Ok(None);
     };
     let live = album_input(conn, &raw.local_album_id)?;
+    let links = AlbumLinks {
+        identity: album_identity(conn, &raw.local_album_id)?,
+        chosen_artist_mbid: match &live {
+            Some(live) => chosen_artist_identity(conn, &live.artist_id)?,
+            None => None,
+        },
+        artist_id: live.as_ref().map(|live| live.artist_id.clone()),
+    };
     let selection: ContributionSourceSelection = from_json(&raw.selection)?;
     let discogs = selection
         .sources
@@ -311,6 +309,7 @@ fn load_row(
             .map(|l| l.input_revision.clone())
             .unwrap_or_default(),
         current_album_row_revision: live.map(|l| l.row_revision).unwrap_or(0),
+        links,
     }))
 }
 
@@ -328,29 +327,25 @@ fn active_id_for_album(conn: &Connection, album_id: &str) -> rusqlite::Result<Op
 }
 
 /// Write every mutable column of `row` back under the revision it was read
-/// at. `row.row_revision` already holds the new revision.
-fn save_row(
-    conn: &Connection,
-    row: &ContributionRow,
-    expected: i64,
-    stale_message: &str,
-) -> Result<(), ContribError> {
+/// at: the one place a contribution's state is written. `row.row_revision`
+/// already holds the new revision.
+fn save_row(conn: &Connection, row: &ContributionRow, expected: i64) -> Result<(), ContribError> {
     let changed = conn
         .prepare_cached(
-            "UPDATE library_contribution_drafts SET updated_by_user_id = ?3, state = ?4, \
+            "UPDATE library_contribution_drafts SET state = ?3, updated_by_user_id = ?4, \
              album_row_revision = ?5, input_revision = ?6, resolved_draft_json = ?7, \
              source_selection_json = ?8, provider_snapshot_expires_at = ?9, \
              duplicate_result_json = ?10, duplicate_checked_at = ?11, \
              duplicate_input_revision = ?12, result_release_mbid = ?13, result_source = ?14, \
              result_received_at = ?15, seed_snapshot_json = ?16, seed_hash = ?17, \
-             seeded_at = ?18, terminal_at = ?19, updated_at = ?20, row_revision = ?21 \
-             WHERE id = ?1 AND row_revision = ?2",
+             seeded_at = ?18, terminal_at = ?19, updated_at = ?20, row_revision = ?21, \
+             last_verification_failure = ?22 WHERE id = ?1 AND row_revision = ?2",
         )?
         .execute(params![
             row.id,
             expected,
-            row.updated_by_user_id,
             state_str(row.state),
+            row.updated_by_user_id,
             row.album_row_revision,
             row.input_revision,
             to_json(&row.draft)?,
@@ -368,9 +363,12 @@ fn save_row(
             row.terminal_at,
             row.updated_at,
             row.row_revision,
+            row.last_verification_failure,
         ])?;
     if changed != 1 {
-        return Err(ContribError::stale(stale_message));
+        return Err(ContribError::stale(
+            "The contribution changed before it could be saved.",
+        ));
     }
     Ok(())
 }
@@ -431,16 +429,6 @@ fn cancel_jobs(queue: &JobQueue, tx: &Transaction, contribution_id: &str) -> Res
 /// stands.
 fn enqueue_job(queue: &JobQueue, tx: &Transaction, contribution_id: &str) -> Result<(), JobError> {
     queue.enqueue(tx, VERIFY, contribution_id, &serde_json::json!({}))?;
-    Ok(())
-}
-
-fn record_failure(
-    conn: &Connection,
-    contribution_id: &str,
-    code: Option<&str>,
-) -> rusqlite::Result<()> {
-    conn.prepare_cached(super::sql::RECORD_VERIFICATION_FAILURE.text())?
-        .execute(params![contribution_id, code])?;
     Ok(())
 }
 
@@ -689,395 +677,103 @@ fn commit_link(
 // Store
 // ---------------------------------------------------------------------------
 
-/// Apply one guarded update to a loaded row (v2's per-operation store
-/// methods). Returns the expected revision and the message a lost race
-/// reports.
-fn apply_update(
-    conn: &Transaction,
+/// A saved change and what the catalog is told once it commits.
+#[derive(Debug, Clone)]
+pub struct Applied {
+    pub row: ContributionRow,
+    pub invalidate: Option<Invalidation>,
+}
+
+/// Run `update` on the loaded `row`: save the result under the revision it
+/// was read at, then run its effects in the same transaction. Returns the
+/// saved row as `transition` left it and the catalog invalidation to run
+/// after the commit.
+fn apply(
+    conn: &Transaction<'_>,
     queue: &JobQueue,
-    row: &mut ContributionRow,
-    expected_row_revision: i64,
-    actor_user_id: &str,
+    row: &ContributionRow,
+    update: Update,
     now: f64,
-    update: ContributionUpdate,
-) -> Result<&'static str, ContribError> {
-    let check = |row: &ContributionRow, msg: &'static str| {
-        if row.row_revision != expected_row_revision {
-            Err(ContribError::stale(msg))
-        } else {
-            Ok(msg)
-        }
-    };
-    let input_moved = |row: &ContributionRow| row.input_revision != row.current_input_revision;
-    let msg =
-        match update {
-            ContributionUpdate::Draft { draft, state } => {
-                if !row.album_active {
-                    return Err(ContribError::ContributionNotFound);
-                }
-                if !editable(row.state) {
-                    return Err(ContribError::state(
-                        "This contribution can no longer be edited.",
-                    ));
-                }
-                let msg = check(row, "The contribution changed before this edit was saved.")?;
-                // A race guard only: the service's read already marks a moved
-                // album stale before it edits.
-                if input_moved(row) || row.album_row_revision != row.current_album_row_revision {
-                    return Err(ContribError::stale(
-                        "The local album changed. Rebuild the contribution before editing.",
-                    ));
-                }
-                row.draft = draft;
-                row.state = state;
-                clear_duplicates(row);
-                msg
-            }
-            ContributionUpdate::SelectDiscogs {
-                release: _,
-                selection,
+) -> Result<(ContributionRow, Option<Invalidation>), ContribError> {
+    let (next, effects) = transition(row, update, now)?;
+    if next.row_revision != row.row_revision {
+        save_row(conn, &next, row.row_revision)?;
+    }
+    let mut invalidate = None;
+    for effect in effects {
+        match effect {
+            Effect::ConsumeTokens => consume_tokens(conn, &next.id, now)?,
+            Effect::InsertToken {
+                token_hash,
+                requested_by_user_id,
                 expires_at,
             } => {
-                if !row.album_active {
-                    return Err(ContribError::ContributionNotFound);
-                }
-                if !editable(row.state) {
-                    return Err(ContribError::state(
-                        "This contribution can no longer be edited.",
-                    ));
-                }
-                let msg = check(
-                    row,
-                    "The contribution changed before the source was selected.",
-                )?;
-                if input_moved(row) {
-                    return Err(ContribError::stale(
-                        "The local album changed. Rebuild the contribution first.",
-                    ));
-                }
-                row.source_selection = selection;
-                row.provider_snapshot_expires_at = Some(expires_at);
-                clear_duplicates(row);
-                msg
+                conn.prepare_cached(
+                    "INSERT INTO library_contribution_callback_tokens (token_hash, \
+                     contribution_id, requested_by_user_id, expires_at, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )?
+                .execute(params![
+                    token_hash,
+                    next.id,
+                    requested_by_user_id,
+                    expires_at,
+                    now
+                ])?;
             }
-            ContributionUpdate::RemoveDiscogs { draft, state } => {
-                if !row.album_active {
-                    return Err(ContribError::ContributionNotFound);
-                }
-                if !editable(row.state) {
-                    return Err(ContribError::state(
-                        "This contribution can no longer be edited.",
-                    ));
-                }
-                let msg = check(
-                    row,
-                    "The contribution changed before the source was removed.",
-                )?;
-                row.source_selection = ContributionSourceSelection::default();
-                row.draft = draft;
-                row.provider_snapshot_expires_at = None;
-                row.state = state;
-                clear_duplicates(row);
-                msg
-            }
-            ContributionUpdate::DuplicateResult { result, state } => {
-                if !row.album_active {
-                    return Err(ContribError::ContributionNotFound);
-                }
-                if !matches!(
-                    row.state,
-                    ContributionState::Ready | ContributionState::NeedsReview
-                ) {
-                    return Err(ContribError::state(
-                        "Complete the contribution draft first.",
-                    ));
-                }
-                let msg = check(
-                    row,
-                    "The contribution changed before duplicate results were saved.",
-                )?;
-                if input_moved(row) || result.input_revision != row.input_revision {
-                    return Err(ContribError::stale(
-                        "The local album changed before duplicate results were saved.",
-                    ));
-                }
-                row.duplicate_input_revision = Some(result.input_revision.clone());
-                row.duplicate_result = Some(result);
-                row.duplicate_checked_at = Some(now);
-                row.state = state;
-                msg
-            }
-            ContributionUpdate::AttachExisting {
+            Effect::CancelJobs => cancel_jobs(queue, conn, &next.id)?,
+            Effect::EnqueueJob => enqueue_job(queue, conn, &next.id)?,
+            Effect::InsertAttempt {
+                attempt,
+                input_revision,
+                state,
+                reason,
+                selected_key,
+            } => insert_attempt(
+                conn,
+                &attempt,
+                &input_revision,
+                state,
+                reason.as_deref(),
+                selected_key.as_deref(),
+            )?,
+            Effect::LinkIdentity {
+                local_album_id,
+                artist_id,
+                album_revision,
                 release_mbid,
                 release_group_mbid,
                 artist_mbid,
                 attempt,
+                selected_by,
                 tracks,
             } => {
-                if !row.album_active {
-                    return Err(ContribError::ContributionNotFound);
-                }
-                if !matches!(
-                    row.state,
-                    ContributionState::Ready | ContributionState::NeedsReview
-                ) {
-                    return Err(ContribError::state(
-                        "This contribution cannot attach a release now.",
-                    ));
-                }
-                let msg = check(
-                    row,
-                    "The contribution changed before the release could be attached.",
-                )?;
-                if input_moved(row)
-                    || row.duplicate_input_revision.as_deref() != Some(row.input_revision.as_str())
-                {
-                    return Err(ContribError::stale(
-                        "The local album changed before the release could be attached.",
-                    ));
-                }
-                let in_result = row.duplicate_result.as_ref().is_some_and(|d| {
-                    d.candidates
-                        .iter()
-                        .any(|c| c.release_mbid.as_deref() == Some(release_mbid.as_str()))
-                });
-                if !in_result {
-                    return Err(ContribError::state(
-                        "The release is not in the current duplicate-check result.",
-                    ));
-                }
-                let expected_key = format!("{release_group_mbid}:{release_mbid}");
-                if attempt.selected_candidate_key.as_deref() != Some(expected_key.as_str())
-                    || attempt.local_album_id != row.local_album_id
-                {
-                    return Err(ContribError::state(
-                        "The verified release evidence does not match this contribution.",
-                    ));
-                }
-                if let Some((existing_release, existing_group)) =
-                    album_identity(conn, &row.local_album_id)?
-                    && (existing_release.as_deref() != Some(release_mbid.as_str())
-                        || existing_group != release_group_mbid)
-                {
-                    return Err(ContribError::state(
-                        "The local album already has a different MusicBrainz identity.",
-                    ));
-                }
-                let live = album_input(conn, &row.local_album_id)?
-                    .ok_or(ContribError::ContributionNotFound)?;
-                if let Some(wanted) = artist_mbid.as_deref()
-                    && chosen_artist_identity(conn, &live.artist_id)?
-                        .is_some_and(|existing| !existing.eq_ignore_ascii_case(wanted))
-                {
-                    return Err(ContribError::state(
-                        "The local artist already has a different MusicBrainz identity.",
-                    ));
-                }
-                insert_attempt(
-                    conn,
-                    &attempt,
-                    &row.input_revision,
-                    "identified",
-                    attempt.terminal_reason_code.as_deref(),
-                    attempt.selected_candidate_key.as_deref(),
-                )?;
-                let album_revision = commit_link(
+                let linked = commit_link(
                     conn,
                     &LinkIdentity {
-                        album_id: &row.local_album_id,
-                        artist_id: &live.artist_id,
-                        album_revision: live.row_revision,
+                        album_id: &local_album_id,
+                        artist_id: &artist_id,
+                        album_revision,
                         release_mbid: &release_mbid,
                         release_group_mbid: &release_group_mbid,
                         artist_mbid: artist_mbid.as_deref(),
                         attempt: &attempt,
-                        selected_by: Some(actor_user_id),
+                        selected_by: selected_by.as_deref(),
                         tracks: &tracks,
                     },
                     now,
                 )?;
-                consume_tokens(conn, &row.id, now)?;
-                row.state = ContributionState::Linked;
-                row.album_row_revision = album_revision;
-                row.current_album_row_revision = album_revision;
-                row.result_release_mbid = Some(release_mbid);
-                row.result_source = Some("manual".into());
-                row.result_received_at = Some(now);
-                row.terminal_at = Some(now);
-                msg
-            }
-            ContributionUpdate::PrepareSeed {
-                token_hash,
-                token_expires_at,
-                seed_snapshot_json,
-                seed_hash,
-            } => {
-                if !row.album_active {
-                    return Err(ContribError::ContributionNotFound);
-                }
-                if !matches!(
-                    row.state,
-                    ContributionState::Ready | ContributionState::Seeded
-                ) || row.duplicate_result.is_none()
-                {
-                    return Err(ContribError::DuplicateCheckRequired(
-                        "Run the MusicBrainz duplicate check first.".into(),
-                    ));
-                }
-                let msg = check(
-                    row,
-                    "The contribution changed before the editor could be opened.",
-                )?;
-                if input_moved(row)
-                    || row.duplicate_input_revision.as_deref() != Some(row.input_revision.as_str())
-                {
+                // The row was saved with the revision the link leaves.
+                if linked != next.album_row_revision {
                     return Err(ContribError::stale(
-                        "The local album changed before the editor could be opened.",
+                        "The album changed before the release could be linked.",
                     ));
                 }
-                if row
-                    .duplicate_result
-                    .as_ref()
-                    .is_some_and(|d| d.candidates.iter().any(|c| c.exact))
-                {
-                    return Err(ContribError::ExactDuplicate(
-                        "An exact MusicBrainz release already exists for this Discogs source."
-                            .into(),
-                    ));
-                }
-                consume_tokens(conn, &row.id, now)?;
-                conn.prepare_cached(
-                "INSERT INTO library_contribution_callback_tokens (token_hash, contribution_id, \
-                 requested_by_user_id, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            )?
-            .execute(params![token_hash, row.id, actor_user_id, token_expires_at, now])?;
-                row.state = ContributionState::Seeded;
-                row.seed_snapshot_json = Some(seed_snapshot_json);
-                row.seed_hash = Some(seed_hash);
-                row.seeded_at = Some(now);
-                msg
             }
-            ContributionUpdate::ManualResult {
-                release_mbid,
-                replace_existing,
-            } => {
-                if !matches!(
-                    row.state,
-                    ContributionState::Seeded
-                        | ContributionState::Verifying
-                        | ContributionState::NeedsReview
-                        | ContributionState::Stale
-                ) {
-                    return Err(ContribError::state(
-                        "This contribution is not waiting for a MusicBrainz result.",
-                    ));
-                }
-                let msg = check(
-                    row,
-                    "The contribution changed before the result was recorded.",
-                )?;
-                if let Some(current) = row.result_release_mbid.as_deref()
-                    && current != release_mbid
-                    && (!replace_existing
-                        || !matches!(
-                            row.state,
-                            ContributionState::NeedsReview | ContributionState::Stale
-                        ))
-                {
-                    return Err(ContribError::state(
-                        "Confirm replacement of the existing MusicBrainz result.",
-                    ));
-                }
-                consume_tokens(conn, &row.id, now)?;
-                cancel_jobs(queue, conn, &row.id)?;
-                let verifying = row.album_active && row.state != ContributionState::Stale;
-                row.state = if verifying {
-                    ContributionState::Verifying
-                } else {
-                    ContributionState::Stale
-                };
-                row.result_release_mbid = Some(release_mbid);
-                row.result_source = Some("manual".into());
-                row.result_received_at = Some(now);
-                row.terminal_at = None;
-                if verifying {
-                    enqueue_job(queue, conn, &row.id)?;
-                }
-                msg
-            }
-            ContributionUpdate::RequeueVerification => {
-                if !row.album_active {
-                    return Err(ContribError::ContributionNotFound);
-                }
-                if !matches!(
-                    row.state,
-                    ContributionState::Verifying | ContributionState::NeedsReview
-                ) {
-                    return Err(ContribError::state(
-                        "This contribution cannot be verified now.",
-                    ));
-                }
-                if row.result_release_mbid.is_none() {
-                    return Err(ContribError::state(
-                        "No MusicBrainz result is ready to verify.",
-                    ));
-                }
-                let msg = check(
-                    row,
-                    "The contribution changed before verification was retried.",
-                )?;
-                enqueue_job(queue, conn, &row.id)?;
-                row.state = ContributionState::Verifying;
-                row.terminal_at = None;
-                msg
-            }
-            ContributionUpdate::Cancel => {
-                if !row.album_active {
-                    return Err(ContribError::ContributionNotFound);
-                }
-                if terminal(row.state) {
-                    return Err(ContribError::state("This contribution is already closed."));
-                }
-                let msg = check(
-                    row,
-                    "The contribution changed before it could be cancelled.",
-                )?;
-                consume_tokens(conn, &row.id, now)?;
-                cancel_jobs(queue, conn, &row.id)?;
-                row.state = ContributionState::Cancelled;
-                row.terminal_at = Some(now);
-                row.seed_snapshot_json = None;
-                msg
-            }
-            ContributionUpdate::PurgeProviderData { draft, selection } => {
-                if row.provider_snapshot_expires_at.is_none()
-                    || row.row_revision != expected_row_revision
-                {
-                    return Err(ContribError::stale(
-                        "The contribution changed before cleanup.",
-                    ));
-                }
-                row.draft = draft;
-                row.source_selection = selection;
-                row.provider_snapshot_expires_at = None;
-                clear_duplicates(row);
-                row.seed_snapshot_json = None;
-                row.updated_at = now;
-                row.row_revision += 1;
-                // Cleanup is not an edit: the last editor stays recorded.
-                return Ok("The contribution changed before cleanup.");
-            }
-        };
-    row.updated_by_user_id = Some(actor_user_id.to_owned());
-    row.updated_at = now;
-    row.row_revision += 1;
-    Ok(msg)
-}
-
-fn clear_duplicates(row: &mut ContributionRow) {
-    row.duplicate_result = None;
-    row.duplicate_checked_at = None;
-    row.duplicate_input_revision = None;
+            Effect::InvalidateCatalog(invalidation) => invalidate = Some(invalidation),
+        }
+    }
+    Ok((next, invalidate))
 }
 
 impl SqliteContributions {
@@ -1151,8 +847,8 @@ impl SqliteContributions {
         ))
     }
 
-    /// Optimistic-lock helper: runs `update` against the current row; the
-    /// store rejects stale `expected_row_revision` reads. Written on the
+    /// Apply a curator's change to the current row; a row read at another
+    /// revision than `expected_row_revision` is refused. Written on the
     /// caller's lane.
     pub fn compare_and_set<'a>(
         &'a self,
@@ -1162,22 +858,21 @@ impl SqliteContributions {
         actor_user_id: &'a str,
         now: f64,
         update: ContributionUpdate,
-    ) -> BoxFuture<'a, Result<ContributionRow, ContribError>> {
+    ) -> BoxFuture<'a, Result<Applied, ContribError>> {
         let (id, actor) = (contribution_id.to_owned(), actor_user_id.to_owned());
         let queue = self.queue.clone();
         Box::pin(self.db.write(lane, "contrib.update", move |conn| {
-            let mut row = require_row(conn, &id)?;
-            let msg = apply_update(
-                conn,
-                &queue,
-                &mut row,
+            let row = require_row(conn, &id)?;
+            let update = Update::Edit {
                 expected_row_revision,
-                &actor,
-                now,
-                update,
-            )?;
-            save_row(conn, &row, expected_row_revision, msg)?;
-            require_row(conn, &id)
+                actor_user_id: actor,
+                update: Box::new(update),
+            };
+            let (_, invalidate) = apply(conn, &queue, &row, update, now)?;
+            Ok(Applied {
+                row: require_row(conn, &id)?,
+                invalidate,
+            })
         }))
     }
 
@@ -1193,26 +888,10 @@ impl SqliteContributions {
         let queue = self.queue.clone();
         Box::pin(self.db.write(lane, "contrib.mark_stale", move |conn| {
             let row = require_row(conn, &id)?;
-            if !terminal(row.state) {
-                if row.row_revision != expected_row_revision {
-                    return Err(ContribError::stale(
-                        "The contribution changed before it could be marked stale.",
-                    ));
-                }
-                let mut stale = row.clone();
-                stale.state = ContributionState::Stale;
-                stale.terminal_at = Some(now);
-                stale.seed_snapshot_json = None;
-                stale.updated_at = now;
-                stale.row_revision += 1;
-                save_row(
-                    conn,
-                    &stale,
-                    expected_row_revision,
-                    "The contribution changed before it could be marked stale.",
-                )?;
-                cancel_jobs(&queue, conn, &id)?;
-            }
+            let update = Update::MarkStale {
+                expected_row_revision,
+            };
+            apply(conn, &queue, &row, update, now)?;
             require_row(conn, &id)
         }))
     }
@@ -1243,50 +922,13 @@ impl SqliteContributions {
                 let Some(contribution_id) = token else {
                     return Ok(None);
                 };
-                let Some(mut row) = load_row(conn, &contribution_id)? else {
+                let Some(row) = load_row(conn, &contribution_id)? else {
                     return Ok(None);
                 };
-                if !matches!(
-                    row.state,
-                    ContributionState::Seeded
-                        | ContributionState::Verifying
-                        | ContributionState::Stale
-                ) {
-                    return Err(ContribError::state(
-                        "This contribution is not waiting for MusicBrainz.",
-                    ));
-                }
-                if row
-                    .result_release_mbid
-                    .as_deref()
-                    .is_some_and(|current| current != release)
-                {
-                    return Err(ContribError::state(
-                        "This contribution already has a different MusicBrainz result.",
-                    ));
-                }
-                consume_tokens(conn, &row.id, now)?;
-                let expected = row.row_revision;
-                let verifying = row.album_active && row.state != ContributionState::Stale;
-                row.state = if verifying {
-                    ContributionState::Verifying
-                } else {
-                    ContributionState::Stale
+                let update = Update::Callback {
+                    release_mbid: release,
                 };
-                row.result_release_mbid = Some(release.clone());
-                row.result_source = Some("callback".into());
-                row.result_received_at = Some(now);
-                row.updated_at = now;
-                row.row_revision += 1;
-                save_row(
-                    conn,
-                    &row,
-                    expected,
-                    "The contribution changed before the MusicBrainz result was recorded.",
-                )?;
-                if verifying {
-                    enqueue_job(&queue, conn, &row.id)?;
-                }
+                apply(conn, &queue, &row, update, now)?;
                 Ok(Some(row.id))
             },
         ))
@@ -1354,31 +996,12 @@ impl SqliteContributions {
             self.db
                 .write(Lane::Foreground, "contrib.rebuild", move |conn| {
                     let old = require_row(conn, &id)?;
-                    if old.row_revision != expected_row_revision {
-                        return Err(ContribError::stale(
-                            "The contribution changed before it could be rebuilt.",
-                        ));
-                    }
-                    let live = album_input(conn, &old.local_album_id)?
-                        .ok_or(ContribError::AlbumNotFound)?;
-                    if live.row_revision != album_row_revision || live.input_revision != input {
-                        return Err(ContribError::stale(
-                            "The album changed before the contribution could be rebuilt.",
-                        ));
-                    }
-                    let mut retired = old.clone();
-                    retired.state = ContributionState::Stale;
-                    retired.terminal_at = Some(now);
-                    retired.updated_at = now;
-                    retired.row_revision += 1;
-                    save_row(
-                        conn,
-                        &retired,
+                    let update = Update::Retire {
                         expected_row_revision,
-                        "The contribution changed before it could be rebuilt.",
-                    )?;
-                    consume_tokens(conn, &id, now)?;
-                    cancel_jobs(&queue, conn, &id)?;
+                        album_row_revision,
+                        input_revision: input.clone(),
+                    };
+                    apply(conn, &queue, &old, update, now)?;
                     let fresh = insert_row(
                         conn,
                         &old.local_album_id,
@@ -1397,163 +1020,26 @@ impl SqliteContributions {
 
     /// End a verification in one write: the contribution's outcome, its
     /// failure code and the job's completion (`complete`), which rolls the
-    /// write back when another worker holds the job.
-    #[allow(clippy::too_many_arguments)]
+    /// write back when another worker holds the job. Returns the outcome
+    /// and, on a link, what the catalog is told.
     pub fn finish_verification<'a>(
         &'a self,
         contribution_id: &'a str,
         complete: Completion,
-        expected_contribution_revision: i64,
-        expected_album_revision: i64,
-        attempt: &'a ContributionVerificationAttempt,
-        outcome: VerificationOutcome,
-        failure_code: Option<&'a str>,
-        identities: &'a FinishIdentities,
+        finish: Finish,
         now: f64,
-    ) -> BoxFuture<'a, Result<VerificationOutcome, ContribError>> {
+    ) -> BoxFuture<'a, Result<(VerificationOutcome, Option<Invalidation>), ContribError>> {
         let contribution_id = contribution_id.to_owned();
-        let (attempt, identities) = (attempt.clone(), identities.clone());
-        let failure_code = failure_code.map(str::to_owned);
+        let queue = self.queue.clone();
         Box::pin(self.db.write(
             Lane::Background,
             "contrib.finish_verification",
             move |conn| {
-                let mut row = require_row(conn, &contribution_id)?;
-                if !row.album_active
-                    || row.input_revision != row.current_input_revision
-                    || row.album_row_revision != row.current_album_row_revision
-                {
-                    let expected = row.row_revision;
-                    row.state = ContributionState::Stale;
-                    row.terminal_at = Some(now);
-                    row.updated_at = now;
-                    row.row_revision += 1;
-                    save_row(
-                        conn,
-                        &row,
-                        expected,
-                        "The contribution changed before verification completed.",
-                    )?;
-                    record_failure(conn, &contribution_id, Some("LOCAL_INPUT_CHANGED"))?;
-                    complete(conn)?;
-                    return Ok(VerificationOutcome::Stale);
-                }
-                if row.row_revision != expected_contribution_revision {
-                    return Err(ContribError::stale(
-                        "The contribution changed before verification completed.",
-                    ));
-                }
-                if row.state != ContributionState::Verifying {
-                    return Err(ContribError::state(
-                        "This contribution is not being verified.",
-                    ));
-                }
-                if attempt.local_album_id != row.local_album_id {
-                    return Err(ContribError::state(
-                        "The verification subject does not match.",
-                    ));
-                }
-                let live =
-                    album_input(conn, &row.local_album_id)?.ok_or(ContribError::AlbumNotFound)?;
-                if live.row_revision != expected_album_revision {
-                    return Err(ContribError::stale(
-                        "The album changed before verification completed.",
-                    ));
-                }
-                let (final_outcome, final_failure) = match outcome {
-                    VerificationOutcome::Linked => {
-                        let selected = attempt.selected_candidate_key.is_some()
-                            && identities.release_mbid.is_some()
-                            && identities.release_group_mbid.is_some();
-                        let existing = album_identity(conn, &row.local_album_id)?;
-                        if !selected {
-                            (
-                                VerificationOutcome::NeedsReview,
-                                Some("VERIFICATION_EVIDENCE_MISSING".to_owned()),
-                            )
-                        } else if identities.release_mbid != row.result_release_mbid {
-                            (
-                                VerificationOutcome::NeedsReview,
-                                Some(FAILURE_RETURNED_RELEASE_MISMATCH.to_owned()),
-                            )
-                        } else if existing.as_ref().is_some_and(|(release, group)| {
-                            release != &identities.release_mbid
-                                || Some(group) != identities.release_group_mbid.as_ref()
-                        }) {
-                            (
-                                VerificationOutcome::NeedsReview,
-                                Some("EXISTING_IDENTITY_CONFLICT".to_owned()),
-                            )
-                        } else if let Some(wanted) = identities.artist_mbid.as_deref()
-                            && chosen_artist_identity(conn, &live.artist_id)?
-                                .is_some_and(|existing| !existing.eq_ignore_ascii_case(wanted))
-                        {
-                            (
-                                VerificationOutcome::NeedsReview,
-                                Some("EXISTING_ARTIST_IDENTITY_CONFLICT".to_owned()),
-                            )
-                        } else {
-                            (VerificationOutcome::Linked, None)
-                        }
-                    }
-                    _ => (VerificationOutcome::NeedsReview, failure_code.clone()),
-                };
-                let linked = final_outcome == VerificationOutcome::Linked;
-                insert_attempt(
-                    conn,
-                    &attempt,
-                    &row.input_revision,
-                    if linked { "identified" } else { "needs_review" },
-                    final_failure
-                        .as_deref()
-                        .or(attempt.terminal_reason_code.as_deref()),
-                    attempt.selected_candidate_key.as_deref().filter(|_| linked),
-                )?;
-                let expected = row.row_revision;
-                if linked {
-                    // A verified release always names both ids; one without
-                    // them is never written as an empty match.
-                    let (Some(release_mbid), Some(release_group_mbid)) = (
-                        identities.release_mbid.as_deref(),
-                        identities.release_group_mbid.as_deref(),
-                    ) else {
-                        return Err(ContribError::Data(
-                            "A verified release came without its MusicBrainz ids.".to_owned(),
-                        ));
-                    };
-                    let album_revision = commit_link(
-                        conn,
-                        &LinkIdentity {
-                            album_id: &row.local_album_id,
-                            artist_id: &live.artist_id,
-                            album_revision: live.row_revision,
-                            release_mbid,
-                            release_group_mbid,
-                            artist_mbid: identities.artist_mbid.as_deref(),
-                            attempt: &attempt,
-                            selected_by: attempt.requested_by_user_id.as_deref(),
-                            tracks: &identities.tracks,
-                        },
-                        now,
-                    )?;
-                    row.state = ContributionState::Linked;
-                    row.album_row_revision = album_revision;
-                    row.terminal_at = Some(now);
-                } else {
-                    row.state = ContributionState::NeedsReview;
-                }
-                row.seed_snapshot_json = None;
-                row.updated_at = now;
-                row.row_revision += 1;
-                save_row(
-                    conn,
-                    &row,
-                    expected,
-                    "The contribution changed before verification completed.",
-                )?;
-                record_failure(conn, &contribution_id, final_failure.as_deref())?;
+                let row = require_row(conn, &contribution_id)?;
+                let update = Update::FinishVerification(Box::new(finish));
+                let (next, invalidate) = apply(conn, &queue, &row, update, now)?;
                 complete(conn)?;
-                Ok(final_outcome)
+                Ok((verification_outcome(&next), invalidate))
             },
         ))
     }
@@ -1577,7 +1063,11 @@ impl SqliteContributions {
             .await
     }
 
+    /// Drop old callback tokens, seed snapshots nobody can use any more,
+    /// and closed contributions that never got a result. A row whose seed
+    /// snapshot is due to go but no longer decodes is logged and left.
     pub fn clean_records<'a>(&'a self, now: f64) -> BoxFuture<'a, Result<(), ContribError>> {
+        let queue = self.queue.clone();
         Box::pin(async move {
             self.db
                 .write(Lane::Background, "contrib.clean_records", move |conn| {
@@ -1587,15 +1077,34 @@ impl SqliteContributions {
                          (consumed_at IS NULL AND expires_at < ?2)",
                         params![now - 30.0 * DAY, now - 7.0 * DAY],
                     )?;
-                    conn.execute(
-                        "UPDATE library_contribution_drafts SET seed_snapshot_json = NULL, \
-                         row_revision = row_revision + 1 WHERE seed_snapshot_json IS NOT NULL \
-                         AND (state IN ('linked','cancelled','stale') OR (seeded_at IS NOT NULL \
-                         AND NOT EXISTS (SELECT 1 FROM library_contribution_callback_tokens t \
-                         WHERE t.contribution_id = library_contribution_drafts.id \
-                         AND t.consumed_at IS NULL AND t.expires_at >= ?1)))",
-                        params![now],
-                    )?;
+                    let ids: Vec<String> = conn
+                        .prepare_cached(
+                            "SELECT id FROM library_contribution_drafts \
+                             WHERE seed_snapshot_json IS NOT NULL \
+                             AND (state IN ('linked','cancelled','stale') OR (seeded_at IS NOT NULL \
+                             AND NOT EXISTS (SELECT 1 FROM library_contribution_callback_tokens t \
+                             WHERE t.contribution_id = library_contribution_drafts.id \
+                             AND t.consumed_at IS NULL AND t.expires_at >= ?1))) ORDER BY id",
+                        )?
+                        .query_map(params![now], |row| row.get(0))?
+                        .collect::<rusqlite::Result<_>>()?;
+                    for id in ids {
+                        match load_row(conn, &id) {
+                            Ok(Some(row)) => {
+                                apply(conn, &queue, &row, Update::ClearSeedSnapshot, now)?;
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                // A row that no longer decodes still loses its snapshot.
+                                tracing::warn!(%error, contribution = id, "contribution row does not decode; clearing its seed snapshot directly");
+                                conn.execute(
+                                    "UPDATE library_contribution_drafts SET seed_snapshot_json = NULL, \
+                                     row_revision = row_revision + 1 WHERE id = ?1",
+                                    params![id],
+                                )?;
+                            }
+                        }
+                    }
                     conn.execute(
                         "DELETE FROM library_contribution_drafts \
                          WHERE state IN ('cancelled','stale') AND result_release_mbid IS NULL \

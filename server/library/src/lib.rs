@@ -14,9 +14,9 @@
 //! stores, services, HTTP routes, background loops, and startup
 //! recovery. HTTP lives under [`http`].
 //!
-//! Store durability: roots, scan runs, the catalog, identification, and
-//! the publish journal (with its snapshots and baselines) all live in the
-//! application database. Contribution state runs on an in-memory store.
+//! Store durability: roots, scan runs, the catalog, identification,
+//! contributions and the publish journal (with its snapshots and
+//! baselines) all live in the application database.
 
 // The identity module's one `sql!` block expands one level per statement.
 #![recursion_limit = "256"]

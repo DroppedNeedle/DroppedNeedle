@@ -15,17 +15,19 @@ use droppedneedle_providers::ProviderError;
 use droppedneedle_providers::RequestPriority;
 use sha2::{Digest as _, Sha256};
 
+use super::ContribProviders;
 use super::error::ContribError;
 use super::models::*;
 use super::rules::*;
 use super::seams::*;
 use super::sqlite::SqliteContributions;
+use super::transition::{CatalogScope, ContributionUpdate, Invalidation};
 
 pub struct ContributionService {
     store: Arc<SqliteContributions>,
-    discogs: Option<Arc<dyn DiscogsContrib>>,
-    musicbrainz: Option<Arc<dyn MusicBrainzContrib>>,
-    catalog: Option<Arc<dyn ContributionCatalog>>,
+    discogs: Arc<dyn DiscogsContrib>,
+    musicbrainz: Arc<dyn MusicBrainzContrib>,
+    catalog: Arc<dyn ContributionCatalog>,
     evidence: Arc<dyn AttachmentEvidence>,
     clock: Arc<dyn Clock>,
 }
@@ -34,31 +36,18 @@ impl ContributionService {
     pub fn new(
         store: Arc<SqliteContributions>,
         evidence: Arc<dyn AttachmentEvidence>,
+        providers: ContribProviders,
+        catalog: Arc<dyn ContributionCatalog>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             store,
-            discogs: None,
-            musicbrainz: None,
-            catalog: None,
+            discogs: providers.discogs,
+            musicbrainz: providers.musicbrainz,
+            catalog,
             evidence,
             clock,
         }
-    }
-
-    pub fn with_discogs(mut self, discogs: Arc<dyn DiscogsContrib>) -> Self {
-        self.discogs = Some(discogs);
-        self
-    }
-
-    pub fn with_musicbrainz(mut self, musicbrainz: Arc<dyn MusicBrainzContrib>) -> Self {
-        self.musicbrainz = Some(musicbrainz);
-        self
-    }
-
-    pub fn with_catalog(mut self, catalog: Arc<dyn ContributionCatalog>) -> Self {
-        self.catalog = Some(catalog);
-        self
     }
 
     pub fn store(&self) -> &Arc<SqliteContributions> {
@@ -71,18 +60,6 @@ impl ContributionService {
 
     pub fn now(&self) -> f64 {
         self.clock.now_ms() as f64 / 1000.0
-    }
-
-    fn require_discogs(&self) -> Result<&Arc<dyn DiscogsContrib>, ContribError> {
-        self.discogs
-            .as_ref()
-            .ok_or_else(|| ContribError::Data("The Discogs adapter is not available.".into()))
-    }
-
-    fn require_musicbrainz(&self) -> Result<&Arc<dyn MusicBrainzContrib>, ContribError> {
-        self.musicbrainz
-            .as_ref()
-            .ok_or_else(|| ContribError::Data("The MusicBrainz adapter is not available.".into()))
     }
 
     // -- lifecycle ----------------------------------------------------------
@@ -207,7 +184,8 @@ impl ContributionService {
                     state,
                 },
             )
-            .await?;
+            .await?
+            .row;
         self.record(row, None).await
     }
 
@@ -264,7 +242,8 @@ impl ContributionService {
                 now,
                 ContributionUpdate::Cancel,
             )
-            .await?;
+            .await?
+            .row;
         let row = self.maybe_purge_row(&row, now).await?;
         self.record(row, None).await
     }
@@ -308,7 +287,7 @@ impl ContributionService {
         if search_query.len() > 200 {
             return Err(ContribError::validation("The Discogs search is too long."));
         }
-        self.require_discogs()?
+        self.discogs
             .search_releases(&search_query, 8, RequestPriority::UserInitiated)
             .await
     }
@@ -331,7 +310,7 @@ impl ContributionService {
         // Quirk (v2): no editable-state guard here; the store owns it
         // ("This contribution can no longer be edited.").
         let release = self
-            .require_discogs()?
+            .discogs
             .get_release(&release_id, RequestPriority::UserInitiated)
             .await?
             .ok_or_else(|| {
@@ -377,7 +356,8 @@ impl ContributionService {
                     expires_at,
                 },
             )
-            .await?;
+            .await?
+            .row;
         self.record(row, Some(release)).await
     }
 
@@ -410,7 +390,8 @@ impl ContributionService {
                 self.now(),
                 ContributionUpdate::RemoveDiscogs { draft, state },
             )
-            .await?;
+            .await?
+            .row;
         self.record(row, None).await
     }
 
@@ -443,7 +424,7 @@ impl ContributionService {
                 "Refresh the Discogs source before checking MusicBrainz.".into(),
             ));
         }
-        let musicbrainz = self.require_musicbrainz()?.clone();
+        let musicbrainz = self.musicbrainz.clone();
         let discogs_release = current
             .discogs_source
             .as_ref()
@@ -574,7 +555,8 @@ impl ContributionService {
                 now,
                 ContributionUpdate::DuplicateResult { result, state },
             )
-            .await?;
+            .await?
+            .row;
         self.record(row, discogs_release).await
     }
 
@@ -613,7 +595,7 @@ impl ContributionService {
             ));
         }
         let verified = self
-            .require_musicbrainz()?
+            .musicbrainz
             .get_release_for_verification(release_mbid, RequestPriority::UserInitiated, true)
             .await
             .map_err(provider_failure_to_contrib)?
@@ -636,7 +618,7 @@ impl ContributionService {
             decision.reason_code.clone(),
             now,
         );
-        let row = self
+        let applied = self
             .store
             .compare_and_set(
                 Lane::Foreground,
@@ -650,19 +632,14 @@ impl ContributionService {
                     artist_mbid: verified.artist_mbid.clone(),
                     attempt,
                     tracks: decision.tracks.clone(),
+                    policy_revision: self.store.input_revisions(&context.tracks).2,
                 },
             )
             .await?;
-        let row = self.maybe_purge_row(&row, now).await?;
+        let row = self.maybe_purge_row(&applied.row, now).await?;
         // Scoped invalidation before returning (as in v2); then the identified hook.
-        if let Some(catalog) = self.catalog.as_ref() {
-            let groups = vec![verified.release_group_mbid.clone()];
-            let artists: Vec<String> = verified.artist_mbid.clone().into_iter().collect();
-            catalog.invalidate_identity_scope(&groups, &artists).await;
-            let (_, _, policy) = self.store.input_revisions(&context.tracks);
-            catalog
-                .after_identified(&current.local_album_id, &policy)
-                .await;
+        if let Some(invalidation) = &applied.invalidate {
+            self.invalidate(invalidation).await;
         }
         self.record(row, None).await
     }
@@ -713,7 +690,7 @@ impl ContributionService {
         if let Some(release) = discogs_release.as_ref() {
             // Race guard (v2): re-resolve fresh; a new link aborts the seed.
             let fresh = self
-                .require_musicbrainz()?
+                .musicbrainz
                 .resolve_url(
                     &release.canonical_release_url,
                     UrlRelation::Release,
@@ -785,7 +762,8 @@ impl ContributionService {
                     seed_hash,
                 },
             )
-            .await?;
+            .await?
+            .row;
         Ok(MusicBrainzSeed {
             action_url: MUSICBRAINZ_RELEASE_EDITOR.into(),
             method: "POST".into(),
@@ -850,7 +828,8 @@ impl ContributionService {
                     replace_existing: replace_existing_result,
                 },
             )
-            .await?;
+            .await?
+            .row;
         self.record(row, None).await
     }
 
@@ -870,7 +849,8 @@ impl ContributionService {
                 self.now(),
                 ContributionUpdate::RequeueVerification,
             )
-            .await?;
+            .await?
+            .row;
         self.record(row, None).await
     }
 
@@ -1016,27 +996,35 @@ impl ContributionService {
         }
     }
 
-    pub async fn invalidate_catalog_cache(&self) {
-        if let Some(catalog) = self.catalog.as_ref() {
-            catalog.invalidate_identification().await;
+    /// Tell the catalog about a committed link: drop the touched keys (or
+    /// sweep identification), then fire the identified hook.
+    async fn invalidate(&self, invalidation: &Invalidation) {
+        match &invalidation.scope {
+            CatalogScope::Identity {
+                release_group_mbids,
+                artist_mbids,
+            } => {
+                self.catalog
+                    .invalidate_identity_scope(release_group_mbids, artist_mbids)
+                    .await;
+            }
+            CatalogScope::Identification => self.catalog.invalidate_identification().await,
         }
+        self.catalog
+            .after_identified(&invalidation.local_album_id, &invalidation.policy_revision)
+            .await;
     }
 
     /// Post-link housekeeping (v2 worker `run_claimed`): drop provider
-    /// snapshots, sweep identification caches, fire the identified hook.
+    /// snapshots, then tell the catalog.
     pub async fn after_linked(
         &self,
         contribution: &ContributionRecord,
-        input_policy_revision: &str,
+        invalidation: &Invalidation,
         now: f64,
     ) -> Result<(), ContribError> {
         self.purge_provider_data(&contribution.id, now).await?;
-        self.invalidate_catalog_cache().await;
-        if let Some(catalog) = self.catalog.as_ref() {
-            catalog
-                .after_identified(&contribution.local_album_id, input_policy_revision)
-                .await;
-        }
+        self.invalidate(invalidation).await;
         Ok(())
     }
 
@@ -1059,7 +1047,7 @@ impl ContributionService {
             Some(expires_at) if expires_at > self.now() => {}
             _ => return Ok(None),
         }
-        self.require_discogs()?
+        self.discogs
             .get_release(&source.external_id, RequestPriority::UserInitiated)
             .await
     }
@@ -1183,13 +1171,14 @@ impl ContributionService {
         if discogs_ref.is_some()
             && !discogs_expired
             && discogs_release.is_none()
-            && let (Some(source), Some(discogs)) = (discogs_ref.as_ref(), self.discogs.as_ref())
+            && let Some(source) = discogs_ref.as_ref()
         {
             // Display only: a Discogs outage must not hide the contribution
             // itself, so the source shows without its release this time.
             // The display lane: answered "unavailable" at once when Discogs
             // has no request free or is resting, never queued behind one.
-            discogs_release = match discogs
+            discogs_release = match self
+                .discogs
                 .get_release(&source.external_id, RequestPriority::PrefetchVisible)
                 .await
             {

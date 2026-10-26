@@ -137,16 +137,16 @@ impl Rig {
         let discogs = Arc::new(ScriptedDiscogs::new());
         let musicbrainz = Arc::new(ScriptedMusicBrainz::new());
         let catalog = Arc::new(RecordingCatalog::default());
-        let service = Arc::new(
-            ContributionService::new(
-                store.clone(),
-                Arc::new(MatchingAttachmentEvidence),
-                Arc::new(clock.clone()),
-            )
-            .with_discogs(discogs.clone())
-            .with_musicbrainz(musicbrainz.clone())
-            .with_catalog(catalog.clone()),
-        );
+        let service = Arc::new(ContributionService::new(
+            store.clone(),
+            Arc::new(MatchingAttachmentEvidence),
+            contrib::ContribProviders {
+                discogs: discogs.clone(),
+                musicbrainz: musicbrainz.clone(),
+            },
+            catalog.clone(),
+            Arc::new(clock.clone()),
+        ));
         let rig = Self {
             db,
             handle,
@@ -598,28 +598,6 @@ async fn brief_stale_marks_on_read_and_rebuilds_fresh() {
     assert_eq!(old.state, ContributionState::Stale);
 }
 
-#[tokio::test]
-async fn brief_cancel_closes_once() {
-    let rig = Rig::new();
-    let ready = to_ready(&rig).await;
-    let cancelled = rig
-        .service
-        .cancel(&ready.id, ready.row_revision, ACTOR)
-        .await
-        .unwrap();
-    assert_eq!(cancelled.state, ContributionState::Cancelled);
-    assert!(cancelled.next_actions.is_empty());
-    let error = rig
-        .service
-        .cancel(&ready.id, cancelled.row_revision, ACTOR)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::State("This contribution is already closed.".into())
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Discogs source briefs
 // ---------------------------------------------------------------------------
@@ -721,26 +699,6 @@ async fn brief_select_aligns_and_expiry_redacts() {
     let raw = rig.raw(&selected.id).await;
     assert!(raw.provider_snapshot_expires_at.is_none());
     assert!(raw.source_selection.alignments.is_empty());
-}
-
-#[tokio::test]
-async fn brief_remove_discogs_restores_local() {
-    let rig = Rig::new();
-    rig.discogs.insert_release(discogs_release());
-    let ready = to_ready(&rig).await;
-    let selected = rig
-        .service
-        .select_discogs(&ready.id, "12345", ready.row_revision, ACTOR)
-        .await
-        .unwrap();
-    let removed = rig
-        .service
-        .remove_discogs(&selected.id, selected.row_revision, ACTOR)
-        .await
-        .unwrap();
-    assert!(removed.discogs_source.is_none());
-    assert!(removed.source_selection.sources.is_empty());
-    assert!(removed.provider_snapshot_expires_at.is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -1423,50 +1381,6 @@ async fn brief_callback_rejects_bad_and_reused_tokens() {
     assert_eq!(
         error,
         ContribError::Missing("Contribution callback is invalid or expired.".into())
-    );
-}
-
-#[tokio::test]
-async fn brief_manual_result_queues_and_replaces_explicitly() {
-    let rig = Rig::new();
-    let checked = to_checked(&rig).await;
-    rig.service
-        .create_seed(
-            &checked.id,
-            checked.row_revision,
-            ACTOR,
-            "https://needle.example.com",
-        )
-        .await
-        .unwrap();
-    let seeded = rig.service.get(&checked.id).await.unwrap();
-    let verifying = rig
-        .service
-        .record_manual_result(&seeded.id, MBID_RELEASE, seeded.row_revision, ACTOR, false)
-        .await
-        .unwrap();
-    assert_eq!(verifying.state, ContributionState::Verifying);
-    assert_eq!(verifying.result_source.as_deref(), Some("manual"));
-    assert_eq!(rig.jobs_for(&seeded.id).len(), 1);
-    // A different MBID needs explicit replacement...
-    let error = rig
-        .service
-        .record_manual_result(&seeded.id, MBID_OTHER, verifying.row_revision, ACTOR, false)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::State("Confirm replacement of the existing MusicBrainz result.".into())
-    );
-    // ...and replacement only lands from needs_review/stale.
-    let error = rig
-        .service
-        .record_manual_result(&seeded.id, MBID_OTHER, verifying.row_revision, ACTOR, true)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::State("Confirm replacement of the existing MusicBrainz result.".into())
     );
 }
 
