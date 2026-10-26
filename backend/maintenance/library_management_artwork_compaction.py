@@ -56,6 +56,9 @@ from typing import Callable, Sequence
 import msgspec
 
 from infrastructure.library_management_blob_store import _image_metadata_json
+from infrastructure.persistence.native_library_store import (
+    IMPORT_BUNDLE_REFERENCE_PREFIX,
+)
 from models.audio_metadata import DesiredAudioDocument
 from models.library_management import LibraryManagementImportBundle
 from models.library_management_stored_artwork import (
@@ -69,7 +72,6 @@ DEFAULT_BATCH_SIZE = 10
 MAX_BATCH_SIZE = 100
 _INLINE_BYTES = "instr({column}, '\"content\":\"')>0"
 _BUNDLE_STATES = "('completed','resolved','rolled_back')"
-_REFERENCE_PREFIX = "import-bundle:"
 
 
 class ArtworkCompactionError(RuntimeError):
@@ -218,7 +220,8 @@ def _prepare_bundle(row: sqlite3.Row) -> _Rewrite | None:
     new_json = msgspec.json.encode(persisted_import_bundle(bundle)).decode()
     return _Rewrite(
         references=tuple(
-            (content, f"{_REFERENCE_PREFIX}{row['id']}") for content in payloads.values()
+            (content, f"{IMPORT_BUNDLE_REFERENCE_PREFIX}{row['id']}")
+            for content in payloads.values()
         ),
         reference_created_at=float(row["created_at"]),
         reclaimable=len(request_json) - len(new_json),

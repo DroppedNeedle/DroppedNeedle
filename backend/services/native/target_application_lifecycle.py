@@ -14,6 +14,8 @@ from core.task_registry import TaskRegistry
 logger = logging.getLogger(__name__)
 
 _ORPHAN_STAGING_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+_BACKFILL_BATCH_ATTEMPTS = 3
+_BACKFILL_RETRY_SECONDS = 5.0
 
 
 async def _cleanup_orphan_staging(store: Any, staging_path: Path | None) -> None:
@@ -42,27 +44,61 @@ async def _cleanup_orphan_staging(store: Any, staging_path: Path | None) -> None
         logger.info("startup.orphan_staging_swept", extra={"removed": removed})
 
 
+async def _backfill_batch(store: Any, after_id: str) -> str | None:
+    """Index one batch of stored import bundles, retrying a transient failure."""
+
+    for attempt in range(1, _BACKFILL_BATCH_ATTEMPTS + 1):
+        try:
+            return await store.backfill_import_bundle_lookups(after_id=after_id)
+        except Exception as error:  # noqa: BLE001 - a locked database must not end the backfill
+            if attempt == _BACKFILL_BATCH_ATTEMPTS:
+                raise
+            logger.warning(
+                "Import bundle lookup batch failed (attempt %d of %d): %s",
+                attempt,
+                _BACKFILL_BATCH_ATTEMPTS,
+                error,
+            )
+            await asyncio.sleep(_BACKFILL_RETRY_SECONDS)
+    return None
+
+
 async def backfill_import_bundle_lookups(store: Any) -> None:
     """Index import bundles stored before the lookup tables, in bounded batches.
 
     Each batch commits on its own, and a restart skips what is already indexed,
     so an interrupted run resumes. The completion marker is written last; until
-    then the lookups use the slower JSON scan and stay correct.
+    then the lookups use the slower JSON scan and stay correct. The state index
+    is built afterwards, off the startup path, because building it reads every
+    stored request.
     """
 
-    if await store.has_completed_import_bundle_lookup_backfill():
-        return
-    after_id = ""
-    batches = 0
-    while True:
-        last_id = await store.backfill_import_bundle_lookups(after_id=after_id)
-        if last_id is None:
-            break
-        after_id = last_id
-        batches += 1
-        await asyncio.sleep(0)
-    await store.complete_import_bundle_lookup_backfill(completed_at=time.time())
-    logger.info("Indexed stored import bundles in %d batches", batches)
+    if not await store.has_completed_import_bundle_lookup_backfill():
+        after_id = ""
+        batches = 0
+        try:
+            while True:
+                last_id = await _backfill_batch(store, after_id)
+                if last_id is None:
+                    break
+                after_id = last_id
+                batches += 1
+                await asyncio.sleep(0)
+            await store.complete_import_bundle_lookup_backfill(completed_at=time.time())
+        except Exception as error:  # noqa: BLE001 - the JSON scan fallback stays correct
+            logger.warning(
+                "Import bundle lookup backfill stopped after %d batches and "
+                "resumes on the next start: %s",
+                batches,
+                error,
+            )
+        else:
+            if batches:
+                logger.info("Indexed stored import bundles in %d batches", batches)
+    try:
+        await store.ensure_import_bundle_state_index()
+    except Exception as error:  # noqa: BLE001 - recovery scans work without the index
+        logger.warning("Import bundle state index was not built: %s", error)
 
 
 async def _migrate_shared_avatar(auth_store: Any, cache_dir: Path) -> None:
@@ -188,9 +224,6 @@ async def run_target_one_time_migrations(
     )
     if release_year_count:
         logger.info("Backfilled %d accepted release catalog years", release_year_count)
-    # Recovery scans bundles by state right after this phase; one index build
-    # costs less than the full table scans it replaces.
-    await store.ensure_import_bundle_state_index()
     if not library_enabled:
         logger.info(
             "Skipped catalog hygiene and artist reconciliation backfills: "

@@ -7,7 +7,7 @@ import hashlib
 
 import msgspec
 
-from models.audio_metadata import DesiredAudioDocument, EmbeddedArtworkDescriptor
+from models.audio_metadata import EmbeddedArtworkDescriptor
 from models.library_management import (
     LibraryManagementImportBundle,
     LibraryManagementImportFile,
@@ -108,11 +108,3 @@ def stored_artwork_descriptor(
         content=content,
         format_supported=image.format_supported,
     )
-
-
-def without_embedded_artwork(
-    desired: DesiredAudioDocument | None,
-) -> DesiredAudioDocument | None:
-    if desired is None or not desired.artwork:
-        return desired
-    return msgspec.structs.replace(desired, artwork=None)

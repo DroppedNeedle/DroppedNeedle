@@ -36,7 +36,10 @@ from infrastructure.audio.metadata_engine import (
     legacy_audio_projection,
 )
 from infrastructure.library_management_blob_store import LibraryManagementBlobStore
-from infrastructure.persistence.native_library_store import NativeLibraryStore
+from infrastructure.persistence.native_library_store import (
+    IMPORT_BUNDLE_REFERENCE_PREFIX,
+    NativeLibraryStore,
+)
 from models.audio import AudioArtistCredit, AudioTag
 from models.audio_metadata import (
     DesiredAudioDocument,
@@ -361,7 +364,7 @@ class LibraryManagementPublisher:
         """
 
         self._validate_import_bundle(bundle)
-        bundle_id = str(uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, bundle.idempotency_key))
+        bundle_id = import_bundle_id(bundle.idempotency_key)
         self._active_import_bundles[bundle_id] = (
             self._active_import_bundles.get(bundle_id, 0) + 1
         )
@@ -395,7 +398,7 @@ class LibraryManagementPublisher:
         bundle = await self._hydrated_import_bundle(bundle)
         request_json = await self.encode_import_bundle(bundle)
         request_hash = hashlib.sha256(request_json.encode()).hexdigest()
-        bundle_id = str(uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, bundle.idempotency_key))
+        bundle_id = import_bundle_id(bundle.idempotency_key)
         now = self._clock()
         record, created = await self._ensure_import_bundle(
             LibraryManagementImportBundleRecord(
@@ -548,7 +551,7 @@ class LibraryManagementPublisher:
         encode to equal text: references are content hashes and nothing else varies.
         """
 
-        bundle_id = str(uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, bundle.idempotency_key))
+        bundle_id = import_bundle_id(bundle.idempotency_key)
         now = self._clock()
         payloads = [
             image.content
@@ -564,13 +567,17 @@ class LibraryManagementPublisher:
             for artifact in file.artifacts
             if artifact.content is not None
         ]
-        for content in payloads:
+        # The same cover is usually repeated on every file of the bundle.
+        distinct = {
+            hashlib.sha256(content).hexdigest(): content for content in payloads
+        }
+        for content in distinct.values():
             blob = await self._blobs.add_bytes(content, kind="image", created_at=now)
             await self._store.add_management_blob_reference(
                 LibraryManagementBlobReference(
                     blob_sha256=blob.sha256,
                     reference_kind="artwork",
-                    reference_id=f"import-bundle:{bundle_id}",
+                    reference_id=f"{IMPORT_BUNDLE_REFERENCE_PREFIX}{bundle_id}",
                     created_at=now,
                 )
             )
@@ -582,6 +589,7 @@ class LibraryManagementPublisher:
         """Put the artwork bytes of a persisted bundle back; other bundles pass through."""
 
         files: list[LibraryManagementImportFile] = []
+        contents: dict[str, bytes] = {}
         for file in bundle.files:
             if file.desired_artwork is None and all(
                 value.content_blob_sha256 is None for value in file.artifacts
@@ -593,18 +601,17 @@ class LibraryManagementPublisher:
                 assert desired is not None
                 images = []
                 for image in file.desired_artwork:
-                    images.append(
-                        stored_artwork_descriptor(
-                            image, await self._import_blob(image.sha256)
-                        )
-                    )
+                    content = await self._cached_import_blob(contents, image.sha256)
+                    images.append(stored_artwork_descriptor(image, content))
                 desired = msgspec.structs.replace(desired, artwork=tuple(images))
             artifacts = []
             for artifact in file.artifacts:
                 if artifact.content_blob_sha256 is not None:
                     artifact = msgspec.structs.replace(
                         artifact,
-                        content=await self._import_blob(artifact.content_blob_sha256),
+                        content=await self._cached_import_blob(
+                            contents, artifact.content_blob_sha256
+                        ),
                         content_blob_sha256=None,
                     )
                 artifacts.append(artifact)
@@ -617,6 +624,13 @@ class LibraryManagementPublisher:
                 )
             )
         return msgspec.structs.replace(bundle, files=tuple(files))
+
+    async def _cached_import_blob(
+        self, contents: dict[str, bytes], sha256: str
+    ) -> bytes:
+        if sha256 not in contents:
+            contents[sha256] = await self._import_blob(sha256)
+        return contents[sha256]
 
     async def _import_blob(self, sha256: str) -> bytes:
         content = await self._blobs.read_bytes(sha256)
@@ -673,9 +687,7 @@ class LibraryManagementPublisher:
                 request_bytes, type=LibraryManagementImportBundle
             )
             self._validate_import_bundle(bundle)
-            expected_id = str(
-                uuid.uuid5(_IMPORT_BUNDLE_NAMESPACE, bundle.idempotency_key)
-            )
+            expected_id = import_bundle_id(bundle.idempotency_key)
             if (
                 expected_id != record.id
                 or (

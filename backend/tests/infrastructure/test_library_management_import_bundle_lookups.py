@@ -17,6 +17,7 @@ from models.library_management import (
     LibraryManagementImportBundleRecord,
     LibraryManagementImportFile,
 )
+from services.native import target_application_lifecycle as lifecycle
 from services.native.target_application_lifecycle import (
     backfill_import_bundle_lookups,
 )
@@ -289,6 +290,76 @@ async def test_backfill_resumes_after_interruption(
     assert _lookup_rows(db_path) == expected
     assert await store.has_completed_import_bundle_lookup_backfill()
     assert batches == ["bundle-e"]
+
+
+@pytest.mark.asyncio
+async def test_backfill_retries_a_failed_batch(
+    store: NativeLibraryStore,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lifecycle, "_BACKFILL_RETRY_SECONDS", 0.0)
+    await _seed_bundles(store)
+    expected = _lookup_rows(db_path)
+    _clear_lookups(db_path)
+    original = store.backfill_import_bundle_lookups
+    failures = [sqlite3.OperationalError("database is locked")] * 2
+
+    async def flaky(**kwargs: object) -> str | None:
+        if failures:
+            raise failures.pop()
+        return await original(**kwargs)  # type: ignore[arg-type]
+
+    store.backfill_import_bundle_lookups = flaky  # type: ignore[method-assign]
+    await backfill_import_bundle_lookups(store)
+
+    assert _lookup_rows(db_path) == expected
+    assert await store.has_completed_import_bundle_lookup_backfill()
+
+
+@pytest.mark.asyncio
+async def test_backfill_gives_up_without_a_marker(
+    store: NativeLibraryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lifecycle, "_BACKFILL_RETRY_SECONDS", 0.0)
+    await _seed_bundles(store)
+    attempts = 0
+
+    async def locked(**kwargs: object) -> str | None:
+        nonlocal attempts
+        attempts += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    store.backfill_import_bundle_lookups = locked  # type: ignore[method-assign]
+    await backfill_import_bundle_lookups(store)
+
+    assert attempts == lifecycle._BACKFILL_BATCH_ATTEMPTS
+    assert not await store.has_completed_import_bundle_lookup_backfill()
+    # The JSON scan fallback keeps the lookups correct.
+    assert await _task_bundle_ids(store, "task-1") == ["bundle-b"]
+
+
+@pytest.mark.asyncio
+async def test_backfill_builds_the_state_index_off_the_startup_path(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_bundles(store)
+
+    def has_index() -> bool:
+        with sqlite3.connect(db_path) as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='idx_import_bundles_state'"
+                ).fetchone()
+                is not None
+            )
+
+    assert not has_index()
+
+    await backfill_import_bundle_lookups(store)
+
+    assert has_index()
 
 
 @pytest.mark.asyncio

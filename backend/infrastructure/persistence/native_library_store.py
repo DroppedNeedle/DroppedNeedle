@@ -19853,10 +19853,14 @@ class NativeLibraryStore(PersistenceBase):
         self, reference: LibraryManagementBlobReference
     ) -> None:
         def operation(connection: sqlite3.Connection) -> None:
+            # A re-added reference restarts its age, so the orphan grace period
+            # protects a retried publish of an old failed bundle.
             connection.execute(
-                "INSERT OR IGNORE INTO library_management_blob_references "
+                "INSERT INTO library_management_blob_references "
                 "(blob_sha256, reference_kind, reference_id, created_at) "
-                "VALUES (?,?,?,?)",
+                "VALUES (?,?,?,?) "
+                "ON CONFLICT(blob_sha256, reference_kind, reference_id) "
+                "DO UPDATE SET created_at=excluded.created_at",
                 (
                     reference.blob_sha256,
                     reference.reference_kind,
@@ -19943,6 +19947,8 @@ class NativeLibraryStore(PersistenceBase):
                 "WHERE baseline.semantic_snapshot_blob_sha256 = blob.sha256) "
                 "AND NOT EXISTS (SELECT 1 FROM library_management_operation_snapshots snapshot "
                 "WHERE snapshot.semantic_snapshot_blob_sha256 = blob.sha256) "
+                "AND NOT EXISTS (SELECT 1 FROM library_management_import_journal journal "
+                "WHERE journal.baseline_blob_sha256 = blob.sha256) "
                 "ORDER BY blob.created_at, blob.sha256 LIMIT ?",
                 (older_than, limit),
             ).fetchall()
@@ -23902,6 +23908,8 @@ class NativeLibraryStore(PersistenceBase):
                     for item in items
                 ],
             )
+            for item in items:
+                self._reference_plan_item_artwork(connection, item)
             counts = connection.execute(
                 "SELECT COUNT(*) AS item_count, "
                 "COUNT(DISTINCT bundle_ordinal) AS bundle_count "
@@ -24545,6 +24553,9 @@ class NativeLibraryStore(PersistenceBase):
     ) -> tuple[LibraryManagementImportBundleRecord, bool]:
         """Create an immutable import publication intent or return its exact retry."""
 
+        # Decoding the multi-MB request belongs outside the write lock.
+        lookup_keys = _import_bundle_lookup_keys(bundle.request_json)
+
         def operation(
             connection: sqlite3.Connection,
         ) -> tuple[LibraryManagementImportBundleRecord, bool]:
@@ -24588,9 +24599,7 @@ class NativeLibraryStore(PersistenceBase):
                     bundle.row_revision,
                 ),
             )
-            self._insert_import_bundle_lookups(
-                connection, bundle.id, *_import_bundle_lookup_keys(bundle.request_json)
-            )
+            self._insert_import_bundle_lookups(connection, bundle.id, *lookup_keys)
             return bundle, True
 
         return await self._write(operation)
@@ -24726,7 +24735,8 @@ class NativeLibraryStore(PersistenceBase):
 
         `state` follows the multi-MB `request_json` in each row, so building the
         index reads the whole table once. That single pass replaces the full
-        scans startup recovery would otherwise run, and is a no-op once built.
+        scans recovery would otherwise run, and is a no-op once built. It runs
+        as background work so it never holds up interactive writes.
         """
 
         def operation(connection: sqlite3.Connection) -> None:
@@ -24735,7 +24745,7 @@ class NativeLibraryStore(PersistenceBase):
                 "ON library_management_import_bundles(state,updated_at,id)"
             )
 
-        await self._write(operation)
+        await self._write_background(operation)
 
     async def get_library_management_import_bundle(
         self, bundle_id: str
@@ -24812,11 +24822,11 @@ class NativeLibraryStore(PersistenceBase):
         updated_before: float,
         limit: int = IMPORT_BUNDLE_PRUNE_BATCH_SIZE,
     ) -> tuple[int, bool]:
-        """Delete finished import bundles last touched before `updated_before`.
+        """Delete completed import bundles last touched before `updated_before`.
 
         A bundle is kept only for idempotent retries, recovery and the cleanup
-        barrier of the download attempts that published it, so a completed or
-        resolved one expires on age once no unfinished attempt holds it. A
+        barrier of the download attempts that published it, so a completed one
+        expires on age once no unfinished attempt holds it. A resolved or
         rolled-back bundle is never pruned: the orphan workspace reconcile keeps
         a task's folder while any of its bundles is not completed. The journal
         rows go first (their foreign key restricts), the lookup rows cascade, and
@@ -24842,7 +24852,7 @@ class NativeLibraryStore(PersistenceBase):
                 page = connection.execute(
                     "SELECT bundle.id,bundle.updated_at "
                     "FROM library_management_import_bundles bundle "
-                    "WHERE bundle.state IN ('completed','resolved') "
+                    "WHERE bundle.state='completed' "
                     "AND bundle.updated_at<? "
                     "AND (bundle.updated_at>? OR (bundle.updated_at=? AND bundle.id>?)) "
                     "AND NOT EXISTS (SELECT 1 FROM "
@@ -27017,6 +27027,12 @@ class NativeLibraryStore(PersistenceBase):
                 item.created_at,
             ),
         )
+        NativeLibraryStore._reference_plan_item_artwork(connection, item)
+
+    @staticmethod
+    def _reference_plan_item_artwork(
+        connection: sqlite3.Connection, item: LibraryManagementPlanItem
+    ) -> None:
         # Embedded artwork bytes live in the blob store; the item keeps them
         # referenced the way the preview planner does.
         for index, choice in enumerate(json.loads(item.artwork_choices_json)):

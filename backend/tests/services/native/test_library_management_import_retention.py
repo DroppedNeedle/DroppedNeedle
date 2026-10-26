@@ -129,8 +129,9 @@ async def test_prune_removes_only_bundles_nothing_needs(
         updated_before=NOW - 90 * DAY
     )
 
-    assert (removed, more) == (3, False)
+    assert (removed, more) == (2, False)
     assert _ids(db_path, "library_management_import_bundles") == {
+        "resolved-old",
         "rolled-back-free",
         "completed-recent",
         "rolled-back-held",
@@ -143,6 +144,7 @@ async def test_prune_removes_only_bundles_nothing_needs(
     assert _ids(
         db_path, "library_management_import_bundle_tasks", "bundle_id"
     ) == {
+        "resolved-old",
         "rolled-back-free",
         "completed-recent",
         "rolled-back-held",
@@ -205,6 +207,19 @@ async def test_prune_never_removes_rolled_back_bundles(
 
     assert await store.prune_terminal_import_bundles(updated_before=NOW) == (0, False)
     assert _ids(db_path, "library_management_import_bundles") == {"rolled-back-old"}
+
+
+@pytest.mark.asyncio
+async def test_prune_never_removes_resolved_bundles(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    # The orphan workspace reconcile keeps a task's folder while any of its
+    # bundles is not completed, so pruning a resolved one would free the folder.
+    await _bundle(store, db_path, "resolved-old", "resolved")
+    await store.complete_import_bundle_lookup_backfill(completed_at=1.0)
+
+    assert await store.prune_terminal_import_bundles(updated_before=NOW) == (0, False)
+    assert _ids(db_path, "library_management_import_bundles") == {"resolved-old"}
 
 
 @pytest.mark.asyncio
@@ -331,3 +346,60 @@ async def test_retention_frees_only_artwork_that_nothing_references(
         0,
         0,
     )
+
+
+@pytest.mark.asyncio
+async def test_readding_a_reference_restarts_its_orphan_grace_period(
+    store: NativeLibraryStore, db_path: Path, tmp_path: Path
+) -> None:
+    blobs = LibraryManagementBlobStore(tmp_path / "blobs", store)
+    await _reference(store, blobs, b"retried", "import-bundle:retried")
+    await _reference(store, blobs, b"stale", "import-bundle:stale")
+
+    await _reference(store, blobs, b"retried", "import-bundle:retried", NOW)
+
+    assert await store.remove_orphaned_import_bundle_references(
+        created_before=NOW - DAY
+    ) == 1
+    assert _ids(db_path, "library_management_blob_references", "reference_id") == {
+        "import-bundle:retried"
+    }
+
+
+@pytest.mark.asyncio
+async def test_blobs_held_by_the_import_journal_do_not_block_cleanup(
+    store: NativeLibraryStore, db_path: Path, tmp_path: Path
+) -> None:
+    blobs = LibraryManagementBlobStore(tmp_path / "blobs", store)
+    await _bundle(store, db_path, "journaled", "completed")
+    held = [
+        (await blobs.add_bytes(content, kind="image", created_at=OLD)).sha256
+        for content in (b"held-1", b"held-2")
+    ]
+    free = (await blobs.add_bytes(b"free", kind="image", created_at=OLD + 1)).sha256
+    for ordinal, sha256 in enumerate(held):
+        await store.ensure_library_management_import_journal(
+            LibraryManagementImportJournal(
+                bundle_id="journaled",
+                ordinal=ordinal,
+                state="completed",
+                source_fingerprint="f" * 64,
+                source_size=1,
+                source_mtime_ns=1,
+                temporary_relative_path=f"tmp-{ordinal}",
+                destination_root_id="root",
+                destination_relative_path=f"{ordinal}.flac",
+                baseline_blob_sha256=sha256,
+            )
+        )
+
+    # A batch no larger than the held blobs would otherwise return only them.
+    unreferenced = await store.list_unreferenced_management_blobs(
+        older_than=NOW, limit=2
+    )
+
+    assert [blob.sha256 for blob in unreferenced] == [free]
+    result = await blobs.cleanup(older_than=NOW, limit=2)
+    assert result.unreferenced_blobs_removed == 1
+    for sha256 in held:
+        assert _blob_exists(blobs, sha256)
