@@ -317,6 +317,23 @@ fn routing_recognizes_v2_set_minus_wma() {
     assert!(format_for_path(Path::new("a.txt")).is_err());
 }
 
+/// A tag item lofty cannot parse (a release date holding a web
+/// address) is dropped on read, so the file is still catalogued; a save
+/// still refuses it and leaves the file as it was.
+#[test]
+fn an_unparsable_tag_item_does_not_hide_the_file() {
+    let frames = vec![
+        ("TIT2", latin1(&["Probe"])),
+        ("TDRL", latin1(&["www.example.com"])),
+    ];
+    let (_dir, path) = raw_id3_mp3("unparsable-item", 3, &frames);
+    let (tag, _) = tags::read_tags(&path).unwrap();
+    assert_eq!(tag.title, "Probe");
+    let before = std::fs::read(&path).unwrap();
+    assert!(tags::save_tags(&path, &[TagEdit::set_title("New")]).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
 #[test]
 fn wma_is_unrecognized_on_every_entry() {
     let path = fixture("management_full.wma");
