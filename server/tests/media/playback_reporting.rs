@@ -22,6 +22,7 @@ use droppedneedle_auth::Principal;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_kernel::clock::{Clock, ManualClock};
+use droppedneedle_media::remotes::warmup::{self, WarmupScope, WarmupStats};
 use playback::PlaybackDeps;
 use playback::ports::{
     ProviderFailure, RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets,
@@ -33,7 +34,6 @@ use playback::rules::{
 };
 use playback::sessions::{SESSION_TTL_SECS, SessionKey, SessionStore};
 use playback::sqlite::PlaybackStore;
-use playback::warmup::{self, WarmupScope, WarmupStats};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 

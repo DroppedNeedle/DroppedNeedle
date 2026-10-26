@@ -1,5 +1,5 @@
 //! Playback reporting: session lifecycle, native scrobbles, live
-//! presence, MBID warmup loops, and each user's listening settings.
+//! presence, and each user's listening settings.
 //!
 //! The native player reports `start`/`progress`/`stop` for each play; the
 //! services resolve the track, keep the bounded session, write presence,
@@ -30,15 +30,12 @@
 //! - Outbound attribution (per-source session reports, logged and
 //!   swallowed; per-user fail-closed): the three
 //!   v2 per-source playback services
-//! - Warmup cadences (Jellyfin one-shot after 8s; Navidrome/Plex every
-//!   four hours after 12s/15s): v2's task schedule
 //!
 //! ## Wiring
 //!
 //! [`routes`] puts every route in the user group, inside the session gate.
 //! `GET /now-playing` serves the live presence registry here, not the
-//! static snapshot in `reads::discover`. The warmup loops run on the loop
-//! supervisor once something starts them. [`listening_routes`] serves each
+//! static snapshot in `reads::discover`. [`listening_routes`] serves each
 //! user's scrobble preferences and ListenBrainz link, kept by
 //! [`listening::ListeningStore`].
 //!
@@ -65,7 +62,6 @@ pub mod scrobble_models;
 pub mod sessions;
 pub(crate) mod sql;
 pub mod sqlite;
-pub mod warmup;
 
 use std::sync::Arc;
 
@@ -73,7 +69,6 @@ use droppedneedle_auth::users::stores::LastFmSwitch;
 use droppedneedle_kernel::clock::Clock;
 
 pub use handlers::routes;
-pub use warmup::{WarmupScope, WarmupStats};
 
 use ports::{PlayEvents, RemoteReporters, ScrobbleSinks};
 use presence::PresenceRegistry;

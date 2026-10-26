@@ -10,7 +10,7 @@
 //! indexers, wanted, Lidarr, Spotify, the download watchdog, auto-retry,
 //! request-status sync, and the new-release poll; `library` owns scan,
 //! identify, publish, the library watcher, the revision poller, and worker
-//! supervision; `playback` owns the Jellyfin/Navidrome/Plex MBID warmups;
+//! supervision; `remotes` owns the Jellyfin/Navidrome/Plex MBID warmups;
 //! `reads::discover` owns the discover/home cache loops. This module must
 //! not grow twins of those.
 //!
