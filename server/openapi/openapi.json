@@ -57407,6 +57407,8 @@
           "no_tracks",
           "version_lower_quality",
           "no_better_than_yours",
+          "owned_elsewhere",
+          "owned_on_album",
           "no_album_match",
           "album_not_found",
           "tags_disagree",

@@ -990,6 +990,8 @@ const HELD_RELEASE: &str = "6d0b7a1e-0000-4000-8000-0000000000a2";
 
 const LIVE_GROUP: &str = "6d0b7a1e-0000-4000-8000-0000000000a3";
 const LIVE_RELEASE: &str = "6d0b7a1e-0000-4000-8000-0000000000a4";
+const DELUXE_RELEASE: &str = "6d0b7a1e-0000-4000-8000-0000000000a5";
+const REMASTER_RELEASE: &str = "6d0b7a1e-0000-4000-8000-0000000000a6";
 const MYSTERONS: &str = "6d0b7a1e-0000-4000-8000-0000000000c0";
 const SOUR_TIMES: &str = "6d0b7a1e-0000-4000-8000-0000000000c1";
 
@@ -1452,6 +1454,185 @@ async fn a_matched_download_is_retried_onto_its_match() {
     assert_eq!(held_file(&rig.db, "matched.flac").await.0, "imported");
     assert!(taken.is_file(), "placed on the album it was matched to");
     assert!(!dummy_dir.join("0101 Mysterons.flac").exists());
+}
+
+/// A file held because its place was taken, whose track the library has
+/// meanwhile got on another copy of the album (it holds two copies, neither
+/// of the file's edition), is never placed beside it by the retry: it waits
+/// for a person, its held copy kept, and is not retried again.
+#[tokio::test]
+async fn a_retry_never_adds_a_second_copy_by_itself() {
+    let dummy = held_release();
+    let deluxe = portishead(
+        DELUXE_RELEASE,
+        HELD_GROUP,
+        "Dummy Deluxe",
+        &[(MYSTERONS, "Mysterons")],
+    );
+    let remaster = portishead(
+        REMASTER_RELEASE,
+        HELD_GROUP,
+        "Dummy Remaster",
+        &[(SOUR_TIMES, "Sour Times")],
+    );
+    let rig = HeldRig::new(vec![dummy.clone(), deluxe.clone(), remaster.clone()]).await;
+    let taken = rig.music.join("Portishead/Dummy/0101 Mysterons.flac");
+    std::fs::create_dir_all(taken.parent().expect("album folder")).expect("album folder");
+    std::fs::write(&taken, b"someone else's file").expect("stray file");
+    held_copy(
+        &rig.held_dir,
+        "taken.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let entry = seed_held_on(
+        &rig.db,
+        "task:t-taken",
+        "",
+        HELD_RELEASE,
+        "held",
+        vec![(
+            "taken.flac",
+            dummy.tracks[0].clone(),
+            Reason::TargetOccupied,
+        )],
+    )
+    .await;
+    rig.acquire.held.tend().await;
+    assert_eq!(retry_of(&rig.db, entry).await.1, 1);
+
+    // The library gets the track on its Deluxe copy, and another track on
+    // a Remaster copy.
+    held_copy(
+        &rig.held_dir,
+        "deluxe.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    held_copy(
+        &rig.held_dir,
+        "remaster.flac",
+        "flac_full_02.flac",
+        "Sour Times",
+        1,
+    );
+    for (key, release, file, track) in [
+        (
+            "task:t-deluxe",
+            DELUXE_RELEASE,
+            "deluxe.flac",
+            &deluxe.tracks[0],
+        ),
+        (
+            "task:t-remaster",
+            REMASTER_RELEASE,
+            "remaster.flac",
+            &remaster.tracks[0],
+        ),
+    ] {
+        seed_held_on(
+            &rig.db,
+            key,
+            "",
+            release,
+            "held",
+            vec![(file, track.clone(), Reason::TargetOccupied)],
+        )
+        .await;
+    }
+    rig.acquire.held.tend().await;
+    assert!(
+        rig.music
+            .join("Portishead/Dummy Deluxe/0101 Mysterons.flac")
+            .is_file()
+    );
+    assert!(
+        rig.music
+            .join("Portishead/Dummy Remaster/0101 Sour Times.flac")
+            .is_file()
+    );
+
+    std::fs::remove_file(&taken).expect("place freed");
+    rig.clock.advance(5 * MINUTE);
+    rig.acquire.held.tend().await;
+    assert!(!taken.exists(), "no second copy");
+    assert_eq!(
+        held_file(&rig.db, "taken.flac").await,
+        ("held".to_owned(), "owned_elsewhere".to_owned()),
+        "a person decides"
+    );
+    assert!(
+        rig.held_dir.join("taken.flac").is_file(),
+        "its copy is kept"
+    );
+    assert_eq!(
+        retry_of(&rig.db, entry).await,
+        ("held".to_owned(), 0, None),
+        "no further retry"
+    );
+}
+
+/// A file held because its place was taken, whose track has since got a
+/// lower-quality copy on the same album, is never swapped in by the retry:
+/// the library's copy stays, nothing goes to the recycle bin, and the file
+/// waits for a person.
+#[tokio::test]
+async fn a_retry_never_replaces_a_library_copy_by_itself() {
+    let dummy = held_release();
+    let rig = HeldRig::new(vec![dummy.clone()]).await;
+    let album = rig.music.join("Portishead/Dummy");
+    held_copy(&rig.held_dir, "low.mp3", "mp3_full_01.mp3", "Mysterons", 1);
+    seed_held(
+        &rig.db,
+        "task:t-low",
+        "held",
+        vec![("low.mp3", dummy.tracks[0].clone(), Reason::TargetOccupied)],
+    )
+    .await;
+    rig.acquire.held.tend().await;
+    let yours = album.join("0101 Mysterons.mp3");
+    assert!(yours.is_file(), "the album has its lower-quality copy");
+
+    held_copy(
+        &rig.held_dir,
+        "better.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let entry = seed_held(
+        &rig.db,
+        "task:t-better",
+        "held",
+        vec![(
+            "better.flac",
+            dummy.tracks[0].clone(),
+            Reason::TargetOccupied,
+        )],
+    )
+    .await;
+    rig.acquire.held.tend().await;
+    assert!(yours.is_file(), "the library's copy stays");
+    assert!(!album.join("0101 Mysterons.flac").exists());
+    assert!(
+        std::fs::read_dir(rig.music.join(".recycle"))
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(true),
+        "nothing went to the recycle bin"
+    );
+    assert_eq!(
+        held_file(&rig.db, "better.flac").await,
+        ("held".to_owned(), "owned_on_album".to_owned()),
+        "a person decides"
+    );
+    assert!(rig.held_dir.join("better.flac").is_file());
+    assert_eq!(
+        retry_of(&rig.db, entry).await,
+        ("held".to_owned(), 0, None),
+        "no further retry"
+    );
 }
 
 /// A pass that finds the database busy, or no library set up yet, spends

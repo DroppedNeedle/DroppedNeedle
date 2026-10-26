@@ -895,7 +895,7 @@ mod tests {
 
     #[test]
     fn the_reason_check_lists_every_spelling() {
-        let migration = include_str!("../../../migrations/0085_acquire_held_entries.sql");
+        let migration = include_str!("../../../migrations/0087_acquire_held_retry.sql");
         let check = migration
             .split("reason TEXT NOT NULL CHECK (reason IN (")
             .nth(1)

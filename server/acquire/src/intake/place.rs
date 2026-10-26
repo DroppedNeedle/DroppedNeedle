@@ -126,7 +126,7 @@ impl Planned {
     /// who imported it by hand is never answered by dropping it: it stays
     /// held and they are told.
     fn owned(&mut self, gate: Gate, file: usize, track: usize) {
-        if gate == Gate::PersonChoseFile {
+        if gate.imports_held() {
             self.hold(
                 file,
                 Some(track),
@@ -207,7 +207,7 @@ async fn plan(
                         && matches!(row.availability.as_str(), "indexed" | "missing")
                 });
             let Some(old) = old else {
-                if gate != Gate::PersonChoseFile {
+                if !gate.imports_held() {
                     planned.owned(gate, file, track);
                 } else if held_for(file) == Some(Reason::VersionLowerQuality) {
                     planned.hold(
@@ -261,6 +261,7 @@ async fn plan(
         .as_ref()
         .map(|copy| copy.album_id.as_str());
     let mut replaced_on: Vec<(String, String)> = Vec::new();
+    let mut group_owned: Option<crate::landing::ports::OwnedTracks> = None;
     for (file, track) in owned {
         if handled.contains(&track) {
             planned.owned(gate, file, track);
@@ -268,7 +269,7 @@ async fn plan(
         }
         let release_track = &release.tracks[track];
         let compares = match &batch.origin {
-            _ if gate == Gate::PersonChoseFile => true,
+            _ if gate.imports_held() => true,
             Origin::Upload { .. } => true,
             Origin::Download { upgrade, .. } => {
                 *upgrade
@@ -293,12 +294,40 @@ async fn plan(
             .await;
         if copies.is_empty() {
             // Owned elsewhere than this release's copy: a person's import
-            // is placed as asked, anything else is left as owned.
-            if gate == Gate::PersonChoseFile {
+            // is placed as asked, anything else is left as owned. A retry
+            // nobody asked for never adds a second copy: the file waits
+            // for a person.
+            if gate == Gate::HeldRetry {
+                let group_owns = match &group_owned {
+                    Some(owned) => owned,
+                    None => {
+                        group_owned.insert(library.owned(&release.release_group_id, None).await)
+                    }
+                };
+                if group_owns
+                    .release_tracks
+                    .contains(&release_track.id.to_ascii_lowercase())
+                    || group_owns
+                        .recordings
+                        .contains(&release_track.recording_id.to_ascii_lowercase())
+                {
+                    planned.hold(file, Some(track), Reason::OwnedElsewhere, String::new());
+                } else {
+                    import.push((file, track));
+                }
+            } else if gate.imports_held() {
                 import.push((file, track));
             } else {
                 planned.owned(gate, file, track);
             }
+            continue;
+        }
+        // A copy of the track has turned up on this album since the file
+        // was held: a retry nobody asked for never replaces it. Only a file
+        // whose replacement was already decided (the recycle bin refused
+        // the old copy) goes on to the comparison.
+        if gate == Gate::HeldRetry && held_for(file) != Some(Reason::UpgradeBlocked) {
+            planned.hold(file, Some(track), Reason::OwnedOnAlbum, String::new());
             continue;
         }
         let chosen =
@@ -316,7 +345,7 @@ async fn plan(
             }
             replaces.insert(file, copies.into_iter().map(|copy| copy.track_id).collect());
             import.push((file, track));
-        } else if gate == Gate::PersonChoseFile {
+        } else if gate.imports_held() {
             let best = copies
                 .iter()
                 .map(|copy| copy.tier)
@@ -357,7 +386,7 @@ async fn plan(
             .filter(|(file, _)| replaces.get(file).is_some_and(|old| !old.is_empty()))
             .copied()
             .collect(),
-        Gate::PersonChoseFile => Vec::new(),
+        Gate::PersonChoseFile | Gate::HeldRetry => Vec::new(),
     };
     if !checked.is_empty() {
         let heard = answers.of(library, batch, &checked).await;
@@ -436,7 +465,7 @@ async fn plan(
                     }
                 }
             }
-            Gate::PersonChoseFile => {}
+            Gate::PersonChoseFile | Gate::HeldRetry => {}
         }
         import.retain(|(file, _)| !refused.contains(file));
     }

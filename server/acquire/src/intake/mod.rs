@@ -40,6 +40,20 @@ pub enum Gate {
     /// the library's copy still run, and a file is never dropped as
     /// already owned: one no better than the library's copy stays held.
     PersonChoseFile,
+    /// The held list retried, by itself, files our side could not take:
+    /// as [`Gate::PersonChoseFile`], except that a track the library
+    /// already holds, on another copy of the album or now on this one, is
+    /// held for a person: never placed beside it, and never replaced unless
+    /// the file was held because the recycle bin refused the old copy.
+    HeldRetry,
+}
+
+impl Gate {
+    /// A held file imported as it is, by a person or by the held list's
+    /// retry.
+    pub fn imports_held(self) -> bool {
+        matches!(self, Self::PersonChoseFile | Self::HeldRetry)
+    }
 }
 
 /// Where the files came from.

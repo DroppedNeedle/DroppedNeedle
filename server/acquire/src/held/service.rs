@@ -811,7 +811,7 @@ impl HeldService {
                 asked: target.map(|target| target.album_wanted).unwrap_or_default(),
             },
             origin,
-            gate: Gate::PersonChoseFile,
+            gate: asker.gate(),
             owner: actor.to_owned(),
         };
         let placement = match intake::place(library.as_ref(), &batch, pairing, None).await {
@@ -1547,6 +1547,15 @@ impl Asker {
         match self {
             Self::Person => RequestPriority::UserInitiated,
             Self::Loop => RequestPriority::BackgroundSync,
+        }
+    }
+
+    /// The intake gate: the loop never places a second copy of a track
+    /// the library already holds.
+    fn gate(self) -> Gate {
+        match self {
+            Self::Person => Gate::PersonChoseFile,
+            Self::Loop => Gate::HeldRetry,
         }
     }
 }

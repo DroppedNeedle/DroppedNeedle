@@ -6245,6 +6245,8 @@ async fn one_plan_and_gate_give_one_outcome_through_every_door() {
             Auto => &[Door::Place, Door::Landing],
             Album => &[Door::Place, Door::DropMatch],
             File => &[Door::Place, Door::HeldImport],
+            // The held list's own retry, tested with its loop.
+            Gate::HeldRetry => &[],
         };
         for door in doors {
             let case = IntakeCase::new(&row).await;
