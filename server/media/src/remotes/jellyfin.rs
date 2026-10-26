@@ -1218,10 +1218,9 @@ fn track_view(item: &Item) -> TrackView {
 fn playlist_summary(item: &Item) -> PlaylistSummary {
     PlaylistSummary {
         source: SourceName::Jellyfin,
-        image_url: Some(format!(
-            "/api/v3/remotes/jellyfin/covers/playlists/{}",
-            item.id
-        )),
+        image_url: request_id(&item.id)
+            .ok()
+            .map(|id| format!("/api/v3/remotes/jellyfin/covers/playlists/{id}")),
         id: item.id.clone(),
         name: item.name.clone().unwrap_or_default(),
         track_count: item.child_count.unwrap_or(0),
@@ -1270,12 +1269,14 @@ fn genre_segment(name: &str) -> Option<String> {
     (!segment.is_empty() && !segment.contains('/')).then(|| segment.to_owned())
 }
 
+/// The image address the browser asks for. Only an id the image route
+/// would accept gets one, so a server's id cannot steer the browser to
+/// another path of the app. A tag of any other shape is left off: it only
+/// keys the browser's cache.
 fn image_url_for(id: &str, tag: Option<&str>) -> Option<String> {
-    if id.is_empty() {
-        return None;
-    }
+    let id = request_id(id).ok()?;
     let mut url = format!("/api/v3/remotes/jellyfin/images/{id}");
-    if let Some(tag) = tag {
+    if let Some(tag) = tag.and_then(|tag| request_id(tag).ok()) {
         url.push_str("?tag=");
         url.push_str(tag);
     }
@@ -1301,4 +1302,24 @@ fn bucket_index(mut artists: Vec<ArtistView>) -> Vec<ArtistIndexEntry> {
         }
     }
     buckets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::image_url_for;
+
+    #[test]
+    fn image_addresses_need_a_plain_id_and_tag() {
+        for hostile in ["../../settings", "al-1?size=1", "al-1/../x", ""] {
+            assert_eq!(image_url_for(hostile, None), None, "{hostile:?}");
+        }
+        assert_eq!(
+            image_url_for("al-1", Some("abc&x=../y")).as_deref(),
+            Some("/api/v3/remotes/jellyfin/images/al-1")
+        );
+        assert_eq!(
+            image_url_for("al-1", Some("abc123")).as_deref(),
+            Some("/api/v3/remotes/jellyfin/images/al-1?tag=abc123")
+        );
+    }
 }

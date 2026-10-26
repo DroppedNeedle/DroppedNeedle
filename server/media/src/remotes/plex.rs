@@ -735,7 +735,7 @@ impl PlexAdapter {
                 progress_ms: track.view_offset.unwrap_or(0),
                 duration_ms: track.duration.unwrap_or(0),
                 is_paused: player.state.as_deref() == Some("paused"),
-                image_url: (!art.is_empty()).then(|| format!("/api/v3/remotes/plex/images/{art}")),
+                image_url: image_url(&art),
             });
         }
         Ok(SessionsView {
@@ -1253,6 +1253,15 @@ fn album_views<'a>(
     rows.map(album_view).collect()
 }
 
+/// The image address the browser asks for. Only an id the image route
+/// would accept gets one, so a server's id cannot steer the browser to
+/// another path of the app.
+fn image_url(id: &str) -> Option<String> {
+    request_id(id)
+        .ok()
+        .map(|id| format!("/api/v3/remotes/plex/images/{id}"))
+}
+
 fn track_views<'a>(
     rows: impl Iterator<Item = &'a Metadata>,
 ) -> Result<Vec<TrackView>, AdapterError> {
@@ -1263,9 +1272,7 @@ fn album_view(album: &Metadata) -> Result<AlbumView, AdapterError> {
     let id = album.rating_key()?.to_owned();
     Ok(AlbumView {
         source: SourceName::Plex,
-        image_url: album
-            .has_thumb()
-            .then(|| format!("/api/v3/remotes/plex/images/{id}")),
+        image_url: album.has_thumb().then(|| image_url(&id)).flatten(),
         title: album.title.clone().unwrap_or_else(|| "Unknown".to_owned()),
         artist_name: album.parent_title.clone().unwrap_or_default(),
         artist_id: non_empty(album.parent_rating_key.as_deref()),
@@ -1287,9 +1294,7 @@ fn artist_view(artist: &Metadata) -> Result<ArtistView, AdapterError> {
     let id = artist.rating_key()?.to_owned();
     Ok(ArtistView {
         source: SourceName::Plex,
-        image_url: artist
-            .has_thumb()
-            .then(|| format!("/api/v3/remotes/plex/images/{id}")),
+        image_url: artist.has_thumb().then(|| image_url(&id)).flatten(),
         name: artist.title.clone().unwrap_or_else(|| "Unknown".to_owned()),
         album_count: None,
         artist_mbid: artist.mbid(),
@@ -1302,9 +1307,7 @@ fn track_view(track: &Metadata) -> Result<TrackView, AdapterError> {
     let parent = non_empty(track.parent_rating_key.as_deref());
     Ok(TrackView {
         source: SourceName::Plex,
-        image_url: parent
-            .as_ref()
-            .map(|parent| format!("/api/v3/remotes/plex/images/{parent}")),
+        image_url: parent.as_deref().and_then(image_url),
         title: track.title.clone().unwrap_or_else(|| "Unknown".to_owned()),
         album_name: track.parent_title.clone().unwrap_or_default(),
         album_id: parent,
@@ -1326,7 +1329,9 @@ fn playlist_summary(playlist: &Metadata) -> Result<PlaylistSummary, AdapterError
     let id = playlist.rating_key()?.to_owned();
     Ok(PlaylistSummary {
         source: SourceName::Plex,
-        image_url: Some(format!("/api/v3/remotes/plex/covers/playlists/{id}")),
+        image_url: request_id(&id)
+            .ok()
+            .map(|id| format!("/api/v3/remotes/plex/covers/playlists/{id}")),
         name: playlist.title.clone().unwrap_or_default(),
         track_count: playlist.leaf_count.unwrap_or(0),
         duration_secs: playlist.duration.map(|ms| ms / 1000).unwrap_or(0),
@@ -1597,4 +1602,20 @@ fn validated_part_key(raw: &str) -> Result<String, AdapterError> {
         ));
     }
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::image_url;
+
+    #[test]
+    fn image_addresses_need_a_plain_id() {
+        for hostile in ["../../settings", "123?size=1", "123/../x", ""] {
+            assert_eq!(image_url(hostile), None, "{hostile:?}");
+        }
+        assert_eq!(
+            image_url("123").as_deref(),
+            Some("/api/v3/remotes/plex/images/123")
+        );
+    }
 }

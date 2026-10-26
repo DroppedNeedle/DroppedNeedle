@@ -22,7 +22,7 @@
 //! payload missing an item id is an upstream error, not an empty item.
 
 use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemoteHttp, RemotePage, TrackBrowse,
+    AdapterError, AlbumBrowse, ArtistBrowse, RemoteHttp, RemotePage, TrackBrowse, request_id,
 };
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryPage, HubView, InfoView,
@@ -1150,10 +1150,12 @@ fn known_name(name: &str) -> bool {
     !name.is_empty() && name != "Unknown"
 }
 
+/// The image address the browser asks for. Only an id the image route
+/// would accept gets one, so a server's id cannot steer the browser to
+/// another path of the app.
 fn cover_url(cover_art: Option<&str>) -> Option<String> {
-    cover_art
-        .filter(|cover| !cover.is_empty())
-        .map(|cover| format!("/api/v3/remotes/navidrome/images/{cover}"))
+    let cover = request_id(cover_art?).ok()?;
+    Some(format!("/api/v3/remotes/navidrome/images/{cover}"))
 }
 
 fn songs(list: Option<super::navidrome_models::Songs>) -> Vec<TrackView> {
@@ -1223,7 +1225,9 @@ fn playlist_summary(playlist: &Playlist) -> PlaylistSummary {
     PlaylistSummary {
         source: SourceName::Navidrome,
         image_url: has_cover
-            .then(|| format!("/api/v3/remotes/navidrome/covers/playlists/{}", playlist.id)),
+            .then(|| request_id(&playlist.id).ok())
+            .flatten()
+            .map(|id| format!("/api/v3/remotes/navidrome/covers/playlists/{id}")),
         id: playlist.id.clone(),
         name: playlist.name.clone().unwrap_or_default(),
         track_count: playlist.song_count.unwrap_or(0),
@@ -1276,4 +1280,20 @@ fn non_empty(value: Option<&str>) -> Option<String> {
 
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cover_url;
+
+    #[test]
+    fn image_addresses_need_a_plain_id() {
+        for hostile in ["../../settings", "al-1?size=1", "al-1/../x", ""] {
+            assert_eq!(cover_url(Some(hostile)), None, "{hostile:?}");
+        }
+        assert_eq!(
+            cover_url(Some("al-1_2")).as_deref(),
+            Some("/api/v3/remotes/navidrome/images/al-1_2")
+        );
+    }
 }

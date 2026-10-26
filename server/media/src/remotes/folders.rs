@@ -151,6 +151,63 @@ impl FolderStore for SqliteFolderStore {
     }
 }
 
+/// How long a fetched folder list is reused. A grid of covers or a few
+/// pages of browsing then share one `getMusicFolders` call, and a folder
+/// added or removed on the server shows within a minute. The preference
+/// screen always reads the server afresh.
+pub const FOLDER_LIST_TTL_MS: i64 = 60_000;
+
+/// The folders each user's Navidrome server exposed, as last fetched,
+/// keyed by user and server identity.
+#[derive(Default)]
+pub struct FolderListCache {
+    entries: std::sync::Mutex<std::collections::HashMap<(String, String), CachedFolders>>,
+}
+
+struct CachedFolders {
+    fetched_at_ms: i64,
+    folders: Vec<(String, String)>,
+}
+
+impl FolderListCache {
+    /// The list fetched for `user_id` from the server at `identity`, while
+    /// it is fresh at `now_ms`.
+    pub fn get(&self, user_id: &str, identity: &str, now_ms: i64) -> Option<Vec<(String, String)>> {
+        let entries = self.lock();
+        let key = (user_id.to_owned(), identity.to_owned());
+        entries
+            .get(&key)
+            .filter(|cached| now_ms - cached.fetched_at_ms < FOLDER_LIST_TTL_MS)
+            .map(|cached| cached.folders.clone())
+    }
+
+    /// Keep a list just fetched, dropping entries that have gone stale.
+    pub fn put(&self, user_id: &str, identity: &str, now_ms: i64, folders: Vec<(String, String)>) {
+        let mut entries = self.lock();
+        entries.retain(|_, cached| now_ms - cached.fetched_at_ms < FOLDER_LIST_TTL_MS);
+        entries.insert(
+            (user_id.to_owned(), identity.to_owned()),
+            CachedFolders {
+                fetched_at_ms: now_ms,
+                folders,
+            },
+        );
+    }
+
+    /// Drop every list kept for `user_id`.
+    pub fn forget(&self, user_id: &str) {
+        self.lock().retain(|(user, _), _| user != user_id);
+    }
+
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<(String, String), CachedFolders>> {
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 /// Resolve one user's scope. `available` is `None` when the source is
 /// down or unconfigured; `server_identity` is the adapter's current
 /// identity for the staleness check.

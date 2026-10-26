@@ -17,7 +17,9 @@ use super::adapter::{
 use super::connections::{
     ConnectionResolver, LinkSummary, Reads, ResolveError, ResolvedConnection, SaveError, UserLink,
 };
-use super::folders::{FolderSaveError, FolderStore, checked_preference, resolve_scope};
+use super::folders::{
+    FolderListCache, FolderSaveError, FolderStore, checked_preference, resolve_scope,
+};
 use super::jellyfin::{JellyfinAdapter, MixSeed};
 use super::models::{
     AlbumPage, AlbumView, AnalyticsView, ArtistIndexEntry, ArtistPage, ArtistView,
@@ -154,6 +156,7 @@ pub struct RemotesService {
     http: reqwest::Client,
     resolver: Arc<ConnectionResolver>,
     folders: Arc<dyn FolderStore>,
+    folder_lists: Arc<FolderListCache>,
     imports: Arc<dyn ImportSink>,
     index: MbidIndex,
     clock: Arc<dyn Clock>,
@@ -176,6 +179,7 @@ impl RemotesService {
             http,
             resolver,
             folders,
+            folder_lists: Arc::default(),
             imports,
             index,
             clock,
@@ -195,19 +199,9 @@ impl RemotesService {
     // -- handles -----------------------------------------------------------
 
     /// The caller's handle for one source, folder-scoped for Navidrome.
+    /// The folder list comes from the cache while it is fresh.
     pub async fn handle(&self, user_id: &str, source: SourceName) -> RemotesResult<RemoteHandle> {
-        self.handle_for(user_id, source, Reads::User).await
-    }
-
-    /// [`Self::handle`] whose calls, the folder lookup included, count as
-    /// `reads`.
-    async fn handle_for(
-        &self,
-        user_id: &str,
-        source: SourceName,
-        reads: Reads,
-    ) -> RemotesResult<RemoteHandle> {
-        let handle = self.unscoped(user_id, source, reads).await?;
+        let handle = self.unscoped(user_id, source, Reads::User).await?;
         let RemoteHandle::Navidrome(adapter) = handle else {
             return Ok(handle);
         };
@@ -217,7 +211,17 @@ impl RemotesService {
             .await
             .map_err(RemotesFailure::Internal)?;
         let identity = adapter.server_identity();
-        let folders = match adapter.music_folders().await {
+        let cached = self
+            .folder_lists
+            .get(user_id, &identity, self.clock.now_ms());
+        let fetched = match cached {
+            Some(folders) => Ok(folders),
+            None => adapter.music_folders().await.inspect(|folders| {
+                self.folder_lists
+                    .put(user_id, &identity, self.clock.now_ms(), folders.clone());
+            }),
+        };
+        let folders = match fetched {
             Ok(folders) => Some(folders),
             Err(AdapterError::Auth) => {
                 return Err(RemotesFailure::AuthFailed(SourceName::Navidrome));
@@ -248,17 +252,10 @@ impl RemotesService {
         Ok(self.resolver.client(&self.http, resolved, reads))
     }
 
-    /// Resolve a handle and run one adapter call on it.
-    async fn call<T, F, Fut>(&self, user_id: &str, source: SourceName, call: F) -> RemotesResult<T>
-    where
-        F: FnOnce(RemoteHandle) -> Fut,
-        Fut: Future<Output = Result<T, AdapterError>>,
-    {
-        self.call_for(user_id, source, Reads::User, call).await
-    }
-
-    /// [`Self::call`] with its reads counted as `reads`.
-    async fn call_for<T, F, Fut>(
+    /// Run one adapter call that addresses an item by id. It skips the
+    /// folder scope, as the stream reader does: the scope is a view filter
+    /// for browse lists, and the id came from one of them.
+    async fn call_by_id<T, F, Fut>(
         &self,
         user_id: &str,
         source: SourceName,
@@ -269,7 +266,19 @@ impl RemotesService {
         F: FnOnce(RemoteHandle) -> Fut,
         Fut: Future<Output = Result<T, AdapterError>>,
     {
-        let handle = self.handle_for(user_id, source, reads).await?;
+        let handle = self.unscoped(user_id, source, reads).await?;
+        call(handle)
+            .await
+            .map_err(|error| adapter_failure(source, error))
+    }
+
+    /// Resolve a handle and run one adapter call on it.
+    async fn call<T, F, Fut>(&self, user_id: &str, source: SourceName, call: F) -> RemotesResult<T>
+    where
+        F: FnOnce(RemoteHandle) -> Fut,
+        Fut: Future<Output = Result<T, AdapterError>>,
+    {
+        let handle = self.handle(user_id, source).await?;
         call(handle)
             .await
             .map_err(|error| adapter_failure(source, error))
@@ -336,7 +345,7 @@ impl RemotesService {
         source: SourceName,
         id: String,
     ) -> RemotesResult<AlbumView> {
-        self.call(user_id, source, move |handle| async move {
+        self.call_by_id(user_id, source, Reads::User, move |handle| async move {
             handle.album_detail(&id).await
         })
         .await?
@@ -351,7 +360,7 @@ impl RemotesService {
         id: String,
     ) -> RemotesResult<TrackPage> {
         let items = self
-            .call(user_id, source, move |handle| async move {
+            .call_by_id(user_id, source, Reads::User, move |handle| async move {
                 handle.album_tracks(&id).await
             })
             .await?;
@@ -854,7 +863,7 @@ impl RemotesService {
         id: String,
         size: i64,
     ) -> RemotesResult<(Vec<u8>, String)> {
-        self.call_for(
+        self.call_by_id(
             user_id,
             source,
             Reads::Background,
@@ -871,7 +880,7 @@ impl RemotesService {
         id: String,
         size: i64,
     ) -> RemotesResult<(Vec<u8>, String)> {
-        self.call_for(
+        self.call_by_id(
             user_id,
             source,
             Reads::Background,
@@ -1194,6 +1203,7 @@ impl RemotesService {
             .set(user_id, preference)
             .await
             .map_err(RemotesFailure::Internal)?;
+        self.folder_lists.forget(user_id);
         self.folders(user_id).await
     }
 }

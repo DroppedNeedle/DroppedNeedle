@@ -1424,6 +1424,55 @@ async fn routes_manage_folder_preferences() {
     assert_eq!(error_code(&body), "CONFLICT");
 }
 
+/// A grid of covers between two browse pages costs one Navidrome folder
+/// lookup: the list is reused while fresh, and an image read by id skips
+/// the folder scope. Browse lists keep the saved scope.
+#[tokio::test]
+async fn navidrome_folders_are_fetched_once_across_browsing_and_images() {
+    let navidrome = serve_navidrome().await.expect("mock serves");
+    let rig = Rig::open("remotes-folder-cache").await;
+    rig.navidrome(&navidrome.base_url, NAVIDROME_USER, "nd-pass")
+        .await;
+    let app = rig.app();
+    let folder_calls = || {
+        navidrome
+            .recorder
+            .snapshot()
+            .navidrome_queries
+            .iter()
+            .filter(|(endpoint, _)| endpoint == "getMusicFolders")
+            .count()
+    };
+    let payload = serde_json::json!({"mode": "selected", "selected_folder_ids": ["folder-1"]});
+    let (status, _) = put_json(app.clone(), "/api/v3/remotes/navidrome/folders", payload).await;
+    assert_eq!(status, StatusCode::OK);
+    let before = folder_calls();
+
+    let (status, _) = get_json(app.clone(), "/api/v3/remotes/navidrome/albums").await;
+    assert_eq!(status, StatusCode::OK);
+    for _ in 0..5 {
+        let (status, _, _) = get_bytes(
+            app.clone(),
+            "/api/v3/remotes/navidrome/images/nd-al-1?size=200",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let (status, _) = get_json(app.clone(), "/api/v3/remotes/navidrome/albums").await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert_eq!(folder_calls() - before, 1);
+    let scoped = navidrome
+        .recorder
+        .snapshot()
+        .navidrome_folder_params
+        .get("getAlbumList2")
+        .and_then(|calls| calls.last())
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(scoped, vec!["folder-1".to_owned()]);
+}
+
 // ---------------------------------------------------------------------------
 // Presence
 // ---------------------------------------------------------------------------
