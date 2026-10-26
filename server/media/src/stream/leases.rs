@@ -1,19 +1,22 @@
-//! Direct-stream concurrency leases: a fair gate ported from v2
-//! `StreamConcurrencyService`.
+//! Stream concurrency: one keyed fair gate, ported from v2
+//! `StreamConcurrencyService`, run as two pools.
 //!
-//! One gate bounds direct reads (32 global slots, 8 per principal); the
-//! transcode pool lives in [`transcode::LocalTranscodeGate`] with the v2
-//! transcode defaults, and the two pools never starve each other. Acquirers
-//! queue fairly (first-eligible scan, like v2): at most 128 waiters, each
-//! waiting at most 5s before the gateway answers 429 + `Retry-After`.
+//! [`DirectGate`] bounds reads (32 global slots, 8 per principal) and
+//! [`TranscodeGate`] bounds ffmpeg jobs (one per CPU, at least two, and 2
+//! per principal so a gapless player can open the next track early). Both
+//! are the same [`Gate`]: acquirers queue fairly (first-eligible scan, like
+//! v2), at most 128 waiters, each waiting at most 5s before the gate answers
+//! [`CapacityExhausted`], which every router turns into 429 plus
+//! `Retry-After`. The pool is a type parameter, so a lease from one pool
+//! cannot be passed where the other is meant.
 //!
-//! [`DirectLease`] releases its slot exactly once, on drop, so cancellation
-//! cannot leak a slot. [`OwnedDirectLease`] is the same slot holding its
-//! gate by `Arc`, so it can ride inside a response body and free the slot
-//! when the last byte (or the client) is gone. State lives behind a std mutex (short critical
-//! sections only) so release stays synchronous and `Drop`-safe.
+//! A [`Lease`] holds its gate by `Arc` and releases its slot exactly once,
+//! on drop, so cancellation and early returns cannot leak it. State lives
+//! behind a std mutex (short critical sections only) so release stays
+//! synchronous and `Drop`-safe.
 
 use std::collections::{HashMap, VecDeque};
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,144 +27,185 @@ use tokio::time::timeout;
 pub const DIRECT_GLOBAL_LIMIT: usize = 32;
 /// Direct-read slots per principal (v2 `direct_principal_limit`).
 pub const DIRECT_PRINCIPAL_LIMIT: usize = 8;
-/// Bounded waiter queue (v2 `max_waiters`).
-pub const DIRECT_MAX_WAITERS: usize = 128;
-/// Per-acquire wait deadline (v2 `wait_timeout_seconds`).
-pub const DIRECT_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Fewest ffmpeg jobs the server runs at once. The real global limit is
+/// one job per CPU, never below this floor (see [`transcode_global_limit`]).
+pub const TRANSCODE_GLOBAL_LIMIT: usize = 2;
+/// ffmpeg jobs one principal may hold: the playing track plus the next one,
+/// which gapless players (ExoPlayer/Media3, just_audio) open early.
+pub const TRANSCODE_PRINCIPAL_LIMIT: usize = 2;
+/// Bounded waiter queue of either pool (v2 `max_waiters`).
+pub const MAX_WAITERS: usize = 128;
+/// Per-acquire wait deadline of either pool (v2 `wait_timeout_seconds`).
+pub const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Retry hint every router sends with its 429 (v2 sends 1).
+pub const RETRY_AFTER_SECONDS: u64 = 1;
 
-/// The gate is full or the wait deadline expired. The gateway answers 429.
+/// Global transcode limit for this machine: one ffmpeg job per CPU, at
+/// least [`TRANSCODE_GLOBAL_LIMIT`].
+pub fn transcode_global_limit() -> usize {
+    std::thread::available_parallelism()
+        .map_or(TRANSCODE_GLOBAL_LIMIT, usize::from)
+        .max(TRANSCODE_GLOBAL_LIMIT)
+}
+
+/// The gate is full or the wait deadline expired. Routers answer 429.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapacityExhausted;
+
+/// The four numbers that shape one gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateLimits {
+    /// Slots across every key.
+    pub global: usize,
+    /// Slots one key (principal) may hold.
+    pub per_key: usize,
+    /// Acquires that may wait at once; one more is refused at once.
+    pub max_waiters: usize,
+    /// How long one acquire waits before giving up.
+    pub wait: Duration,
+}
+
+/// Which pool a gate guards; it sets the production limits.
+pub trait Pool: Send + Sync + 'static {
+    /// The limits [`Gate::new`] uses.
+    fn limits() -> GateLimits;
+}
+
+/// The direct-read pool.
+#[derive(Debug)]
+pub enum Direct {}
+
+impl Pool for Direct {
+    fn limits() -> GateLimits {
+        GateLimits {
+            global: DIRECT_GLOBAL_LIMIT,
+            per_key: DIRECT_PRINCIPAL_LIMIT,
+            max_waiters: MAX_WAITERS,
+            wait: WAIT_TIMEOUT,
+        }
+    }
+}
+
+/// The ffmpeg pool.
+#[derive(Debug)]
+pub enum Transcode {}
+
+impl Pool for Transcode {
+    fn limits() -> GateLimits {
+        GateLimits {
+            global: transcode_global_limit(),
+            per_key: TRANSCODE_PRINCIPAL_LIMIT,
+            max_waiters: MAX_WAITERS,
+            wait: WAIT_TIMEOUT,
+        }
+    }
+}
+
+/// The direct-read gate.
+pub type DirectGate = Gate<Direct>;
+/// A held direct-read slot.
+pub type OwnedDirectLease = Lease<Direct>;
+/// The ffmpeg gate.
+pub type TranscodeGate = Gate<Transcode>;
+/// A held ffmpeg slot.
+pub type TranscodeLease = Lease<Transcode>;
 
 /// One waiter identity in the fair queue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Waiter {
     id: u64,
-    principal: String,
+    key: String,
 }
 
 /// Gate counters. Every field is touched only under the gate lock.
 #[derive(Debug, Default)]
 struct GateState {
     active: usize,
-    active_by_principal: HashMap<String, usize>,
+    active_by_key: HashMap<String, usize>,
     waiters: VecDeque<Waiter>,
     next_waiter_id: u64,
 }
 
-/// Fair direct-read gate. Clone shares one gate (wrap in `Arc`).
+/// Keyed fair gate. Share one by `Arc`.
 #[derive(Debug)]
-pub struct DirectGate {
+pub struct Gate<P: Pool> {
     state: Mutex<GateState>,
     changed: Notify,
-    global_limit: usize,
-    principal_limit: usize,
-    max_waiters: usize,
-    wait_timeout: Duration,
+    limits: GateLimits,
+    pool: PhantomData<P>,
 }
 
-impl DirectGate {
-    /// Gate with the v2 direct-pool defaults.
+impl<P: Pool> Gate<P> {
+    /// Gate with its pool's production limits.
     pub fn new() -> Self {
-        Self::with_limits(
-            DIRECT_GLOBAL_LIMIT,
-            DIRECT_PRINCIPAL_LIMIT,
-            DIRECT_MAX_WAITERS,
-            DIRECT_WAIT_TIMEOUT,
-        )
+        Self::with_limits(P::limits())
     }
 
     /// Gate with explicit limits, for tests that need tiny pools.
-    pub fn with_limits(
-        global_limit: usize,
-        principal_limit: usize,
-        max_waiters: usize,
-        wait_timeout: Duration,
-    ) -> Self {
+    pub fn with_limits(limits: GateLimits) -> Self {
         Self {
             state: Mutex::new(GateState::default()),
             changed: Notify::new(),
-            global_limit,
-            principal_limit,
-            max_waiters,
-            wait_timeout,
+            limits,
+            pool: PhantomData,
         }
     }
 
-    /// Take a direct slot for one principal, waiting fairly before giving up
-    /// with [`CapacityExhausted`].
-    pub async fn acquire(&self, principal: &str) -> Result<DirectLease<'_>, CapacityExhausted> {
-        self.take(principal).await?;
-        Ok(DirectLease {
-            gate: self,
-            principal: principal.to_owned(),
-        })
-    }
-
-    /// [`acquire`](Self::acquire) for a lease that outlives the borrow.
-    pub async fn acquire_owned(
-        self: &Arc<Self>,
-        principal: &str,
-    ) -> Result<OwnedDirectLease, CapacityExhausted> {
-        self.take(principal).await?;
-        Ok(OwnedDirectLease {
+    /// Take a slot for one key, waiting fairly before giving up with
+    /// [`CapacityExhausted`].
+    pub async fn acquire_owned(self: &Arc<Self>, key: &str) -> Result<Lease<P>, CapacityExhausted> {
+        self.take(key).await?;
+        Ok(Lease {
             gate: Arc::clone(self),
-            principal: principal.to_owned(),
+            key: key.to_owned(),
         })
     }
 
     /// Wait fairly for a slot and count it taken. The caller wraps it in a
     /// lease at once, with no await in between, so the slot cannot leak.
-    async fn take(&self, principal: &str) -> Result<(), CapacityExhausted> {
+    async fn take(&self, key: &str) -> Result<(), CapacityExhausted> {
         let id = {
             let mut state = self.lock();
-            if state.waiters.len() >= self.max_waiters {
+            if state.waiters.len() >= self.limits.max_waiters {
                 return Err(CapacityExhausted);
             }
             let id = state.next_waiter_id;
             state.next_waiter_id += 1;
             state.waiters.push_back(Waiter {
                 id,
-                principal: principal.to_owned(),
+                key: key.to_owned(),
             });
             id
         };
-        let _cancel_guard = CancelGuard {
+        let mut guard = CancelGuard {
             gate: self,
             id,
             disarmed: false,
         };
-        let outcome = timeout(self.wait_timeout, async {
+        let outcome = timeout(self.limits.wait, async {
             loop {
+                let changed = self.changed.notified();
                 {
                     let state = self.lock();
                     if self.is_eligible(&state, id) {
                         break;
                     }
                 }
-                self.changed.notified().await;
+                changed.await;
             }
         })
         .await;
-        let mut guard = _cancel_guard;
         guard.disarmed = true;
         let mut state = self.lock();
+        state.waiters.retain(|waiter| waiter.id != id);
+        self.changed.notify_waiters();
         match outcome {
             Ok(()) => {
-                state.waiters.retain(|waiter| waiter.id != id);
                 state.active += 1;
-                *state
-                    .active_by_principal
-                    .entry(principal.to_owned())
-                    .or_insert(0) += 1;
-                self.changed.notify_waiters();
+                *state.active_by_key.entry(key.to_owned()).or_insert(0) += 1;
                 Ok(())
             }
-            Err(_) => {
-                state.waiters.retain(|waiter| waiter.id != id);
-                self.changed.notify_waiters();
-                Err(CapacityExhausted)
-            }
+            Err(_) => Err(CapacityExhausted),
         }
     }
 
@@ -176,25 +220,19 @@ impl DirectGate {
     }
 
     /// True when waiter `id` is the first eligible waiter: a global slot is
-    /// free, its own principal has room, and no earlier waiter is eligible
-    /// ahead of it.
+    /// free, its own key has room, and no earlier waiter is eligible ahead
+    /// of it.
     fn is_eligible(&self, state: &GateState, id: u64) -> bool {
-        if state.active >= self.global_limit {
+        if state.active >= self.limits.global {
             return false;
         }
-        let has_room = |principal: &str| {
-            state
-                .active_by_principal
-                .get(principal)
-                .copied()
-                .unwrap_or(0)
-                < self.principal_limit
-        };
+        let has_room =
+            |key: &str| state.active_by_key.get(key).copied().unwrap_or(0) < self.limits.per_key;
         for waiter in &state.waiters {
             if waiter.id == id {
-                return has_room(&waiter.principal);
+                return has_room(&waiter.key);
             }
-            if has_room(&waiter.principal) {
+            if has_room(&waiter.key) {
                 return false;
             }
         }
@@ -202,19 +240,13 @@ impl DirectGate {
     }
 
     /// Free one slot. Called exactly once per lease, from `Drop`.
-    fn release(&self, principal: &str) {
+    fn release(&self, key: &str) {
         let mut state = self.lock();
-        let count = state
-            .active_by_principal
-            .get(principal)
-            .copied()
-            .unwrap_or(0);
+        let count = state.active_by_key.get(key).copied().unwrap_or(0);
         if count > 1 {
-            state
-                .active_by_principal
-                .insert(principal.to_owned(), count - 1);
+            state.active_by_key.insert(key.to_owned(), count - 1);
         } else {
-            state.active_by_principal.remove(principal);
+            state.active_by_key.remove(key);
         }
         state.active = state.active.saturating_sub(1);
         self.changed.notify_waiters();
@@ -228,35 +260,21 @@ impl DirectGate {
     }
 }
 
-impl Default for DirectGate {
+impl<P: Pool> Default for Gate<P> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// One held direct slot. Dropping releases the slot exactly once, so
-/// cancellation and early returns cannot leak it.
+/// One held slot that owns its gate handle. Dropping releases the slot
+/// exactly once.
 #[derive(Debug)]
-pub struct DirectLease<'a> {
-    gate: &'a DirectGate,
-    principal: String,
+pub struct Lease<P: Pool> {
+    gate: Arc<Gate<P>>,
+    key: String,
 }
 
-impl Drop for DirectLease<'_> {
-    fn drop(&mut self) {
-        self.gate.release(&self.principal);
-    }
-}
-
-/// One held direct slot that owns its gate handle. Dropping releases the
-/// slot exactly once.
-#[derive(Debug)]
-pub struct OwnedDirectLease {
-    gate: Arc<DirectGate>,
-    principal: String,
-}
-
-impl OwnedDirectLease {
+impl Lease<Direct> {
     /// Keep this slot held until `chunks` ends or is dropped, so the gate
     /// bounds response bodies in flight, not only opens.
     pub fn hold(self, chunks: super::routes::ChunkStream) -> super::routes::ChunkStream {
@@ -270,23 +288,22 @@ impl OwnedDirectLease {
     }
 }
 
-impl Drop for OwnedDirectLease {
+impl<P: Pool> Drop for Lease<P> {
     fn drop(&mut self) {
-        self.gate.release(&self.principal);
+        self.gate.release(&self.key);
     }
 }
 
 /// Removes a queued waiter when its acquire is cancelled. Timeouts take the
 /// normal path (the guard is disarmed first); only a dropped future (which
 /// skips the code below the wait) triggers the guard.
-#[derive(Debug)]
-struct CancelGuard<'a> {
-    gate: &'a DirectGate,
+struct CancelGuard<'a, P: Pool> {
+    gate: &'a Gate<P>,
     id: u64,
     disarmed: bool,
 }
 
-impl Drop for CancelGuard<'_> {
+impl<P: Pool> Drop for CancelGuard<'_, P> {
     fn drop(&mut self) {
         if self.disarmed {
             return;

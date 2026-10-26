@@ -13,7 +13,9 @@ use droppedneedle_compat::jellyfin::seams::StreamEngine as JellyfinEngine;
 use droppedneedle_compat::subsonic::stream::{
     AudioBackend, ServeError, StreamPlan, serve_original,
 };
-use droppedneedle_media::stream::routes::{OpenMedia, StreamEngine, StreamFault, StreamOpen};
+use droppedneedle_media::stream::routes::{
+    MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
+};
 
 /// Scripted engine: scripted files, recorded opens, scripted faults.
 #[derive(Clone)]
@@ -46,7 +48,11 @@ impl StubEngine {
 }
 
 impl StreamEngine for StubEngine {
-    async fn open(&self, request: StreamOpen) -> Result<OpenMedia, StreamFault> {
+    async fn open_stream(
+        &self,
+        request: StreamOpen,
+        _head_only: bool,
+    ) -> Result<StreamMedia, StreamFault> {
         self.opens.lock().expect("opens lock").push(request.clone());
         if request.key == "busy.mp3" {
             return Err(StreamFault::Capacity);
@@ -56,12 +62,13 @@ impl StreamEngine for StubEngine {
             .get(&request.key)
             .cloned()
             .ok_or(StreamFault::NotFound)?;
-        Ok(OpenMedia {
+        Ok(StreamMedia {
             content_type,
             total_len: bytes.len() as u64,
             transcoded,
             estimated_len: None,
-            bytes,
+            body: MediaBody::Bytes(bytes),
+            lease: None,
         })
     }
 }
@@ -257,8 +264,9 @@ impl droppedneedle_media::stream::gateway::RemoteReader for NoRemote {
 #[tokio::test]
 async fn real_gateway_streams_the_asked_span_from_the_file() {
     use droppedneedle_media::stream::gateway::Gateway;
+    use droppedneedle_media::stream::leases::TranscodeGate;
     use droppedneedle_media::stream::transcode::{
-        FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner, TranscodeSettings,
+        FfmpegTranscoder, ProcessSpawner, TranscodeSettings,
     };
 
     let root = crate::common::ScratchDir::new("compat-stream");
@@ -267,8 +275,8 @@ async fn real_gateway_streams_the_asked_span_from_the_file() {
         root.to_path_buf(),
         NoRemote,
         FfmpegTranscoder::new(
-            StdFfmpegSpawner::with_path("ffmpeg".into()),
-            Arc::new(LocalTranscodeGate::new()),
+            ProcessSpawner::with_path("ffmpeg".into()),
+            Arc::new(TranscodeGate::new()),
         ),
         TranscodeSettings::default(),
         false,

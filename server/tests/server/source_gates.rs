@@ -485,7 +485,7 @@ const LOOP_STEP: &str =
     "a blocking step awaited inside a supervised loop, its stop checked between steps";
 const JOB_STEP: &str = "blocking file and store work, awaited by the queued job that runs it, its stop checked between rows";
 const SCAN_WALK: &str = "scan walk tasks, owned and joined by the scan's drive";
-const TRANSCODE: &str = "ffmpeg's stderr reader and exit waiter, bound to one transcode";
+const TRANSCODE: &str = "ffmpeg's output pump and stderr reader, bound to one transcode";
 const PLUGIN_EVENTS: &str = "plugin event deliveries, each bounded by its call timeout";
 const PLUGIN_REPLACED: &str =
     "stops a replaced plugin runtime off the request path; plugin lifecycle";
@@ -585,11 +585,11 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("library/src/scan/walk.rs", 3, SCAN_WALK),
     ("library/src/wiring.rs", 2, LOOP_STEP),
     ("media/src/stream/download.rs", 3, REQUEST),
-    ("media/src/stream/gateway.rs", 3, REQUEST),
+    ("media/src/stream/gateway.rs", 1, REQUEST),
     ("media/src/stream/local_files.rs", 1, REQUEST),
     ("media/src/stream/plugin_url.rs", 2, REQUEST),
     ("media/src/stream/routes.rs", 1, REQUEST),
-    ("media/src/stream/transcode.rs", 4, TRANSCODE),
+    ("media/src/stream/transcode.rs", 2, TRANSCODE),
     ("plugins/src/capabilities/events.rs", 2, PLUGIN_EVENTS),
     ("plugins/src/capabilities/library_files.rs", 1, REQUEST),
     ("plugins/src/capabilities/stream.rs", 1, REQUEST),

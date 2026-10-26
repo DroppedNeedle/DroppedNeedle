@@ -10,17 +10,22 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
 
-use transcode::{
-    CAPACITY_STATUS_CODE, FfmpegChild, FfmpegSpawner, FfmpegTranscoder, LocalTranscodeGate,
-    OutFormat, RETRY_AFTER_SECONDS, STDERR_CAPTURE_BYTES, SUPPORTED_OUT_FORMATS, StdFfmpegSpawner,
-    StreamPlan, TRANSCODE_GLOBAL_LIMIT, TRANSCODE_PRINCIPAL_LIMIT, TrackInfo, TranscodeBody,
-    TranscodeError, TranscodeLease as _, TranscodeLeasePool as _, TranscodeSettings, Transcoder,
-    build_cmd, decide,
+use droppedneedle_media::stream::gateway::{Gateway, RemoteReader};
+use droppedneedle_media::stream::leases::{DirectGate, TranscodeGate};
+use droppedneedle_media::stream::routes::{
+    AudioSource, MediaBody, StreamEngine as _, StreamFault, StreamMedia, StreamOpen, StreamParams,
 };
+use futures_util::StreamExt as _;
+use transcode::{
+    FfmpegChild, FfmpegSpawner, FfmpegTranscoder, IDLE_DEADLINE, OutFormat, ProcessSpawner,
+    StreamPlan, TrackInfo, TranscodeError, TranscodeSettings, Transcoder as _, build_cmd, decide,
+};
+
+use crate::common::ScratchDir;
 
 // ---------------------------------------------------------------------------
 // Scripted ffmpeg
@@ -30,8 +35,7 @@ use transcode::{
 #[derive(Debug, Clone, Default)]
 struct Probe {
     argv_seen: Arc<Mutex<Vec<Vec<String>>>>,
-    killed: Arc<AtomicBool>,
-    shutdowns: Arc<AtomicUsize>,
+    stops: Arc<AtomicUsize>,
     finishes: Arc<AtomicUsize>,
 }
 
@@ -40,12 +44,8 @@ impl Probe {
         self.argv_seen.lock().expect("probe mutex").clone()
     }
 
-    fn killed(&self) -> bool {
-        self.killed.load(Ordering::SeqCst)
-    }
-
-    fn shutdowns(&self) -> usize {
-        self.shutdowns.load(Ordering::SeqCst)
+    fn stops(&self) -> usize {
+        self.stops.load(Ordering::SeqCst)
     }
 
     fn finishes(&self) -> usize {
@@ -53,14 +53,18 @@ impl Probe {
     }
 }
 
-/// Scripted child: serves canned chunks, then EOF.
+/// Scripted child: serves canned chunks, then EOF, or chunks forever.
 struct FakeChild {
     chunks: VecDeque<Vec<u8>>,
+    endless: bool,
     probe: Probe,
 }
 
 impl FfmpegChild for FakeChild {
     async fn read_chunk(&mut self) -> Result<Option<Vec<u8>>, TranscodeError> {
+        if self.endless {
+            return Ok(Some(b"chunk".to_vec()));
+        }
         Ok(self.chunks.pop_front())
     }
 
@@ -68,19 +72,15 @@ impl FfmpegChild for FakeChild {
         self.probe.finishes.fetch_add(1, Ordering::SeqCst);
     }
 
-    async fn shutdown(&mut self) {
-        self.probe.shutdowns.fetch_add(1, Ordering::SeqCst);
-    }
-
-    fn kill(&mut self) {
-        self.probe.killed.store(true, Ordering::SeqCst);
+    async fn stop(&mut self) {
+        self.probe.stops.fetch_add(1, Ordering::SeqCst);
     }
 }
 
-/// Scripted spawner: records argv, replays one script per spawn, or fails.
+/// Scripted spawner: records argv and replays one script per spawn.
 struct FakeSpawner {
     script: Vec<Vec<u8>>,
-    fail_spawn: bool,
+    endless: bool,
     probe: Probe,
 }
 
@@ -88,15 +88,16 @@ impl FakeSpawner {
     fn scripted(script: Vec<Vec<u8>>, probe: Probe) -> Self {
         Self {
             script,
-            fail_spawn: false,
+            endless: false,
             probe,
         }
     }
 
-    fn failing(probe: Probe) -> Self {
+    /// A transcode that never ends by itself.
+    fn endless(probe: Probe) -> Self {
         Self {
             script: Vec::new(),
-            fail_spawn: true,
+            endless: true,
             probe,
         }
     }
@@ -106,9 +107,6 @@ impl FfmpegSpawner for FakeSpawner {
     type Child = FakeChild;
 
     fn spawn(&self, argv: &[String]) -> Result<FakeChild, TranscodeError> {
-        if self.fail_spawn {
-            return Err(TranscodeError::Spawn("scripted ffmpeg failure".to_owned()));
-        }
         self.probe
             .argv_seen
             .lock()
@@ -116,12 +114,26 @@ impl FfmpegSpawner for FakeSpawner {
             .push(argv.to_vec());
         Ok(FakeChild {
             chunks: self.script.iter().cloned().collect(),
+            endless: self.endless,
             probe: self.probe.clone(),
         })
     }
 }
 
-type FakeTranscoder = FfmpegTranscoder<FakeSpawner, Arc<LocalTranscodeGate>>;
+/// Remote reader for a local-only gateway.
+struct NoRemote;
+
+impl RemoteReader for NoRemote {
+    async fn open_stream(
+        &self,
+        _source: AudioSource,
+        _key: &str,
+        _user_id: &str,
+        _head_only: bool,
+    ) -> Result<StreamMedia, StreamFault> {
+        Err(StreamFault::NotFound)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -426,14 +438,30 @@ fn opus_argv_seeks_before_input() {
 }
 
 // ---------------------------------------------------------------------------
-// Execution tests (scripted ffmpeg, real local gate)
+// Execution tests (scripted ffmpeg, real gates)
 // ---------------------------------------------------------------------------
+
+fn transcode_gate() -> Arc<TranscodeGate> {
+    Arc::new(TranscodeGate::new())
+}
+
+/// Wait until the pump has let go of every slot. The pump runs as its own
+/// task, so a dropped body frees its slots a moment later.
+async fn settled(gate: &TranscodeGate) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while gate.active() > 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the transcode lets go of its slot");
+}
 
 #[tokio::test]
 async fn scripted_stream_serves_chunks_then_frees_lease_at_eof() {
-    let gate = Arc::new(LocalTranscodeGate::new());
+    let gate = transcode_gate();
     let probe = Probe::default();
-    let service = FakeTranscoder::new(
+    let service = FfmpegTranscoder::new(
         FakeSpawner::scripted(vec![b"first".to_vec(), b"second".to_vec()], probe.clone()),
         Arc::clone(&gate),
     );
@@ -442,26 +470,19 @@ async fn scripted_stream_serves_chunks_then_frees_lease_at_eof() {
             Path::new("/validated/input.flac"),
             &transcode_plan(),
             "alice",
+            None,
         )
         .await
         .expect("stream starts");
     assert_eq!(gate.active(), 1);
 
-    let no_probe: Option<&(dyn Fn() -> bool + Sync)> = None;
-    assert_eq!(
-        body.next_chunk(no_probe).await.expect("chunk").as_deref(),
-        Some(b"first".as_slice())
-    );
-    assert_eq!(
-        body.next_chunk(no_probe).await.expect("chunk").as_deref(),
-        Some(b"second".as_slice())
-    );
-    assert_eq!(body.next_chunk(no_probe).await.expect("eof"), None);
+    assert_eq!(body.next().await.unwrap().unwrap(), b"first");
+    assert_eq!(body.next().await.unwrap().unwrap(), b"second");
+    assert!(body.next().await.is_none(), "EOF ends the body cleanly");
     assert_eq!(probe.finishes(), 1, "natural exit settles once");
+    assert_eq!(probe.stops(), 0);
     assert_eq!(gate.active(), 0, "slot frees at EOF, before drop");
-    assert!(body.is_closed());
-    assert_eq!(body.next_chunk(no_probe).await.expect("fused"), None);
-    assert_eq!(probe.finishes(), 1, "EOF fuses; no second settle");
+    assert!(body.next().await.is_none(), "the body stays ended");
 
     let argv = probe.argv();
     assert_eq!(argv.len(), 1);
@@ -471,157 +492,137 @@ async fn scripted_stream_serves_chunks_then_frees_lease_at_eof() {
 }
 
 #[tokio::test]
-async fn lease_exhaustion_returns_capacity() {
-    assert_eq!(TRANSCODE_GLOBAL_LIMIT, 2);
-    // A gapless player opens the next track while the current one plays.
-    assert_eq!(TRANSCODE_PRINCIPAL_LIMIT, 2);
-    assert_eq!(CAPACITY_STATUS_CODE, 429, "gateway maps capacity to 429");
-    assert_eq!(RETRY_AFTER_SECONDS, 1);
-
-    // Global ceiling: two holders from different principals, third waits out
-    // the short deadline and exhausts.
-    let gate = Arc::new(LocalTranscodeGate::with_limits(
-        2,
-        1,
-        128,
-        Duration::from_millis(50),
-    ));
-    let first = gate.acquire_transcode("alice").await.expect("slot 1");
-    let second = gate.acquire_transcode("bob").await.expect("slot 2");
-    assert_eq!(gate.active(), 2);
-    let err = gate
-        .acquire_transcode("carol")
-        .await
-        .expect_err("pool is full");
-    assert!(err.is_capacity());
-    assert_eq!(err, TranscodeError::Capacity);
-    assert_eq!(gate.active(), 2, "failed acquire takes nothing");
-    assert_eq!(gate.waiter_count(), 0, "timed-out waiter leaves no trace");
-
-    // Per-principal ceiling: one holder, same principal again exhausts.
-    let gate = Arc::new(LocalTranscodeGate::with_limits(
-        2,
-        1,
-        128,
-        Duration::from_millis(50),
-    ));
-    let held = gate.acquire_transcode("alice").await.expect("slot");
-    let err = gate
-        .acquire_transcode("alice")
-        .await
-        .expect_err("principal capped at one");
-    assert_eq!(err, TranscodeError::Capacity);
-
-    // A freed slot is reusable.
-    held.release();
-    assert_eq!(gate.active(), 0);
-    gate.acquire_transcode("alice")
-        .await
-        .expect("slot back")
-        .release();
-
-    first.release();
-    second.release();
-}
-
-#[tokio::test]
-async fn spawn_failure_releases_slot() {
-    let gate = Arc::new(LocalTranscodeGate::new());
+async fn dropped_stream_kills_child_and_releases_once() {
+    let gate = transcode_gate();
+    let direct = Arc::new(DirectGate::new());
     let probe = Probe::default();
-    let service = FakeTranscoder::new(FakeSpawner::failing(probe), Arc::clone(&gate));
-    let err = service
+    let service = FfmpegTranscoder::new(FakeSpawner::endless(probe.clone()), Arc::clone(&gate));
+    let mut body = service
         .stream(
             Path::new("/validated/input.flac"),
             &transcode_plan(),
             "alice",
+            Some(direct.acquire_owned("alice").await.expect("direct slot")),
         )
         .await
-        .expect_err("spawn fails");
+        .expect("stream starts");
+    assert!(body.next().await.expect("chunk").is_ok());
+    assert_eq!(gate.active(), 1);
+    assert_eq!(direct.active(), 1);
+
+    drop(body);
+    settled(&gate).await;
+    assert_eq!(probe.stops(), 1, "a dropped body stops ffmpeg once");
+    assert_eq!(probe.finishes(), 0);
+    assert_eq!(direct.active(), 0, "the direct slot goes with it");
+}
+
+/// A client that goes away mid-transcode drops the response body; through
+/// the gateway that stops ffmpeg and frees the slot the open took.
+#[tokio::test]
+async fn disconnect_kills_ffmpeg_and_releases_lease() {
+    let root = ScratchDir::new("transcode-disconnect");
+    std::fs::write(root.join("song.flac"), b"FLAC").unwrap();
+    let gate = transcode_gate();
+    let probe = Probe::default();
+    let gateway = Gateway::new(
+        root.to_path_buf(),
+        NoRemote,
+        FfmpegTranscoder::new(FakeSpawner::endless(probe.clone()), Arc::clone(&gate)),
+        settings(),
+        true,
+    );
+    let media = gateway
+        .open_stream(
+            StreamOpen {
+                source: AudioSource::Local,
+                key: "song.flac".to_owned(),
+                user_id: "alice".to_owned(),
+                params: StreamParams {
+                    format: Some("mp3".to_owned()),
+                    ..StreamParams::default()
+                },
+            },
+            false,
+        )
+        .await
+        .expect("transcode opens");
+    assert!(media.lease.is_none(), "the transcode holds the direct slot");
+    let MediaBody::Chunks(mut chunks) = media.body else {
+        panic!("a transcode streams chunks");
+    };
+    assert!(chunks.next().await.expect("chunk").is_ok());
+    assert_eq!(gate.active(), 1);
+
+    drop(chunks);
+    settled(&gate).await;
+    assert_eq!(probe.stops(), 1, "disconnect stops ffmpeg");
+}
+
+/// A body nobody reads (a paused-forever client, a forgotten tab) is
+/// stopped after the idle deadline, and both its slots come back.
+#[tokio::test(start_paused = true)]
+async fn unread_body_is_stopped_after_the_idle_deadline() {
+    let gate = transcode_gate();
+    let direct = Arc::new(DirectGate::new());
+    let probe = Probe::default();
+    let service = FfmpegTranscoder::new(FakeSpawner::endless(probe.clone()), Arc::clone(&gate));
+    let mut body = service
+        .stream(
+            Path::new("/validated/input.flac"),
+            &transcode_plan(),
+            "alice",
+            Some(direct.acquire_owned("alice").await.expect("direct slot")),
+        )
+        .await
+        .expect("stream starts");
+    assert!(body.next().await.expect("chunk").is_ok());
+
+    tokio::time::sleep(IDLE_DEADLINE - Duration::from_secs(1)).await;
+    assert_eq!(
+        probe.stops(),
+        0,
+        "a pause shorter than the deadline resumes"
+    );
+    assert_eq!(gate.active(), 1);
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(probe.stops(), 1, "ffmpeg is stopped");
+    assert_eq!(gate.active(), 0, "the ffmpeg slot is free");
+    assert_eq!(direct.active(), 0, "the direct slot is free");
+
+    assert!(body.next().await.expect("buffered chunk").is_ok());
+    assert!(
+        body.next().await.expect("an end").is_err(),
+        "a stopped transcode never ends like a whole one"
+    );
+}
+
+/// A missing binary fails with a path-free error and wedges no slot.
+#[tokio::test]
+async fn spawn_failure_releases_slot() {
+    let gate = transcode_gate();
+    let service = FfmpegTranscoder::new(
+        ProcessSpawner::with_path(PathBuf::from("/nonexistent/ffmpeg")),
+        Arc::clone(&gate),
+    );
+    let Err(err) = service
+        .stream(
+            Path::new("/validated/input.flac"),
+            &transcode_plan(),
+            "alice",
+            None,
+        )
+        .await
+    else {
+        panic!("a missing binary cannot spawn");
+    };
     assert!(matches!(err, TranscodeError::Spawn(_)), "{err:?}");
     assert_eq!(gate.active(), 0, "failed start wedges no slot");
     assert!(
         !err.to_string().contains("input.flac"),
         "errors never quote paths: {err}"
     );
-}
-
-#[tokio::test]
-async fn disconnect_kills_ffmpeg_and_releases_lease() {
-    let gate = Arc::new(LocalTranscodeGate::new());
-    let probe = Probe::default();
-    let service = FakeTranscoder::new(
-        FakeSpawner::scripted(vec![b"first".to_vec(), b"second".to_vec()], probe.clone()),
-        Arc::clone(&gate),
-    );
-    let mut body = service
-        .stream(
-            Path::new("/validated/input.flac"),
-            &transcode_plan(),
-            "alice",
-        )
-        .await
-        .expect("stream starts");
-    assert_eq!(gate.active(), 1);
-
-    let gone = || true;
-    let err = body
-        .next_chunk(Some(&gone))
-        .await
-        .expect_err("disconnect aborts the stream");
-    assert_eq!(err, TranscodeError::ClientDisconnected);
-    assert!(probe.killed(), "disconnect reaps ffmpeg");
-    assert_eq!(probe.shutdowns(), 1, "failure path shuts down first");
-    assert_eq!(gate.active(), 0, "slot frees on disconnect, before drop");
-
-    drop(body);
-    assert_eq!(gate.active(), 0, "release lands exactly once");
-}
-
-#[tokio::test]
-async fn dropped_stream_kills_child_and_releases_once() {
-    let gate = Arc::new(LocalTranscodeGate::new());
-    let probe = Probe::default();
-    let service = FakeTranscoder::new(
-        FakeSpawner::scripted(vec![b"first".to_vec(), b"second".to_vec()], probe.clone()),
-        Arc::clone(&gate),
-    );
-    let mut body = service
-        .stream(
-            Path::new("/validated/input.flac"),
-            &transcode_plan(),
-            "alice",
-        )
-        .await
-        .expect("stream starts");
-    let no_probe: Option<&(dyn Fn() -> bool + Sync)> = None;
-    assert!(body.next_chunk(no_probe).await.expect("chunk").is_some());
-    assert_eq!(gate.active(), 1);
-
-    drop(body);
-    assert!(probe.killed(), "drop reaps a mid-flight ffmpeg");
-    assert_eq!(
-        probe.shutdowns(),
-        0,
-        "drop kills; it cannot wait on graceful"
-    );
-    assert_eq!(gate.active(), 0, "drop frees the slot exactly once");
-}
-
-#[test]
-fn production_spawner_contract_without_ffmpeg() {
-    assert_eq!(SUPPORTED_OUT_FORMATS, &["mp3", "opus"]);
-    assert_eq!(STDERR_CAPTURE_BYTES, 2000, "bounded stderr capture");
-
-    // A pinned path round-trips, and a missing binary fails to spawn with a
-    // path-free error and no lease involvement at all.
-    let spawner = StdFfmpegSpawner::with_path(PathBuf::from("/nonexistent/ffmpeg"));
-    assert_eq!(spawner.ffmpeg_path(), Path::new("/nonexistent/ffmpeg"));
-    let argv = build_cmd(Path::new("/m/x.flac"), &transcode_plan()).expect("argv");
-    let err = spawner
-        .spawn(&argv)
-        .expect_err("missing binary cannot spawn");
-    assert!(matches!(err, TranscodeError::Spawn(_)), "{err:?}");
-    assert!(!err.to_string().contains("x.flac"), "{err}");
 }
 
 /// The real child against a trivial process: it exits at once with empty
@@ -638,25 +639,23 @@ async fn real_child_settles_a_trivial_process() {
     let Some(binary) = binary else {
         return;
     };
-    let gate = Arc::new(LocalTranscodeGate::new());
-    let service = FfmpegTranscoder::new(StdFfmpegSpawner::with_path(binary), Arc::clone(&gate));
-    assert_eq!(service.leases().active(), 0);
-    assert!(service.spawner().ffmpeg_path().is_file());
+    let gate = transcode_gate();
+    let service = FfmpegTranscoder::new(ProcessSpawner::with_path(binary), Arc::clone(&gate));
     let mut body = service
         .stream(
             Path::new("/validated/input.flac"),
             &transcode_plan(),
             "alice",
+            None,
         )
         .await
         .expect("trivial process starts");
-    let no_probe: Option<&(dyn Fn() -> bool + Sync)> = None;
-    assert_eq!(body.next_chunk(no_probe).await.expect("eof"), None);
-    assert!(body.is_closed());
+    assert!(body.next().await.is_none(), "EOF ends the body cleanly");
     assert_eq!(gate.active(), 0);
 }
 
-/// A killed child is reaped, not left behind as a zombie.
+/// A stopped child is reaped, not left behind as a zombie, and so is one
+/// that is only dropped.
 #[cfg(unix)]
 #[tokio::test]
 async fn killed_child_is_reaped() {
@@ -667,16 +666,22 @@ async fn killed_child_is_reaped() {
     else {
         return;
     };
-    let child = StdFfmpegSpawner::with_path(binary)
-        .spawn(&["ffmpeg".to_owned(), "30".to_owned()])
-        .expect("sleep starts");
-    let proc_dir = PathBuf::from(format!("/proc/{}", child.id().expect("pid")));
-    drop(child);
-    for _ in 0..100 {
-        if !proc_dir.exists() {
-            break;
+    let spawner = ProcessSpawner::with_path(binary);
+    let argv = ["ffmpeg".to_owned(), "30".to_owned()];
+
+    let mut stopped = spawner.spawn(&argv).expect("sleep starts");
+    let proc_dir = PathBuf::from(format!("/proc/{}", stopped.id().expect("pid")));
+    stopped.stop().await;
+    assert!(!proc_dir.exists(), "stop reaps the child");
+
+    let dropped = spawner.spawn(&argv).expect("sleep starts");
+    let proc_dir = PathBuf::from(format!("/proc/{}", dropped.id().expect("pid")));
+    drop(dropped);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while proc_dir.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(!proc_dir.exists(), "the killed child was reaped");
+    })
+    .await
+    .expect("the runtime reaps a dropped child");
 }

@@ -41,11 +41,10 @@ use crate::remotes::reader::RemotesRemoteReader;
 use crate::remotes::service::RemotesService;
 use crate::stream::download::DownloadState;
 use crate::stream::gateway::Gateway;
+use crate::stream::leases::TranscodeGate;
 use crate::stream::local_files::LibraryFiles;
 use crate::stream::routes::StreamState;
-use crate::stream::transcode::{
-    FfmpegTranscoder, LocalTranscodeGate, OutFormat, StdFfmpegSpawner, TranscodeSettings,
-};
+use crate::stream::transcode::{FfmpegTranscoder, OutFormat, ProcessSpawner, TranscodeSettings};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::AppConfig;
@@ -58,8 +57,7 @@ use droppedneedle_kernel::runtime_config::sections::{AudioFormat, ConnectApps};
 
 /// Production stream engine: gateway over stored-connection remote reads
 /// and ffmpeg transcodes behind the shared transcode gate.
-pub type MediaEngine =
-    Gateway<RemotesRemoteReader, FfmpegTranscoder<StdFfmpegSpawner, Arc<LocalTranscodeGate>>>;
+pub type MediaEngine = Gateway<RemotesRemoteReader, FfmpegTranscoder<ProcessSpawner>>;
 
 /// Everything `create_app` needs to mount the remote-source, stream and
 /// playback routes, built once.
@@ -186,8 +184,8 @@ impl MediaSetup {
         // Without an ffmpeg every plan lands direct, so the spawner's path
         // is never run.
         let spawner =
-            StdFfmpegSpawner::with_path(ffmpeg.clone().unwrap_or_else(|| PathBuf::from("ffmpeg")));
-        let transcoder = FfmpegTranscoder::new(spawner, Arc::new(LocalTranscodeGate::new()));
+            ProcessSpawner::with_path(ffmpeg.clone().unwrap_or_else(|| PathBuf::from("ffmpeg")));
+        let transcoder = FfmpegTranscoder::new(spawner, Arc::new(TranscodeGate::new()));
         let gateway = Gateway::new(
             local_root(app_config),
             reader,

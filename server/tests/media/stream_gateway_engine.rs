@@ -1,11 +1,10 @@
-//! Gateway-engine tests: leases, sandboxing, and the engine seam.
+//! Gateway-engine tests: the stream gates, sandboxing, and the engine seam.
 //!
 //! The engine (`Gateway`) is tested directly with a scripted remote reader
 //! and a scripted ffmpeg service. No live servers, no real ffmpeg, no
 //! network. Local reads use a per-test scratch dir under the system temp
-//! dir, removed afterwards. The last two tests put a scripted engine and
-//! the real one behind the stream routes: the estimated length of a
-//! transcode, and the per-user cap on concurrent direct streams.
+//! dir, removed afterwards. The last test puts the real engine behind the
+//! stream routes: the per-user cap on concurrent direct streams.
 
 use droppedneedle_media::stream;
 
@@ -20,12 +19,15 @@ use droppedneedle_auth::users::roles::{Role, SessionKind};
 use futures_util::StreamExt as _;
 use serde_json::Value;
 use stream::gateway::{Gateway, RemoteMedia, RemoteReader};
-use stream::leases::{DIRECT_PRINCIPAL_LIMIT, DIRECT_WAIT_TIMEOUT, DirectGate};
-use stream::routes::{
-    AudioSource, MediaBody, OpenMedia, StreamEngine, StreamFault, StreamOpen, StreamParams,
-    StreamState, file_range, stream_routes,
+use stream::leases::{
+    CapacityExhausted, DIRECT_PRINCIPAL_LIMIT, DirectGate, GateLimits, OwnedDirectLease,
+    TranscodeGate, WAIT_TIMEOUT,
 };
-use stream::transcode::{StreamPlan, TranscodeBody, TranscodeError, TranscodeSettings, Transcoder};
+use stream::routes::{
+    AudioSource, ChunkStream, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
+    StreamParams, StreamState, file_range, stream_routes,
+};
+use stream::transcode::{StreamPlan, TranscodeError, TranscodeSettings, Transcoder};
 use tower::ServiceExt as _;
 
 use crate::common::ScratchDir;
@@ -50,7 +52,7 @@ impl RemoteReader for FakeRemote {
         key: &str,
         _user_id: &str,
         _head_only: bool,
-    ) -> Result<droppedneedle_media::stream::routes::StreamMedia, StreamFault> {
+    ) -> Result<StreamMedia, StreamFault> {
         let canned: Result<RemoteMedia, StreamFault> = async {
             if let Some(fault) = self.faults.get(key) {
                 return Err(fault.clone());
@@ -60,31 +62,6 @@ impl RemoteReader for FakeRemote {
         .await;
         canned.map(Into::into)
     }
-}
-
-/// Scripted ffmpeg body: canned chunks, no process. A stalling body never
-/// ends after its chunks, like a transcode still running.
-struct FakeBody {
-    chunks: Vec<Vec<u8>>,
-    stall: bool,
-}
-
-impl TranscodeBody for FakeBody {
-    async fn next_chunk(
-        &mut self,
-        _is_disconnected: Option<&(dyn Fn() -> bool + Sync)>,
-    ) -> Result<Option<Vec<u8>>, TranscodeError> {
-        if self.chunks.is_empty() {
-            if self.stall {
-                std::future::pending::<()>().await;
-            }
-            Ok(None)
-        } else {
-            Ok(Some(self.chunks.remove(0)))
-        }
-    }
-
-    async fn close(&mut self) {}
 }
 
 /// Scripted ffmpeg service: canned output per call, or a canned fault.
@@ -117,21 +94,24 @@ impl FakeTranscoder {
 }
 
 impl Transcoder for FakeTranscoder {
-    type Body = FakeBody;
-
     async fn stream(
         &self,
         _source_path: &Path,
         plan: &StreamPlan,
         _principal: &str,
-    ) -> Result<Self::Body, TranscodeError> {
+        _direct: Option<OwnedDirectLease>,
+    ) -> Result<ChunkStream, TranscodeError> {
         self.calls.lock().unwrap().push(plan.clone());
         if let Some(fault) = &self.fault {
             return Err(fault.clone());
         }
-        Ok(FakeBody {
-            chunks: self.chunks.clone(),
-            stall: self.stall,
+        let chunks = futures_util::stream::iter(self.chunks.clone().into_iter().map(Ok));
+        // A stalling body never ends after its chunks, like a transcode
+        // still running.
+        Ok(if self.stall {
+            chunks.chain(futures_util::stream::pending()).boxed()
+        } else {
+            chunks.boxed()
         })
     }
 }
@@ -150,6 +130,17 @@ fn engine(
         TranscodeSettings::default(),
         ffmpeg_present,
     )
+}
+
+/// Whole bytes of a local direct open, read through its file body.
+async fn file_bytes(media: StreamMedia) -> Vec<u8> {
+    let MediaBody::File(path) = media.body else {
+        panic!("a local direct read streams from the file");
+    };
+    file_range(path, 0, media.total_len)
+        .map(|chunk| chunk.unwrap())
+        .concat()
+        .await
 }
 
 /// One open request with default (direct) params.
@@ -179,27 +170,6 @@ fn open_transcode(key: &str, format: &str) -> StreamOpen {
 }
 
 #[tokio::test]
-async fn local_direct_reads_file_bytes() {
-    let root = ScratchDir::new("direct");
-    put(&root, "song.flac", b"FLAC-BYTES");
-    let app = engine(
-        &root,
-        FakeRemote::default(),
-        FakeTranscoder::succeeding(vec![]),
-        true,
-    );
-
-    let media: OpenMedia = app
-        .open(open(AudioSource::Local, "song.flac"))
-        .await
-        .unwrap();
-    assert_eq!(media.content_type, "audio/flac");
-    assert_eq!(media.total_len, 10);
-    assert!(!media.transcoded);
-    assert_eq!(media.bytes, b"FLAC-BYTES");
-}
-
-#[tokio::test]
 async fn local_escape_attempts_are_forbidden() {
     let root = ScratchDir::new("sandbox");
     put(&root, "song.mp3", b"MP3");
@@ -211,7 +181,10 @@ async fn local_escape_attempts_are_forbidden() {
     );
 
     for key in ["../song.mp3", "/etc/hostname", "", "sub/../../song.mp3"] {
-        let fault = app.open(open(AudioSource::Local, key)).await.unwrap_err();
+        let fault = app
+            .open_stream(open(AudioSource::Local, key), false)
+            .await
+            .unwrap_err();
         assert_eq!(
             fault,
             StreamFault::Forbidden {
@@ -239,7 +212,7 @@ async fn symlink_escape_is_forbidden() {
     );
 
     let fault = app
-        .open(open(AudioSource::Local, "link.mp3"))
+        .open_stream(open(AudioSource::Local, "link.mp3"), false)
         .await
         .unwrap_err();
     assert_eq!(
@@ -250,10 +223,10 @@ async fn symlink_escape_is_forbidden() {
     );
 
     let media = app
-        .open(open(AudioSource::Local, "inner.mp3"))
+        .open_stream(open(AudioSource::Local, "inner.mp3"), false)
         .await
         .unwrap();
-    assert_eq!(media.bytes, b"MP3");
+    assert_eq!(file_bytes(media).await, b"MP3");
 }
 
 #[tokio::test]
@@ -268,7 +241,7 @@ async fn wma_never_streams() {
     );
 
     let fault = app
-        .open(open(AudioSource::Local, "song.wma"))
+        .open_stream(open(AudioSource::Local, "song.wma"), false)
         .await
         .unwrap_err();
     assert_eq!(
@@ -280,43 +253,6 @@ async fn wma_never_streams() {
 }
 
 #[tokio::test]
-async fn remote_direct_proxies_upstream_bytes() {
-    let root = ScratchDir::new("remote");
-    let remote = FakeRemote {
-        objects: HashMap::from([(
-            "item-9".to_owned(),
-            RemoteMedia {
-                content_type: "audio/x-upstream".to_owned(),
-                bytes: b"UP".to_vec(),
-            },
-        )]),
-        faults: HashMap::new(),
-    };
-    let app = engine(&root, remote, FakeTranscoder::succeeding(vec![]), true);
-
-    let media = app
-        .open(open(AudioSource::Jellyfin, "item-9"))
-        .await
-        .unwrap();
-    assert_eq!(media.content_type, "audio/x-upstream");
-    assert_eq!(media.bytes, b"UP");
-    assert!(!media.transcoded);
-}
-
-#[tokio::test]
-async fn codec_mismatch_transcodes_through_ffmpeg() {
-    let root = ScratchDir::new("transcode");
-    put(&root, "song.flac", b"FLAC-BYTES");
-    let transcoder = FakeTranscoder::succeeding(vec![b"MP3-".to_vec(), b"OUT".to_vec()]);
-    let app = engine(&root, FakeRemote::default(), transcoder, true);
-
-    let media = app.open(open_transcode("song.flac", "mp3")).await.unwrap();
-    assert!(media.transcoded);
-    assert_eq!(media.content_type, "audio/mpeg");
-    assert_eq!(media.bytes, b"MP3-OUT");
-}
-
-#[tokio::test]
 async fn raw_format_stays_direct() {
     let root = ScratchDir::new("raw");
     put(&root, "song.flac", b"FLAC-BYTES");
@@ -324,9 +260,12 @@ async fn raw_format_stays_direct() {
     let calls = Arc::clone(&transcoder.calls);
     let app = engine(&root, FakeRemote::default(), transcoder, true);
 
-    let media = app.open(open_transcode("song.flac", "raw")).await.unwrap();
+    let media = app
+        .open_stream(open_transcode("song.flac", "raw"), false)
+        .await
+        .unwrap();
     assert!(!media.transcoded);
-    assert_eq!(media.bytes, b"FLAC-BYTES");
+    assert_eq!(file_bytes(media).await, b"FLAC-BYTES");
     assert!(calls.lock().unwrap().is_empty());
 }
 
@@ -338,7 +277,10 @@ async fn ffmpeg_absent_falls_back_to_direct() {
     let calls = Arc::clone(&transcoder.calls);
     let app = engine(&root, FakeRemote::default(), transcoder, false);
 
-    let media = app.open(open_transcode("song.flac", "mp3")).await.unwrap();
+    let media = app
+        .open_stream(open_transcode("song.flac", "mp3"), false)
+        .await
+        .unwrap();
     assert!(!media.transcoded);
     assert!(calls.lock().unwrap().is_empty());
 }
@@ -355,7 +297,7 @@ async fn transcode_capacity_maps_to_fault() {
     );
 
     let fault = app
-        .open(open_transcode("song.flac", "mp3"))
+        .open_stream(open_transcode("song.flac", "mp3"), false)
         .await
         .unwrap_err();
     assert_eq!(fault, StreamFault::Capacity);
@@ -373,7 +315,7 @@ async fn seek_then_transcode_starts_at_offset() {
 
     let mut request = open_transcode("song.flac", "mp3");
     request.params.start_seconds = 42.5;
-    let media = app.open(request).await.unwrap();
+    let media = app.open_stream(request, false).await.unwrap();
     assert!(media.transcoded);
     let plans = calls.lock().unwrap();
     assert_eq!(plans.len(), 1);
@@ -398,7 +340,7 @@ async fn forced_verdict_transcodes_same_codec_despite_unknown_source_bitrate() {
 
     let mut request = open_transcode("song.mp3", "mp3");
     request.params.max_bitrate_kbps = Some(128);
-    let media = app.open(request.clone()).await.unwrap();
+    let media = app.open_stream(request.clone(), false).await.unwrap();
     assert!(
         !media.transcoded,
         "no carry: unknown source bitrate lands direct"
@@ -406,7 +348,7 @@ async fn forced_verdict_transcodes_same_codec_despite_unknown_source_bitrate() {
 
     request.params.force_transcode = true;
     request.params.start_seconds = 7.0;
-    let media = app.open(request).await.unwrap();
+    let media = app.open_stream(request, false).await.unwrap();
     assert!(media.transcoded);
     assert_eq!(media.content_type, "audio/mpeg");
     let plans = calls.lock().unwrap();
@@ -424,30 +366,51 @@ async fn forced_verdict_transcodes_same_codec_despite_unknown_source_bitrate() {
     }
 }
 
+/// Both pools are one gate type: a global cap, a per-key cap, a bounded
+/// wait that ends in `CapacityExhausted` (the routers' 429), and a slot
+/// that comes back when its lease drops.
 #[tokio::test]
-async fn direct_gate_bounds_and_releases() {
-    let gate = DirectGate::with_limits(1, 1, 4, std::time::Duration::from_millis(50));
-    let first = gate.acquire("user-1").await.unwrap();
-    assert_eq!(gate.active(), 1);
-
-    let denied = gate.acquire("user-1").await.unwrap_err();
-    assert_eq!(denied, stream::leases::CapacityExhausted);
-
-    drop(first);
-    assert_eq!(gate.active(), 0);
-    let _reacquired = gate.acquire("user-1").await.unwrap();
+async fn gate_bounds_globally_and_per_key_then_frees() {
+    let gate = Arc::new(TranscodeGate::with_limits(GateLimits {
+        global: 2,
+        per_key: 1,
+        max_waiters: 4,
+        wait: std::time::Duration::from_millis(50),
+    }));
+    let alice = gate.acquire_owned("alice").await.unwrap();
+    let _bob = gate.acquire_owned("bob").await.unwrap();
+    assert_eq!(gate.active(), 2);
+    assert_eq!(
+        gate.acquire_owned("carol").await.unwrap_err(),
+        CapacityExhausted,
+        "global cap"
+    );
+    drop(alice);
+    assert_eq!(
+        gate.acquire_owned("bob").await.unwrap_err(),
+        CapacityExhausted,
+        "per-key cap with a global slot free"
+    );
+    assert_eq!(gate.waiter_count(), 0, "timed-out waiters leave no trace");
+    let _alice = gate.acquire_owned("alice").await.unwrap();
+    assert_eq!(gate.active(), 2);
 }
 
 #[tokio::test]
 async fn cancelled_acquire_leaves_no_waiter() {
-    let gate = DirectGate::with_limits(1, 8, 4, std::time::Duration::from_secs(5));
-    let _held = gate.acquire("user-1").await.unwrap();
+    let gate = Arc::new(DirectGate::with_limits(GateLimits {
+        global: 1,
+        per_key: 8,
+        max_waiters: 4,
+        wait: std::time::Duration::from_secs(5),
+    }));
+    let _held = gate.acquire_owned("user-1").await.unwrap();
 
     // Poll once so the waiter registers, then drop the future: the cancel
     // guard must remove the waiter instead of blocking the queue forever.
     let waker = futures_util::task::noop_waker();
     let mut context = std::task::Context::from_waker(&waker);
-    let mut waiter = Box::pin(gate.acquire("user-2"));
+    let mut waiter = Box::pin(gate.acquire_owned("user-2"));
     assert!(matches!(
         waiter.as_mut().poll(&mut context),
         std::task::Poll::Pending
@@ -457,9 +420,9 @@ async fn cancelled_acquire_leaves_no_waiter() {
     assert_eq!(gate.waiter_count(), 0);
 }
 
-// The streaming open reads lazily: a direct file comes back as the file
-// and its size, HEAD of a transcode never starts ffmpeg, and transcode
-// output arrives before the transcode ends.
+// The open reads lazily: a direct file comes back as the file and its
+// size, HEAD of a transcode never starts ffmpeg, and transcode output
+// arrives before the transcode ends.
 #[tokio::test]
 async fn streaming_open_reads_lazily() {
     let root = ScratchDir::new("lazy");
@@ -495,6 +458,7 @@ async fn streaming_open_reads_lazily() {
         .open_stream(open_transcode("song.flac", "mp3"), false)
         .await
         .unwrap();
+    assert_eq!(live.content_type, "audio/mpeg");
     let MediaBody::Chunks(mut chunks) = live.body else {
         panic!("transcodes stream chunk by chunk");
     };
@@ -505,7 +469,7 @@ async fn streaming_open_reads_lazily() {
 }
 
 // ---------------------------------------------------------------------------
-// Through the stream routes: the estimated length and the per-user caps
+// Through the stream routes: the per-user caps
 // ---------------------------------------------------------------------------
 
 /// One request returning raw bytes (stream bodies are not JSON).
@@ -532,26 +496,6 @@ async fn call_raw(
     (status, headers, bytes)
 }
 
-/// Scripted transcoded landing behind the real stream routes.
-struct TranscodedEngine {
-    media: OpenMedia,
-    seen: Arc<std::sync::Mutex<Vec<StreamParams>>>,
-}
-
-impl StreamEngine for TranscodedEngine {
-    async fn open(&self, request: StreamOpen) -> Result<OpenMedia, StreamFault> {
-        self.seen
-            .lock()
-            .expect("seen unlocks")
-            .push(request.params.clone());
-        if request.source == AudioSource::Plex && request.key == "library/parts/1/file.mp3" {
-            Ok(self.media.clone())
-        } else {
-            Err(StreamFault::NotFound)
-        }
-    }
-}
-
 /// Stream routes signed in as `user-1`.
 fn stream_app<E: StreamEngine + Send + Sync + 'static>(engine: E) -> Router {
     let state = StreamState {
@@ -570,107 +514,17 @@ fn stream_header(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-#[tokio::test]
-async fn media_transcode_estimate_round_trip() {
-    // Why scripted: the production gateway only transcodes local files, and
-    // it never emits an estimate (track durations are unknown at that
-    // layer), so the estimated-length landing is pinned here through the
-    // real routes with a scripted transcoded engine.
-    let bytes = b"fake-transcoded-mp3-bytes".to_vec();
-    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let engine = TranscodedEngine {
-        media: OpenMedia {
-            content_type: "audio/mpeg".to_owned(),
-            total_len: bytes.len() as u64,
-            transcoded: true,
-            estimated_len: Some(48_000),
-            bytes: bytes.clone(),
-        },
-        seen: Arc::clone(&seen),
-    };
-    let app = stream_app(engine);
-
-    let (status, headers, body) = call_raw(
-        app.clone(),
-        "GET",
-        "/stream/plex/library/parts/1/file.mp3?format=mp3&estimate_content_length=true",
-        &[],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, bytes);
-    assert_eq!(
-        stream_header(&headers, "content-type"),
-        Some("audio/mpeg".to_owned())
-    );
-    assert_eq!(
-        stream_header(&headers, "accept-ranges"),
-        Some("none".to_owned())
-    );
-    assert_eq!(
-        stream_header(&headers, "cache-control"),
-        Some("no-store".to_owned())
-    );
-    assert_eq!(
-        stream_header(&headers, "content-length"),
-        Some("48000".to_owned())
-    );
-    {
-        let seen = seen.lock().expect("seen unlocks");
-        assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0].format, Some("mp3".to_owned()));
-        assert!(seen[0].estimate_content_length);
-    }
-
-    let (status, headers, body) = call_raw(
-        app.clone(),
-        "GET",
-        "/stream/plex/library/parts/1/file.mp3?format=mp3",
-        &[],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, bytes);
-    assert_eq!(
-        stream_header(&headers, "accept-ranges"),
-        Some("none".to_owned())
-    );
-    assert_eq!(
-        stream_header(&headers, "cache-control"),
-        Some("no-store".to_owned())
-    );
-    assert_eq!(
-        stream_header(&headers, "content-length"),
-        Some("25".to_owned()),
-        "without the flag the length is the actual body, not the estimate"
-    );
-}
-
 /// Transcoder that never runs: the caps test only opens remote keys.
-struct NeverBody;
-
-impl TranscodeBody for NeverBody {
-    async fn next_chunk(
-        &mut self,
-        _is_disconnected: Option<&(dyn Fn() -> bool + Sync)>,
-    ) -> Result<Option<Vec<u8>>, TranscodeError> {
-        Ok(None)
-    }
-
-    async fn close(&mut self) {}
-}
-
 struct NeverTranscoder;
 
 impl Transcoder for NeverTranscoder {
-    type Body = NeverBody;
-
     async fn stream(
         &self,
         _source_path: &Path,
         _plan: &StreamPlan,
         _principal: &str,
-    ) -> Result<NeverBody, TranscodeError> {
+        _direct: Option<OwnedDirectLease>,
+    ) -> Result<ChunkStream, TranscodeError> {
         Err(TranscodeError::Capacity)
     }
 }
@@ -687,7 +541,7 @@ impl RemoteReader for CannedRemote {
         _key: &str,
         _user_id: &str,
         _head_only: bool,
-    ) -> Result<droppedneedle_media::stream::routes::StreamMedia, StreamFault> {
+    ) -> Result<StreamMedia, StreamFault> {
         let canned: Result<RemoteMedia, StreamFault> = async { Ok(self.media.clone()) }.await;
         canned.map(Into::into)
     }
@@ -737,7 +591,7 @@ impl RemoteReader for BlockingRemote {
         _key: &str,
         _user_id: &str,
         _head_only: bool,
-    ) -> Result<droppedneedle_media::stream::routes::StreamMedia, StreamFault> {
+    ) -> Result<StreamMedia, StreamFault> {
         let canned: Result<RemoteMedia, StreamFault> = async {
             self.inner.entries.send_modify(|entered| *entered += 1);
             self.inner.release.notified().await;
@@ -840,7 +694,7 @@ async fn media_concurrent_streams_under_caps() {
     }
     blocking.wait_for_entries(DIRECT_PRINCIPAL_LIMIT).await;
     let (status, headers, body) = tokio::time::timeout(
-        DIRECT_WAIT_TIMEOUT + std::time::Duration::from_secs(10),
+        WAIT_TIMEOUT + std::time::Duration::from_secs(10),
         call_raw(app.clone(), "GET", "/stream/plex/part-1", &[]),
     )
     .await

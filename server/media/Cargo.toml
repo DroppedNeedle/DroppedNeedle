@@ -18,7 +18,6 @@ caseless.workspace = true
 flate2.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
-libc.workspace = true
 md5.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true

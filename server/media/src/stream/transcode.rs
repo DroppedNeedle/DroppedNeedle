@@ -3,40 +3,49 @@
 //! A faithful port of v2's compat transcode service, with leases from its
 //! stream concurrency module. `decide()` keeps the v2
 //! rule order and quirk citations; `build_cmd()` keeps the exact ffmpeg argv;
-//! the streaming body keeps the disconnect, timeout, and stderr-drain
-//! behavior. Nothing is removed or "improved": where v2 has a wart, the port
-//! keeps it and says so.
+//! the streaming body keeps the read timeout and the stderr capture.
 //!
 //! Engine only: there are no routes here. The gateway owns the HTTP
 //! surface and consumes the [`Transcoder`] seam defined below.
 //!
+//! # Execution
+//!
+//! ffmpeg runs as a `tokio::process` child with `kill_on_drop`. One task
+//! per transcode pumps its stdout into a one-chunk channel that the
+//! response body reads, and owns the child and both leases (the ffmpeg
+//! slot and the direct slot the open took). Every way the body can end
+//! goes through that task: natural EOF settles the exit, a dropped body
+//! or a failed read kills and reaps ffmpeg, and a body nobody reads for
+//! [`IDLE_DEADLINE`] is stopped the same way. Leases release when the task
+//! ends, exactly once. A second task drains stderr into the bounded
+//! capture for the nonzero-exit warning.
+//!
 //! # Seams
 //!
-//! * Leases: the engine talks to [`TranscodeLeasePool`] / [`TranscodeLease`]
-//!   only. [`LocalTranscodeGate`] is the gate production uses (one global
-//!   slot per CPU, two per principal so a gapless player can open the next
-//!   track early); it is separate from the gateway's direct gate.
+//! * Leases: [`TranscodeGate`] (see [`super::leases`]).
 //! * Service: [`Transcoder`] is the trait the gateway calls,
-//!   [`FfmpegTranscoder`] the implementation, [`TranscodeBody`] /
-//!   [`TranscodeStream`] the per-request byte stream.
+//!   [`FfmpegTranscoder`] the implementation. [`FfmpegSpawner`] and
+//!   [`FfmpegChild`] put the process behind a trait so tests script it.
 //! * Inputs: [`TrackInfo`] mirrors the track fields `decide()` reads from the
 //!   gateway view model (`file_format`, `bitrate` in kbps, `duration_seconds`);
 //!   [`TranscodeSettings`] mirrors the `connect_apps` section
 //!   (`transcoding_enabled`, `transcode_default_format`,
 //!   `transcode_max_bitrate_kbps`).
-//! * Failures: [`TranscodeError::Capacity`] is the gateway's 429. v2 routers
-//!   answer capacity exhaustion with status 429 plus `Retry-After: 1`
-//!   (the Subsonic router's `_stream_decided`); see
-//!   [`CAPACITY_STATUS_CODE`] and [`RETRY_AFTER_SECONDS`].
+//! * Failures: [`TranscodeError::Capacity`] is the gateway's 429 with
+//!   `Retry-After: 1`, as v2's routers answer it.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdout};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use futures_util::StreamExt as _;
 use thiserror::Error;
-use tokio::sync::Notify;
+use tokio::io::AsyncReadExt as _;
+use tokio::sync::mpsc;
+
+use super::leases::{OwnedDirectLease, TranscodeGate, TranscodeLease};
+use super::routes::ChunkStream;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
@@ -91,41 +100,17 @@ pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Wait for natural ffmpeg exit after EOF, matching v2's 5s `proc.wait()`.
 pub const EXIT_WAIT: Duration = Duration::from_secs(5);
 
-/// Grace period between SIGTERM and SIGKILL, matching v2 `_terminate`.
-pub const TERMINATE_WAIT: Duration = Duration::from_secs(3);
+/// How long a transcode waits for its reader before it stops ffmpeg and
+/// frees both slots. Long enough for an ordinary pause and for a gapless
+/// player that opened the next track at the start of a long one; a
+/// forgotten tab or a client that stopped reading without closing gives
+/// its slots back instead of holding them until the connection dies.
+/// Transcodes cannot resume at an offset, so the track may need playing
+/// again after that.
+pub const IDLE_DEADLINE: Duration = Duration::from_secs(30 * 60);
 
 /// Bounded stderr capture for the nonzero-exit warning, v2's 2000 bytes.
 pub const STDERR_CAPTURE_BYTES: usize = 2000;
-
-/// Fewest ffmpeg jobs the server runs at once. The real global limit is
-/// one job per CPU, never below this floor (see [`transcode_global_limit`]).
-pub const TRANSCODE_GLOBAL_LIMIT: usize = 2;
-/// ffmpeg jobs one principal may hold: the playing track plus the next one,
-/// which gapless players (ExoPlayer/Media3, just_audio) open early.
-pub const TRANSCODE_PRINCIPAL_LIMIT: usize = 2;
-
-/// Global transcode limit for this machine: one ffmpeg job per CPU, at
-/// least [`TRANSCODE_GLOBAL_LIMIT`].
-pub fn transcode_global_limit() -> usize {
-    std::thread::available_parallelism()
-        .map_or(TRANSCODE_GLOBAL_LIMIT, usize::from)
-        .max(TRANSCODE_GLOBAL_LIMIT)
-}
-
-/// Bounded lease queue, matching v2 `max_waiters`.
-pub const TRANSCODE_MAX_WAITERS: usize = 128;
-
-/// Lease wait deadline before capacity exhaustion, matching v2's 5s timeout.
-pub const TRANSCODE_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Status the gateway answers on [`TranscodeError::Capacity`], per v2 routers.
-pub const CAPACITY_STATUS_CODE: u16 = 429;
-
-/// Retry hint the gateway sends with the 429, per v2 routers.
-pub const RETRY_AFTER_SECONDS: u64 = 1;
-
-/// Poll step while waiting on a child process to change state.
-const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 // ---------------------------------------------------------------------------
 // Policy types
@@ -446,19 +431,19 @@ fn is_executable_file(path: &Path) -> bool {
 /// its ffmpeg log lines, and 5xx bodies stay fixed upstream).
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum TranscodeError {
-    /// Both transcode slots (or the caller's single slot) are busy. The
-    /// gateway answers [`CAPACITY_STATUS_CODE`] plus `Retry-After`.
+    /// The transcode gate is full for this caller. The gateway answers 429
+    /// plus `Retry-After`.
     #[error("transcode capacity exhausted")]
     Capacity,
-    /// The client went away mid-transcode; ffmpeg was reaped.
-    #[error("client disconnected")]
-    ClientDisconnected,
     /// ffmpeg would not start. The detail is an OS error kind, never a path.
     #[error("ffmpeg failed to start: {0}")]
     Spawn(String),
     /// One ffmpeg stdout read ran past [`READ_TIMEOUT`]; ffmpeg was reaped.
     #[error("ffmpeg read timed out")]
     ReadTimeout,
+    /// Nobody read the output for [`IDLE_DEADLINE`]; ffmpeg was reaped.
+    #[error("transcode stopped: nobody read it")]
+    Idle,
     /// ffmpeg I/O failed. The detail is a static context string, never a path.
     #[error("transcode I/O failed: {0}")]
     Io(String),
@@ -468,226 +453,9 @@ pub enum TranscodeError {
     NotTranscoding,
 }
 
-impl TranscodeError {
-    /// True for the exhaustion case the gateway maps to 429.
-    pub fn is_capacity(&self) -> bool {
-        matches!(self, TranscodeError::Capacity)
-    }
-}
-
 /// OS error kinds are safe to surface; full I/O messages can quote paths.
 fn sanitized_io_detail(err: &std::io::Error) -> String {
     err.kind().to_string()
-}
-
-// ---------------------------------------------------------------------------
-// Lease seam
-// ---------------------------------------------------------------------------
-
-/// One held transcode slot. Consuming release makes double-release
-/// unrepresentable: each lease value releases exactly one slot, once.
-pub trait TranscodeLease: Send + 'static {
-    /// Free the slot.
-    fn release(self);
-}
-
-/// Source of transcode leases. The engine depends only on this trait;
-/// production implements it for [`LocalTranscodeGate`]. Exhaustion surfaces as
-/// [`TranscodeError::Capacity`] so the gateway can answer its 429.
-pub trait TranscodeLeasePool: Send + Sync {
-    /// Lease type this pool hands out.
-    type Lease: TranscodeLease;
-
-    /// Take a transcode slot for one principal, waiting briefly before
-    /// giving up with [`TranscodeError::Capacity`].
-    fn acquire_transcode(
-        &self,
-        principal: &str,
-    ) -> impl Future<Output = Result<Self::Lease, TranscodeError>> + Send;
-}
-
-/// Gate counters behind [`LocalTranscodeGate`].
-#[derive(Debug)]
-struct TranscodeGateState {
-    /// Slots currently held.
-    active: usize,
-    /// Slots held per principal.
-    active_by_principal: HashMap<String, usize>,
-    /// Acquires currently waiting (bounded by [`TRANSCODE_MAX_WAITERS`]).
-    waiters: usize,
-}
-
-/// Transcode gate: one global slot per CPU (at least two), two per
-/// principal (current track plus a gapless prefetch), a bounded waiter
-/// queue, and a 5s wait deadline. Waiting acquirers race on a broadcast wake
-/// rather than v2's first-eligible scan; at this pool size the difference
-/// does not matter, and the gateway's direct gate bounds the reads.
-#[derive(Debug)]
-pub struct LocalTranscodeGate {
-    state: Mutex<TranscodeGateState>,
-    changed: Notify,
-    global_limit: usize,
-    principal_limit: usize,
-    max_waiters: usize,
-    wait_timeout: Duration,
-}
-
-impl LocalTranscodeGate {
-    /// Gate with the production limits: one job per CPU (at least two),
-    /// two per principal.
-    pub fn new() -> Self {
-        Self::with_limits(
-            transcode_global_limit(),
-            TRANSCODE_PRINCIPAL_LIMIT,
-            TRANSCODE_MAX_WAITERS,
-            TRANSCODE_WAIT_TIMEOUT,
-        )
-    }
-
-    /// Gate with explicit limits, for tests that need a short wait deadline.
-    pub fn with_limits(
-        global_limit: usize,
-        principal_limit: usize,
-        max_waiters: usize,
-        wait_timeout: Duration,
-    ) -> Self {
-        Self {
-            state: Mutex::new(TranscodeGateState {
-                active: 0,
-                active_by_principal: HashMap::new(),
-                waiters: 0,
-            }),
-            changed: Notify::new(),
-            global_limit,
-            principal_limit,
-            max_waiters,
-            wait_timeout,
-        }
-    }
-
-    /// Slots currently held. Test and observability hook.
-    pub fn active(&self) -> usize {
-        self.lock_state().active
-    }
-
-    /// Acquires currently waiting. Test and observability hook.
-    pub fn waiter_count(&self) -> usize {
-        self.lock_state().waiters
-    }
-
-    /// Lock the counters, tolerating a poisoned mutex by carrying on with
-    /// the guarded state (a panicking holder must not wedge the pool).
-    fn lock_state(&self) -> MutexGuard<'_, TranscodeGateState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-    }
-}
-
-impl Default for LocalTranscodeGate {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Decrements the waiter count unless the acquire already accounted for it,
-/// so a cancelled acquire cannot leak a waiter slot (v2 drains its waiter
-/// deque on every exit path for the same reason).
-struct WaiterGuard<'a> {
-    gate: &'a LocalTranscodeGate,
-    armed: bool,
-}
-
-impl Drop for WaiterGuard<'_> {
-    fn drop(&mut self) {
-        if self.armed {
-            let mut state = self.gate.lock_state();
-            state.waiters = state.waiters.saturating_sub(1);
-        }
-    }
-}
-
-/// A slot held on a [`LocalTranscodeGate`].
-#[derive(Debug)]
-pub struct LocalTranscodeLease {
-    gate: Arc<LocalTranscodeGate>,
-    principal: String,
-}
-
-impl TranscodeLease for LocalTranscodeLease {
-    fn release(self) {
-        let mut state = self.gate.lock_state();
-        state.active = state.active.saturating_sub(1);
-        match state.active_by_principal.get(&self.principal).copied() {
-            Some(held) if held > 1 => {
-                state
-                    .active_by_principal
-                    .insert(self.principal.clone(), held - 1);
-            }
-            _ => {
-                state.active_by_principal.remove(&self.principal);
-            }
-        }
-        drop(state);
-        self.gate.changed.notify_waiters();
-    }
-}
-
-impl TranscodeLeasePool for Arc<LocalTranscodeGate> {
-    type Lease = LocalTranscodeLease;
-
-    async fn acquire_transcode(
-        &self,
-        principal: &str,
-    ) -> Result<LocalTranscodeLease, TranscodeError> {
-        {
-            let mut state = self.lock_state();
-            if state.waiters >= self.max_waiters {
-                return Err(TranscodeError::Capacity);
-            }
-            state.waiters += 1;
-        }
-        let mut waiter = WaiterGuard {
-            gate: self,
-            armed: true,
-        };
-        let granted = tokio::time::timeout(self.wait_timeout, async {
-            loop {
-                let changed = self.changed.notified();
-                {
-                    let mut state = self.lock_state();
-                    let held = state
-                        .active_by_principal
-                        .get(principal)
-                        .copied()
-                        .unwrap_or(0);
-                    if state.active < self.global_limit && held < self.principal_limit {
-                        state.active += 1;
-                        state
-                            .active_by_principal
-                            .insert(principal.to_owned(), held + 1);
-                        state.waiters = state.waiters.saturating_sub(1);
-                        waiter.armed = false;
-                        return;
-                    }
-                }
-                changed.await;
-            }
-        })
-        .await;
-        match granted {
-            Ok(()) => Ok(LocalTranscodeLease {
-                gate: Arc::clone(self),
-                principal: principal.to_owned(),
-            }),
-            Err(_) => {
-                let mut state = self.lock_state();
-                state.waiters = state.waiters.saturating_sub(1);
-                waiter.armed = false;
-                Err(TranscodeError::Capacity)
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -702,20 +470,16 @@ pub trait FfmpegChild: Send + 'static {
         &mut self,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, TranscodeError>> + Send;
 
-    /// Settle after EOF: wait for natural exit (bounded) and note a nonzero
-    /// exit. Port of the tail of v2 `_body`.
+    /// Settle after EOF: wait for the exit (at most [`EXIT_WAIT`], then
+    /// kill) and log a nonzero one with the captured stderr.
     fn finish(&mut self) -> impl Future<Output = ()> + Send;
 
-    /// Graceful stop: terminate, short wait, then kill. Port of v2
-    /// `_terminate`.
-    fn shutdown(&mut self) -> impl Future<Output = ()> + Send;
-
-    /// Immediate best-effort kill for drop paths, where nothing can wait.
-    fn kill(&mut self);
+    /// Kill the child and wait until it is reaped.
+    fn stop(&mut self) -> impl Future<Output = ()> + Send;
 }
 
 /// Spawns ffmpeg children. The engine depends only on this trait; production
-/// passes [`StdFfmpegSpawner`], tests pass a scripted fake.
+/// passes [`ProcessSpawner`], tests pass a scripted fake.
 pub trait FfmpegSpawner: Send + Sync {
     /// Child type this spawner produces.
     type Child: FfmpegChild;
@@ -724,37 +488,31 @@ pub trait FfmpegSpawner: Send + Sync {
     fn spawn(&self, argv: &[String]) -> Result<Self::Child, TranscodeError>;
 }
 
-/// Production spawner on top of `std::process`. `tokio::process` is off the
-/// table (the `process` feature is not enabled for this tree), so blocking
-/// stdout reads run on the blocking pool and stderr drains on a thread.
-pub struct StdFfmpegSpawner {
+/// Production spawner: one `tokio::process` child per transcode.
+pub struct ProcessSpawner {
     ffmpeg: PathBuf,
 }
 
-impl StdFfmpegSpawner {
+impl ProcessSpawner {
     /// Spawner pinned to one binary path.
     pub fn with_path(path: PathBuf) -> Self {
         Self { ffmpeg: path }
     }
-
-    /// The binary this spawner executes.
-    pub fn ffmpeg_path(&self) -> &Path {
-        &self.ffmpeg
-    }
 }
 
-impl FfmpegSpawner for StdFfmpegSpawner {
-    type Child = StdFfmpegChild;
+impl FfmpegSpawner for ProcessSpawner {
+    type Child = ProcessChild;
 
-    fn spawn(&self, argv: &[String]) -> Result<StdFfmpegChild, TranscodeError> {
+    fn spawn(&self, argv: &[String]) -> Result<ProcessChild, TranscodeError> {
         let Some((_, args)) = argv.split_first() else {
             return Err(TranscodeError::Spawn("empty ffmpeg argv".to_owned()));
         };
-        let mut child = std::process::Command::new(&self.ffmpeg)
+        let mut child = tokio::process::Command::new(&self.ffmpeg)
             .args(args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|err| TranscodeError::Spawn(sanitized_io_detail(&err)))?;
         let stdout = child
@@ -766,393 +524,249 @@ impl FfmpegSpawner for StdFfmpegSpawner {
             .take()
             .ok_or_else(|| TranscodeError::Spawn("ffmpeg stderr unavailable".to_owned()))?;
         let stderr_text = Arc::new(Mutex::new(String::new()));
-        std::thread::spawn({
-            let stderr_text = Arc::clone(&stderr_text);
-            move || drain_stderr(stderr, stderr_text)
-        });
-        Ok(StdFfmpegChild {
-            child: Some(child),
-            stdout: Arc::new(Mutex::new(stdout)),
+        tokio::spawn(drain_stderr(stderr, Arc::clone(&stderr_text)));
+        Ok(ProcessChild {
+            child,
+            stdout,
             stderr_text,
         })
     }
 }
 
-/// Drain a child stderr to EOF, keeping only the first bytes for the
-/// nonzero-exit warning. Port of v2 `_drain_stderr` with its 2000-byte bound.
-fn drain_stderr(stderr: ChildStderr, captured: Arc<Mutex<String>>) {
-    use std::io::Read as _;
-    let mut reader = stderr;
+/// Drain a child's stderr to EOF, keeping only the first bytes for the
+/// nonzero-exit warning. Port of v2 `_drain_stderr` with its 2000-byte
+/// bound. Ends when ffmpeg closes stderr, which it does when it exits.
+async fn drain_stderr(mut stderr: tokio::process::ChildStderr, captured: Arc<Mutex<String>>) {
     let mut buf = [0u8; 8192];
     loop {
-        let read = match reader.read(&mut buf) {
-            Ok(0) => break,
+        let read = match stderr.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
             Ok(n) => n,
-            Err(_) => break,
         };
         let mut guard = captured.lock().unwrap_or_else(|poison| poison.into_inner());
-        let remaining = STDERR_CAPTURE_BYTES.saturating_sub(guard.len());
-        if remaining == 0 {
-            continue;
+        let take = read.min(STDERR_CAPTURE_BYTES.saturating_sub(guard.len()));
+        if take > 0 {
+            guard.push_str(&String::from_utf8_lossy(&buf[..take]));
         }
-        let take = read.min(remaining);
-        guard.push_str(&String::from_utf8_lossy(&buf[..take]));
     }
 }
 
-/// Production ffmpeg child. Stdout reads hop onto the blocking pool; exit
-/// waits poll on `try_wait` so nothing blocks a runtime thread. A killed
-/// child that has not exited yet is handed to a reaper that waits for it
-/// off the async threads, so no zombie is left behind.
+/// Production ffmpeg child. Dropping it kills the process, and the runtime
+/// reaps it.
 #[derive(Debug)]
-pub struct StdFfmpegChild {
-    child: Option<Child>,
-    stdout: Arc<Mutex<ChildStdout>>,
+pub struct ProcessChild {
+    child: tokio::process::Child,
+    stdout: tokio::process::ChildStdout,
     stderr_text: Arc<Mutex<String>>,
 }
 
-impl StdFfmpegChild {
-    /// OS process id while the child is still owned here.
+impl ProcessChild {
+    /// OS process id while the child has not been reaped.
     pub fn id(&self) -> Option<u32> {
-        self.child.as_ref().map(Child::id)
-    }
-
-    /// Exit status if the child has ended (reaping it); `None` while it
-    /// runs or once it was handed to the reaper.
-    fn try_wait(&mut self) -> Option<std::io::Result<Option<std::process::ExitStatus>>> {
-        self.child.as_mut().map(Child::try_wait)
+        self.child.id()
     }
 }
 
-impl Drop for StdFfmpegChild {
-    fn drop(&mut self) {
-        self.kill();
-    }
-}
-
-/// Wait for a killed child on a blocking thread so it never lingers as a
-/// zombie.
-fn reap(mut child: Child) {
-    let wait = move || {
-        if let Err(error) = child.wait() {
-            tracing::warn!(%error, "ffmpeg child could not be reaped");
-        }
-    };
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.spawn_blocking(wait);
-        }
-        Err(_) => {
-            std::thread::spawn(wait);
-        }
-    }
-}
-
-impl FfmpegChild for StdFfmpegChild {
+impl FfmpegChild for ProcessChild {
     async fn read_chunk(&mut self) -> Result<Option<Vec<u8>>, TranscodeError> {
-        let stdout = Arc::clone(&self.stdout);
-        tokio::task::spawn_blocking(move || {
-            use std::io::Read as _;
-            let mut guard = stdout.lock().unwrap_or_else(|poison| poison.into_inner());
-            let mut buf = vec![0u8; STREAM_CHUNK_SIZE];
-            match guard.read(&mut buf) {
-                Ok(0) => Ok(None),
-                Ok(n) => {
-                    buf.truncate(n);
-                    Ok(Some(buf))
-                }
-                Err(err) => Err(TranscodeError::Io(sanitized_io_detail(&err))),
+        let mut buf = vec![0u8; STREAM_CHUNK_SIZE];
+        match self.stdout.read(&mut buf).await {
+            Ok(0) => Ok(None),
+            Ok(n) => {
+                buf.truncate(n);
+                Ok(Some(buf))
             }
-        })
-        .await
-        .map_err(|_| TranscodeError::Io("ffmpeg reader failed".to_owned()))?
+            Err(err) => Err(TranscodeError::Io(sanitized_io_detail(&err))),
+        }
     }
 
     async fn finish(&mut self) {
-        let settled = tokio::time::timeout(EXIT_WAIT, async {
-            loop {
-                match self.try_wait() {
-                    None => return,
-                    Some(Ok(Some(status))) => {
-                        if !status.success() {
-                            let detail = self
-                                .stderr_text
-                                .lock()
-                                .unwrap_or_else(|poison| poison.into_inner())
-                                .clone();
-                            tracing::warn!(
-                                exit_code = ?status.code(),
-                                stderr = %detail,
-                                "ffmpeg exited nonzero",
-                            );
-                        }
-                        return;
-                    }
-                    Some(Ok(None)) => tokio::time::sleep(CHILD_POLL_INTERVAL).await,
-                    Some(Err(_)) => return,
-                }
+        match tokio::time::timeout(EXIT_WAIT, self.child.wait()).await {
+            Ok(Ok(status)) if !status.success() => {
+                let detail = self
+                    .stderr_text
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .clone();
+                tracing::warn!(
+                    exit_code = ?status.code(),
+                    stderr = %detail,
+                    "ffmpeg exited nonzero",
+                );
             }
-        })
-        .await;
-        if settled.is_err() {
-            self.kill();
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "ffmpeg exit could not be read"),
+            Err(_) => self.stop().await,
         }
     }
 
-    async fn shutdown(&mut self) {
-        match self.try_wait() {
-            Some(Ok(None)) => {}
-            _ => return,
-        }
-        if let Some(child) = self.child.as_mut() {
-            terminate_child(child);
-        }
-        let exited = tokio::time::timeout(TERMINATE_WAIT, async {
-            loop {
-                match self.try_wait() {
-                    Some(Ok(None)) => tokio::time::sleep(CHILD_POLL_INTERVAL).await,
-                    _ => return,
-                }
-            }
-        })
-        .await
-        .is_ok();
-        if !exited {
-            self.kill();
+    async fn stop(&mut self) {
+        // `kill` sends SIGKILL and then waits, so the child is reaped here.
+        // An already reaped child refuses the signal, which is fine.
+        if let Err(error) = self.child.kill().await {
+            tracing::debug!(%error, "ffmpeg kill failed");
         }
     }
-
-    fn kill(&mut self) {
-        let Some(mut child) = self.child.take() else {
-            return;
-        };
-        match child.try_wait() {
-            // Already exited and now reaped.
-            Ok(Some(_)) => {}
-            _ => {
-                if let Err(error) = child.kill() {
-                    tracing::debug!(%error, "ffmpeg kill failed");
-                }
-                reap(child);
-            }
-        }
-    }
-}
-
-/// SIGTERM on unix, matching v2 `proc.terminate()`; plain kill elsewhere.
-#[cfg(unix)]
-fn terminate_child(child: &mut Child) {
-    let pid = child.id();
-    // SAFETY: signalling a child pid has no memory effects; a stale pid only
-    // fails the call, which is ignored because shutdown always falls back to
-    // kill.
-    let _ = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-}
-
-/// Non-unix graceful stop degrades to an immediate kill.
-#[cfg(not(unix))]
-fn terminate_child(child: &mut Child) {
-    let _ = child.kill();
 }
 
 // ---------------------------------------------------------------------------
 // Transcoder seam (consumed by the gateway)
 // ---------------------------------------------------------------------------
 
-/// Byte stream for one transcode, behind a trait so the gateway programs to
-/// the seam rather than the struct.
-pub trait TranscodeBody: Send {
-    /// Pull the next output chunk; `None` is the end of the stream and fuses
-    /// (later calls keep returning `None`). The disconnect probe, when given,
-    /// runs after each read and before the chunk is handed out, matching v2's
-    /// per-chunk `is_disconnected` check: a gone client aborts with
-    /// [`TranscodeError::ClientDisconnected`] and ffmpeg is reaped.
-    fn next_chunk(
-        &mut self,
-        is_disconnected: Option<&(dyn Fn() -> bool + Sync)>,
-    ) -> impl Future<Output = Result<Option<Vec<u8>>, TranscodeError>> + Send;
-
-    /// Stop early and free the slot. Idempotent; dropping the body without
-    /// closing releases everything anyway.
-    fn close(&mut self) -> impl Future<Output = ()> + Send;
-}
-
 /// Transcode service seam the gateway consumes. The gateway calls
 /// [`decide()`] first and only reaches `stream` on a transcode plan; the
 /// engine rejects direct plans defensively.
 pub trait Transcoder: Send + Sync {
-    /// Per-request byte stream this service produces.
-    type Body: TranscodeBody + 'static;
-
-    /// Take a lease, spawn ffmpeg for the plan, and hand back the byte
-    /// stream. The lease travels inside the body and releases exactly once
-    /// when the stream ends, fails, closes, or drops. Port of v2
-    /// `TranscodeService.stream`, minus the HTTP response wrapping, which is
-    /// the gateway's job.
+    /// Take an ffmpeg slot, spawn ffmpeg for the plan, and hand back its
+    /// output as a body stream. The ffmpeg slot and `direct`, the direct
+    /// slot the open took, are held until the transcode ends, and released
+    /// exactly once however it ends: EOF, failure, a dropped body, or
+    /// [`IDLE_DEADLINE`] without a read.
     fn stream(
         &self,
         source_path: &Path,
         plan: &StreamPlan,
         principal: &str,
-    ) -> impl Future<Output = Result<Self::Body, TranscodeError>> + Send;
+        direct: Option<OwnedDirectLease>,
+    ) -> impl Future<Output = Result<ChunkStream, TranscodeError>> + Send;
 }
 
-/// The [`Transcoder`] implementation: a spawner plus a lease pool, both
-/// injected. Production wires [`StdFfmpegSpawner`] with the shared gateway
-/// gate; the standalone [`LocalTranscodeGate`] covers engine-only use.
-pub struct FfmpegTranscoder<S, P> {
+/// The [`Transcoder`] implementation: a spawner plus the ffmpeg gate.
+pub struct FfmpegTranscoder<S> {
     spawner: S,
-    leases: P,
+    gate: Arc<TranscodeGate>,
 }
 
-impl<S, P> FfmpegTranscoder<S, P> {
-    /// Build the service from its two seams.
-    pub fn new(spawner: S, leases: P) -> Self {
-        Self { spawner, leases }
-    }
-
-    /// The injected spawner.
-    pub fn spawner(&self) -> &S {
-        &self.spawner
-    }
-
-    /// The injected lease pool.
-    pub fn leases(&self) -> &P {
-        &self.leases
+impl<S> FfmpegTranscoder<S> {
+    /// Build the service from its spawner and gate.
+    pub fn new(spawner: S, gate: Arc<TranscodeGate>) -> Self {
+        Self { spawner, gate }
     }
 }
 
-impl<S: FfmpegSpawner, P: TranscodeLeasePool> Transcoder for FfmpegTranscoder<S, P> {
-    type Body = TranscodeStream<P::Lease, S::Child>;
-
+impl<S: FfmpegSpawner> Transcoder for FfmpegTranscoder<S> {
     async fn stream(
         &self,
         source_path: &Path,
         plan: &StreamPlan,
         principal: &str,
-    ) -> Result<TranscodeStream<P::Lease, S::Child>, TranscodeError> {
-        if !plan.is_transcode() {
-            return Err(TranscodeError::NotTranscoding);
-        }
-        // Lease first, exactly as v2 acquires before spawning; every exit
-        // below frees it, so a failed start never wedges a slot.
-        let lease = self.leases.acquire_transcode(principal).await?;
+        direct: Option<OwnedDirectLease>,
+    ) -> Result<ChunkStream, TranscodeError> {
         let Some(argv) = build_cmd(source_path, plan) else {
-            lease.release();
             return Err(TranscodeError::NotTranscoding);
         };
-        match self.spawner.spawn(&argv) {
-            Ok(child) => Ok(TranscodeStream::new(lease, child)),
-            Err(err) => {
-                lease.release();
-                Err(err)
+        // Lease before spawning, as v2 does; a failed start drops it, so it
+        // never wedges a slot.
+        let lease = self
+            .gate
+            .acquire_owned(principal)
+            .await
+            .map_err(|_| TranscodeError::Capacity)?;
+        let child = self.spawner.spawn(&argv)?;
+        Ok(start(
+            child,
+            Held {
+                _lease: lease,
+                _direct: direct,
+            },
+        ))
+    }
+}
+
+/// The slots one transcode holds. Dropping it releases both.
+struct Held {
+    _lease: TranscodeLease,
+    _direct: Option<OwnedDirectLease>,
+}
+
+/// Start the pump for `child` and return the body that reads it. The body
+/// ends cleanly only after a natural EOF; a transcode stopped any other way
+/// ends the body with an error, so a client never takes a cut-off stream
+/// for a whole one.
+fn start<C: FfmpegChild>(child: C, held: Held) -> ChunkStream {
+    let (chunks, receiver) = mpsc::channel(1);
+    let complete = Arc::new(AtomicBool::new(false));
+    tokio::spawn(pump(child, chunks, held, Arc::clone(&complete)));
+    futures_util::stream::unfold(Some(receiver), move |state| {
+        let complete = Arc::clone(&complete);
+        async move {
+            let mut receiver = state?;
+            match receiver.recv().await {
+                Some(Ok(bytes)) => Some((Ok(bytes), Some(receiver))),
+                Some(Err(error)) => Some((Err(std::io::Error::other(error.to_string())), None)),
+                None if complete.load(Ordering::Acquire) => None,
+                None => Some((
+                    Err(std::io::Error::other(TranscodeError::Idle.to_string())),
+                    None,
+                )),
             }
         }
-    }
+    })
+    .fuse()
+    .boxed()
 }
 
-/// One live transcode: the lease plus the child. The lease releases exactly
-/// once no matter how the stream ends (EOF, error, `close`, or drop),
-/// because every path funnels through `Option::take`: the structural
-/// version of v2's idempotent `lease.release()` plus `BackgroundTask`.
-pub struct TranscodeStream<L: TranscodeLease, C: FfmpegChild> {
-    lease: Option<L>,
-    child: Option<C>,
-    closed: bool,
+/// How a pump ended.
+enum End {
+    /// ffmpeg reached EOF.
+    Eof,
+    /// The body was dropped.
+    Gone,
+    /// A read failed or timed out.
+    Failed(TranscodeError),
+    /// Nobody read for [`IDLE_DEADLINE`].
+    Idle,
 }
 
-impl<L: TranscodeLease, C: FfmpegChild> std::fmt::Debug for TranscodeStream<L, C> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TranscodeStream")
-            .field("lease_held", &self.lease.is_some())
-            .field("child_live", &self.child.is_some())
-            .field("closed", &self.closed)
-            .finish()
-    }
-}
-
-impl<L: TranscodeLease, C: FfmpegChild> TranscodeStream<L, C> {
-    fn new(lease: L, child: C) -> Self {
-        Self {
-            lease: Some(lease),
-            child: Some(child),
-            closed: false,
-        }
-    }
-
-    /// True once the stream ended, failed, or closed.
-    pub fn is_closed(&self) -> bool {
-        self.closed
-    }
-
-    /// Kill the child and free the slot, at most once each.
-    fn release_all(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            child.kill();
-        }
-        if let Some(lease) = self.lease.take() {
-            lease.release();
-        }
-    }
-
-    /// Fail the stream: graceful child shutdown first (v2 reaps via
-    /// `_terminate` on every failure path), then the exactly-once release.
-    async fn fail<T>(&mut self, err: TranscodeError) -> Result<T, TranscodeError> {
-        if let Some(child) = self.child.as_mut() {
-            child.shutdown().await;
-        }
-        self.release_all();
-        self.closed = true;
-        Err(err)
-    }
-}
-
-impl<L: TranscodeLease, C: FfmpegChild> TranscodeBody for TranscodeStream<L, C> {
-    async fn next_chunk(
-        &mut self,
-        is_disconnected: Option<&(dyn Fn() -> bool + Sync)>,
-    ) -> Result<Option<Vec<u8>>, TranscodeError> {
-        if self.closed {
-            return Ok(None);
-        }
-        let Some(child) = self.child.as_mut() else {
-            return Ok(None);
+/// Move ffmpeg's stdout into `chunks` until EOF, failure, a dropped body or
+/// the idle deadline, then settle or stop the child and drop `held`. It
+/// logs how it ended when that was not EOF or a dropped body.
+async fn pump<C: FfmpegChild>(
+    mut child: C,
+    chunks: mpsc::Sender<Result<Vec<u8>, TranscodeError>>,
+    held: Held,
+    complete: Arc<AtomicBool>,
+) {
+    let end = loop {
+        let read = tokio::select! {
+            () = chunks.closed() => break End::Gone,
+            read = tokio::time::timeout(READ_TIMEOUT, child.read_chunk()) => read,
         };
-        let chunk = match tokio::time::timeout(READ_TIMEOUT, child.read_chunk()).await {
-            Ok(Ok(chunk)) => chunk,
-            Ok(Err(err)) => return self.fail(err).await,
-            Err(_) => return self.fail(TranscodeError::ReadTimeout).await,
+        let bytes = match read {
+            Ok(Ok(Some(bytes))) => bytes,
+            Ok(Ok(None)) => break End::Eof,
+            Ok(Err(error)) => break End::Failed(error),
+            Err(_) => break End::Failed(TranscodeError::ReadTimeout),
         };
-        let Some(bytes) = chunk else {
-            // Natural EOF: settle the process, then free the slot eagerly so
-            // the gateway does not have to drop the body to unblock others.
-            if let Some(child) = self.child.as_mut() {
-                child.finish().await;
-            }
-            self.release_all();
-            self.closed = true;
-            return Ok(None);
-        };
-        if is_disconnected.is_some_and(|gone| gone()) {
-            return self.fail(TranscodeError::ClientDisconnected).await;
+        match tokio::time::timeout(IDLE_DEADLINE, chunks.send(Ok(bytes))).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => break End::Gone,
+            Err(_) => break End::Idle,
         }
-        Ok(Some(bytes))
-    }
-
-    async fn close(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            child.shutdown().await;
+    };
+    match end {
+        End::Eof => {
+            child.finish().await;
+            drop(held);
+            complete.store(true, Ordering::Release);
         }
-        self.release_all();
-        self.closed = true;
-    }
-}
-
-impl<L: TranscodeLease, C: FfmpegChild> Drop for TranscodeStream<L, C> {
-    fn drop(&mut self) {
-        // Backstop for streams dropped mid-flight: prompt paths already took
-        // the lease and child, so the takes below are usually empty, and the
-        // release still lands exactly once either way.
-        self.release_all();
+        End::Gone => {
+            child.stop().await;
+            drop(held);
+        }
+        End::Failed(error) => {
+            tracing::warn!(%error, "transcode failed");
+            child.stop().await;
+            drop(held);
+            let _ = chunks.try_send(Err(error));
+        }
+        End::Idle => {
+            tracing::info!(
+                idle_seconds = IDLE_DEADLINE.as_secs(),
+                "transcode stopped: nobody read it"
+            );
+            child.stop().await;
+            drop(held);
+        }
     }
 }

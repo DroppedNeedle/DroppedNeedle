@@ -33,16 +33,13 @@
 //!   range/HEAD/error/header logic stays in this file.
 //! * Streaming reads: routes call [`StreamEngine::open_stream`], which
 //!   hands back a [`MediaBody`]: a local file read by range on demand, a
-//!   transcode read chunk by chunk, or in-memory bytes (remote objects and
-//!   engines that only implement `open`). HEAD never reads a body and never
-//!   starts ffmpeg. The 206/416 decisions stay here.
+//!   transcode read chunk by chunk, or in-memory bytes. HEAD never reads a
+//!   body and never starts ffmpeg. The 206/416 decisions stay here.
 //! * Mounting: [`routes`] mounts [`stream_get_route`] and
 //!   [`stream_head_route`], the production forms of the generic handlers,
 //!   for any signed-in user. Playback
 //!   reporting (`start`/`progress`/`stop`/`scrobble`/`now-playing`/`stopped`)
 //!   lives in `playback`, not this router.
-//! * [`RETRY_AFTER_SECONDS`] duplicates the transcode constant of the same
-//!   name; the two could share one spelling.
 //! * [`content_type_for_extension`] ports the v2 `CONTENT_TYPE_MAP` minus
 //!   WMA, which v3 does not support. The engine resolves the
 //!   final content type (upstream wins for remotes); local reads go through
@@ -77,6 +74,7 @@ use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidQuery;
 use droppedneedle_kernel::mount::{Routes, routes};
 
+use super::leases::RETRY_AFTER_SECONDS;
 use crate::MediaEngine;
 use serde::Deserialize;
 use serde_json::json;
@@ -93,8 +91,6 @@ pub const STREAM_FORBIDDEN: &str = "STREAM_FORBIDDEN";
 pub const RANGE_NOT_SATISFIABLE: &str = "RANGE_NOT_SATISFIABLE";
 /// Direct or transcode leases exhausted. Carries `Retry-After: 1`.
 pub const STREAM_CAPACITY_EXHAUSTED: &str = "STREAM_CAPACITY_EXHAUSTED";
-/// Retry hint on every 429 (v2 sends 1; duplicates the transcode constant).
-pub const RETRY_AFTER_SECONDS: u64 = 1;
 
 // ---------------------------------------------------------------------------
 // Audio sources
@@ -192,22 +188,6 @@ pub struct StreamOpen {
     pub params: StreamParams,
 }
 
-/// Whole media object plus its response metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenMedia {
-    /// Engine-resolved content type (upstream wins; local via
-    /// [`content_type_for_extension`]).
-    pub content_type: String,
-    /// Exact object length in bytes.
-    pub total_len: u64,
-    /// Transcode landing: ranges are refused, never honored.
-    pub transcoded: bool,
-    /// Estimated length for the optional transcode `Content-Length`.
-    pub estimated_len: Option<u64>,
-    /// Whole object bytes (direct) or whole transcode output (fake-sized).
-    pub bytes: Vec<u8>,
-}
-
 /// Body chunks of a streamed response.
 pub type ChunkStream = BoxStream<'static, Result<Vec<u8>, std::io::Error>>;
 
@@ -217,7 +197,7 @@ pub type SpanOpener = Box<dyn FnOnce(u64, u64) -> ChunkStream + Send>;
 
 /// Where the response body comes from.
 pub enum MediaBody {
-    /// The whole object in memory (remote reads, whole-object engines).
+    /// The whole object in memory.
     Bytes(Vec<u8>),
     /// A local file, read by range when the response streams.
     File(PathBuf),
@@ -260,19 +240,6 @@ pub struct StreamMedia {
     pub lease: Option<super::leases::OwnedDirectLease>,
 }
 
-impl From<OpenMedia> for StreamMedia {
-    fn from(media: OpenMedia) -> Self {
-        Self {
-            content_type: media.content_type,
-            total_len: media.total_len,
-            transcoded: media.transcoded,
-            estimated_len: media.estimated_len,
-            body: MediaBody::Bytes(media.bytes),
-            lease: None,
-        }
-    }
-}
-
 /// Engine failures, mapped to the wire in [`serve`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamFault {
@@ -305,25 +272,17 @@ pub enum StreamFault {
     },
 }
 
-/// Minimal engine stand-in: open one media object or fail with a [`StreamFault`].
-/// [`super::gateway::Gateway`] is the production implementation.
+/// The engine the routes read from: open one media object or fail with a
+/// [`StreamFault`]. [`super::gateway::Gateway`] is the production
+/// implementation.
 pub trait StreamEngine: Send + Sync {
-    /// Resolve and read one media object for `request`, whole.
-    fn open(
-        &self,
-        request: StreamOpen,
-    ) -> impl Future<Output = Result<OpenMedia, StreamFault>> + Send;
-
     /// Resolve one media object for streaming. `head_only` asks for the
-    /// metadata alone. The default reads the whole object through `open`.
+    /// metadata alone.
     fn open_stream(
         &self,
         request: StreamOpen,
         head_only: bool,
-    ) -> impl Future<Output = Result<StreamMedia, StreamFault>> + Send {
-        let _ = head_only;
-        async move { self.open(request).await.map(StreamMedia::from) }
-    }
+    ) -> impl Future<Output = Result<StreamMedia, StreamFault>> + Send;
 }
 
 // ---------------------------------------------------------------------------
@@ -868,6 +827,8 @@ pub fn file_range(path: PathBuf, start: u64, len: u64) -> ChunkStream {
         if cursor.remaining == 0 {
             return None;
         }
+        // File reads block, and the workspace's tokio has no `fs` feature,
+        // so each chunk is read on the blocking pool.
         let read = tokio::task::spawn_blocking(move || {
             use std::io::{Read as _, Seek as _, SeekFrom};
             let mut file = match cursor.file.take() {
@@ -934,8 +895,8 @@ fn transcode_response(
     if let Some(len) = estimated {
         response_headers.insert(header::CONTENT_LENGTH, header_value(&len.to_string())?);
     } else if let (true, MediaBody::Bytes(bytes)) = (head_only, &media.body) {
-        // A whole-object engine knows the length: pin it on HEAD for
-        // GET/HEAD parity (GET's buffered body gets it stamped).
+        // An in-memory body knows its length: pin it on HEAD for GET/HEAD
+        // parity (GET's buffered body gets it stamped).
         response_headers.insert(
             header::CONTENT_LENGTH,
             header_value(&bytes.len().to_string())?,

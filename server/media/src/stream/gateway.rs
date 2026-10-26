@@ -10,16 +10,15 @@
 //! files exist. A gateway without the library wired (tests, unwired
 //! builds) joins the key onto its constructor root as a relative path
 //! instead, sandboxed to that root.
-//! The streaming open hands the routes a file body read by range, or the
-//! transcode output chunk by chunk; HEAD answers from file metadata and
-//! never starts ffmpeg. The whole-object open collects a streamed open in
-//! memory; nothing in the server calls it (the compat adapters stream too),
-//! it stays for the engine seam's tests. Range slicing, 206/416 decisions,
-//! and headers stay in the routes file.
+//! The open hands the routes a file body read by range, or the transcode
+//! output chunk by chunk; HEAD answers from file metadata and never starts
+//! ffmpeg. Range slicing, 206/416 decisions, and headers stay in the routes
+//! file.
 //!
-//! The streaming open hands its direct lease back inside [`StreamMedia`],
-//! so a caller that moves it into the response body bounds response
-//! concurrency, not only opens (the compat adapters do). Remote reads
+//! The open hands its direct lease back inside [`StreamMedia`], so a caller
+//! that moves it into the response body bounds response concurrency, not
+//! only opens (the compat adapters do). A transcode takes the lease into
+//! the transcode instead, which frees it with the ffmpeg slot. Remote reads
 //! stream by range and are direct-only (the ffmpeg service takes a local
 //! path; per-source server-side transcode stays a remotes-adapter concern).
 //!
@@ -37,13 +36,14 @@ use droppedneedle_kernel::runtime_config::sections::ConnectApps;
 use droppedneedle_plugins::capabilities::stream::{open_url, proxy_chunks};
 use futures_util::StreamExt as _;
 
+use super::leases::OwnedDirectLease;
 use super::routes::{
-    AudioSource, ChunkStream, MediaBody, OpenMedia, StreamEngine, StreamFault, StreamMedia,
-    StreamOpen, StreamParams, content_type_for_extension,
+    AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
+    content_type_for_extension,
 };
 use super::transcode::{
-    OutFormat, StreamPlan, TrackInfo, TranscodeBody, TranscodeError, TranscodeSettings, Transcoder,
-    decide, estimate_size, out_media_type,
+    OutFormat, StreamPlan, TrackInfo, TranscodeError, TranscodeSettings, Transcoder, decide,
+    estimate_size, out_media_type,
 };
 
 /// A canned remote object, for scripted readers: upstream bytes plus the
@@ -58,13 +58,14 @@ pub struct RemoteMedia {
 
 impl From<RemoteMedia> for StreamMedia {
     fn from(media: RemoteMedia) -> Self {
-        StreamMedia::from(OpenMedia {
+        StreamMedia {
             content_type: media.content_type,
             total_len: media.bytes.len() as u64,
             transcoded: false,
             estimated_len: None,
-            bytes: media.bytes,
-        })
+            body: MediaBody::Bytes(media.bytes),
+            lease: None,
+        }
     }
 }
 
@@ -161,28 +162,6 @@ impl<R, T> Gateway<R, T> {
 }
 
 impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
-    async fn open(&self, request: StreamOpen) -> Result<OpenMedia, StreamFault> {
-        let _lease = self
-            .direct
-            .acquire(&request.user_id)
-            .await
-            .map_err(|_| StreamFault::Capacity)?;
-        match request.source {
-            AudioSource::Local => self.open_local(&request).await,
-            AudioSource::Plugin => {
-                let media = self.stream_plugin(&request, false).await?;
-                whole_media(media).await
-            }
-            source => {
-                let media = self
-                    .remote
-                    .open_stream(source, &request.key, &request.user_id, false)
-                    .await?;
-                whole_media(media).await
-            }
-        }
-    }
-
     async fn open_stream(
         &self,
         request: StreamOpen,
@@ -193,17 +172,18 @@ impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
             .acquire_owned(&request.user_id)
             .await
             .map_err(|_| StreamFault::Capacity)?;
-        let mut media = match request.source {
-            AudioSource::Local => self.stream_local(&request, head_only).await?,
-            AudioSource::Plugin => self.stream_plugin(&request, head_only).await?,
+        match request.source {
+            AudioSource::Local => self.stream_local(&request, head_only, lease).await,
+            AudioSource::Plugin => self.stream_plugin(&request, head_only, lease).await,
             source => {
-                self.remote
+                let mut media = self
+                    .remote
                     .open_stream(source, &request.key, &request.user_id, head_only)
-                    .await?
+                    .await?;
+                media.lease = Some(lease);
+                Ok(media)
             }
-        };
-        media.lease = Some(lease);
-        Ok(media)
+        }
     }
 }
 
@@ -216,62 +196,16 @@ struct LocalRead {
 }
 
 impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
-    /// Sandboxed local read, whole, with the transcode policy applied.
-    async fn open_local(&self, request: &StreamOpen) -> Result<OpenMedia, StreamFault> {
-        let LocalRead {
-            path,
-            content_type,
-            plan,
-        } = self.local_read(request).await?;
-        match plan {
-            StreamPlan::Direct { .. } => {
-                let bytes = tokio::task::spawn_blocking(move || std::fs::read(path))
-                    .await
-                    .map_err(|cause| StreamFault::Internal {
-                        cause: cause.to_string(),
-                    })?
-                    .map_err(io_fault)?;
-                Ok(OpenMedia {
-                    content_type: content_type.to_owned(),
-                    total_len: bytes.len() as u64,
-                    transcoded: false,
-                    estimated_len: None,
-                    bytes,
-                })
-            }
-            StreamPlan::Transcode { .. } => {
-                let out_format = plan.out_format().ok_or_else(|| StreamFault::Internal {
-                    cause: "transcode plan carries no codec".to_owned(),
-                })?;
-                let mut body = self
-                    .transcoder
-                    .stream(&path, &plan, &request.user_id)
-                    .await
-                    .map_err(transcode_fault)?;
-                let mut bytes = Vec::new();
-                while let Some(chunk) = body.next_chunk(None).await.map_err(transcode_fault)? {
-                    bytes.extend_from_slice(&chunk);
-                }
-                Ok(OpenMedia {
-                    content_type: out_media_type(&out_format).to_owned(),
-                    total_len: bytes.len() as u64,
-                    transcoded: true,
-                    estimated_len: estimated_len(request, &plan),
-                    bytes,
-                })
-            }
-        }
-    }
-
     /// Sandboxed local read for streaming: the file is read by range as
     /// the response goes out, and a transcode streams chunk by chunk.
     async fn stream_local(
         &self,
         request: &StreamOpen,
         head_only: bool,
+        lease: OwnedDirectLease,
     ) -> Result<StreamMedia, StreamFault> {
         let read = self.local_read(request).await?;
-        self.stream_read(read, request, head_only).await
+        self.stream_read(read, request, head_only, lease).await
     }
 
     /// Stream one resolved read: a file body by range, or live transcode
@@ -281,6 +215,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         read: LocalRead,
         request: &StreamOpen,
         head_only: bool,
+        lease: OwnedDirectLease,
     ) -> Result<StreamMedia, StreamFault> {
         let LocalRead {
             path,
@@ -290,6 +225,8 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         match plan {
             StreamPlan::Direct { .. } => {
                 let probe = path.clone();
+                // A stat is blocking file I/O, and the workspace's tokio has
+                // no `fs` feature, so it runs on the blocking pool.
                 let metadata = tokio::task::spawn_blocking(move || std::fs::metadata(probe))
                     .await
                     .map_err(|cause| StreamFault::Internal {
@@ -305,22 +242,22 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     transcoded: false,
                     estimated_len: None,
                     body: MediaBody::File(path),
-                    lease: None,
+                    lease: Some(lease),
                 })
             }
             StreamPlan::Transcode { .. } => {
                 let out_format = plan.out_format().ok_or_else(|| StreamFault::Internal {
                     cause: "transcode plan carries no codec".to_owned(),
                 })?;
-                let body = if head_only {
-                    MediaBody::Empty
+                let (body, lease) = if head_only {
+                    (MediaBody::Empty, Some(lease))
                 } else {
-                    let stream = self
+                    let chunks = self
                         .transcoder
-                        .stream(&path, &plan, &request.user_id)
+                        .stream(&path, &plan, &request.user_id, Some(lease))
                         .await
                         .map_err(transcode_fault)?;
-                    MediaBody::Chunks(transcode_chunks(stream))
+                    (MediaBody::Chunks(chunks), None)
                 };
                 Ok(StreamMedia {
                     content_type: out_media_type(&out_format).to_owned(),
@@ -328,7 +265,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     transcoded: true,
                     estimated_len: estimated_len(request, &plan),
                     body,
-                    lease: None,
+                    lease,
                 })
             }
         }
@@ -436,6 +373,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         &self,
         request: &StreamOpen,
         head_only: bool,
+        lease: OwnedDirectLease,
     ) -> Result<StreamMedia, StreamFault> {
         use droppedneedle_plugins::capabilities::stream::PluginStream;
 
@@ -450,7 +388,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         match resolved {
             PluginStream::File { path, .. } => {
                 let read = self.read_plan(path, request)?;
-                self.stream_read(read, request, head_only).await
+                self.stream_read(read, request, head_only, lease).await
             }
             PluginStream::Remote {
                 plugin,
@@ -463,7 +401,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                 if plan.is_transcode() {
                     return self
                         .transcode_plugin_url(
-                            client, &plugin, url, &format, plan, request, head_only,
+                            client, &plugin, url, &format, plan, request, head_only, lease,
                         )
                         .await;
                 }
@@ -491,7 +429,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                         } else {
                             MediaBody::Spans(plugin_url::spans(client.clone(), url, response))
                         },
-                        lease: None,
+                        lease: Some(lease),
                     }),
                     Some(total) => Err(StreamFault::Upstream {
                         source: AudioSource::Plugin,
@@ -510,7 +448,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                         } else {
                             MediaBody::Chunks(proxy_chunks(response).boxed())
                         },
-                        lease: None,
+                        lease: Some(lease),
                     }),
                 }
             }
@@ -530,6 +468,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         plan: StreamPlan,
         request: &StreamOpen,
         head_only: bool,
+        lease: OwnedDirectLease,
     ) -> Result<StreamMedia, StreamFault> {
         let out_format = plan.out_format().ok_or_else(|| StreamFault::Internal {
             cause: "transcode plan carries no codec".to_owned(),
@@ -543,6 +482,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             lease: None,
         };
         if head_only {
+            media.lease = Some(lease);
             return Ok(media);
         }
         let response = plugin_url_response(client, plugin, url, None).await?;
@@ -554,14 +494,14 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     "plugin {plugin} stream URL could not be fetched for transcoding: {error}"
                 ),
             })?;
-        let stream = self
+        let chunks = self
             .transcoder
-            .stream(spool.path(), &plan, &request.user_id)
+            .stream(spool.path(), &plan, &request.user_id, Some(lease))
             .await
             .map_err(transcode_fault)?;
         // The spool lives inside the body stream and goes with it.
         media.body = MediaBody::Chunks(
-            transcode_chunks(stream)
+            chunks
                 .map(move |chunk| {
                     let _keep = &spool;
                     chunk
@@ -689,62 +629,6 @@ fn estimated_len(request: &StreamOpen, plan: &StreamPlan) -> Option<u64> {
         .then(|| estimate_size(plan))
         .flatten()
         .filter(|size| *size > 0)
-}
-
-/// Transcode output as a body stream. Dropping the stream (a client that
-/// went away) drops the transcode, which kills and reaps ffmpeg and frees
-/// its slot.
-fn transcode_chunks<B: TranscodeBody + 'static>(body: B) -> ChunkStream {
-    futures_util::stream::unfold(Some(body), |state| async move {
-        let mut body = state?;
-        match body.next_chunk(None).await {
-            Ok(Some(chunk)) => Some((Ok(chunk), Some(body))),
-            Ok(None) => None,
-            Err(error) => Some((Err(std::io::Error::other(error.to_string())), None)),
-        }
-    })
-    .boxed()
-}
-
-/// Collect a streamed open into a whole object (the compat whole-object
-/// path).
-async fn whole_media(media: StreamMedia) -> Result<OpenMedia, StreamFault> {
-    let body = match media.body {
-        MediaBody::Spans(open) => MediaBody::Chunks(open(0, media.total_len)),
-        body => body,
-    };
-    let bytes = match body {
-        MediaBody::Bytes(bytes) => bytes,
-        MediaBody::File(path) => tokio::task::spawn_blocking(move || std::fs::read(path))
-            .await
-            .map_err(|cause| StreamFault::Internal {
-                cause: cause.to_string(),
-            })?
-            .map_err(io_fault)?,
-        MediaBody::Chunks(mut chunks) => {
-            let cap = droppedneedle_plugins::capabilities::stream::PROXY_MAX_BYTES as usize;
-            let mut bytes = Vec::new();
-            while let Some(chunk) = chunks.next().await {
-                bytes.extend_from_slice(&chunk.map_err(|error| StreamFault::Internal {
-                    cause: error.to_string(),
-                })?);
-                if bytes.len() > cap {
-                    return Err(StreamFault::Internal {
-                        cause: "stream is over 500 MiB".to_owned(),
-                    });
-                }
-            }
-            bytes
-        }
-        MediaBody::Spans(_) | MediaBody::Empty => Vec::new(),
-    };
-    Ok(OpenMedia {
-        content_type: media.content_type,
-        total_len: bytes.len() as u64,
-        transcoded: media.transcoded,
-        estimated_len: media.estimated_len,
-        bytes,
-    })
 }
 
 /// v2's refusal for a library file that resolves outside every root.
