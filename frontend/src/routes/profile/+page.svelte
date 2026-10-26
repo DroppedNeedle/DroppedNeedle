@@ -231,9 +231,11 @@
 					<MediaServerAccountsCard {services} />
 				</div>
 
-				<div id="navidrome-music-folders" class="scroll-mt-24 xl:ml-40">
-					<NavidromeMusicFoldersCard {userId} />
-				</div>
+				{#if navidromeEnabled}
+					<div id="navidrome-music-folders" class="scroll-mt-24 xl:ml-40">
+						<NavidromeMusicFoldersCard {userId} />
+					</div>
+				{/if}
 
 				<div id="connect-apps" class="scroll-mt-24 xl:ml-40">
 					<ProfileConnectApps />
