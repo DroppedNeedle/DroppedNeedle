@@ -104,25 +104,55 @@ struct Place<'a> {
     directory: &'a str,
 }
 
-/// A track this run walked past: a scope of the run whose discovery
-/// completed covers its path, and the walk did not see the file.
-macro_rules! walked_past {
+/// Journal row `j` keeps scope `s` from judging its track: it is still
+/// open, or it moved after the scope's walk began. The states listed are
+/// the publisher's terminal ones (`JournalState::is_terminal`).
+macro_rules! fenced_by {
     () => {
-        "(EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
-          AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
-          AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
-            OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
-        AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-          AND i.root_id = t.root_id AND i.relative_path = t.relative_path))"
+        "(j.state NOT IN ('cleaned', 'compensated', 'needs_attention') \
+          OR j.fence_revision > s.walk_revision)"
     };
 }
+pub(super) use fenced_by;
+
+/// The one rule for "this run walked past the track" (aliased `t`; the
+/// run id is the parameter `$run`): the walk did not see the file, and a
+/// scope of the run covering its path finished its walk with a recorded
+/// walk revision, while no library write naming the track is still open
+/// or moved after that walk began. A write names a track by its journal
+/// row's `track_id`, or, for a removal or a replaced file, by the row's
+/// replacement. The journal probe runs last: it is the rarest to match.
+macro_rules! walked_past {
+    ($run:literal) => {
+        concat!(
+            "(NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ",
+            $run,
+            " AND i.root_id = t.root_id AND i.relative_path = t.relative_path) \
+             AND EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ",
+            $run,
+            " AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
+              AND s.walk_revision IS NOT NULL \
+              AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
+                OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/') \
+              AND NOT EXISTS (SELECT 1 FROM library_publish_journal j \
+                WHERE j.track_id = t.id AND ",
+            $crate::scan::sqlite_store::commit::fenced_by!(),
+            ") AND NOT EXISTS (SELECT 1 FROM library_publish_replacements r \
+                JOIN library_publish_journal j ON j.id = r.journal_id \
+                WHERE r.replaced_track_id = t.id AND ",
+            $crate::scan::sqlite_store::commit::fenced_by!(),
+            ")))"
+        )
+    };
+}
+pub(super) use walked_past;
 
 /// A track still counts as present unless it is missing or this run
 /// walked its folder to the end without seeing it, and did not hold back a
 /// folder covering it.
 const TRACK_PRESENT: &str = concat!(
     "(t.availability = 'indexed' AND NOT (",
-    walked_past!(),
+    walked_past!("?1"),
     " AND NOT ",
     held_back!("?1", "t"),
     "))"
@@ -292,7 +322,7 @@ struct TrackKey<'a> {
 
 /// A track this run walked past, whether or not the mass-missing guard
 /// held its scope back.
-pub(super) const WALKED_PAST: &str = walked_past!();
+pub(super) const WALKED_PAST: &str = walked_past!("?1");
 
 /// A track is gone when it is already marked missing, or when this run
 /// walked its folder to the end without seeing the file. A folder the
@@ -300,7 +330,7 @@ pub(super) const WALKED_PAST: &str = walked_past!();
 /// scope or a mount found empty, does not count as walked.
 pub(super) const TRACK_GONE: &str = concat!(
     "(t.availability = 'missing' OR (t.availability = 'indexed' AND ",
-    walked_past!(),
+    walked_past!("?1"),
     " AND NOT ",
     held_back!("?1", "t"),
     "))"

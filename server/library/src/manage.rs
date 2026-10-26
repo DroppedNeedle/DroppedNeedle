@@ -18,7 +18,6 @@ use super::publish::recovery::LeftoverReport;
 use super::publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
 use super::publish::tags_seam::TagDocument;
 use super::publish::{PlacementMode, PublishError, Sandbox};
-use super::scan::fs::WriteGuard;
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::RootRegistry;
 use super::service::ServiceError;
@@ -66,8 +65,7 @@ pub(crate) struct OpenPublish {
 /// bins are unknown), and the real folder each root resolves to now. A
 /// change to any of them reopens the session, so a library folder whose
 /// link is pointed somewhere else is probed and given its bins afresh. A
-/// caller works it out once and uses that one answer both to decide on
-/// the root guards and to refresh, so the two never disagree.
+/// caller works it out once and refreshes to that one answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionRoots {
     library: Vec<Root>,
@@ -411,8 +409,7 @@ impl PublishCell {
         *logged = ids.to_vec();
     }
 
-    /// [`Self::refresh_to`] the session `registry` calls for now, for a
-    /// caller that holds the root guards whatever the answer.
+    /// [`Self::refresh_to`] the session `registry` calls for now.
     pub(crate) fn refresh(
         &mut self,
         registry: &RootRegistry,
@@ -478,16 +475,6 @@ impl PublishCell {
     pub(crate) fn pending_ids(registry: &RootRegistry) -> Vec<String> {
         Self::root_dirs(registry)
             .iter()
-            .map(|root| root.id.clone())
-            .collect()
-    }
-
-    /// Every root id a refresh would open under, remove-only roots
-    /// included: the roots a reopen's reconcile may write under.
-    pub(crate) fn guarded_ids(registry: &RootRegistry) -> Vec<String> {
-        Self::root_dirs(registry)
-            .iter()
-            .chain(&Self::remove_only_dirs(registry))
             .map(|root| root.id.clone())
             .collect()
     }
@@ -584,8 +571,8 @@ impl super::wiring::LibraryCore {
         }
     }
 
-    /// One try of [`Self::add_plugin_file`]: `None` while the lock or the
-    /// folder is taken.
+    /// One try of [`Self::add_plugin_file`]: `None` while the lock is
+    /// taken.
     fn try_add_plugin_file<'a>(
         &self,
         plugin: &str,
@@ -617,18 +604,6 @@ impl super::wiring::LibraryCore {
             }
         }
         let session = cell.session(&registry);
-        // A reopen reconciles, which may touch any root.
-        let mut ids: Vec<String> = if cell.needs_refresh(&session) {
-            PublishCell::guarded_ids(&registry)
-        } else {
-            vec![first.to_owned()]
-        };
-        ids.sort();
-        ids.dedup();
-        let mut guards = Vec::with_capacity(ids.len());
-        for id in &ids {
-            guards.push(self.fs.try_write(id)?);
-        }
         let terms = terms();
         if terms.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
             return Some(Err(PluginFileRefusal::Cancelled));
@@ -644,8 +619,7 @@ impl super::wiring::LibraryCore {
         ))
     }
 
-    /// Publish the plugin's file under the cell and guards the caller
-    /// holds. `file` is the plugin, the path and the root id.
+    /// Publish the plugin's file under the cell the caller holds. `file` is the plugin, the path and the root id.
     fn publish_plugin_file(
         &self,
         cell: &mut PublishCell,
@@ -774,8 +748,8 @@ fn seal_pinned(
 /// How a removal takes the publish lock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemovalEntry {
-    /// A person is waiting: a lock or library folder another write holds
-    /// answers busy at once.
+    /// A person is waiting: a lock another write holds answers busy at
+    /// once.
     Now,
     /// Background work: it waits its turn, as other background publishes
     /// do, so busy never fails it.
@@ -1030,18 +1004,6 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
 }
 
 impl LibrarySetup {
-    /// Blocking write guards over every usable root in sorted order.
-    /// The caller holds them across its publish-cell refresh plus
-    /// its publish so scans never interleave with managed writes.
-    /// Blocking: callers run off the async runtime.
-    pub(crate) fn publish_guards(&self, registry: &RootRegistry) -> Vec<WriteGuard> {
-        let mut ids = PublishCell::guarded_ids(registry);
-        ids.sort();
-        ids.into_iter()
-            .map(|id| self.fs.blocking_write(&id))
-            .collect()
-    }
-
     /// Drop expired preview seals.
     pub(crate) fn sweep_previews(&self) {
         let today = self.clock.today_day();
@@ -1349,11 +1311,6 @@ impl LibrarySetup {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let session = cell.session(&registry);
-            let _guards = if cell.needs_refresh(&session) {
-                self.publish_guards(&registry)
-            } else {
-                Vec::new()
-            };
             cell.refresh_to(session, &self.root_dirs)
                 .map_err(publish_error)?;
             cell.open().map_err(publish_error)?.sandbox.clone()
@@ -1542,9 +1499,8 @@ impl LibrarySetup {
             .map(|entry| entry.plain_retag)
     }
 
-    /// Apply a sealed preview exactly once. The write guards span
-    /// the refresh plus the publish, so no scan interleaves with
-    /// the commit. `applied_by` is recorded so that account may undo
+    /// Apply a sealed preview exactly once, under the publish lock.
+    /// `applied_by` is recorded so that account may undo
     /// it. Blocking: handlers run this off the async runtime.
     pub fn apply_preview(
         &self,
@@ -1570,7 +1526,6 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
-        let _guards = self.publish_guards(&registry);
         cell.refresh(&registry, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
@@ -1746,11 +1701,6 @@ impl LibrarySetup {
         let session = cell.session(&registry);
         let reopen = cell.needs_refresh(&session);
         let retry = !reopen && cell.has_held()?;
-        let _guards = if reopen || retry {
-            self.publish_guards(&registry)
-        } else {
-            Vec::new()
-        };
         cell.refresh_to(session, &self.root_dirs)?;
         if retry {
             cell.retry_held()?;
@@ -1767,11 +1717,6 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = cell.session(&registry);
-        let _guards = if cell.needs_refresh(&session) {
-            self.publish_guards(&registry)
-        } else {
-            Vec::new()
-        };
         cell.refresh_to(session, &self.root_dirs)?;
         Ok(cell.open()?.sandbox.clone())
     }
@@ -1790,19 +1735,14 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = cell.session(&registry);
-        let _guards = if cell.needs_refresh(&session) {
-            self.publish_guards(&registry)
-        } else {
-            Vec::new()
-        };
         cell.refresh_to(session, &self.root_dirs)?;
         cell.recheck_placement(root_id)
     }
 
     /// Take `targets` out of the library and their files to the recycle
     /// bin, as one removal bundle: planned, sealed and published under the
-    /// publish lock and the root guards. With [`RemovalEntry::Now`] a lock
-    /// or a library folder another write holds answers busy at once; with
+    /// publish lock. With [`RemovalEntry::Now`] a lock another write holds
+    /// answers busy at once; with
     /// [`RemovalEntry::Wait`] the removal waits its turn. A removal whose
     /// commit landed answers what it removed even when a later step failed:
     /// recovery finishes it. `album_removed` queues the album's clean-up in
@@ -1831,25 +1771,6 @@ impl LibrarySetup {
         };
         let registry = self.live_registry();
         let session = cell.session(&registry);
-        let _guards = match entry {
-            RemovalEntry::Wait => self.publish_guards(&registry),
-            RemovalEntry::Now => {
-                // A reopen reconciles, which may touch any root.
-                let mut ids: Vec<String> = if cell.needs_refresh(&session) {
-                    PublishCell::guarded_ids(&registry)
-                } else {
-                    targets
-                        .iter()
-                        .map(|target| target.root_id.clone())
-                        .collect()
-                };
-                ids.sort();
-                ids.dedup();
-                ids.iter()
-                    .map(|id| self.fs.try_write(id).ok_or(Refusal::Busy))
-                    .collect::<Result<Vec<_>, _>>()?
-            }
-        };
         cell.refresh_to(session, &self.root_dirs)?;
         let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;
         let bundle_id = uuid::Uuid::new_v4().to_string();
@@ -1957,9 +1878,8 @@ impl LibrarySetup {
 
     /// Put back what the removal `removal_id` took from album `album_id`,
     /// as one put-back bundle planned, sealed and published under the
-    /// publish lock and the guards of the folders the files came from.
-    /// Each copy is hashed before the lock is taken. A person is waiting:
-    /// a lock or folder another write holds answers busy at once. A
+    /// publish lock. Each copy is hashed before the lock is taken. A
+    /// person is waiting: a lock another write holds answers busy at once. A
     /// put-back whose commit landed answers what did not come back even
     /// when a later step failed: recovery finishes it. Answers the
     /// root-relative paths of the files that did not come back. Blocking.
@@ -1978,18 +1898,6 @@ impl LibrarySetup {
         };
         let registry = self.live_registry();
         let session = cell.session(&registry);
-        // A reopen reconciles, which may touch any root.
-        let mut ids: Vec<String> = if cell.needs_refresh(&session) {
-            PublishCell::guarded_ids(&registry)
-        } else {
-            roots.clone()
-        };
-        ids.sort();
-        ids.dedup();
-        let _guards = ids
-            .iter()
-            .map(|id| self.fs.try_write(id).ok_or(Refusal::Busy))
-            .collect::<Result<Vec<_>, _>>()?;
         cell.refresh_to(session, &self.root_dirs)?;
         let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;
         let bundle_id = uuid::Uuid::new_v4().to_string();
@@ -2071,7 +1979,6 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
-        let _guards = self.publish_guards(&registry);
         cell.refresh(&registry, &self.root_dirs)?;
         let open = cell.open()?;
         let mut docs = BTreeMap::new();
@@ -2148,7 +2055,6 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
-        let _guards = self.publish_guards(&registry);
         cell.refresh(&registry, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
@@ -2292,11 +2198,6 @@ impl LibrarySetup {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
         let session = cell.session(&registry);
-        let _guards = if cell.needs_refresh(&session) {
-            self.publish_guards(&registry)
-        } else {
-            Vec::new()
-        };
         cell.refresh_to(session, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
@@ -2572,7 +2473,6 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
-        let _guards = self.publish_guards(&registry);
         cell.refresh(&registry, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
@@ -2615,11 +2515,6 @@ impl LibrarySetup {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
         let session = cell.session(&registry);
-        let _guards = if cell.needs_refresh(&session) {
-            self.publish_guards(&registry)
-        } else {
-            Vec::new()
-        };
         cell.refresh_to(session, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;

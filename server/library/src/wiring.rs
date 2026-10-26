@@ -26,7 +26,6 @@ use super::management::settings::service::LibraryManagementService;
 use super::scan::coordinator::{
     LibraryScanCoordinator, ResolverSource, ScanEventPublisher, SharedResolver,
 };
-use super::scan::fs::FsCoordinator;
 use super::scan::pool::BlockingPool;
 use super::scan::roots::RootRegistry;
 use super::scan::sqlite_store::SqliteScanStore;
@@ -100,8 +99,8 @@ pub struct LibraryPorts {
 }
 
 /// The library's write side: the publish cell, the roots it opens over
-/// (with the dirty marks and wakeups a change to them sends the scan),
-/// the root leases and the recycle bins. Built once, before the plugin
+/// (with the dirty marks and wakeups a change to them sends the scan)
+/// and the recycle bins. Built once, before the plugin
 /// host, which adds plugin files through it, and handed to
 /// [`LibrarySetup::build`], so the library and the host hold one cell.
 #[derive(Clone)]
@@ -111,8 +110,6 @@ pub struct LibraryCore {
     pub(crate) library: Live<TypedLibrary>,
     pub(crate) registry: Arc<SharedResolver>,
     pub(crate) root_dirs: RootDirs,
-    /// Root leases: scans read, publishes write.
-    pub fs: FsCoordinator,
     pub(crate) dirty: DirtyScopes,
     pub(crate) wakeups: WorkWakeups,
     pub(crate) publish: Arc<std::sync::Mutex<PublishCell>>,
@@ -159,7 +156,6 @@ impl LibraryCore {
             library: settings.library,
             registry,
             root_dirs,
-            fs: FsCoordinator::new(),
             dirty: DirtyScopes::new(),
             wakeups: WorkWakeups::new(),
             placement: publish.placement(),
@@ -219,10 +215,6 @@ pub struct LibrarySetup {
     pub scan_store: Arc<SqliteScanStore>,
     /// Scan coordinator over the wired seams.
     pub coordinator: Arc<ScanCoordinator>,
-    /// Filesystem leases shared by scan (read) and publish (write).
-    /// Every publish holds the write guard across its refresh plus
-    /// its commit so scans never interleave with managed writes.
-    pub fs: FsCoordinator,
     /// Blocking pool shared by scan and the watcher.
     pub pool: BlockingPool,
     /// Dirty scope marks (Hook B).
@@ -406,7 +398,6 @@ impl LibrarySetup {
         } = ports;
         let registry = core.registry.clone();
         let root_dirs = core.root_dirs.clone();
-        let fs = core.fs.clone();
         let identify_store = Arc::new(SqliteIdentifyStore::new(db.clone(), platform.clock.clone()));
         let pool = BlockingPool::new(4);
         let wakeups = core.wakeups.clone();
@@ -418,7 +409,6 @@ impl LibrarySetup {
                 registry.clone(),
                 platform.clock.clone(),
             )
-            .with_filesystem(fs.clone())
             .with_wakeups(wakeups.clone())
             .with_events(ScanEventPublisher::new(Arc::new(move |event| {
                 tracing::debug!(
@@ -473,7 +463,6 @@ impl LibrarySetup {
             db: db.clone(),
             scan_store,
             coordinator,
-            fs,
             pool,
             dirty: core.dirty.clone(),
             wakeups,
@@ -559,9 +548,6 @@ impl LibrarySetup {
         let setup = self.clone();
         let recovered = tokio::task::spawn_blocking(move || {
             let registry = setup.live_registry();
-            // Startup is uncontended, so the guards cost nothing; taken
-            // first so reconcile can never race a scan.
-            let _guards = setup.publish_guards(&registry);
             let mut cell = setup
                 .publish
                 .lock()

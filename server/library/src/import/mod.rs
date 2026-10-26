@@ -399,7 +399,6 @@ impl LibrarySetup {
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _guards = self.publish_guards(&registry);
         cell.refresh(&registry, &self.root_dirs)
             .map_err(|error| fault(error.to_string()))?;
         let open = cell.open().map_err(|error| fault(error.to_string()))?;

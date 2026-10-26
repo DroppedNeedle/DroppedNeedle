@@ -68,13 +68,13 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 168);
+    assert_eq!(table_names(&pool).await.len(), 169);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 62);
+    assert_eq!(triggers, 64);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -5990,6 +5990,143 @@ async fn held_files_and_waiting_uploads_become_one_list() {
                 .unwrap();
         assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
     }
+}
+
+/// Migration 0086 fences scans with the publish journal. Every journal
+/// write that names a track (a removal names it through its replacement)
+/// moves the library revision and records it on the row; a plugin's added
+/// file moves nothing. A scope walked before the upgrade has no walk
+/// revision, so its run marks nothing missing.
+#[tokio::test]
+async fn journal_writes_stamp_the_scan_fence_on_upgrade() {
+    use droppedneedle_kernel::clock::SystemClock;
+    use droppedneedle_library::scan::{RunStop, SqliteScanStore};
+
+    let dir = crate::common::ScratchDir::new("scan-fence");
+    let db_path = dir.join("fence.db");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    migrator_through(85).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES ('album', 'music', \
+         'k', 'Album', 'album', '00000000-0000-4000-8000-000000000002', 'automatic', 0, 0); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES ('gone', 'album', 'music', 'a/01.flac', 'a/01.flac', \
+         'h', 0, 0, '0:0', 'T', 't', 'Album', 'album', 'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope, \
+         queued_at, started_at, updated_at) VALUES ('run', 'incremental', 'manual', \
+         'completed', 'reconciling', 'music', 1, 1, 1); \
+         INSERT INTO library_scan_run_scopes (run_id, scope_sequence, root_id, \
+         relative_path, effective_policy, policy_revision, discovery_state) VALUES \
+         ('run', 0, 'music', '.', 'automatic', 'p', 'completed');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let walk: Option<i64> = sqlx::query_scalar("SELECT walk_revision FROM library_scan_run_scopes")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        walk, None,
+        "a scope walked before the upgrade has no walk revision"
+    );
+    let runtime = open_runtime(&DbConfig::new(&db_path))
+        .await
+        .expect("runtime opens");
+    let store = SqliteScanStore::new(runtime.db().clone(), std::sync::Arc::new(SystemClock));
+    let missing = || {
+        store
+            .missing_catalog_paths(&RunStop::never(), "run", "music", ".")
+            .expect("missing paths read")
+    };
+    assert!(missing().is_empty(), "the old walk marks nothing");
+
+    let journal = |id: &str, kind: &str, track: Option<&str>| {
+        format!(
+            "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+             staged, staged_sha256, track_id, state) VALUES ('{id}', 'b', '{kind}', 'music', \
+             '{id}.flac', 's', 'h', {}, 'prepared');",
+            track.map_or("NULL".to_owned(), |track| format!("'{track}'"))
+        )
+    };
+    let stamps = |pool: SqlitePool| async move {
+        let rows: Vec<(String, Option<i64>)> =
+            sqlx::query_as("SELECT id, fence_revision FROM library_publish_journal ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let counter: i64 = sqlx::query_scalar("SELECT revision FROM library_scan_fences")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        (rows, counter)
+    };
+    sqlx::raw_sql(&format!(
+        "{}{}{}",
+        journal("audio", "audio", Some("t")),
+        journal("plugin", "add", None),
+        journal("remove", "remove", None)
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stamps(pool.clone()).await,
+        (
+            vec![
+                ("audio".to_owned(), Some(1)),
+                ("plugin".to_owned(), None),
+                ("remove".to_owned(), Some(2)),
+            ],
+            2
+        )
+    );
+    sqlx::raw_sql(
+        "UPDATE library_publish_journal SET state = 'staged' WHERE id = 'audio'; \
+         UPDATE library_publish_journal SET state = 'prepared' WHERE id = 'remove'; \
+         UPDATE library_publish_journal SET state = 'staged' WHERE id = 'plugin';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stamps(pool.clone()).await,
+        (
+            vec![
+                ("audio".to_owned(), Some(3)),
+                ("plugin".to_owned(), None),
+                ("remove".to_owned(), Some(2)),
+            ],
+            3
+        ),
+        "a state change stamps; a write that keeps the state does not"
+    );
+
+    sqlx::raw_sql("UPDATE library_scan_run_scopes SET walk_revision = 3")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        missing(),
+        vec![("a/01.flac".to_owned(), false)],
+        "a scope with a walk revision judges the track it did not see"
+    );
+    runtime.shutdown().await;
 }
 
 /// Wall time in milliseconds, for checks against "due now".

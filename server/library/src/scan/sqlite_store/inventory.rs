@@ -75,6 +75,28 @@ impl SqliteScanStore {
         })
     }
 
+    /// Record the library write revision a scope's walk starts from,
+    /// before it reads its first folder. Kept for the rest of the
+    /// discovery generation: a write after it keeps its track from
+    /// counting as walked past. Restarting the scope's discovery clears it.
+    pub fn begin_scope_walk(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        root_id: &str,
+        relative_path: &str,
+    ) -> Result<(), ScanStoreError> {
+        self.write(stop, Lane::Background, "scan_scope_walk_start", |tx| {
+            tx.execute(
+                "UPDATE library_scan_run_scopes SET walk_revision = COALESCE(walk_revision, \
+                 (SELECT revision FROM library_scan_fences WHERE singleton = 1)) \
+                 WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
+                params![run_id, root_id, relative_path],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn restart_scope_discovery(
         &self,
         stop: &RunStop,
@@ -85,7 +107,7 @@ impl SqliteScanStore {
         self.write(stop, Lane::Background, "scan_scope_restart", |tx| {
             tx.execute(
                 "UPDATE library_scan_run_scopes SET discovery_state = 'pending', error_code = NULL, \
-                 discovery_generation = discovery_generation + 1 \
+                 discovery_generation = discovery_generation + 1, walk_revision = NULL \
                  WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
                 params![run_id, root_id, relative_path],
             )?;
@@ -101,7 +123,8 @@ impl SqliteScanStore {
         self.write(stop, Lane::Background, "scan_discovery_resume", |tx| {
             tx.execute(
                 "UPDATE library_scan_run_scopes SET discovery_state = 'pending', \
-                 error_code = NULL, discovery_generation = discovery_generation + 1 \
+                 error_code = NULL, discovery_generation = discovery_generation + 1, \
+                 walk_revision = NULL \
                  WHERE run_id = ?1 AND discovery_state != 'completed'",
                 params![run_id],
             )?;

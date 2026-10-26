@@ -58,7 +58,7 @@ pub use coordinator::{
     IndexCounts, LibraryScanCoordinator, ResolverSource, ScanEvent, ScanEventPublisher,
     ScanRequestError, SharedResolver,
 };
-pub use fs::{FsCoordinator, ReadGuard, WriteGuard, is_management_artifact};
+pub use fs::is_management_artifact;
 pub use models::{
     Counters, Disposition, EffectivePolicy, RequestedControl, ScanControl, ScanFailureRecord,
     ScanInventoryItem, ScanKind, ScanPhase, ScanRequest, ScanRequestResult, ScanRun, ScanScope,

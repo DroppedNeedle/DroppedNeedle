@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use unicode_normalization::UnicodeNormalization;
 
-use super::fs::FsCoordinator;
 use super::fs::is_management_artifact;
 use super::models::{
     EffectivePolicy, ScanFailureRecord, ScanInventoryItem, ScanPhase, ScanRun, ScanScope,
@@ -270,7 +269,6 @@ fn send_with_stop(
 pub struct InventoryScanner {
     store: Arc<SqliteScanStore>,
     pool: BlockingPool,
-    fs: Option<FsCoordinator>,
     walk_deadline: Duration,
     max_detached_walkers: usize,
     detached: Arc<Mutex<HashMap<u64, Instant>>>,
@@ -290,7 +288,6 @@ impl InventoryScanner {
         Self {
             store,
             pool,
-            fs: None,
             walk_deadline: Duration::from_secs_f64(DEFAULT_WALK_DEADLINE_SECS),
             max_detached_walkers: DEFAULT_MAX_DETACHED_WALKERS,
             detached: Arc::new(Mutex::new(HashMap::new())),
@@ -300,11 +297,6 @@ impl InventoryScanner {
             probe_max_workers: 1,
             clock,
         }
-    }
-
-    pub fn with_filesystem(mut self, fs: FsCoordinator) -> Self {
-        self.fs = Some(fs);
-        self
     }
 
     fn reap_stale_detached_walkers(&self) -> usize {
@@ -607,7 +599,6 @@ impl InventoryScanner {
                 Ok(true) => {}
             }
             let mut restarts = 0u32;
-            let mut superseded_scope = false;
             let (completed, walk_failure_code) = loop {
                 let generation = self.store.scope_discovery_generation(
                     stop,
@@ -615,7 +606,8 @@ impl InventoryScanner {
                     &scope.root_id,
                     &scope.relative_path,
                 )?;
-                let filesystem_revision = self.fs.as_ref().map(|fs| fs.revision(&scope.root_id));
+                self.store
+                    .begin_scope_walk(stop, &run.id, &scope.root_id, &scope.relative_path)?;
                 let (next, completed, code) = self
                     .walk_scope(
                         &current, scope, &root, &selected, resolver, checkpoint, generation, stop,
@@ -651,39 +643,7 @@ impl InventoryScanner {
                         continue;
                     }
                 }
-                if !completed || self.fs.is_none() {
-                    break (completed, code);
-                }
-                let Some(fs) = self.fs.as_ref() else {
-                    break (completed, code);
-                };
-                let _lease = fs.read(&scope.root_id).await;
-                if fs.revision(&scope.root_id) == filesystem_revision.unwrap_or(0) {
-                    // Only a clean, un-degraded walk records
-                    // the fence; a partially-read scope keeps the
-                    // reconciler conservative.
-                    if code.is_none() && !superseded_scope {
-                        fs.record_scan_revision(&run.id, &scope.root_id);
-                    }
-                    break (true, code);
-                }
-                restarts += 1;
-                if restarts >= 3 {
-                    // Sustained concurrent publication would
-                    // otherwise re-walk this scope forever.
-                    tracing::warn!(run_id = %run.id, restarts, "library_scan event=walk_superseded");
-                    superseded_scope = true;
-                    break (true, code);
-                }
-                drop(_lease);
-                self.store.restart_scope_discovery(
-                    stop,
-                    &run.id,
-                    &scope.root_id,
-                    &scope.relative_path,
-                )?;
-                current = self.store.reread_run(stop, &run.id)?.0;
-                self.store.cleanup_stale_inventory(stop, &run.id)?;
+                break (completed, code);
             };
             if !completed {
                 current = self.store.reread_run(stop, &run.id)?.0;
@@ -695,16 +655,7 @@ impl InventoryScanner {
                 }
                 return Ok(current);
             }
-            if superseded_scope {
-                self.store.complete_scope_discovery(
-                    stop,
-                    &run.id,
-                    &scope.root_id,
-                    &scope.relative_path,
-                    ScopeDiscoveryState::PartiallyRead,
-                    Some(failure_codes::WALK_SUPERSEDED),
-                )?;
-            } else if let Some(code) = &walk_failure_code {
+            if let Some(code) = &walk_failure_code {
                 self.store.complete_scope_discovery(
                     stop,
                     &run.id,

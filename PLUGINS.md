@@ -337,8 +337,8 @@ does not reset it, and a write that failed or was undone by itself does not
 count. One file may be at most 6,288,384 bytes (just under 6 MiB, so its
 base64 text fits one 8 MiB message); the helper raises `ValueError` for a
 larger one before sending anything, and the host refuses one sent anyway.
-The write has 8 seconds: it waits for the library to be free (no scan,
-move or other change running) and then fails, and a file not in place by
+The write has 8 seconds: it waits for the library to be free (no move or
+other change running) and then fails, and a file not in place by
 then, or that the server stopped waiting for, is never put there. In rare
 cases a `host request timed out` answer means the file did land; a retry
 then answers that it already exists. After each write the library folder

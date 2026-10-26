@@ -19,7 +19,6 @@ use std::time::Instant;
 
 use droppedneedle_kernel::jobs::CancellationToken;
 
-use super::fs::FsCoordinator;
 use super::models::{
     Counters, Disposition, RequestedControl, ScanControl, ScanFailureRecord, ScanInventoryItem,
     ScanKind, ScanPhase, ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState,
@@ -251,7 +250,6 @@ pub struct LibraryScanCoordinator<T: TagReader> {
     inventory: InventoryScanner,
     tags: Arc<T>,
     pool: BlockingPool,
-    fs: Option<FsCoordinator>,
     resolvers: Arc<dyn ResolverSource>,
     events: Option<ScanEventPublisher>,
     wakeups: Option<WorkWakeups>,
@@ -300,7 +298,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             inventory,
             tags,
             pool,
-            fs: None,
             resolvers,
             events: None,
             wakeups: None,
@@ -310,17 +307,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             last_progress_log: Mutex::new(HashMap::new()),
             drives: Mutex::new(HashMap::new()),
         }
-    }
-
-    pub fn with_filesystem(mut self, fs: FsCoordinator) -> Self {
-        self.inventory = InventoryScanner::new(
-            Arc::clone(&self.store),
-            self.pool.clone(),
-            Arc::clone(&self.clock),
-        )
-        .with_filesystem(fs.clone());
-        self.fs = Some(fs);
-        self
     }
 
     pub fn with_events(mut self, events: ScanEventPublisher) -> Self {
@@ -588,9 +574,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         self.publish(&run, "scan.transition", false);
         if run.terminal_at.is_some() {
             self.flush_terminal();
-            if let Some(fs) = &self.fs {
-                fs.forget_scan(&run.id);
-            }
         }
         // A resumed run, or a stop that freed the worker for a queued
         // run, has work for the supervisor now rather than at its idle
@@ -640,9 +623,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             self.publish(run, "scan.transition", false);
             self.flush_terminal();
             self.log_progress(run, "recovery", true);
-            if let Some(fs) = &self.fs {
-                fs.forget_scan(&run.id);
-            }
         }
         Ok(runs)
     }
@@ -670,18 +650,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .remove(&run.id);
-                // Every terminal state releases its revision entries,
-                // including scanner-created failed.
-                if matches!(
-                    run.state,
-                    ScanState::Completed
-                        | ScanState::Cancelled
-                        | ScanState::SupersededPolicyChanged
-                        | ScanState::Failed
-                ) && let Some(fs) = &self.fs
-                {
-                    fs.forget_scan(&run.id);
-                }
                 return run;
             }
             let new_state = if run.state == ScanState::Pausing {
@@ -716,11 +684,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .remove(&settled.id);
-                    if settled.state == ScanState::Cancelled
-                        && let Some(fs) = &self.fs
-                    {
-                        fs.forget_scan(&settled.id);
-                    }
                     return settled;
                 }
                 Err(ScanStoreError::StaleRevision { .. }) => {
@@ -990,9 +953,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&run.id);
-        if let Some(fs) = &self.fs {
-            fs.forget_scan(&run.id);
-        }
         run
     }
 
@@ -1100,9 +1060,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             Ok(failed) => {
                 self.publish(&failed, "scan.transition", false);
                 self.flush_terminal();
-                if let Some(fs) = &self.fs {
-                    fs.forget_scan(&failed.id);
-                }
                 failed
             }
             Err(error) => {
@@ -1726,9 +1683,6 @@ impl<T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<T> {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .remove(&run.id);
-            if let Some(fs) = &self.fs {
-                fs.forget_scan(&run.id);
-            }
             return false;
         }
         if matches!(run.state, ScanState::Pausing | ScanState::Stopping) {

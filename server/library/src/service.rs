@@ -97,11 +97,6 @@ impl LibrarySetup {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let session = cell.session(&registry);
-            let _guards = if cell.needs_refresh(&session) {
-                self.publish_guards(&registry)
-            } else {
-                Vec::new()
-            };
             cell.refresh_to(session, &self.root_dirs)
                 .map_err(publish_error)?;
         }

@@ -28,8 +28,9 @@ impl SqliteScanStore {
     }
 
     /// The remembered mounts of the root at or under `scope_relative_path`
-    /// that have indexed tracks under them and no file at all under them in
-    /// the run's current inventory, with their indexed track counts.
+    /// that have no file at all under them in the run's current inventory,
+    /// with how many of their indexed tracks the run walked past (only
+    /// mounts where that is more than none).
     pub fn empty_mounts(
         &self,
         stop: &RunStop,
@@ -42,7 +43,7 @@ impl SqliteScanStore {
                (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = m.root_id \
                 AND t.availability = 'indexed' \
                 AND t.relative_path > m.relative_path || '/' \
-                AND t.relative_path < m.relative_path || '0') AS indexed \
+                AND t.relative_path < m.relative_path || '0' AND {}) AS indexed \
              FROM library_scan_mounts m \
              WHERE m.root_id = ?1 AND {} \
              AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i \
@@ -53,6 +54,7 @@ impl SqliteScanStore {
                AND i.relative_path < m.relative_path || '0' \
                AND s.discovery_generation = i.discovery_generation)) \
              WHERE indexed > 0 ORDER BY relative_path",
+            super::commit::walked_past!("?3"),
             super::held_scopes::covers("?2", "m.relative_path"),
         );
         let rows = self.read_long(stop, "scan_empty_mounts", |conn| {

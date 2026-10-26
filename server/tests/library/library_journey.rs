@@ -16418,6 +16418,360 @@ async fn a_deleted_copy_leaves_its_history_with_the_copy_that_stays() {
     assert_eq!(holdings(&db, &old[1])[1], 0);
 }
 
+/// A tag reader that holds the scan's first file read until the test lets
+/// it go, then reads the file as the app does.
+struct HoldFirstRead {
+    armed: std::sync::atomic::AtomicBool,
+    reached: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl droppedneedle_library::scan::TagReader for HoldFirstRead {
+    fn read_tags(
+        &self,
+        path: &Path,
+    ) -> Result<droppedneedle_library::scan::ScannedTags, droppedneedle_library::scan::TagReadError>
+    {
+        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            if let Ok(reached) = self.reached.lock() {
+                let _ = reached.send(());
+            }
+            if let Ok(release) = self.release.lock() {
+                let _ = release.recv_timeout(std::time::Duration::from_secs(60));
+            }
+        }
+        droppedneedle_library::scan::TagReader::read_tags(
+            &droppedneedle_library::adapters::LoftyTagReader,
+            path,
+        )
+    }
+}
+
+/// Scan `music` once, held in its index phase: once the walk is over and
+/// the first file read waits, `during` runs, then the scan finishes. A
+/// new file is planted first so the index phase has a file to read.
+async fn scan_held_while(
+    library: &LibrarySetup,
+    music: &Path,
+    during: impl FnOnce() + Send + 'static,
+) {
+    use droppedneedle_library::scan::{
+        BlockingPool, LibraryScanCoordinator, ScanKind, ScanRequest, ScanTrigger,
+    };
+    plant(music, "zz-new/01.flac", "flac_no_tags.flac");
+    let (reached_tx, reached) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let coordinator = Arc::new(LibraryScanCoordinator::new(
+        library.scan_store.clone(),
+        BlockingPool::new(4),
+        Arc::new(HoldFirstRead {
+            armed: std::sync::atomic::AtomicBool::new(true),
+            reached: std::sync::Mutex::new(reached_tx),
+            release: std::sync::Mutex::new(release_rx),
+        }),
+        library.registry.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ));
+    let registry = library.live_registry();
+    coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: None,
+            policy_revision: registry.policy_revision().to_owned(),
+        })
+        .expect("scan requested");
+    let paths = HashMap::from([("music".to_owned(), music.to_owned())]);
+    let driver = {
+        let coordinator = coordinator.clone();
+        tokio::spawn(async move {
+            while let Some(run) = coordinator.run_once(&paths).await {
+                if run.terminal_at.is_some() {
+                    break;
+                }
+            }
+            coordinator.run_once(&paths).await;
+        })
+    };
+    tokio::task::spawn_blocking(move || {
+        reached
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the scan's first read is reached after its walk");
+        during();
+        release.send(()).expect("released");
+    })
+    .await
+    .expect("the write runs");
+    tokio::time::timeout(std::time::Duration::from_secs(60), driver)
+        .await
+        .expect("the scan finishes")
+        .expect("the scan task");
+}
+
+/// `count` untagged files in `filler/`, scanned, so the scope holds
+/// plenty of tracks the walk sees and the mass-missing guard never holds
+/// it back.
+async fn plant_filler(library: &LibrarySetup, music: &Path, count: usize) {
+    for number in 1..=count {
+        plant(
+            music,
+            &format!("filler/{number:02}.flac"),
+            "flac_no_tags.flac",
+        );
+    }
+    rescan(library).await;
+}
+
+/// An album at rest with a second copy of its second track, both mapped
+/// to the one release track, and plenty of other tracks in the folder.
+/// Returns the library, the album, the original and the copy.
+async fn album_with_a_copy(tag: &str) -> (Scratch, LibrarySetup, PathBuf, String, String, String) {
+    let (scratch, library, music, album, old) = album_at_rest(tag, 3).await;
+    let db = scratch_db(&scratch);
+    scratch
+        .identify
+        .set_recall(fitting_release(&library, &album));
+    while library.identify_tick().await > 0 {}
+    let release_track = placement(&db, &old[1]).1.expect("original mapped");
+    std::fs::copy(
+        music.join("album/02.flac"),
+        music.join("album/02 copy.flac"),
+    )
+    .expect("copied");
+    plant_filler(&library, &music, 20).await;
+    let copy = indexed_at(&library, "album/02 copy.flac");
+    db.execute(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_track_mbid, decision_source, selected_at) VALUES \
+         (?1, 'musicbrainz', 'rec-copy', ?2, 'automatic', 1) \
+         ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+         release_track_mbid = excluded.release_track_mbid",
+        rusqlite::params![copy, release_track],
+    )
+    .expect("both copies mapped");
+    let original = old[1].clone();
+    (scratch, library, music, album, original, copy)
+}
+
+/// Give `track` one play, one favourite and one playlist entry.
+fn give_history(db: &rusqlite::Connection, album: &str, track: &str) {
+    db.execute_batch(&format!(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) VALUES \
+         ('play-{track}', 'listener', '{track}', '{album}', 'Two', 'A', '2026-01-01T00:00:00Z'); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'track', '{track}', 1); \
+         INSERT INTO playlists (id, name, created_at, updated_at) \
+         VALUES ('list-{track}', 'List', '', ''); \
+         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         album_name, album_id, track_source_id, library_file_id, source_type, created_at) \
+         VALUES ('entry-{track}', 'list-{track}', 0, 'Two', 'A', 'B', '{album}', '{track}', \
+         '{track}', 'local', '');"
+    ))
+    .expect("history given");
+}
+
+fn track_aliases(db: &rusqlite::Connection) -> i64 {
+    db.query_row("SELECT COUNT(*) FROM local_track_aliases", [], |row| {
+        row.get(0)
+    })
+    .expect("aliases read")
+}
+
+/// A download imported while a scan sits in its index phase, into a folder
+/// the walk already passed, is never judged gone by that scan: its tracks
+/// stay listed on their own album, and the next scan keeps them.
+#[tokio::test]
+async fn an_import_during_a_scan_is_not_judged_gone() {
+    use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
+
+    let (scratch, library, music, album, _) = album_at_rest("lib-fence-import", 3).await;
+    let db = scratch_db(&scratch);
+    scratch
+        .identify
+        .set_recall(fitting_release(&library, &album));
+    while library.identify_tick().await > 0 {}
+    plant_filler(&library, &music, 20).await;
+    let release = library
+        .identify_store
+        .release(REL_1, None)
+        .unwrap()
+        .expect("release stored");
+    let files: Vec<ImportSource> = [0usize, 1]
+        .iter()
+        .map(|&track| {
+            let source = scratch
+                .to_path_buf()
+                .join(format!("incoming/task/{track}.flac"));
+            std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+            std::fs::copy(fixtures_dir().join("flac_full_02.flac"), &source)
+                .expect("download planted");
+            ImportSource {
+                path: source,
+                track,
+                replaces: Vec::new(),
+            }
+        })
+        .collect();
+    let imported = Arc::new(std::sync::Mutex::new(None));
+    {
+        let (library, imported) = (library.clone(), imported.clone());
+        scan_held_while(&library.clone(), &music, move || {
+            let done = library
+                .import_download(&DownloadImport {
+                    task_id: "task".to_owned(),
+                    origin: ImportOrigin::Download,
+                    staging: None,
+                    release,
+                    files,
+                    extras: Vec::new(),
+                    actor: None,
+                })
+                .expect("imported");
+            *imported.lock().expect("lock") = Some(done);
+        })
+        .await;
+    }
+    let imported = imported.lock().expect("lock").take().expect("import ran");
+    let tracks: Vec<(String, String)> = imported
+        .paths
+        .iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(&music)
+                .expect("under the root")
+                .to_string_lossy()
+                .into_owned();
+            db.query_row(
+                "SELECT id, availability FROM local_tracks \
+                 WHERE root_id = 'music' AND relative_path = ?1",
+                [&relative],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("imported track row")
+        })
+        .collect();
+    for (track, availability) in &tracks {
+        assert_eq!(availability, "indexed", "imported track {track} is listed");
+        assert_eq!(
+            library
+                .scan_store
+                .album_for_track(track)
+                .unwrap()
+                .as_deref(),
+            Some(imported.album_id.as_str()),
+            "imported track {track} keeps its album"
+        );
+    }
+
+    rescan(&library).await;
+    for (track, _) in &tracks {
+        assert_eq!(
+            availability_of(&db, track),
+            "indexed",
+            "{track} after the next scan"
+        );
+        assert_eq!(
+            library
+                .scan_store
+                .album_for_track(track)
+                .unwrap()
+                .as_deref(),
+            Some(imported.album_id.as_str())
+        );
+    }
+}
+
+/// A person's rename of one of two copies of a release track, applied
+/// while a scan sits in its index phase, keeps the track: it is listed at
+/// its new path, keeps its plays, favourite and playlist entry, and no
+/// alias hands it to the other copy.
+#[tokio::test]
+async fn a_rename_during_a_scan_keeps_the_tracks_history() {
+    use droppedneedle_library::publish::planner::PlanKind;
+
+    let (scratch, library, music, album, original, copy) =
+        album_with_a_copy("lib-fence-rename").await;
+    let db = scratch_db(&scratch);
+    give_history(&db, &album, &original);
+    assert_eq!(holdings(&db, &original)[..3], [1, 1, 1]);
+    {
+        let (library, album) = (library.clone(), album.clone());
+        scan_held_while(&library.clone(), &music, move || {
+            publish_one(
+                &library,
+                PlanKind::Move,
+                &album,
+                "album/02.flac",
+                Some("moved/02.flac"),
+                &[],
+            );
+        })
+        .await;
+    }
+
+    let row = old_row(&db, &original);
+    assert_eq!(
+        (row.1.as_str(), row.2.as_str()),
+        ("moved/02.flac", "indexed"),
+        "the renamed track is listed at its new path"
+    );
+    assert_eq!(
+        holdings(&db, &original)[..3],
+        [1, 1, 1],
+        "its history stays"
+    );
+    assert_eq!(holdings(&db, &copy)[..3], [0, 0, 0]);
+    assert_eq!(track_aliases(&db), 0, "nothing hands it to the copy");
+}
+
+/// A removal of one copy of a release track, stopped after its file was
+/// set aside and before its commit, stays open while a scan walks past
+/// the empty path. Put back by recovery before the scan's end, the copy
+/// is not marked missing and keeps its favourite.
+#[tokio::test]
+async fn a_removal_open_across_a_walk_is_not_judged_gone() {
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::publish::CrashPoint;
+
+    let (scratch, library, music, album, original, copy) =
+        album_with_a_copy("lib-fence-removal").await;
+    add_admin(&library);
+    let db = scratch_db(&scratch);
+    give_history(&db, &album, &copy);
+    let home = music.join("album/02 copy.flac");
+
+    library.arm_publish_crash(Some(CrashPoint::BeforeCatalogCommit));
+    let answer = Mutations::new(&library).remove_track_now(&copy, true, "admin");
+    library.arm_publish_crash(None);
+    assert!(answer.is_err(), "the removal stopped before its commit");
+    assert!(!home.exists(), "its file is set aside");
+    {
+        let library = library.clone();
+        let copy = copy.clone();
+        scan_held_while(&library.clone(), &music, move || {
+            // The copy's row changed while the removal waited, so recovery
+            // puts its file back.
+            library
+                .scan_store
+                .db()
+                .run_sql(&format!(
+                    "UPDATE local_tracks SET stat_revision = 'changed' WHERE id = '{copy}'"
+                ))
+                .expect("row changes");
+            library.publish_tick().expect("recovery runs");
+        })
+        .await;
+    }
+
+    assert!(home.exists(), "recovery put the file back");
+    assert_eq!(availability_of(&db, &copy), "indexed", "the copy is listed");
+    assert_eq!(holdings(&db, &copy)[..3], [1, 1, 1], "its history stays");
+    assert_eq!(holdings(&db, &original)[..3], [0, 0, 0]);
+    assert_eq!(track_aliases(&db), 0);
+}
+
 /// A download that brings back a track whose file was deleted maps the
 /// new file in the import itself, and the old track's history is on it
 /// without a scan.

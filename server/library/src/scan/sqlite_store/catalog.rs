@@ -1,5 +1,6 @@
 //! Track catalog: classification, catalog commits, and missing detection.
 
+use super::commit::walked_past;
 use super::*;
 
 /// The `scope_covers_path` rule in SQL for a catalog path column
@@ -13,6 +14,14 @@ const IN_SCOPE: &str = "(?2 = '.' OR relative_path = ?2 \
 /// [`IN_SCOPE`] for a `local_tracks t` alias.
 const IN_SCOPE_T: &str = "(?2 = '.' OR t.relative_path = ?2 \
     OR (t.relative_path > ?2 || '/' AND t.relative_path < ?2 || '0'))";
+
+/// Mark one listed path (`?2` under root `?1`) missing at `?3`, only while
+/// run `?4` still walked past it.
+const MARK_WALKED_PAST_MISSING: &str = concat!(
+    "UPDATE local_tracks AS t SET availability = 'missing', missing_since = ?3 \
+     WHERE t.root_id = ?1 AND t.relative_path = ?2 AND t.availability = 'indexed' AND ",
+    walked_past!("?4")
+);
 
 /// The track catalog: classification against it, commits into it, and
 /// missing detection.
@@ -164,7 +173,8 @@ impl SqliteScanStore {
     /// Mark catalog rows missing (never delete: plays, playlists, and
     /// identities keep pointing at them) and count them on the run, in
     /// chunks: each chunk marks its rows and counts them in one turn.
-    /// Returns rows marked.
+    /// Each row is checked again inside its chunk, so a library write that
+    /// landed after the listing keeps its track. Returns rows marked.
     pub fn mark_missing(
         &self,
         stop: &RunStop,
@@ -179,12 +189,9 @@ impl SqliteScanStore {
         let marked = self.write_chunked(stop, "scan_mark_missing", relative_paths, |chunk, tx| {
             let mut marked = 0usize;
             {
-                let mut stmt = tx.prepare_cached(
-                    "UPDATE local_tracks SET availability = 'missing', missing_since = ?3 \
-                     WHERE root_id = ?1 AND relative_path = ?2 AND availability = 'indexed'",
-                )?;
+                let mut stmt = tx.prepare_cached(MARK_WALKED_PAST_MISSING)?;
                 for path in chunk {
-                    marked += stmt.execute(params![root_id, path, now])?;
+                    marked += stmt.execute(params![root_id, path, now, run_id])?;
                 }
             }
             tx.execute(
@@ -247,17 +254,13 @@ impl SqliteScanStore {
                     &format!(
                         "SELECT \
                          (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-                          AND t.availability = 'indexed' AND {IN_SCOPE_T} AND NOT EXISTS ( \
-                          SELECT 1 FROM library_scan_inventory i \
-                          JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-                          AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-                          WHERE i.run_id = ?3 AND i.root_id = ?1 AND i.relative_path = t.relative_path \
-                          AND s.discovery_generation = i.discovery_generation)), \
+                          AND t.availability = 'indexed' AND {IN_SCOPE_T} AND {WALKED}), \
                          (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
                           AND t.availability = 'indexed' AND {IN_SCOPE_T}) \
                          + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
                           AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
-                          AND i.comparison_result = 'new')"
+                          AND i.comparison_result = 'new')",
+                        WALKED = walked_past!("?3"),
                     ),
                     params![root_id, scope_relative_path, run_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
@@ -307,14 +310,9 @@ impl SqliteScanStore {
         let sql = format!(
             "SELECT t.relative_path, {} FROM local_tracks t \
              WHERE t.root_id = ?1 AND t.availability = 'indexed' AND {IN_SCOPE} \
-             AND NOT EXISTS ( \
-             SELECT 1 FROM library_scan_inventory i \
-             JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-             AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-             WHERE i.run_id = ?3 AND i.root_id = ?1 AND i.relative_path = t.relative_path \
-             AND s.discovery_generation = i.discovery_generation) \
-             ORDER BY t.relative_path",
+             AND {} ORDER BY t.relative_path",
             super::held_scopes::held_back!("?3", "t"),
+            walked_past!("?3"),
         );
         self.read_long(stop, "scan_missing_paths", |conn| {
             let mut stmt = conn.prepare(&sql)?;
