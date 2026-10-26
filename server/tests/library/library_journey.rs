@@ -2125,6 +2125,110 @@ fn control_revision(activity: &Value) -> u64 {
     })
 }
 
+/// A run whose stored state the server does not know answers 500, never a
+/// state it made up.
+#[tokio::test]
+async fn a_run_in_an_unknown_state_is_not_read_as_another() {
+    let app = TestApp::start("lib-unknown-state").await;
+    let auth = app.login_admin().await;
+    // The database's own check is set aside to store a state no release
+    // wrote, as a damaged or foreign file could hold it.
+    app.db()
+        .execute_batch(
+            "PRAGMA ignore_check_constraints = ON;
+             INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope,
+                 queued_at, updated_at, terminal_at) VALUES
+                 ('strange', 'incremental', 'manual', 'resting', 'queued', 'all', 1.0, 1.0, 1.0);",
+        )
+        .expect("row stored");
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v3/library/scan/runs/strange",
+            &[("authorization", auth.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    app.stop().await;
+}
+
+/// A folder added on the settings page is scanned as soon as it is saved,
+/// and the scan covers that folder only.
+#[tokio::test]
+async fn a_folder_added_in_settings_is_scanned_at_once_and_alone() {
+    let app = TestApp::start("lib-settings-folder").await;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let first = app.config.root_app_dir.join("first");
+    plant(&first, "a/01.flac", "management_full.flac");
+    app.add_library_folder("first", &first).await;
+    let second = app.config.root_app_dir.join("second");
+    plant(&second, "b/01.flac", "management_full.flac");
+    let runs = || async {
+        let (status, body) = app
+            .call("GET", "/api/v3/library/scan/runs", &headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ids = |list: &str| -> Vec<String> {
+            body[list]
+                .as_array()
+                .expect("runs")
+                .iter()
+                .map(|run| run["id"].as_str().expect("id").to_owned())
+                .collect()
+        };
+        [ids("current"), ids("history")].concat()
+    };
+    let before = runs().await;
+
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/settings/library/paths",
+            &headers,
+            Some(json!({"path": second.to_string_lossy()})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let root = body["library_roots"]
+        .as_array()
+        .expect("roots")
+        .iter()
+        .find(|root| root["path"] == json!(second.to_string_lossy()))
+        .unwrap_or_else(|| panic!("the new folder is saved: {body}"))["id"]
+        .as_str()
+        .expect("root id")
+        .to_owned();
+    // The scan is asked for before the route answers.
+    let new: Vec<String> = runs()
+        .await
+        .into_iter()
+        .filter(|run| !before.contains(run))
+        .collect();
+    assert_eq!(new.len(), 1, "one scan for the new folder: {new:?}");
+    app.scan_ended(&new[0]).await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/scan/runs/{}", new[0]),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let scopes = body["scopes"].as_array().expect("scopes");
+    assert_eq!(scopes.len(), 1, "{body}");
+    assert_eq!(scopes[0]["root_id"], json!(root), "{body}");
+    let after: Vec<String> = runs()
+        .await
+        .into_iter()
+        .filter(|run| !before.contains(run))
+        .collect();
+    assert_eq!(after, new, "no other scan followed");
+    app.stop().await;
+}
+
 /// A library test's scratch folder, the MusicBrainz answers its library
 /// identifies with, and the outside sources Library Management plans with
 /// (none unless the test scripts them). Derefs to the folder.

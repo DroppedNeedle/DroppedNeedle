@@ -39,7 +39,7 @@ impl LibrarySetup {
             match self.coordinator.snapshot(&run.id) {
                 Ok((fresh, _, counters)) => (fresh, counters),
                 Err(_) => {
-                    let counters = run.counters.clone();
+                    let counters = run.counters;
                     (run, counters)
                 }
             }

@@ -600,6 +600,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("src/bootstrap/mod.rs", 1, BOOT_STEP),
     ("src/bootstrap/platform.rs", 1, BOOT_STEP),
     ("src/bootstrap/serve.rs", 1, HTTP_SERVER),
+    ("src/settings/effects.rs", 1, LOOP_STEP),
     ("src/settings/library_policy_service.rs", 1, REQUEST),
     ("src/settings/services.rs", 3, REQUEST),
     ("src/settings/wiring.rs", 2, REQUEST),

@@ -40773,6 +40773,80 @@
           }
         }
       },
+      "Counters": {
+        "type": "object",
+        "description": "A run's counters, one per column of the runs table.",
+        "required": [
+          "total_count",
+          "discovered_count",
+          "inspected_count",
+          "new_count",
+          "changed_count",
+          "indexed_count",
+          "unchanged_count",
+          "excluded_count",
+          "missing_count",
+          "errored_count",
+          "identification_enqueued_count"
+        ],
+        "properties": {
+          "changed_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files changed since the last scan."
+          },
+          "discovered_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files the walk found."
+          },
+          "errored_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files that could not be read or written."
+          },
+          "excluded_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files a policy leaves out."
+          },
+          "identification_enqueued_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums offered for identification."
+          },
+          "indexed_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files written to the catalog."
+          },
+          "inspected_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files the index phase looked at."
+          },
+          "missing_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Catalog files the walk no longer found."
+          },
+          "new_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files new to the catalog."
+          },
+          "total_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files the run will look at."
+          },
+          "unchanged_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files unchanged since the last scan."
+          }
+        }
+      },
       "CoverUploadBody": {
         "type": "object",
         "description": "Cover-upload body. Base64 JSON instead of multipart: the app has no\nmultipart feature and the frontend regenerates against this contract.",
@@ -44958,6 +45032,45 @@
             "default": 30
           }
         }
+      },
+      "FailureCode": {
+        "type": "string",
+        "description": "Why a scan skipped or failed a path, or why a run ended early. The\n`WALK_E*` codes name the operating system's error for a folder the scan\ncould not read.",
+        "enum": [
+          "ROOT_UNAVAILABLE",
+          "ROOT_PERMISSION_DENIED",
+          "WALK_TIMEOUT",
+          "WALKER_UNAVAILABLE",
+          "PROBE_UNAVAILABLE",
+          "WALK_SUPERSEDED",
+          "WALK_ERROR",
+          "WALK_EPERM",
+          "WALK_ENOENT",
+          "WALK_EIO",
+          "WALK_EACCES",
+          "WALK_ENOTDIR",
+          "WALK_EISDIR",
+          "WALK_EINVAL",
+          "WALK_ENFILE",
+          "WALK_EMFILE",
+          "WALK_ENOSPC",
+          "WALK_EROFS",
+          "WALK_ENAMETOOLONG",
+          "WALK_ELOOP",
+          "WALK_EUNKNOWN",
+          "SYMLINK_ESCAPE_OUT",
+          "NON_REGULAR_FILE",
+          "WALK_NAME_ENCODING",
+          "NFC_TWIN_COLLISION",
+          "TAG_READ_DEFERRED",
+          "TAG_READ_FAILED",
+          "MTIME_SKEW",
+          "SUPERSEDED_POLICY_CHANGED",
+          "UNEXPECTED_WORKER_FAILURE",
+          "MASS_MISSING_GUARD",
+          "CATALOG_COMMIT_FAILED",
+          "RUN_END_PENDING"
+        ]
       },
       "FavoriteCounts": {
         "type": "object",
@@ -60870,7 +60983,7 @@
       },
       "ScanPhase": {
         "type": "string",
-        "description": "Worker phase. Spelling matches v2 `ScanPhase` exactly.",
+        "description": "A run's phase as the API reports it and the runs table stores it:\n`queued` before the run starts, then the phase it is in or reached.",
         "enum": [
           "queued",
           "discovering",
@@ -60950,7 +61063,7 @@
             "description": "What to do about it."
           },
           "failure_code": {
-            "type": "string",
+            "$ref": "#/components/schemas/FailureCode",
             "description": "Stable machine code, for example `TAG_READ_FAILED`."
           },
           "failure_detail": {
@@ -61125,15 +61238,8 @@
             "description": "Requests folded into this run."
           },
           "counters": {
-            "type": "object",
-            "description": "Progress counters.",
-            "additionalProperties": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
+            "$ref": "#/components/schemas/Counters",
+            "description": "Progress counters."
           },
           "event_revision": {
             "type": "integer",
@@ -61225,11 +61331,15 @@
             "description": "Terminal time, when terminal."
           },
           "terminal_code": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Terminal code, when terminal."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FailureCode",
+                "description": "Terminal code, when terminal."
+              }
+            ]
           },
           "terminal_message": {
             "type": [
@@ -61298,7 +61408,7 @@
       },
       "ScanState": {
         "type": "string",
-        "description": "Durable run state. Spelling matches v2 `ScanState` exactly.",
+        "description": "A run's state, as the API reports it and the runs table stores it.",
         "enum": [
           "queued",
           "discovering",

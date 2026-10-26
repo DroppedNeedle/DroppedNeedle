@@ -20,7 +20,6 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 };
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, FilesystemWatcher, LibraryManagement, LibraryScanSchedule, MusicBrainzSettings,
-    ScanFrequency,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, UpdateError};
@@ -203,27 +202,11 @@ pub fn inclusion_rules(registry: &RootRegistry) -> Vec<InclusionRule> {
         .collect()
 }
 
-fn frequency(value: ScanFrequency) -> &'static str {
-    match value {
-        ScanFrequency::Manual => "manual",
-        ScanFrequency::Min5 => "5min",
-        ScanFrequency::Min10 => "10min",
-        ScanFrequency::Min30 => "30min",
-        ScanFrequency::Hr1 => "1hr",
-        ScanFrequency::Hr6 => "6hr",
-        ScanFrequency::Hr12 => "12hr",
-        ScanFrequency::Hr24 => "24hr",
-        ScanFrequency::Days3 => "3d",
-        ScanFrequency::Days7 => "7d",
-        ScanFrequency::Daily => "daily",
-    }
-}
-
 /// Automatic-scan schedule. An unreadable section schedules nothing.
 pub fn schedule(settings: &Live<LibraryScanSchedule>) -> ScheduleSettings {
     match settings.get() {
         Ok(stored) => ScheduleSettings::new(
-            frequency(stored.scan_frequency),
+            stored.scan_frequency,
             &stored.daily_scan_time,
             SCHEDULE_TIMEZONE,
         ),

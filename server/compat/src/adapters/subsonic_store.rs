@@ -30,7 +30,7 @@ use droppedneedle_catalog::reads::library::player::{
 };
 use droppedneedle_catalog::reads::library::stores::ArtistRecord;
 use droppedneedle_kernel::runtime_config::Crypto;
-use droppedneedle_library::scan::counter_names;
+use droppedneedle_library::scan::Counter;
 use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
 use droppedneedle_library::wiring::LibrarySetup;
 
@@ -1027,7 +1027,7 @@ impl Store for SubsonicStore {
         let count = if scanning {
             current
                 .iter()
-                .filter_map(|run| run.counters.get(counter_names::INSPECTED))
+                .map(|run| run.counters.get(Counter::Inspected))
                 .sum()
         } else {
             tracks

@@ -12247,6 +12247,64 @@ export interface components {
             field: string;
             message: string;
         };
+        /** @description A run's counters, one per column of the runs table. */
+        Counters: {
+            /**
+             * Format: int64
+             * @description Files changed since the last scan.
+             */
+            changed_count: number;
+            /**
+             * Format: int64
+             * @description Files the walk found.
+             */
+            discovered_count: number;
+            /**
+             * Format: int64
+             * @description Files that could not be read or written.
+             */
+            errored_count: number;
+            /**
+             * Format: int64
+             * @description Files a policy leaves out.
+             */
+            excluded_count: number;
+            /**
+             * Format: int64
+             * @description Albums offered for identification.
+             */
+            identification_enqueued_count: number;
+            /**
+             * Format: int64
+             * @description Files written to the catalog.
+             */
+            indexed_count: number;
+            /**
+             * Format: int64
+             * @description Files the index phase looked at.
+             */
+            inspected_count: number;
+            /**
+             * Format: int64
+             * @description Catalog files the walk no longer found.
+             */
+            missing_count: number;
+            /**
+             * Format: int64
+             * @description Files new to the catalog.
+             */
+            new_count: number;
+            /**
+             * Format: int64
+             * @description Files the run will look at.
+             */
+            total_count: number;
+            /**
+             * Format: int64
+             * @description Files unchanged since the last scan.
+             */
+            unchanged_count: number;
+        };
         /**
          * @description Cover-upload body. Base64 JSON instead of multipart: the app has no
          *     multipart feature and the frontend regenerates against this contract.
@@ -14083,6 +14141,13 @@ export interface components {
              */
             retry_delay_seconds: number;
         };
+        /**
+         * @description Why a scan skipped or failed a path, or why a run ended early. The
+         *     `WALK_E*` codes name the operating system's error for a folder the scan
+         *     could not read.
+         * @enum {string}
+         */
+        FailureCode: "ROOT_UNAVAILABLE" | "ROOT_PERMISSION_DENIED" | "WALK_TIMEOUT" | "WALKER_UNAVAILABLE" | "PROBE_UNAVAILABLE" | "WALK_SUPERSEDED" | "WALK_ERROR" | "WALK_EPERM" | "WALK_ENOENT" | "WALK_EIO" | "WALK_EACCES" | "WALK_ENOTDIR" | "WALK_EISDIR" | "WALK_EINVAL" | "WALK_ENFILE" | "WALK_EMFILE" | "WALK_ENOSPC" | "WALK_EROFS" | "WALK_ENAMETOOLONG" | "WALK_ELOOP" | "WALK_EUNKNOWN" | "SYMLINK_ESCAPE_OUT" | "NON_REGULAR_FILE" | "WALK_NAME_ENCODING" | "NFC_TWIN_COLLISION" | "TAG_READ_DEFERRED" | "TAG_READ_FAILED" | "MTIME_SKEW" | "SUPERSEDED_POLICY_CHANGED" | "UNEXPECTED_WORKER_FAILURE" | "MASS_MISSING_GUARD" | "CATALOG_COMMIT_FAILED" | "RUN_END_PENDING";
         /** @description Per-kind counts. */
         FavoriteCounts: {
             /** @description Favorited albums. */
@@ -21235,7 +21300,8 @@ export interface components {
          */
         ScanKindBody: "incremental" | "rescan_files" | "policy_reconcile";
         /**
-         * @description Worker phase. Spelling matches v2 `ScanPhase` exactly.
+         * @description A run's phase as the API reports it and the runs table stores it:
+         *     `queued` before the run starts, then the phase it is in or reached.
          * @enum {string}
          */
         ScanPhase: "queued" | "discovering" | "indexing" | "reconciling";
@@ -21261,7 +21327,7 @@ export interface components {
             /** @description What to do about it. */
             action: string;
             /** @description Stable machine code, for example `TAG_READ_FAILED`. */
-            failure_code: string;
+            failure_code: components["schemas"]["FailureCode"];
             /** @description Technical detail for diagnostics; not meant for display. */
             failure_detail: string;
             /** @description What happened, in plain words. */
@@ -21329,9 +21395,7 @@ export interface components {
              */
             coalesced_request_count: number;
             /** @description Progress counters. */
-            counters: {
-                [key: string]: number;
-            };
+            counters: components["schemas"]["Counters"];
             /**
              * Format: int64
              * @description Event revision.
@@ -21376,8 +21440,7 @@ export interface components {
              * @description Terminal time, when terminal.
              */
             terminal_at?: number | null;
-            /** @description Terminal code, when terminal. */
-            terminal_code?: string | null;
+            terminal_code?: null | components["schemas"]["FailureCode"];
             /** @description What the terminal code means, in plain words. */
             terminal_message?: string | null;
             /** @description What triggered the run. */
@@ -21405,7 +21468,7 @@ export interface components {
             root_id: string;
         };
         /**
-         * @description Durable run state. Spelling matches v2 `ScanState` exactly.
+         * @description A run's state, as the API reports it and the runs table stores it.
          * @enum {string}
          */
         ScanState: "queued" | "discovering" | "indexing" | "reconciling" | "pausing" | "paused" | "stopping" | "completed" | "cancelled" | "superseded_policy_changed" | "failed";

@@ -1,6 +1,7 @@
 //! Scan runs: requests, claims, transitions, control, counters, recovery.
 
 use super::*;
+use crate::scan::models::transition;
 use crate::scan::sql;
 use droppedneedle_kernel::db::statement::Statement;
 
@@ -50,7 +51,7 @@ impl SqliteScanStore {
             let mut runs = current_runs(conn)?;
             let owing = conn
                 .prepare(sql::RUNS_OWING_END_PASSES.text())?
-                .query_map(params![failure_codes::RUN_END_PENDING], map_run)?
+                .query_map(params![FailureCode::RunEndPending], map_run)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             runs.extend(owing);
             Ok(runs)
@@ -99,18 +100,19 @@ impl SqliteScanStore {
 
     pub fn claim_next(&self, stop: &RunStop, now: f64) -> Result<Option<ScanRun>, ScanStoreError> {
         self.write(stop, Lane::Background, "scan_claim_next", |tx| {
-            Ok(claim_next_inner(tx, now)?)
+            claim_next_inner(tx, now)
         })
     }
 
+    /// The started run the worker should take up again: one it was working
+    /// on, or one whose pause or stop has yet to take effect.
     pub fn resumable(&self, stop: &RunStop) -> Result<Option<ScanRun>, ScanStoreError> {
         self.read_long(stop, "scan_resumable", |conn| {
             Ok(conn
                 .query_row(
                     &format!(
                         "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-                         WHERE state IN ('discovering','indexing','reconciling') \
-                         AND requested_control = 'none' \
+                         WHERE state IN ('discovering','indexing','reconciling','pausing','stopping') \
                          ORDER BY started_at, id LIMIT 1"
                     ),
                     [],
@@ -120,40 +122,47 @@ impl SqliteScanStore {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Move a run by `event`, if it still has row revision
+    /// `expected_revision`. A worker write: it waits out a busy database.
     pub fn transition(
         &self,
         stop: &RunStop,
         run_id: &str,
-        expected_state: ScanState,
         expected_revision: u64,
-        new_state: ScanState,
+        event: Event,
         now: f64,
-        terminal_code: Option<&str>,
+        terminal_code: Option<FailureCode>,
     ) -> Result<ScanRun, ScanStoreError> {
         self.write(stop, Lane::Background, "scan_transition", |tx| {
-            transition_inner(
+            apply_event(
                 tx,
                 run_id,
-                expected_state,
-                expected_revision,
-                new_state,
+                Some(expected_revision),
+                event,
                 now,
                 terminal_code,
             )
         })
     }
 
+    /// A pause, resume or stop asked for through the API. One that already
+    /// took effect answers the run as it is; otherwise the run must still
+    /// have row revision `expected_revision`. Returns the run and the scan
+    /// stream revision.
     pub fn request_control(
         &self,
         run_id: &str,
-        control: ScanControl,
-        resume: bool,
+        event: Event,
         expected_revision: u64,
         now: f64,
     ) -> Result<(ScanRun, u64), ScanStoreError> {
         self.write_once(Lane::Foreground, "scan_control", |tx| {
-            request_control_inner(tx, run_id, control, resume, expected_revision, now)
+            let run = load_run(tx, run_id)?.ok_or_else(|| not_found(run_id))?;
+            if !already_done(run.state, event) {
+                apply_event(tx, run_id, Some(expected_revision), event, now, None)?;
+            }
+            let run = load_run(tx, run_id)?.ok_or_else(|| not_found(run_id))?;
+            Ok((run, read_scan_stream(tx)?))
         })
     }
 
@@ -179,7 +188,7 @@ impl SqliteScanStore {
                     failure.relative_path,
                     failure.failure_code,
                     failure.failure_detail,
-                    phase_to_str(failure.phase),
+                    failure.phase.as_str(),
                     failure.recorded_at,
                 ])?;
             }
@@ -191,7 +200,7 @@ impl SqliteScanStore {
         self.read("scan_failures", |conn| {
             let mut stmt = conn.prepare(sql::RUN_FAILURES.text())?;
             let rows = stmt
-                .query_map(params![run_id, failure_codes::RUN_END_PENDING], map_failure)?
+                .query_map(params![run_id, FailureCode::RunEndPending], map_failure)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -216,7 +225,7 @@ impl SqliteScanStore {
                         run_id,
                         after,
                         (limit + 1) as i64,
-                        failure_codes::RUN_END_PENDING
+                        FailureCode::RunEndPending
                     ],
                     |row| Ok((row.get::<_, i64>("rowid")?, map_failure(row)?)),
                 )?
@@ -253,47 +262,32 @@ impl SqliteScanStore {
         self.lock().catalog_cache.clear();
     }
 
+    /// Boot recovery: every pause or stop asked for before the restart
+    /// takes effect, then the runs still to drive are listed.
     pub fn recover(&self, stop: &RunStop, now: f64) -> Result<Vec<ScanRun>, ScanStoreError> {
         self.write(stop, Lane::Background, "scan_recover", |tx| {
-            cancel_stopping(tx, now)?;
-            tx.execute(
-                "UPDATE library_scan_runs SET state = 'paused', requested_control = 'none', \
-                 updated_at = ?1, row_revision = row_revision + 1, \
-                 event_revision = event_revision + 1 \
-                 WHERE state = 'pausing' OR requested_control = 'pause'",
-                params![now],
-            )?;
-            let runs: Vec<ScanRun> = {
-                let mut stmt = tx.prepare(&format!(
-                    "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-                     WHERE state IN ('queued','discovering','indexing','reconciling','paused') \
-                     ORDER BY queued_at, id"
-                ))?;
-                stmt.query_map([], map_run)?
-                    .collect::<rusqlite::Result<Vec<_>>>()?
-            };
-            if !runs.is_empty() {
-                bump_scan_stream(tx)?;
-            }
+            settle_all(tx, "state IN ('pausing','stopping')", now)?;
+            let mut stmt = tx.prepare(&format!(
+                "SELECT {RUN_COLUMNS} FROM library_scan_runs \
+                 WHERE state IN ('queued','discovering','indexing','reconciling','paused') \
+                 ORDER BY queued_at, id"
+            ))?;
+            let runs = stmt
+                .query_map([], map_run)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(runs)
         })
     }
 
+    /// Boot recovery while the library is off: every stop asked for before
+    /// the restart takes effect. Returns the runs it ended.
     pub fn recover_stopping(
         &self,
         stop: &RunStop,
         now: f64,
     ) -> Result<Vec<ScanRun>, ScanStoreError> {
         self.write(stop, Lane::Background, "scan_recover_stopping", |tx| {
-            cancel_stopping(tx, now)?;
-            let mut stmt = tx.prepare(&format!(
-                "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-                 WHERE state = 'cancelled' AND terminal_at = ?1 ORDER BY id"
-            ))?;
-            let runs = stmt
-                .query_map(params![now], map_run)?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(runs)
+            settle_all(tx, "state = 'stopping'", now)
         })
     }
 
@@ -311,7 +305,7 @@ impl SqliteScanStore {
         let owed: Vec<(String, String, f64)> = self.read_long(stop, "scan_end_owed", |conn| {
             let rows = conn
                 .prepare(sql::OWED_END_PASSES.text())?
-                .query_map(params![failure_codes::RUN_END_PENDING], |row| {
+                .query_map(params![FailureCode::RunEndPending], |row| {
                     Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -328,11 +322,11 @@ impl SqliteScanStore {
                     match following {
                         Some(name) => tx.execute(
                             sql::NEXT_END_PASS.text(),
-                            params![run_id, name, failure_codes::RUN_END_PENDING],
+                            params![run_id, name, FailureCode::RunEndPending],
                         )?,
                         None => tx.execute(
                             sql::END_PASSES_DONE.text(),
-                            params![run_id, failure_codes::RUN_END_PENDING],
+                            params![run_id, FailureCode::RunEndPending],
                         )?,
                     };
                     Ok(())
@@ -340,10 +334,8 @@ impl SqliteScanStore {
                 let ran = match &pass.work {
                     EndWork::Whole(run) => self.write(stop, Lane::Background, pass.name, |tx| {
                         let enqueued = run(tx, &run_id, ended_at)?;
-                        if enqueued > 0
-                            && let Some(column) =
-                                counter_column(counter_names::IDENTIFICATION_ENQUEUED)
-                        {
+                        if enqueued > 0 {
+                            let column = Counter::IdentificationEnqueued.column();
                             tx.execute(
                                 &format!(
                                     "UPDATE library_scan_runs SET {column} = {column} + ?1 \
@@ -414,7 +406,7 @@ impl SqliteScanStore {
                 Ok(conn
                     .query_row(
                         sql::CLEANUP_TARGET.text(),
-                        params![failure_codes::RUN_END_PENDING],
+                        params![FailureCode::RunEndPending],
                         |row| row.get(0),
                     )
                     .optional()?)
@@ -506,7 +498,7 @@ fn run_with_scopes(
         run_id: run_id.to_owned(),
     })?;
     let scopes = load_scopes(conn, run_id)?;
-    let counters = run.counters.clone();
+    let counters = run.counters;
     Ok((run, scopes, counters))
 }
 
@@ -585,203 +577,113 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// End every run that was stopping, or was asked to stop, as cancelled.
-/// A run cancelled while it was waiting keeps its stop request and has
-/// ended already: it is left as it is.
-fn cancel_stopping(tx: &rusqlite::Transaction<'_>, now: f64) -> rusqlite::Result<()> {
-    const STOPPING: &str =
-        "(state = 'stopping' OR requested_control = 'stop') AND terminal_at IS NULL";
-    let stopping: Vec<String> = tx
+fn not_found(run_id: &str) -> ScanStoreError {
+    ScanStoreError::NotFound {
+        run_id: run_id.to_owned(),
+    }
+}
+
+/// True when `event` asks for what the run already did or is doing, so a
+/// repeated request answers the run as it is.
+fn already_done(state: RunState, event: Event) -> bool {
+    use super::super::models::Outcome;
+    match event {
+        Event::Pause => matches!(state, RunState::Pausing(_) | RunState::Paused(_)),
+        Event::Resume => matches!(state, RunState::Running(_)),
+        Event::Stop => matches!(
+            state,
+            RunState::Stopping(_)
+                | RunState::Ended {
+                    outcome: Outcome::Cancelled,
+                    ..
+                }
+        ),
+        _ => false,
+    }
+}
+
+/// Settle every run `filter` selects, each by its own transition. Returns
+/// the settled runs.
+fn settle_all(
+    tx: &Transaction<'_>,
+    filter: &str,
+    now: f64,
+) -> Result<Vec<ScanRun>, ScanStoreError> {
+    let ids: Vec<String> = tx
         .prepare(&format!(
-            "SELECT id FROM library_scan_runs WHERE {STOPPING}"
+            "SELECT id FROM library_scan_runs WHERE {filter} ORDER BY queued_at, id"
         ))?
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
+    ids.iter()
+        .map(|run_id| apply_event(tx, run_id, None, Event::Settle, now, None))
+        .collect()
+}
+
+/// Move run `run_id` by `event` and write the state it reaches, in the
+/// caller's transaction: the one place a run's state changes. With an
+/// `expected_revision`, a run that moved on since is refused. A run that
+/// ends takes `terminal_code` and owes its end passes. Each phase's time is
+/// added up as the run leaves it.
+fn apply_event(
+    tx: &Transaction<'_>,
+    run_id: &str,
+    expected_revision: Option<u64>,
+    event: Event,
+    now: f64,
+    terminal_code: Option<FailureCode>,
+) -> Result<ScanRun, ScanStoreError> {
+    let run = load_run(tx, run_id)?.ok_or_else(|| not_found(run_id))?;
+    if expected_revision.is_some_and(|expected| expected != run.row_revision) {
+        return Err(ScanStoreError::StaleRevision {
+            message: "The scan run changed before the change was applied.".to_owned(),
+        });
+    }
+    let next = transition(run.state, event).map_err(|refused| ScanStoreError::InvalidControl {
+        message: match refused.event {
+            Event::Pause => "This scan cannot be paused in its current state.",
+            Event::Resume => "Only a paused scan can be resumed.",
+            Event::Stop => "This scan cannot be stopped in its current state.",
+            _ => "The scan run cannot make that change in its current state.",
+        }
+        .to_owned(),
+    })?;
+    let mut timings = run.phase_timings.clone();
+    let mut phase_started_at: Option<f64> =
+        tx.query_row(sql::PHASE_STARTED_AT.text(), params![run_id], |row| {
+            row.get(0)
+        })?;
+    if run.state.timed() != next.timed() {
+        if let (Some(phase), Some(started)) = (run.state.timed(), phase_started_at) {
+            *timings.entry(phase).or_default() += (now - started).max(0.0);
+        }
+        phase_started_at = next.timed().map(|_| now);
+    }
+    let timings = serde_json::to_string(&timings).map_err(|error| ScanStoreError::Internal {
+        message: format!("scan phase timings not written: {error}"),
+    })?;
+    let ended = next.is_ended();
     tx.execute(
-        &format!(
-            "UPDATE library_scan_runs SET state = 'cancelled', terminal_at = ?1, \
-             updated_at = ?1, requested_control = 'none', \
-             row_revision = row_revision + 1, event_revision = event_revision + 1 \
-             WHERE {STOPPING}"
-        ),
-        params![now],
+        sql::WRITE_RUN_STATE.text(),
+        params![
+            run_id,
+            next.scan_state().as_str(),
+            next.phase().as_str(),
+            next.resume_phase().map(ScanPhase::as_str),
+            next.requested_control().as_str(),
+            (event == Event::Claim).then_some(now),
+            ended.then_some(now),
+            terminal_code.filter(|_| ended).map(FailureCode::as_str),
+            phase_started_at,
+            timings,
+            now,
+        ],
     )?;
-    for run_id in &stopping {
+    if ended {
         super::commit::owe_end_passes(tx, run_id, now)?;
     }
-    Ok(())
-}
-
-fn transition_inner(
-    conn: &rusqlite::Transaction<'_>,
-    run_id: &str,
-    expected_state: ScanState,
-    expected_revision: u64,
-    new_state: ScanState,
-    now: f64,
-    terminal_code: Option<&str>,
-) -> Result<ScanRun, ScanStoreError> {
-    let current = load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
-        run_id: run_id.to_owned(),
-    })?;
-    if current.state != expected_state || current.row_revision != expected_revision {
-        return Err(ScanStoreError::StaleRevision {
-            message: "The scan run changed before the transition was applied.".to_owned(),
-        });
-    }
-    let phase = match new_state {
-        ScanState::Discovering => Some(ScanPhase::Discovering),
-        ScanState::Indexing => Some(ScanPhase::Indexing),
-        ScanState::Reconciling => Some(ScanPhase::Reconciling),
-        _ => None,
-    };
-    if new_state.is_terminal() {
-        conn.execute(
-            "UPDATE library_scan_runs SET state = ?1, terminal_at = ?2, terminal_code = ?3, \
-             updated_at = ?2, row_revision = row_revision + 1, \
-             event_revision = event_revision + 1 WHERE id = ?4",
-            params![state_to_str(new_state), now, terminal_code, run_id],
-        )?;
-        super::commit::owe_end_passes(conn, run_id, now)?;
-    } else {
-        conn.execute(
-            "UPDATE library_scan_runs SET state = ?1, updated_at = ?2, \
-             row_revision = row_revision + 1, event_revision = event_revision + 1 WHERE id = ?3",
-            params![state_to_str(new_state), now, run_id],
-        )?;
-    }
-    if let Some(phase) = phase {
-        conn.execute(
-            "UPDATE library_scan_runs SET phase = ?1 WHERE id = ?2",
-            params![phase_to_str(phase), run_id],
-        )?;
-    }
-    bump_scan_stream(conn)?;
-    load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
-        run_id: run_id.to_owned(),
-    })
-}
-
-fn request_control_inner(
-    conn: &rusqlite::Transaction<'_>,
-    run_id: &str,
-    control: ScanControl,
-    resume: bool,
-    expected_revision: u64,
-    now: f64,
-) -> Result<(ScanRun, u64), ScanStoreError> {
-    let snapshot = load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
-        run_id: run_id.to_owned(),
-    })?;
-    let run_state = snapshot.state;
-    let current_stream = read_scan_stream(conn)?;
-    if !resume
-        && control == ScanControl::Pause
-        && matches!(run_state, ScanState::Pausing | ScanState::Paused)
-    {
-        return Ok((snapshot, current_stream));
-    }
-    if !resume
-        && control == ScanControl::Stop
-        && matches!(run_state, ScanState::Stopping | ScanState::Cancelled)
-    {
-        return Ok((snapshot, current_stream));
-    }
-    if resume
-        && matches!(
-            run_state,
-            ScanState::Discovering | ScanState::Indexing | ScanState::Reconciling
-        )
-        && snapshot.requested_control == RequestedControl::None
-    {
-        return Ok((snapshot, current_stream));
-    }
-    if snapshot.row_revision != expected_revision {
-        return Err(ScanStoreError::StaleRevision {
-            message: "The scan run changed before the control was applied.".to_owned(),
-        });
-    }
-    if resume {
-        let Some(resume_phase) = snapshot.resume_phase else {
-            return Err(ScanStoreError::InvalidControl {
-                message: "Only a paused scan can be resumed.".to_owned(),
-            });
-        };
-        if run_state != ScanState::Paused {
-            return Err(ScanStoreError::InvalidControl {
-                message: "Only a paused scan can be resumed.".to_owned(),
-            });
-        }
-        let state = match resume_phase {
-            ScanPhase::Discovering => ScanState::Discovering,
-            ScanPhase::Indexing => ScanState::Indexing,
-            ScanPhase::Reconciling => ScanState::Reconciling,
-            ScanPhase::Queued => ScanState::Queued,
-        };
-        conn.execute(
-            "UPDATE library_scan_runs SET state = ?1, requested_control = 'none', \
-             resume_phase = NULL, updated_at = ?2, row_revision = row_revision + 1, \
-             event_revision = event_revision + 1 WHERE id = ?3",
-            params![state_to_str(state), now, run_id],
-        )?;
-    } else if control == ScanControl::Pause {
-        if !matches!(
-            run_state,
-            ScanState::Discovering | ScanState::Indexing | ScanState::Reconciling
-        ) {
-            return Err(ScanStoreError::InvalidControl {
-                message: "This scan cannot be paused in its current state.".to_owned(),
-            });
-        }
-        conn.execute(
-            "UPDATE library_scan_runs SET state = 'pausing', requested_control = 'pause', \
-             resume_phase = phase, updated_at = ?1, row_revision = row_revision + 1, \
-             event_revision = event_revision + 1 WHERE id = ?2",
-            params![now, run_id],
-        )?;
-    } else if run_state == ScanState::Paused {
-        conn.execute(
-            "UPDATE library_scan_runs SET state = 'cancelled', requested_control = 'none', \
-             terminal_at = ?1, updated_at = ?1, row_revision = row_revision + 1, \
-             event_revision = event_revision + 1 WHERE id = ?2",
-            params![now, run_id],
-        )?;
-        super::commit::owe_end_passes(conn, run_id, now)?;
-    } else if matches!(
-        run_state,
-        ScanState::Queued
-            | ScanState::Discovering
-            | ScanState::Indexing
-            | ScanState::Reconciling
-            | ScanState::Pausing
-    ) {
-        if run_state == ScanState::Queued {
-            conn.execute(
-                "UPDATE library_scan_runs SET state = 'cancelled', requested_control = 'stop', \
-                 terminal_at = ?1, updated_at = ?1, row_revision = row_revision + 1, \
-                 event_revision = event_revision + 1 WHERE id = ?2",
-                params![now, run_id],
-            )?;
-            super::commit::owe_end_passes(conn, run_id, now)?;
-        } else {
-            conn.execute(
-                "UPDATE library_scan_runs SET state = 'stopping', requested_control = 'stop', \
-                 updated_at = ?1, row_revision = row_revision + 1, \
-                 event_revision = event_revision + 1 WHERE id = ?2",
-                params![now, run_id],
-            )?;
-        }
-    } else {
-        return Err(ScanStoreError::InvalidControl {
-            message: "This scan cannot be stopped in its current state.".to_owned(),
-        });
-    }
-    bump_scan_stream(conn)?;
-    let stream_revision = read_scan_stream(conn)?;
-    let run = load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
-        run_id: run_id.to_owned(),
-    })?;
-    Ok((run, stream_revision))
+    bump_scan_stream(tx)?;
+    load_run(tx, run_id)?.ok_or_else(|| not_found(run_id))
 }
 
 fn request_run_inner(
@@ -798,10 +700,10 @@ fn request_run_inner(
     let current: Vec<ScanRun> = stmt
         .query_map([], map_run)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let has_active = current.iter().any(|run| run.state != ScanState::Queued);
+    let has_active = current.iter().any(|run| run.state != RunState::Queued);
     let queued_id = current
         .iter()
-        .find(|run| run.state == ScanState::Queued)
+        .find(|run| run.state == RunState::Queued)
         .map(|run| run.id.clone());
 
     let mut scopes_by_run: HashMap<String, Vec<ScanScope>> = HashMap::new();
@@ -810,7 +712,7 @@ fn request_run_inner(
     }
     // Only a queued run may cover a request.
     let covering = current.iter().find(|run| {
-        if run.state != ScanState::Queued || run.kind != request.kind {
+        if run.state != RunState::Queued || run.kind != request.kind {
             return false;
         }
         let Some(scopes) = scopes_by_run.get(&run.id) else {
@@ -913,7 +815,7 @@ fn request_run_inner(
                     scope.scope_id,
                     scope.relative_path,
                     scope.root_path,
-                    policy_to_str(scope.effective_policy),
+                    scope.effective_policy.as_str(),
                     scope.policy_revision,
                     scope.estimated_count,
                 ],
@@ -976,8 +878,8 @@ fn fresh_run(
          VALUES (?1, ?2, ?3, ?4, 'queued', 'queued', ?5, ?6, ?6, 1, 1, 0)",
         params![
             run_id,
-            kind_to_str(request.kind),
-            trigger_to_str(request.trigger),
+            request.kind.as_str(),
+            request.trigger.as_str(),
             request.requested_by_user_id,
             aggregate,
             requested_at,
@@ -995,7 +897,7 @@ fn fresh_run(
                 scope.scope_id,
                 scope.relative_path,
                 scope.root_path,
-                policy_to_str(scope.effective_policy),
+                scope.effective_policy.as_str(),
                 scope.policy_revision,
                 scope.estimated_count,
             ],
@@ -1020,8 +922,8 @@ fn fresh_run(
     })
 }
 
-fn claim_next_inner(conn: &Connection, now: f64) -> rusqlite::Result<Option<ScanRun>> {
-    let blocked: i64 = conn.query_row(
+fn claim_next_inner(tx: &Transaction<'_>, now: f64) -> Result<Option<ScanRun>, ScanStoreError> {
+    let blocked: i64 = tx.query_row(
         "SELECT COUNT(*) FROM library_scan_runs \
          WHERE state IN ('discovering','indexing','reconciling','pausing','paused','stopping')",
         [],
@@ -1030,24 +932,16 @@ fn claim_next_inner(conn: &Connection, now: f64) -> rusqlite::Result<Option<Scan
     if blocked > 0 {
         return Ok(None);
     }
-    let candidate: Option<String> = conn
+    let candidate: Option<String> = tx
         .query_row(
             "SELECT id FROM library_scan_runs WHERE state = 'queued' ORDER BY rowid LIMIT 1",
             [],
             |row| row.get(0),
         )
         .optional()?;
-    let Some(candidate) = candidate else {
-        return Ok(None);
-    };
-    conn.execute(
-        "UPDATE library_scan_runs SET state = 'discovering', phase = 'discovering', \
-         started_at = COALESCE(started_at, ?1), updated_at = ?1, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 WHERE id = ?2",
-        params![now, candidate],
-    )?;
-    bump_scan_stream(conn)?;
-    load_run(conn, &candidate)
+    candidate
+        .map(|candidate| apply_event(tx, &candidate, None, Event::Claim, now, None))
+        .transpose()
 }
 
 #[cfg(test)]

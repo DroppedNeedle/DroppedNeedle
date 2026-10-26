@@ -13,43 +13,47 @@
 
 use std::collections::HashMap;
 
+use droppedneedle_kernel::runtime_config::sections::ScanFrequency;
+
 use super::models::{Disposition, EffectivePolicy, ScanKind, ScanRequest, ScanScope, ScanTrigger};
 use super::roots::RootRegistry;
 
 /// Schedule settings for automatic scans.
 #[derive(Debug, Clone)]
 pub struct ScheduleSettings {
-    pub frequency: String,
+    pub frequency: ScanFrequency,
     pub daily_time: String,
     pub timezone_name: String,
 }
 
 impl ScheduleSettings {
-    pub fn new(frequency: &str, daily_time: &str, timezone_name: &str) -> Self {
+    pub fn new(frequency: ScanFrequency, daily_time: &str, timezone_name: &str) -> Self {
         Self {
-            frequency: frequency.to_owned(),
+            frequency,
             daily_time: daily_time.to_owned(),
             timezone_name: timezone_name.to_owned(),
         }
     }
 
     pub fn manual() -> Self {
-        Self::new("manual", "03:00", "UTC")
+        Self::new(ScanFrequency::Manual, "03:00", "UTC")
     }
 }
 
-fn interval_seconds(frequency: &str) -> Option<f64> {
+/// The rolling gap of an interval frequency; `None` for `manual` and
+/// `daily`.
+fn interval_seconds(frequency: ScanFrequency) -> Option<f64> {
     match frequency {
-        "5min" => Some(300.0),
-        "10min" => Some(600.0),
-        "30min" => Some(1_800.0),
-        "1hr" => Some(3_600.0),
-        "6hr" => Some(21_600.0),
-        "12hr" => Some(43_200.0),
-        "24hr" => Some(86_400.0),
-        "3d" => Some(259_200.0),
-        "7d" => Some(604_800.0),
-        _ => None,
+        ScanFrequency::Min5 => Some(300.0),
+        ScanFrequency::Min10 => Some(600.0),
+        ScanFrequency::Min30 => Some(1_800.0),
+        ScanFrequency::Hr1 => Some(3_600.0),
+        ScanFrequency::Hr6 => Some(21_600.0),
+        ScanFrequency::Hr12 => Some(43_200.0),
+        ScanFrequency::Hr24 => Some(86_400.0),
+        ScanFrequency::Days3 => Some(259_200.0),
+        ScanFrequency::Days7 => Some(604_800.0),
+        ScanFrequency::Manual | ScanFrequency::Daily => None,
     }
 }
 
@@ -88,19 +92,19 @@ pub fn utc_offset_seconds(timezone_name: &str) -> Option<i64> {
 }
 
 /// Seconds until the next automatic scan is due, anchored on the latest
-/// terminal run (v2 `seconds_until_due`). `None` means manual, unknown
-/// frequency, or an unresolvable timezone: never due.
+/// terminal run (v2 `seconds_until_due`). `None` means manual or an
+/// unresolvable timezone: never due.
 pub fn seconds_until_due(
-    frequency: &str,
+    frequency: ScanFrequency,
     daily_time: &str,
     terminal_at: Option<f64>,
     now: f64,
     timezone_name: &str,
 ) -> Option<f64> {
-    if frequency == "manual" {
+    if frequency == ScanFrequency::Manual {
         return None;
     }
-    if frequency != "daily" {
+    if frequency != ScanFrequency::Daily {
         let interval = interval_seconds(frequency)?;
         let Some(terminal) = terminal_at else {
             return Some(0.0);
@@ -217,11 +221,11 @@ pub fn tick<F>(
 where
     F: FnOnce(ScanRequest) -> Result<Disposition, String>,
 {
-    if settings.frequency == "manual" {
+    if settings.frequency == ScanFrequency::Manual {
         return false;
     }
     let remaining = seconds_until_due(
-        &settings.frequency,
+        settings.frequency,
         &settings.daily_time,
         terminal_at,
         now,
@@ -268,24 +272,20 @@ mod tests {
     #[test]
     fn interval_math_anchors_on_terminal() {
         assert_eq!(
-            seconds_until_due("manual", "03:00", None, 100.0, "UTC"),
+            seconds_until_due(ScanFrequency::Manual, "03:00", None, 100.0, "UTC"),
             None
         );
         assert_eq!(
-            seconds_until_due("1hr", "03:00", None, 100.0, "UTC"),
+            seconds_until_due(ScanFrequency::Hr1, "03:00", None, 100.0, "UTC"),
             Some(0.0)
         );
         assert_eq!(
-            seconds_until_due("1hr", "03:00", Some(0.0), 100.0, "UTC"),
+            seconds_until_due(ScanFrequency::Hr1, "03:00", Some(0.0), 100.0, "UTC"),
             Some(3_500.0)
         );
         assert_eq!(
-            seconds_until_due("1hr", "03:00", Some(0.0), 10_000.0, "UTC"),
+            seconds_until_due(ScanFrequency::Hr1, "03:00", Some(0.0), 10_000.0, "UTC"),
             Some(0.0)
-        );
-        assert_eq!(
-            seconds_until_due("bogus", "03:00", None, 100.0, "UTC"),
-            None
         );
     }
 
@@ -294,18 +294,24 @@ mod tests {
         // 2024-01-01T00:00:00Z, target 03:00, no terminal yet.
         let monday = 1_704_067_200.0;
         assert_eq!(
-            seconds_until_due("daily", "03:00", None, monday, "UTC"),
+            seconds_until_due(ScanFrequency::Daily, "03:00", None, monday, "UTC"),
             Some(10_800.0)
         );
         // Past today's target with no terminal: due now.
         assert_eq!(
-            seconds_until_due("daily", "03:00", None, monday + 20_000.0, "UTC"),
+            seconds_until_due(
+                ScanFrequency::Daily,
+                "03:00",
+                None,
+                monday + 20_000.0,
+                "UTC"
+            ),
             Some(0.0)
         );
         // Terminal Monday noon: next due Tuesday 03:00.
         assert_eq!(
             seconds_until_due(
-                "daily",
+                ScanFrequency::Daily,
                 "03:00",
                 Some(monday + 43_200.0),
                 monday + 43_200.0,
@@ -315,7 +321,13 @@ mod tests {
         );
         // Unknown timezone never fires.
         assert_eq!(
-            seconds_until_due("daily", "03:00", None, monday, "America/New_York"),
+            seconds_until_due(
+                ScanFrequency::Daily,
+                "03:00",
+                None,
+                monday,
+                "America/New_York"
+            ),
             None
         );
         // Numeric offsets resolve.
@@ -340,7 +352,7 @@ mod tests {
 
     #[test]
     fn tick_fires_only_when_due() {
-        let settings = ScheduleSettings::new("1hr", "03:00", "UTC");
+        let settings = ScheduleSettings::new(ScanFrequency::Hr1, "03:00", "UTC");
         let fired = tick(
             |_| Ok(Disposition::Started),
             &registry(),

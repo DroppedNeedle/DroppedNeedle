@@ -23,9 +23,11 @@ impl SqliteScanStore {
                 )
                 .optional()?)
         })?;
-        Ok(state
-            .map(|state| discovery_from_str(&state))
-            .unwrap_or(ScopeDiscoveryState::Pending))
+        state.map_or(Ok(ScopeDiscoveryState::Pending), |state| {
+            ScopeDiscoveryState::parse(&state).ok_or_else(|| ScanStoreError::Internal {
+                message: format!("a scan scope holds an unknown discovery state: {state:?}"),
+            })
+        })
     }
 
     pub fn scope_discovery_generation(
@@ -57,19 +59,13 @@ impl SqliteScanStore {
         root_id: &str,
         relative_path: &str,
         state: ScopeDiscoveryState,
-        error_code: Option<&str>,
+        error_code: Option<FailureCode>,
     ) -> Result<(), ScanStoreError> {
         self.write(stop, Lane::Background, "scan_scope_done", |tx| {
             tx.execute(
                 "UPDATE library_scan_run_scopes SET discovery_state = ?1, error_code = ?2 \
                  WHERE run_id = ?3 AND root_id = ?4 AND relative_path = ?5",
-                params![
-                    discovery_to_str(state),
-                    error_code,
-                    run_id,
-                    root_id,
-                    relative_path
-                ],
+                params![state.as_str(), error_code, run_id, root_id, relative_path],
             )?;
             Ok(())
         })
@@ -363,7 +359,7 @@ fn write_inventory(
                 run_id,
                 item.root_id,
                 item.relative_path,
-                failure_codes::NFC_TWIN_COLLISION,
+                FailureCode::NfcTwinCollision,
                 "Two on-disk names normalize to the same inventory key; the first file won and this twin was skipped.",
                 updated_at,
             ])?;
@@ -380,8 +376,8 @@ fn write_inventory(
             item.file_mtime_ns,
             item.stat_revision,
             item.policy_revision,
-            policy_to_str(item.effective_policy),
-            verdict_to_str(item.comparison_result),
+            item.effective_policy.as_str(),
+            item.comparison_result.as_str(),
             item.local_track_id,
         ];
         if !isolate {
@@ -397,7 +393,7 @@ fn write_inventory(
                     run_id,
                     item.root_id,
                     item.relative_path,
-                    failure_codes::WALK_ERROR,
+                    FailureCode::WalkError,
                     format!("The inventory row could not be stored: {error}"),
                     updated_at,
                 ])?;

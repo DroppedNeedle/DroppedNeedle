@@ -20,7 +20,9 @@ use super::scan::ScanStoreError;
 use super::scan::coordinator::{ResolverSource as _, ScanRequestError};
 use super::scan::models::EffectivePolicy;
 use super::scan::supervisor::SupervisorInputs;
-use super::scan::supervisor::{startup_recovery, supervise_once, supervise_once_with_shutdown};
+use super::scan::supervisor::{
+    request_dirty_scopes, startup_recovery, supervise_once, supervise_once_with_shutdown,
+};
 use super::scan::watcher::{
     WatcherAction, WatcherSettings, WatcherState, clear_pending, watcher_request,
 };
@@ -144,6 +146,14 @@ impl LibrarySetup {
     pub async fn scan_startup_recovery(&self) {
         self.refresh_registry();
         startup_recovery(&self.coordinator, &self.supervisor_inputs()).await;
+    }
+
+    /// The saved library roots changed: swap them in and ask now for the
+    /// scans that new or changed roots need, so a folder added anywhere is
+    /// scanned without waiting for the scan loop's next pass. Blocking.
+    pub fn roots_saved(&self) {
+        self.refresh_registry();
+        request_dirty_scopes(&self.coordinator, &self.supervisor_inputs());
     }
 
     /// One supervisor iteration. Returns true when a run was driven.

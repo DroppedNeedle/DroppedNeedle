@@ -1103,7 +1103,7 @@ fn write_item(
     let file_format = crate::tags::format_for_path(std::path::Path::new(&item.relative_path))
         .map(|format| format.as_str().to_owned())
         .unwrap_or_else(|_| "unknown".to_owned());
-    let policy = policy_to_str(item.effective_policy);
+    let policy = item.effective_policy.as_str();
     tx.prepare_cached(
         "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
          path_hash, file_size_bytes, file_mtime_ns, stat_revision, stat_revision_kind, \
@@ -1961,7 +1961,7 @@ pub(super) fn owe_end_passes(tx: &Connection, run_id: &str, now: f64) -> rusqlit
         .execute(params![
             run_id,
             END_PASSES[0].name,
-            failure_codes::RUN_END_PENDING,
+            FailureCode::RunEndPending,
             now
         ])?;
     Ok(())
@@ -2544,7 +2544,7 @@ fn mark_window(
     window: &IndexWindow,
     indexed: &[(String, String, String)],
     failed: &[(String, String, &'static str)],
-    extra_counters: &[(&'static str, i64)],
+    extra_counters: &[(Counter, i64)],
 ) -> rusqlite::Result<()> {
     let mut mark_indexed = tx.prepare_cached(
         "UPDATE library_scan_inventory SET processing_state = 'indexed', local_track_id = ?4 \
@@ -2578,13 +2578,16 @@ fn mark_window(
         window.through.1
     ])?;
     let mut summed: HashMap<&'static str, i64> = HashMap::new();
-    let window_counters = window.counters.iter().map(|(_, name, delta)| (name, delta));
-    for (name, delta) in
-        window_counters.chain(extra_counters.iter().map(|(name, delta)| (name, delta)))
-    {
-        if let Some(column) = counter_column(name) {
-            *summed.entry(column).or_insert(0) += delta;
-        }
+    let window_counters = window
+        .counters
+        .iter()
+        .map(|(_, counter, delta)| (counter, delta));
+    for (counter, delta) in window_counters.chain(
+        extra_counters
+            .iter()
+            .map(|(counter, delta)| (counter, delta)),
+    ) {
+        *summed.entry(counter.column()).or_insert(0) += delta;
     }
     for (column, delta) in summed {
         if delta != 0 {
@@ -2693,7 +2696,7 @@ fn write_window(
         .iter()
         .map(|(root, path, state)| (root.clone(), path.clone(), *state))
         .collect();
-    let mut adjust: Vec<(&'static str, i64)> = Vec::new();
+    let mut adjust: Vec<(Counter, i64)> = Vec::new();
     let mut offered: Vec<String> = Vec::new();
     // Albums with a changed file the app has a record of: automatic
     // management looks at them soon, to see who changed it.
@@ -2717,7 +2720,7 @@ fn write_window(
                 other_music: replaced,
                 new_copy,
             }) => {
-                let changed_on_record = item.verdict_counter == counter_names::CHANGED
+                let changed_on_record = item.verdict_counter == Counter::Changed.column()
                     && takeover::has_record(tx, &track_id)?;
                 // Other music on the album of a track the app wrote: the
                 // album's files changed, as when the file itself changed.
@@ -2751,9 +2754,9 @@ fn write_window(
             }
             Err(error) if isolate => {
                 // The coordinator counted this file as indexed; it was not.
-                adjust.push((counter_names::INDEXED, -1));
-                adjust.push((item.verdict_counter, -1));
-                adjust.push((counter_names::ERRORED, 1));
+                adjust.push((Counter::Indexed, -1));
+                adjust.extend(Counter::parse(item.verdict_counter).map(|verdict| (verdict, -1)));
+                adjust.push((Counter::Errored, 1));
                 failed.push((item.root_id.clone(), item.relative_path.clone(), "failed"));
                 outcome.failed.push((
                     item.root_id.clone(),
@@ -2807,10 +2810,7 @@ fn write_window(
             outcome.enqueued += 1;
         }
     }
-    adjust.push((
-        counter_names::IDENTIFICATION_ENQUEUED,
-        outcome.enqueued as i64,
-    ));
+    adjust.push((Counter::IdentificationEnqueued, outcome.enqueued as i64));
     // Every file the catalog did not take is on the run's failure list
     // with the window that gave it up, so a stop cannot lose the row.
     outcome.failed.extend(window.refused.iter().cloned());
@@ -2820,9 +2820,9 @@ fn write_window(
             window.run_id,
             root,
             path,
-            failure_codes::CATALOG_COMMIT_FAILED,
+            FailureCode::CatalogCommitFailed,
             format!("The catalog could not store this file: {error}"),
-            phase_to_str(ScanPhase::Indexing),
+            ScanPhase::Indexing.as_str(),
             window.now,
         ])?;
     }
@@ -3011,11 +3011,11 @@ pub(super) fn give_up_window(window: &IndexWindow) -> Option<IndexWindow> {
         row.1.clone(),
         "the catalog write ran past its time budget".to_owned(),
     ));
-    given_up.counters.extend([
-        (row.clone(), counter_names::INDEXED, -1),
-        (row.clone(), item.verdict_counter, -1),
-        (row, counter_names::ERRORED, 1),
-    ]);
+    given_up.counters.push((row.clone(), Counter::Indexed, -1));
+    if let Some(verdict) = Counter::parse(item.verdict_counter) {
+        given_up.counters.push((row.clone(), verdict, -1));
+    }
+    given_up.counters.push((row, Counter::Errored, 1));
     Some(given_up)
 }
 

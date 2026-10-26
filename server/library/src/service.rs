@@ -158,19 +158,10 @@ impl LibrarySetup {
         &self,
         run_id: &str,
     ) -> Result<(ScanRun, Vec<ScanScope>, Vec<ScanInventoryItem>), ServiceError> {
-        use super::scan::store::ScanStoreError;
         let (run, scopes, _) = self
             .coordinator
             .snapshot(run_id)
-            .map_err(|error| match error {
-                ScanStoreError::NotFound { .. } => ServiceError::NotFound,
-                busy @ (ScanStoreError::Busy { .. } | ScanStoreError::LaneClosed) => {
-                    super::scans::store_error(busy)
-                }
-                other => ServiceError::Conflict {
-                    message: other.to_string(),
-                },
-            })?;
+            .map_err(super::scans::store_error)?;
         let files = self
             .scan_store
             .inventory_for_run(run_id, RUN_DETAIL_FILES)

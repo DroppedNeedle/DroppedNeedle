@@ -94,6 +94,7 @@ impl Default for TypedLibrary {
 
 impl Section for TypedLibrary {
     const KEY: &'static str = "library_settings";
+    const EFFECTS: &'static [Effect] = &[Effect::RefreshLibraryRoots];
 
     fn normalize(&mut self) {
         if self.naming_script.trim().is_empty() {

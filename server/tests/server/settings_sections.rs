@@ -368,7 +368,11 @@ async fn library_round_trip_cas_and_paths() {
         .await
         .expect("saves");
     assert_eq!(saved.settings.acoustid_api_key.expose(), SECRET_MASK);
-    assert!(effects.calls().is_empty(), "a save clears no cache");
+    assert_eq!(
+        effects.calls(),
+        [Effect::RefreshLibraryRoots],
+        "a save takes the roots in and clears no cache"
+    );
     let stored = service.store.get_raw::<TypedLibrary>().expect("raw reads");
     assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
 

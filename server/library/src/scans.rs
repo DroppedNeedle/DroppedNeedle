@@ -8,7 +8,7 @@
 
 use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{
-    ScanControl, ScanFailureRecord, ScanKind, ScanRequest, ScanRequestResult, ScanRun, ScanState,
+    Event, RunState, ScanFailureRecord, ScanKind, ScanRequest, ScanRequestResult, ScanRun,
     ScanTrigger,
 };
 use super::scan::roots::RootRegistry;
@@ -166,9 +166,9 @@ impl LibrarySetup {
         let runs = self.coordinator.current_runs().map_err(store_error)?;
         let active = runs
             .iter()
-            .find(|run| run.state != ScanState::Queued)
+            .find(|run| run.state != RunState::Queued)
             .cloned();
-        let queued = runs.into_iter().find(|run| run.state == ScanState::Queued);
+        let queued = runs.into_iter().find(|run| run.state == RunState::Queued);
         Ok((active, queued))
     }
 
@@ -205,14 +205,14 @@ impl LibrarySetup {
         control: RunControl,
         expected_revision: u64,
     ) -> Result<ControlledRun, ServiceError> {
-        let (kind, resume) = match control {
-            RunControl::Pause => (ScanControl::Pause, false),
-            RunControl::Resume => (ScanControl::Pause, true),
-            RunControl::Stop => (ScanControl::Stop, false),
+        let event = match control {
+            RunControl::Pause => Event::Pause,
+            RunControl::Resume => Event::Resume,
+            RunControl::Stop => Event::Stop,
         };
         let (run, stream_revision) = self
             .coordinator
-            .control(run_id, kind, resume, expected_revision)
+            .control(run_id, event, expected_revision)
             .map_err(store_error)?;
         Ok(ControlledRun {
             run,

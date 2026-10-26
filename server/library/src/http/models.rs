@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 pub use super::operations::ReasonView;
 use crate::identify::models::{JobState as IdentifyJobState, ReviewState};
 use crate::publish::publisher::PublishOutcome;
-use crate::scan::models::{ScanKind, ScanPhase, ScanState};
+use crate::scan::models::{Counters, FailureCode, ScanKind, ScanPhase, ScanState};
 
 /// Snake-case label for a serializable engine enum. Falls back to
 /// `"unknown"` instead of failing the whole response.
@@ -97,7 +97,7 @@ pub struct ScanRunView {
     /// Scope label: `all` or `selected`.
     pub aggregate_scope: String,
     /// Progress counters.
-    pub counters: HashMap<String, i64>,
+    pub counters: Counters,
     /// Queue time (unix seconds).
     pub queued_at: f64,
     /// Start time, when started.
@@ -107,7 +107,7 @@ pub struct ScanRunView {
     /// Terminal time, when terminal.
     pub terminal_at: Option<f64>,
     /// Terminal code, when terminal.
-    pub terminal_code: Option<String>,
+    pub terminal_code: Option<FailureCode>,
     /// What the terminal code means, in plain words.
     pub terminal_message: Option<String>,
     /// What to do about the terminal code.

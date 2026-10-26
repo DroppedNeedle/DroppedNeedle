@@ -22,13 +22,13 @@ use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::repairs::hygiene;
-use droppedneedle_library::scan::RunStop;
 use droppedneedle_library::scan::ScanFailureRecord;
 use droppedneedle_library::scan::{
-    BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, NullTagReader,
-    RootRegistry, RootSeamError, ScanControl, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState,
-    ScanTrigger, ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError,
-    TagReader, WorkWakeups, counter_names, failure_codes,
+    BlockingPool, Counter, EffectivePolicy, Event, FailureCode, LibraryRoot,
+    LibraryScanCoordinator, NullTagReader, Phase, RootRegistry, RootSeamError, RunState, ScanKind,
+    ScanPhase, ScanRequest, ScanRun, ScanScope, ScanState, ScanStoreError, ScanTrigger,
+    ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
+    WorkWakeups,
 };
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
@@ -46,8 +46,8 @@ fn plant(root: &Path, relative: &str, fixture_name: &str) -> PathBuf {
     dest
 }
 
-fn count(run: &ScanRun, name: &str) -> i64 {
-    run.counters.get(name).copied().unwrap_or(0)
+fn count(run: &ScanRun, counter: Counter) -> i64 {
+    run.counters.get(counter)
 }
 
 /// Relative path to (size, mtime, sha256) for every file under `root`.
@@ -146,8 +146,8 @@ async fn scan_catalogs_tags_without_touching_files() {
     let library = bundle(&scratch).await;
 
     let run = scan(&library).await;
-    assert_eq!(run.state, ScanState::Completed);
-    assert_eq!(count(&run, counter_names::INDEXED), 3);
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
+    assert_eq!(count(&run, Counter::Indexed), 3);
     let tag = droppedneedle_library::tags::read::read_tag_only(
         &tagged,
         droppedneedle_library::tags::AudioFormat::Flac,
@@ -181,11 +181,11 @@ async fn scan_catalogs_tags_without_touching_files() {
     );
     let jobs = query(&library, "SELECT COUNT(*) FROM library_identify_jobs");
     assert_eq!(jobs, albums, "one identify job per catalog album");
-    assert_eq!(count(&run, counter_names::IDENTIFICATION_ENQUEUED), jobs);
+    assert_eq!(count(&run, Counter::IdentificationEnqueued), jobs);
 
     let again = scan(&library).await;
-    assert_eq!(count(&again, counter_names::NEW), 0);
-    assert_eq!(count(&again, counter_names::UNCHANGED), 3);
+    assert_eq!(count(&again, Counter::New), 0);
+    assert_eq!(count(&again, Counter::Unchanged), 3);
     assert_eq!(
         query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
         jobs,
@@ -206,7 +206,7 @@ async fn unchanged_tags_keep_their_revision() {
     let library = bundle(&scratch).await;
 
     let run = scan(&library).await;
-    assert_eq!(run.state, ScanState::Completed);
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
     assert_eq!(
         query(
             &library,
@@ -314,9 +314,9 @@ async fn a_carried_file_gets_its_edition_hints_from_its_tags() {
     let db = library.scan_store.db();
 
     let run = scan(&library).await;
-    assert_eq!(run.state, ScanState::Completed);
-    assert_eq!(count(&run, counter_names::UNCHANGED), 1);
-    assert_eq!(count(&run, counter_names::CHANGED), 0);
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
+    assert_eq!(count(&run, Counter::Unchanged), 1);
+    assert_eq!(count(&run, Counter::Changed), 0);
     assert_eq!(
         query(
             &library,
@@ -365,11 +365,11 @@ async fn vanished_files_are_marked_missing_and_mass_loss_is_held_back() {
         plant(&music, &format!("Album/{n:02}.flac"), "flac_full_01.flac");
     }
     let library = bundle(&scratch).await;
-    assert_eq!(count(&scan(&library).await, counter_names::INDEXED), 30);
+    assert_eq!(count(&scan(&library).await, Counter::Indexed), 30);
 
     std::fs::remove_file(music.join("Album/00.flac")).expect("remove one");
     let run = scan(&library).await;
-    assert_eq!(count(&run, counter_names::MISSING), 1);
+    assert_eq!(count(&run, Counter::Missing), 1);
     assert_eq!(
         query(
             &library,
@@ -383,14 +383,14 @@ async fn vanished_files_are_marked_missing_and_mass_loss_is_held_back() {
         std::fs::remove_file(music.join(format!("Album/{n:02}.flac"))).expect("remove");
     }
     let run = scan(&library).await;
-    assert_eq!(count(&run, counter_names::MISSING), 0);
+    assert_eq!(count(&run, Counter::Missing), 0);
     assert!(
         library
             .scan_store
             .failures(&run.id)
             .unwrap()
             .iter()
-            .any(|failure| failure.failure_code == failure_codes::MASS_MISSING_GUARD)
+            .any(|failure| failure.failure_code == FailureCode::MassMissingGuard)
     );
     assert_eq!(
         query(
@@ -442,7 +442,7 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
     }
     plant(&music, "Other/01.flac", "flac_full_01.flac");
     let library = bundle(&scratch).await;
-    assert_eq!(count(&scan(&library).await, counter_names::INDEXED), 31);
+    assert_eq!(count(&scan(&library).await, Counter::Indexed), 31);
     let held = |library: &LibrarySetup| {
         (
             query(library, "SELECT COUNT(*) FROM library_scan_held_scopes"),
@@ -482,7 +482,7 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
         "a hold keeps its start"
     );
     let narrow = scan_folder(&library, "Other").await;
-    assert_eq!(narrow.state, ScanState::Completed);
+    assert_eq!(narrow.state.scan_state(), ScanState::Completed);
     assert_eq!(
         held(&library),
         (1, 1),
@@ -641,13 +641,17 @@ async fn shutdown_mid_index_resumes_without_double_counting() {
     );
     drop(resume);
     let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
-    assert_eq!(run.state, ScanState::Indexing, "the run stays resumable");
+    assert_eq!(
+        run.state.scan_state(),
+        ScanState::Indexing,
+        "the run stays resumable"
+    );
 
     let run = coordinator.run_once(&paths).await.expect("resumed");
-    assert_eq!(run.state, ScanState::Completed);
-    assert_eq!(count(&run, counter_names::TOTAL), 600);
-    assert_eq!(count(&run, counter_names::INSPECTED), 600);
-    assert_eq!(count(&run, counter_names::INDEXED), 600);
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
+    assert_eq!(count(&run, Counter::Total), 600);
+    assert_eq!(count(&run, Counter::Inspected), 600);
+    assert_eq!(count(&run, Counter::Indexed), 600);
     assert_eq!(
         coordinator
             .store()
@@ -682,6 +686,120 @@ impl TagReader for HoldOnRead {
         }
         Ok(ScannedTags::default())
     }
+}
+
+/// Tag reader that holds every read while its gate is shut.
+#[derive(Default)]
+struct GatedReader {
+    /// Whether the gate is open, and how many reads wait at it.
+    state: std::sync::Mutex<(bool, usize)>,
+    turned: std::sync::Condvar,
+}
+
+impl GatedReader {
+    fn set(&self, open: bool) {
+        self.state.lock().expect("gate").0 = open;
+        self.turned.notify_all();
+    }
+
+    /// Wait until a read is held at the shut gate.
+    async fn held(self: &Arc<Self>) {
+        let gate = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            let state = gate.state.lock().expect("gate");
+            let (state, timeout) = gate
+                .turned
+                .wait_timeout_while(state, Duration::from_secs(30), |(_, waiting)| *waiting == 0)
+                .expect("gate");
+            assert!(
+                !timeout.timed_out() && state.1 > 0,
+                "no read reached the gate"
+            );
+        })
+        .await
+        .expect("waits");
+    }
+}
+
+impl TagReader for GatedReader {
+    fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
+        let mut state = self.state.lock().expect("gate");
+        state.1 += 1;
+        self.turned.notify_all();
+        let mut state = self
+            .turned
+            .wait_while(state, |(open, _)| !*open)
+            .expect("gate");
+        state.1 -= 1;
+        Ok(ScannedTags::default())
+    }
+}
+
+/// A pause, a resume and a stop asked of a running scan each answer what
+/// the run does now and settle where the worker can stop: the paused run
+/// picks up in the phase it left, the stopped one keeps the time it spent
+/// in each phase it reached, and an ended run refuses another pause.
+#[tokio::test]
+async fn pause_resume_and_stop_settle_where_the_worker_stops() {
+    let scratch = ScratchDir::new("scan-controls");
+    let root = scratch.join("music");
+    std::fs::create_dir_all(&root).expect("root");
+    for n in 0..20 {
+        std::fs::write(root.join(format!("t{n:02}.flac")), b"junk").expect("plant");
+    }
+    let gate = Arc::new(GatedReader::default());
+    let (coordinator, paths) = coordinator(&root, Arc::clone(&gate));
+    let id = coordinator
+        .request_run(&request(&root))
+        .expect("requested")
+        .run_id;
+    let indexing = RunState::Running(Phase::Indexing);
+
+    // Paused while the worker is held inside a tag read.
+    let (paused, ()) = tokio::join!(coordinator.run_once(&paths), async {
+        gate.held().await;
+        let (run, _, _) = coordinator.snapshot(&id).expect("run");
+        assert_eq!(run.state, indexing);
+        let (run, _) = coordinator
+            .control(&id, Event::Pause, run.row_revision)
+            .expect("pause is taken");
+        assert_eq!(run.state, RunState::Pausing(Phase::Indexing));
+        gate.set(true);
+    });
+    let paused = paused.expect("the drive settles");
+    assert_eq!(paused.state, RunState::Paused(Phase::Indexing));
+    assert_eq!(paused.state.resume_phase(), Some(ScanPhase::Indexing));
+
+    // Resumed, then stopped while held again.
+    gate.set(false);
+    let (run, _) = coordinator
+        .control(&id, Event::Resume, paused.row_revision)
+        .expect("resume is taken");
+    assert_eq!(run.state, indexing);
+    let (stopped, ()) = tokio::join!(coordinator.run_once(&paths), async {
+        gate.held().await;
+        let (run, _, _) = coordinator.snapshot(&id).expect("run");
+        assert_eq!(run.state, indexing);
+        let (run, _) = coordinator
+            .control(&id, Event::Stop, run.row_revision)
+            .expect("stop is taken");
+        assert_eq!(run.state, RunState::Stopping(Phase::Indexing));
+        gate.set(true);
+    });
+    let stopped = stopped.expect("the drive settles");
+    assert_eq!(stopped.state.scan_state(), ScanState::Cancelled);
+    for phase in [Phase::Discovering, Phase::Indexing] {
+        assert!(
+            stopped.phase_timings.contains_key(&phase),
+            "time kept for {phase:?}: {:?}",
+            stopped.phase_timings
+        );
+    }
+    let refused = coordinator.control(&id, Event::Pause, stopped.row_revision);
+    assert!(
+        matches!(refused, Err(ScanStoreError::InvalidControl { .. })),
+        "{refused:?}"
+    );
 }
 
 /// New music shows as a scan goes: each window that writes catalog rows
@@ -743,7 +861,7 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
             .expect("the second window's first read is reached");
         let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
         assert_eq!(
-            count(&run, counter_names::INDEXED),
+            count(&run, Counter::Indexed),
             256,
             "held after the first window"
         );
@@ -773,7 +891,11 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
     let (drive, moved) = tokio::join!(coordinator.run_once_with_shutdown(&paths, &signal), held);
     assert!(drive.is_none(), "shutdown abandons the drive");
     let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
-    assert_eq!(run.state, ScanState::Indexing, "the run never ended");
+    assert_eq!(
+        run.state.scan_state(),
+        ScanState::Indexing,
+        "the run never ended"
+    );
     drop(coordinator);
 
     // A closed lane ends the event loop, with the supervisor never stopped.
@@ -812,15 +934,7 @@ async fn a_run_owing_its_end_passes_still_counts_as_scanning() {
     let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
     coordinator
         .store()
-        .transition(
-            &RunStop::never(),
-            &run.id,
-            run.state,
-            run.row_revision,
-            ScanState::Cancelled,
-            1.0,
-            None,
-        )
+        .request_control(&run.id, Event::Stop, run.row_revision, 1.0)
         .expect("ended without its passes");
     let current = coordinator.current();
     assert_eq!(current.len(), 1, "the run owing passes counts");
@@ -847,7 +961,7 @@ async fn a_run_whose_end_passes_fail_still_ends() {
     let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
     coordinator.request_run(&request(&root)).expect("requested");
     let first = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(first.state, ScanState::Completed);
+    assert_eq!(first.state.scan_state(), ScanState::Completed);
     for n in 0..25 {
         std::fs::remove_file(root.join(format!("t{n:04}.flac"))).expect("remove");
     }
@@ -861,9 +975,9 @@ async fn a_run_whose_end_passes_fail_still_ends() {
         .expect("trigger");
     let requested = coordinator.request_run(&request(&root)).expect("requested");
     let ended = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(ended.state, ScanState::Completed);
+    assert_eq!(ended.state.scan_state(), ScanState::Completed);
     let (stored, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
-    assert_eq!(stored.state, ScanState::Completed);
+    assert_eq!(stored.state.scan_state(), ScanState::Completed);
     let failures = coordinator
         .store()
         .failures(&requested.run_id)
@@ -871,7 +985,7 @@ async fn a_run_whose_end_passes_fail_still_ends() {
     assert!(
         failures
             .iter()
-            .any(|failure| failure.failure_code == failure_codes::MASS_MISSING_GUARD),
+            .any(|failure| failure.failure_code == FailureCode::MassMissingGuard),
         "the guard held the scope back"
     );
     assert!(
@@ -903,11 +1017,11 @@ async fn a_refused_inventory_row_costs_that_file_only() {
         .expect("trigger");
     coordinator.request_run(&request(&root)).expect("requested");
     let run = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(run.state, ScanState::Completed);
-    assert_eq!(count(&run, counter_names::INDEXED), 9);
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
+    assert_eq!(count(&run, Counter::Indexed), 9);
     let failures = coordinator.store().failures(&run.id).unwrap();
     assert!(failures.iter().any(|failure| {
-        failure.failure_code == failure_codes::WALK_ERROR
+        failure.failure_code == FailureCode::WalkError
             && failure.relative_path == "t0003.flac"
             && failure.failure_detail.contains("refused for the test")
     }));
@@ -979,35 +1093,27 @@ async fn window_with_bad_files(
 async fn a_refused_and_a_slow_file_cost_those_files_only() {
     let (clean, _, clean_tracks) = window_with_bad_files("scan-window-clean", 8, false).await;
     let (run, failures, tracks) = window_with_bad_files("scan-window-bad", 8, true).await;
-    assert_eq!(run.state, ScanState::Completed);
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
     assert_eq!((clean_tracks, tracks), (8, 6));
     let mut refused: Vec<&str> = failures
         .iter()
-        .filter(|failure| failure.failure_code == failure_codes::CATALOG_COMMIT_FAILED)
+        .filter(|failure| failure.failure_code == FailureCode::CatalogCommitFailed)
         .map(|failure| failure.relative_path.as_str())
         .collect();
     refused.sort_unstable();
     assert_eq!(refused, ["t0002.flac", "t0005.flac"]);
     // Untagged, each file is an album of its own, so the two files that
     // did not land take their identification offers with them.
-    let moved = |name: &str| match name {
-        name if name == counter_names::INDEXED
-            || name == counter_names::NEW
-            || name == counter_names::IDENTIFICATION_ENQUEUED =>
-        {
-            -2
-        }
-        name if name == counter_names::ERRORED => 2,
+    let moved = |counter| match counter {
+        Counter::Indexed | Counter::New | Counter::IdentificationEnqueued => -2,
+        Counter::Errored => 2,
         _ => 0,
     };
-    let mut names: Vec<&String> = clean.counters.keys().chain(run.counters.keys()).collect();
-    names.sort_unstable();
-    names.dedup();
-    for name in names {
+    for counter in Counter::ALL {
         assert_eq!(
-            count(&run, name),
-            count(&clean, name) + moved(name),
-            "counter {name}"
+            count(&run, counter),
+            count(&clean, counter) + moved(counter),
+            "counter {counter:?}"
         );
     }
 }
@@ -1035,7 +1141,7 @@ async fn a_request_write_during_indexing_is_answered_quickly() {
             run.terminal_at.is_none(),
             "the scan ended before it was probed"
         );
-        if count(&run, counter_names::INDEXED) > 0 {
+        if count(&run, Counter::Indexed) > 0 {
             break;
         }
         tokio::task::yield_now().await;
@@ -1057,7 +1163,7 @@ async fn a_request_write_during_indexing_is_answered_quickly() {
     answer.expect("a foreground write is answered");
     assert!(waited < Duration::from_secs(1), "it waited {waited:?}");
     let ended = driver.await.expect("drive").expect("driven");
-    assert_eq!(ended.state, ScanState::Completed);
+    assert_eq!(ended.state.scan_state(), ScanState::Completed);
 }
 
 /// Symlinks never lead out of a root: the walk audits them and the stream
@@ -1078,13 +1184,13 @@ async fn symlinks_never_escape_a_root() {
     let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
     coordinator.request_run(&request(&root)).expect("requested");
     let run = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(count(&run, counter_names::INDEXED), 1);
+    assert_eq!(count(&run, Counter::Indexed), 1);
     let escapes: Vec<String> = coordinator
         .store()
         .failures(&run.id)
         .unwrap()
         .into_iter()
-        .filter(|failure| failure.failure_code == failure_codes::SYMLINK_ESCAPE_OUT)
+        .filter(|failure| failure.failure_code == FailureCode::SymlinkEscapeOut)
         .map(|failure| failure.relative_path)
         .collect();
     assert_eq!(escapes, vec!["escape.flac".to_owned()]);
@@ -1373,7 +1479,10 @@ impl RegroupRig {
     }
 
     async fn scan(&self) {
-        assert_eq!(self.scan_to_its_end().await.state, ScanState::Completed);
+        assert_eq!(
+            self.scan_to_its_end().await.state.scan_state(),
+            ScanState::Completed
+        );
     }
 
     async fn scan_to_its_end(&self) -> ScanRun {
@@ -1942,11 +2051,11 @@ async fn stopped_scan_offers_the_half_retagged_album() {
             .pop()
             .expect("the scan is running");
         coordinator
-            .control(&run.id, ScanControl::Stop, false, run.row_revision)
+            .control(&run.id, Event::Stop, run.row_revision)
             .expect("stop is taken");
     });
     let run = rig.scan_to_its_end().await;
-    assert_eq!(run.state, ScanState::Cancelled);
+    assert_eq!(run.state.scan_state(), ScanState::Cancelled);
 
     let new_row = rig.album_of("a/t000.flac");
     assert_ne!(new_row, album);
@@ -2469,7 +2578,7 @@ async fn run_cancelled_while_queued_is_not_ended_again_at_startup() {
         .pop()
         .expect("the run is waiting");
     rig.coordinator
-        .control(&run.id, ScanControl::Stop, false, run.row_revision)
+        .control(&run.id, Event::Stop, run.row_revision)
         .expect("stop is taken");
     let stamp = "SELECT CAST(terminal_at * 1000 AS INTEGER) + row_revision \
                  FROM library_scan_runs WHERE state = 'cancelled'";
@@ -2986,7 +3095,7 @@ impl RegroupRig {
                 .pop()
                 .expect("the scan is running");
             coordinator
-                .control(&run.id, ScanControl::Stop, false, run.row_revision)
+                .control(&run.id, Event::Stop, run.row_revision)
                 .expect("stop is taken");
         });
     }
@@ -3125,7 +3234,10 @@ async fn retag_across_a_cancelled_scan_is_joined_at_the_next() {
         let after = rig.after.clone();
         rig.tag(&files, &after);
         rig.stop_before(SECOND_WINDOW);
-        assert_eq!(rig.scan_to_its_end().await.state, ScanState::Cancelled);
+        assert_eq!(
+            rig.scan_to_its_end().await.state.scan_state(),
+            ScanState::Cancelled
+        );
         let new_row = rig.album_of("a/t000.flac");
         assert_ne!(new_row, album, "{name}");
         assert_eq!(
@@ -4926,7 +5038,7 @@ impl RegroupRig {
         self.coordinator.request_run(&request).expect("requested");
         let paths = HashMap::from([("music".to_owned(), self.root.clone())]);
         let run = self.coordinator.run_once(&paths).await.expect("scan runs");
-        assert_eq!(run.state, ScanState::Completed);
+        assert_eq!(run.state.scan_state(), ScanState::Completed);
     }
 
     fn open_pairs(&self) -> i64 {
@@ -6384,7 +6496,7 @@ impl ArtistRig {
             .expect("requested");
         let paths = HashMap::from([("music".to_owned(), self.root.clone())]);
         let run = self.coordinator.run_once(&paths).await.expect("scan runs");
-        assert_eq!(run.state, ScanState::Completed);
+        assert_eq!(run.state.scan_state(), ScanState::Completed);
     }
 
     fn run(&self, sql: &str) {
@@ -8074,7 +8186,10 @@ async fn big_retag(
     }
     if stop {
         rig.stop_before(LAST_FILE);
-        assert_eq!(rig.scan_to_its_end().await.state, ScanState::Cancelled);
+        assert_eq!(
+            rig.scan_to_its_end().await.state.scan_state(),
+            ScanState::Cancelled
+        );
     } else {
         rig.scan().await;
     }

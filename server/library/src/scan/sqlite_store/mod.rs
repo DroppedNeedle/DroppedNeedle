@@ -28,10 +28,10 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_f
 use sha2::{Digest as _, Sha256};
 
 use super::models::{
-    Counters, Disposition, EffectivePolicy, RequestedControl, ScanControl, ScanFailureRecord,
-    ScanInventoryItem, ScanKind, ScanPhase, ScanRequest, ScanRequestResult, ScanRun, ScanScope,
-    ScanState, ScanTrigger, ScopeDiscoveryState, Verdict, counter_names, failure_codes,
-    scope_covers_path,
+    Counter, Counters, Disposition, EffectivePolicy, Event, FailureCode, PhaseTimings,
+    RequestedControl, RunState, ScanFailureRecord, ScanInventoryItem, ScanKind, ScanPhase,
+    ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState, ScanTrigger,
+    ScopeDiscoveryState, Verdict, scope_covers_path,
 };
 use super::revision::{exact_stat_revision, legacy_mtime_eps_seconds};
 use super::stop::{Backoff, RunStop, retry_busy};
@@ -241,174 +241,38 @@ fn sha256_hex(value: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Enum spellings. Writer-controlled values; unknown strings fall back to a
-// fixed default so a stray row degrades instead of failing the read.
+// Reading rows back. A stored value no release wrote fails the read: it is
+// never taken for a default that looks real.
 // ---------------------------------------------------------------------------
 
-fn kind_to_str(kind: ScanKind) -> &'static str {
-    match kind {
-        ScanKind::Incremental => "incremental",
-        ScanKind::RescanFiles => "rescan_files",
-        ScanKind::PolicyReconcile => "policy_reconcile",
-    }
+/// The read error for a column holding a value no release wrote.
+fn unknown(column: &str, value: &str) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        0,
+        rusqlite::types::Type::Text,
+        format!("{column} holds a value this release does not know: {value:?}").into(),
+    )
 }
 
-fn kind_from_str(raw: &str) -> ScanKind {
-    match raw {
-        "rescan_files" => ScanKind::RescanFiles,
-        "policy_reconcile" => ScanKind::PolicyReconcile,
-        _ => ScanKind::Incremental,
-    }
+/// Column `column` read through `parse`.
+fn spelled<T>(
+    row: &rusqlite::Row<'_>,
+    column: &str,
+    parse: fn(&str) -> Option<T>,
+) -> rusqlite::Result<T> {
+    let text: String = row.get(column)?;
+    parse(&text).ok_or_else(|| unknown(column, &text))
 }
 
-fn trigger_to_str(trigger: ScanTrigger) -> &'static str {
-    match trigger {
-        ScanTrigger::Manual => "manual",
-        ScanTrigger::Automatic => "automatic",
-        ScanTrigger::Subsonic => "subsonic",
-        ScanTrigger::StartupResume => "startup_resume",
-        ScanTrigger::PolicyApply => "policy_apply",
-    }
-}
-
-fn trigger_from_str(raw: &str) -> ScanTrigger {
-    match raw {
-        "automatic" => ScanTrigger::Automatic,
-        "subsonic" => ScanTrigger::Subsonic,
-        "startup_resume" => ScanTrigger::StartupResume,
-        "policy_apply" => ScanTrigger::PolicyApply,
-        _ => ScanTrigger::Manual,
-    }
-}
-
-fn state_to_str(state: ScanState) -> &'static str {
-    match state {
-        ScanState::Queued => "queued",
-        ScanState::Discovering => "discovering",
-        ScanState::Indexing => "indexing",
-        ScanState::Reconciling => "reconciling",
-        ScanState::Pausing => "pausing",
-        ScanState::Paused => "paused",
-        ScanState::Stopping => "stopping",
-        ScanState::Completed => "completed",
-        ScanState::Cancelled => "cancelled",
-        ScanState::SupersededPolicyChanged => "superseded_policy_changed",
-        ScanState::Failed => "failed",
-    }
-}
-
-fn state_from_str(raw: &str) -> ScanState {
-    match raw {
-        "queued" => ScanState::Queued,
-        "discovering" => ScanState::Discovering,
-        "indexing" => ScanState::Indexing,
-        "reconciling" => ScanState::Reconciling,
-        "pausing" => ScanState::Pausing,
-        "paused" => ScanState::Paused,
-        "stopping" => ScanState::Stopping,
-        "completed" => ScanState::Completed,
-        "cancelled" => ScanState::Cancelled,
-        "superseded_policy_changed" => ScanState::SupersededPolicyChanged,
-        _ => ScanState::Failed,
-    }
-}
-
-fn phase_to_str(phase: ScanPhase) -> &'static str {
-    match phase {
-        ScanPhase::Queued => "queued",
-        ScanPhase::Discovering => "discovering",
-        ScanPhase::Indexing => "indexing",
-        ScanPhase::Reconciling => "reconciling",
-    }
-}
-
-fn phase_from_str(raw: &str) -> ScanPhase {
-    match raw {
-        "discovering" => ScanPhase::Discovering,
-        "indexing" => ScanPhase::Indexing,
-        "reconciling" => ScanPhase::Reconciling,
-        _ => ScanPhase::Queued,
-    }
-}
-
-fn control_from_str(raw: &str) -> RequestedControl {
-    match raw {
-        "pause" => RequestedControl::Pause,
-        "stop" => RequestedControl::Stop,
-        _ => RequestedControl::None,
-    }
-}
-
-fn policy_to_str(policy: EffectivePolicy) -> &'static str {
-    match policy {
-        EffectivePolicy::LocalMetadata => "local_metadata",
-        EffectivePolicy::Automatic => "automatic",
-        EffectivePolicy::Excluded => "excluded",
-    }
-}
-
-fn policy_from_str(raw: &str) -> EffectivePolicy {
-    match raw {
-        "local_metadata" => EffectivePolicy::LocalMetadata,
-        "excluded" => EffectivePolicy::Excluded,
-        _ => EffectivePolicy::Automatic,
-    }
-}
-
-fn verdict_to_str(verdict: Verdict) -> &'static str {
-    match verdict {
-        Verdict::New => "new",
-        Verdict::Changed => "changed",
-        Verdict::Unchanged => "unchanged",
-        Verdict::Excluded => "excluded",
-        Verdict::CandidateMissing => "candidate_missing",
-    }
-}
-
-fn verdict_from_str(raw: &str) -> Verdict {
-    match raw {
-        "changed" => Verdict::Changed,
-        "unchanged" => Verdict::Unchanged,
-        "excluded" => Verdict::Excluded,
-        "candidate_missing" => Verdict::CandidateMissing,
-        _ => Verdict::New,
-    }
-}
-
-fn discovery_to_str(state: ScopeDiscoveryState) -> &'static str {
-    match state {
-        ScopeDiscoveryState::Pending => "pending",
-        ScopeDiscoveryState::Completed => "completed",
-        ScopeDiscoveryState::PartiallyRead => "partially_read",
-        ScopeDiscoveryState::Unavailable => "unavailable",
-    }
-}
-
-fn discovery_from_str(raw: &str) -> ScopeDiscoveryState {
-    match raw {
-        "completed" => ScopeDiscoveryState::Completed,
-        "partially_read" => ScopeDiscoveryState::PartiallyRead,
-        "unavailable" => ScopeDiscoveryState::Unavailable,
-        _ => ScopeDiscoveryState::Pending,
-    }
-}
-
-/// Counter name to its runs-table column. Unknown names have no column.
-fn counter_column(name: &str) -> Option<&'static str> {
-    match name {
-        s if s == counter_names::TOTAL => Some("total_count"),
-        s if s == counter_names::DISCOVERED => Some("discovered_count"),
-        s if s == counter_names::INSPECTED => Some("inspected_count"),
-        s if s == counter_names::NEW => Some("new_count"),
-        s if s == counter_names::CHANGED => Some("changed_count"),
-        s if s == counter_names::INDEXED => Some("indexed_count"),
-        s if s == counter_names::UNCHANGED => Some("unchanged_count"),
-        s if s == counter_names::EXCLUDED => Some("excluded_count"),
-        s if s == counter_names::MISSING => Some("missing_count"),
-        s if s == counter_names::ERRORED => Some("errored_count"),
-        s if s == counter_names::IDENTIFICATION_ENQUEUED => Some("identification_enqueued_count"),
-        _ => None,
-    }
+/// Nullable column `column` read through `parse`.
+fn spelled_opt<T>(
+    row: &rusqlite::Row<'_>,
+    column: &str,
+    parse: fn(&str) -> Option<T>,
+) -> rusqlite::Result<Option<T>> {
+    let text: Option<String> = row.get(column)?;
+    text.map(|text| parse(&text).ok_or_else(|| unknown(column, &text)))
+        .transpose()
 }
 
 pub(in crate::scan) const RUN_COLUMNS: &str = "id, kind, trigger, requested_by_user_id, state, phase, \
@@ -419,71 +283,54 @@ pub(in crate::scan) const RUN_COLUMNS: &str = "id, kind, trigger, requested_by_u
     terminal_code, phase_timings_json, row_revision, event_revision";
 
 fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRun> {
-    let kind: String = row.get("kind")?;
-    let trigger: String = row.get("trigger")?;
     let state: String = row.get("state")?;
     let phase: String = row.get("phase")?;
-    let resume_phase: Option<String> = row.get("resume_phase")?;
-    let requested_control: String = row.get("requested_control")?;
-    let timings: String = row.get("phase_timings_json")?;
-    let mut counters = Counters::new();
-    for (name, column) in [
-        (counter_names::TOTAL, "total_count"),
-        (counter_names::DISCOVERED, "discovered_count"),
-        (counter_names::INSPECTED, "inspected_count"),
-        (counter_names::NEW, "new_count"),
-        (counter_names::CHANGED, "changed_count"),
-        (counter_names::INDEXED, "indexed_count"),
-        (counter_names::UNCHANGED, "unchanged_count"),
-        (counter_names::EXCLUDED, "excluded_count"),
-        (counter_names::MISSING, "missing_count"),
-        (counter_names::ERRORED, "errored_count"),
-        (
-            counter_names::IDENTIFICATION_ENQUEUED,
-            "identification_enqueued_count",
-        ),
-    ] {
-        counters.insert(name.to_owned(), row.get(column)?);
+    let run_state = RunState::from_columns(&state, &phase)
+        .ok_or_else(|| unknown("state", &format!("{state} in phase {phase}")))?;
+    // Both follow from the state; they are read only so a word no release
+    // wrote fails the read.
+    spelled_opt(row, "resume_phase", ScanPhase::parse)?;
+    spelled(row, "requested_control", RequestedControl::parse)?;
+    let mut counters = Counters::default();
+    for counter in Counter::ALL {
+        *counters.slot(counter) = row.get(counter.column())?;
     }
+    let timings: String = row.get("phase_timings_json")?;
+    let phase_timings: PhaseTimings =
+        serde_json::from_str(&timings).map_err(|_| unknown("phase_timings_json", &timings))?;
     Ok(ScanRun {
         id: row.get("id")?,
-        kind: kind_from_str(&kind),
-        trigger: trigger_from_str(&trigger),
-        state: state_from_str(&state),
-        phase: phase_from_str(&phase),
+        kind: spelled(row, "kind", ScanKind::parse)?,
+        trigger: spelled(row, "trigger", ScanTrigger::parse)?,
+        state: run_state,
         requested_by_user_id: row.get("requested_by_user_id")?,
         aggregate_scope: row.get("aggregate_scope")?,
         queued_at: row.get("queued_at")?,
         started_at: row.get("started_at")?,
         updated_at: row.get("updated_at")?,
         terminal_at: row.get("terminal_at")?,
-        resume_phase: resume_phase.as_deref().map(phase_from_str),
-        requested_control: control_from_str(&requested_control),
-        terminal_code: row.get("terminal_code")?,
+        terminal_code: spelled_opt(row, "terminal_code", FailureCode::parse)?,
         coalesced_request_count: row.get("coalesced_request_count")?,
         row_revision: row.get::<_, i64>("row_revision")? as u64,
         event_revision: row.get::<_, i64>("event_revision")? as u64,
         counters,
-        phase_timings: serde_json::from_str(&timings).unwrap_or_default(),
+        phase_timings,
     })
 }
 
 fn map_scope(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanScope> {
-    let policy: String = row.get("effective_policy")?;
     Ok(ScanScope {
         root_id: row.get("root_id")?,
         scope_id: row.get("scope_id")?,
         relative_path: row.get("relative_path")?,
         root_path: row.get("root_path")?,
-        effective_policy: policy_from_str(&policy),
+        effective_policy: spelled(row, "effective_policy", EffectivePolicy::parse)?,
         policy_revision: row.get("policy_revision")?,
         estimated_count: row.get("estimated_count")?,
     })
 }
 
 fn map_inventory(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanInventoryItem> {
-    let policy: String = row.get("effective_policy")?;
-    let verdict: String = row.get("comparison_result")?;
     Ok(ScanInventoryItem {
         root_id: row.get("root_id")?,
         relative_path: row.get("relative_path")?,
@@ -491,8 +338,8 @@ fn map_inventory(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanInventoryItem>
         file_size_bytes: row.get::<_, i64>("file_size_bytes")? as u64,
         file_mtime_ns: row.get("file_mtime_ns")?,
         stat_revision: row.get("stat_revision")?,
-        effective_policy: policy_from_str(&policy),
-        comparison_result: verdict_from_str(&verdict),
+        effective_policy: spelled(row, "effective_policy", EffectivePolicy::parse)?,
+        comparison_result: spelled(row, "comparison_result", Verdict::parse)?,
         policy_revision: row.get("policy_revision")?,
         local_track_id: row.get("local_track_id")?,
         scope_relative_path: row.get("scope_relative_path")?,
@@ -500,14 +347,13 @@ fn map_inventory(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanInventoryItem>
 }
 
 fn map_failure(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanFailureRecord> {
-    let phase: String = row.get("phase")?;
     Ok(ScanFailureRecord {
         root_id: row.get("root_id")?,
         relative_path: row.get("relative_path")?,
-        failure_code: row.get("failure_code")?,
+        failure_code: spelled(row, "failure_code", FailureCode::parse)?,
         recorded_at: row.get("recorded_at")?,
         failure_detail: row.get("failure_detail")?,
-        phase: phase_from_str(&phase),
+        phase: spelled(row, "phase", ScanPhase::parse)?,
     })
 }
 

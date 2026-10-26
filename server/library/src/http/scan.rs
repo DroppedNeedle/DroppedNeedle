@@ -22,7 +22,7 @@ use super::error::LibraryError;
 use super::handlers::run_view;
 use super::models::ScanRunView;
 use crate::activity::feed::LibraryActivity;
-use crate::scan::models::{Disposition, ScanKind, ScanPhase, ScanState};
+use crate::scan::models::{Disposition, FailureCode, ScanKind, ScanPhase, ScanState};
 use crate::scan::reasons::scan_reason;
 use crate::scans::{MAX_FAILURE_PAGE, MAX_PAGE, RunControl};
 use crate::wiring::LibrarySetup;
@@ -195,7 +195,7 @@ pub struct ScanRunFailureItem {
     pub root_id: String,
     pub relative_path: String,
     /// Stable machine code, for example `TAG_READ_FAILED`.
-    pub failure_code: String,
+    pub failure_code: FailureCode,
     /// What happened, in plain words.
     pub message: String,
     /// What to do about it.
@@ -420,7 +420,7 @@ pub async fn scan_run_failures(
         items: failures
             .into_iter()
             .map(|failure| {
-                let reason = scan_reason(&failure.failure_code);
+                let reason = scan_reason(failure.failure_code);
                 ScanRunFailureItem {
                     message: reason.message.to_owned(),
                     action: reason.action.to_owned(),
@@ -447,7 +447,7 @@ async fn control(
         blocking(move || state.control_scan_run(&id, control, body.expected_revision)).await??;
     let run = controlled.run;
     Ok(Json(ScanControlResponse {
-        state: run.state,
+        state: run.state.scan_state(),
         run_id: run.id,
         row_revision: run.row_revision,
         event_revision: run.event_revision,

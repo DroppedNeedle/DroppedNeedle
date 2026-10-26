@@ -13,4 +13,7 @@ pub enum Effect {
     /// Ask the download worker for a pass now, so requests held for want
     /// of a source start.
     WakeDownloads,
+    /// Take the saved library roots in now, and scan the roots that are
+    /// new or changed.
+    RefreshLibraryRoots,
 }

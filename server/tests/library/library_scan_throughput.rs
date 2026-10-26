@@ -34,7 +34,7 @@ use droppedneedle_kernel::db::{DbConfig, open_runtime};
 use droppedneedle_kernel::jobs::checkpoint;
 use droppedneedle_kernel::jobs::{CancellationToken, Supervisor};
 use droppedneedle_library::scan::{
-    EffectivePolicy, ScanKind, ScanRequest, ScanState, ScanTrigger, counter_names,
+    Counter, EffectivePolicy, ScanKind, ScanRequest, ScanState, ScanTrigger,
 };
 
 const FILES_ENV: &str = "DN_SCAN_FILES";
@@ -192,9 +192,8 @@ async fn full_scan_throughput() {
     println!("full scan: {files} files, {albums} albums, {artists} artists");
     println!("  wall time     {elapsed:.2} s");
     println!("  throughput    {:.0} files/s", files as f64 / elapsed);
-    let mut phases: Vec<_> = run.phase_timings.iter().collect();
-    phases.sort_by(|a, b| a.0.cmp(b.0));
-    for (phase, seconds) in phases {
+    for (phase, seconds) in &run.phase_timings {
+        let phase = phase.scan_phase().as_str();
         println!("  {phase:<13} {seconds:.2} s");
     }
     println!(
@@ -207,11 +206,8 @@ async fn full_scan_throughput() {
         wal_at_end as f64 / 1e6
     );
 
-    assert_eq!(run.state, ScanState::Completed);
-    assert_eq!(
-        run.counters.get(counter_names::INDEXED).copied(),
-        Some(files as i64)
-    );
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
+    assert_eq!(run.counters.get(Counter::Indexed), files as i64);
     assert_eq!(indexed, files as i64);
 
     supervisor.shutdown(Duration::from_secs(5)).await;

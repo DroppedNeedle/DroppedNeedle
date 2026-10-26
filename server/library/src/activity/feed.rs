@@ -12,7 +12,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::store::{DeferredJob, IdentificationSnapshot, OperationWork};
-use crate::scan::models::{Counters, ScanPhase, ScanRun, ScanState, counter_names};
+use crate::scan::models::{Counter, Counters, ScanPhase, ScanRun, ScanState};
 
 /// A failed scan stays on the strip this long after it ended.
 const FAILURE_WINDOW_SECS: f64 = 24.0 * 60.0 * 60.0;
@@ -294,22 +294,15 @@ pub struct FeedInputs<'a> {
     pub now: f64,
 }
 
-fn counter(counters: &Counters, name: &str) -> Option<u64> {
-    counters.get(name).map(|value| (*value).max(0) as u64)
+fn counter(counters: &Counters, counter: Counter) -> Option<u64> {
+    Some(counters.get(counter).max(0) as u64)
 }
 
 /// v2's `total_count or discovered_count`: a zero total falls through.
 fn run_total(counters: &Counters) -> Option<u64> {
-    counter(counters, counter_names::TOTAL)
+    counter(counters, Counter::Total)
         .filter(|total| *total != 0)
-        .or_else(|| counter(counters, counter_names::DISCOVERED))
-}
-
-fn snake<T: Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_default()
+        .or_else(|| counter(counters, Counter::Discovered))
 }
 
 fn priority_band(priority: i64) -> String {
@@ -326,7 +319,7 @@ fn priority_band(priority: i64) -> String {
 /// The failed scan card and work entry for a run that failed recently.
 fn failed_scan(run: &ScanRun, counters: &Counters) -> (ActivityItem, WorkItem) {
     let total = run_total(counters);
-    let inspected = counter(counters, counter_names::INSPECTED).unwrap_or(0);
+    let inspected = counter(counters, Counter::Inspected).unwrap_or(0);
     let failure_at = run.terminal_at.unwrap_or(run.updated_at);
     let mut item = ActivityItem::new(ActivityKind::Scan, "failed", SCAN_LABEL);
     item.processed = inspected;
@@ -337,14 +330,14 @@ fn failed_scan(run: &ScanRun, counters: &Counters) -> (ActivityItem, WorkItem) {
     item.failure_event_id = Some(run.id.clone());
     item.failure_at = Some(failure_at);
     let mut work = WorkItem::new(&run.id, WorkKind::Scan, "failed", WorkUnit::Files);
-    work.phase = Some(snake(&run.phase));
+    work.phase = Some(run.state.phase().as_str().to_owned());
     work.effect = WorkEffect::Attention;
     work.processed = inspected;
     work.total = total;
     work.indeterminate = total.unwrap_or(0) == 0;
     work.started_at = run.started_at;
     work.updated_at = run.updated_at;
-    work.failed_count = counter(counters, counter_names::ERRORED).unwrap_or(0);
+    work.failed_count = counter(counters, Counter::Errored).unwrap_or(0);
     work.priority = 0;
     work.failure_event_id = Some(run.id.clone());
     work.failure_at = Some(failure_at);
@@ -409,14 +402,14 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
     let mut items: Vec<ActivityItem> = Vec::new();
     let mut work_items: Vec<WorkItem> = Vec::new();
     let latest_failure = inputs.latest_terminal.filter(|(run, _)| {
-        run.state == ScanState::Failed
+        run.state.scan_state() == ScanState::Failed
             && run
                 .terminal_at
                 .is_some_and(|at| inputs.now - at < FAILURE_WINDOW_SECS)
     });
 
     for (index, (run, counters)) in inputs.runs.iter().enumerate() {
-        let discovering = run.state == ScanState::Discovering;
+        let discovering = run.state.scan_state() == ScanState::Discovering;
         let total = if discovering {
             None
         } else {
@@ -425,15 +418,19 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
         let processed = counter(
             counters,
             if discovering {
-                counter_names::DISCOVERED
+                Counter::Discovered
             } else {
-                counter_names::INSPECTED
+                Counter::Inspected
             },
         )
         .unwrap_or(0);
         let indeterminate = discovering || total.unwrap_or(0) == 0;
         if index == 0 {
-            let mut item = ActivityItem::new(ActivityKind::Scan, &snake(&run.state), SCAN_LABEL);
+            let mut item = ActivityItem::new(
+                ActivityKind::Scan,
+                run.state.scan_state().as_str(),
+                SCAN_LABEL,
+            );
             item.processed = processed;
             item.total = total;
             item.indeterminate = indeterminate;
@@ -445,9 +442,14 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
             }
             items.push(item);
         }
-        let mut work = WorkItem::new(&run.id, WorkKind::Scan, &snake(&run.state), WorkUnit::Files);
-        work.phase = Some(snake(&run.phase));
-        work.processed = match (run.phase, total) {
+        let mut work = WorkItem::new(
+            &run.id,
+            WorkKind::Scan,
+            run.state.scan_state().as_str(),
+            WorkUnit::Files,
+        );
+        work.phase = Some(run.state.phase().as_str().to_owned());
+        work.processed = match (run.state.phase(), total) {
             (ScanPhase::Reconciling, Some(total)) => total,
             _ => processed,
         };
@@ -462,11 +464,11 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
                 "Selected library scopes".to_owned()
             }
         });
-        work.new_count = counter(counters, counter_names::NEW).unwrap_or(0);
-        work.changed_count = counter(counters, counter_names::CHANGED).unwrap_or(0);
-        work.missing_count = counter(counters, counter_names::MISSING).unwrap_or(0);
-        work.failed_count = counter(counters, counter_names::ERRORED).unwrap_or(0);
-        work.priority = if index == 0 && run.state != ScanState::Queued {
+        work.new_count = counter(counters, Counter::New).unwrap_or(0);
+        work.changed_count = counter(counters, Counter::Changed).unwrap_or(0);
+        work.missing_count = counter(counters, Counter::Missing).unwrap_or(0);
+        work.failed_count = counter(counters, Counter::Errored).unwrap_or(0);
+        work.priority = if index == 0 && run.state.scan_state() != ScanState::Queued {
             20
         } else {
             70

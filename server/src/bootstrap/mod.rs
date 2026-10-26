@@ -466,13 +466,15 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     }
     .with_precache(jobs.precache_trigger());
     let download_worker = acquire.worker.clone();
+    let roots_library = library.clone();
     // Each section's declared effects run after every committed change to
     // it, whoever saved it; settings routes wait for them before answering.
     let (effects, effects_runner) = Effects::new(
         config_store.clone(),
         Arc::new(
             LiveSaveEffects::new(jobs.events_kick())
-                .with_download_wake(Arc::new(move || download_worker.wake())),
+                .with_download_wake(Arc::new(move || download_worker.wake()))
+                .with_library_roots(Arc::new(move || roots_library.roots_saved())),
         ),
     );
     if supervisor

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use droppedneedle_kernel::jobs::CancellationToken;
+use droppedneedle_kernel::runtime_config::sections::ScanFrequency;
 
 use super::coordinator::LibraryScanCoordinator;
 use super::models::{Disposition, ScanKind, ScanRequest, ScanScope, ScanTrigger};
@@ -72,6 +73,47 @@ pub fn scopes_for_dirty_ids(
     scopes
 }
 
+/// Hook B consumer: ask for a scan of the scopes marked dirty (new or
+/// changed roots and rules), whatever the schedule, while the library is
+/// on. Marks clear only on a non-conflict request; ids that no longer
+/// resolve clear at once as hints. Callers take turns, so two never ask
+/// for the same marks. Blocking.
+pub fn request_dirty_scopes<T>(coordinator: &LibraryScanCoordinator<T>, inputs: &SupervisorInputs)
+where
+    T: TagReader + 'static,
+{
+    let _turn = coordinator.dirty_turn();
+    let registry = coordinator.registry();
+    if !registry.enabled() {
+        return;
+    }
+    let dirty_ids = inputs.dirty.list();
+    if dirty_ids.is_empty() {
+        return;
+    }
+    let rules = (inputs.inclusion_rules)();
+    let dirty_scopes = scopes_for_dirty_ids(&registry, &rules, &dirty_ids);
+    if dirty_scopes.is_empty() {
+        inputs.dirty.clear(&dirty_ids);
+        return;
+    }
+    match coordinator.request_run(&ScanRequest {
+        kind: ScanKind::Incremental,
+        trigger: ScanTrigger::PolicyApply,
+        requested_by_user_id: None,
+        policy_revision: registry.policy_revision().to_owned(),
+        scopes: dirty_scopes,
+    }) {
+        Ok(result) if result.disposition != Disposition::Conflict => {
+            inputs.dirty.clear(&dirty_ids);
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "dirty-scope scan request failed");
+        }
+        _ => {}
+    }
+}
+
 /// Startup recovery plus the Hook A one-shot reconciliation scan (v2
 /// supervisor preamble, every boot). Guards mirror the loop gates:
 /// enabled, not manual, nothing resumable or current, non-empty scopes.
@@ -99,7 +141,7 @@ where
         }
     };
     let schedule = (inputs.schedule)();
-    if enabled && schedule.frequency != "manual" && idle {
+    if enabled && schedule.frequency != ScanFrequency::Manual && idle {
         let scopes = scheduled_scopes(&registry, &(inputs.inclusion_rules)());
         if !scopes.is_empty() {
             let result = coordinator.request_run(&ScanRequest {
@@ -153,35 +195,7 @@ where
 {
     let registry = coordinator.registry();
     let enabled = registry.enabled();
-    // Hook B consumer: dirty scope marks fire regardless of frequency
-    // (after the enabled check only). Marks clear only on a non-conflict
-    // request; unresolvable ids clear immediately as hints.
-    if enabled {
-        let dirty_ids = inputs.dirty.list();
-        if !dirty_ids.is_empty() {
-            let rules = (inputs.inclusion_rules)();
-            let dirty_scopes = scopes_for_dirty_ids(&registry, &rules, &dirty_ids);
-            if dirty_scopes.is_empty() {
-                inputs.dirty.clear(&dirty_ids);
-            } else {
-                match coordinator.request_run(&ScanRequest {
-                    kind: ScanKind::Incremental,
-                    trigger: ScanTrigger::PolicyApply,
-                    requested_by_user_id: None,
-                    policy_revision: registry.policy_revision().to_owned(),
-                    scopes: dirty_scopes,
-                }) {
-                    Ok(result) if result.disposition != Disposition::Conflict => {
-                        inputs.dirty.clear(&dirty_ids);
-                    }
-                    Err(error) => {
-                        tracing::warn!(error = %error, "dirty-scope scan request failed");
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
+    request_dirty_scopes(coordinator, inputs);
     // A last scan that cannot be read schedules nothing this pass.
     let latest = if enabled {
         coordinator.latest_filesystem_terminal().map_err(|error| {
@@ -300,7 +314,7 @@ mod tests {
         assert!(
             current
                 .iter()
-                .all(|run| run.state == super::super::models::ScanState::Queued),
+                .all(|run| run.state == super::super::models::RunState::Queued),
             "no run leaves queued under shutdown"
         );
     }
@@ -320,7 +334,7 @@ mod tests {
     async fn startup_recovery_requests_a_resume_scan() {
         let (_dir, coordinator) = coordinator();
         let inputs = SupervisorInputs {
-            schedule: Arc::new(|| ScheduleSettings::new("1hr", "03:00", "UTC")),
+            schedule: Arc::new(|| ScheduleSettings::new(ScanFrequency::Hr1, "03:00", "UTC")),
             ..inputs(DirtyScopes::new())
         };
         startup_recovery(&coordinator, &inputs).await;

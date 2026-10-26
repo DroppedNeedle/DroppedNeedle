@@ -98,4 +98,14 @@ droppedneedle_kernel::sql! {
              AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
                WHERE r.local_album_id = t.local_album_id \
                AND r.state IN ('rejected','dismissed','excluded'))";
+    /// When run `?1` entered the phase whose time is running.
+    pub(super) PHASE_STARTED_AT = "SELECT phase_started_at FROM library_scan_runs WHERE id = ?1";
+    /// Write run `?1`'s state (`?2` to `?5`, from its one run state), the
+    /// start time `?6` it keeps once set, its end `?7` with code `?8`, its
+    /// phase clock `?9` and timings `?10`, changed at `?11`.
+    pub(super) WRITE_RUN_STATE = "UPDATE library_scan_runs SET state = ?2, phase = ?3, \
+             resume_phase = ?4, requested_control = ?5, started_at = COALESCE(started_at, ?6), \
+             terminal_at = ?7, terminal_code = ?8, phase_started_at = ?9, \
+             phase_timings_json = ?10, updated_at = ?11, row_revision = row_revision + 1, \
+             event_revision = event_revision + 1 WHERE id = ?1";
 }

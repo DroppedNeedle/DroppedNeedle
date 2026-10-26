@@ -287,7 +287,7 @@ impl SqliteScanStore {
                     run_id,
                     root_id,
                     scope_relative_path,
-                    failure_codes::MASS_MISSING_GUARD
+                    FailureCode::MassMissingGuard
                 ],
                 |row| row.get(0),
             )?)
@@ -441,7 +441,7 @@ impl SqliteScanStore {
                         run_id,
                         root_id,
                         relative_path,
-                        failure_codes::MTIME_SKEW,
+                        FailureCode::MtimeSkew,
                         "Legacy mtime drift beyond tolerance; the file clock and the read clock disagree.",
                     ])?;
                 }

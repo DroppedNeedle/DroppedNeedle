@@ -60,10 +60,10 @@ pub use coordinator::{
 };
 pub use fs::is_management_artifact;
 pub use models::{
-    Counters, Disposition, EffectivePolicy, RequestedControl, ScanControl, ScanFailureRecord,
-    ScanInventoryItem, ScanKind, ScanPhase, ScanRequest, ScanRequestResult, ScanRun, ScanScope,
-    ScanState, ScanTrigger, ScopeDiscoveryState, Verdict, counter_names, failure_codes,
-    scope_covers_path,
+    Counter, Counters, Disposition, EffectivePolicy, Event, FailureCode, Outcome, Phase,
+    PhaseTimings, RequestedControl, RunState, ScanFailureRecord, ScanInventoryItem, ScanKind,
+    ScanPhase, ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState, ScanTrigger,
+    ScopeDiscoveryState, Verdict, scope_covers_path, transition,
 };
 pub use pool::BlockingPool;
 pub use revision::{exact_stat_revision, legacy_mtime_eps_seconds, mtime_ns_from_metadata};

@@ -3,7 +3,7 @@
 
 use droppedneedle_kernel::db::DbError;
 
-use super::models::{EffectivePolicy, ScanInventoryItem};
+use super::models::{Counter, EffectivePolicy, ScanInventoryItem};
 use super::seams::ScannedTags;
 
 /// Stat-revision lineage for one catalog row. `exact` rows compare the
@@ -92,7 +92,7 @@ pub struct EditionFill {
 }
 
 /// One counter delta and the inventory row (root, path) it counts.
-pub type RowCounter = ((String, String), &'static str, i64);
+pub type RowCounter = ((String, String), Counter, i64);
 
 /// What one window commit landed.
 #[derive(Debug, Clone, Default)]

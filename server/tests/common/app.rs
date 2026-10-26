@@ -16,7 +16,7 @@ use axum::{
 };
 use droppedneedle::{AppState, bootstrap, middleware::request_scope};
 use droppedneedle_kernel::config::AppConfig;
-use droppedneedle_library::scan::models::failure_codes;
+use droppedneedle_library::scan::models::FailureCode;
 use droppedneedle_testkit::{
     remotes::{MockServer, serve_plex},
     slskd::MockSlskd,
@@ -432,7 +432,7 @@ impl TestApp {
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM library_scan_failures \
                      WHERE run_id = ?1 AND failure_code = ?2)",
-                    [run, failure_codes::RUN_END_PENDING],
+                    [run, FailureCode::RunEndPending.as_str()],
                     |row| row.get(0),
                 )
                 .expect("end passes read");

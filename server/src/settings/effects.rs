@@ -35,12 +35,19 @@ pub trait SaveEffects: Send + Sync {
 /// waits for the pass and cannot fail.
 pub type DownloadWake = Arc<dyn Fn() + Send + Sync>;
 
-/// Production effects: the events kick and the download worker's wake.
+/// Takes the saved library roots in and asks for the scans new or changed
+/// roots need. Blocking; it logs its own failures.
+pub type LibraryRootsSaved = Arc<dyn Fn() + Send + Sync>;
+
+/// Production effects: the events kick, the download worker's wake and the
+/// library's roots refresh.
 pub struct LiveSaveEffects {
     /// Events sweep kick.
     pub kick: Arc<dyn EventsKick>,
     /// Download worker wake, where a worker runs.
     pub download_wake: Option<DownloadWake>,
+    /// The library's roots refresh, where a library runs.
+    pub roots_saved: Option<LibraryRootsSaved>,
 }
 
 impl LiveSaveEffects {
@@ -49,6 +56,7 @@ impl LiveSaveEffects {
         Self {
             kick,
             download_wake: None,
+            roots_saved: None,
         }
     }
 
@@ -56,6 +64,13 @@ impl LiveSaveEffects {
     #[must_use]
     pub fn with_download_wake(mut self, wake: DownloadWake) -> Self {
         self.download_wake = Some(wake);
+        self
+    }
+
+    /// Refresh the library's roots when the library settings are saved.
+    #[must_use]
+    pub fn with_library_roots(mut self, roots_saved: LibraryRootsSaved) -> Self {
+        self.roots_saved = Some(roots_saved);
         self
     }
 }
@@ -68,6 +83,13 @@ impl SaveEffects for LiveSaveEffects {
                 Effect::WakeDownloads => {
                     if let Some(wake) = &self.download_wake {
                         wake();
+                    }
+                }
+                Effect::RefreshLibraryRoots => {
+                    if let Some(roots_saved) = self.roots_saved.clone()
+                        && let Err(error) = tokio::task::spawn_blocking(move || roots_saved()).await
+                    {
+                        tracing::error!(%error, "the library roots refresh did not finish");
                     }
                 }
             }
