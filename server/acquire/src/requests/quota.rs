@@ -307,10 +307,13 @@ impl QuotaLedger {
     /// `get_user_library_bytes`). Scanned files have no task and count only
     /// toward the global cap.
     async fn user_bytes(&self, user_id: &str) -> Result<u64, RequestsError> {
+        // CROSS JOIN keeps the user's tasks as the outer loop, so each task reaches
+        // its tracks through idx_local_tracks_download_task. A plain JOIN can start
+        // from every track instead.
         let total: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(t.file_size_bytes), 0) FROM local_tracks t \
-             JOIN download_tasks d ON d.id = t.download_task_id \
-             WHERE t.availability = 'indexed' AND d.user_id = ?1",
+            "SELECT COALESCE(SUM(t.file_size_bytes), 0) FROM download_tasks d \
+             CROSS JOIN local_tracks t \
+             WHERE t.download_task_id = d.id AND d.user_id = ?1 AND t.availability = 'indexed'",
         )
         .bind(user_id)
         .fetch_one(self.db.pool())

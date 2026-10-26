@@ -6265,6 +6265,51 @@ async fn held_entries_gain_an_automatic_retry_on_upgrade() {
     );
 }
 
+/// Migration 0089 indexes tracks by the download task they came from, so the
+/// storage quota reaches one user's tracks through that link. A track keeps
+/// its link through the upgrade, and the index is in place afterwards.
+#[tokio::test]
+async fn tracks_gain_a_download_task_index_on_upgrade() {
+    let pool = scratch_pool().await;
+    migrator_through(88).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('ar1', 'A', 'a', 'person', 0, 0); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, album_artist_name, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'al1', 'T', 't', 'ar1', 'A', 'automatic', 0, 0); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, bit_rate, ingest_source, \
+             imported_at, membership_source, availability, download_task_id) \
+         VALUES ('t1', 'al1', 'r1', '/m/1.mp3', '1.mp3', 'p1', 1234, 0, 's', 'T', 't', 'T', \
+             't', 'mp3', 320, 'scan', 0, 'automatic', 'indexed', 'task-1');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master \
+         WHERE type = 'index' AND name = 'idx_local_tracks_download_task'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(index.as_deref(), Some("idx_local_tracks_download_task"));
+
+    let kept: (String, Option<String>, i64) = sqlx::query_as(
+        "SELECT id, download_task_id, file_size_bytes FROM local_tracks WHERE id = 't1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ("t1".to_owned(), Some("task-1".to_owned()), 1234));
+}
+
 /// Wall time in milliseconds, for checks against "due now".
 fn now_ms() -> i64 {
     let elapsed = std::time::SystemTime::now()
