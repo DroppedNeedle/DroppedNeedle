@@ -22,6 +22,7 @@ use super::dispatch::DownloadDispatch;
 use super::downloads::journal::Journal;
 use super::downloads::source_tag::SourceTag;
 use super::downloads::sources::DownloadSource;
+use super::downloads::store::StoreError;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::drop_import::DropImports;
 use super::drop_import::store::DropStore;
@@ -69,6 +70,7 @@ use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use super::worker::{DownloadWorker, SourceList, SourceSet, WorkerConfig, run_startup_recovery};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::store::Stores as CollectionsStores;
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::queue::JobQueue;
@@ -1068,7 +1070,10 @@ impl AcquireSetup {
         self.held.recover().await;
         let report = run_startup_recovery(&self.journal)
             .await
-            .map_err(RecoveryError::Failed)?;
+            .map_err(|error| match error {
+                StoreError::Db(DbError::Busy { operation }) => RecoveryError::Busy { operation },
+                other => RecoveryError::Failed(other.to_string()),
+            })?;
         let requests = super::requests::service::RequestsService::new(&self.requests)
             .recover()
             .await

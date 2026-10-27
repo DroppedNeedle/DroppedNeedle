@@ -134,7 +134,7 @@ pub struct RecoveryReport {
 /// landing or a live attempt resumes, and anything else returns to queued
 /// under its existing idempotency keys. Re-running after a clean shutdown
 /// is a no-op.
-pub async fn run_startup_recovery(journal: &Journal) -> Result<RecoveryReport, String> {
+pub async fn run_startup_recovery(journal: &Journal) -> Result<RecoveryReport, StoreError> {
     match journal
         .read("downloads.reason_spellings", |store| {
             store.stored_reason_spellings()
@@ -150,8 +150,7 @@ pub async fn run_startup_recovery(journal: &Journal) -> Result<RecoveryReport, S
             TaskStatus::Downloading,
             TaskStatus::Processing,
         ])
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     let mut report = RecoveryReport::default();
     for task in tasks {
         let attempts = match journal.read_attempts(&task.id).await {
@@ -175,8 +174,7 @@ pub async fn run_startup_recovery(journal: &Journal) -> Result<RecoveryReport, S
                         let now = crate::db::unix_secs_f64(clock.as_ref());
                         store.transition_task(&task_id, TaskStatus::Queued, now, None)
                     })
-                    .await
-                    .map_err(|error| error.to_string())?;
+                    .await?;
                 report.restarted += 1;
             }
             StartupAction::Noop => {}
