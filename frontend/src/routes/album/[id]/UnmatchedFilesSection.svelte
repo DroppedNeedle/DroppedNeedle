@@ -6,7 +6,6 @@
 	import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
 	import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { albumSourceMatchCacheKey } from '$lib/utils/albumDetailCache';
 	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -37,7 +36,7 @@
 		confirmingId = null;
 		if (activeId === file.id) stopPreview();
 		remove.mutate(
-			{ fileId: file.id, albumMbid, albumCacheKey: albumSourceMatchCacheKey(albumMbid) },
+			{ fileId: file.id, albumMbid },
 			{
 				onSuccess: () => {
 					void invalidateQueriesWithPersister({

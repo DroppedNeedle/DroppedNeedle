@@ -3,9 +3,8 @@ import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import { CACHE_KEYS } from '$lib/constants';
-import { clearLocalStorageNamespace } from '$lib/utils/localStorageCache';
 
+import { AlbumMatchKeyFactory } from '../albumMatch';
 import { LibraryQueryKeyFactory } from '../library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '../QueryClient';
 import { REMOTE_ENDPOINTS } from './endpoints';
@@ -29,7 +28,9 @@ export const createSaveRemoteFoldersMutation = () =>
 			// a folder-scope change reshapes every navidrome read: drop the
 			// album source matches, sweep the whole adapter prefix, and bust
 			// the unified catalog built on top of it
-			clearLocalStorageNamespace(CACHE_KEYS.ALBUM_SOURCE_MATCH_CACHE);
+			await invalidateQueriesWithPersister({
+				queryKey: AlbumMatchKeyFactory.user(context.userId)
+			});
 			await invalidateQueriesWithPersister({
 				queryKey: RemoteQueryKeyFactory.source(context.userId, 'navidrome')
 			});

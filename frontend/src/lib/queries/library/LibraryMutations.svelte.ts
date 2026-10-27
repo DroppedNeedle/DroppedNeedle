@@ -1,4 +1,4 @@
-import { createMutation } from '@tanstack/svelte-query';
+import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
@@ -8,9 +8,9 @@ import { HomeQueryKeyFactory } from '../HomeQueryKeyFactory';
 import { WantedQueryKeyFactory } from '../wanted/WantedQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 import { LOCAL_KEYS } from '../local/LocalV3Keys';
+import { AlbumMatchKeyFactory } from '../albumMatch';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import { albumSourceMatchCache } from '$lib/utils/albumDetailCache';
 import type {
 	AlbumRemoveResponse,
 	TargetCatalogRemovalResponse,
@@ -100,26 +100,24 @@ export function saveLibraryScanSchedule() {
 
 // Remove ONE library file by id: the orphan-review action and the matched
 // track page's per-row action. Admin/trusted only (the route enforces it).
-// Invalidates the album's coverage/status AND the local-library lists, and
-// clears the caller's captured source-match cache entry (the exact key string
-// taken when the action started) here rather than in the page, so a page that
-// unmounts before settle cannot leave the entry behind.
+// Invalidates the album's coverage/status, its local copy on the album page
+// AND the local-library lists, in the cache of the page that removed it.
 export function removeLibraryTrack() {
+	const client = useQueryClient();
 	return createMutation(() => ({
-		mutationFn: ({ fileId }: { fileId: string; albumMbid: string; albumCacheKey: string }) =>
+		mutationFn: ({ fileId }: { fileId: string; albumMbid: string }) =>
 			api.global.v3.DELETE(LibraryV3Api.removeTrack(fileId)),
-		onSuccess: async (_data, { albumMbid, albumCacheKey }) => {
-			albumSourceMatchCache.remove(albumCacheKey);
-			await invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.album(albumMbid)
-			});
-			await invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.catalog.stats(authStore.user?.id)
-			});
-			await invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
-			await invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(authStore.user?.id)
-			});
+		onSuccess: async (_data, { albumMbid }) => {
+			const userId = authStore.user?.id;
+			for (const queryKey of [
+				LibraryQueryKeyFactory.album(albumMbid),
+				AlbumMatchKeyFactory.local(userId, albumMbid),
+				LibraryQueryKeyFactory.catalog.stats(userId),
+				LOCAL_KEYS.root,
+				LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(userId)
+			]) {
+				await invalidateQueriesWithPersister({ queryKey }, undefined, { client });
+			}
 		}
 	}));
 }

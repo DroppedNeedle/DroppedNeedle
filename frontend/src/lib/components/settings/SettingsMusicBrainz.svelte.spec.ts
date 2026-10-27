@@ -39,7 +39,6 @@ const h = vi.hoisted(() => {
 		verify: mutation(),
 		activate: mutation(),
 		invalidate: vi.fn().mockResolvedValue(undefined),
-		clearCaches: vi.fn().mockReturnValue(true),
 		lastSettingsUpdate: null as MusicBrainzSettingsUpdate | null
 	};
 	return state;
@@ -59,10 +58,6 @@ vi.mock('$lib/queries/musicbrainz/MusicBrainzMutations.svelte', () => ({
 vi.mock('$lib/queries/QueryClient', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/queries/QueryClient')>()),
 	invalidateMusicBrainzProviderQueries: h.invalidate
-}));
-
-vi.mock('$lib/utils/albumDetailCache', () => ({
-	clearMusicBrainzProviderCaches: h.clearCaches
 }));
 
 import SettingsMusicBrainz from './SettingsMusicBrainz.svelte';
@@ -155,8 +150,6 @@ beforeEach(() => {
 	resetMutation(h.activate);
 	h.invalidate.mockReset();
 	h.invalidate.mockResolvedValue(undefined);
-	h.clearCaches.mockReset();
-	h.clearCaches.mockReturnValue(true);
 });
 
 afterEach(async () => {
@@ -348,7 +341,6 @@ describe('MusicBrainz four-way source picker', () => {
 			community_acknowledged: null
 		});
 		expect(h.invalidate).toHaveBeenCalledOnce();
-		expect(h.clearCaches).toHaveBeenCalledOnce();
 	});
 	it('sweeps provider caches when source generation changes on the same endpoint', async () => {
 		const current = settings({
@@ -372,6 +364,5 @@ describe('MusicBrainz four-way source picker', () => {
 		await expect.element(page.getByText('MusicBrainz settings saved.')).toBeVisible();
 
 		expect(h.invalidate).toHaveBeenCalledOnce();
-		expect(h.clearCaches).toHaveBeenCalledOnce();
 	});
 });

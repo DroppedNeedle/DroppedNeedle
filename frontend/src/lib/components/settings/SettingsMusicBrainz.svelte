@@ -23,7 +23,6 @@
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
-	import { clearMusicBrainzProviderCaches } from '$lib/utils/albumDetailCache';
 	import {
 		CircleAlert,
 		ExternalLink,
@@ -266,11 +265,6 @@
 		let succeeded = true;
 		try {
 			await invalidateMusicBrainzProviderQueries();
-		} catch {
-			succeeded = false;
-		}
-		try {
-			if (!clearMusicBrainzProviderCaches()) succeeded = false;
 		} catch {
 			succeeded = false;
 		}

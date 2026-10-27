@@ -22,12 +22,6 @@ const CACHE_KEY_GROUPS = {
 		LOCAL_FILES_ALBUMS_LIST: 'droppedneedle_local_files_albums_list'
 	},
 	detail: {
-		ALBUM_BASIC_CACHE: 'droppedneedle_album_basic_cache',
-		ALBUM_TRACKS_CACHE: 'droppedneedle_album_tracks_cache',
-		ALBUM_DISCOVERY_CACHE: 'droppedneedle_album_discovery_cache',
-		ALBUM_LASTFM_CACHE: 'droppedneedle_album_lastfm_cache',
-		ALBUM_YOUTUBE_CACHE: 'droppedneedle_album_youtube_cache',
-		ALBUM_SOURCE_MATCH_CACHE: 'droppedneedle_album_source_match_cache_v2',
 		ARTIST_BASIC_CACHE: 'droppedneedle_artist_basic_cache',
 		ARTIST_EXTENDED_CACHE: 'droppedneedle_artist_extended_cache',
 		ARTIST_LASTFM_CACHE: 'droppedneedle_artist_lastfm_cache'

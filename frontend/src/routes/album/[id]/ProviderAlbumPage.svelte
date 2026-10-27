@@ -1,9 +1,7 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { integrationStore } from '$lib/stores/integration';
 	import BackButton from '$lib/components/BackButton.svelte';
-	import { toastStore } from '$lib/stores/toast';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import LastFmAlbumEnrichmentComponent from '$lib/components/LastFmAlbumEnrichment.svelte';
@@ -85,18 +83,6 @@
 	const providerUnavailable = $derived.by(() => {
 		if (!(primaryError instanceof ApiError)) return false;
 		return primaryError.status === 0 || primaryError.status === 429 || primaryError.status >= 500;
-	});
-
-	// The page state raises its request and removal toasts as a flag; the
-	// shell's Toaster shows them.
-	$effect(() => {
-		if (!state.showToast) return;
-		const message = state.toastMessage;
-		const type = state.toastType === 'warning' ? 'info' : state.toastType;
-		untrack(() => {
-			state.showToast = false;
-			toastStore.show({ message, type });
-		});
 	});
 
 	$effect(() => {

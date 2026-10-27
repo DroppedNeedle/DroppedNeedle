@@ -12,17 +12,11 @@ const REMOTE_LIBRARY_NAMESPACES = [
 ];
 
 // Clear user-dependent localStorage caches that TanStack's user-switch reset does not own.
-// Album basic/tracks/discovery entries include ownership/request/personalized overlays, so
-// they must not survive a logout or account switch even though their provider metadata is reusable.
 export function clearUserScopedLocalCaches(): void {
 	const failures: unknown[] = [];
 	const cleanup = [
 		() => clearLocalStorageNamespace(CACHE_KEYS.DISCOVER_QUEUE),
 		() => clearLocalStorageNamespace(CACHE_KEYS.TIME_RANGE_OVERVIEW_CACHE),
-		() => clearLocalStorageNamespace(CACHE_KEYS.ALBUM_BASIC_CACHE),
-		() => clearLocalStorageNamespace(CACHE_KEYS.ALBUM_TRACKS_CACHE),
-		() => clearLocalStorageNamespace(CACHE_KEYS.ALBUM_DISCOVERY_CACHE),
-		() => clearLocalStorageNamespace(CACHE_KEYS.ALBUM_SOURCE_MATCH_CACHE),
 		// Remote library lists that earlier builds kept here; nothing writes them now.
 		...REMOTE_LIBRARY_NAMESPACES.map((namespace) => () => clearLocalStorageNamespace(namespace))
 	];

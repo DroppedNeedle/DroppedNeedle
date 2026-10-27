@@ -8,8 +8,6 @@ const h = vi.hoisted(() => ({
 		DELETE: vi.fn().mockResolvedValue({})
 	},
 	invalidate: vi.fn().mockResolvedValue(undefined),
-	removeBasic: vi.fn(),
-	removeTracks: vi.fn(),
 	cached: undefined as unknown
 }));
 
@@ -35,11 +33,6 @@ vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => (
 	invalidateLibraryManagementSurfaces: h.invalidate
 }));
 
-vi.mock('$lib/utils/albumDetailCache', () => ({
-	albumBasicCache: { remove: h.removeBasic },
-	albumTracksCache: { remove: h.removeTracks }
-}));
-
 vi.mock('$lib/queries/downloads/DownloadQueryKeyFactory', () => ({
 	DownloadQueryKeyFactory: {
 		tasks: (userId: string | undefined) => ['downloads', 'tasks', userId, 'user', 0],
@@ -61,6 +54,7 @@ import {
 	matchEditionFile,
 	unmatchEditionFile
 } from './EditionQueries.svelte';
+import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 
 type EditionQueryOptions = {
 	queryKey: readonly unknown[];
@@ -134,12 +128,12 @@ it('refreshes the copy, its plans and pages and both groups after a choice', asy
 			['library', 'catalog', 'user-a', 'album-copies'],
 			['library', 'album'],
 			editionsKey('user-a', 'old-group'),
-			editionsKey('user-a', 'new-group')
+			editionsKey('user-a', 'new-group'),
+			AlbumQueryKeyFactory.basic('user-a', 'old-group'),
+			AlbumQueryKeyFactory.basic('user-a', 'new-group'),
+			AlbumQueryKeyFactory.tracks('user-a', 'new-group')
 		])
 	);
-	expect(h.removeBasic).toHaveBeenCalledWith('old-group');
-	expect(h.removeBasic).toHaveBeenCalledWith('new-group');
-	expect(h.removeTracks).toHaveBeenCalledWith('new-group');
 });
 
 it('polls the status while the files are placed or written, and only then', () => {

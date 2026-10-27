@@ -25,6 +25,9 @@ import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
 
 const queryPersister = createPersistedQueryPersister(createIDBStorage(isCurrentQueryScope));
 
+// Both helpers act on the app's client unless given one. A mutation or page
+// passes the client it took from context (`useQueryClient()`), so the change
+// reaches the cache that rendered it, a spec's own client included.
 export const setQueryDataWithPersister = async <
 	TQueryFnData = unknown,
 	TTaggedQueryKey extends QueryKey = QueryKey,
@@ -35,22 +38,26 @@ export const setQueryDataWithPersister = async <
 		NoInfer<TInferredQueryFnData> | undefined,
 		NoInfer<TInferredQueryFnData> | undefined
 	>,
-	options?: SetDataOptions
+	options?: SetDataOptions,
+	client: QueryClient = queryClient
 ) => {
 	if (!isCurrentQueryScope({ queryKey })) return;
-	// eslint-disable-next-line no-restricted-syntax
-	await queryClient.setQueryData<TQueryFnData, TTaggedQueryKey, TInferredQueryFnData>(
+	await client.setQueryData<TQueryFnData, TTaggedQueryKey, TInferredQueryFnData>(
 		queryKey,
 		updater,
 		options
 	);
-	await queryPersister.persistQueryByKey(queryKey, queryClient);
+	await queryPersister.persistQueryByKey(queryKey, client);
 };
 
 export const invalidateQueriesWithPersister = async <TTaggedQueryKey extends QueryKey = QueryKey>(
 	filters?: InvalidateQueryFilters<TTaggedQueryKey>,
 	options?: InvalidateOptions,
-	opts?: { removePersisted?: boolean; persistedPredicate?: PersistedQueryPredicate }
+	opts?: {
+		removePersisted?: boolean;
+		persistedPredicate?: PersistedQueryPredicate;
+		client?: QueryClient;
+	}
 ) => {
 	// Default keeps IndexedDB rows: queries are marked stale (active ones
 	// refetch immediately, inactive ones paint the persisted payload instantly
@@ -74,8 +81,7 @@ export const invalidateQueriesWithPersister = async <TTaggedQueryKey extends Que
 	let activeFailure: unknown;
 	let activeFailed = false;
 	try {
-		// eslint-disable-next-line no-restricted-syntax
-		await queryClient.invalidateQueries<TTaggedQueryKey>(filters, options);
+		await (opts?.client ?? queryClient).invalidateQueries<TTaggedQueryKey>(filters, options);
 	} catch (error) {
 		activeFailure = error;
 		activeFailed = true;

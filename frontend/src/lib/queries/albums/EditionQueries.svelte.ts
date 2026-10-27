@@ -21,7 +21,7 @@ import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryC
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
-import { albumBasicCache, albumTracksCache } from '$lib/utils/albumDetailCache';
+import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 
 // Choosing an edition is for curators; the list of a group's editions is
 // open to any authenticated user.
@@ -367,9 +367,12 @@ function invalidateEditionScope(
 	];
 	for (const group of new Set([rgMbid, joinedGroup])) {
 		if (!group) continue;
-		albumBasicCache.remove(group);
-		albumTracksCache.remove(group);
-		keys.push(editionsKey(userId, group), purchaseOptionsKey(group));
+		keys.push(
+			AlbumQueryKeyFactory.basic(userId, group),
+			AlbumQueryKeyFactory.tracks(userId, group),
+			editionsKey(userId, group),
+			purchaseOptionsKey(group)
+		);
 	}
 	for (const queryKey of keys) void invalidateQueriesWithPersister({ queryKey });
 }

@@ -6,11 +6,9 @@ import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 
 export interface EventHandlerDeps {
 	getAlbum: () => AlbumBasicInfo | null;
-	setAlbum: (a: AlbumBasicInfo | null) => void;
-	getAlbumId: () => string;
+	setAlbum: (a: AlbumBasicInfo) => void;
 	/** The edition the page shows, which a request fetches. */
 	getSelectedRelease?: () => string | null;
-	albumBasicCacheSet: (data: AlbumBasicInfo, key: string) => void;
 	setTrackLinks: (tl: YouTubeTrackLink[]) => void;
 	getTrackLinks: () => YouTubeTrackLink[];
 	setAlbumLink: (l: YouTubeLink) => void;
@@ -64,9 +62,7 @@ export function createEventHandlers(deps: EventHandlerDeps) {
 				.catch(() => null);
 			const current = deps.getAlbum();
 			if (result?.success && current) {
-				current.requested = true;
-				deps.setAlbum(current);
-				deps.albumBasicCacheSet(current, deps.getAlbumId());
+				deps.setAlbum({ ...current, requested: true });
 				deps.onRequestSuccess?.();
 			}
 		} finally {

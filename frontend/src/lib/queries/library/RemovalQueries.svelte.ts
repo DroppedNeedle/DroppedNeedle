@@ -7,12 +7,8 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { WantedQueryKeyFactory } from '$lib/queries/wanted/WantedQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
-import {
-	albumBasicCache,
-	albumSourceMatchCache,
-	albumSourceMatchCacheKey,
-	albumTracksCache
-} from '$lib/utils/albumDetailCache';
+import { AlbumMatchKeyFactory } from '$lib/queries/albumMatch';
+import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
@@ -42,8 +38,8 @@ export function invalidateAlbumRemovals(): Promise<void> {
 }
 
 // Put one removal's files back. The album's tracks are listed again, so
-// every catalog list refreshes, and the album page's own caches for its
-// release group go. A refusal reads the removals again, since one is
+// every catalog list refreshes, and so does the album page for its release
+// group. A refusal reads the removals again, since one is
 // usually stale.
 export function putBackRemoval() {
 	return createMutation(() => ({
@@ -57,15 +53,20 @@ export function putBackRemoval() {
 		}): Promise<PutBackAnswer> =>
 			api.global.v3.POST(LibraryV3Api.putBackRemoval(albumId, removalId)),
 		onSuccess: async (_answer, { releaseGroupMbid }) => {
-			if (releaseGroupMbid) {
-				libraryStore.addMbid(releaseGroupMbid);
-				albumBasicCache.remove(releaseGroupMbid);
-				albumTracksCache.remove(releaseGroupMbid);
-				albumSourceMatchCache.remove(albumSourceMatchCacheKey(releaseGroupMbid));
-			}
+			const userId = authStore.user?.id;
+			const albumPage = releaseGroupMbid
+				? [
+						AlbumQueryKeyFactory.basic(userId, releaseGroupMbid),
+						AlbumQueryKeyFactory.tracks(userId, releaseGroupMbid),
+						AlbumMatchKeyFactory.album(userId, releaseGroupMbid)
+					]
+				: [];
+			if (releaseGroupMbid) libraryStore.addMbid(releaseGroupMbid);
 			await Promise.allSettled([
 				invalidateLibraryCatalog(),
-				invalidateQueriesWithPersister({ queryKey: WantedQueryKeyFactory.prefix })
+				...[WantedQueryKeyFactory.prefix, ...albumPage].map((queryKey) =>
+					invalidateQueriesWithPersister({ queryKey })
+				)
 			]);
 		},
 		onError: () => invalidateAlbumRemovals()
