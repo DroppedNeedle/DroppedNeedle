@@ -348,7 +348,9 @@ impl InstallRecord {
     /// their tip, and tags and commits stay on the installed commit. `None`
     /// means the repository's default (latest release or default branch).
     pub fn update_reference(&self, asked: Option<&str>) -> Option<String> {
-        let asked = asked.map(str::trim).filter(|reference| !reference.is_empty());
+        let asked = asked
+            .map(str::trim)
+            .filter(|reference| !reference.is_empty());
         match (asked, self.ref_kind) {
             (Some(reference), _) => Some(reference.to_owned()),
             (None, PluginRefKind::Release) => None,

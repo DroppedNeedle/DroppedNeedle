@@ -8,10 +8,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use axum::{
-    Json,
-    extract::Request,
-    http::{StatusCode, header},
-    response::{IntoResponse, Response},
+    body::Body,
+    http::{HeaderMap, StatusCode, header},
 };
 
 use droppedneedle_auth::{Admin, Principal};
@@ -19,7 +17,7 @@ use droppedneedle_auth::{Admin, Principal};
 use super::capabilities::routes::ROUTE_BODY_MAX_BYTES;
 use super::error::PluginError;
 use super::host::PluginHost;
-use super::manifest::{Capability, RouteAuth};
+use super::manifest::{Capability, RouteAuth, RouteMethod};
 use super::runtime::PluginRouteBody;
 
 /// One pacing bucket: (plugin, caller, method, subpath).
@@ -85,16 +83,48 @@ impl ExtRateLimiter {
     }
 }
 
+/// What a plugin's route answered.
+#[derive(Debug)]
+pub struct ExtAnswer {
+    /// The plugin's status, never 404 or 502 (those are errors).
+    pub status: StatusCode,
+    /// The plugin's JSON body.
+    pub body: serde_json::Value,
+}
+
+/// One call to a plugin's declared route.
+pub struct ExtCall<'a> {
+    /// Who is calling.
+    pub caller: &'a Principal,
+    /// The plugin's name.
+    pub plugin: &'a str,
+    /// The declared route path.
+    pub subpath: &'a str,
+    /// The request method.
+    pub method: RouteMethod,
+    /// The decoded query string.
+    pub query: HashMap<String, String>,
+    /// The request headers.
+    pub headers: &'a HeaderMap,
+    /// The request body, not yet read.
+    pub body: Body,
+}
+
 /// Serve one call to a plugin's declared route.
 pub async fn serve(
     host: &PluginHost,
     limiter: &ExtRateLimiter,
-    caller: &Principal,
-    plugin_name: &str,
-    subpath: &str,
-    method: &str,
-    request: Request,
-) -> Result<Response, PluginError> {
+    call: ExtCall<'_>,
+) -> Result<ExtAnswer, PluginError> {
+    let ExtCall {
+        caller,
+        plugin: plugin_name,
+        subpath,
+        method,
+        query,
+        headers,
+        body,
+    } = call;
     if plugin_name.is_empty()
         || subpath.is_empty()
         || subpath.starts_with('/')
@@ -112,7 +142,7 @@ pub async fn serve(
         .manifest
         .routes
         .iter()
-        .find(|route| route.path == subpath && route.method.as_str() == method);
+        .find(|route| route.path == subpath && route.method == method);
     let Some(spec) = spec else {
         return Err(PluginError::NotFound);
     };
@@ -124,15 +154,13 @@ pub async fn serve(
     if let Some(retry_after) = limiter.check(
         plugin_name,
         caller.user_id(),
-        method,
+        method.as_str(),
         subpath,
         spec.rate_limit_per_minute,
     ) {
         return Err(PluginError::RateLimited { retry_after });
     }
-    let (parts, body) = request.into_parts();
-    if let Some(declared) = parts
-        .headers
+    if let Some(declared) = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|text| text.trim().parse::<usize>().ok())
@@ -152,24 +180,8 @@ pub async fn serve(
     } else {
         PluginRouteBody::Empty
     };
-    let mut query = HashMap::new();
-    if let Some(raw_query) = parts.uri.query() {
-        for pair in raw_query.split('&') {
-            if pair.is_empty() {
-                continue;
-            }
-            let (key, value) = match pair.split_once('=') {
-                Some((key, value)) => (key, value),
-                None => (pair, ""),
-            };
-            query.insert(
-                percent_decode(key).unwrap_or_else(|| key.to_owned()),
-                percent_decode(value).unwrap_or_else(|| value.to_owned()),
-            );
-        }
-    }
     let result = host
-        .handle_plugin_route(plugin_name, method, subpath, &query, &route_body)
+        .handle_plugin_route(plugin_name, method.as_str(), subpath, &query, &route_body)
         .await;
     let status =
         StatusCode::from_u16(result.status.max(100) as u16).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -179,47 +191,15 @@ pub async fn serve(
     if status == StatusCode::NOT_FOUND {
         return Err(PluginError::NotFound);
     }
-    Ok((status, Json(result.body)).into_response())
-}
-
-/// Decode one percent-encoded query part. Malformed escapes fail the part
-/// (the caller keeps the raw text) instead of failing the request.
-fn percent_decode(part: &str) -> Option<String> {
-    let bytes = part.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len() {
-                return None;
-            }
-            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok()?;
-            let byte = u8::from_str_radix(hex, 16).ok()?;
-            out.push(byte);
-            index += 3;
-            continue;
-        }
-        if bytes[index] == b'+' {
-            out.push(b' ');
-        } else {
-            out.push(bytes[index]);
-        }
-        index += 1;
-    }
-    String::from_utf8(out).ok()
+    Ok(ExtAnswer {
+        status,
+        body: result.body,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn query_decoding_tolerates_bad_escapes() {
-        assert_eq!(percent_decode("a+b"), Some("a b".to_owned()));
-        assert_eq!(percent_decode("a%20b"), Some("a b".to_owned()));
-        assert_eq!(percent_decode("a%zz"), None);
-        assert_eq!(percent_decode("a%2"), None);
-    }
 
     #[test]
     fn limiter_opens_after_the_first_call_over_budget() {

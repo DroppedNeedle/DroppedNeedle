@@ -12,23 +12,26 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{FromRef, Path, Request, State},
+    body::Body,
+    extract::{FromRef, Path, State},
     http::{HeaderMap, StatusCode, header},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 
 use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
-use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
 use super::error::{PluginError, SourceFault};
+use super::ext::ExtCall;
 pub use super::ext::ExtRateLimiter;
 use super::host::{PluginHost, UninstallError, UpdateError};
 use super::install::{
     ArchiveFetcher, InstallError, StagedPlugin, TRUST_WARNING, parse_source, resolve, stage,
 };
+use super::manifest::RouteMethod;
 use super::models::{
     PluginInfo, PluginInstallInfo, PluginInstallPreview, PluginInstallRequest, PluginListResponse,
     PluginRuntimeInfo, PluginSettingFieldInfo, PluginSourceUpdateRequest,
@@ -485,18 +488,21 @@ pub async fn plugin_ext_get(
     State(deps): State<PluginsDeps>,
     User(caller): User,
     Path((name, subpath)): Path<(String, String)>,
-    request: Request,
+    ValidQuery(query): ValidQuery<HashMap<String, String>>,
+    headers: HeaderMap,
+    body: Body,
 ) -> Result<Response, ApiError> {
-    Ok(ext::serve(
-        &deps.host,
-        &deps.ext_limiter,
-        &caller,
-        &name,
-        &subpath,
-        "GET",
-        request,
-    )
-    .await?)
+    let call = ExtCall {
+        caller: &caller,
+        plugin: &name,
+        subpath: &subpath,
+        method: RouteMethod::Get,
+        query,
+        headers: &headers,
+        body,
+    };
+    let answer = ext::serve(&deps.host, &deps.ext_limiter, call).await?;
+    Ok((answer.status, Json(answer.body)).into_response())
 }
 
 /// Serve one declared plugin POST route.
@@ -521,18 +527,21 @@ pub async fn plugin_ext_post(
     State(deps): State<PluginsDeps>,
     User(caller): User,
     Path((name, subpath)): Path<(String, String)>,
-    request: Request,
+    ValidQuery(query): ValidQuery<HashMap<String, String>>,
+    headers: HeaderMap,
+    body: Body,
 ) -> Result<Response, ApiError> {
-    Ok(ext::serve(
-        &deps.host,
-        &deps.ext_limiter,
-        &caller,
-        &name,
-        &subpath,
-        "POST",
-        request,
-    )
-    .await?)
+    let call = ExtCall {
+        caller: &caller,
+        plugin: &name,
+        subpath: &subpath,
+        method: RouteMethod::Post,
+        query,
+        headers: &headers,
+        body,
+    };
+    let answer = ext::serve(&deps.host, &deps.ext_limiter, call).await?;
+    Ok((answer.status, Json(answer.body)).into_response())
 }
 
 /// Serve one declared plugin DELETE route.
@@ -556,18 +565,21 @@ pub async fn plugin_ext_delete(
     State(deps): State<PluginsDeps>,
     User(caller): User,
     Path((name, subpath)): Path<(String, String)>,
-    request: Request,
+    ValidQuery(query): ValidQuery<HashMap<String, String>>,
+    headers: HeaderMap,
+    body: Body,
 ) -> Result<Response, ApiError> {
-    Ok(ext::serve(
-        &deps.host,
-        &deps.ext_limiter,
-        &caller,
-        &name,
-        &subpath,
-        "DELETE",
-        request,
-    )
-    .await?)
+    let call = ExtCall {
+        caller: &caller,
+        plugin: &name,
+        subpath: &subpath,
+        method: RouteMethod::Delete,
+        query,
+        headers: &headers,
+        body,
+    };
+    let answer = ext::serve(&deps.host, &deps.ext_limiter, call).await?;
+    Ok((answer.status, Json(answer.body)).into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -601,7 +613,22 @@ pub async fn plugin_panel_page(
         .get(header::IF_NONE_MATCH)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    Ok(panel::serve(&deps.host, &deps.config, &name, if_none_match).await?)
+    let answer = panel::serve(&deps.host, &deps.config, &name, if_none_match).await?;
+    let builder = Response::builder()
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(header::CONTENT_SECURITY_POLICY, answer.policy)
+        .header(
+            header::CACHE_CONTROL,
+            "private, max-age=60, must-revalidate",
+        )
+        .header(header::ETAG, answer.etag)
+        .header(header::LAST_MODIFIED, answer.last_modified);
+    let rendered = match answer.page {
+        Some(page) => builder.status(StatusCode::OK).body(Body::from(page)),
+        None => builder.status(StatusCode::NOT_MODIFIED).body(Body::empty()),
+    };
+    Ok(rendered.map_err(|error| PluginError::internal(&error))?)
 }
 
 // ---------------------------------------------------------------------------

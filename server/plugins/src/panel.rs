@@ -1,13 +1,7 @@
 //! A plugin's settings panel, served as a sealed page for the admin UI to
 //! frame: a fixed wrapper with the plugin's panel script inlined.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use axum::{
-    body::Body,
-    http::{StatusCode, header},
-    response::Response,
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
@@ -61,54 +55,28 @@ fn inline_panel_script(script: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Format one timestamp as an HTTP date (`Sun, 06 Nov 1994 08:49:37 GMT`).
-fn http_date(when: SystemTime) -> String {
-    const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let secs = when
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0);
-    let days = (secs / 86_400) as i64;
-    let time = secs % 86_400;
-    // Civil date from days since the epoch (Howard Hinnant's algorithm).
-    let era_days = days + 719_468;
-    let era = era_days.div_euclid(146_097);
-    let day_of_era = era_days.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = (day_of_year - (153 * month_prime + 2) / 5 + 1) as u64;
-    let month = (if month_prime < 10 {
-        month_prime + 3
-    } else {
-        month_prime - 9
-    }) as usize;
-    let full_year = if month <= 2 { year + 1 } else { year };
-    format!(
-        "{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
-        DAYS[(days.rem_euclid(7)) as usize],
-        day,
-        MONTHS[month - 1],
-        full_year,
-        time / 3_600,
-        (time % 3_600) / 60,
-        time % 60
-    )
+/// One panel answer. `page` is `None` when the caller's copy is current.
+#[derive(Debug)]
+pub struct PanelPage {
+    /// What the page may do, sent on the 304 too: a cached page takes its
+    /// headers from whichever answer the browser saw last.
+    pub policy: String,
+    /// The page's entity tag.
+    pub etag: String,
+    /// When the panel script last changed, as an HTTP date.
+    pub last_modified: String,
+    /// The page, unless the caller's copy is current.
+    pub page: Option<Vec<u8>>,
 }
 
-/// Serve one enabled plugin's panel page. The entry path resolves inside
-/// the plugin's own directory; anything escaping it reads as missing.
+/// One enabled plugin's panel page. The entry path resolves inside the
+/// plugin's own directory; anything escaping it reads as missing.
 pub async fn serve(
     host: &PluginHost,
     config: &ConfigStore,
     name: &str,
     if_none_match: &str,
-) -> Result<Response, PluginError> {
+) -> Result<PanelPage, PluginError> {
     if name.is_empty()
         || name.contains('/')
         || name.contains('\\')
@@ -139,28 +107,11 @@ pub async fn serve(
     if plugin.directory.is_empty() {
         return Err(PluginError::NotFound);
     }
-    serve_panel_file(
-        &plugin.directory,
-        &normalized,
-        name,
-        if_none_match,
-        &panel_page_policy(config),
-    )
-    .await
-}
-
-async fn serve_panel_file(
-    directory: &str,
-    entry: &str,
-    plugin_name: &str,
-    if_none_match: &str,
-    policy: &str,
-) -> Result<Response, PluginError> {
-    let base = tokio::fs::canonicalize(directory)
+    let base = tokio::fs::canonicalize(&plugin.directory)
         .await
         .map_err(|_| PluginError::NotFound)?;
     let mut joined = base.clone();
-    for part in entry.split('/') {
+    for part in normalized.split('/') {
         if part.is_empty() || part == "." || part == ".." {
             return Err(PluginError::NotFound);
         }
@@ -180,44 +131,34 @@ async fn serve_panel_file(
     }
     // The manifest entry is static and the plugin dir is admin-managed, so
     // the check-then-read below races with nothing untrusted.
-    let mtime = metadata
-        .modified()
-        .unwrap_or(UNIX_EPOCH)
+    let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+    let mtime = modified
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
     // The build's version is part of the tag: a release that changes the
     // wrapper must not answer 304 for a page cached from the old one.
     let etag = format!(
-        "\"{plugin_name}-{}-{:x}-{:x}\"",
+        "\"{name}-{}-{:x}-{:x}\"",
         env!("CARGO_PKG_VERSION"),
         metadata.len(),
         mtime
     );
-    // The policy is on the 304 too: a cached page takes its headers from
-    // whichever answer the browser saw last.
-    let builder = Response::builder()
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header("x-content-type-options", "nosniff")
-        .header("content-security-policy", policy)
-        .header("cache-control", "private, max-age=60, must-revalidate")
-        .header("etag", etag.clone())
-        .header(
-            "last-modified",
-            http_date(metadata.modified().unwrap_or(UNIX_EPOCH)),
-        );
-    let candidates: Vec<&str> = if_none_match
+    let mut answer = PanelPage {
+        policy: panel_page_policy(config),
+        etag,
+        last_modified: http_date(modified),
+        page: None,
+    };
+    let current = if_none_match
         .split(',')
         .map(str::trim)
         .filter(|token| !token.is_empty())
-        .collect();
-    if candidates.iter().any(|token| {
-        *token == "*" || *token == etag || token.strip_prefix("W/") == Some(etag.as_str())
-    }) {
-        return builder
-            .status(StatusCode::NOT_MODIFIED)
-            .body(Body::empty())
-            .map_err(|error| PluginError::internal(&error));
+        .any(|token| {
+            token == "*" || token == answer.etag || token.strip_prefix("W/") == Some(&answer.etag)
+        });
+    if current {
+        return Ok(answer);
     }
     let bytes = tokio::fs::read(&target)
         .await
@@ -228,22 +169,14 @@ async fn serve_panel_file(
     let mut page = PANEL_PAGE_HEAD.to_vec();
     page.extend(inline_panel_script(&bytes));
     page.extend_from_slice(PANEL_PAGE_TAIL);
-    builder
-        .status(StatusCode::OK)
-        .body(Body::from(page))
-        .map_err(|error| PluginError::internal(&error))
+    answer.page = Some(page);
+    Ok(answer)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn http_date_matches_the_reference_point() {
-        // 2024-01-01T00:00:00Z is a Monday.
-        let when = UNIX_EPOCH + Duration::from_secs(1_704_067_200);
-        assert_eq!(http_date(when), "Mon, 01 Jan 2024 00:00:00 GMT");
-        assert_eq!(http_date(UNIX_EPOCH), "Thu, 01 Jan 1970 00:00:00 GMT");
-    }
+/// One timestamp as an HTTP date, held to the years the format can write.
+fn http_date(when: SystemTime) -> String {
+    // 9999-12-31T23:59:59Z, the last moment `httpdate` writes.
+    const LAST: Duration = Duration::from_secs(253_402_300_799);
+    let since_epoch = when.duration_since(UNIX_EPOCH).unwrap_or_default();
+    httpdate::fmt_http_date(UNIX_EPOCH + since_epoch.min(LAST))
 }

@@ -872,6 +872,7 @@ dependencies = [
  "droppedneedle-library",
  "droppedneedle-providers",
  "futures-util",
+ "httpdate",
  "libc",
  "reqwest",
  "rusqlite",
