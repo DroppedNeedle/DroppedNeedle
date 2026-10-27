@@ -64,8 +64,10 @@ pub struct SearchResultItem {
     pub requested: bool,
     /// Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;
     /// library rows score 100 exact, 90 prefix, 70 substring, and songs
-    /// matched only through their artist or album 60. Ranks hits,
-    /// never filters them.
+    /// matched only through their artist or album 60. A MusicBrainz hit
+    /// the library holds carries the better of the two. Library rows that
+    /// match exactly or as a prefix rank above every other row. Ranks
+    /// hits, never filters them.
     pub score: i32,
     /// MusicBrainz disambiguation comment.
     pub disambiguation: Option<String>,
@@ -132,7 +134,8 @@ pub struct SearchBucketResponse {
     pub limit: u32,
     /// Echoed offset.
     pub offset: u32,
-    /// This page of hits, best first.
+    /// This page of hits, best first. Library rows page in step with
+    /// MusicBrainz hits, so a page can hold up to `limit` of each.
     pub results: Vec<SearchResultItem>,
     /// Standout hit, present only on the first page and only when one
     /// scored high enough to headline.

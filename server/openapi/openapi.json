@@ -62151,7 +62151,7 @@
             "items": {
               "$ref": "#/components/schemas/SearchResultItem"
             },
-            "description": "This page of hits, best first."
+            "description": "This page of hits, best first. Library rows page in step with\nMusicBrainz hits, so a page can hold up to `limit` of each."
           },
           "status": {
             "$ref": "#/components/schemas/SearchRemoteStatus",
@@ -62591,7 +62591,7 @@
           "score": {
             "type": "integer",
             "format": "int32",
-            "description": "Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;\nlibrary rows score 100 exact, 90 prefix, 70 substring, and songs\nmatched only through their artist or album 60. Ranks hits,\nnever filters them."
+            "description": "Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;\nlibrary rows score 100 exact, 90 prefix, 70 substring, and songs\nmatched only through their artist or album 60. A MusicBrainz hit\nthe library holds carries the better of the two. Library rows that\nmatch exactly or as a prefix rank above every other row. Ranks\nhits, never filters them."
           },
           "title": {
             "type": "string",

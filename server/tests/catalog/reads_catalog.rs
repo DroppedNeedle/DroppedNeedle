@@ -833,7 +833,11 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
 
     let page = get(&app, "/api/v3/search/albums?q=ok%20computer&limit=2").await;
     assert_eq!(page["status"], "ok");
-    assert_eq!(titles(&page["results"]), ["OK Computer", "Kid A"]);
+    // The library-only bootleg must show in "see all" too, not only in the overview.
+    assert_eq!(
+        titles(&page["results"]),
+        ["OK Computer", "OK Computer Live Bootleg", "Kid A"]
+    );
     assert_eq!(page["results"][0]["id"], "album-okc");
 
     let suggest = get(&app, "/api/v3/search/suggest?q=ok%20computer&limit=3").await;

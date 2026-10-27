@@ -21723,7 +21723,10 @@ export interface components {
              * @description Echoed offset.
              */
             offset: number;
-            /** @description This page of hits, best first. */
+            /**
+             * @description This page of hits, best first. Library rows page in step with
+             *     MusicBrainz hits, so a page can hold up to `limit` of each.
+             */
             results: components["schemas"]["SearchResultItem"][];
             /** @description Provider health for this bucket. */
             status: components["schemas"]["SearchRemoteStatus"];
@@ -21901,8 +21904,10 @@ export interface components {
              * Format: int32
              * @description Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;
              *     library rows score 100 exact, 90 prefix, 70 substring, and songs
-             *     matched only through their artist or album 60. Ranks hits,
-             *     never filters them.
+             *     matched only through their artist or album 60. A MusicBrainz hit
+             *     the library holds carries the better of the two. Library rows that
+             *     match exactly or as a prefix rank above every other row. Ranks
+             *     hits, never filters them.
              */
             score: number;
             /** @description Display title (artist name, album title, or track title). */
