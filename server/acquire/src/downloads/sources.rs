@@ -50,6 +50,11 @@ pub struct SourceHandle {
     /// identified by peer and files.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub release_identity: String,
+    /// This attempt fetches exactly the candidate a person picked (never a
+    /// failover or a fallback search), so a quality waiver confirmed with
+    /// that pick covers it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
 }
 
 impl SourceHandle {
@@ -64,6 +69,7 @@ impl SourceHandle {
             plugin_token: String::new(),
             sizes: Vec::new(),
             release_identity: String::new(),
+            pinned: false,
         }
     }
 }

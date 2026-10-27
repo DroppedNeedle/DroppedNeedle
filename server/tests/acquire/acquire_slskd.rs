@@ -1049,7 +1049,8 @@ async fn seed_album_task(journal: &Journal, task_id: &'static str) {
 }
 
 // Under a saved MP3-only policy the worker fetches the MP3 folder and a
-// search never offers the FLAC one. A FLAC-only policy saved afterwards
+// search offers the FLAC one only last, as outside the settings. A
+// FLAC-only policy saved afterwards
 // steers the next search, with no restart.
 #[tokio::test]
 async fn soulseek_picks_follow_the_saved_quality_policy() {
@@ -1109,14 +1110,21 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
     worker.run_once(1).await;
     assert_eq!(enqueued_peer(&journal, "task-mp3-only").await, "lossy");
     let sources = worker.sources_now();
-    let offered: Vec<String> = sources[0]
+    let offered: Vec<(String, bool)> = sources[0]
         .search(&target)
         .await
         .expect("search runs")
         .into_iter()
-        .filter_map(|candidate| candidate.view.username)
+        .filter_map(|candidate| {
+            let refused = candidate.is_refused();
+            candidate.view.username.map(|peer| (peer, refused))
+        })
         .collect();
-    assert_eq!(offered, ["lossy"], "the FLAC folder is not offered");
+    assert_eq!(
+        offered,
+        [("lossy".to_owned(), false), ("lossless".to_owned(), true)],
+        "the FLAC folder is offered last, as outside the settings"
+    );
 
     settings
         .save_blocking(one_tier_policy("lossless", "flac", "cd"))

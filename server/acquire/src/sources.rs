@@ -16,9 +16,11 @@
 //! blocklisted.
 //!
 //! A task started from a manual search fetches the candidate the person
-//! picked on its first attempt (see [`super::search_jobs`]); failover then
-//! searches as usual. Each adapter also answers a manual search with its
-//! ranked candidates.
+//! picked on its first attempt (see [`super::search_jobs`]), even one
+//! outside the download settings, and marks that attempt's handle
+//! `pinned`; failover then searches as usual. Each adapter also answers a
+//! manual search with its ranked candidates, those outside the settings
+//! last.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -37,9 +39,9 @@ use super::downloads::sources::{
 use super::downloads::store::TaskRow;
 use super::landing::ports::LandingLibrary;
 use super::reason::Reason;
-use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
+use super::search_jobs::candidates::{Candidate, CandidateRefusal, MAX_PER_SOURCE, Pin};
 use super::search_jobs::pinned;
-use super::slskd::folders::{RankRequest, rank_folders};
+use super::slskd::folders::{RankRequest, rank_listing};
 use super::slskd::{EnqueueFile, ReqwestSlskdHttp, SlskdRepository};
 use super::target::reasons::TrackReason;
 use super::target::releases::order_releases;
@@ -209,8 +211,8 @@ impl SlskdSource {
     }
 
     /// A manual search: the album's folders, ranked against the edition's
-    /// tracklist the same way the automatic path ranks them. Blocklisted
-    /// files are left out.
+    /// tracklist the same way the automatic path ranks them, with folders
+    /// outside the quality band last. Blocklisted files are left out.
     async fn search_album(&self, target: &SearchTarget) -> Result<Vec<Candidate>, SourceError> {
         if !self.repo.is_configured() {
             return Ok(Vec::new());
@@ -229,7 +231,7 @@ impl SlskdSource {
             wanted: &[],
             single_track: false,
         };
-        Ok(rank_folders(&hits, request, self.repo.policy())
+        Ok(rank_listing(&hits, request, self.repo.policy())
             .into_iter()
             .take(MAX_PER_SOURCE)
             .map(Candidate::from_folder)
@@ -318,6 +320,7 @@ impl SlskdSource {
                 .collect(),
             _ => Vec::new(),
         };
+        let pinned_pick = !picked.is_empty();
         let payload: Vec<EnqueueFile> = if picked.is_empty() {
             let keep = |hit: &super::slskd::SearchResult| {
                 !blocked.blocks_file(&hit.username, &hit.filename) && !tried.contains(&hit.username)
@@ -371,6 +374,7 @@ impl SlskdSource {
             sizes,
             username: handle.username,
             filenames: handle.filenames,
+            pinned: pinned_pick,
             ..SourceHandle::new(SourceTag::Soulseek)
         })
     }
@@ -504,14 +508,23 @@ impl SabnzbdSource {
         self
     }
 
-    /// Search every indexer, then gate: an NZB URL is required, a
-    /// positive password flag rejects (aggregators use negative for
-    /// unknown, which never rejects), retention plus size caps apply, and
-    /// a release whose category names a tier outside the band is skipped.
-    /// Album results are ordered against the target's tracklist.
-    /// Blocklisted releases are left to the caller, which needs the count
-    /// found before them.
+    /// The releases an automatic pick may take: [`Self::listed`] minus
+    /// those outside the download settings.
     async fn candidates(&self, query: &IndexerQuery<'_>) -> Vec<IndexerResult> {
+        self.listed(query)
+            .await
+            .into_iter()
+            .filter(|hit| self.refusals(hit).is_empty())
+            .collect()
+    }
+
+    /// Search every indexer and drop what cannot be fetched: an NZB URL is
+    /// required, a positive password flag drops (aggregators use negative
+    /// for unknown, which never drops), and so does a release past the
+    /// provider's retention. Album results are ordered against the
+    /// target's tracklist. Blocklisted releases are left to the caller,
+    /// which needs the count found before them.
+    async fn listed(&self, query: &IndexerQuery<'_>) -> Vec<IndexerResult> {
         let found = futures_util::future::join_all(
             self.indexers.iter().map(|indexer| indexer.search(query)),
         )
@@ -526,13 +539,24 @@ impl SabnzbdSource {
             .filter(|hit| !hit.usenet.nzb_url.is_empty())
             .filter(|hit| hit.usenet.password <= 0)
             .filter(|hit| self.policy.within_retention(hit.usenet.usenet_date, now))
-            .filter(|hit| self.policy.within_size_cap(hit.usenet.size_bytes))
-            .filter(|hit| self.policy.accepts_categories(&hit.usenet.category_ids))
             .collect();
         match query {
             IndexerQuery::Album(target) => order_releases(hits, target),
             IndexerQuery::Track { .. } => hits,
         }
+    }
+
+    /// How a release is outside the download settings: a category that
+    /// names a tier outside the band, or a size over the cap.
+    fn refusals(&self, hit: &IndexerResult) -> Vec<CandidateRefusal> {
+        let mut refusal = Vec::new();
+        if !self.policy.accepts_categories(&hit.usenet.category_ids) {
+            refusal.push(CandidateRefusal::QualityOutsideRange);
+        }
+        if !self.policy.within_size_cap(hit.usenet.size_bytes) {
+            refusal.push(CandidateRefusal::OverSizeCap);
+        }
+        refusal
     }
 
     /// The best release for a task that is neither blocklisted nor already
@@ -598,30 +622,33 @@ impl SabnzbdSource {
         })
     }
 
-    /// A manual search: the album's releases from every indexer, gated
-    /// and ordered as the automatic path orders them. Blocklisted releases
-    /// are left out.
+    /// A manual search: the album's releases from every indexer, ordered
+    /// as the automatic path orders them, with those outside the download
+    /// settings after the rest. Blocklisted releases are left out.
     async fn search_album(&self, target: &SearchTarget) -> Result<Vec<Candidate>, SourceError> {
         if !self.queue.is_configured() || !target.has_album() {
             return Ok(Vec::new());
         }
         let blocked = blocklist(&self.journal, &SourceTag::Usenet).await?;
-        Ok(self
+        let (mut listing, refused): (Vec<Candidate>, Vec<Candidate>) = self
             .unblocked_albums(target, &blocked)
             .await
             .iter()
-            .take(MAX_PER_SOURCE)
-            .map(|hit| Candidate::from_release(hit, target))
-            .collect())
+            .map(|hit| Candidate::from_release(hit, target, self.refusals(hit)))
+            .partition(|candidate| !candidate.is_refused());
+        listing.extend(refused);
+        listing.truncate(MAX_PER_SOURCE);
+        Ok(listing)
     }
 
-    /// The album's releases minus the blocklisted ones.
+    /// The album's releases minus the blocklisted ones, including those
+    /// outside the download settings (a person may pick one).
     async fn unblocked_albums(
         &self,
         target: &SearchTarget,
         blocked: &Blocklist,
     ) -> Vec<IndexerResult> {
-        self.candidates(&IndexerQuery::Album(target))
+        self.listed(&IndexerQuery::Album(target))
             .await
             .into_iter()
             .filter(|hit| {
@@ -657,10 +684,12 @@ impl SabnzbdSource {
         }
         let task = task_row(&self.journal, task_id).await?;
         let index = candidate_index.max(0) as usize;
+        let pin = pinned(&self.journal, &task, &SourceTag::Usenet, candidate_index).await;
         // Crash-retry dedup: the job name is deterministic per
         // (task, index), so a repeat enqueue after a crash between the
         // client add and the journal write re-attaches to the existing
-        // job instead of adding a twin.
+        // job instead of adding a twin. With a pick, that job can only
+        // be the picked release: a pick that is not found adds nothing.
         let job_name = format!("droppedneedle-{task_id}-{index}");
         let probe = super::usenet::sabnzbd::TaskHandle {
             source: SourceTag::Usenet.to_string(),
@@ -678,6 +707,7 @@ impl SabnzbdSource {
                 return Ok(SourceHandle {
                     job_name,
                     nzo_id,
+                    pinned: matches!(pin, Some(Pin::Release { .. })),
                     ..SourceHandle::new(SourceTag::Usenet)
                 });
             }
@@ -692,9 +722,11 @@ impl SabnzbdSource {
         }
         let target = resolve_target(self.targets.as_ref(), &task).await?;
         let blocked = blocklist(&self.journal, &SourceTag::Usenet).await?;
-        let pick = match pinned(&self.journal, &task, &SourceTag::Usenet, candidate_index).await {
-            // The release a person picked, found again by its identity: the
-            // NZB link is never stored.
+        let pinned_pick = matches!(pin, Some(Pin::Release { .. }));
+        let pick = match pin {
+            // The release a person picked, found again by its identity (even
+            // outside the download settings: they judged it): the NZB link
+            // is never stored.
             Some(Pin::Release { identity }) => self
                 .unblocked_albums(&target, &blocked)
                 .await
@@ -749,6 +781,7 @@ impl SabnzbdSource {
             job_name: handle.job_name,
             nzo_id: handle.nzo_id,
             release_identity: usenet_identity(&pick.usenet.title, pick.usenet.size_bytes),
+            pinned: pinned_pick,
             ..SourceHandle::new(SourceTag::Usenet)
         })
     }

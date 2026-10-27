@@ -143,6 +143,9 @@ pub struct Target {
     /// one matched, the library's holdings are read from that copy only,
     /// and the files join it.
     pub planned_album: Option<crate::downloads::plan::PlannedAlbum>,
+    /// A person confirmed this attempt's candidate outside the quality
+    /// band: its files are kept whatever their quality.
+    pub quality_waived: bool,
 }
 
 impl Target {
@@ -603,8 +606,9 @@ impl ImportSpec for WrongAlbum {
 }
 
 /// The files' real quality must sit inside the policy band (v2
-/// `post_download_quality_mismatch`). Never blocklisted: a peer's labels
-/// were wrong, not its files broken.
+/// `post_download_quality_mismatch`), unless a person confirmed the
+/// candidate this attempt fetched outside it. Never blocklisted: a peer's
+/// labels were wrong, not its files broken.
 struct QualityAllowed;
 
 impl ImportSpec for QualityAllowed {
@@ -618,7 +622,9 @@ impl ImportSpec for QualityAllowed {
             return Verdict::accept();
         };
         let policy = subject.policy;
-        if super::quality::in_range(tier, &policy.quality_min, &policy.quality_max) {
+        if subject.target.quality_waived
+            || super::quality::in_range(tier, &policy.quality_min, &policy.quality_max)
+        {
             return Verdict::accept();
         }
         Verdict::reject(

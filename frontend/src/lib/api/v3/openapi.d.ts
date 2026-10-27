@@ -11729,19 +11729,27 @@ export interface components {
         };
         /** @description Why a candidate sits where it does: one stable code and one sentence. */
         CandidateNote: {
-            /**
-             * @description Stable code (`complete`, `incomplete`, `lengths`, `quality`,
-             *     `no_tracklist`, `names_album`, `title_unclear`, `strong`, `weak`).
-             */
-            code: string;
+            /** @description Stable code. */
+            code: components["schemas"]["CandidateNoteCode"];
             /** @description What the candidate looks like, in one sentence. */
             text: string;
         };
         /**
+         * @description The stable code of a [`CandidateNote`].
+         * @enum {string}
+         */
+        CandidateNoteCode: "complete" | "incomplete" | "lengths" | "quality" | "no_tracklist" | "names_album" | "title_unclear" | "strong" | "weak";
+        /**
+         * @description Why a candidate is outside the download settings. Declared in the order
+         *     the page names them: the first that applies is shown.
+         * @enum {string}
+         */
+        CandidateRefusal: "quality_outside_range" | "over_size_cap" | "ignored_term" | "required_term_missing" | "below_minimum_score";
+        /**
          * @description How strongly a candidate is recommended.
          * @enum {string}
          */
-        CandidateTier: "recommended" | "possible";
+        CandidateTier: "recommended" | "possible" | "refused";
         /** @description One scored candidate inside a review. */
         CandidateView: {
             /** @description Candidate album artist. */
@@ -18337,6 +18345,11 @@ export interface components {
         PickRequest: {
             /** @description `candidate_index` of the candidate to download. */
             candidate_index: number;
+            /**
+             * @description Download it even though it is outside the download settings (its
+             *     `refusal` is not empty). Without it such a pick answers 409.
+             */
+            confirm_policy_break?: boolean;
         };
         /** @description The download a pick started. */
         PickResponse: {
@@ -21581,7 +21594,7 @@ export interface components {
             file_count: number;
             /** @description Files it would fetch, when the source lists them. */
             files: components["schemas"]["CandidateFile"][];
-            /** @description Format label (`FLAC`, `MP3 320`, `lossless`), when known. */
+            /** @description Format label (`FLAC 24-bit`, `MP3 320`, `lossless`), when known. */
             format?: string | null;
             /**
              * Format: int64
@@ -21592,6 +21605,11 @@ export interface components {
             has_free_slot?: boolean | null;
             /** @description Usenet: the indexer that listed it. */
             indexer?: string | null;
+            /**
+             * @description Soulseek: held tracks whose length is unknown or off the edition's,
+             *     when the tracklist is known.
+             */
+            length_misses?: number | null;
             /** @description Why, in one sentence. */
             note: components["schemas"]["CandidateNote"];
             /**
@@ -21604,6 +21622,16 @@ export interface components {
              * @description Soulseek: files waiting in the peer's upload queue.
              */
             queue_length?: number | null;
+            /**
+             * @description Every way it is outside the download settings, the one to show
+             *     first. Empty when it is inside them.
+             */
+            refusal?: components["schemas"]["CandidateRefusal"][];
+            /**
+             * Format: double
+             * @description Plugin: the plugin's own score for it, from 0 to 1.
+             */
+            score?: number | null;
             /**
              * Format: int64
              * @description Total size in bytes (0 when unknown).

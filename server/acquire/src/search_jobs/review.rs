@@ -54,8 +54,11 @@ pub enum Verdict {
 /// Judge the candidates, listed source by source in try order with each
 /// source's best first. The first recommended one wins, so an earlier
 /// source's good copy beats a later source's (v2's source-first order).
+/// Candidates outside the download settings count for nothing: when only
+/// those were found, the download searches as usual rather than waiting
+/// for a person.
 pub fn verdict(mode: ReviewMode, candidates: &[Candidate]) -> Verdict {
-    if candidates.is_empty() {
+    if candidates.iter().all(Candidate::is_refused) {
         return Verdict::Nothing;
     }
     if mode == ReviewMode::WhenUnsure

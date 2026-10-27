@@ -14,7 +14,10 @@
 //! the size cap and the quality band. Scores at or above
 //! `preflight_score_auto_accept` (0.70 by default) download automatically;
 //! from `preflight_score_manual_min` (0.50 by default) up to that, a person
-//! picks them; anything lower is dropped. Port of v2's `PluginReleaseScorer`.
+//! picks them. A blocklisted release is never offered; one that fails any
+//! other gate, or scores lower, is offered to a person only, after every
+//! release that passes, with the reasons it fails. Port of v2's
+//! `PluginReleaseScorer`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,7 +30,7 @@ use super::downloads::sources::{
 };
 use super::downloads::store::TaskRow;
 use super::reason::Reason;
-use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
+use super::search_jobs::candidates::{Candidate, CandidateRefusal, MAX_PER_SOURCE, Pin};
 use super::search_jobs::pinned;
 use super::target::reasons::TrackReason;
 use super::target::{SearchTarget, Targets};
@@ -46,7 +49,7 @@ const RANKED_MAX: usize = 50;
 /// How sure the scorer is about one release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Band {
-    /// Below the manual minimum: never offered.
+    /// Below the manual minimum: offered to a person as refused.
     Rejected,
     /// Offered for a manual pick only.
     Manual,
@@ -65,6 +68,8 @@ pub struct ScoredRelease {
     pub band: Band,
     /// Parsed quality tier, when the plugin gave one.
     pub tier: Option<QualityTier>,
+    /// The gates it fails, in display order; empty when it passes them.
+    pub refusal: Vec<CandidateRefusal>,
 }
 
 /// The policy gates a plugin release must pass.
@@ -98,9 +103,26 @@ pub fn release_identity(release: &PluginSearchResult) -> String {
     format!("{title}\u{1f}{}", release.size_bytes.max(0) / (1024 * 1024))
 }
 
-/// Rank one source's releases: gates first, then band, quality tier and
-/// score, best first. Ties keep title order.
+/// Rank one source's releases for an automatic pick: only those that pass
+/// every gate, by band, quality tier and score, best first. Ties keep
+/// title order.
 pub fn rank_plugin_releases(
+    releases: Vec<PluginSearchResult>,
+    policy: &ReleasePolicy,
+    blocked: &Blocklist,
+) -> Vec<ScoredRelease> {
+    let mut ranked: Vec<ScoredRelease> = score_plugin_releases(releases, policy, blocked)
+        .into_iter()
+        .filter(|scored| scored.refusal.is_empty())
+        .collect();
+    ranked.truncate(RANKED_MAX);
+    ranked
+}
+
+/// Score every release that is not blocklisted, with the gates each one
+/// fails: those that pass every gate first, then the rest, each part
+/// ranked as [`rank_plugin_releases`] ranks.
+pub fn score_plugin_releases(
     releases: Vec<PluginSearchResult>,
     policy: &ReleasePolicy,
     blocked: &Blocklist,
@@ -116,21 +138,10 @@ pub fn rank_plugin_releases(
     let required = lower_terms(&policy.required_terms);
     let mut scored: Vec<ScoredRelease> = releases
         .into_iter()
-        .filter_map(|release| {
+        .filter(|release| !blocked.blocks(&release_identity(release)))
+        .map(|release| {
             let title = release.title.to_lowercase();
-            if blocked.blocks(&release_identity(&release))
-                || ignored.iter().any(|term| title.contains(term))
-                || !required.iter().all(|term| title.contains(term))
-                || !policy
-                    .usenet
-                    .within_size_cap(release.size_bytes.max(0) as u64)
-            {
-                return None;
-            }
             let tier = QualityTier::parse(&release.quality_tier);
-            if tier.is_some_and(|tier| !policy.usenet.accepts_tier(tier)) {
-                return None;
-            }
             let score = if release.score.is_finite() {
                 release.score.clamp(0.0, 1.0)
             } else {
@@ -143,19 +154,46 @@ pub fn rank_plugin_releases(
             } else {
                 Band::Rejected
             };
-            (band != Band::Rejected).then_some(ScoredRelease {
+            let fails = [
+                (
+                    tier.is_some_and(|tier| !policy.usenet.accepts_tier(tier)),
+                    CandidateRefusal::QualityOutsideRange,
+                ),
+                (
+                    !policy
+                        .usenet
+                        .within_size_cap(release.size_bytes.max(0) as u64),
+                    CandidateRefusal::OverSizeCap,
+                ),
+                (
+                    ignored.iter().any(|term| title.contains(term)),
+                    CandidateRefusal::IgnoredTerm,
+                ),
+                (
+                    !required.iter().all(|term| title.contains(term)),
+                    CandidateRefusal::RequiredTermMissing,
+                ),
+                (band == Band::Rejected, CandidateRefusal::BelowMinimumScore),
+            ];
+            ScoredRelease {
                 release,
                 score,
                 band,
                 tier,
-            })
+                refusal: fails
+                    .into_iter()
+                    .filter_map(|(fails, reason)| fails.then_some(reason))
+                    .collect(),
+            }
         })
         .collect();
     scored.sort_by(|left, right| left.release.title.cmp(&right.release.title));
     scored.sort_by(|left, right| {
         right
-            .band
-            .cmp(&left.band)
+            .refusal
+            .is_empty()
+            .cmp(&left.refusal.is_empty())
+            .then(right.band.cmp(&left.band))
             .then(
                 right
                     .tier
@@ -164,7 +202,6 @@ pub fn rank_plugin_releases(
             )
             .then(right.score.total_cmp(&left.score))
     });
-    scored.truncate(RANKED_MAX);
     scored
 }
 
@@ -247,18 +284,20 @@ impl PluginDownloadSource {
             plugin_token: handle.plugin_token,
             sizes: Vec::new(),
             release_identity: release_identity(release),
+            pinned: false,
         })
     }
 
-    /// A manual search: the album's releases, ranked and gated, with the
-    /// ones a person must judge (the plugin's weaker matches) included.
+    /// A manual search: the album's releases, ranked, with the ones a
+    /// person must judge (the plugin's weaker matches) included and those
+    /// outside the download settings after them.
     async fn search_album(&self, target: &SearchTarget) -> Result<Vec<Candidate>, SourceError> {
         if !target.has_album() {
             return Ok(Vec::new());
         }
         let blocked = super::sources::blocklist(&self.journal, &self.tag).await?;
         Ok(
-            rank_plugin_releases(self.album_releases(target).await, &self.policy, &blocked)
+            score_plugin_releases(self.album_releases(target).await, &self.policy, &blocked)
                 .into_iter()
                 .take(MAX_PER_SOURCE)
                 .map(|scored| Candidate::from_plugin(&self.tag, scored))
@@ -380,9 +419,10 @@ impl PluginDownloadSource {
             pinned(&self.journal, &task, &self.tag, candidate_index).await
         {
             // The release a person picked from a manual search, found
-            // again by its identity (any band: they judged it).
+            // again by its identity (any band and outside the settings
+            // too: they judged it), never once blocklisted.
             let release =
-                rank_plugin_releases(self.album_releases(&target).await, &self.policy, &blocked)
+                score_plugin_releases(self.album_releases(&target).await, &self.policy, &blocked)
                     .into_iter()
                     .find(|scored| release_identity(&scored.release) == identity)
                     .ok_or_else(|| {
@@ -394,7 +434,9 @@ impl PluginDownloadSource {
                             ),
                         )
                     })?;
-            return self.enqueue_release(&task, &release.release, index).await;
+            let mut handle = self.enqueue_release(&task, &release.release, index).await?;
+            handle.pinned = true;
+            return Ok(handle);
         }
         let tried = super::sources::tried_releases(&self.journal, task_id, &self.tag).await?;
         let untried =

@@ -266,6 +266,9 @@ impl LandingService {
         };
         let mut target = target_for(task, &details, &plan);
         target.wait_for_files = patient;
+        // A waiver covers only the attempt that fetched the candidate the
+        // person confirmed, never a failover or a fallback search.
+        target.quality_waived = plan.quality_waived && attempt_pinned(&task.id, handle.as_deref());
         // The album's chosen edition (manual identity, pin, best fit) is
         // the only acceptable release: matching, the missing positions and
         // the pinned-edition check all use it. A download fetched for one
@@ -940,6 +943,7 @@ pub fn target_for(task: &TaskRow, details: &TaskDetails, plan: &TaskPlan) -> Tar
             .map(|at| (at.disc.max(1), at.track))
             .collect(),
         planned_album: planned_album(details, plan),
+        quality_waived: false,
     }
 }
 
@@ -1014,6 +1018,21 @@ fn confine(landed: Landed, libraries: &[PathBuf]) -> Result<Vec<Reported>, Rejec
         });
     }
     Ok(kept)
+}
+
+/// Whether this attempt fetched exactly the candidate a person picked, as
+/// its journaled handle records. A handle that does not decode is not.
+fn attempt_pinned(task_id: &str, handle: Option<&str>) -> bool {
+    let Some(json) = handle.filter(|json| !json.is_empty()) else {
+        return false;
+    };
+    match serde_json::from_str::<SourceHandle>(json) {
+        Ok(handle) => handle.pinned,
+        Err(error) => {
+            tracing::warn!(task_id, %error, "attempt handle does not decode; not a pinned pick");
+            false
+        }
+    }
 }
 
 /// The file names the client reported for this attempt, as it named them

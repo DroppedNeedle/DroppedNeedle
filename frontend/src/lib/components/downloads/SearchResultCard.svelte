@@ -1,5 +1,29 @@
+<script lang="ts" module>
+	import type { CandidateRefusal } from '$lib/queries/downloads/SearchQueries.svelte';
+
+	/** Why a candidate is outside the download settings, as a short label. */
+	export const REFUSAL_LABELS: Record<CandidateRefusal, string> = {
+		quality_outside_range: 'Quality outside your range',
+		over_size_cap: 'Over your size limit',
+		ignored_term: 'Has a term you ignore',
+		required_term_missing: 'Missing a term you require',
+		below_minimum_score: 'Scored below your minimum'
+	};
+</script>
+
 <script lang="ts">
-	import { BadgeCheck, Disc3, Download, Files, Library, Puzzle, Signal } from 'lucide-svelte';
+	import {
+		BadgeCheck,
+		CircleAlert,
+		Disc3,
+		Download,
+		Files,
+		Gauge,
+		Library,
+		Puzzle,
+		Signal,
+		Timer
+	} from 'lucide-svelte';
 
 	import type { SearchCandidate } from '$lib/queries/downloads/SearchQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -17,6 +41,18 @@
 	const isSoulseek = $derived(candidate.source === 'soulseek');
 	const isUsenet = $derived(candidate.source === 'usenet');
 	const recommended = $derived(candidate.tier === 'recommended');
+	const refusal = $derived(candidate.refusal?.[0] ?? null);
+	const noteTone = $derived(
+		recommended ? 'text-success' : refusal ? 'text-base-content/60' : 'text-warning'
+	);
+	const scoreLabel = $derived(
+		candidate.score != null ? `score ${Math.round(candidate.score * 100)}%` : null
+	);
+	const lengthsLabel = $derived(
+		candidate.length_misses
+			? `${candidate.length_misses} ${candidate.length_misses === 1 ? 'length' : 'lengths'} off`
+			: null
+	);
 
 	function sizeLabel(bytes: number): string {
 		if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
@@ -49,10 +85,10 @@
 	);
 </script>
 
-<Card variant="bordered" padding="sm" class="sleeve-card">
-	<div class="flex items-center gap-4">
+<Card as="article" variant="bordered" padding="sm" class="sleeve-card">
+	<div class="flex items-center gap-3 sm:gap-4">
 		<div
-			class="sleeve grid size-14 shrink-0 place-items-center rounded-md bg-base-300"
+			class="sleeve hidden size-14 shrink-0 place-items-center rounded-md bg-base-300 sm:grid"
 			aria-hidden="true"
 		>
 			{#if isSoulseek}
@@ -67,21 +103,43 @@
 		<div class="min-w-0 flex-1">
 			<p class="truncate text-base font-semibold" title={candidate.title}>{candidate.title}</p>
 			<p class="truncate text-sm text-base-content/60" title={subtitle}>{subtitle}</p>
-			<p
-				class="mt-1 text-xs"
-				class:text-success={recommended}
-				class:text-warning={!recommended}
-				data-testid="candidate-note"
-			>
+			{#if refusal}
+				<p
+					class="mt-1 flex items-center gap-1 text-xs font-medium text-error"
+					data-testid="candidate-refusal"
+				>
+					<CircleAlert class="size-3.5 shrink-0" aria-hidden="true" />
+					{REFUSAL_LABELS[refusal]}
+				</p>
+			{/if}
+			<p class="mt-1 text-xs {noteTone}" data-testid="candidate-note">
 				{candidate.note.text}
 			</p>
 			<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
 				{#if candidate.format}
-					<span class="badge badge-sm" class:badge-success={recommended}>{candidate.format}</span>
+					<span
+						class="badge badge-sm"
+						class:badge-success={recommended}
+						class:badge-error={refusal === 'quality_outside_range'}
+						class:badge-outline={refusal === 'quality_outside_range'}>{candidate.format}</span
+					>
+				{/if}
+				{#if scoreLabel}
+					<span
+						class="badge badge-ghost badge-sm gap-1"
+						title="The source's own match score for this release"
+					>
+						<Gauge class="size-3" aria-hidden="true" />{scoreLabel}
+					</span>
 				{/if}
 				{#if tracksLabel}
 					<span class="badge badge-ghost badge-sm gap-1" title={fileList || undefined}>
 						<Files class="size-3" aria-hidden="true" />{tracksLabel}
+					</span>
+				{/if}
+				{#if lengthsLabel}
+					<span class="badge badge-ghost badge-sm gap-1 text-warning">
+						<Timer class="size-3" aria-hidden="true" />{lengthsLabel}
 					</span>
 				{/if}
 				{#if candidate.size_bytes > 0}
@@ -131,7 +189,7 @@
 			onclick={onPick}
 			aria-label={`Pick ${candidate.title} from ${subtitle}`}
 		>
-			{recommended ? 'Pick' : 'Pick anyway'}
+			{recommended ? 'Pick' : refusal ? 'Pick anyway…' : 'Pick anyway'}
 		</Button>
 	</div>
 </Card>

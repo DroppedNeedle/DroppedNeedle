@@ -38,6 +38,11 @@ pub struct TaskPlan {
     /// album's release, title and year are on the task row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_album: Option<TrackAlbum>,
+    /// A person picked a candidate outside the quality band and confirmed
+    /// it: the landing keeps its files whatever their quality, for the
+    /// attempt that fetched that candidate only (its handle is `pinned`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quality_waived: bool,
 }
 
 impl TaskPlan {
@@ -53,7 +58,8 @@ impl TaskPlan {
 
     /// What a retry carries over: the release, the positions it asks for,
     /// the copy it is for and "Get it from the album". The tracklist and a
-    /// track's album are worked out again.
+    /// track's album are worked out again. A quality waiver is never
+    /// carried over: it belongs to the pick a person confirmed.
     pub fn for_successor(&self) -> Self {
         Self {
             release_mbid: self.release_mbid.clone(),

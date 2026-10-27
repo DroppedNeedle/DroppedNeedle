@@ -39551,8 +39551,8 @@
         ],
         "properties": {
           "code": {
-            "type": "string",
-            "description": "Stable code (`complete`, `incomplete`, `lengths`, `quality`,\n`no_tracklist`, `names_album`, `title_unclear`, `strong`, `weak`)."
+            "$ref": "#/components/schemas/CandidateNoteCode",
+            "description": "Stable code."
           },
           "text": {
             "type": "string",
@@ -39560,12 +39560,39 @@
           }
         }
       },
+      "CandidateNoteCode": {
+        "type": "string",
+        "description": "The stable code of a [`CandidateNote`].",
+        "enum": [
+          "complete",
+          "incomplete",
+          "lengths",
+          "quality",
+          "no_tracklist",
+          "names_album",
+          "title_unclear",
+          "strong",
+          "weak"
+        ]
+      },
+      "CandidateRefusal": {
+        "type": "string",
+        "description": "Why a candidate is outside the download settings. Declared in the order\nthe page names them: the first that applies is shown.",
+        "enum": [
+          "quality_outside_range",
+          "over_size_cap",
+          "ignored_term",
+          "required_term_missing",
+          "below_minimum_score"
+        ]
+      },
       "CandidateTier": {
         "type": "string",
         "description": "How strongly a candidate is recommended.",
         "enum": [
           "recommended",
-          "possible"
+          "possible",
+          "refused"
         ]
       },
       "CandidateView": {
@@ -54347,6 +54374,10 @@
             "type": "integer",
             "description": "`candidate_index` of the candidate to download.",
             "minimum": 0
+          },
+          "confirm_policy_break": {
+            "type": "boolean",
+            "description": "Download it even though it is outside the download settings (its\n`refusal` is not empty). Without it such a pick answers 409."
           }
         }
       },
@@ -61752,7 +61783,7 @@
               "string",
               "null"
             ],
-            "description": "Format label (`FLAC`, `MP3 320`, `lossless`), when known."
+            "description": "Format label (`FLAC 24-bit`, `MP3 320`, `lossless`), when known."
           },
           "grabs": {
             "type": [
@@ -61776,6 +61807,14 @@
             ],
             "description": "Usenet: the indexer that listed it."
           },
+          "length_misses": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Soulseek: held tracks whose length is unknown or off the edition's,\nwhen the tracklist is known.",
+            "minimum": 0
+          },
           "note": {
             "$ref": "#/components/schemas/CandidateNote",
             "description": "Why, in one sentence."
@@ -61795,6 +61834,21 @@
             ],
             "format": "int64",
             "description": "Soulseek: files waiting in the peer's upload queue."
+          },
+          "refusal": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandidateRefusal"
+            },
+            "description": "Every way it is outside the download settings, the one to show\nfirst. Empty when it is inside them."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Plugin: the plugin's own score for it, from 0 to 1."
           },
           "size_bytes": {
             "type": "integer",

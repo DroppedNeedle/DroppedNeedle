@@ -7,13 +7,16 @@
 		dismissSearch,
 		getSearchJobQuery,
 		pickSearchCandidate,
+		policyBreak,
 		refreshSearchJob,
+		type CandidateRefusal,
 		type SearchCandidate
 	} from '$lib/queries/downloads/SearchQueries.svelte';
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 
-	import SearchResultCard from './SearchResultCard.svelte';
+	import SearchResultCard, { REFUSAL_LABELS } from './SearchResultCard.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	let { jobId, onClose }: { jobId: string; onClose?: () => void } = $props();
 
@@ -76,16 +79,53 @@
 	});
 	const hasMore = $derived(groups.some((g) => g.items.length > 3));
 
-	function handlePick(index: number) {
+	// A candidate outside the download settings is picked only once the
+	// person confirms it.
+	let confirming = $state<{ index: number; refusal: CandidateRefusal } | null>(null);
+	let confirmOpen = $state(false);
+	const confirmMessage = $derived.by(() => {
+		if (!confirming) return '';
+		const reason = REFUSAL_LABELS[confirming.refusal];
+		return `Outside your download settings: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}. Download it anyway?`;
+	});
+
+	function askFirst(index: number, refusal: CandidateRefusal) {
+		confirming = { index, refusal };
+		confirmOpen = true;
+	}
+
+	function handlePick(candidate: SearchCandidate) {
 		if (busy) return;
+		const refusal = candidate.refusal?.[0];
+		if (refusal) {
+			askFirst(candidate.candidate_index, refusal);
+			return;
+		}
+		const index = candidate.candidate_index;
 		pickingIndex = index;
 		pick.mutate(
 			{ jobId, candidate_index: index },
 			{
 				onSuccess: () => (picked = true),
-				onError: () => (pickingIndex = null)
+				onError: (err) => {
+					pickingIndex = null;
+					const refused = policyBreak(err);
+					if (refused) askFirst(index, refused);
+				}
 			}
 		);
+	}
+
+	async function confirmPick() {
+		if (!confirming) return;
+		const index = confirming.index;
+		pickingIndex = index;
+		try {
+			await pick.mutateAsync({ jobId, candidate_index: index, confirm_policy_break: true });
+			picked = true;
+		} finally {
+			if (!picked) pickingIndex = null;
+		}
 	}
 
 	function handleDismiss() {
@@ -147,7 +187,7 @@
 							{candidate}
 							picking={pickingIndex === candidate.candidate_index}
 							disabled={busy}
-							onPick={() => handlePick(candidate.candidate_index)}
+							onPick={() => handlePick(candidate)}
 						/>
 					{/each}
 				</div>
@@ -185,4 +225,13 @@
 			<Search class="h-4 w-4" /> No search to show.
 		</p>
 	{/if}
+
+	<ConfirmDialog
+		bind:open={confirmOpen}
+		title="Pick this source?"
+		message={confirmMessage}
+		confirmLabel="Download anyway"
+		onconfirm={confirmPick}
+		oncancel={() => (confirming = null)}
+	/>
 </section>

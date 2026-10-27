@@ -1129,6 +1129,10 @@ pub struct SearchJobResponse {
 pub struct PickRequest {
     /// `candidate_index` of the candidate to download.
     pub candidate_index: usize,
+    /// Download it even though it is outside the download settings (its
+    /// `refusal` is not empty). Without it such a pick answers 409.
+    #[serde(default)]
+    pub confirm_policy_break: bool,
 }
 
 /// The download a pick started.
@@ -1154,6 +1158,13 @@ impl From<SearchJobError> for ApiError {
             },
             SearchJobError::Invalid(message) => RequestsError::InvalidInput { message },
             SearchJobError::Conflict(message) => RequestsError::Conflict { message },
+            SearchJobError::PolicyBreak(refusal) => {
+                return ApiError::conflict(format!(
+                    "This candidate is outside your download settings: {}. Confirm to download it anyway.",
+                    refusal.text()
+                ))
+                .with_details(serde_json::json!({ "refusal": refusal }));
+            }
             SearchJobError::Refused(error) => error,
             SearchJobError::Internal(cause) => RequestsError::internal(&cause),
         })
@@ -1258,7 +1269,12 @@ pub async fn pick_candidate_handler(
     ValidJson(body): ValidJson<PickRequest>,
 ) -> Result<Json<PickResponse>, ApiError> {
     let task_id = search
-        .pick(&principal, &job_id, body.candidate_index)
+        .pick(
+            &principal,
+            &job_id,
+            body.candidate_index,
+            body.confirm_policy_break,
+        )
         .await?;
     Ok(Json(PickResponse { task_id }))
 }

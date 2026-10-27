@@ -325,8 +325,9 @@ async fn check_watch(
 }
 
 /// Ask every source that is on for the watch's album, through the same
-/// search (and gates) as a manual search. `None` when no source is on or
-/// the download settings do not read; an error when every source failed.
+/// search (and gates) as a manual search. Candidates outside the download
+/// settings do not count as found. `None` when no source is on or the
+/// download settings do not read; an error when every source failed.
 async fn search_watch(
     deps: &WantedDeps,
     watch: &WantedWatch,
@@ -342,11 +343,12 @@ async fn search_watch(
         wanted: Vec::new(),
         track: None,
     };
-    let (candidates, failed) =
+    let (mut candidates, failed) =
         crate::search_jobs::search_sources(&sources, &target, &watch.key).await;
     if candidates.is_empty() && failed > 0 && failed == sources.len() {
         return Err("every download source failed".to_owned());
     }
+    candidates.retain(|candidate| !candidate.is_refused());
     Ok(Some(candidates))
 }
 

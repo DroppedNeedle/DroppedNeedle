@@ -80,6 +80,9 @@ pub struct PickedTask {
     pub source: String,
     pub username: Option<String>,
     pub candidate_index: i64,
+    /// The person confirmed a candidate outside the quality band: the
+    /// task's plan keeps its files whatever their quality.
+    pub quality_waived: bool,
 }
 
 /// Why a pick was refused inside its transaction.
@@ -417,7 +420,9 @@ impl JobStore {
     /// `completed`. A download parked on this job waiting for a pick is
     /// linked to the candidate and resumes; otherwise no download of the
     /// album may be running and a new task is queued, linked to the
-    /// candidate. The job becomes `matched`. Answers the task's id.
+    /// candidate. The job becomes `matched`. A quality waiver is set on
+    /// the task's plan in the same transaction, changing nothing else in
+    /// it. Answers the task's id.
     pub async fn pick(
         &self,
         job_id: &str,
@@ -446,6 +451,14 @@ impl JobStore {
                     .optional()?;
                 let store = DownloadStore::new(tx);
                 let store_error = |error| PickError::Db(store_failed("search_jobs.pick", error));
+                let waive = |task_id: &str| -> Result<(), StoreError> {
+                    if !picked.quality_waived {
+                        return Ok(());
+                    }
+                    let mut plan = store.task_plan(task_id)?;
+                    plan.quality_waived = true;
+                    store.set_task_plan(task_id, &plan, at)
+                };
                 if let Some(task_id) = parked {
                     store
                         .link_candidate(
@@ -458,6 +471,7 @@ impl JobStore {
                             at,
                         )
                         .map_err(store_error)?;
+                    waive(&task_id).map_err(store_error)?;
                     tx.execute(
                         "UPDATE search_jobs SET status = ?2, updated_at = ?3 WHERE id = ?1",
                         params![job_id, MATCHED, at],
@@ -487,6 +501,7 @@ impl JobStore {
                         at,
                     )
                     .map_err(store_error)?;
+                waive(&picked.task.id).map_err(store_error)?;
                 tx.execute(
                     "UPDATE search_jobs SET status = ?2, updated_at = ?3 WHERE id = ?1",
                     params![job_id, MATCHED, at],

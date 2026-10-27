@@ -58,7 +58,7 @@ const BAD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000003";
 const BAD_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000004";
 
 /// MusicBrainz as a fixed set of releases: every search returns them all.
-struct Releases(Vec<Release>);
+pub(crate) struct Releases(pub(crate) Vec<Release>);
 
 impl ReleaseSource for Releases {
     fn search<'a>(
@@ -105,7 +105,13 @@ fn fixture(name: &str) -> PathBuf {
 
 /// A landed file: a fixture copy tagged as one track, with no
 /// MusicBrainz ids of its own.
-fn land_file(dir: &Path, name: &str, fixture_name: &str, title: &str, track: u32) -> PathBuf {
+pub(crate) fn land_file(
+    dir: &Path,
+    name: &str,
+    fixture_name: &str,
+    title: &str,
+    track: u32,
+) -> PathBuf {
     std::fs::create_dir_all(dir).expect("download dir");
     let path = dir.join(name);
     std::fs::copy(fixture(fixture_name), &path).expect("copy fixture");
@@ -129,7 +135,7 @@ fn land_file(dir: &Path, name: &str, fixture_name: &str, title: &str, track: u32
     path
 }
 
-fn length_ms(path: &Path) -> Option<u64> {
+pub(crate) fn length_ms(path: &Path) -> Option<u64> {
     let format = droppedneedle_library::tags::format_for_path(path).expect("format");
     let (_, header) =
         droppedneedle_library::tags::read::read_scan_metadata(path, format).expect("header");
@@ -138,7 +144,7 @@ fn length_ms(path: &Path) -> Option<u64> {
         .map(|seconds| (seconds * 1000.0) as u64)
 }
 
-fn release(id: &str, group: &str, titles: &[&str], lengths: &[Option<u64>]) -> Release {
+pub(crate) fn release(id: &str, group: &str, titles: &[&str], lengths: &[Option<u64>]) -> Release {
     let artist = CreditedArtist {
         id: "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11".to_owned(),
         name: "Portishead".to_owned(),
@@ -1226,7 +1232,7 @@ async fn held_call(
     (status, serde_json::from_slice(&bytes).unwrap_or_default())
 }
 
-fn files_under(dir: &Path, extension: &str) -> Vec<PathBuf> {
+pub(crate) fn files_under(dir: &Path, extension: &str) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return found;
@@ -1881,6 +1887,131 @@ async fn a_landing_waits_while_the_download_policy_does_not_read() {
         .await
         .expect("quarantine count");
     assert_eq!(quarantined, 0);
+}
+
+/// A person confirmed a pick outside the quality band: the attempt that
+/// fetched exactly that pick imports its files, while the same files from
+/// any other attempt of the task (a failover) are refused on quality.
+#[tokio::test]
+async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
+    for (pinned, kept) in [(true, true), (false, false)] {
+        let db = AcquireDb::scratch().expect("scratch db");
+        db.add_user("u-ada", "Ada", "user").await.expect("user");
+        let dir = db.path().parent().expect("scratch dir").to_path_buf();
+        let config = Arc::new(
+            ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+                .expect("config"),
+        );
+        let platform = TestPlatform::on(db.db(), &dir)
+            .settings(config)
+            .build()
+            .await;
+        let (library, _) = library_at(&platform);
+        let music = dir.join("music");
+        std::fs::create_dir_all(&music).expect("music root");
+        library
+            .add_root(
+                Some("music".to_owned()),
+                music.to_string_lossy().into_owned(),
+                EffectivePolicy::Automatic,
+            )
+            .expect("root adds");
+        let downloads = dir.join("downloads");
+        let file = land_file(
+            &downloads.join("job"),
+            "01 - Mysterons.flac",
+            "flac_full_01.flac",
+            "Mysterons",
+            1,
+        );
+        let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release(
+            GOOD_RELEASE,
+            GOOD_GROUP,
+            &["Mysterons"],
+            &[length_ms(&file)],
+        )]));
+        let acquire = acquire_over(
+            &db,
+            Some(Arc::new(LibraryLanding::new(
+                library.clone(),
+                every_priority(releases),
+                db.pool().clone(),
+            ))),
+        );
+        // Lossy only: the FLAC files are outside the band.
+        let band = dir.join("band");
+        std::fs::create_dir_all(&band).expect("settings dir");
+        std::fs::write(
+            band.join("config.json"),
+            serde_json::json!({"download_policy": {"quality_min": "low", "quality_max": "mp3_320"}})
+                .to_string(),
+        )
+        .expect("config.json");
+        let store = droppedneedle_acquire::settings::scratch_settings(&band).expect("settings");
+        let landing = droppedneedle_acquire::landing::LandingService::new(
+            acquire.journal.clone(),
+            acquire.landing.library().cloned(),
+            store.live(),
+            dir.join("held"),
+        );
+        let handle = serde_json::json!({
+            "source": "soulseek", "username": "peer", "job_name": "", "pinned": pinned,
+            "filenames": ["@@music\\Portishead\\Dummy\\01 - Mysterons.flac"],
+        })
+        .to_string();
+        acquire
+            .journal
+            .run("test.seed", move |store| {
+                store.insert_task(&new_task("t-waived", GOOD_GROUP), 1.0)?;
+                store.set_task_plan(
+                    "t-waived",
+                    &TaskPlan {
+                        quality_waived: true,
+                        ..TaskPlan::default()
+                    },
+                    1.0,
+                )?;
+                store.insert_attempt(
+                    "t-waived-a0",
+                    "t-waived",
+                    "soulseek",
+                    0,
+                    "",
+                    &handle,
+                    AttemptState::InUse,
+                    1.0,
+                )
+            })
+            .await
+            .expect("task");
+        let task = acquire
+            .journal
+            .read_task("t-waived")
+            .await
+            .unwrap()
+            .unwrap();
+        let landed = Landed {
+            mounts: vec![downloads.into()],
+            files: vec![Reported::path(file)],
+        };
+        let result = landing
+            .land(&task, Some("t-waived-a0"), landed, false)
+            .await
+            .result;
+        if kept {
+            assert!(
+                matches!(result, LandingResult::Imported { .. }),
+                "the pinned attempt keeps its files: {result:?}"
+            );
+            assert_eq!(files_under(&music, "flac").len(), 1);
+        } else {
+            let LandingResult::Rejected(rejection) = result else {
+                panic!("an attempt that is not the pick was kept: {result:?}");
+            };
+            assert_eq!(rejection.code, Reason::QualityRejected);
+            assert!(files_under(&music, "flac").is_empty());
+        }
+    }
 }
 
 /// An attempt that imported its files and then had a landing wait (a busy

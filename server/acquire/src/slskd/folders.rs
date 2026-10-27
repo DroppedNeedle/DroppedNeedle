@@ -14,7 +14,9 @@
 //! 4. speed: a free upload slot, a short queue, a fast uploader.
 //!
 //! A folder whose quality the search shows outside the band the landing
-//! keeps is left out, so it is never fetched only to be refused.
+//! keeps is left out of automatic picks ([`rank_folders`]), so it is never
+//! fetched only to be refused. A manual search lists it after every other
+//! folder ([`rank_listing`]), for a person to take on purpose.
 //!
 //! This is soularr's folder check and Lidarr's import matching moved in
 //! front of the download, with v2's pairing rules (a hard length miss
@@ -79,14 +81,43 @@ pub struct FolderPick {
     /// Of the wanted positions, how many this folder holds (all of its
     /// audio files when nothing in particular is wanted).
     pub held: usize,
+    /// The worst quality the search shows is outside the band.
+    pub out_of_band: bool,
     has_free_slot: bool,
     queue_length: i64,
     upload_speed: i64,
 }
 
-/// Rank folders best first. Folders that cannot serve the wanted
-/// positions are left out.
+/// Rank folders best first for an automatic pick. Folders that cannot
+/// serve the wanted positions, or whose known quality is outside the band,
+/// are left out.
 pub fn rank_folders(
+    hits: &[SearchResult],
+    request: RankRequest<'_>,
+    policy: &DownloadPolicy,
+) -> Vec<FolderPick> {
+    ranked(hits, request, policy)
+        .into_iter()
+        .filter(|pick| !pick.out_of_band)
+        .collect()
+}
+
+/// Rank folders for a person to pick from: every folder that can serve the
+/// wanted positions, best first, with those outside the band after all
+/// the others.
+pub fn rank_listing(
+    hits: &[SearchResult],
+    request: RankRequest<'_>,
+    policy: &DownloadPolicy,
+) -> Vec<FolderPick> {
+    let (mut listing, outside): (Vec<_>, Vec<_>) = ranked(hits, request, policy)
+        .into_iter()
+        .partition(|pick| !pick.out_of_band);
+    listing.extend(outside);
+    listing
+}
+
+fn ranked(
     hits: &[SearchResult],
     request: RankRequest<'_>,
     policy: &DownloadPolicy,
@@ -182,8 +213,7 @@ fn paired_discs(files: &[&SearchResult], tracklist: &[ExpectedTrack]) -> BTreeSe
         .collect()
 }
 
-/// Score one folder, or `None` when it cannot serve the request or its
-/// worst known quality is outside the band.
+/// Score one folder, or `None` when it cannot serve the request.
 fn judge(
     username: String,
     folder: String,
@@ -245,9 +275,8 @@ fn judge(
     let tiers: Vec<Option<&str>> = audio_to_fetch()
         .map(|(format, hit)| search_tier(format, hit.bitrate, hit.bit_depth))
         .collect();
-    if worst(tiers.iter().flatten().copied()).is_some_and(|tier| !policy.in_band(tier)) {
-        return None;
-    }
+    let out_of_band =
+        worst(tiers.iter().flatten().copied()).is_some_and(|tier| !policy.in_band(tier));
     let unknown_quality = tiers.iter().any(Option::is_none);
     let quality = audio_to_fetch()
         .map(|(format, hit)| {
@@ -272,6 +301,7 @@ fn judge(
         unknown_quality,
         lone_track,
         held,
+        out_of_band,
         has_free_slot: first.has_free_slot,
         queue_length: first.queue_length,
         upload_speed: first.upload_speed,

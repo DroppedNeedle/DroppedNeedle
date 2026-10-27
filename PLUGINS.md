@@ -420,12 +420,15 @@ PluginSearchResult(
 ```
 
 You rank your source; DroppedNeedle applies its rules on top, the same as
-for every other source: quarantined releases, ignored and required terms, the
-size limit and the quality range drop results. A score of
+for every other source. Quarantined releases are dropped. A score of
 `preflight_score_auto_accept` (0.70 by default) or more downloads
 automatically. A score from `preflight_score_manual_min` (0.50 by default) up
-to that is kept back for a person to pick. Lower is dropped. Both cut-offs are
-download policy settings. When a download fails, the next result is tried.
+to that is kept back for a person to pick. Both cut-offs are download policy
+settings. A result with a lower score, an ignored term, a missing required
+term, a size over the limit or a quality outside the range never downloads by
+itself: a person searching by hand sees it last, with the reason, and can
+still pick it after confirming. When a download fails, the next result is
+tried.
 
 The client then gets `enqueue(request)` with `task_id`, `source`, `files`,
 `payload`, `job_name` and `download_type`, and returns a `TaskHandle`. Every

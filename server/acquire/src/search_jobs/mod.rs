@@ -7,7 +7,10 @@
 //! tracklist), and one source failing only drops its group. The job then
 //! holds the ranked list. Picking one queues a download linked to it: the
 //! worker fetches exactly that candidate first and falls back to the
-//! normal search on failover. "None of these" puts the album on the
+//! normal search on failover. A candidate outside the download settings
+//! is picked only with a confirm; confirming one outside the quality band
+//! keeps the files of that first attempt whatever their quality, never
+//! those of a failover. "None of these" puts the album on the
 //! wanted watchlist instead; cancel just closes the job. Each change is
 //! announced to the owner as `search_job_updated` on the event stream.
 //!
@@ -26,7 +29,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use self::candidates::{Candidate, Pin};
+use self::candidates::{Candidate, CandidateRefusal, Pin};
 use self::store::{
     CANCELLED, COMPLETED, FAILED, JobPayload, JobRow, JobStore, MATCHED, NewJob, PickRefusal,
     PickedTask, SEARCHING,
@@ -129,6 +132,9 @@ pub enum SearchJobError {
     /// The job or the album is in a state that refuses this; the text
     /// says why and what to do.
     Conflict(String),
+    /// The candidate is outside the download settings and the pick did
+    /// not confirm that; carries the reason the page shows first.
+    PolicyBreak(CandidateRefusal),
     /// A request rule refused it (storage limit).
     Refused(RequestsError),
     /// Our side failed.
@@ -388,12 +394,17 @@ impl SearchJobs {
         })
     }
 
-    /// Download one candidate. Answers the new download task's id.
+    /// Download one candidate. A candidate outside the download settings
+    /// needs `confirm_policy_break`; confirming one outside the quality
+    /// band keeps that download's files whatever their quality. A confirm
+    /// for any other candidate changes nothing. Answers the new download
+    /// task's id.
     pub async fn pick(
         &self,
         principal: &Principal,
         job_id: &str,
         candidate_index: usize,
+        confirm_policy_break: bool,
     ) -> Result<String, SearchJobError> {
         let row = self.owned(principal, job_id, false).await?;
         if row.status != COMPLETED {
@@ -412,6 +423,11 @@ impl SearchJobs {
                 ))
             })?
             .clone();
+        if let Some(refusal) = candidate.first_refusal()
+            && !confirm_policy_break
+        {
+            return Err(SearchJobError::PolicyBreak(refusal));
+        }
         let source = candidate.view.source.clone();
         if !self
             .worker
@@ -450,6 +466,7 @@ impl SearchJobs {
             },
             source,
             candidate_index: i64::try_from(candidate_index).unwrap_or(i64::MAX),
+            quality_waived: candidate.waives_quality(),
         };
         match self
             .store

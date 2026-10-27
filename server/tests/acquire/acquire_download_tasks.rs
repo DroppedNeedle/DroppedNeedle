@@ -757,6 +757,7 @@ async fn queued_past_the_wait(
                 source: "soulseek".to_owned(),
                 username: peer,
                 candidate_index: 0,
+                quality_waived: false,
             };
             let linked = jobs.pick("job-1", picked).await.unwrap().unwrap();
             assert_eq!(linked, "t-slow", "the parked download takes the pick");
