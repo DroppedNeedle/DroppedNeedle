@@ -1225,7 +1225,7 @@ fn flows_bundle(
     let ledger = requests.store.clone();
     let follows = requests.follows.clone();
     let worklist = UpgradeWorklist::new(db.clone());
-    let library = Arc::new(LibraryPresence::over_catalog(db.pool().clone()));
+    let library = Arc::new(LibraryPresence::over_catalog(db.db().clone()));
     let admins = AdminDirectory::over_users(db.clone());
     let wanted_deps = Arc::new(WantedDeps {
         settings: settings.live(),

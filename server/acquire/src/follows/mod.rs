@@ -23,10 +23,12 @@ pub mod approvals;
 pub mod cursors;
 pub mod http;
 pub mod models;
+pub(crate) mod sql;
 
 use std::collections::HashSet;
 
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::types::Value;
+use rusqlite::{OptionalExtension, Transaction, params, params_from_iter};
 
 use self::approvals::Reviewer;
 use self::models::{
@@ -37,14 +39,15 @@ use crate::db::{AcquireDb, epoch_secs, unix_secs_f64};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{ApprovalState, validate_mbid};
 use crate::requests::models::ActionResponse;
-use crate::requests::sqlite::{lane_error, ms_from_secs, read_error};
+use crate::requests::sqlite::{lane_error, ms_from_secs, read};
 use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::collections::db::{CollectionsDb, placeholders};
+use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::error::CollectionsError;
 use droppedneedle_catalog::reads::collections::models::FollowStatusResponse;
 use droppedneedle_catalog::reads::collections::service::follow_status;
 use droppedneedle_catalog::reads::collections::store::FollowStore;
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::statement::ListLen;
 
 pub use self::http::routes;
 
@@ -393,21 +396,16 @@ impl Follows {
     ) -> Result<HashSet<String>, RequestsError> {
         let mut out = HashSet::new();
         for chunk in candidates.chunks(500) {
-            let sql = format!(
-                "SELECT artist_mbid_lower FROM user_followed_artists \
-                 WHERE user_id = ? AND artist_mbid_lower IN ({})",
-                placeholders(chunk.len())
-            );
-            let mut query = sqlx::query_scalar::<_, String>(&sql).bind(user_id);
-            for mbid in chunk {
-                query = query.bind(mbid.to_lowercase());
-            }
-            out.extend(
-                query
-                    .fetch_all(self.db.pool())
-                    .await
-                    .map_err(|error| read_error("follows.followed_among", error))?,
-            );
+            let text = sql::followed_among(ListLen::new(chunk.len()));
+            let mut values = vec![Value::Text(user_id.to_owned())];
+            values.extend(chunk.iter().map(|mbid| Value::Text(mbid.to_lowercase())));
+            let found: Vec<String> = read(&self.db, "follows.followed_among", move |conn| {
+                let mut statement = conn.prepare(&text)?;
+                let rows = statement.query_map(params_from_iter(values), |row| row.get(0))?;
+                rows.collect()
+            })
+            .await?;
+            out.extend(found);
         }
         Ok(out)
     }
@@ -432,12 +430,7 @@ impl Follows {
                 for artist in &artists {
                     let lower = artist.mbid.to_lowercase();
                     let known = tx
-                        .query_row(
-                            "SELECT 1 FROM user_followed_artists \
-                             WHERE user_id = ?1 AND artist_mbid_lower = ?2",
-                            params![user, lower],
-                            |_| Ok(()),
-                        )
+                        .query_row(sql::IS_FOLLOWED.text(), params![user, lower], |_| Ok(()))
                         .optional()?
                         .is_some();
                     if known {
@@ -507,8 +500,7 @@ pub(crate) fn set_follow_tx(
         upsert_follow(tx, user_id, artist_mbid, artist_name, now)
     } else {
         tx.execute(
-            "DELETE FROM user_followed_artists \
-             WHERE user_id = ?1 AND artist_mbid_lower = ?2",
+            sql::UNFOLLOW.text(),
             params![user_id, artist_mbid.to_lowercase()],
         )?;
         Ok(())
@@ -530,8 +522,7 @@ pub(crate) fn set_auto_download_tx(
     let lower = artist_mbid.to_lowercase();
     let name: Option<(String, String)> = tx
         .query_row(
-            "SELECT artist_mbid, artist_name FROM user_followed_artists \
-             WHERE user_id = ?1 AND artist_mbid_lower = ?2",
+            sql::FOLLOWED_ARTIST.text(),
             params![user_id, lower],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -558,11 +549,7 @@ fn upsert_follow(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO user_followed_artists (user_id, artist_mbid, \
-         artist_mbid_lower, artist_name, auto_download, followed_at, updated_at) \
-         VALUES (?1, ?2, ?3, COALESCE(?4, ?5), 0, ?6, ?6) \
-         ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-         artist_name = COALESCE(?4, artist_name), updated_at = ?6",
+        sql::UPSERT_FOLLOW.text(),
         params![
             user_id,
             artist_mbid,
@@ -585,8 +572,7 @@ fn set_intent(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "UPDATE user_followed_artists SET auto_download = ?1, updated_at = ?2 \
-         WHERE user_id = ?3 AND artist_mbid_lower = ?4",
+        sql::SET_INTENT.text(),
         params![i64::from(enabled), now, user_id, mbid_lower],
     )?;
     Ok(())
@@ -604,11 +590,7 @@ fn apply_verdict(
 ) -> rusqlite::Result<()> {
     if verdict == ApprovalState::Approved {
         tx.execute(
-            "INSERT INTO user_followed_artists (user_id, artist_mbid, \
-             artist_mbid_lower, artist_name, auto_download, followed_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5) \
-             ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-             auto_download = 1, updated_at = ?5",
+            sql::FOLLOW_ARMED.text(),
             params![
                 user_id,
                 artist_mbid,

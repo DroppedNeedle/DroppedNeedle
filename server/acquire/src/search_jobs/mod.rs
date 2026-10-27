@@ -274,7 +274,7 @@ impl SearchJobs {
         }
         let release_group_mbid = normalise_mbid(ask.release_group_mbid);
         if let Some(group) = release_group_mbid.as_deref() {
-            let held = library_holds(self.store.db().pool(), group)
+            let held = library_holds(self.store.db().db(), group)
                 .await
                 .map_err(|error| SearchJobError::Internal(error.to_string()))?;
             if held {

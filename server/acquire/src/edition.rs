@@ -13,7 +13,8 @@
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_library::identity::DecisionSource;
 use droppedneedle_library::identity::reads::{Pick, copy_for_group};
-use sqlx::SqlitePool;
+
+use crate::requests::sql;
 
 /// Why this edition was chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,30 +81,22 @@ fn pick(identity: Option<&str>, source: DecisionSource) -> Option<ChosenEdition>
 /// chose "leave unmanaged", the app stepped back after outside edits, or a
 /// scan followed the album across a retag. None of its files is replaced
 /// by another version. Read by "Get missing tracks" and by the landing.
-pub async fn copy_is_held(pool: &SqlitePool, album_id: &str) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1) \
-         OR EXISTS(SELECT 1 FROM library_album_takeovers WHERE local_album_id = ?1) \
-         OR EXISTS(SELECT 1 FROM library_management_automatic_queue \
-           WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL)",
-    )
-    .bind(album_id)
-    .fetch_one(pool)
+pub async fn copy_is_held(db: &Db, album_id: &str) -> Result<bool, DbError> {
+    let album_id = album_id.to_owned();
+    db.read("acquire.edition.copy_is_held", move |conn| {
+        Ok(conn.query_row(sql::COPY_IS_HELD.text(), [album_id], |row| row.get(0))?)
+    })
     .await
 }
 
 /// Whether the library holds a copy of one release group with at least one
-/// indexed track: the check the landing and the wanted watcher share.
-pub async fn library_holds(
-    pool: &SqlitePool,
-    release_group_mbid: &str,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(&format!(
-        "SELECT EXISTS (SELECT 1 {})",
-        crate::landing::library::OWNED_TRACKS_FROM
-    ))
-    .bind(release_group_mbid.to_ascii_lowercase())
-    .fetch_one(pool)
+/// indexed track: the check the landing, the wanted watcher and library
+/// presence share.
+pub async fn library_holds(db: &Db, release_group_mbid: &str) -> Result<bool, DbError> {
+    let group = release_group_mbid.to_ascii_lowercase();
+    db.read("acquire.edition.library_holds", move |conn| {
+        Ok(conn.query_row(sql::LIBRARY_HOLDS.text(), [group], |row| row.get(0))?)
+    })
     .await
 }
 

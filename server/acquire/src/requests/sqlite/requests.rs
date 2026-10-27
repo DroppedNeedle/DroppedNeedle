@@ -2,9 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{OptionalExtension, Transaction, params};
-use sqlx::Row;
-use sqlx::sqlite::SqliteRow;
+use rusqlite::{Connection, OptionalExtension, Params, Transaction, params, params_from_iter};
 
 use super::super::error::RequestsError;
 use super::super::ledger::{
@@ -14,11 +12,35 @@ use super::super::ledger::{
 use super::super::models::RequestKind;
 use super::super::settle::{self, Fulfilled};
 use super::super::sql;
-use super::{lane_error, ms_from_secs, read_error, secs_from_ms};
+use super::{lane_error, ms_from_secs, read, secs_from_ms, unknown_value};
 use crate::db::{AcquireDb, to_i64, to_u64};
 use crate::dispatch::DispatchOrigin;
 use crate::follows::FollowAsk;
 use droppedneedle_auth::Role;
+use droppedneedle_kernel::db::statement::ListLen;
+
+droppedneedle_kernel::sql_choice! {
+    /// The history list's sort.
+    pub(crate) enum HistoryOrder {
+        /// Newest ask first.
+        Newest,
+        /// Oldest ask first.
+        Oldest,
+        /// By status, newest first within one.
+        Status,
+    }
+}
+
+impl HistoryOrder {
+    /// The sort a history request names; anything else is newest first.
+    fn from_param(sort: &str) -> Self {
+        match sort {
+            "oldest" => Self::Oldest,
+            "status" => Self::Status,
+            _ => Self::Newest,
+        }
+    }
+}
 
 /// Ledger key for one row (v2 `_request_key`).
 fn row_key(kind: RequestKind, key: &str) -> String {
@@ -29,94 +51,22 @@ fn row_key(kind: RequestKind, key: &str) -> String {
     }
 }
 
-/// Columns every record read selects, in decode order.
-const RECORD_SELECT: &str = "SELECT rh.musicbrainz_id_lower, rh.request_kind, rh.status, \
-     rh.artist_name, rh.album_title, rh.artist_mbid, rh.year, rh.release_mbid, \
-     rh.track_title, rh.duration_seconds, rh.track_release_group_mbid, rh.user_id, \
-     rh.requested_by_name, rh.requested_at, rh.completed_at, rh.download_task_id, \
-     rh.generation, rh.dispatch_authorized, rh.monitor_artist, rh.auto_download_artist, \
-     rh.reviewed_by_name, rh.reviewed_at, rh.origin \
-     FROM request_history rh";
-
-/// Per-user filter: with `?1` NULL every row passes; otherwise the row's
-/// owner or a listener is `?1` and that user has not hidden it.
-const MEMBER_FILTER: &str = "(?1 IS NULL OR ((rh.user_id = ?1 OR EXISTS (SELECT 1 FROM \
-     request_history_requesters rr WHERE rr.musicbrainz_id_lower = rh.musicbrainz_id_lower \
-     AND rr.user_id = ?1)) AND NOT EXISTS (SELECT 1 FROM request_history_dismissals d \
-     WHERE d.musicbrainz_id_lower = rh.musicbrainz_id_lower AND d.user_id = ?1)))";
-
 /// The bare MBID of a ledger key.
 fn bare_key(stored: &str) -> String {
     stored.strip_prefix("track:").unwrap_or(stored).to_owned()
 }
 
-/// A stored closed-set value that does not parse, as a decode failure.
-fn unknown_value(column: &str, value: &str) -> sqlx::Error {
-    sqlx::Error::Decode(format!("request_history.{column}: unknown value {value}").into())
-}
-
-/// Decode one record from the reader pool (requesters attach later).
-fn record_from_sqlx(row: &SqliteRow) -> Result<RequestRecord, sqlx::Error> {
-    let stored: String = row.try_get(0)?;
-    let kind: String = row.try_get(1)?;
-    let kind = RequestKind::parse(&kind).ok_or_else(|| unknown_value("request_kind", &kind))?;
-    let status: String = row.try_get(2)?;
-    let status = RequestStatus::parse(&status).ok_or_else(|| unknown_value("status", &status))?;
-    let origin: String = row.try_get(22)?;
-    let origin = DispatchOrigin::parse(&origin).ok_or_else(|| unknown_value("origin", &origin))?;
-    Ok(RequestRecord {
-        origin,
-        key: bare_key(&stored),
-        kind,
-        status,
-        artist_name: row.try_get(3)?,
-        album_title: row.try_get(4)?,
-        artist_mbid: row.try_get(5)?,
-        year: row
-            .try_get::<Option<i64>, _>(6)?
-            .and_then(|year| i32::try_from(year).ok()),
-        release_mbid: row.try_get(7)?,
-        track_title: row.try_get(8)?,
-        duration_seconds: row.try_get(9)?,
-        track_release_group_mbid: row.try_get(10)?,
-        user_id: row.try_get(11)?,
-        requested_by_name: row.try_get(12)?,
-        requesters: Vec::new(),
-        requested_at: secs_from_ms(row.try_get(13)?),
-        completed_at: row.try_get::<Option<i64>, _>(14)?.map(secs_from_ms),
-        task_id: row.try_get(15)?,
-        generation: to_u64(row.try_get(16)?),
-        dispatch_authorized: row.try_get::<i64, _>(17)? != 0,
-        monitor_artist: row.try_get::<i64, _>(18)? != 0,
-        auto_download_artist: row.try_get::<i64, _>(19)? != 0,
-        reviewed_by_name: row.try_get(20)?,
-        reviewed_at: row.try_get::<Option<i64>, _>(21)?.map(secs_from_ms),
-    })
-}
-
-/// Decode one record inside a write transaction (requesters attach later).
-fn record_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRecord> {
+/// Decode one record selected by `RECORD_SELECT` (requesters attach
+/// later). A kind, status or origin outside its set fails the read.
+fn record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRecord> {
     let stored: String = row.get(0)?;
-    let kind: String = row.get(1)?;
-    let kind = RequestKind::parse(&kind).ok_or_else(|| {
-        rusqlite::Error::FromSqlConversionFailure(
-            1,
-            rusqlite::types::Type::Text,
-            format!("request_history.request_kind: unknown value {kind}").into(),
-        )
-    })?;
     let origin: String = row.get(22)?;
-    let origin = DispatchOrigin::parse(&origin).ok_or_else(|| {
-        rusqlite::Error::FromSqlConversionFailure(
-            22,
-            rusqlite::types::Type::Text,
-            format!("request_history.origin: unknown value {origin}").into(),
-        )
-    })?;
+    let origin = DispatchOrigin::parse(&origin)
+        .ok_or_else(|| unknown_value(22, "request_history.origin", &origin))?;
     Ok(RequestRecord {
         origin,
         key: bare_key(&stored),
-        kind,
+        kind: row.get(1)?,
         status: row.get(2)?,
         artist_name: row.get(3)?,
         album_title: row.get(4)?,
@@ -145,17 +95,13 @@ fn record_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestReco
 
 /// One full record inside a write transaction, listeners included.
 fn load_record_tx(tx: &Transaction, stored: &str) -> rusqlite::Result<Option<RequestRecord>> {
-    let sql = format!("{RECORD_SELECT} WHERE rh.musicbrainz_id_lower = ?1");
     let Some(mut record) = tx
-        .query_row(&sql, params![stored], record_from_rusqlite)
+        .query_row(sql::RECORD_BY_KEY.text(), params![stored], record_from_row)
         .optional()?
     else {
         return Ok(None);
     };
-    let mut statement = tx.prepare(
-        "SELECT user_id, requested_by_name FROM request_history_requesters \
-         WHERE musicbrainz_id_lower = ?1 ORDER BY requested_at, user_id",
-    )?;
+    let mut statement = tx.prepare_cached(sql::ROW_LISTENERS.text())?;
     let rows = statement.query_map(params![stored], |row| {
         Ok(Requester {
             user_id: row.get(0)?,
@@ -171,19 +117,21 @@ fn load_record_tx(tx: &Transaction, stored: &str) -> rusqlite::Result<Option<Req
     Ok(Some(record))
 }
 
-/// Asks one listener made since `since` (v2 `async_count_user_requests_since`).
+/// Asks one listener made since `since` (v2
+/// `async_count_user_requests_since`), on a pooled read or inside a write.
 /// A row still waiting for quota room has used none yet.
-const COUNT_ASKS: &str = "SELECT COUNT(*) FROM request_history_requesters rr \
-     JOIN request_history rh ON rh.musicbrainz_id_lower = rr.musicbrainz_id_lower \
-     WHERE rr.user_id = ?1 AND rr.requested_at >= ?2 \
-     AND NOT (rh.status = 'queued' AND rh.download_task_id IS NULL)";
+fn count_asks_on(conn: &Connection, user_id: &str, since: u64) -> rusqlite::Result<u32> {
+    let count: i64 = conn.query_row(
+        sql::COUNT_ASKS.text(),
+        params![user_id, ms_from_secs(since)],
+        |row| row.get(0),
+    )?;
+    Ok(u32::try_from(count).unwrap_or(u32::MAX))
+}
 
 /// Asks one listener made since `since`, inside a write transaction.
 fn count_asks_tx(tx: &Transaction, user_id: &str, since: u64) -> rusqlite::Result<u32> {
-    let count: i64 = tx.query_row(COUNT_ASKS, params![user_id, ms_from_secs(since)], |row| {
-        row.get(0)
-    })?;
-    Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    count_asks_on(tx, user_id, since)
 }
 
 /// Whether `owner` may make one more ask at `now` under `gate`.
@@ -203,13 +151,9 @@ fn has_room(
 
 /// Whether one user owns or listens to a row, inside a write transaction.
 fn is_member_tx(tx: &Transaction, stored: &str, user_id: &str) -> rusqlite::Result<bool> {
-    tx.query_row(
-        "SELECT EXISTS (SELECT 1 FROM request_history WHERE musicbrainz_id_lower = ?1 \
-         AND user_id = ?2) OR EXISTS (SELECT 1 FROM request_history_requesters \
-         WHERE musicbrainz_id_lower = ?1 AND user_id = ?2)",
-        params![stored, user_id],
-        |row| row.get(0),
-    )
+    tx.query_row(sql::IS_MEMBER.text(), params![stored, user_id], |row| {
+        row.get(0)
+    })
 }
 
 /// Claim one generation for a record inside a write transaction (v2
@@ -219,11 +163,9 @@ fn is_member_tx(tx: &Transaction, stored: &str, user_id: &str) -> rusqlite::Resu
 fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<BeginOutcome> {
     let stored = row_key(record.kind, &record.key);
     let existing: Option<(RequestStatus, i64)> = tx
-        .query_row(
-            "SELECT status, generation FROM request_history WHERE musicbrainz_id_lower = ?1",
-            params![stored],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
+        .query_row(sql::ROW_STATE.text(), params![stored], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .optional()?;
     if let Some((status, _)) = &existing
         && (status.is_active() || *status == RequestStatus::Cancelling)
@@ -240,20 +182,10 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
     record.generation = to_u64(generation);
     record.requesters.clear();
     if existing.is_some() {
-        tx.execute(
-            "DELETE FROM request_history WHERE musicbrainz_id_lower = ?1",
-            params![stored],
-        )?;
+        tx.execute(sql::DELETE_ROW.text(), params![stored])?;
     }
     tx.execute(
-        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, \
-         artist_name, album_title, artist_mbid, year, cover_url, requested_at, completed_at, \
-         status, monitor_artist, auto_download_artist, user_id, requested_by_name, \
-         reviewed_by_id, reviewed_by_name, reviewed_at, download_task_id, release_mbid, \
-         request_kind, track_title, duration_seconds, track_release_group_mbid, \
-         dispatch_authorized, generation, origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, \
-         ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, \
-         ?24)",
+        sql::INSERT_ROW.text(),
         params![
             stored,
             record.key,
@@ -272,7 +204,7 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
             record.reviewed_at.map(ms_from_secs),
             record.task_id,
             record.release_mbid,
-            record.kind.as_str(),
+            record.kind,
             record.track_title,
             record.duration_seconds,
             record.track_release_group_mbid,
@@ -283,8 +215,7 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
     )?;
     if let Some(owner) = &record.user_id {
         tx.execute(
-            "INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, \
-             requested_at, requested_by_name) VALUES (?1, ?2, ?3, ?4)",
+            sql::INSERT_OWNER.text(),
             params![
                 owner,
                 stored,
@@ -306,21 +237,13 @@ fn attach_tx(
     now: u64,
 ) -> rusqlite::Result<bool> {
     let status: Option<RequestStatus> = tx
-        .query_row(
-            "SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1",
-            params![stored],
-            |row| row.get(0),
-        )
+        .query_row(sql::ROW_STATUS.text(), params![stored], |row| row.get(0))
         .optional()?;
     if !status.is_some_and(RequestStatus::is_active) {
         return Ok(false);
     }
     tx.execute(
-        "INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, \
-         requested_at, requested_by_name) VALUES (?1, ?2, ?3, ?4) \
-         ON CONFLICT (user_id, musicbrainz_id_lower) DO UPDATE SET \
-         requested_by_name = COALESCE(excluded.requested_by_name, \
-         request_history_requesters.requested_by_name)",
+        sql::ATTACH_LISTENER.text(),
         params![user_id, stored, ms_from_secs(now), name],
     )?;
     Ok(true)
@@ -329,6 +252,56 @@ fn attach_tx(
 /// Optional generation guard as SQL: NULL matches any generation.
 fn guard(expected: Option<u64>) -> Option<i64> {
     expected.map(to_i64)
+}
+
+/// Run one record statement and attach listeners to every row, on one
+/// connection so the rows and their listeners agree.
+fn read_records(
+    conn: &Connection,
+    text: &str,
+    values: impl Params,
+) -> rusqlite::Result<Vec<RequestRecord>> {
+    let mut statement = conn.prepare_cached(text)?;
+    let mut records = statement
+        .query_map(values, record_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    attach_listeners(conn, &mut records)?;
+    Ok(records)
+}
+
+/// Fill each record's listeners (owner excluded) in one query.
+fn attach_listeners(conn: &Connection, records: &mut [RequestRecord]) -> rusqlite::Result<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let keys: Vec<String> = records
+        .iter()
+        .map(|record| row_key(record.kind, &record.key))
+        .collect();
+    let mut statement = conn.prepare(&sql::listeners_in(ListLen::new(keys.len())))?;
+    let rows = statement.query_map(params_from_iter(&keys), |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            Requester {
+                user_id: row.get(1)?,
+                name: row.get(2)?,
+            },
+        ))
+    })?;
+    let mut by_key: HashMap<String, Vec<Requester>> = HashMap::new();
+    for row in rows {
+        let (stored, requester) = row?;
+        by_key.entry(stored).or_default().push(requester);
+    }
+    for (record, key) in records.iter_mut().zip(keys) {
+        if let Some(listeners) = by_key.remove(&key) {
+            record.requesters = listeners
+                .into_iter()
+                .filter(|listener| record.user_id.as_deref() != Some(listener.user_id.as_str()))
+                .collect();
+        }
+    }
+    Ok(())
 }
 
 /// Durable request ledger.
@@ -349,32 +322,22 @@ impl RequestStore {
         kind: RequestKind,
         key: &str,
     ) -> Result<Option<RequestRecord>, RequestsError> {
-        let sql = format!("{RECORD_SELECT} WHERE rh.musicbrainz_id_lower = ?1");
-        let row = sqlx::query(&sql)
-            .bind(row_key(kind, key))
-            .fetch_optional(self.db.pool())
-            .await
-            .map_err(|error| read_error("requests.get", error))?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let record = record_from_sqlx(&row).map_err(|error| read_error("requests.get", error))?;
-        let mut records = vec![record];
-        self.attach_listeners(&mut records).await?;
-        Ok(records.pop())
+        let stored = row_key(kind, key);
+        read(&self.db, "requests.get", move |conn| {
+            Ok(read_records(conn, sql::RECORD_BY_KEY.text(), params![stored])?.pop())
+        })
+        .await
     }
 
     /// Lowercased MBIDs with a live row of one kind (v2
     /// `async_get_requested_mbids`, the batch dedupe read).
     pub async fn active_mbids(&self, kind: RequestKind) -> Result<HashSet<String>, RequestsError> {
-        let rows: Vec<String> = sqlx::query_scalar(
-            "SELECT musicbrainz_id_lower FROM request_history WHERE request_kind = ?1 \
-             AND status IN ('pending','downloading','queued','awaiting_approval')",
-        )
-        .bind(kind.as_str())
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(|error| read_error("requests.active_mbids", error))?;
+        let rows: Vec<String> = read(&self.db, "requests.active_mbids", move |conn| {
+            let mut statement = conn.prepare_cached(sql::ACTIVE_KEYS.text())?;
+            let rows = statement.query_map(params![kind], |row| row.get(0))?;
+            rows.collect()
+        })
+        .await?;
         Ok(rows
             .into_iter()
             .map(|stored| stored.strip_prefix("track:").unwrap_or(&stored).to_owned())
@@ -496,19 +459,12 @@ impl RequestStore {
                 if !has_room(tx, &asker, gate.as_ref(), now)? {
                     return Ok(None);
                 }
-                let moved = tx.execute(
-                    "UPDATE request_history SET status = 'pending', \
-                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
-                     AND status = 'queued' AND download_task_id IS NULL",
-                    params![stored],
-                )?;
+                let moved = tx.execute(sql::START_WAITING.text(), params![stored])?;
                 if moved == 0 {
                     return Ok(None);
                 }
                 tx.execute(
-                    "UPDATE request_history_requesters SET requested_at = ?3 \
-                     WHERE musicbrainz_id_lower = ?1 AND (user_id = ?2 OR user_id = \
-                     (SELECT user_id FROM request_history WHERE musicbrainz_id_lower = ?1))",
+                    sql::RESTAMP_ASKS.text(),
                     params![stored, asker, ms_from_secs(now)],
                 )?;
                 Ok(load_record_tx(tx, &stored)?)
@@ -529,13 +485,7 @@ impl RequestStore {
         let expected = to_i64(expected_generation);
         self.db
             .write_background("requests.requeue_waiting", move |tx| {
-                let moved = tx.execute(
-                    "UPDATE request_history SET status = 'queued', \
-                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
-                     AND status = 'pending' AND download_task_id IS NULL \
-                     AND generation = ?2",
-                    params![stored, expected],
-                )?;
+                let moved = tx.execute(sql::REQUEUE_WAITING.text(), params![stored, expected])?;
                 Ok(moved > 0)
             })
             .await
@@ -547,13 +497,10 @@ impl RequestStore {
     pub async fn waiting_for_quota(
         &self,
     ) -> Result<Vec<(RequestRecord, Option<Role>)>, RequestsError> {
-        let sql = format!(
-            "{RECORD_SELECT} WHERE rh.status = 'queued' AND rh.download_task_id IS NULL \
-             ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower"
-        );
-        let records = self
-            .fetch_records("requests.waiting_for_quota", sqlx::query(&sql))
-            .await?;
+        let records = read(&self.db, "requests.waiting_for_quota", |conn| {
+            read_records(conn, sql::WAITING_FOR_QUOTA.text(), [])
+        })
+        .await?;
         let mut out = Vec::with_capacity(records.len());
         for record in records {
             let role = match record.user_id.as_deref() {
@@ -567,11 +514,12 @@ impl RequestStore {
 
     /// One account's role, or `None` when the account does not exist.
     pub async fn role_of(&self, user_id: &str) -> Result<Option<Role>, RequestsError> {
-        let role: Option<String> = sqlx::query_scalar("SELECT role FROM auth_users WHERE id = ?1")
-            .bind(user_id)
-            .fetch_optional(self.db.pool())
-            .await
-            .map_err(|error| read_error("requests.role_of", error))?;
+        let user_id = user_id.to_owned();
+        let role: Option<String> = read(&self.db, "requests.role_of", move |conn| {
+            conn.query_row(sql::ROLE_OF.text(), params![user_id], |row| row.get(0))
+                .optional()
+        })
+        .await?;
         Ok(role.as_deref().map(Role::from_stored))
     }
 
@@ -617,9 +565,7 @@ impl RequestStore {
                 }
                 if let Some(follow) = follow {
                     tx.execute(
-                        "UPDATE request_history SET monitor_artist = 1, \
-                         auto_download_artist = ?2 \
-                         WHERE musicbrainz_id_lower = ?1 AND monitor_artist = 0",
+                        sql::WIDEN_MONITORING.text(),
                         params![stored, follow.auto_download],
                     )?;
                     follow.apply(tx, &user_id, crate::follows::now_ms(clock.as_ref()))?;
@@ -645,9 +591,7 @@ impl RequestStore {
         self.db
             .write("requests.update_status", move |tx| {
                 let changed = tx.execute(
-                    "UPDATE request_history SET status = ?2, completed_at = ?3, \
-                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
-                     AND (?4 IS NULL OR generation = ?4)",
+                    sql::UPDATE_STATUS.text(),
                     params![stored, status, completed_at.map(ms_from_secs), expected],
                 )?;
                 Ok(changed > 0)
@@ -749,10 +693,7 @@ impl RequestStore {
         self.db
             .write("requests.claim_approval", move |tx| {
                 let changed = tx.execute(
-                    "UPDATE request_history SET status = ?2, dispatch_authorized = 1, \
-                     reviewed_by_name = ?3, reviewed_at = ?4, download_task_id = NULL, \
-                     generation = generation + 1 \
-                     WHERE musicbrainz_id_lower = ?1 AND status = ?5 AND generation = ?6",
+                    sql::CLAIM_APPROVAL.text(),
                     params![
                         stored,
                         RequestStatus::Pending,
@@ -784,10 +725,7 @@ impl RequestStore {
         self.db
             .write("requests.claim_rejection", move |tx| {
                 let changed = tx.execute(
-                    "UPDATE request_history SET status = ?2, dispatch_authorized = 0, \
-                     reviewed_by_name = ?3, reviewed_at = ?4, completed_at = ?4, \
-                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
-                     AND status = ?5 AND generation = ?6",
+                    sql::CLAIM_REJECTION.text(),
                     params![
                         stored,
                         RequestStatus::Rejected,
@@ -822,12 +760,9 @@ impl RequestStore {
         self.db
             .write("requests.claim_retry", move |tx| {
                 let row: Option<(RequestStatus, i64)> = tx
-                    .query_row(
-                        "SELECT status, generation FROM request_history \
-                         WHERE musicbrainz_id_lower = ?1",
-                        params![stored],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
+                    .query_row(sql::ROW_STATE.text(), params![stored], |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    })
                     .optional()?;
                 let Some((status, generation)) = row else {
                     return Ok(RetryClaim::Lost);
@@ -839,9 +774,7 @@ impl RequestStore {
                     return Ok(RetryClaim::Lost);
                 }
                 tx.execute(
-                    "UPDATE request_history SET status = ?2, dispatch_authorized = ?3, \
-                     requested_at = ?4, completed_at = NULL, download_task_id = NULL, \
-                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1",
+                    sql::CLAIM_RETRY.text(),
                     params![
                         stored,
                         target,
@@ -865,16 +798,14 @@ impl RequestStore {
         key: &str,
         user_id: &str,
     ) -> Result<bool, RequestsError> {
-        sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM request_history WHERE musicbrainz_id_lower = ?1 \
-             AND user_id = ?2) OR EXISTS (SELECT 1 FROM request_history_requesters \
-             WHERE musicbrainz_id_lower = ?1 AND user_id = ?2)",
-        )
-        .bind(row_key(kind, key))
-        .bind(user_id)
-        .fetch_one(self.db.pool())
+        let stored = row_key(kind, key);
+        let user_id = user_id.to_owned();
+        read(&self.db, "requests.is_requester", move |conn| {
+            conn.query_row(sql::IS_MEMBER.text(), params![stored, user_id], |row| {
+                row.get(0)
+            })
+        })
         .await
-        .map_err(|error| read_error("requests.is_requester", error))
     }
 
     /// The atomic requester-cancel decision (v2
@@ -903,18 +834,12 @@ impl RequestStore {
                     }));
                 }
                 if record.user_id.as_deref() != Some(user_id.as_str()) {
-                    tx.execute(
-                        "DELETE FROM request_history_requesters \
-                         WHERE musicbrainz_id_lower = ?1 AND user_id = ?2",
-                        params![stored, user_id],
-                    )?;
+                    tx.execute(sql::DETACH_LISTENER.text(), params![stored, user_id])?;
                     return Ok(Some(CancelDecision::Detached));
                 }
                 if record.status == RequestStatus::AwaitingApproval {
                     tx.execute(
-                        "UPDATE request_history SET status = ?2, completed_at = ?3, \
-                         dispatch_authorized = 0, generation = generation + 1 \
-                         WHERE musicbrainz_id_lower = ?1",
+                        sql::CANCEL_ROW.text(),
                         params![stored, RequestStatus::Cancelled, ms_from_secs(now)],
                     )?;
                     return Ok(Some(CancelDecision::CancelledDirect));
@@ -925,8 +850,7 @@ impl RequestStore {
                     }));
                 }
                 tx.execute(
-                    "UPDATE request_history SET status = ?2, generation = generation + 1 \
-                     WHERE musicbrainz_id_lower = ?1",
+                    sql::SET_STATUS.text(),
                     params![stored, RequestStatus::Cancelling],
                 )?;
                 Ok(Some(CancelDecision::CancelTask {
@@ -954,9 +878,7 @@ impl RequestStore {
         self.db
             .write("requests.restore_status", move |tx| {
                 let changed = tx.execute(
-                    "UPDATE request_history SET status = ?2, completed_at = NULL, \
-                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
-                     AND status = ?3 AND generation = ?4",
+                    sql::RESTORE_STATUS.text(),
                     params![stored, status, expected_status, to_i64(expected_generation)],
                 )?;
                 Ok(changed > 0)
@@ -975,11 +897,7 @@ impl RequestStore {
         let stored = row_key(kind, key);
         self.db
             .write("requests.set_dispatch_authorized", move |tx| {
-                tx.execute(
-                    "UPDATE request_history SET dispatch_authorized = ?2, \
-                     generation = generation + 1 WHERE musicbrainz_id_lower = ?1",
-                    params![stored, value],
-                )?;
+                tx.execute(sql::SET_DISPATCH_AUTHORIZED.text(), params![stored, value])?;
                 Ok(())
             })
             .await
@@ -992,10 +910,7 @@ impl RequestStore {
         let stored = row_key(kind, key);
         self.db
             .write("requests.delete", move |tx| {
-                let changed = tx.execute(
-                    "DELETE FROM request_history WHERE musicbrainz_id_lower = ?1",
-                    params![stored],
-                )?;
+                let changed = tx.execute(sql::DELETE_ROW.text(), params![stored])?;
                 Ok(changed > 0)
             })
             .await
@@ -1014,17 +929,13 @@ impl RequestStore {
         let user_id = user_id.to_owned();
         self.db
             .write("requests.dismiss", move |tx| {
-                let exists: bool = tx.query_row(
-                    "SELECT EXISTS (SELECT 1 FROM request_history WHERE musicbrainz_id_lower = ?1)",
-                    params![stored],
-                    |row| row.get(0),
-                )?;
+                let exists: bool =
+                    tx.query_row(sql::ROW_EXISTS.text(), params![stored], |row| row.get(0))?;
                 if !exists {
                     return Ok(false);
                 }
                 tx.execute(
-                    "INSERT OR IGNORE INTO request_history_dismissals \
-                     (user_id, musicbrainz_id_lower, dismissed_at) VALUES (?1, ?2, ?3)",
+                    sql::DISMISS_ROW.text(),
                     params![user_id, stored, ms_from_secs(now)],
                 )?;
                 Ok(true)
@@ -1039,17 +950,10 @@ impl RequestStore {
         user_id: Option<&str>,
         kind: Option<RequestKind>,
     ) -> Result<Vec<RequestRecord>, RequestsError> {
-        let sql = format!(
-            "{RECORD_SELECT} WHERE rh.status IN ('pending','downloading','queued',\
-             'awaiting_approval') AND (?2 IS NULL OR rh.request_kind = ?2) AND {MEMBER_FILTER} \
-             ORDER BY rh.requested_at DESC, rh.musicbrainz_id_lower"
-        );
-        self.fetch_records(
-            "requests.active",
-            sqlx::query(&sql)
-                .bind(user_id.map(str::to_owned))
-                .bind(kind.map(|kind| kind.as_str())),
-        )
+        let user = user_id.map(str::to_owned);
+        read(&self.db, "requests.active", move |conn| {
+            read_records(conn, sql::ACTIVE_ROWS.text(), params![user, kind])
+        })
         .await
     }
 
@@ -1064,52 +968,35 @@ impl RequestStore {
         offset: u32,
         limit: u32,
     ) -> Result<(Vec<RequestRecord>, u32), RequestsError> {
-        let filter = format!(
-            "WHERE (?2 IS NULL OR rh.request_kind = ?2) AND (?3 IS NULL OR rh.status = ?3) \
-             AND {MEMBER_FILTER}"
-        );
-        let order = match sort {
-            "oldest" => "rh.requested_at ASC",
-            "status" => "rh.status ASC, rh.requested_at DESC",
-            _ => "rh.requested_at DESC",
-        };
+        let page = sql::history_page(HistoryOrder::from_param(sort));
         let user = user_id.map(str::to_owned);
-        let kind = kind.map(|kind| kind.as_str());
-        let total: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM request_history rh {filter}"))
-                .bind(&user)
-                .bind(kind)
-                .bind(status)
-                .fetch_one(self.db.pool())
-                .await
-                .map_err(|error| read_error("requests.history", error))?;
-        let sql = format!(
-            "{RECORD_SELECT} {filter} ORDER BY {order}, rh.musicbrainz_id_lower LIMIT ?4 OFFSET ?5"
-        );
-        let rows = self
-            .fetch_records(
-                "requests.history",
-                sqlx::query(&sql)
-                    .bind(&user)
-                    .bind(kind)
-                    .bind(status)
-                    .bind(i64::from(limit))
-                    .bind(i64::from(offset)),
-            )
-            .await?;
+        let status = status.map(str::to_owned);
+        let (rows, total) = read(&self.db, "requests.history", move |conn| {
+            let total: i64 = conn.query_row(
+                sql::HISTORY_COUNT.text(),
+                params![user, kind, status],
+                |row| row.get(0),
+            )?;
+            let rows = read_records(
+                conn,
+                &page,
+                params![user, kind, status, i64::from(limit), i64::from(offset)],
+            )?;
+            Ok((rows, total))
+        })
+        .await?;
         Ok((rows, u32::try_from(total).unwrap_or(u32::MAX)))
     }
 
     /// Rows waiting for review, oldest first.
     pub async fn pending_approvals(&self) -> Result<Vec<RequestRecord>, RequestsError> {
-        let sql = format!(
-            "{RECORD_SELECT} WHERE rh.status = ?1 \
-             ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower"
-        );
-        self.fetch_records(
-            "requests.pending_approvals",
-            sqlx::query(&sql).bind(RequestStatus::AwaitingApproval.as_str()),
-        )
+        read(&self.db, "requests.pending_approvals", |conn| {
+            read_records(
+                conn,
+                sql::ROWS_IN_STATUS.text(),
+                params![RequestStatus::AwaitingApproval],
+            )
+        })
         .await
     }
 
@@ -1119,26 +1006,23 @@ impl RequestStore {
         kind: RequestKind,
         status: RequestStatus,
     ) -> Result<Vec<RequestRecord>, RequestsError> {
-        let sql = format!(
-            "{RECORD_SELECT} WHERE rh.status = ?1 AND rh.request_kind = ?2 \
-             ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower"
-        );
-        self.fetch_records(
-            "requests.with_status",
-            sqlx::query(&sql).bind(status.as_str()).bind(kind.as_str()),
-        )
+        read(&self.db, "requests.with_status", move |conn| {
+            read_records(
+                conn,
+                sql::ROWS_IN_STATUS_OF_KIND.text(),
+                params![status, kind],
+            )
+        })
         .await
     }
 
     /// Asks one listener made since `since` (quota usage).
     pub async fn count_asks_since(&self, user_id: &str, since: u64) -> Result<u32, RequestsError> {
-        let count: i64 = sqlx::query_scalar(COUNT_ASKS)
-            .bind(user_id)
-            .bind(ms_from_secs(since))
-            .fetch_one(self.db.pool())
-            .await
-            .map_err(|error| read_error("requests.count_asks", error))?;
-        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+        let user_id = user_id.to_owned();
+        read(&self.db, "requests.count_asks", move |conn| {
+            count_asks_on(conn, &user_id, since)
+        })
+        .await
     }
 
     /// Delete terminal requests settled before `cutoff` (epoch seconds),
@@ -1148,85 +1032,11 @@ impl RequestStore {
     pub async fn prune_terminal(&self, cutoff: u64) -> Result<u64, RequestsError> {
         self.db
             .write_background("requests.prune", move |tx| {
-                let deleted = tx.execute(
-                    "DELETE FROM request_history \
-                     WHERE status IN ('imported', 'incomplete', 'failed', 'cancelled', 'rejected') \
-                       AND COALESCE(completed_at, requested_at) < ?1 \
-                       AND musicbrainz_id_lower NOT IN (SELECT release_group_mbid_lower \
-                           FROM wanted_watches WHERE state = 'watching')",
-                    params![ms_from_secs(cutoff)],
-                )?;
+                let deleted =
+                    tx.execute(sql::PRUNE_TERMINAL.text(), params![ms_from_secs(cutoff)])?;
                 Ok(u64::try_from(deleted).unwrap_or(0))
             })
             .await
             .map_err(|error| lane_error("requests.prune", error))
-    }
-
-    /// Run one record query and attach listeners to every row.
-    async fn fetch_records<'q>(
-        &self,
-        operation: &'static str,
-        query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
-    ) -> Result<Vec<RequestRecord>, RequestsError> {
-        let rows = query
-            .fetch_all(self.db.pool())
-            .await
-            .map_err(|error| read_error(operation, error))?;
-        let mut records = rows
-            .iter()
-            .map(record_from_sqlx)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| read_error(operation, error))?;
-        self.attach_listeners(&mut records).await?;
-        Ok(records)
-    }
-
-    /// Fill each record's listeners (owner excluded) in one query.
-    async fn attach_listeners(&self, records: &mut [RequestRecord]) -> Result<(), RequestsError> {
-        if records.is_empty() {
-            return Ok(());
-        }
-        let keys: Vec<String> = records
-            .iter()
-            .map(|record| row_key(record.kind, &record.key))
-            .collect();
-        let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-            "SELECT musicbrainz_id_lower, user_id, requested_by_name \
-             FROM request_history_requesters WHERE musicbrainz_id_lower IN (",
-        );
-        let mut separated = builder.separated(", ");
-        for key in &keys {
-            separated.push_bind(key.clone());
-        }
-        builder.push(") ORDER BY requested_at, user_id");
-        let rows = builder
-            .build()
-            .fetch_all(self.db.pool())
-            .await
-            .map_err(|error| read_error("requests.listeners", error))?;
-        let mut by_key: HashMap<String, Vec<Requester>> = HashMap::new();
-        for row in rows {
-            let stored: String = row
-                .try_get(0)
-                .map_err(|error| read_error("requests.listeners", error))?;
-            let requester = Requester {
-                user_id: row
-                    .try_get(1)
-                    .map_err(|error| read_error("requests.listeners", error))?,
-                name: row
-                    .try_get(2)
-                    .map_err(|error| read_error("requests.listeners", error))?,
-            };
-            by_key.entry(stored).or_default().push(requester);
-        }
-        for (record, key) in records.iter_mut().zip(keys) {
-            if let Some(listeners) = by_key.remove(&key) {
-                record.requesters = listeners
-                    .into_iter()
-                    .filter(|listener| record.user_id.as_deref() != Some(listener.user_id.as_str()))
-                    .collect();
-            }
-        }
-        Ok(())
     }
 }

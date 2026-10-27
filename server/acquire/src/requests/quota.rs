@@ -23,10 +23,12 @@ use serde_json::json;
 
 use super::error::RequestsError;
 use super::ledger::{QuotaGate, QuotaRefusal};
+use super::sql;
 use super::sqlite::RequestStore;
 use crate::db::{AcquireDb, to_u64};
 use crate::dispatch::DispatchOrigin;
 use droppedneedle_auth::Role;
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
@@ -293,13 +295,17 @@ impl QuotaLedger {
 
     /// Whole-library indexed bytes (v2 `get_total_library_bytes`).
     async fn library_bytes(&self) -> Result<u64, RequestsError> {
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(file_size_bytes), 0) FROM local_tracks \
-             WHERE availability = 'indexed'",
-        )
-        .fetch_one(self.db.pool())
-        .await
-        .map_err(|error| RequestsError::internal(&format_args!("library bytes read: {error}")))?;
+        let total: i64 = self
+            .db
+            .db()
+            .read("quota.library_bytes", |conn| {
+                conn.query_row(sql::LIBRARY_BYTES.text(), [], |row| row.get(0))
+                    .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| {
+                RequestsError::internal(&format_args!("library bytes read: {error}"))
+            })?;
         Ok(to_u64(total))
     }
 
@@ -307,18 +313,16 @@ impl QuotaLedger {
     /// `get_user_library_bytes`). Scanned files have no task and count only
     /// toward the global cap.
     async fn user_bytes(&self, user_id: &str) -> Result<u64, RequestsError> {
-        // CROSS JOIN keeps the user's tasks as the outer loop, so each task reaches
-        // its tracks through idx_local_tracks_download_task. A plain JOIN can start
-        // from every track instead.
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(t.file_size_bytes), 0) FROM download_tasks d \
-             CROSS JOIN local_tracks t \
-             WHERE t.download_task_id = d.id AND d.user_id = ?1 AND t.availability = 'indexed'",
-        )
-        .bind(user_id)
-        .fetch_one(self.db.pool())
-        .await
-        .map_err(|error| RequestsError::internal(&format_args!("user bytes read: {error}")))?;
+        let user_id = user_id.to_owned();
+        let total: i64 = self
+            .db
+            .db()
+            .read("quota.user_bytes", move |conn| {
+                conn.query_row(sql::USER_BYTES.text(), [user_id], |row| row.get(0))
+                    .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| RequestsError::internal(&format_args!("user bytes read: {error}")))?;
         Ok(to_u64(total))
     }
 }

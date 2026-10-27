@@ -6,11 +6,11 @@
 
 use std::collections::HashSet;
 
-use rusqlite::params;
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use super::{Follows, auto_download_live};
-use crate::flows::stores::{StoreFailure, lane_failure, read_failure};
+use super::{Follows, auto_download_live, sql};
+use crate::flows::stores::{StoreFailure, lane_failure, read};
 use crate::requests::ledger::ApprovalState;
 use droppedneedle_auth::Role;
 
@@ -71,17 +71,38 @@ pub struct FeedRelease {
     pub first_release_date: Option<String>,
 }
 
-/// One cursor as the pool reads it: lowercase key, MBID as followed,
-/// name, then the cursor columns (all null for a never-polled artist).
-type CursorRow = (
-    String,
-    String,
-    String,
-    Option<i64>,
-    Option<String>,
-    Option<i64>,
-    Option<String>,
-);
+/// One cursor as `CURSORS_DUE` and `CURSOR` select it: lowercase key, MBID
+/// as followed, name, then the cursor columns (all null for a never-polled
+/// artist), with its known set read beside it. Pending releases that do
+/// not decode fail the read.
+fn cursor_from_row(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<FollowCursor> {
+    let lower: String = row.get(0)?;
+    let baselined: Option<i64> = row.get(3)?;
+    let next_poll_at: Option<i64> = row.get(5)?;
+    let pending = match row.get::<_, Option<String>>(6)? {
+        Some(text) => serde_json::from_str(&text).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                6,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        None => Vec::new(),
+    };
+    let mut known = conn.prepare_cached(sql::KNOWN_RELEASES.text())?;
+    let known = known
+        .query_map(params![lower], |row| row.get(0))?
+        .collect::<rusqlite::Result<HashSet<String>>>()?;
+    Ok(FollowCursor {
+        artist_mbid: row.get(1)?,
+        artist_name: row.get(2)?,
+        baselined: baselined.unwrap_or(0) != 0,
+        cursor_date: row.get(4)?,
+        known,
+        next_poll_at: next_poll_at.unwrap_or(0),
+        pending,
+    })
+}
 
 impl Follows {
     /// Followed artists whose poll is due at `now`, never-polled first,
@@ -92,48 +113,34 @@ impl Follows {
         now: i64,
         limit: usize,
     ) -> Result<Vec<FollowCursor>, StoreFailure> {
-        let rows: Vec<CursorRow> = sqlx::query_as(
-            "SELECT f.artist_mbid_lower, MIN(f.artist_mbid), MIN(f.artist_name), \
-             MAX(c.baselined), MAX(c.cursor_date), MAX(c.next_poll_at), MAX(c.pending) \
-             FROM user_followed_artists f \
-             LEFT JOIN acquire_follow_cursors c ON c.artist_mbid_lower = f.artist_mbid_lower \
-             GROUP BY f.artist_mbid_lower \
-             HAVING MAX(c.next_poll_at) IS NULL OR MAX(c.next_poll_at) <= ?1 \
-             ORDER BY COALESCE(MAX(c.next_poll_at), 0), f.artist_mbid_lower LIMIT ?2",
-        )
-        .bind(now)
-        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
-        .fetch_all(self.db.pool())
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        read(self.db.db(), "follows.list_due", move |conn| {
+            let mut statement = conn.prepare_cached(sql::CURSORS_DUE.text())?;
+            let rows =
+                statement.query_map(params![now, limit], |row| cursor_from_row(conn, row))?;
+            rows.collect()
+        })
         .await
-        .map_err(|error| read_failure("follows.list_due", error))?;
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows {
-            out.push(self.hydrate(row).await?);
-        }
-        Ok(out)
     }
 
     /// Users whose auto-download is live for this artist, ordered by user
     /// id so the owner pick is stable: intent on, and either a role that
     /// approves itself or an approved grant.
     pub async fn auto_followers(&self, artist_mbid: &str) -> Result<Vec<Follower>, StoreFailure> {
-        let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT f.user_id, u.role, a.state, u.display_name FROM user_followed_artists f \
-             JOIN auth_users u ON u.id = f.user_id \
-             LEFT JOIN auto_download_approvals a \
-               ON a.user_id = f.user_id AND a.artist_mbid_lower = f.artist_mbid_lower \
-             WHERE f.artist_mbid_lower = ?1 AND f.auto_download = 1 \
-             ORDER BY f.user_id",
-        )
-        .bind(artist_mbid.to_lowercase())
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(|error| read_failure("follows.auto_followers", error))?;
+        let artist = artist_mbid.to_lowercase();
+        let rows: Vec<(String, String, Option<ApprovalState>, Option<String>)> =
+            read(self.db.db(), "follows.auto_followers", move |conn| {
+                let mut statement = conn.prepare_cached(sql::AUTO_FOLLOWERS.text())?;
+                let rows = statement.query_map(params![artist], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })?;
+                rows.collect()
+            })
+            .await?;
         Ok(rows
             .into_iter()
             .filter_map(|(user_id, role, verdict, name)| {
                 let role = Role::from_stored(&role);
-                let verdict = verdict.as_deref().and_then(ApprovalState::parse);
                 auto_download_live(role, verdict).then_some(Follower {
                     user_id,
                     role,
@@ -162,9 +169,7 @@ impl Follows {
             .write_background("follows.record_poll", move |tx| {
                 let artist = cursor.artist_mbid.to_lowercase();
                 tx.execute(
-                    "INSERT OR REPLACE INTO acquire_follow_cursors (artist_mbid_lower, \
-                     baselined, cursor_date, next_poll_at, followers, pending) \
-                     VALUES (?1, ?2, ?3, ?4, '[]', ?5)",
+                    sql::PUT_CURSOR.text(),
                     params![
                         artist,
                         cursor.baselined,
@@ -175,18 +180,14 @@ impl Follows {
                 )?;
                 for rg in &cursor.known {
                     tx.execute(
-                        "INSERT OR IGNORE INTO artist_known_releases \
-                         (artist_mbid_lower, rg_mbid_lower) VALUES (?1, ?2)",
+                        sql::ADD_KNOWN_RELEASE.text(),
                         params![artist, rg.to_lowercase()],
                     )?;
                 }
                 let now = crate::db::unix_secs_f64(clock.as_ref());
                 for row in &feed {
                     tx.execute(
-                        "INSERT OR IGNORE INTO new_release_feed (release_group_mbid_lower, \
-                         release_group_mbid, artist_mbid_lower, artist_name, title, \
-                         primary_type, secondary_types, first_release_date, discovered_at) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        sql::ADD_FEED_RELEASE.text(),
                         params![
                             row.rg_mbid.to_lowercase(),
                             row.rg_mbid,
@@ -208,46 +209,13 @@ impl Follows {
 
     /// One artist's cursor, if it has been polled.
     pub async fn cursor(&self, artist_mbid: &str) -> Result<Option<FollowCursor>, StoreFailure> {
-        let row: Option<CursorRow> = sqlx::query_as(
-            "SELECT c.artist_mbid_lower, c.artist_mbid_lower, '', c.baselined, c.cursor_date, \
-             c.next_poll_at, c.pending FROM acquire_follow_cursors c \
-             WHERE c.artist_mbid_lower = ?1",
-        )
-        .bind(artist_mbid.to_lowercase())
-        .fetch_optional(self.db.pool())
-        .await
-        .map_err(|error| read_failure("follows.get", error))?;
-        match row {
-            Some(row) => Ok(Some(self.hydrate(row).await?)),
-            None => Ok(None),
-        }
-    }
-
-    /// Decode one row and load its known set.
-    async fn hydrate(&self, row: CursorRow) -> Result<FollowCursor, StoreFailure> {
-        let (lower, mbid, name, baselined, cursor_date, next_poll_at, pending) = row;
-        let known: Vec<String> = sqlx::query_scalar(
-            "SELECT rg_mbid_lower FROM artist_known_releases WHERE artist_mbid_lower = ?1",
-        )
-        .bind(&lower)
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(|error| read_failure("follows.known", error))?;
-        let pending = match pending {
-            Some(text) => serde_json::from_str(&text).map_err(|error| StoreFailure {
-                operation: "follows.decode",
-                cause: error.to_string(),
-            })?,
-            None => Vec::new(),
-        };
-        Ok(FollowCursor {
-            artist_mbid: mbid,
-            artist_name: name,
-            baselined: baselined.unwrap_or(0) != 0,
-            cursor_date,
-            known: known.into_iter().collect(),
-            next_poll_at: next_poll_at.unwrap_or(0),
-            pending,
+        let artist = artist_mbid.to_lowercase();
+        read(self.db.db(), "follows.get", move |conn| {
+            conn.query_row(sql::CURSOR.text(), params![artist], |row| {
+                cursor_from_row(conn, row)
+            })
+            .optional()
         })
+        .await
     }
 }

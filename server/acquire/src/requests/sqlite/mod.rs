@@ -22,14 +22,18 @@ mod wanted;
 
 pub use editions::EditionStore;
 pub use mixes::PersonalMixStore;
+pub(crate) use requests::HistoryOrder;
 pub use requests::RequestStore;
 pub use wanted::{WantedStore, WatchChange};
 pub(crate) use wanted::{rearm_after_removal, stop_after_removal};
 
 use super::error::RequestsError;
-use droppedneedle_kernel::db::{DbError, map_sqlx_busy};
+use crate::db::AcquireDb;
+use droppedneedle_kernel::db::DbError;
 
-/// Map a writer-lane failure: busy stays retryable, the rest is a fault.
+/// Map a database failure, from the writer lane or the reader pool: busy
+/// stays retryable, the rest (a row that does not decode included) is a
+/// fault.
 pub(crate) fn lane_error(operation: &'static str, error: DbError) -> RequestsError {
     match error {
         DbError::Busy { .. } | DbError::LaneClosed => RequestsError::Busy {
@@ -39,9 +43,30 @@ pub(crate) fn lane_error(operation: &'static str, error: DbError) -> RequestsErr
     }
 }
 
-/// Map a reader-pool failure the same way.
-pub(crate) fn read_error(operation: &'static str, error: sqlx::Error) -> RequestsError {
-    lane_error(operation, map_sqlx_busy(operation, error))
+/// One pooled read, its failure mapped as [`lane_error`] maps a write's.
+pub(crate) async fn read<R, F>(
+    db: &AcquireDb,
+    operation: &'static str,
+    op: F,
+) -> Result<R, RequestsError>
+where
+    F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<R> + Send + 'static,
+    R: Send + 'static,
+{
+    db.db()
+        .read(operation, move |conn| op(conn).map_err(DbError::from))
+        .await
+        .map_err(|error| lane_error(operation, error))
+}
+
+/// A stored value outside its closed set, as a decode failure of column
+/// `index`.
+pub(crate) fn unknown_value(index: usize, column: &str, value: &str) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        index,
+        rusqlite::types::Type::Text,
+        format!("{column}: unknown value {value}").into(),
+    )
 }
 
 /// Personal-mix approval states (`personal_mix_approvals` has no CHECK yet).

@@ -26,9 +26,12 @@ use crate::flows::stores::UpgradeWorklist;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{EditionMark, validate_mbid};
 use crate::requests::models::EditionAcquireResponse;
+use crate::requests::sql;
 use droppedneedle_auth::Curator;
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_library::operations::models::OperationError;
 use droppedneedle_library::operations::plan::{EditionPlan, FileFate, PlanTrack};
+use rusqlite::OptionalExtension;
 
 /// Bytes a track takes in staging, at least (v2's acquisition floor).
 const TRACK_FLOOR_BYTES: u64 = 8 * 1024 * 1024;
@@ -330,14 +333,16 @@ impl RequestsService {
             }
             self.editions.clear(release_group_mbid).await?;
         }
-        sqlx::query_scalar::<_, String>(
-            "SELECT id FROM download_tasks WHERE lower(release_group_mbid) = ?1 \
-             AND status IN ('queued', 'downloading', 'processing') LIMIT 1",
-        )
-        .bind(release_group_mbid.to_ascii_lowercase())
-        .fetch_optional(self.library.pool())
-        .await
-        .map_err(|error| RequestsError::internal(&error))
+        let group = release_group_mbid.to_ascii_lowercase();
+        self.library
+            .db()
+            .read("editions.album_busy", move |conn| {
+                conn.query_row(sql::GROUP_DOWNLOADING.text(), [group], |row| row.get(0))
+                    .optional()
+                    .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| RequestsError::internal(&error))
     }
 
     /// The library copy a fetch with no plan is for: the copy asked for
@@ -349,20 +354,22 @@ impl RequestsService {
         album_id: Option<&str>,
         release_group_mbid: &str,
     ) -> Result<Option<PlannedAlbum>, RequestsError> {
-        let found: Option<(String, String)> = sqlx::query_as(
-            "SELECT e.local_album_id, e.release_mbid FROM local_album_external_identities e \
-             JOIN local_albums b ON b.id = e.local_album_id \
-             WHERE b.retired_into_album_id IS NULL AND e.provider = 'musicbrainz' \
-               AND lower(e.release_group_mbid) = ?1 AND trim(e.release_mbid) <> '' \
-               AND (?2 IS NULL OR e.local_album_id = (SELECT COALESCE(retired_into_album_id, id) \
-                 FROM local_albums WHERE id = ?2)) \
-             ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1",
-        )
-        .bind(release_group_mbid.to_ascii_lowercase())
-        .bind(album_id)
-        .fetch_optional(self.library.pool())
-        .await
-        .map_err(|error| RequestsError::internal(&error))?;
+        let group = release_group_mbid.to_ascii_lowercase();
+        let album_id = album_id.map(str::to_owned);
+        let found: Option<(String, String)> = self
+            .library
+            .db()
+            .read("editions.planned_copy", move |conn| {
+                conn.query_row(
+                    sql::PLANNED_COPY.text(),
+                    rusqlite::params![group, album_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| RequestsError::internal(&error))?;
         Ok(found.map(|(album_id, release_mbid)| PlannedAlbum {
             album_id,
             release_mbid,
@@ -408,7 +415,7 @@ impl RequestsService {
                 });
             }
         };
-        let held = copy_is_held(self.library.pool(), &plan.local_album_id)
+        let held = copy_is_held(self.library.db(), &plan.local_album_id)
             .await
             .map_err(|error| RequestsError::internal(&error))?;
         Ok(Some(gap_of(

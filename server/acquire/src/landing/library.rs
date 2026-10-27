@@ -336,7 +336,7 @@ impl LandingLibrary for LibraryLanding {
                 }
             };
             let (availability, format, bitrate, depth, on_planned, alias, on_release, album) = row?;
-            let held = match crate::edition::copy_is_held(&self.pool, &album).await {
+            let held = match crate::edition::copy_is_held(&self.library.db, &album).await {
                 Ok(held) => held,
                 Err(error) => {
                     tracing::warn!(%error, album, "album hold unreadable; nothing is replaced");

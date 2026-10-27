@@ -5,10 +5,10 @@
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::Follows;
+use super::{Follows, sql};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{ApprovalBatch, ApprovalState, FollowApproval};
-use crate::requests::sqlite::{read_error, secs_from_ms};
+use crate::requests::sqlite::{read, secs_from_ms};
 
 /// One pending approval or batch row as the queries read it.
 type ApprovalRow = (String, Option<String>, String, String, i64, Option<String>);
@@ -26,14 +26,7 @@ pub(super) fn file_pending(
     now_ms: i64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
-         artist_mbid_lower, artist_name, state, requested_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-         ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-         artist_name = excluded.artist_name, state = excluded.state, \
-         requested_at = excluded.requested_at, reviewed_by_id = NULL, \
-         reviewed_by_name = NULL, reviewed_at = NULL, batch_id = NULL \
-         WHERE auto_download_approvals.state <> ?7",
+        sql::FILE_APPROVAL.text(),
         params![
             user_id,
             artist_mbid,
@@ -57,15 +50,7 @@ pub(super) fn file_batch_member(
     now_ms: i64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
-         artist_mbid_lower, artist_name, state, requested_at, batch_id, source) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-         ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-         artist_name = excluded.artist_name, state = excluded.state, \
-         requested_at = excluded.requested_at, reviewed_by_id = NULL, \
-         reviewed_by_name = NULL, reviewed_at = NULL, \
-         batch_id = excluded.batch_id, source = excluded.source \
-         WHERE auto_download_approvals.state != ?9",
+        sql::FILE_BATCH_MEMBER.text(),
         params![
             user_id,
             artist_mbid,
@@ -88,8 +73,7 @@ pub(super) fn withdraw_pending(
     mbid_lower: &str,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "DELETE FROM auto_download_approvals WHERE user_id = ?1 \
-         AND artist_mbid_lower = ?2 AND state = ?3",
+        sql::WITHDRAW_APPROVAL.text(),
         params![user_id, mbid_lower, ApprovalState::Pending],
     )?;
     Ok(())
@@ -107,9 +91,7 @@ pub(super) fn transition(
 ) -> rusqlite::Result<Option<FollowApproval>> {
     let row: Option<(String, String, Option<String>, i64)> = tx
         .query_row(
-            "SELECT a.artist_mbid, a.artist_name, u.display_name, a.requested_at \
-             FROM auto_download_approvals a LEFT JOIN auth_users u ON u.id = a.user_id \
-             WHERE a.user_id = ?1 AND a.artist_mbid_lower = ?2 AND a.state = ?3",
+            sql::APPROVAL_IN_STATE.text(),
             params![user_id, mbid_lower, from],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
@@ -118,9 +100,7 @@ pub(super) fn transition(
         return Ok(None);
     };
     tx.execute(
-        "UPDATE auto_download_approvals SET state = ?3, reviewed_by_id = ?4, \
-         reviewed_by_name = ?5, reviewed_at = ?6 \
-         WHERE user_id = ?1 AND artist_mbid_lower = ?2",
+        sql::DECIDE_APPROVAL.text(),
         params![user_id, mbid_lower, to, reviewer.0, reviewer.1, now_ms],
     )?;
     Ok(Some(FollowApproval {
@@ -142,10 +122,7 @@ pub(super) fn decide_batch_rows(
     reviewer: &Reviewer,
     now_ms: i64,
 ) -> rusqlite::Result<Vec<(String, String, String)>> {
-    let mut statement = tx.prepare(
-        "SELECT user_id, artist_mbid, artist_name FROM auto_download_approvals \
-         WHERE batch_id = ?1 AND state = ?2 ORDER BY artist_name",
-    )?;
+    let mut statement = tx.prepare_cached(sql::BATCH_ROWS.text())?;
     let rows = statement
         .query_map(params![batch_id, ApprovalState::Pending], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -153,8 +130,7 @@ pub(super) fn decide_batch_rows(
         .collect::<rusqlite::Result<Vec<(String, String, String)>>>()?;
     drop(statement);
     tx.execute(
-        "UPDATE auto_download_approvals SET state = ?2, reviewed_by_id = ?3, \
-         reviewed_by_name = ?4, reviewed_at = ?5 WHERE batch_id = ?1 AND state = ?6",
+        sql::DECIDE_BATCH.text(),
         params![
             batch_id,
             state,
@@ -217,30 +193,29 @@ impl Follows {
     /// Pending units for the badge: single approvals plus one unit per
     /// pending batch.
     pub async fn pending_units(&self) -> Result<u32, RequestsError> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT (SELECT COUNT(*) FROM auto_download_approvals \
-             WHERE state = 'pending' AND batch_id IS NULL) + \
-             (SELECT COUNT(*) FROM (SELECT batch_id, user_id FROM auto_download_approvals \
-             WHERE state = 'pending' AND batch_id IS NOT NULL GROUP BY batch_id, user_id))",
-        )
-        .fetch_one(self.db.pool())
-        .await
-        .map_err(|error| read_error("approvals.units", error))?;
+        let count: i64 = read(&self.db, "approvals.units", |conn| {
+            conn.query_row(sql::PENDING_UNITS.text(), [], |row| row.get(0))
+        })
+        .await?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
     /// Pending rows, singles or batch members, oldest first.
     async fn pending_rows(&self, batched: bool) -> Result<Vec<ApprovalRow>, RequestsError> {
-        sqlx::query_as(
-            "SELECT a.user_id, u.display_name, a.artist_mbid, a.artist_name, \
-             a.requested_at, a.batch_id FROM auto_download_approvals a \
-             LEFT JOIN auth_users u ON u.id = a.user_id \
-             WHERE a.state = 'pending' AND (a.batch_id IS NOT NULL) = ?1 \
-             ORDER BY a.requested_at ASC, a.artist_name ASC",
-        )
-        .bind(batched)
-        .fetch_all(self.db.pool())
+        read(&self.db, "approvals.pending", move |conn| {
+            let mut statement = conn.prepare_cached(sql::PENDING_APPROVALS.text())?;
+            let rows = statement.query_map(params![batched], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })?;
+            rows.collect()
+        })
         .await
-        .map_err(|error| read_error("approvals.pending", error))
     }
 }

@@ -132,6 +132,7 @@ impl std::fmt::Display for RequestStatus {
 }
 
 sql_text!(RequestStatus);
+sql_text!(RequestKind);
 
 /// Whether a request row may move `from -> to`.
 ///

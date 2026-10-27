@@ -1,48 +1,16 @@
 //! Wanted watches over `wanted_watches`.
 
-use rusqlite::{OptionalExtension, Transaction, params};
-use sqlx::Row;
-use sqlx::sqlite::SqliteRow;
+use rusqlite::{Connection, OptionalExtension, Params, Transaction, params};
 
 use super::super::error::RequestsError;
 use super::super::ledger::{WantedWatch, WatchState};
-use super::{lane_error, ms_from_secs, ms_from_secs_f64, read_error, secs_from_ms};
+use super::super::sql;
+use super::{lane_error, ms_from_secs, ms_from_secs_f64, read, secs_from_ms};
 use crate::db::AcquireDb;
 
-/// Columns every watch read selects, in decode order.
-const WATCH_SELECT: &str = "SELECT w.release_group_mbid_lower, w.user_id, u.display_name, \
-     w.artist_name, w.album_title, w.artist_mbid, w.year, w.cover_url, w.kind, w.state, \
-     w.created_at, w.first_release_date, w.check_count, w.quiet_streak, w.next_check_at, \
-     w.new_candidate_count FROM wanted_watches w LEFT JOIN auth_users u ON u.id = w.user_id";
-
-fn watch_from_sqlx(row: &SqliteRow) -> Result<WantedWatch, sqlx::Error> {
-    let state: String = row.try_get(9)?;
-    let state = WatchState::parse(&state).ok_or_else(|| {
-        sqlx::Error::Decode(format!("wanted_watches.state: unknown value {state}").into())
-    })?;
-    Ok(WantedWatch {
-        key: row.try_get(0)?,
-        user_id: row.try_get(1)?,
-        user_name: row.try_get(2)?,
-        artist_name: row.try_get(3)?,
-        album_title: row.try_get(4)?,
-        artist_mbid: row.try_get(5)?,
-        year: row
-            .try_get::<Option<i64>, _>(6)?
-            .and_then(|year| i32::try_from(year).ok()),
-        cover_url: row.try_get(7)?,
-        kind: row.try_get(8)?,
-        state,
-        created_at: secs_from_ms(row.try_get(10)?),
-        first_release_date: row.try_get(11)?,
-        check_count: u32::try_from(row.try_get::<i64, _>(12)?).unwrap_or(0),
-        quiet_streak: u32::try_from(row.try_get::<i64, _>(13)?).unwrap_or(0),
-        next_check_at: secs_from_ms(row.try_get(14)?),
-        new_candidate_count: u32::try_from(row.try_get::<i64, _>(15)?).unwrap_or(0),
-    })
-}
-
-fn watch_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<WantedWatch> {
+/// Decode one watch selected by `WATCH_SELECT`. A state outside its set
+/// fails the read.
+fn watch_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WantedWatch> {
     Ok(WantedWatch {
         key: row.get(0)?,
         user_id: row.get(1)?,
@@ -67,9 +35,19 @@ fn watch_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<WantedWatch>
 
 /// One watch inside a write transaction.
 fn load_watch_tx(tx: &Transaction, key: &str) -> rusqlite::Result<Option<WantedWatch>> {
-    let sql = format!("{WATCH_SELECT} WHERE w.release_group_mbid_lower = ?1");
-    tx.query_row(&sql, params![key], watch_from_rusqlite)
+    tx.query_row(sql::WATCH_BY_KEY.text(), params![key], watch_from_row)
         .optional()
+}
+
+/// Every watch one statement selects.
+fn read_watches(
+    conn: &Connection,
+    text: &str,
+    values: impl Params,
+) -> rusqlite::Result<Vec<WantedWatch>> {
+    let mut statement = conn.prepare_cached(text)?;
+    let rows = statement.query_map(values, watch_from_row)?;
+    rows.collect()
 }
 
 /// What a guarded watch mutation found.
@@ -97,16 +75,9 @@ impl WantedStore {
     pub async fn prune(&self, cutoff: u64) -> Result<(u64, u64), RequestsError> {
         self.db
             .write_background("wanted.prune", move |tx| {
-                let watches = tx.execute(
-                    "DELETE FROM wanted_watches WHERE state IN ('stopped', 'fulfilled') \
-                     AND COALESCE(last_checked_at, created_at) < ?1",
-                    params![ms_from_secs(cutoff)],
-                )?;
-                let seen = tx.execute(
-                    "DELETE FROM wanted_seen_candidates WHERE release_group_mbid_lower \
-                     NOT IN (SELECT release_group_mbid_lower FROM wanted_watches)",
-                    [],
-                )?;
+                let watches =
+                    tx.execute(sql::PRUNE_WATCHES.text(), params![ms_from_secs(cutoff)])?;
+                let seen = tx.execute(sql::PRUNE_SEEN.text(), [])?;
                 Ok((
                     u64::try_from(watches).unwrap_or(0),
                     u64::try_from(seen).unwrap_or(0),
@@ -128,34 +99,21 @@ impl WantedStore {
         user_id: &str,
         is_admin: bool,
     ) -> Result<Vec<WantedWatch>, RequestsError> {
-        let sql = format!(
-            "{WATCH_SELECT} WHERE ?1 OR w.user_id = ?2 ORDER BY w.created_at DESC, \
-             w.release_group_mbid_lower"
-        );
-        let rows = sqlx::query(&sql)
-            .bind(is_admin)
-            .bind(user_id)
-            .fetch_all(self.db.pool())
-            .await
-            .map_err(|error| read_error("wanted.list", error))?;
-        rows.iter()
-            .map(watch_from_sqlx)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| read_error("wanted.list", error))
+        let user_id = user_id.to_owned();
+        read(&self.db, "wanted.list", move |conn| {
+            read_watches(conn, sql::WATCHES_FOR.text(), params![is_admin, user_id])
+        })
+        .await
     }
 
     /// One watch, if present.
     pub async fn get(&self, key: &str) -> Result<Option<WantedWatch>, RequestsError> {
-        let sql = format!("{WATCH_SELECT} WHERE w.release_group_mbid_lower = ?1");
-        let row = sqlx::query(&sql)
-            .bind(key.to_lowercase())
-            .fetch_optional(self.db.pool())
-            .await
-            .map_err(|error| read_error("wanted.get", error))?;
-        row.as_ref()
-            .map(watch_from_sqlx)
-            .transpose()
-            .map_err(|error| read_error("wanted.get", error))
+        let key = key.to_lowercase();
+        read(&self.db, "wanted.get", move |conn| {
+            conn.query_row(sql::WATCH_BY_KEY.text(), params![key], watch_from_row)
+                .optional()
+        })
+        .await
     }
 
     /// Watching rows due at `now`, oldest due first, at most `limit`.
@@ -164,21 +122,15 @@ impl WantedStore {
         now: u64,
         limit: usize,
     ) -> Result<Vec<WantedWatch>, RequestsError> {
-        let sql = format!(
-            "{WATCH_SELECT} WHERE w.state = ?1 AND w.next_check_at <= ?2 \
-             ORDER BY w.next_check_at, w.release_group_mbid_lower LIMIT ?3"
-        );
-        let rows = sqlx::query(&sql)
-            .bind(WatchState::Watching.as_str())
-            .bind(ms_from_secs(now))
-            .bind(i64::try_from(limit).unwrap_or(i64::MAX))
-            .fetch_all(self.db.pool())
-            .await
-            .map_err(|error| read_error("wanted.list_due", error))?;
-        rows.iter()
-            .map(watch_from_sqlx)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| read_error("wanted.list_due", error))
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        read(&self.db, "wanted.list_due", move |conn| {
+            read_watches(
+                conn,
+                sql::WATCHES_DUE.text(),
+                params![WatchState::Watching, ms_from_secs(now), limit],
+            )
+        })
+        .await
     }
 
     /// Enrol a watch. A fulfilled watch re-arms with fresh counters (the
@@ -190,11 +142,7 @@ impl WantedStore {
             .write_background("wanted.enrol", move |tx| {
                 let key = watch.key.to_lowercase();
                 let inserted = tx.execute(
-                    "INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, \
-                     user_id, artist_name, album_title, artist_mbid, year, cover_url, kind, \
-                     state, created_at, first_release_date, next_check_at) \
-                     VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
-                     ON CONFLICT (release_group_mbid_lower) DO NOTHING",
+                    sql::ENROL_WATCH.text(),
                     params![
                         key,
                         watch.user_id,
@@ -214,11 +162,7 @@ impl WantedStore {
                     return Ok(true);
                 }
                 let rearmed = tx.execute(
-                    "UPDATE wanted_watches SET state = ?2, user_id = ?3, kind = ?4, \
-                     created_at = ?5, check_count = 0, quiet_streak = 0, last_checked_at = NULL, \
-                     next_check_at = ?6, last_outcome = NULL, new_candidate_count = 0, \
-                     first_release_date = COALESCE(?8, first_release_date) \
-                     WHERE release_group_mbid_lower = ?1 AND state = ?7",
+                    sql::REARM_WATCH.text(),
                     params![
                         key,
                         WatchState::Watching,
@@ -252,10 +196,7 @@ impl WantedStore {
         self.db
             .write_background("wanted.record_check", move |tx| {
                 tx.execute(
-                    "UPDATE wanted_watches SET check_count = check_count + 1, \
-                     quiet_streak = ?2, next_check_at = ?3, last_checked_at = ?4, \
-                     last_outcome = ?5, first_release_date = COALESCE(?6, first_release_date) \
-                     WHERE release_group_mbid_lower = ?1",
+                    sql::RECORD_CHECK.text(),
                     params![
                         key,
                         quiet_streak,
@@ -283,9 +224,7 @@ impl WantedStore {
         self.db
             .write_background("wanted.fulfilled", move |tx| {
                 tx.execute(
-                    "UPDATE wanted_watches SET state = ?2, last_outcome = ?3, \
-                     last_checked_at = ?4, new_candidate_count = 0 \
-                     WHERE release_group_mbid_lower = ?1",
+                    sql::MARK_FULFILLED.text(),
                     params![key, WatchState::Fulfilled, outcome, ms_from_secs(now)],
                 )?;
                 Ok(())
@@ -310,8 +249,7 @@ impl WantedStore {
             false,
             |tx, key, _| {
                 tx.execute(
-                    "UPDATE wanted_watches SET state = ?2 WHERE release_group_mbid_lower = ?1 \
-                 AND state = ?3",
+                    sql::MOVE_WATCH.text(),
                     params![key, WatchState::Stopped, WatchState::Watching],
                 )?;
                 Ok(())
@@ -330,26 +268,29 @@ impl WantedStore {
         is_admin: bool,
         now: u64,
     ) -> Result<WatchChange, RequestsError> {
-        self.change(key, user_id, is_admin, "wanted.resume", false, move |tx, key, state| {
-            if state == WatchState::Watching {
-                tx.execute(
-                    "UPDATE wanted_watches SET next_check_at = ?2 WHERE release_group_mbid_lower = ?1",
-                    params![key, ms_from_secs(now)],
-                )?;
-            } else {
-                tx.execute(
-                    "UPDATE wanted_watches SET state = ?2, next_check_at = ?3, created_at = ?3 \
-                     WHERE release_group_mbid_lower = ?1 AND state = ?4",
-                    params![
-                        key,
-                        WatchState::Watching,
-                        ms_from_secs(now),
-                        WatchState::Stopped
-                    ],
-                )?;
-            }
-            Ok(())
-        })
+        self.change(
+            key,
+            user_id,
+            is_admin,
+            "wanted.resume",
+            false,
+            move |tx, key, state| {
+                if state == WatchState::Watching {
+                    tx.execute(sql::WATCH_DUE_AT.text(), params![key, ms_from_secs(now)])?;
+                } else {
+                    tx.execute(
+                        sql::RESUME_WATCH.text(),
+                        params![
+                            key,
+                            WatchState::Watching,
+                            ms_from_secs(now),
+                            WatchState::Stopped
+                        ],
+                    )?;
+                }
+                Ok(())
+            },
+        )
         .await
     }
 
@@ -367,9 +308,7 @@ impl WantedStore {
             .write("wanted.add_seen", move |tx| {
                 for (source, identity) in &candidates {
                     tx.execute(
-                        "INSERT INTO wanted_seen_candidates (release_group_mbid_lower, source, \
-                         identity, first_seen_at) VALUES (?1, ?2, ?3, ?4) \
-                         ON CONFLICT DO NOTHING",
+                        sql::ADD_SEEN.text(),
                         params![key, source, identity, now as f64],
                     )?;
                 }
@@ -387,11 +326,7 @@ impl WantedStore {
         is_admin: bool,
     ) -> Result<WatchChange, RequestsError> {
         self.change(key, user_id, is_admin, "wanted.seen", true, |tx, key, _| {
-            tx.execute(
-                "UPDATE wanted_watches SET new_candidate_count = 0 \
-                 WHERE release_group_mbid_lower = ?1",
-                params![key],
-            )?;
+            tx.execute(sql::CLEAR_UNSEEN.text(), params![key])?;
             Ok(())
         })
         .await
@@ -445,8 +380,7 @@ pub(crate) fn stop_after_removal(
     removed_at: f64,
 ) -> rusqlite::Result<bool> {
     let changed = tx.execute(
-        "UPDATE wanted_watches SET state = ?2 WHERE release_group_mbid_lower = ?1 \
-         AND state = ?3 AND created_at <= ?4",
+        sql::STOP_AFTER_REMOVAL.text(),
         params![
             key.to_lowercase(),
             WatchState::Stopped,
@@ -470,10 +404,7 @@ pub(crate) fn rearm_after_removal(
     now: f64,
 ) -> rusqlite::Result<bool> {
     let changed = tx.execute(
-        "UPDATE wanted_watches SET state = ?2, created_at = ?3, check_count = 0, \
-         quiet_streak = 0, last_checked_at = NULL, next_check_at = ?3, \
-         last_outcome = NULL, new_candidate_count = 0 \
-         WHERE release_group_mbid_lower = ?1 AND state = ?4 AND created_at <= ?5",
+        sql::REARM_AFTER_REMOVAL.text(),
         params![
             key.to_lowercase(),
             WatchState::Watching,

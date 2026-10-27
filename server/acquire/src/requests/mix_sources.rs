@@ -10,9 +10,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use sqlx::SqlitePool;
 
 use super::mix::MixSources;
+use super::sql;
+use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
@@ -29,22 +30,14 @@ const PRIORITY: RequestPriority = RequestPriority::BackgroundSync;
 pub struct LiveMixSources {
     client: ListenBrainzClient,
     links: Arc<dyn ListenBrainzLinkStore>,
-    pool: SqlitePool,
+    db: Db,
 }
 
 impl LiveMixSources {
     /// Sources over the ListenBrainz client, the link store and the
     /// database holding `user_connections`.
-    pub fn new(
-        client: ListenBrainzClient,
-        links: Arc<dyn ListenBrainzLinkStore>,
-        pool: SqlitePool,
-    ) -> Self {
-        Self {
-            client,
-            links,
-            pool,
-        }
+    pub fn new(client: ListenBrainzClient, links: Arc<dyn ListenBrainzLinkStore>, db: Db) -> Self {
+        Self { client, links, db }
     }
 }
 
@@ -71,13 +64,14 @@ impl MixSources for LiveMixSources {
 
     fn linked_users(&self) -> BoxFuture<'_, Result<Vec<String>, String>> {
         Box::pin(async move {
-            sqlx::query_scalar(
-                "SELECT user_id FROM user_connections \
-                 WHERE service = 'listenbrainz' AND enabled = 1 ORDER BY user_id",
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| format!("listenbrainz links read failed: {error}"))
+            self.db
+                .read("mix.linked_users", |conn| {
+                    let mut statement = conn.prepare_cached(sql::LISTENBRAINZ_USERS.text())?;
+                    let rows = statement.query_map([], |row| row.get(0))?;
+                    Ok::<_, DbError>(rows.collect::<rusqlite::Result<Vec<String>>>()?)
+                })
+                .await
+                .map_err(|error| format!("listenbrainz links read failed: {error}"))
         })
     }
 
@@ -179,7 +173,7 @@ pub fn live_builder(
     let sources = Arc::new(LiveMixSources::new(
         providers.listenbrainz.clone(),
         links,
-        requests.library.pool().clone(),
+        requests.library.db().clone(),
     ));
     Arc::new(super::mix::PersonalMixBuilder::new(
         sources,

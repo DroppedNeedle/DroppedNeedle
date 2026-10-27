@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
+use rusqlite::{OptionalExtension, params_from_iter};
 
 use super::RequestsState;
 use super::error::RequestsError;
@@ -31,6 +32,8 @@ use droppedneedle_catalog::reads::collections::store::playlists::{
 };
 use droppedneedle_catalog::reads::discover::adapters::queue::select::{self, Shuffler};
 use droppedneedle_catalog::reads::discover::models::QueueItemLight;
+use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::events::{
     EventHub, PersonalMixRefreshed, UserNotice, model::new_event_id,
 };
@@ -605,30 +608,23 @@ impl PersonalMixBuilder {
         if groups.is_empty() {
             return Ok(());
         }
-        let sql = format!(
-            "SELECT t.id, lower(ae.release_group_mbid), lower(te.recording_mbid), \
-             t.track_number, t.disc_number FROM local_tracks t \
-             JOIN local_albums b ON b.id = t.local_album_id \
-             JOIN local_album_external_identities ae ON ae.local_album_id = b.id \
-             JOIN local_track_external_identities te \
-             ON te.local_track_id = t.id AND te.provider = 'musicbrainz' \
-             WHERE b.retired_into_album_id IS NULL AND t.availability = 'indexed' \
-             AND te.recording_mbid IS NOT NULL AND lower(ae.release_group_mbid) IN ({})",
-            vec!["?"; groups.len()].join(", ")
-        );
-        let mut query =
-            sqlx::query_as::<_, (String, String, String, Option<i64>, Option<i64>)>(&sql);
-        for group in &groups {
-            query = query.bind(group);
-        }
-        let rows = query
-            .fetch_all(self.requests.library.pool())
+        let text = super::sql::mix_library_files(ListLen::new(groups.len()));
+        let by_key: HashMap<(String, String), LibraryFile> = self
+            .requests
+            .library
+            .db()
+            .read("mix.library_files", move |conn| {
+                let mut statement = conn.prepare(&text)?;
+                let rows = statement.query_map(params_from_iter(&groups), |row| {
+                    Ok((
+                        (row.get(1)?, row.get(2)?),
+                        (row.get(0)?, row.get(3)?, row.get(4)?),
+                    ))
+                })?;
+                Ok::<_, DbError>(rows.collect::<rusqlite::Result<_>>()?)
+            })
             .await
             .map_err(|error| RequestsError::internal(&error))?;
-        let by_key: HashMap<(String, String), LibraryFile> = rows
-            .into_iter()
-            .map(|(id, group, recording, number, disc)| ((group, recording), (id, number, disc)))
-            .collect();
         for track in mix.iter_mut().filter(|track| track.in_library) {
             let Some(recording) = &track.recording_mbid else {
                 continue;
@@ -760,13 +756,20 @@ impl PersonalMixBuilder {
         &self,
         user_id: &str,
     ) -> Result<Option<(Role, Option<String>)>, RequestsError> {
-        let row: Option<(String, Option<String>)> = sqlx::query_as(
-            "SELECT role, COALESCE(username_display, username) FROM auth_users WHERE id = ?",
-        )
-        .bind(user_id)
-        .fetch_optional(self.requests.library.pool())
-        .await
-        .map_err(|error| RequestsError::internal(&error))?;
+        let user_id = user_id.to_owned();
+        let row: Option<(String, Option<String>)> = self
+            .requests
+            .library
+            .db()
+            .read("mix.owner", move |conn| {
+                conn.query_row(super::sql::MIX_OWNER.text(), [user_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })
+                .optional()
+                .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| RequestsError::internal(&error))?;
         Ok(row.map(|(role, name)| (Role::from_stored(&role), name)))
     }
 }

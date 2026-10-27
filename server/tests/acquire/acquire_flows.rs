@@ -686,7 +686,7 @@ async fn presence_trusts_a_tag_only_for_an_unidentified_album() {
     })
     .await
     .unwrap();
-    let library = LibraryPresence::over_catalog(db.pool().clone());
+    let library = LibraryPresence::over_catalog(db.db().clone());
     assert!(
         !library.contains("rg-x").await,
         "an album identified as another group never holds its files' tag"

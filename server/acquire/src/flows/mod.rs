@@ -9,4 +9,5 @@
 
 pub mod loops;
 pub mod seams;
+pub(crate) mod sql;
 pub mod stores;

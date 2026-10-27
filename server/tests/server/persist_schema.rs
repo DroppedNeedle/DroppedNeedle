@@ -4120,7 +4120,14 @@ fn every_registered_statement_prepares() {
 /// the playable totals across every folder, and the player apps' track
 /// lists, totals and unplayed halves over the whole library (one album's
 /// or one exact title's are families of their own, checked here), and
-/// their lists of every track and genre.
+/// their lists of every track and genre. Also the upgrade worklist, which
+/// reads every identified track to find each album's worst file, and the
+/// quota's library total, which sums every indexed track (10 ms on 100k
+/// tracks). The acquire reads of one release group's or one recording's
+/// tracks (the album and recording quality checks and "the library holds
+/// it") walk only because no index covers lowered release-group or
+/// recording ids; the expression indexes that cover them take them off
+/// this list.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::reads::library::sql::TRACK_PAGE_LIKE",
     "droppedneedle_catalog::reads::library::sql::TRACK_PAGE_WORDS",
@@ -4139,6 +4146,11 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::reads::library::sql::PLAYER_TRACKS_UNPLAYED_COUNT",
     "droppedneedle_compat::adapters::jellyfin_ids::sql::NEW_TRACKS",
     "droppedneedle_compat::adapters::jellyfin_ids::sql::GENRE_NAMES",
+    "droppedneedle_acquire::flows::sql::IDENTIFIED_TRACKS",
+    "droppedneedle_acquire::requests::sql::LIBRARY_BYTES",
+    "droppedneedle_acquire::flows::sql::GROUP_TRACK_QUALITY",
+    "droppedneedle_acquire::flows::sql::RECORDING_TRACK_QUALITY",
+    "droppedneedle_acquire::requests::sql::LIBRARY_HOLDS",
 ];
 
 /// Before the first ANALYZE (a fresh install) the planner has no
