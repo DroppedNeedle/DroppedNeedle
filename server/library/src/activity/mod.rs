@@ -3,24 +3,29 @@
 //!
 //! [`feed`] builds what `GET /library/activity` answers from the scan
 //! runs and the identification queue. [`store`] holds the SQL. This file
-//! has the service methods on [`LibrarySetup`]. The `activity.changed`
+//! has the [`Activity`] service. The `activity.changed`
 //! event stream reads the same change revisions from the event hub's own
 //! poller.
 
 pub mod feed;
 pub mod store;
 
-use droppedneedle_kernel::db::DbError;
+use std::sync::Arc;
+
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::writer::Lane;
+use droppedneedle_kernel::db::{Db, DbError};
 
 use self::feed::{FeedInputs, LibraryActivity};
 use self::store::{ControlError, IdentificationControl};
 use super::clock::LibraryClock as _;
 use super::scan::models::{Counters, ScanRun};
+use super::scan::sqlite_store::SqliteScanStore;
 use super::scan::store::ScanStoreError;
+use super::scan::watcher::WorkWakeups;
 use super::scans::store_error;
 use super::service::ServiceError;
-use super::wiring::LibrarySetup;
+use super::wiring::ScanCoordinator;
 
 /// Answer to a pause or resume of identification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +36,16 @@ pub struct IdentificationControlAnswer {
     pub row_revision: u64,
 }
 
-impl LibrarySetup {
+/// The activity feed and the identification pause switch.
+#[derive(Clone)]
+pub struct Activity {
+    pub(crate) coordinator: Arc<ScanCoordinator>,
+    pub(crate) scan_store: Arc<SqliteScanStore>,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) wakeups: WorkWakeups,
+}
+
+impl Activity {
     /// The activity feed. Administrators also see which part of the
     /// library each scan covers. Blocking.
     pub fn library_activity(&self, admin: bool) -> Result<LibraryActivity, ServiceError> {
@@ -132,23 +146,20 @@ impl LibrarySetup {
             row_revision: revision,
         })
     }
+}
 
-    /// True while identification is paused. The identify loop checks this
-    /// before each claim to stop early; the claim itself also refuses
-    /// while paused, so this is only a fast path. An unreadable switch
-    /// reads as running, with the error logged. Blocking.
-    pub fn identification_paused(&self) -> bool {
-        match self
-            .scan_store
-            .db()
-            .read_blocking("identification_switch", |conn| {
-                Ok::<_, DbError>(store::identification_control(conn)?)
-            }) {
-            Ok(IdentificationControl { paused, .. }) => paused,
-            Err(error) => {
-                tracing::warn!(%error, "cannot read the identification pause switch");
-                false
-            }
+/// True while identification is paused. The identify loop checks this
+/// before each claim to stop early; the claim itself also refuses while
+/// paused, so this is only a fast path. An unreadable switch reads as
+/// running, with the error logged. Blocking.
+pub(crate) fn identification_paused(db: &Db) -> bool {
+    match db.read_blocking("identification_switch", |conn| {
+        Ok::<_, DbError>(store::identification_control(conn)?)
+    }) {
+        Ok(IdentificationControl { paused, .. }) => paused,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the identification pause switch");
+            false
         }
     }
 }

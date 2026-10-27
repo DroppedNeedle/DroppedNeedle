@@ -7,6 +7,8 @@
 //! user reads (administrators see a little more). Ported from v2's
 //! `library_scan_target` routes.
 
+use crate::activity::Activity;
+use crate::scans::Scans;
 use axum::{
     Json,
     extract::{Path, State},
@@ -25,7 +27,7 @@ use crate::activity::feed::LibraryActivity;
 use crate::scan::models::{Disposition, FailureCode, ScanKind, ScanPhase, ScanState};
 use crate::scan::reasons::scan_reason;
 use crate::scans::{MAX_FAILURE_PAGE, MAX_PAGE, RunControl};
-use crate::wiring::{LibraryServices, LibrarySetup};
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, User};
 
 /// Scan control and activity routes.
@@ -278,7 +280,7 @@ pub struct IdentificationControlResponse {
     )
 )]
 pub async fn request_scan_run(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     caller: Admin,
     ValidJson(body): ValidJson<ScanRunRequestBody>,
 ) -> Result<(StatusCode, Json<ScanRunRequestedResponse>), ApiError> {
@@ -317,7 +319,7 @@ pub async fn request_scan_run(
     )
 )]
 pub async fn current_scan_runs(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     _caller: Admin,
 ) -> Result<Json<ScanRunCurrentResponse>, ApiError> {
     let (active, queued) = blocking(move || state.current_scan_runs()).await??;
@@ -344,7 +346,7 @@ pub async fn current_scan_runs(
     )
 )]
 pub async fn scan_run_history(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     _caller: Admin,
     ValidQuery(query): ValidQuery<HistoryQuery>,
 ) -> Result<Json<ScanRunHistoryResponse>, ApiError> {
@@ -373,7 +375,7 @@ pub async fn scan_run_history(
     )
 )]
 pub async fn estimate_scan_run(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     _caller: Admin,
     ValidQuery(pairs): ValidQuery<Vec<(String, String)>>,
 ) -> Result<Json<ScanEstimateResponse>, ApiError> {
@@ -408,7 +410,7 @@ pub async fn estimate_scan_run(
     )
 )]
 pub async fn scan_run_failures(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     _caller: Admin,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<FailuresQuery>,
@@ -438,7 +440,7 @@ pub async fn scan_run_failures(
 }
 
 async fn control(
-    state: LibrarySetup,
+    state: Scans,
     id: String,
     control: RunControl,
     body: ScanControlBody,
@@ -471,7 +473,7 @@ async fn control(
     )
 )]
 pub async fn pause_scan_run(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     _caller: Admin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ScanControlBody>,
@@ -495,7 +497,7 @@ pub async fn pause_scan_run(
     )
 )]
 pub async fn resume_scan_run(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     _caller: Admin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ScanControlBody>,
@@ -519,7 +521,7 @@ pub async fn resume_scan_run(
     )
 )]
 pub async fn stop_scan_run(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     _caller: Admin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ScanControlBody>,
@@ -543,7 +545,7 @@ pub async fn stop_scan_run(
     )
 )]
 pub async fn library_activity(
-    State(state): State<LibrarySetup>,
+    State(state): State<Activity>,
     User(caller): User,
 ) -> Result<Json<LibraryActivity>, ApiError> {
     let admin = caller.is_admin();
@@ -553,7 +555,7 @@ pub async fn library_activity(
 }
 
 async fn identification_control(
-    state: LibrarySetup,
+    state: Activity,
     paused: bool,
     user_id: String,
     body: IdentificationControlBody,
@@ -586,7 +588,7 @@ async fn identification_control(
     )
 )]
 pub async fn pause_identification(
-    State(state): State<LibrarySetup>,
+    State(state): State<Activity>,
     caller: Admin,
     ValidJson(body): ValidJson<IdentificationControlBody>,
 ) -> Result<Json<IdentificationControlResponse>, ApiError> {
@@ -607,7 +609,7 @@ pub async fn pause_identification(
     )
 )]
 pub async fn resume_identification(
-    State(state): State<LibrarySetup>,
+    State(state): State<Activity>,
     caller: Admin,
     ValidJson(body): ValidJson<IdentificationControlBody>,
 ) -> Result<Json<IdentificationControlResponse>, ApiError> {

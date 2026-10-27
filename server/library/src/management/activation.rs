@@ -62,6 +62,7 @@ impl Management {
     /// settings' own revision of the roots and rules, as in v2).
     pub(super) fn activation_policy_revision(&self) -> Result<String, ManagementError> {
         self.setup
+            .core
             .policy_revision()
             .map_err(|error| ManagementError::Store(error.to_string()))
     }

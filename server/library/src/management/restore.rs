@@ -172,6 +172,7 @@ impl Management {
             let override_of = |track_id: &str| self.override_revision(&album_id, track_id);
             let files = self
                 .setup
+                .publishing
                 .baseline_files(&track_ids, &override_of)
                 .map_err(|error| ManagementError::Store(format!("{error:?}")))?;
             let mut items = Vec::new();

@@ -25,7 +25,9 @@
 //!   ([`worker::VERIFY`]); the server registers [`worker::VerificationWorker`]
 //!   as its handler. [`worker::start_upkeep`] runs the hourly upkeep loop.
 
+pub mod attachment;
 pub mod error;
+pub mod live;
 pub mod models;
 pub mod reasons;
 pub mod rules;
@@ -68,7 +70,7 @@ pub fn assemble(
     let musicbrainz = providers.musicbrainz.clone();
     let service = Arc::new(service::ContributionService::new(
         store,
-        Arc::new(super::adapters::MatchingAttachmentEvidence),
+        Arc::new(attachment::MatchingAttachmentEvidence),
         providers,
         catalog,
         clock,

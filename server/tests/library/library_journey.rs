@@ -278,9 +278,9 @@ fn snapshot_tree(root: &Path) -> std::collections::BTreeMap<String, (u64, i64, S
 
 /// Drive supervisor ticks until no run is current (cap 100).
 async fn drain_scans(library: &LibrarySetup) {
-    library.scan_startup_recovery().await;
+    library.scans.scan_startup_recovery().await;
     for _ in 0..100 {
-        library.supervisor_tick().await;
+        library.scans.supervisor_tick().await;
         if library.coordinator.current().is_empty() {
             break;
         }
@@ -2358,6 +2358,7 @@ async fn open_library(scratch: &Scratch) -> LibrarySetup {
 /// Add `music` as the only root and scan it.
 async fn add_music_root(library: &LibrarySetup, music: &Path) {
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -2370,7 +2371,7 @@ async fn add_music_root(library: &LibrarySetup, music: &Path) {
 /// Scan every root again and wait for it.
 async fn rescan(library: &LibrarySetup) {
     use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
-    let registry = library.live_registry();
+    let registry = library.core.live_registry();
     library
         .coordinator
         .request_run(&ScanRequest {
@@ -2805,9 +2806,9 @@ async fn failed_approval_leaves_the_review_pending() {
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     file_edition_review(&library.identify_store, &album);
-    let review = library.pending_reviews(&album).unwrap();
+    let review = library.identification.pending_reviews(&album).unwrap();
     assert_eq!(review.len(), 1);
     library
         .scan_store
@@ -2818,13 +2819,20 @@ async fn failed_approval_leaves_the_review_pending() {
         )
         .expect("trigger installs");
 
-    let refused = library.approve_review(&review[0].id, "curator", &format!("rg-1:{REL_1}"));
+    let refused =
+        library
+            .identification
+            .approve_review(&review[0].id, "curator", &format!("rg-1:{REL_1}"));
     assert!(
         matches!(refused, Err(ServiceError::Internal { .. })),
         "a store failure is an error, not an approval"
     );
     assert_eq!(
-        library.pending_reviews(&album).unwrap().len(),
+        library
+            .identification
+            .pending_reviews(&album)
+            .unwrap()
+            .len(),
         1,
         "review stays pending"
     );
@@ -2851,12 +2859,17 @@ async fn journal_on_a_removed_root_waits() {
     drop(first);
 
     let library = open_library(&scratch).await;
-    let recovery = library.run_recovery().await;
+    let recovery = crate::common::library::services(&library)
+        .run_recovery()
+        .await;
 
     assert_eq!(recovery.publish_recoveries.len(), 1);
     assert!(recovery.publish_recoveries[0].1.starts_with("Deferred"));
     assert_eq!(
-        library.held_publish_bundles().expect("held reads"),
+        library
+            .publishing
+            .held_publish_bundles()
+            .expect("held reads"),
         vec!["bundle-1".to_owned()]
     );
     assert_eq!(
@@ -2871,9 +2884,15 @@ async fn journal_on_a_removed_root_waits() {
         1,
         "the bundle is left as it was"
     );
-    library.publish_tick().expect("maintenance retries");
+    library
+        .publishing
+        .publish_tick()
+        .expect("maintenance retries");
     assert_eq!(
-        library.held_publish_bundles().expect("held reads"),
+        library
+            .publishing
+            .held_publish_bundles()
+            .expect("held reads"),
         vec!["bundle-1".to_owned()]
     );
 }
@@ -2934,7 +2953,7 @@ async fn identification_survives_restarts() {
 /// editions (the automatic pass only keeps a best guess).
 async fn approve_first_candidate(library: &LibrarySetup, identify: &FakeProviders, album: &str) {
     identify.set_recall(ambiguous_recall(&library.identify_store, album));
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     choose_first_edition(library, album).await;
 }
 
@@ -2957,6 +2976,7 @@ fn publish_one(
 ) -> String {
     use droppedneedle_library::manage::PreviewItemInput;
     let sealed = library
+        .publishing
         .plan_preview(
             kind,
             album,
@@ -2972,6 +2992,7 @@ fn publish_one(
         )
         .expect("preview seals");
     library
+        .publishing
         .apply_preview(&sealed.token, None)
         .expect("apply publishes")
         .bundle_id
@@ -3021,7 +3042,10 @@ async fn undo_restores_values_no_new_edit_could_write() {
     assert_eq!(retagged[&TagField::Date], vec!["2001".to_owned()]);
     assert_ne!(retagged[&TagField::TrackNumber], vec!["3/12".to_owned()]);
 
-    library.undo_bundle(&bundle, None).expect("undo publishes");
+    crate::common::library::services(&library)
+        .management
+        .undo_bundle(&bundle, None)
+        .expect("undo publishes");
     assert_eq!(read_fields(&file).expect("fields read"), before);
 }
 
@@ -3074,6 +3098,7 @@ async fn baseline_restore_removes_fields_added_later() {
     );
 
     library
+        .publishing
         .baseline_restore(std::slice::from_ref(&track))
         .expect("restore publishes");
     assert!(file.is_file(), "the file is back where it started");
@@ -3113,6 +3138,7 @@ async fn a_publish_checks_its_own_rows() {
     };
     let preview = |date: &str| {
         library
+            .publishing
             .plan_preview(
                 PlanKind::SamePath,
                 &album,
@@ -3140,6 +3166,7 @@ async fn a_publish_checks_its_own_rows() {
     );
     let after_scan = counter();
     library
+        .publishing
         .apply_preview(&sealed.token, None)
         .expect("a scan of another album leaves the preview good");
     assert_eq!(
@@ -3159,7 +3186,7 @@ async fn a_publish_checks_its_own_rows() {
         .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3600))
         .expect("mtime moves");
     rescan(&library).await;
-    match library.apply_preview(&sealed.token, None) {
+    match library.publishing.apply_preview(&sealed.token, None) {
         Err(ServiceError::Conflict { message }) => {
             assert_eq!(message, format!("track {track} changed under the preview"));
         }
@@ -4161,6 +4188,7 @@ async fn an_upgrade_held_for_one_file_keeps_that_files_old_copy() {
             })
             .collect();
         library
+            .imports
             .import_download(&DownloadImport {
                 task_id: task.to_owned(),
                 origin: ImportOrigin::Download,
@@ -4416,7 +4444,7 @@ async fn a_stopped_removal_keeps_each_file_with_its_track() {
         assert_eq!(on_album, 2, "{case}: one album per folder");
         let binned_before = walk_files(&bin).len();
 
-        library.arm_publish_crash(Some(point));
+        library.publishing.arm_publish_crash(Some(point));
         let mutations = Mutations::new(&library);
         let answer = if extras {
             mutations
@@ -4427,7 +4455,7 @@ async fn a_stopped_removal_keeps_each_file_with_its_track() {
                 .remove_album(&album, true, true, "admin")
                 .map(|_| ())
         };
-        library.arm_publish_crash(None);
+        library.publishing.arm_publish_crash(None);
         let committed = matches!(
             point,
             CrashPoint::AfterCatalogCommit | CrashPoint::DuringCleanup
@@ -4444,7 +4472,7 @@ async fn a_stopped_removal_keeps_each_file_with_its_track() {
             )
             .expect("row changes");
         }
-        library.publish_tick().expect("recovery runs");
+        library.publishing.publish_tick().expect("recovery runs");
 
         let mut gone = 0;
         for (path, track) in paths.iter().zip(&tracks) {
@@ -4680,7 +4708,10 @@ async fn a_removed_album_is_put_back_from_its_page() {
         [&gone_track],
     )
     .expect("copy ages past the retention");
-    library.recycle_expiry_tick(&|| true).expect("expiry runs");
+    library
+        .publishing
+        .recycle_expiry_tick(&|| true)
+        .expect("expiry runs");
     assert!(
         mutations
             .album_removals(&gone_album)
@@ -4779,6 +4810,7 @@ async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
     let (d_copy, d_row) = copy_of(&conn, &d);
 
     let report = library
+        .publishing
         .empty_recycle_bin(before, &|| true)
         .expect("the bin empties");
 
@@ -4838,7 +4870,7 @@ async fn the_bin_lists_a_removal_until_it_is_put_back() {
         .expect("album removed")
         .removal_id
         .expect("removal id");
-    let sandbox = library.expiry_sandbox();
+    let sandbox = library.publishing.expiry_sandbox();
 
     let page = bin_contents::page(&library.db, sandbox.as_ref(), None, 50).expect("bin read");
     assert_eq!(page.items.len(), 1, "{page:?}");
@@ -4906,14 +4938,14 @@ async fn a_put_back_stopped_at_any_step_ends_in_the_bin_or_home() {
             removed_extras(&library, &music, &conn, &format!("Case{index}"));
         let binned = walk_files(&bin).len();
 
-        library.set_publish_seams(Seams {
+        library.publishing.set_publish_seams(Seams {
             copy_put_back: copied,
             ..Seams::default()
         });
-        library.arm_publish_crash(Some(point));
+        library.publishing.arm_publish_crash(Some(point));
         let answer = Mutations::new(&library).put_back(&album, &action, "admin");
-        library.arm_publish_crash(None);
-        library.set_publish_seams(Seams::default());
+        library.publishing.arm_publish_crash(None);
+        library.publishing.set_publish_seams(Seams::default());
         if matches!(
             point,
             CrashPoint::AfterStage
@@ -4949,7 +4981,7 @@ async fn a_put_back_stopped_at_any_step_ends_in_the_bin_or_home() {
             committed,
             "{case}: only a put-back that committed answers that it put files back: {answer:?}"
         );
-        library.publish_tick().expect("recovery runs");
+        library.publishing.publish_tick().expect("recovery runs");
 
         let home: Vec<bool> = paths.iter().map(|path| path.exists()).collect();
         assert!(
@@ -5081,14 +5113,14 @@ async fn a_file_that_lands_just_before_a_put_back_survives() {
     let binned = walk_files(&music.join(".recycle"));
     assert_eq!(binned.len(), 2);
 
-    library.set_publish_hooks(
+    library.publishing.set_publish_hooks(
         Some(Box::new(|dest| {
             std::fs::write(dest, b"someone else's file").expect("planted");
         })),
         None,
     );
     let answer = Mutations::new(&library).put_back(&album, &action, "admin");
-    library.set_publish_hooks(None, None);
+    library.publishing.set_publish_hooks(None, None);
     assert!(
         matches!(
             &answer,
@@ -5260,7 +5292,7 @@ async fn put_back_takes_a_file_still_waiting_for_the_bin() {
     // passed: no file can move in.
     let blocker = music.join(".recycle");
     let planted = blocker.clone();
-    library.set_publish_hooks(
+    library.publishing.set_publish_hooks(
         None,
         Some(Box::new(move |_| {
             if !planted.exists() {
@@ -5270,7 +5302,7 @@ async fn put_back_takes_a_file_still_waiting_for_the_bin() {
     );
     let conn = scratch_db(&scratch);
     let (album, tracks, paths, action) = removed_extras(&library, &music, &conn, "Wait");
-    library.set_publish_hooks(None, None);
+    library.publishing.set_publish_hooks(None, None);
     assert!(paths.iter().all(|path| !path.exists()));
     assert!(
         !no_hidden_files(&music.join("Wait")),
@@ -5290,7 +5322,7 @@ async fn put_back_takes_a_file_still_waiting_for_the_bin() {
     );
 
     std::fs::remove_file(&blocker).expect("bin unblocked");
-    library.publish_tick().expect("recovery runs");
+    library.publishing.publish_tick().expect("recovery runs");
     assert!(
         walk_files(&music.join(".recycle")).is_empty(),
         "nothing reached the bin"
@@ -5422,7 +5454,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     library
         .scan_store
         .db()
@@ -5466,7 +5498,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
                         .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
                         .expect("settings read"),
                 ),
-                expected_policy_revision: library.policy_revision().expect("policy revision"),
+                expected_policy_revision: library.core.policy_revision().expect("policy revision"),
                 fields: vec![("title".to_owned(), serde_json::json!("Linked Title"))],
                 idempotency_key: Some("linked-edit".to_owned()),
             },
@@ -5510,6 +5542,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
     std::os::unix::fs::symlink(real.join("music"), &other).expect("link made");
     let inner = other.join("Band");
     library
+        .scans
         .add_root(
             Some("inner".to_owned()),
             inner.to_string_lossy().into_owned(),
@@ -7271,7 +7304,7 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
                 },
                 profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
                 expected_settings_revision: lm::settings_revision(&settings),
-                expected_policy_revision: library.policy_revision().expect("policy revision"),
+                expected_policy_revision: library.core.policy_revision().expect("policy revision"),
                 idempotency_key: Some("preview-busy".to_owned()),
                 target_root_id: None,
                 overrides: None,
@@ -7360,7 +7393,7 @@ async fn a_management_job_whose_worker_died_is_finished_by_its_own_worker() {
                 },
                 profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
                 expected_settings_revision: lm::settings_revision(&settings),
-                expected_policy_revision: library.policy_revision().expect("policy revision"),
+                expected_policy_revision: library.core.policy_revision().expect("policy revision"),
                 idempotency_key: Some("preview-dead-worker".to_owned()),
                 target_root_id: None,
                 overrides: None,
@@ -7451,7 +7484,10 @@ async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
                     },
                     profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
                     expected_settings_revision: lm::settings_revision(&settings),
-                    expected_policy_revision: library.policy_revision().expect("policy revision"),
+                    expected_policy_revision: library
+                        .core
+                        .policy_revision()
+                        .expect("policy revision"),
                     idempotency_key: Some(key.to_owned()),
                     target_root_id: None,
                     overrides: None,
@@ -7681,7 +7717,7 @@ async fn library_management_preview_apply_undo() {
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     library
         .scan_store
         .db()
@@ -7726,7 +7762,7 @@ async fn library_management_preview_apply_undo() {
             },
             profile_id: profile.to_owned(),
             expected_settings_revision: lm::settings_revision(&settings),
-            expected_policy_revision: library.policy_revision().expect("policy revision"),
+            expected_policy_revision: library.core.policy_revision().expect("policy revision"),
             idempotency_key: Some(key.to_owned()),
             target_root_id: None,
             overrides: None,
@@ -8371,7 +8407,7 @@ async fn library_management_tools_journey() {
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     library
         .scan_store
         .db()
@@ -8408,7 +8444,7 @@ async fn library_management_tools_journey() {
     let title =
         |path: &std::path::Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
     let management = Management::new(&library);
-    let policy = library.policy_revision().expect("policy revision");
+    let policy = library.core.policy_revision().expect("policy revision");
     let revision = || {
         lm::settings_revision(
             &library
@@ -8794,7 +8830,7 @@ async fn library_management_tools_journey() {
     );
 
     // The album is then managed without asking: moved by the profile.
-    library.queue_automatic_management(&album);
+    library.identification.queue_automatic_management(&album);
     assert!(automatic_next(&library).await);
     assert!(management_step(&library).await, "automatic planning runs");
     assert!(management_step(&library).await, "automatic apply runs");
@@ -8808,7 +8844,7 @@ async fn library_management_tools_journey() {
     assert_eq!(automatic.job.state.as_str(), "succeeded");
 
     // Looked at again, the album is already managed: nothing new runs.
-    library.queue_automatic_management(&album);
+    library.identification.queue_automatic_management(&album);
     assert!(automatic_next(&library).await);
     let (again, _) = management.history(Default::default()).expect("history");
     assert_eq!(again.len(), history.len());
@@ -8824,7 +8860,7 @@ async fn library_management_tools_journey() {
         [&album],
     )
     .expect("identity bumped");
-    library.queue_automatic_management(&album);
+    library.identification.queue_automatic_management(&album);
     assert!(automatic_next(&library).await);
     let (renewed, _) = management.history(Default::default()).expect("history");
     assert_eq!(
@@ -8860,7 +8896,7 @@ async fn library_management_tools_journey() {
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &second_album));
-    library.identify_tick().await;
+    library.identification.identify_tick().await;
     crate::common::library::operations(&library)
         .confirm_match(&second_album, "admin")
         .expect("second match confirmed");
@@ -8958,7 +8994,7 @@ async fn library_management_tools_journey() {
         .expect("resolution queued");
     assert_eq!(stop(&resolve.job_id).state.as_str(), "stopped");
     management_step(&library).await;
-    library.publish_tick().expect("maintenance runs");
+    library.publishing.publish_tick().expect("maintenance runs");
     assert_eq!(
         std::fs::read(music.join(&managed_rel)).expect("bytes in place"),
         before_apply,
@@ -8977,14 +9013,14 @@ async fn library_management_tools_journey() {
         management_step(&library).await,
         "duplicate planning runs again"
     );
-    library.arm_publish_crash(Some(
+    library.publishing.arm_publish_crash(Some(
         droppedneedle_library::publish::CrashPoint::AfterFirstRename,
     ));
     management
         .apply(&resolve.job_id, apply_request(&resolve))
         .expect("resolution queued");
     management_step(&library).await;
-    library.arm_publish_crash(None);
+    library.publishing.arm_publish_crash(None);
     assert_eq!(
         management
             .detail(&resolve.job_id)
@@ -9010,7 +9046,7 @@ async fn library_management_tools_journey() {
     // A stop while it waits does not strand it: the journal owns the
     // files, and recovery settles the publish either way.
     assert_eq!(stop(&resolve.job_id).state.as_str(), "stopped");
-    library.publish_tick().expect("recovery runs");
+    library.publishing.publish_tick().expect("recovery runs");
     let holder: (String, String) = db()
         .query_row(
             "SELECT id, availability FROM local_tracks WHERE root_id = 'music' \
@@ -9091,7 +9127,7 @@ async fn library_management_custom_edition_journey() {
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     library
         .scan_store
         .db()
@@ -9153,7 +9189,7 @@ async fn library_management_custom_edition_journey() {
         },
         profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
         expected_settings_revision: revision.clone(),
-        expected_policy_revision: library.policy_revision().expect("policy revision"),
+        expected_policy_revision: library.core.policy_revision().expect("policy revision"),
         idempotency_key: Some(key.to_owned()),
         target_root_id: None,
         overrides: None,
@@ -9279,7 +9315,7 @@ async fn library_management_artwork_journey() {
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     library
         .scan_store
         .db()
@@ -9329,7 +9365,7 @@ async fn library_management_artwork_journey() {
                 .get::<LibraryManagement>()
                 .expect("settings read"),
         ),
-        expected_policy_revision: library.policy_revision().expect("policy revision"),
+        expected_policy_revision: library.core.policy_revision().expect("policy revision"),
         idempotency_key: Some(key.to_owned()),
         target_root_id: None,
         overrides: None,
@@ -9451,7 +9487,7 @@ async fn library_management_artwork_journey() {
                         .get::<LibraryManagement>()
                         .expect("settings read"),
                 ),
-                expected_policy_revision: library.policy_revision().expect("policy revision"),
+                expected_policy_revision: library.core.policy_revision().expect("policy revision"),
                 idempotency_key: "art-restore".to_owned(),
             },
             "admin",
@@ -9684,7 +9720,7 @@ impl ManagedLibrary {
         }
         recall.releases.iter_mut().for_each(&edition);
         self.scratch.identify.set_recall(recall);
-        assert_eq!(self.library.identify_tick().await, 1);
+        assert_eq!(self.library.identification.identify_tick().await, 1);
         crate::common::library::operations(&self.library)
             .confirm_match(&album, "admin")
             .expect("match confirmed");
@@ -9767,6 +9803,7 @@ impl ManagedLibrary {
                     expected_settings_revision: self.settings_revision(),
                     expected_policy_revision: self
                         .library
+                        .core
                         .policy_revision()
                         .expect("policy revision"),
                     idempotency_key: Some(key.to_owned()),
@@ -9784,7 +9821,9 @@ impl ManagedLibrary {
     /// Have automatic management look at the album now, and run whatever
     /// it starts to the end.
     async fn look(&self, album: &str) {
-        self.library.queue_automatic_management(album);
+        self.library
+            .identification
+            .queue_automatic_management(album);
         self.worker_looks().await;
     }
 
@@ -9946,6 +9985,7 @@ impl ManagedLibrary {
                     expected_settings_revision: self.settings_revision(),
                     expected_policy_revision: self
                         .library
+                        .core
                         .policy_revision()
                         .expect("policy revision"),
                     idempotency_key: Some(key.to_owned()),
@@ -9979,8 +10019,14 @@ async fn automatic_management_settles_per_album() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_secs_f64();
-    managed.library.queue_automatic_management(&ready);
-    managed.library.queue_automatic_management(&identifying);
+    managed
+        .library
+        .identification
+        .queue_automatic_management(&ready);
+    managed
+        .library
+        .identification
+        .queue_automatic_management(&identifying);
     managed
         .db()
         .execute(
@@ -10046,7 +10092,7 @@ async fn automatic_management_settles_per_album() {
             [],
         )
         .expect("identification done");
-    let registry = managed.library.live_registry();
+    let registry = managed.library.core.live_registry();
     managed
         .library
         .coordinator
@@ -10148,7 +10194,7 @@ async fn management_leaves_a_folder_that_keeps_its_own_tags() {
             Ok(library)
         })
         .expect("path rule saved");
-    managed.library.refresh_registry();
+    managed.library.core.refresh_registry();
     managed.activate().await;
     let own_file = managed.path(&own_tracks[0]);
     let own_before = file_sha256(&own_file);
@@ -10175,6 +10221,7 @@ async fn management_leaves_a_folder_that_keeps_its_own_tags() {
                 expected_settings_revision: managed.settings_revision(),
                 expected_policy_revision: managed
                     .library
+                    .core
                     .policy_revision()
                     .expect("policy revision"),
                 fields: vec![("title".to_owned(), serde_json::json!("Typo Fixed"))],
@@ -10443,6 +10490,7 @@ async fn unmanaged_changes_do_not_take_the_album_over() {
                 expected_settings_revision: managed.settings_revision(),
                 expected_policy_revision: managed
                     .library
+                    .core
                     .policy_revision()
                     .expect("policy revision"),
                 fields: vec![("title".to_owned(), serde_json::json!("Edited In App"))],
@@ -10640,6 +10688,7 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
                 expected_settings_revision: managed.settings_revision(),
                 expected_policy_revision: managed
                     .library
+                    .core
                     .policy_revision()
                     .expect("policy revision"),
                 idempotency_key: "restore".to_owned(),
@@ -11165,8 +11214,8 @@ async fn an_undone_bundle_is_not_done_again() {
         )
         .expect("the run's bundle");
 
-    managed
-        .library
+    crate::common::library::services(&managed.library)
+        .management
         .undo_bundle(&bundle, None)
         .expect("bundle undone");
     assert_eq!(managed.path(&tracks[0]), planted);
@@ -12100,7 +12149,11 @@ impl ManagedLibrary {
                     droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID
                         .to_owned(),
                 expected_settings_revision: self.settings_revision(),
-                expected_policy_revision: self.library.policy_revision().expect("policy revision"),
+                expected_policy_revision: self
+                    .library
+                    .core
+                    .policy_revision()
+                    .expect("policy revision"),
                 idempotency_key: Some(key.to_owned()),
                 target_root_id: None,
                 overrides: None,
@@ -12171,6 +12224,7 @@ async fn a_persons_write_over_a_hand_edit_leaves_it_the_users() {
     let track = &stale_tracks[0];
     let sealed = managed
         .library
+        .publishing
         .plan_preview(
             PlanKind::Move,
             &stale,
@@ -12185,7 +12239,13 @@ async fn a_persons_write_over_a_hand_edit_leaves_it_the_users() {
     managed.edit_outside(track, title_edit("By Hand")).await;
     let file = managed.path(track);
     let bytes = file_sha256(&file);
-    assert!(managed.library.apply_preview(&sealed.token, None).is_err());
+    assert!(
+        managed
+            .library
+            .publishing
+            .apply_preview(&sealed.token, None)
+            .is_err()
+    );
     assert_eq!(managed.path(track), file);
     assert_eq!(file_sha256(&file), bytes, "the file untouched");
 }
@@ -12368,7 +12428,7 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
     // One file of a third album deleted, none added.
     std::fs::remove_file(managed.path(&pruned_tracks[1])).expect("file removed");
     rescan(&managed.library).await;
-    while managed.library.identify_tick().await > 0 {}
+    while managed.library.identification.identify_tick().await > 0 {}
     let new_row = |file: &Path| -> String {
         let relative = file
             .strip_prefix(&managed.music)
@@ -12517,6 +12577,7 @@ async fn an_import_in_place_of_a_missing_track_marks_nothing() {
     std::fs::copy(fixtures_dir().join("management_full.flac"), &source).expect("download planted");
     let imported = managed
         .library
+        .imports
         .import_download(&DownloadImport {
             task_id: "task-1".to_owned(),
             origin: ImportOrigin::Download,
@@ -12552,7 +12613,7 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
     scratch
         .identify
         .set_recall(fitting_release(&library, &at_rest));
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     let payload: String = db
         .query_row(
             "SELECT canonical_payload_json FROM library_management_metadata_snapshots \
@@ -12581,6 +12642,7 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
             })
             .collect();
         library
+            .imports
             .import_download(&DownloadImport {
                 task_id: task.to_owned(),
                 origin: ImportOrigin::Download,
@@ -12770,6 +12832,7 @@ async fn import_and_management_name_a_file_alike() {
         std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
         std::fs::copy(fixtures_dir().join("flac_full_02.flac"), &source).expect("download planted");
         let imported = library
+            .imports
             .import_download(&DownloadImport {
                 task_id: format!("task-{n}"),
                 origin: ImportOrigin::Download,
@@ -12800,7 +12863,10 @@ async fn import_and_management_name_a_file_alike() {
                     },
                     profile_id: format!("profile-{n}"),
                     expected_settings_revision: lm::settings_revision(&settings),
-                    expected_policy_revision: library.policy_revision().expect("policy revision"),
+                    expected_policy_revision: library
+                        .core
+                        .policy_revision()
+                        .expect("policy revision"),
                     idempotency_key: Some(format!("alike-{n}")),
                     target_root_id: None,
                     overrides: None,
@@ -12925,6 +12991,7 @@ impl ManagedLibrary {
                     expected_settings_revision: self.settings_revision(),
                     expected_policy_revision: self
                         .library
+                        .core
                         .policy_revision()
                         .expect("policy revision"),
                     idempotency_key: key.to_owned(),
@@ -13114,7 +13181,10 @@ async fn an_open_automatic_run_is_a_write_to_come() {
     managed.activate().await;
     let management = managed.management();
     let writes = || management.writes_by_itself(&album).expect("writes read");
-    managed.library.queue_automatic_management(&album);
+    managed
+        .library
+        .identification
+        .queue_automatic_management(&album);
     assert!(writes().by_itself);
     assert!(writes().pending, "queued");
     assert!(management.automatic_next().expect("automatic step"));
@@ -13143,7 +13213,10 @@ async fn a_run_planned_after_the_stamp_writes_nothing() {
     managed.add_album("first", 1).await;
     let (album, tracks) = managed.add_album("second", 2).await;
     managed.activate().await;
-    managed.library.queue_automatic_management(&album);
+    managed
+        .library
+        .identification
+        .queue_automatic_management(&album);
     assert!(
         managed
             .management()
@@ -13567,6 +13640,7 @@ async fn management_preview_blocks_an_album_whose_edition_is_being_placed() {
                 expected_settings_revision: managed.settings_revision(),
                 expected_policy_revision: managed
                     .library
+                    .core
                     .policy_revision()
                     .expect("policy revision"),
                 idempotency_key: Some("preview-remap".to_owned()),
@@ -14305,6 +14379,7 @@ async fn an_approved_release_is_placed_and_its_undo_survives() {
     .unwrap();
 
     library
+        .identification
         .approve_review("rev-approved", "curator", &format!("rg-2:{REL_2}"))
         .expect("approved");
     assert_eq!(remap_row(&db, &album), Some(("album_pin".to_owned(), 0)));
@@ -15153,7 +15228,7 @@ async fn an_automatic_album_retagged_and_renamed_keeps_its_history() {
     let db = scratch_db(&scratch);
     let providers = &scratch.identify;
     providers.set_recall(fitting_release(&library, &album));
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     assert_eq!(choice_row(&db, &album).0, "automatic");
     assert_eq!(placement(&db, &old[0]).0.as_deref(), Some(REL_1));
     db.execute_batch(&format!(
@@ -15178,7 +15253,7 @@ async fn an_automatic_album_retagged_and_renamed_keeps_its_history() {
         "nothing before the files are mapped"
     );
     providers.set_recall(fitting_release(&library, &album));
-    library.identify_tick().await;
+    library.identification.identify_tick().await;
     assert_eq!(holdings(&db, &new)[1], 1);
     assert_eq!(holdings(&db, &old[0])[1], 0);
 }
@@ -15203,7 +15278,7 @@ async fn retagged_without_ids(
     scratch
         .identify
         .set_recall(fitting_release(&library, &album));
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
@@ -15261,7 +15336,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     sibling.release_group_id = "rg-2".to_owned();
     tied.releases.push(sibling);
     providers.set_recall(tied);
-    library.identify_tick().await;
+    library.identification.identify_tick().await;
     assert!(match_state(&db, &own_row).is_some(), "a best guess");
     assert_eq!(retired_into(&db, &album), None);
     exclude_by_hand(&db, &album);
@@ -15296,6 +15371,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     )
     .unwrap();
     library
+        .identification
         .approve_review("rev-join", "curator", &key)
         .expect("approved");
     assert_eq!(retired_into(&db, &album), Some(own_row.clone()));
@@ -15326,7 +15402,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
         releases: vec![sibling.clone()],
         ..RecallResult::default()
     });
-    library.identify_tick().await;
+    library.identification.identify_tick().await;
     let (source, release, ..) = choice_row(&db, &own_row);
     assert_eq!(
         (source.as_str(), release.as_deref()),
@@ -15412,7 +15488,7 @@ impl ManagedLibrary {
                 .expect("the old album's track");
         }
         self.scratch.identify.set_recall(recall);
-        while self.library.identify_tick().await > 0 {}
+        while self.library.identification.identify_tick().await > 0 {}
     }
 }
 
@@ -15834,7 +15910,10 @@ async fn a_held_folder_holds_only_files_scanned_into_it_since() {
             rusqlite::params![album, imported_at, source],
         )
         .expect("rows set");
-        managed.library.queue_automatic_management(&album);
+        managed
+            .library
+            .identification
+            .queue_automatic_management(&album);
         assert!(managed.management().automatic_next().expect("looked"));
         db.query_row(
             "SELECT last_reason_code FROM library_management_automatic_queue \
@@ -16102,7 +16181,7 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
                 recall.releases[0].id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".to_owned();
                 recall.releases[0].release_group_id = "rg-elsewhere".to_owned();
                 managed.scratch.identify.set_recall(recall);
-                while managed.library.identify_tick().await > 0 {}
+                while managed.library.identification.identify_tick().await > 0 {}
             }
             _ => managed.identify_as(&replacement, album).await,
         }
@@ -16421,7 +16500,7 @@ async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look()
                 recall.releases[0].id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".to_owned();
                 recall.releases[0].release_group_id = "rg-elsewhere".to_owned();
                 managed.scratch.identify.set_recall(recall);
-                while managed.library.identify_tick().await > 0 {}
+                while managed.library.identification.identify_tick().await > 0 {}
             }
             "folder by hand" => {
                 managed.set_automatic(false, false);
@@ -16550,7 +16629,7 @@ async fn a_deleted_copy_leaves_its_history_with_the_copy_that_stays() {
     scratch
         .identify
         .set_recall(fitting_release(&library, &album));
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     let release_track = placement(&db, &old[1]).1.expect("original mapped");
     std::fs::copy(
         music.join("album/02.flac"),
@@ -16641,7 +16720,7 @@ async fn scan_held_while(
         library.registry.clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
     ));
-    let registry = library.live_registry();
+    let registry = library.core.live_registry();
     coordinator
         .request_run(&ScanRequest {
             kind: ScanKind::Incremental,
@@ -16701,7 +16780,7 @@ async fn album_with_a_copy(tag: &str) -> (Scratch, LibrarySetup, PathBuf, String
     scratch
         .identify
         .set_recall(fitting_release(&library, &album));
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     let release_track = placement(&db, &old[1]).1.expect("original mapped");
     std::fs::copy(
         music.join("album/02.flac"),
@@ -16760,7 +16839,7 @@ async fn an_import_during_a_scan_is_not_judged_gone() {
     scratch
         .identify
         .set_recall(fitting_release(&library, &album));
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     plant_filler(&library, &music, 20).await;
     let release = library
         .identify_store
@@ -16788,6 +16867,7 @@ async fn an_import_during_a_scan_is_not_judged_gone() {
         let (library, imported) = (library.clone(), imported.clone());
         scan_held_while(&library.clone(), &music, move || {
             let done = library
+                .imports
                 .import_download(&DownloadImport {
                     task_id: "task".to_owned(),
                     origin: ImportOrigin::Download,
@@ -16911,9 +16991,11 @@ async fn a_removal_open_across_a_walk_is_not_judged_gone() {
     give_history(&db, &album, &copy);
     let home = music.join("album/02 copy.flac");
 
-    library.arm_publish_crash(Some(CrashPoint::BeforeCatalogCommit));
+    library
+        .publishing
+        .arm_publish_crash(Some(CrashPoint::BeforeCatalogCommit));
     let answer = Mutations::new(&library).remove_track_now(&copy, true, "admin");
-    library.arm_publish_crash(None);
+    library.publishing.arm_publish_crash(None);
     assert!(answer.is_err(), "the removal stopped before its commit");
     assert!(!home.exists(), "its file is set aside");
     {
@@ -16929,7 +17011,7 @@ async fn a_removal_open_across_a_walk_is_not_judged_gone() {
                     "UPDATE local_tracks SET stat_revision = 'changed' WHERE id = '{copy}'"
                 ))
                 .expect("row changes");
-            library.publish_tick().expect("recovery runs");
+            library.publishing.publish_tick().expect("recovery runs");
         })
         .await;
     }
@@ -16953,7 +17035,7 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
     scratch
         .identify
         .set_recall(fitting_release(&library, &album));
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     let release = library
         .identify_store
         .release(REL_1, None)
@@ -16978,6 +17060,7 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
             })
             .collect();
         library
+            .imports
             .import_download(&DownloadImport {
                 task_id: task.to_owned(),
                 origin: ImportOrigin::Download,
@@ -17043,7 +17126,7 @@ async fn an_approval_continues_a_track_once_its_files_are_placed() {
     scratch
         .identify
         .set_recall(fitting_release(&library, &album));
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     let release_track = placement(&db, &old[1]).1.expect("original mapped");
     std::fs::copy(
         music.join("album/02.flac"),
@@ -17092,6 +17175,7 @@ async fn an_approval_continues_a_track_once_its_files_are_placed() {
     )
     .unwrap();
     library
+        .identification
         .approve_review("rev-approve", "curator", &key)
         .expect("approved");
     remap_once(
@@ -18400,7 +18484,7 @@ async fn a_track_id_from_another_edition_is_corrected() {
         releases: vec![r.clone(), r2.clone()],
         ..RecallResult::default()
     });
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     let identity = library
         .identify_store
         .album_identity(&album)
@@ -18486,7 +18570,7 @@ async fn a_track_id_from_another_edition_is_corrected() {
         releases: vec![r.clone()],
         ..RecallResult::default()
     });
-    library.identify_tick().await;
+    library.identification.identify_tick().await;
     assert!(
         library
             .identify_store
@@ -18562,7 +18646,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
         releases,
         ..RecallResult::default()
     });
-    assert_eq!(library.identify_tick().await, 4);
+    assert_eq!(library.identification.identify_tick().await, 4);
 
     // What the older matcher and people left behind.
     let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
@@ -18666,7 +18750,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     let repairs = crate::common::library::repair_worker(&library);
     droppedneedle_library::repairs::tick(&repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
 
     let release_of = |album: &str| {
         library
@@ -18772,7 +18856,7 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
         releases: editions.clone(),
         ..RecallResult::default()
     });
-    assert_eq!(library.identify_tick().await, 3);
+    assert_eq!(library.identification.identify_tick().await, 3);
 
     // What v2 carried: the group only, with no track matches.
     let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
@@ -18839,7 +18923,7 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
     let repairs = crate::common::library::repair_worker(&library);
     droppedneedle_library::repairs::tick(&repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
 
     let release_of = |album: &str| {
         library
@@ -18941,7 +19025,7 @@ async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
         releases: editions.clone(),
         ..RecallResult::default()
     });
-    assert_eq!(library.identify_tick().await, 3);
+    assert_eq!(library.identification.identify_tick().await, 3);
 
     // What an older matcher left: every match confirmed outside the group
     // the files name, B chosen by a person and C carried from v2.
@@ -18975,7 +19059,7 @@ async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
     let repairs = crate::common::library::repair_worker(&library);
     droppedneedle_library::repairs::tick(&repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
 
     let flag = |album: &str| {
         library
@@ -19093,7 +19177,7 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
         releases: vec![vinyl.clone()],
         ..RecallResult::default()
     });
-    assert_eq!(library.identify_tick().await, 2);
+    assert_eq!(library.identification.identify_tick().await, 2);
     scratch.identify.set_recall(RecallResult {
         releases: vec![vinyl.clone(), cd.clone()],
         ..RecallResult::default()
@@ -19173,7 +19257,7 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
     .await;
     assert_eq!(queued(&db), vec![a.clone()]);
     assert!(marked(&db));
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     assert_eq!(release_of(&a), Some(cd.id.clone()));
     assert_eq!(release_of(&b), Some(vinyl.id.clone()));
     assert_eq!(
@@ -19203,7 +19287,7 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
             droppedneedle_kernel::db::Lane::Background,
         )
         .expect("queued");
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     assert_eq!(release_of(&a), Some(vinyl.id.clone()));
 
     // The next start looks no more.
@@ -19329,7 +19413,7 @@ async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
         .expect("file tagged");
     }
     add_music_root(&library, &music).await;
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
         .expect("db opens");
     let read = |sql: &str| -> Vec<String> {
@@ -20343,7 +20427,7 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() 
     let mut recall = fitting_release(&library, &album);
     recall.releases[0].id = CHOSEN_REL.to_owned();
     scratch.identify.set_recall(recall);
-    while library.identify_tick().await > 0 {}
+    while library.identification.identify_tick().await > 0 {}
     let release_track = placement(&db, &old[1]).1.expect("original mapped");
     std::fs::copy(
         music.join("album/02.flac"),
@@ -20869,7 +20953,7 @@ async fn an_identified_album_links_its_artist() {
         releases: vec![release.clone()],
         ..RecallResult::default()
     });
-    assert_eq!(library.identify_tick().await, 1);
+    assert_eq!(library.identification.identify_tick().await, 1);
     let db = scratch_db(&scratch);
     assert_eq!(
         texts(
@@ -21438,7 +21522,7 @@ impl ManagedLibrary {
             release.release_group_id = format!("rg-ff-{edition}");
         }
         self.scratch.identify.set_recall(recall);
-        while self.library.identify_tick().await > 0 {}
+        while self.library.identification.identify_tick().await > 0 {}
         crate::common::library::operations(&self.library)
             .confirm_match(album, "admin")
             .expect("match confirmed");

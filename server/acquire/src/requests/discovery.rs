@@ -13,18 +13,17 @@ use droppedneedle_auth::{Admin, Principal, Role};
 use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, BatchRequests};
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BatchRefusal, ProviderFailure};
 use droppedneedle_library::mutations::{MutationError, Mutations};
-use droppedneedle_library::wiring::LibrarySetup;
 
 /// Discovery batches over the request ledger and the library.
 pub struct DiscoveryBatchRequests {
     requests: RequestsState,
-    library: Option<LibrarySetup>,
+    library: Option<Mutations>,
 }
 
 impl DiscoveryBatchRequests {
     /// File through `requests`; recycle landed albums through `library`
     /// (`None` leaves landed albums in place and counts them as kept).
-    pub fn new(requests: RequestsState, library: Option<LibrarySetup>) -> Self {
+    pub fn new(requests: RequestsState, library: Option<Mutations>) -> Self {
         Self { requests, library }
     }
 }
@@ -120,7 +119,7 @@ impl BatchRequests for DiscoveryBatchRequests {
             };
             let (album, actor_id) = (release_group_mbid.to_owned(), admin.user_id().to_owned());
             let removed = tokio::task::spawn_blocking(move || {
-                Mutations::new(&library).remove_album(&album, true, true, &actor_id)
+                library.remove_album(&album, true, true, &actor_id)
             })
             .await
             .map_err(|error| format!("batch album removal did not finish: {error}"))?;

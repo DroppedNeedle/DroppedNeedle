@@ -347,12 +347,12 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             collections: CollectionsState::over(collections_db, collections, local),
             catalog,
             artwork,
-            library_files: LibraryFiles::new(db.sqlx().clone(), library.root_source()),
+            library_files: LibraryFiles::new(db.sqlx().clone(), library.core.root_source()),
             // Discovery batches file their albums through the requests
             // service.
             batch_requests: Arc::new(DiscoveryBatchRequests::new(
                 acquire.requests.clone(),
-                Some(library.clone()),
+                Some(library_services.mutations.clone()),
             )),
             download_readiness: Arc::new(acquire.readiness.clone()),
             cover_warm: Some(cover_warm),
@@ -366,7 +366,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let (media, media_workers) = MediaSetup::build(
         p,
         auth.users.clone(),
-        library.root_source(),
+        library.core.root_source(),
         // Remote playlist imports land in the user's playlists.
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
         plugin_host.clone(),
@@ -394,7 +394,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     );
     // Publish journal reconciliation; scan recovery runs when the scan
     // supervisor starts.
-    let library_recovery = library.run_recovery().await;
+    let library_recovery = library_services.run_recovery().await;
     tracing::info!(
         publish_bundles = library_recovery.publish_recoveries.len(),
         "library recovery complete"
@@ -404,7 +404,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         auth.users.clone(),
         media.playback.clone(),
         media.stream.engine.clone(),
-        library.clone(),
+        library.scans.clone(),
         &reads,
     ));
     let admin = AdminSetup::new(
@@ -448,7 +448,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     )
     .with_job(
         droppedneedle_library::recycle_bin::SPEC,
-        droppedneedle_library::recycle_bin::handler(&library),
+        droppedneedle_library::recycle_bin::handler(&library.publishing),
     )
     .with_mixer(mix_hooks)
     .with_precache_sources_from(&reads, config_store)
@@ -469,7 +469,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     }
     .with_precache(jobs.precache_trigger());
     let download_worker = acquire.worker.clone();
-    let roots_library = library.clone();
+    let roots_library = library.scans.clone();
     // Each section's declared effects run after every committed change to
     // it, whoever saved it; settings routes wait for them before answering.
     let (effects, effects_runner) = Effects::new(
@@ -626,8 +626,8 @@ fn acquire_ports(
     AcquirePorts {
         library: Arc::new(
             droppedneedle_acquire::landing::library::LibraryLanding::new(
-                library.setup.clone(),
-                library.setup.releases.clone(),
+                &library.setup,
+                library.setup.imports.releases.clone(),
                 p.db.sqlx().clone(),
             ),
         ),

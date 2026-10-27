@@ -12,6 +12,8 @@ use droppedneedle_kernel::jobs::{
 use tokio::runtime::Handle;
 
 use super::clock::LibraryClock as _;
+use super::manage::LeftoverFiles;
+use super::manage::Publishing;
 use super::publish::PublishError;
 use super::publish::expiry::{self, ExpiryPass, ExpiryReport};
 use super::publish::paths::{Root, Sandbox};
@@ -26,7 +28,9 @@ use super::scan::supervisor::{
 use super::scan::watcher::{
     WatcherAction, WatcherSettings, WatcherState, clear_pending, watcher_request,
 };
-use super::wiring::{LibraryServices, LibrarySetup};
+use super::scans::Scans;
+use super::service::Identification;
+use super::wiring::{LibraryCore, LibraryServices};
 
 /// The library's always-on loops on the supervisor.
 pub const SCAN_JOB: &str = "library-scan";
@@ -113,25 +117,25 @@ const RECYCLE_EXPIRY_PAGE: usize = 200;
 /// Row code of an expiry pass that failed.
 const RECYCLE_EXPIRY_FAILED: &str = "RECYCLE_EXPIRY_FAILED";
 
-impl LibrarySetup {
+impl Scans {
     /// Supervisor inputs, rebuilt per call so settings-swap rebuilds
     /// never strand the loop on stale getters.
     pub(crate) fn supervisor_inputs(&self) -> SupervisorInputs {
         SupervisorInputs {
-            root_paths: self.root_dirs.clone(),
+            root_paths: self.core.root_dirs.clone(),
             schedule: {
                 let schedule = self.settings.schedule.clone();
                 let zone = self.settings.schedule_zone.clone();
                 Arc::new(move || super::settings::schedule(&schedule, &zone))
             },
             inclusion_rules: {
-                let registry = self.registry.clone();
+                let registry = self.core.registry.clone();
                 Arc::new(move || super::settings::inclusion_rules(registry.resolver().registry()))
             },
-            dirty: self.dirty.clone(),
-            wakeups: self.wakeups.clone(),
+            dirty: self.core.dirty.clone(),
+            wakeups: self.core.wakeups.clone(),
             now_unix: {
-                let clock = Arc::clone(&self.clock);
+                let clock = Arc::clone(&self.core.clock);
                 Arc::new(move || clock.now_secs())
             },
         }
@@ -145,7 +149,7 @@ impl LibrarySetup {
     /// One-shot scan startup reconciliation (Hook A). The loop runs
     /// this in its preamble; tests drive it directly.
     pub async fn scan_startup_recovery(&self) {
-        self.refresh_registry();
+        self.core.refresh_registry();
         startup_recovery(&self.coordinator, &self.supervisor_inputs()).await;
     }
 
@@ -153,13 +157,13 @@ impl LibrarySetup {
     /// scans that new or changed roots need, so a folder added anywhere is
     /// scanned without waiting for the scan loop's next pass. Blocking.
     pub fn roots_saved(&self) {
-        self.refresh_registry();
+        self.core.refresh_registry();
         request_dirty_scopes(&self.coordinator, &self.supervisor_inputs());
     }
 
     /// One supervisor iteration. Returns true when a run was driven.
     pub async fn supervisor_tick(&self) -> bool {
-        self.refresh_registry();
+        self.core.refresh_registry();
         supervise_once(&self.coordinator, &self.supervisor_inputs()).await
     }
 
@@ -169,7 +173,7 @@ impl LibrarySetup {
     /// it out. The run keeps its state and the next start resumes it. A
     /// stop already cancelled claims no new work.
     pub async fn supervisor_tick_with_shutdown(&self, stop: &CancellationToken) -> bool {
-        self.refresh_registry();
+        self.core.refresh_registry();
         supervise_once_with_shutdown(&self.coordinator, &self.supervisor_inputs(), stop).await
     }
 
@@ -192,14 +196,14 @@ impl LibrarySetup {
             std::mem::replace(&mut *guard, WatcherState::new())
         };
         let settings = self.watcher_settings();
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let action = super::scan::watcher::poll_once(
             &mut state,
             &settings,
             &registry,
-            &(self.root_dirs)(),
+            &(self.core.root_dirs)(),
             &self.pool,
-            self.clock.now_secs(),
+            self.core.clock.now_secs(),
             stop,
         )
         .await;
@@ -216,7 +220,7 @@ impl LibrarySetup {
                             disposition = ?result.disposition,
                             "filesystem watcher requested incremental scan"
                         );
-                        self.wakeups.notify("scan");
+                        self.core.wakeups.notify("scan");
                         true
                     }
                     // A busy database: the changes stay pending and the
@@ -248,7 +252,9 @@ impl LibrarySetup {
         }
         action
     }
+}
 
+impl Identification {
     /// One identify tick: claim every due job, fill missing facts
     /// from the scan catalog plus disk tag reads, and run each
     /// attempt. Returns jobs attempted.
@@ -285,7 +291,9 @@ impl LibrarySetup {
             }
             // An administrator's pause stops new claims; a job already
             // running finishes.
-            if self.identification_paused() || !self.settings.identification_readable() {
+            if super::activity::identification_paused(&self.db)
+                || !self.settings.identification_readable()
+            {
                 break;
             }
             let claimed = self.identify_store.claim(
@@ -340,10 +348,10 @@ impl LibrarySetup {
                                 | super::identify::models::IdentificationOutcome::EditionUncertain
                                 | super::identify::models::IdentificationOutcome::KeptTagged
                         ) {
-                            let setup = self.clone();
+                            let identification = self.clone();
                             let album = report.job.local_album_id.clone();
                             let queued = tokio::task::spawn_blocking(move || {
-                                setup.queue_automatic_management(&album);
+                                identification.queue_automatic_management(&album);
                             })
                             .await;
                             if let Err(error) = queued {
@@ -432,7 +440,7 @@ impl LibrarySetup {
     /// disagreeing, unless identification is paused. Shutdown stops the
     /// lookups; an id not answered stays pending.
     async fn resolve_merged_artist_ids(&self, limit: usize, stop: &CancellationToken) {
-        if stop.is_cancelled() || self.identification_paused() {
+        if stop.is_cancelled() || super::activity::identification_paused(&self.db) {
             return;
         }
         tokio::select! {
@@ -449,7 +457,7 @@ impl LibrarySetup {
     /// Fetch release documents that albums with an accepted match wait for,
     /// so the artist link sweep can prove their artists.
     async fn fetch_waiting_documents(&self, stop: &CancellationToken) {
-        if stop.is_cancelled() || self.identification_paused() {
+        if stop.is_cancelled() || super::activity::identification_paused(&self.db) {
             return;
         }
         tokio::select! {
@@ -469,21 +477,24 @@ impl LibrarySetup {
             }
         }
     }
+}
 
+impl Publishing {
     /// One publish maintenance tick: purge expired operation
     /// snapshots plus expired preview seals. Returns snapshots purged.
     pub fn publish_tick(&self) -> Result<usize, PublishError> {
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         // Reconcile-on-reopen (and the retry of held bundles) can resume
         // renames.
         let session = cell.session(&registry);
         let reopen = cell.needs_refresh(&session);
         let retry = !reopen && cell.has_held()?;
-        cell.refresh_to(session, &self.root_dirs)?;
+        cell.refresh_to(session, &self.core.root_dirs)?;
         if retry {
             cell.retry_held()?;
         }
@@ -493,7 +504,7 @@ impl LibrarySetup {
         // long.
         let purged = match cell.cell.as_ref() {
             Some(_) => {
-                let purged = snapshots::purge_expired(&self.db, self.clock.today_day())?;
+                let purged = snapshots::purge_expired(&self.db, self.core.clock.today_day())?;
                 // Generated files a preview planned (covers, lyrics) wait in
                 // the blob store until their job is done with them.
                 self.db
@@ -529,7 +540,7 @@ impl LibrarySetup {
         };
         let pass = ExpiryPass {
             retention_days: policy.recycle_retention_days,
-            now_ms: self.clock.now_ms(),
+            now_ms: self.core.clock.now_ms(),
             page: RECYCLE_EXPIRY_PAGE,
             due_before_ms: None,
         };
@@ -546,7 +557,7 @@ impl LibrarySetup {
         before_ms: i64,
         go_on: &dyn Fn() -> bool,
     ) -> Result<ExpiryReport, PublishError> {
-        let now_ms = self.clock.now_ms();
+        let now_ms = self.core.clock.now_ms();
         let pass = ExpiryPass {
             retention_days: 0,
             now_ms,
@@ -566,7 +577,12 @@ impl LibrarySetup {
             pass,
             &self.expiry,
             &|| self.expiry_sandbox(),
-            || self.publish.lock().unwrap_or_else(PoisonError::into_inner),
+            || {
+                self.core
+                    .publish
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+            },
             go_on,
         )?;
         if report.did_anything() {
@@ -590,7 +606,7 @@ impl LibrarySetup {
     pub fn expiry_sandbox(&self) -> Option<Sandbox> {
         let library = self.settings.library.read()?;
         let registry = super::settings::registry_from(&library);
-        let (bins, dropped) = match self.bins.for_expiry(&registry) {
+        let (bins, dropped) = match self.core.bins.for_expiry(&registry) {
             Ok(found) => found,
             Err(cause) => {
                 self.expiry.note(
@@ -636,13 +652,13 @@ pub(crate) fn start_loops(
         scans,
         Schedule::new(SUPERVISOR_IDLE_CEILING)
             .with_backoff(Duration::from_secs(1), SCAN_BACKOFF_CAP),
-        scan_tick(setup.clone(), handle.clone()),
+        scan_tick(services.scans.clone(), handle.clone()),
     )?;
     supervisor.periodic(
         WATCHER_JOB,
         Schedule::new(Duration::ZERO).with_backoff(Duration::from_secs(1), Duration::from_secs(60)),
         WatcherTick {
-            setup: setup.clone(),
+            scans: services.scans.clone(),
             handle: handle.clone(),
         },
     )?;
@@ -654,15 +670,17 @@ pub(crate) fn start_loops(
         Schedule::new(IDENTIFY_POLL)
             .with_jitter(IDENTIFY_JITTER)
             .with_backoff(Duration::from_secs(1), IDENTIFY_BACKOFF_CAP),
-        identify_tick(setup.clone(), handle),
+        identify_tick(services.identification.clone(), handle),
     )?;
     super::contrib::worker::start_upkeep(supervisor, setup.contrib_worker.clone())?;
     super::operations::start(setup, services.operations.clone(), supervisor)?;
     super::management::start(services.management.clone(), supervisor)?;
     super::repairs::start(services.repair_worker(), supervisor)?;
-    let leftovers = setup.clone();
-    supervisor.one_shot(LEFTOVERS_JOB, move |ctx| leftover_pass(leftovers, ctx))?;
-    let publish = setup.clone();
+    let (core, leftovers) = (setup.core.clone(), setup.leftover_files.clone());
+    supervisor.one_shot(LEFTOVERS_JOB, move |ctx| {
+        leftover_pass(core, leftovers, ctx)
+    })?;
+    let publish = services.publishing.clone();
     supervisor.periodic_blocking(
         PUBLISH_JOB,
         Schedule::new(PUBLISH_MAINTENANCE).with_initial_delay(PUBLISH_MAINTENANCE),
@@ -671,7 +689,7 @@ pub(crate) fn start_loops(
             Err(error) => Err(TickError::new(PUBLISH_FAILED, error)),
         },
     )?;
-    let expiry = setup.clone();
+    let expiry = services.publishing.clone();
     supervisor.periodic_blocking(
         RECYCLE_EXPIRY_JOB,
         Schedule::new(RECYCLE_EXPIRY)
@@ -716,10 +734,7 @@ fn drive<F: std::future::Future>(
 /// due until none is left, then the album art and lyrics sweeps when a run
 /// changed something. A cancelled stop ends the run in flight; the next
 /// start resumes it.
-fn scan_tick(
-    setup: LibrarySetup,
-    handle: Handle,
-) -> impl FnMut(&TickCtx) -> TickResult + Send + 'static {
+fn scan_tick(scans: Scans, handle: Handle) -> impl FnMut(&TickCtx) -> TickResult + Send + 'static {
     let mut recovered = false;
     // Album art and the lyrics marks are refreshed once the scans go idle,
     // and once at boot.
@@ -731,18 +746,18 @@ fn scan_tick(
             if let Err(error) = drive(
                 &handle,
                 "library_scan_recovery",
-                setup.scan_startup_recovery(),
+                scans.scan_startup_recovery(),
             ) {
                 tracing::error!(%error, "scan startup recovery did not run");
             }
         }
-        let mut revision = setup.wakeups.revision("scan");
+        let mut revision = scans.core.wakeups.revision("scan");
         while !stop.is_cancelled() {
-            revision = setup.wakeups.revision("scan");
+            revision = scans.core.wakeups.revision("scan");
             if !drive(
                 &handle,
                 "library_scan_tick",
-                setup.supervisor_tick_with_shutdown(stop),
+                scans.supervisor_tick_with_shutdown(stop),
             )? {
                 break;
             }
@@ -752,7 +767,7 @@ fn scan_tick(
         if sweeps_due && !stop.is_cancelled() {
             // A sweep of its own: a panic there waits for the next scan and
             // never holds up the runs.
-            sweeps_due = match caught("library sweep", || setup.sweep(revision, stop)) {
+            sweeps_due = match caught("library sweep", || scans.sweep(revision, stop)) {
                 Ok(complete) => !complete,
                 Err(error) => {
                     tracing::error!(%error, "library sweep panicked; it waits for the next scan");
@@ -764,7 +779,7 @@ fn scan_tick(
     }
 }
 
-impl LibrarySetup {
+impl Scans {
     /// Refresh album art and the lyrics marks, giving way to a stop and to
     /// any scan request (a wakeup past `revision`, or a queued run). True
     /// when both finished; a catalog that cannot be read is logged and
@@ -774,7 +789,7 @@ impl LibrarySetup {
         let give_way = || {
             polls.set(polls.get().wrapping_add(1));
             stop.is_cancelled()
-                || self.wakeups.revision("scan") != revision
+                || self.core.wakeups.revision("scan") != revision
                 || (polls.get() % 32 == 0 && !self.coordinator.current().is_empty())
         };
         let artwork = self.scan_store.refresh_album_artwork(&give_way);
@@ -794,14 +809,14 @@ impl LibrarySetup {
 /// The identify loop's turn: drain every due job. A store error backs the
 /// loop off; a resume wakes it at once.
 fn identify_tick(
-    setup: LibrarySetup,
+    identification: Identification,
     handle: Handle,
 ) -> impl FnMut(&TickCtx) -> TickResult + Send + 'static {
     move |ctx| {
         let drain = drive(
             &handle,
             "library_identify_tick",
-            setup.identify_drain(ctx.token()),
+            identification.identify_drain(ctx.token()),
         )?;
         if drain.store_failed {
             return Err(TickError::new(
@@ -816,20 +831,20 @@ fn identify_tick(
 /// The filesystem watcher's turn: snapshot, batch, request on due, then
 /// wait as long as the saved settings say.
 struct WatcherTick {
-    setup: LibrarySetup,
+    scans: Scans,
     handle: Handle,
 }
 
 impl Tick for WatcherTick {
     async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
-        let (setup, handle, stop) = (self.setup.clone(), self.handle.clone(), ctx.token().clone());
+        let (scans, handle, stop) = (self.scans.clone(), self.handle.clone(), ctx.token().clone());
         // A snapshot of a large tree takes a while; the stop does not wait
         // for it.
         let action = tokio::task::spawn_blocking(move || {
             drive(
                 &handle,
                 "library_watcher_tick",
-                setup.watcher_tick_with_shutdown(&stop),
+                scans.watcher_tick_with_shutdown(&stop),
             )
         })
         .await
@@ -838,7 +853,7 @@ impl Tick for WatcherTick {
             WatcherAction::Idle { sleep_secs } | WatcherAction::Batching { sleep_secs } => {
                 sleep_secs.max(0.0)
             }
-            WatcherAction::Due => self.setup.watcher_settings().poll_interval_seconds.max(1.0),
+            WatcherAction::Due => self.scans.watcher_settings().poll_interval_seconds.max(1.0),
         };
         ctx.sleep(Duration::from_secs_f64(sleep_secs)).await;
         Ok(Next::Continue)
@@ -847,13 +862,15 @@ impl Tick for WatcherTick {
 
 /// Look once for hidden files no journal row names. The walk runs off the
 /// async runtime and gives up between two folders once the stop comes.
-async fn leftover_pass(setup: LibrarySetup, ctx: TickCtx) -> Result<(), TickError> {
+async fn leftover_pass(
+    core: LibraryCore,
+    leftovers: LeftoverFiles,
+    ctx: TickCtx,
+) -> Result<(), TickError> {
     let stop = ctx.token().clone();
     let walk = tokio::task::spawn_blocking(move || {
-        let registry = setup.live_registry();
-        setup
-            .leftover_files
-            .refresh(&registry, &|| stop.is_cancelled())
+        let registry = core.live_registry();
+        leftovers.refresh(&registry, &|| stop.is_cancelled())
     });
     match walk.await {
         Ok(Ok(Some(report))) if report.count > 0 => tracing::warn!(

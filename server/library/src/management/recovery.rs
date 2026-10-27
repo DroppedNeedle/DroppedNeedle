@@ -233,7 +233,7 @@ impl Management {
                     .to_owned(),
             ));
         }
-        let sandbox = self.setup.publish_sandbox().map_err(|_| {
+        let sandbox = self.setup.publishing.publish_sandbox().map_err(|_| {
             ManagementError::Conflict(
                 "The library folders are not available right now, so the files cannot be checked."
                     .to_owned(),

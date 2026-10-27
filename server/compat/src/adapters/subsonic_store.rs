@@ -32,7 +32,7 @@ use droppedneedle_catalog::reads::library::stores::ArtistRecord;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::scan::Counter;
 use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
-use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_library::scans::Scans;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
 fn iso_text(unix: u64) -> Option<String> {
@@ -189,7 +189,7 @@ pub struct SubsonicStore {
     queues: CompatQueues,
     playback: CompatPlayback,
     users: UsersDeps,
-    scan: LibrarySetup,
+    scan: Scans,
     crypto: Arc<Crypto>,
     pictures: PictureSigner,
     settings: LiveSettings,
@@ -203,7 +203,7 @@ impl SubsonicStore {
         queues: CompatQueues,
         playback: CompatPlayback,
         users: UsersDeps,
-        scan: LibrarySetup,
+        scan: Scans,
         crypto: Arc<Crypto>,
         settings: LiveSettings,
     ) -> Self {
@@ -1059,7 +1059,7 @@ impl Store for SubsonicStore {
     }
 
     async fn start_scan(&self) -> Result<(), CompatError> {
-        let registry = self.scan.live_registry();
+        let registry = self.scan.core.live_registry();
         let outcome = self.scan.coordinator.request_run(&ScanRequest {
             kind: ScanKind::Incremental,
             trigger: ScanTrigger::Subsonic,

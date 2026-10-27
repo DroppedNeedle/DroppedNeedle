@@ -36,7 +36,7 @@ use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::{AlreadyRunning, Supervisor};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Crypto;
-use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_library::scans::Scans;
 use droppedneedle_media::MediaEngine;
 use droppedneedle_media::playback::PlaybackDeps;
 
@@ -64,7 +64,7 @@ pub struct CompatDeps {
     /// The stream engine the native routes use.
     pub engine: Arc<MediaEngine>,
     /// Scan status and triggers.
-    pub scan: LibrarySetup,
+    pub scan: Scans,
     /// Catalog, collections, lyrics and covers.
     pub library: CompatLibrary,
     /// Saved queues and bookmarks.
@@ -84,7 +84,7 @@ impl CompatDeps {
         users: UsersDeps,
         playback: PlaybackDeps,
         engine: Arc<MediaEngine>,
-        scan: LibrarySetup,
+        scan: Scans,
         reads: &ReadsSetup,
     ) -> Self {
         let config = &platform.config;

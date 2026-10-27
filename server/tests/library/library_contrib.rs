@@ -23,7 +23,7 @@ use contrib::worker::{Claim, SPEC, VERIFY, Verdict, VerificationWorker};
 use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, Outcome, runner, start_runners};
-use droppedneedle_library::adapters::MatchingAttachmentEvidence;
+use droppedneedle_library::contrib::attachment::MatchingAttachmentEvidence;
 use droppedneedle_providers::RequestPriority;
 use futures_util::future::BoxFuture;
 use rusqlite::{OptionalExtension as _, params};

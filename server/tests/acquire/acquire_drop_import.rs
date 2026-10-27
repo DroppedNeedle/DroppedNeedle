@@ -206,6 +206,7 @@ async fn bundles() -> (AcquireDb, LibrarySetup, PathBuf, AuthRig) {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -248,7 +249,7 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(Arc::new(OneRelease(release(
                 &["Mysterons", "Sour Times"],
                 &lengths,
@@ -415,7 +416,7 @@ async fn same_named_files_on_two_discs_both_wait() {
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
             db.pool().clone(),
         )),
@@ -460,7 +461,7 @@ async fn an_upgrade_the_bin_cannot_take_keeps_the_upload() {
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
             db.pool().clone(),
         )),
@@ -611,7 +612,7 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(Arc::new(LargeGroups(known))),
             pool,
         )),
@@ -697,7 +698,7 @@ async fn a_deferred_upload_match_leaves_its_files_as_they_were() {
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(Arc::new(LargeGroups(vec![picked, guess]))),
             pool,
         )),
@@ -792,7 +793,7 @@ async fn a_matched_uploads_bonus_track_is_not_retried_onto_the_old_guess() {
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(Arc::new(LargeGroups(vec![picked, guess]))),
             pool,
         )),
@@ -965,7 +966,7 @@ async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
-            library,
+            &library,
             every_priority(Arc::new(OneRelease(release(&["Big"], &[None])))),
             pool,
         )),

@@ -283,22 +283,18 @@ pub fn path_revision(sandbox: &Sandbox, root_id: &str, relative_path: &str) -> O
     ))
 }
 
-impl crate::wiring::LibrarySetup {
-    /// Queue an album for automatic management. A failure only logs:
-    /// the album is then managed by hand, never left half done. Blocking.
-    pub fn queue_automatic_management(&self, album_id: &str) {
-        let queued = self
-            .db
-            .write_blocking(Lane::Background, "management.queue_automatic", |tx| {
-                Ok::<_, droppedneedle_kernel::db::DbError>(queue(
-                    tx,
-                    album_id,
-                    self.clock.now_secs(),
-                )?)
-            });
-        if let Err(error) = queued {
-            tracing::warn!(%error, album_id, "album not queued for automatic management");
-        }
+/// Queue an album for automatic management. A failure only logs: the
+/// album is then managed by hand, never left half done. Blocking.
+pub(crate) fn queue_automatic_management(
+    db: &droppedneedle_kernel::db::Db,
+    clock: &dyn droppedneedle_kernel::clock::Clock,
+    album_id: &str,
+) {
+    let queued = db.write_blocking(Lane::Background, "management.queue_automatic", |tx| {
+        Ok::<_, droppedneedle_kernel::db::DbError>(queue(tx, album_id, clock.now_secs())?)
+    });
+    if let Err(error) = queued {
+        tracing::warn!(%error, album_id, "album not queued for automatic management");
     }
 }
 
@@ -432,7 +428,7 @@ impl Management {
             .read_blocking("management.album_files", |conn| {
                 Ok::<_, ManagementError>(album_files(conn, album_id)?)
             })?;
-        let registry = self.setup.live_registry();
+        let registry = self.setup.core.live_registry();
         Ok(files
             .iter()
             .any(|file| planner::keeps_own_tags(&registry, &file.root_id, &file.relative_path)))
@@ -659,7 +655,7 @@ impl Management {
             }
             return Ok(Gate::Closed(Verdict::Done("NOT_AUTOMATIC")));
         };
-        let registry = self.setup.live_registry();
+        let registry = self.setup.core.live_registry();
         let policy = registry.policy_revision().to_owned();
         let pinned_policy = self.activation_policy_revision()?;
         if !activation_is_current(&stored, &assignment, &pinned_policy)
@@ -900,7 +896,7 @@ impl Management {
         } = opened;
         let pinned = profile::pin_assignment(&stored, &assignment)?;
         let revisions = profile::revisions(&stored, &pinned, &policy);
-        let sandbox = self.setup.publish_sandbox().ok();
+        let sandbox = self.setup.publishing.publish_sandbox().ok();
         let as_revision = |value: u64| i64::try_from(value).ok();
         let managed =
             files

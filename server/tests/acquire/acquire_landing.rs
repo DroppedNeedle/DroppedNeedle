@@ -213,6 +213,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -272,7 +273,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             pool,
         ))),
@@ -498,6 +499,7 @@ async fn land_with_recording(
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -543,7 +545,7 @@ async fn land_with_recording(
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             pool,
         ))),
@@ -707,11 +709,12 @@ async fn land_heard(
         .await;
     let (mut library, _) = library_at(&platform);
     if let Some(heard) = heard {
-        library.fingerprints = heard;
+        library.imports.fingerprints = heard;
     }
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -726,7 +729,7 @@ async fn land_heard(
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             pool,
         ))),
@@ -1269,6 +1272,7 @@ async fn held_files_import_as_upgrades_or_discard() {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -1287,7 +1291,7 @@ async fn held_files_import_as_upgrades_or_discard() {
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             pool,
         ))),
@@ -1481,6 +1485,7 @@ async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -1499,7 +1504,7 @@ async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             pool,
         ))),
@@ -2218,6 +2223,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -2240,7 +2246,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         .expect("folder aged");
 
     let port: Arc<dyn LandingLibrary> = Arc::new(LibraryLanding::new(
-        library.clone(),
+        &library,
         every_priority(Arc::new(Releases(vec![release.clone()]))),
         db.pool().clone(),
     ));
@@ -2360,7 +2366,7 @@ async fn a_failed_downloads_kept_folder_stays_until_it_expires() {
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library,
+            &library,
             every_priority(Arc::new(Releases(Vec::new()))),
             db.pool().clone(),
         ))),
@@ -2497,6 +2503,7 @@ async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -2532,7 +2539,7 @@ async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             db.pool().clone(),
         ))),
@@ -2671,6 +2678,7 @@ async fn a_read_only_archive_folder_does_not_hold_downloads() {
     ] {
         std::fs::create_dir_all(folder).expect("root");
         library
+            .scans
             .add_root(
                 Some(name.to_owned()),
                 folder.to_string_lossy().into_owned(),
@@ -2681,7 +2689,7 @@ async fn a_read_only_archive_folder_does_not_hold_downloads() {
     std::fs::set_permissions(&archive, std::fs::Permissions::from_mode(0o555))
         .expect("archive read-only");
     let port: Arc<dyn LandingLibrary> = Arc::new(LibraryLanding::new(
-        library.clone(),
+        &library,
         every_priority(Arc::new(Releases(Vec::new()))),
         db.pool().clone(),
     ));
@@ -2903,6 +2911,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -2912,7 +2921,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(Arc::new(Releases(releases.clone()))),
             db.pool().clone(),
         ))),
@@ -2942,7 +2951,7 @@ impl JoinRig {
 
     async fn scan(&self) {
         use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
-        let registry = self.library.live_registry();
+        let registry = self.library.core.live_registry();
         self.library
             .coordinator
             .request_run(&ScanRequest {
@@ -2953,9 +2962,9 @@ impl JoinRig {
                 policy_revision: registry.policy_revision().to_owned(),
             })
             .expect("scan requested");
-        self.library.scan_startup_recovery().await;
+        self.library.scans.scan_startup_recovery().await;
         for _ in 0..100 {
-            self.library.supervisor_tick().await;
+            self.library.scans.supervisor_tick().await;
             if self.library.coordinator.current().is_empty() {
                 break;
             }
@@ -3684,7 +3693,7 @@ async fn an_import_stopped_around_its_commit_keeps_its_match() {
         .await;
         let row = rig.task("t-stop").await;
         let landed = rig.landed("t-stop", &e.new, 1, FIXTURES[1]);
-        rig.library.arm_publish_crash(Some(point));
+        rig.library.publishing.arm_publish_crash(Some(point));
         rig.acquire
             .landing
             .land(
@@ -3700,9 +3709,12 @@ async fn an_import_stopped_around_its_commit_keeps_its_match() {
                 false,
             )
             .await;
-        rig.library.arm_publish_crash(None);
+        rig.library.publishing.arm_publish_crash(None);
         if point == CrashPoint::BeforeCatalogCommit {
-            rig.library.publish_tick().expect("recovery runs");
+            rig.library
+                .publishing
+                .publish_tick()
+                .expect("recovery runs");
         }
 
         let (track, on, _, _, availability) = rig.row_at(&copy_rel(1, SOUR_TIMES)).await;
@@ -3784,7 +3796,7 @@ async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
                     Ok(library)
                 })
                 .expect("path rule saved");
-            rig.library.refresh_registry();
+            rig.library.core.refresh_registry();
         }
         rig.ask(
             "t-own",
@@ -3809,7 +3821,7 @@ async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
         )
         .expect("download retagged");
         let downloaded = sha256(&landed);
-        rig.library.arm_publish_crash(crash);
+        rig.library.publishing.arm_publish_crash(crash);
         rig.acquire
             .landing
             .land(
@@ -3825,9 +3837,12 @@ async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
                 false,
             )
             .await;
-        rig.library.arm_publish_crash(None);
+        rig.library.publishing.arm_publish_crash(None);
         if crash.is_some() {
-            rig.library.publish_tick().expect("recovery runs");
+            rig.library
+                .publishing
+                .publish_tick()
+                .expect("recovery runs");
         }
 
         let (track, on, _, _, availability) = rig.row_at(&copy_rel(1, SOUR_TIMES)).await;
@@ -3901,6 +3916,7 @@ async fn a_plain_download_prefers_a_folder_with_automatic_tags() {
         let second_dir = rig.music.with_file_name("second");
         std::fs::create_dir_all(&second_dir).expect("second root");
         rig.library
+            .scans
             .add_root(
                 Some("second".to_owned()),
                 second_dir.to_string_lossy().into_owned(),
@@ -4128,7 +4144,7 @@ async fn a_joined_import_recovers_joined() {
             &[(2, 1)],
         )
         .await;
-        rig.library.arm_publish_crash(Some(
+        rig.library.publishing.arm_publish_crash(Some(
             droppedneedle_library::publish::CrashPoint::BeforeCatalogCommit,
         ));
         let landed = rig.landed(task, &eds.new, 1, FIXTURES[1]);
@@ -4144,7 +4160,7 @@ async fn a_joined_import_recovers_joined() {
             .landing
             .land(&row, None, landing(vec![landed.clone()]), false)
             .await;
-        rig.library.arm_publish_crash(None);
+        rig.library.publishing.arm_publish_crash(None);
         let folder = staging.join(task);
         let record = std::fs::read(folder.join("provenance.json")).expect("record kept");
 
@@ -4166,7 +4182,10 @@ async fn a_joined_import_recovers_joined() {
             "the record recovery reads is unchanged"
         );
 
-        rig.library.publish_tick().expect("recovery runs");
+        rig.library
+            .publishing
+            .publish_tick()
+            .expect("recovery runs");
         let (track, on, _, locked, availability) = rig.row_at(&copy_rel(s, SOUR_TIMES)).await;
         assert_eq!(
             (on.as_str(), locked, availability.as_str()),
@@ -4183,7 +4202,9 @@ async fn a_joined_import_recovers_joined() {
             assert_ne!(gone, copy_rel(2, SOUR_TIMES));
         }
     }
-    rig.library.run_recovery().await;
+    crate::common::library::services(&rig.library)
+        .run_recovery()
+        .await;
     assert!(!staging.exists(), "staging removed once settled");
 }
 
@@ -4206,7 +4227,7 @@ async fn a_held_release_track_is_not_given_away() {
     rig.set_edition(&album, &e.group, &e.new.id, "manual");
     rig.place(&holder, &e.new, 1, "manual");
     let port = LibraryLanding::new(
-        rig.library.clone(),
+        &rig.library,
         every_priority(Arc::new(Releases(vec![e.new.clone()]))),
         rig.acquire.db.pool().clone(),
     );
@@ -4521,10 +4542,13 @@ async fn a_version_replacement_recovers_after_a_crash() {
         let v = VersionCase::new(s, 1, true, o_name).await;
         let rig = &v.rig;
         v.ask("t-version").await;
-        rig.library.arm_publish_crash(Some(point));
+        rig.library.publishing.arm_publish_crash(Some(point));
         v.land_directly("t-version", v.sour("t-version")).await;
-        rig.library.arm_publish_crash(None);
-        rig.library.publish_tick().expect("recovery runs");
+        rig.library.publishing.arm_publish_crash(None);
+        rig.library
+            .publishing
+            .publish_tick()
+            .expect("recovery runs");
         let (new, on, _, _, availability) = rig.row_at(&copy_rel(s, SOUR_TIMES)).await;
         assert_eq!(
             (on.as_str(), availability.as_str()),
@@ -4608,13 +4632,16 @@ async fn a_worse_version_after_a_stopped_swap_finds_yours_in_place() {
     let o_path = rig.music.join(copy_rel(19, &v.o_name));
     let o_bytes = std::fs::read(&o_path).expect("O's file");
     v.ask("t-version").await;
-    rig.library.arm_publish_crash(Some(
+    rig.library.publishing.arm_publish_crash(Some(
         droppedneedle_library::publish::CrashPoint::AfterFirstFileStaged,
     ));
     let better = rig.landed("t-version", &v.e.new, 0, FIXTURES[0]);
     v.land_directly("t-version", better).await;
-    rig.library.arm_publish_crash(None);
-    rig.library.publish_tick().expect("recovery runs");
+    rig.library.publishing.arm_publish_crash(None);
+    rig.library
+        .publishing
+        .publish_tick()
+        .expect("recovery runs");
     assert_eq!(std::fs::read(&o_path).expect("O's file"), o_bytes);
     assert!(!rig.in_recycle_bin(&v.o_name), "nothing went to the bin");
     assert_eq!(rig.availability(&v.old).await, "indexed");
@@ -4751,6 +4778,7 @@ async fn a_failed_request_follows_its_retry_to_imported() {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -4785,7 +4813,7 @@ async fn a_failed_request_follows_its_retry_to_imported() {
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             pool,
         ))),
@@ -4913,7 +4941,7 @@ async fn land_single(task_id: &'static str, title: &str) -> Vec<(String, Option<
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library,
+            &library,
             every_priority(Arc::new(Releases(vec![single]))),
             db.pool().clone(),
         ))),
@@ -4995,6 +5023,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -5025,7 +5054,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             db.pool().clone(),
         ))),
@@ -5336,6 +5365,7 @@ async fn land_swapped(
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -5375,7 +5405,7 @@ async fn land_swapped(
     };
     let port: Arc<dyn LandingLibrary> = Arc::new(Shaky {
         inner: Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(source),
             db.pool().clone(),
         )),
@@ -5768,13 +5798,14 @@ impl IntakeCase {
             .await;
         let (mut library, _) = library_at(&platform);
         let recording = e.new.tracks[0].recording_id.clone();
-        library.fingerprints = Arc::new(Hears(
+        library.imports.fingerprints = Arc::new(Hears(
             row.heard
                 .map(|right| if right { recording } else { mb(s, 3, 9) }),
         ));
         let music = dir.join("music");
         std::fs::create_dir_all(&music).expect("music root");
         library
+            .scans
             .add_root(
                 Some("music".to_owned()),
                 music.to_string_lossy().into_owned(),
@@ -5788,7 +5819,7 @@ impl IntakeCase {
         };
         let port: Arc<dyn LandingLibrary> = Arc::new(Shaky {
             inner: Arc::new(LibraryLanding::new(
-                library.clone(),
+                &library,
                 every_priority(Arc::new(GroupListing(releases.clone()))),
                 db.pool().clone(),
             )),

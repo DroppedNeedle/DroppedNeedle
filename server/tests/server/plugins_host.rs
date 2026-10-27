@@ -1120,7 +1120,7 @@ async fn a_write_the_plugin_gave_up_on_never_lands_and_spends_nothing() {
     host.update_settings("toy", true, HashMap::new()).unwrap();
     let (reached, at_place) = std::sync::mpsc::channel::<()>();
     let (release, released) = std::sync::mpsc::channel::<()>();
-    library.set_publish_hooks(
+    library.publishing.set_publish_hooks(
         Some(Box::new(move |_: &Path| {
             let _ = reached.send(());
             let _ = released.recv();
@@ -1161,7 +1161,7 @@ async fn a_write_the_plugin_gave_up_on_never_lands_and_spends_nothing() {
 
     // Only the unwound write's bytes stand between the plugin and its
     // allowance: they are back, so the same write now lands.
-    library.set_publish_hooks(None, None);
+    library.publishing.set_publish_hooks(None, None);
     seed_written(&rig, "seeded", QUOTA_BYTES_PER_DAY - 4);
     let (path, _) = host
         .write_library_file("toy", "notes/late.txt", b"late".to_vec())

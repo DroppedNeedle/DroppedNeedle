@@ -93,6 +93,7 @@ async fn bundle(scratch: &Path) -> LibrarySetup {
     let (library, _) = library_at(&platform);
     let music = scratch.join("music");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -104,7 +105,7 @@ async fn bundle(scratch: &Path) -> LibrarySetup {
 
 /// Request a scan of every root and drive it to the end.
 async fn scan(library: &LibrarySetup) -> ScanRun {
-    let registry = library.live_registry();
+    let registry = library.core.live_registry();
     let result = library
         .coordinator
         .request_run(&ScanRequest {
@@ -116,7 +117,7 @@ async fn scan(library: &LibrarySetup) -> ScanRun {
         })
         .expect("scan requested");
     for _ in 0..50 {
-        library.supervisor_tick().await;
+        library.scans.supervisor_tick().await;
         if library.coordinator.current().is_empty() {
             break;
         }
@@ -252,6 +253,7 @@ async fn daily_scans_run_at_local_time_across_a_clock_change() {
         .expect("schedule saves");
     let (library, _) = library_at(&platform);
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             scratch.join("music").to_string_lossy().into_owned(),
@@ -260,7 +262,7 @@ async fn daily_scans_run_at_local_time_across_a_clock_change() {
         .expect("root adds");
     let settle = || async {
         for _ in 0..50 {
-            library.supervisor_tick().await;
+            library.scans.supervisor_tick().await;
             if library.coordinator.current().is_empty() {
                 break;
             }
@@ -469,7 +471,7 @@ async fn vanished_files_are_marked_missing_and_mass_loss_is_held_back() {
 
 /// Scan only `folder` of the music root and drive it to the end.
 async fn scan_folder(library: &LibrarySetup, folder: &str) -> ScanRun {
-    let registry = library.live_registry();
+    let registry = library.core.live_registry();
     let mut scopes = registry.scheduled_root_scopes();
     for scope in &mut scopes {
         scope.relative_path = folder.to_owned();
@@ -485,7 +487,7 @@ async fn scan_folder(library: &LibrarySetup, folder: &str) -> ScanRun {
         })
         .expect("scan requested");
     for _ in 0..50 {
-        library.supervisor_tick().await;
+        library.scans.supervisor_tick().await;
         if library.coordinator.current().is_empty() {
             break;
         }
@@ -1353,7 +1355,7 @@ async fn unrecorded_scan_request_is_an_error() {
     std::fs::create_dir_all(&music).expect("root");
     let library = bundle(&scratch).await;
     // No such user in this database: the auth_users reference fails.
-    assert!(library.request_scan(None, "no-such-user").is_err());
+    assert!(library.scans.request_scan(None, "no-such-user").is_err());
 }
 
 /// What happens between two scan windows: a listener, a curator or a

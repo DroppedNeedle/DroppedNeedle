@@ -1,7 +1,7 @@
 //! Local seams: the narrow traits contributions need from code they do not
 //! own, and the types their store takes.
 //!
-//! Owned elsewhere (implemented in `library::adapters`):
+//! Owned elsewhere (implemented in [`super::attachment`] and [`super::live`]):
 //! - [`AttachmentEvidence`] - the identification evidence decision for
 //!   attach/verify, from identify (v2 `AlbumEvidenceEngine`).
 //! - [`ContributionCatalog`] - catalog invalidation + identified hook, from
@@ -91,7 +91,7 @@ pub struct AlbumIdentificationContext {
 
 /// Catalog invalidation plus the post-identify hook.
 /// A trait because it cuts the dependency from contributions on
-/// identification; `library::adapters` implements it.
+/// identification; [`super::live::IdentifyFollowUp`] implements it.
 pub trait ContributionCatalog: Send + Sync {
     /// Delete exactly the touched identity-bearing keys before the
     /// commit path returns; lists still sweep.

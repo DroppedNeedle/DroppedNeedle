@@ -216,7 +216,7 @@ impl Management {
         let [root] = found.roots.as_slice() else {
             return refused(TWO_FOLDERS);
         };
-        let registry = self.setup.live_registry();
+        let registry = self.setup.core.live_registry();
         if found
             .files
             .iter()

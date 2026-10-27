@@ -591,6 +591,7 @@ impl Mutations {
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
         let missing = self
             .setup
+            .publishing
             .publish_put_back(removal_id, &canonical, actor)
             .map_err(put_back_refusal)?;
         tracing::info!(missing = missing.len(), "removed files put back");
@@ -602,7 +603,7 @@ impl Mutations {
     /// `.recycle`. None while the download settings do not read, so
     /// nothing is recycled.
     pub fn bin_for(&self, root_id: &str) -> Option<PathBuf> {
-        let bins = self.bins(&self.setup.live_registry()).ok()?;
+        let bins = self.bins(&self.setup.core.live_registry()).ok()?;
         bin_dir(&bins, root_id).ok()
     }
 
@@ -616,7 +617,7 @@ impl Mutations {
         root_id: &str,
         name: &str,
     ) -> Result<Option<PathBuf>, MutationError> {
-        let bins = self.bins(&self.setup.live_registry())?;
+        let bins = self.bins(&self.setup.core.live_registry())?;
         Ok(fresh_entry(
             &bin_dir(&bins, root_id)?,
             name,
@@ -633,7 +634,7 @@ impl Mutations {
         let canonical = self
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
-        let registry = self.setup.live_registry();
+        let registry = self.setup.core.live_registry();
         let scopes = rescan_scopes(&canonical, &self.album_tracks(&canonical)?, &registry);
         if scopes.is_empty() {
             return Err(MutationError::NotFound(ALBUM_HAS_NO_FILES));
@@ -782,7 +783,7 @@ impl Mutations {
                 ..RemovalDone::default()
             });
         }
-        let registry = self.setup.live_registry();
+        let registry = self.setup.core.live_registry();
         let mut targets = Vec::with_capacity(tracks.len());
         for track in tracks {
             let root = registry
@@ -802,6 +803,7 @@ impl Mutations {
         }
         let done = self
             .setup
+            .publishing
             .publish_removal(
                 &targets,
                 removal.reason_code,

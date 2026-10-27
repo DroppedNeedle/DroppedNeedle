@@ -1,18 +1,16 @@
-//! Library service: roots, scans, identification, and reviews.
+//! The library's service error, and identification: requests, reviews
+//! and the identify loop's turns.
+use std::sync::Arc;
+
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::ids::IdGenerator;
 
 use super::clock::LibraryClock as _;
 use super::identify::models::{AlbumIdentity, IdentifyJob, IdentifyKind};
-use super::manage::publish_error;
-use super::scan::models::{
-    EffectivePolicy, ScanInventoryItem, ScanKind, ScanRequest, ScanRequestResult, ScanRun,
-    ScanScope, ScanTrigger,
-};
-use super::scan::roots::LibraryRoot;
-use super::wiring::LibrarySetup;
-
-/// Inventory rows a run detail view shows: the most recent ones.
-const RUN_DETAIL_FILES: usize = 500;
+use super::identify::service::IdentifyService;
+use super::identify::sqlite::SqliteIdentifyStore;
+use super::settings::LibrarySettings;
 
 /// Why a library operation failed, independent of transport. The
 /// HTTP layer maps each variant to a status.
@@ -52,137 +50,37 @@ impl std::fmt::Display for ServiceError {
 
 impl std::error::Error for ServiceError {}
 
-impl LibrarySetup {
-    /// Add a library root. The path must exist, be absolute, and be a
-    /// directory; the id must be unused. Adding the first root
-    /// enables the library and marks the root dirty so Hook B picks
-    /// it up for an initial scan. Blocking file and database work:
-    /// handlers run this off the async runtime.
-    pub fn add_root(
-        &self,
-        id: Option<String>,
-        path: String,
-        policy: EffectivePolicy,
-    ) -> Result<(LibraryRoot, String), ServiceError> {
-        let dir =
-            crate::policy::clean_absolute(&path).ok_or_else(|| ServiceError::InvalidInput {
-                message: "Root path must be absolute".to_owned(),
-            })?;
-        let meta = std::fs::symlink_metadata(&dir).map_err(|_| ServiceError::InvalidInput {
-            message: "Root path does not exist".to_owned(),
-        })?;
-        if !meta.file_type().is_dir() {
-            return Err(ServiceError::InvalidInput {
-                message: "Root path is not a directory".to_owned(),
-            });
-        }
-        let id = id.unwrap_or_else(|| self.ids.new_id());
-        if id.is_empty() || id.contains('/') || id.contains('\0') || id.contains("::") {
-            return Err(ServiceError::InvalidInput {
-                message: "Root id is not a plain name".to_owned(),
-            });
-        }
-        let root = LibraryRoot::new(&id, dir, policy);
-        self.settings.add_root(&root)?;
-        // The refresh swaps the new root in and marks it dirty, so the
-        // supervisor gives it an initial scan.
-        let registry = self.refresh_registry();
-        let revision = registry.policy_revision().to_owned();
-        // Open (or reopen) the publish cell under the new root set.
-        // A reconcile failure here is a 409: the root is registered
-        // but publishing stays closed until recovery passes.
-        {
-            let mut cell = self
-                .publish
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let session = cell.session(&registry);
-            cell.refresh_to(session, &self.root_dirs)
-                .map_err(publish_error)?;
-        }
-        Ok((root, revision))
+/// Identification requests and reviews, and the identify loop's turns.
+#[derive(Clone)]
+pub struct Identification {
+    pub(crate) db: droppedneedle_kernel::db::Db,
+    pub(crate) identify_store: Arc<SqliteIdentifyStore>,
+    pub(crate) identify: Arc<IdentifyService>,
+    pub(crate) settings: LibrarySettings,
+    pub(crate) ids: Arc<dyn IdGenerator>,
+    pub(crate) clock: Arc<dyn Clock>,
+}
+
+impl Identification {
+    /// Queue an album for automatic management, as a settled match does.
+    /// A failure only logs: the album is then managed by hand, never left
+    /// half done. Blocking.
+    pub fn queue_automatic_management(&self, album_id: &str) {
+        super::management::automatic::queue_automatic_management(&self.db, &*self.clock, album_id);
     }
 
-    /// Request a manual scan over one root or every scheduled root.
-    pub fn request_scan(
-        &self,
-        root_id: Option<&str>,
-        user_id: &str,
-    ) -> Result<ScanRequestResult, ServiceError> {
-        let registry = self.live_registry();
-        let mut scopes = registry.scheduled_root_scopes();
-        if let Some(wanted) = root_id {
-            scopes.retain(|scope| scope.root_id == wanted);
-            if scopes.is_empty() {
-                return Err(ServiceError::NotFound);
+    /// Put back the identify jobs a previous run left claimed. A failure
+    /// only logs: the jobs' leases run out and the queue takes them again.
+    pub(crate) async fn recover(&self) {
+        let identify = self.identify_store.clone();
+        match tokio::task::spawn_blocking(move || identify.recover()).await {
+            Ok(Ok(0)) => {}
+            Ok(Ok(requeued)) => {
+                tracing::info!(requeued, "identify jobs from the previous run requeued");
             }
+            Ok(Err(error)) => tracing::warn!(%error, "identify jobs not requeued at startup"),
+            Err(error) => tracing::warn!(%error, "identify job recovery did not run"),
         }
-        let result = self
-            .coordinator
-            .request_run(&ScanRequest {
-                kind: ScanKind::Incremental,
-                trigger: ScanTrigger::Manual,
-                scopes,
-                requested_by_user_id: Some(user_id.to_owned()),
-                policy_revision: registry.policy_revision().to_owned(),
-            })
-            .map_err(|error| match error {
-                super::scan::coordinator::ScanRequestError::Disabled => ServiceError::Conflict {
-                    message: error.to_string(),
-                },
-                super::scan::coordinator::ScanRequestError::EmptyScopes => {
-                    ServiceError::InvalidInput {
-                        message: error.to_string(),
-                    }
-                }
-                super::scan::coordinator::ScanRequestError::StalePolicy
-                | super::scan::coordinator::ScanRequestError::UnknownRoots => {
-                    ServiceError::Conflict {
-                        message: error.to_string(),
-                    }
-                }
-                super::scan::coordinator::ScanRequestError::BadCursor => {
-                    ServiceError::InvalidInput {
-                        message: error.to_string(),
-                    }
-                }
-                super::scan::coordinator::ScanRequestError::Store(cause) => {
-                    ServiceError::internal(&cause)
-                }
-            })?;
-        Ok(result)
-    }
-
-    /// Every current run and the latest finished ones. Blocking.
-    pub fn recent_scan_runs(
-        &self,
-        finished: usize,
-    ) -> Result<(Vec<ScanRun>, Vec<ScanRun>), ServiceError> {
-        let current = self
-            .coordinator
-            .current_runs()
-            .map_err(super::scans::store_error)?;
-        let history = self
-            .coordinator
-            .history(finished)
-            .map_err(super::scans::store_error)?;
-        Ok((current, history))
-    }
-
-    /// Run detail plus discovered files (bounded to the latest 500).
-    pub fn run_detail(
-        &self,
-        run_id: &str,
-    ) -> Result<(ScanRun, Vec<ScanScope>, Vec<ScanInventoryItem>), ServiceError> {
-        let (run, scopes, _) = self
-            .coordinator
-            .snapshot(run_id)
-            .map_err(super::scans::store_error)?;
-        let files = self
-            .scan_store
-            .inventory_for_run(run_id, RUN_DETAIL_FILES)
-            .map_err(super::scans::store_error)?;
-        Ok((run, scopes, files))
     }
 
     /// Enqueue one catalog album (a `local_albums.id`) for
@@ -208,30 +106,6 @@ impl LibrarySetup {
             self.clock.now_ms_u64(),
             Lane::Foreground,
         )?)
-    }
-
-    /// One page of the files plugin `plugin` added, newest first. Blocking.
-    pub fn plugin_files(
-        &self,
-        plugin: &str,
-        before: Option<(i64, String)>,
-        limit: u32,
-    ) -> Result<Vec<super::publish::add::PluginFile>, ServiceError> {
-        self.db
-            .read_blocking("publish.plugin_files", |conn| {
-                super::publish::add::plugin_files(
-                    conn,
-                    plugin,
-                    before.as_ref().map(|(at, id)| (*at, id.as_str())),
-                    limit,
-                )
-            })
-            .map_err(publish_error)
-    }
-
-    /// Unsettled publish bundles in the journal. Blocking.
-    pub fn held_publish_bundles(&self) -> Result<Vec<String>, ServiceError> {
-        self.held_bundles.list().map_err(publish_error)
     }
 
     /// Pending reviews for one album, oldest first.

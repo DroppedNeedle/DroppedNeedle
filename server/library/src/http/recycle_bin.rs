@@ -4,6 +4,7 @@
 //! run of the bin's expiry with no retention. Put back is the album's
 //! removal route.
 
+use crate::manage::Publishing;
 use axum::{Json, extract::State, http::StatusCode};
 use droppedneedle_auth::Admin;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
@@ -15,7 +16,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::publish::PublishError;
 use crate::publish::bin_contents::{self, BinGroup, BinKind};
 use crate::recycle_bin::{self, Emptied, EmptyingState};
-use crate::wiring::{LibraryServices, LibrarySetup};
+use crate::wiring::LibraryServices;
 
 /// Recycle bin routes.
 pub fn routes() -> Routes<LibraryServices> {
@@ -144,7 +145,7 @@ pub struct EmptyRecycleBinView {
     )
 )]
 pub async fn list_recycle_bin(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     _caller: Admin,
     ValidQuery(query): ValidQuery<RecycleBinQuery>,
 ) -> Result<Json<RecycleBinPage>, ApiError> {
@@ -225,10 +226,10 @@ fn view(group: BinGroup, retention_days: Option<i64>) -> BinRemovalView {
     )
 )]
 pub async fn recycle_bin_summary(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     _caller: Admin,
 ) -> Result<Json<RecycleBinSummary>, ApiError> {
-    let as_of = state.clock.now_ms();
+    let as_of = state.core.clock.now_ms();
     let summary = blocking(move || {
         let sandbox = state.expiry_sandbox();
         bin_contents::summary(&state.db, sandbox.as_ref(), as_of)
@@ -256,7 +257,7 @@ pub async fn recycle_bin_summary(
     )
 )]
 pub async fn recycle_bin_status(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     _caller: Admin,
 ) -> Result<Json<RecycleBinStatus>, ApiError> {
     let emptying = recycle_bin::state(&state).await.map_err(db_error)?;
@@ -288,7 +289,7 @@ pub async fn recycle_bin_status(
     )
 )]
 pub async fn empty_recycle_bin(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     caller: Admin,
     ValidJson(body): ValidJson<EmptyRecycleBinBody>,
 ) -> Result<(StatusCode, Json<EmptyRecycleBinView>), ApiError> {

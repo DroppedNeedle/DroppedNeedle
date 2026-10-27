@@ -16,7 +16,7 @@ use crate::downloads::plan::PlannedAlbum;
 use droppedneedle_library::identify::sources::{
     Prioritised, ReleaseHit, ReleaseSource, SourceError, group_editions,
 };
-use droppedneedle_library::import::{DownloadImport, ImportError, ImportSource};
+use droppedneedle_library::import::{DownloadImport, ImportError, ImportSource, Imports};
 use droppedneedle_library::management::service::Management;
 use droppedneedle_library::matching::Release;
 use droppedneedle_library::publish::paths::{ResolvedRoot, left_out};
@@ -137,21 +137,24 @@ fn tier_of(format: &str, bitrate: Option<i64>, depth: Option<i64>) -> &'static s
 
 /// The library as the landing sees it in production.
 pub struct LibraryLanding {
-    library: LibrarySetup,
+    library: Imports,
+    management: Management,
     releases: Prioritised<Arc<dyn ReleaseSource>>,
     pool: SqlitePool,
 }
 
 impl LibraryLanding {
-    /// Port over the library bundle, its release sources, and the reader
-    /// pool of the application database.
+    /// Port over the imports and management services `library` built,
+    /// its release sources, and the reader pool of the application
+    /// database.
     pub fn new(
-        library: LibrarySetup,
+        library: &LibrarySetup,
         releases: Prioritised<Arc<dyn ReleaseSource>>,
         pool: SqlitePool,
     ) -> Self {
         Self {
-            library,
+            library: library.imports.clone(),
+            management: Management::new(library),
             releases,
             pool,
         }
@@ -394,6 +397,7 @@ impl LandingLibrary for LibraryLanding {
 
     fn library_dirs(&self) -> Vec<PathBuf> {
         self.library
+            .core
             .live_registry()
             .roots()
             .iter()
@@ -402,7 +406,7 @@ impl LandingLibrary for LibraryLanding {
     }
 
     fn import_folder(&self) -> Option<PathBuf> {
-        let registry = self.library.live_registry();
+        let registry = self.library.core.live_registry();
         let usable: Vec<_> = registry
             .roots()
             .iter()
@@ -475,7 +479,7 @@ impl LandingLibrary for LibraryLanding {
 
     fn publish_settled<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(async move {
-            let management = Management::new(&self.library);
+            let management = self.management.clone();
             let task_id = task_id.to_owned();
             tokio::task::spawn_blocking(move || management.download_publish_settled(&task_id))
                 .await

@@ -329,10 +329,10 @@ impl Management {
         let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
         let pinned = Self::pinned(snapshot)?;
         let scripts = CompiledScripts::new(&pinned);
-        let sandbox = self.setup.publish_sandbox().map_err(|error| {
+        let sandbox = self.setup.publishing.publish_sandbox().map_err(|error| {
             ManagementError::Conflict(format!("No library folder can be written: {error}"))
         })?;
-        let registry = self.setup.live_registry();
+        let registry = self.setup.core.live_registry();
         let ctx = PlanContext {
             setup: &self.setup,
             pinned: &pinned,

@@ -237,7 +237,7 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
 
 pub(crate) async fn drain_scans(library: &LibrarySetup) {
     use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
-    let registry = library.live_registry();
+    let registry = library.core.live_registry();
     library
         .coordinator
         .request_run(&ScanRequest {
@@ -248,9 +248,9 @@ pub(crate) async fn drain_scans(library: &LibrarySetup) {
             policy_revision: registry.policy_revision().to_owned(),
         })
         .expect("scan requested");
-    library.scan_startup_recovery().await;
+    library.scans.scan_startup_recovery().await;
     for _ in 0..100 {
-        library.supervisor_tick().await;
+        library.scans.supervisor_tick().await;
         if library.coordinator.current().is_empty() {
             break;
         }
@@ -424,6 +424,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     // "Restore original" brings back the file as v2 first found it: its
     // place and exactly its tags, with the fields management added gone.
     library
+        .publishing
         .baseline_restore(&[V2_TRACK_ID.to_owned()])
         .expect("restore publishes");
     let original = music.join(ORIGINAL_REL);

@@ -148,13 +148,14 @@ async fn full_scan_throughput() {
         .await;
     let (library, _) = library_at(&platform);
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
-    let roots = library.live_registry();
+    let roots = library.core.live_registry();
 
     let started = Instant::now();
     let requested = library
@@ -167,7 +168,7 @@ async fn full_scan_throughput() {
             policy_revision: roots.policy_revision().to_owned(),
         })
         .expect("scan requested");
-    while library.supervisor_tick().await && !library.coordinator.current().is_empty() {}
+    while library.scans.supervisor_tick().await && !library.coordinator.current().is_empty() {}
     let elapsed = started.elapsed().as_secs_f64();
     let wal_at_end = std::fs::metadata(scratch.join("app.db-wal")).map_or(0, |meta| meta.len());
 

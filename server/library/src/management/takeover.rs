@@ -553,7 +553,10 @@ pub(crate) fn hand_back(
             "The album's files could not be read, so it was not handed back.".to_owned(),
         )
     };
-    let sandbox = setup.publish_sandbox().map_err(|_| unreadable())?;
+    let sandbox = setup
+        .publishing
+        .publish_sandbox()
+        .map_err(|_| unreadable())?;
     let hashed: Vec<(String, String, String, Option<String>)> = files
         .into_iter()
         .map(|(track_id, root_id, relative_path)| {

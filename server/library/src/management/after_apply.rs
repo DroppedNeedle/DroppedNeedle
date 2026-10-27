@@ -116,7 +116,7 @@ impl Management {
             // puts the old state back.
             Some(JobMode::Apply | JobMode::AutomaticApply) if intent.tag_edit.is_none() => {
                 let (profile_id, _) = snapshot.profile_label();
-                let sandbox = self.setup.publish_sandbox().ok();
+                let sandbox = self.setup.publishing.publish_sandbox().ok();
                 struct Mark {
                     track_id: String,
                     album_id: String,
@@ -214,9 +214,25 @@ impl Management {
         Ok(())
     }
 
+    /// Undo one published bundle (see
+    /// [`Publishing::undo_bundle`](crate::manage::Publishing::undo_bundle)).
+    /// An undone run of the profile is not run again by itself; the undo
+    /// stands either way. Blocking.
+    pub fn undo_bundle(
+        &self,
+        bundle_id: &str,
+        only_by: Option<&str>,
+    ) -> Result<crate::manage::AppliedBundle, crate::service::ServiceError> {
+        let applied = self.setup.publishing.undo_bundle(bundle_id, only_by)?;
+        if let Err(error) = self.bundle_undone(bundle_id) {
+            tracing::warn!(%error, bundle_id, "undone bundle not recorded for automatic management");
+        }
+        Ok(applied)
+    }
+
     /// The same for one bundle undone on its own, outside a job (the
     /// route that undoes a single bundle). Blocking.
-    pub fn bundle_undone(&self, bundle_id: &str) -> Result<(), ManagementError> {
+    fn bundle_undone(&self, bundle_id: &str) -> Result<(), ManagementError> {
         let found: Option<(String, i64)> = self
             .setup
             .db

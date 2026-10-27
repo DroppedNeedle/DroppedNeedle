@@ -1,9 +1,13 @@
-//! Library handlers: thin Axum handlers over [`LibrarySetup`].
+//! Library handlers: thin Axum handlers over the library services.
 //!
 //! Everything that reaches the library stores (synchronous SQLite) or the
 //! publisher runs on `spawn_blocking`; only the in-memory root registry
 //! answers inline.
 
+use crate::manage::Publishing;
+use crate::management::service::Management;
+use crate::scans::Scans;
+use crate::service::Identification;
 use axum::{
     Json,
     extract::{Path, State},
@@ -25,7 +29,6 @@ use crate::identify::models::IdentifyKind;
 use crate::manage::{PreviewItemInput, plain_retag};
 use crate::publish::planner::PlanKind;
 use crate::scan::models::{EffectivePolicy, ScanRun, ScanScope};
-use crate::wiring::LibrarySetup;
 use droppedneedle_auth::{Admin, Curator, Principal, User};
 
 // ---------------------------------------------------------------------------
@@ -165,7 +168,7 @@ fn check_plain_retag(caller: &Principal, plain: bool) -> Result<(), LibraryError
     )
 )]
 pub async fn list_roots(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     _caller: User,
 ) -> Result<Json<RootsResponse>, ApiError> {
     let held = {
@@ -174,9 +177,9 @@ pub async fn list_roots(
     };
     let policy_revision = {
         let state = state.clone();
-        blocking(move || state.policy_revision()).await??
+        blocking(move || state.core.policy_revision()).await??
     };
-    let registry = state.live_registry();
+    let registry = state.core.live_registry();
     Ok(Json(RootsResponse {
         roots: registry
             .roots()
@@ -208,7 +211,7 @@ pub async fn list_roots(
     )
 )]
 pub async fn add_root(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     _caller: Admin,
     ValidJson(body): ValidJson<AddRootBody>,
 ) -> Result<(StatusCode, Json<RootView>), ApiError> {
@@ -246,7 +249,7 @@ pub async fn add_root(
     )
 )]
 pub async fn trigger_scan(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     caller: Admin,
     ValidJson(body): ValidJson<ScanBody>,
 ) -> Result<Json<ScanResponse>, ApiError> {
@@ -270,7 +273,7 @@ pub async fn trigger_scan(
     )
 )]
 pub async fn list_runs(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     User(caller): User,
 ) -> Result<Json<ScanRunsResponse>, ApiError> {
     let (current, history) = blocking(move || state.recent_scan_runs(20))
@@ -296,7 +299,7 @@ pub async fn list_runs(
     )
 )]
 pub async fn get_run(
-    State(state): State<LibrarySetup>,
+    State(state): State<Scans>,
     User(caller): User,
     Path(id): Path<String>,
 ) -> Result<Json<RunDetailResponse>, ApiError> {
@@ -335,7 +338,7 @@ pub async fn get_run(
     )
 )]
 pub async fn enqueue_identify(
-    State(state): State<LibrarySetup>,
+    State(state): State<Identification>,
     caller: Curator,
     ValidJson(body): ValidJson<IdentifyBody>,
 ) -> Result<Json<IdentifyResponse>, ApiError> {
@@ -371,7 +374,7 @@ pub async fn enqueue_identify(
     )
 )]
 pub async fn manage_preview(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     caller: Curator,
     ValidJson(body): ValidJson<ManagePreviewBody>,
 ) -> Result<Json<ManagePreviewResponse>, ApiError> {
@@ -448,7 +451,7 @@ pub async fn manage_preview(
     )
 )]
 pub async fn manage_apply(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     caller: Curator,
     ValidJson(body): ValidJson<ManageApplyBody>,
 ) -> Result<Json<ManageApplyResponse>, ApiError> {
@@ -495,7 +498,7 @@ pub async fn manage_apply(
     )
 )]
 pub async fn manage_undo(
-    State(state): State<LibrarySetup>,
+    State(state): State<Management>,
     caller: Curator,
     ValidJson(body): ValidJson<ManageUndoBody>,
 ) -> Result<Json<ManageUndoResponse>, ApiError> {
@@ -533,7 +536,7 @@ pub async fn manage_undo(
     )
 )]
 pub async fn list_plugin_files(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     _caller: Admin,
     ValidQuery(query): ValidQuery<PluginFilesQuery>,
 ) -> Result<Json<PluginFilesPage>, ApiError> {
@@ -596,7 +599,7 @@ pub async fn list_plugin_files(
     )
 )]
 pub async fn baseline_restore(
-    State(state): State<LibrarySetup>,
+    State(state): State<Publishing>,
     _caller: Admin,
     ValidJson(body): ValidJson<BaselineRestoreBody>,
 ) -> Result<Json<BaselineRestoreResponse>, ApiError> {

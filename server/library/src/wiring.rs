@@ -1,13 +1,14 @@
 //! Library bundle: one setup the app mounts.
 //!
-//! [`LibrarySetup`] owns the scan coordinator, the identify service
-//! and queue, the contribution service and worker, and the publish
-//! cell, plus the HTTP state (preview seals) and the background
-//! loops. `build` binds everything over the production provider
-//! clients, or over the provider ports a test gives in [`Endpoints`].
-//! [`LibraryServices`] builds the services over it once; it is the state
-//! of the routes [`routes`] lists for the app to mount, and it starts the
-//! background loops.
+//! [`LibrarySetup`] only builds: the scan coordinator, the identify
+//! service and queue, the contribution service and worker, the publish
+//! cell, and the services over them ([`Scans`], [`Activity`],
+//! [`Identification`], [`Publishing`], [`Imports`]), which it hands out.
+//! `build` binds everything over the production provider clients, or over
+//! the provider ports a test gives in [`Endpoints`]. [`LibraryServices`]
+//! adds the services built over the setup; it is the state of the routes
+//! [`routes`] lists for the app to mount, and it starts the background
+//! loops.
 //!
 //! Store durability: roots, scan state, identification, contributions,
 //! and the publish journal live in the application database.
@@ -18,6 +19,7 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 
+use super::activity::Activity;
 use super::adapters::LoftyTagReader;
 use super::contrib::ContribProviders;
 use super::contrib::service::ContributionService;
@@ -25,7 +27,8 @@ use super::contrib::worker::VerificationWorker;
 use super::corrections::service::Corrections;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
-use super::manage::{PreviewEntry, PublishCell};
+use super::import::Imports;
+use super::manage::{PublishCell, Publishing};
 use super::management::enrich::EnrichmentPort;
 use super::management::service::Management;
 use super::management::settings::service::LibraryManagementService;
@@ -40,7 +43,8 @@ use super::scan::pool::BlockingPool;
 use super::scan::roots::RootRegistry;
 use super::scan::sqlite_store::SqliteScanStore;
 use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
-use super::service::ServiceError;
+use super::scans::Scans;
+use super::service::{Identification, ServiceError};
 use super::settings::LibrarySettings;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
@@ -206,6 +210,44 @@ impl LibraryCore {
         }
         fresh
     }
+
+    /// Live root registry: re-read from the settings, never cached.
+    pub fn live_registry(&self) -> RootRegistry {
+        self.refresh_registry()
+    }
+
+    /// The policy revision pages are shown and send back as
+    /// `expected_policy_revision`: the saved settings' revision of the
+    /// roots and rules, as `GET /settings/library` shows it. The
+    /// registry's own fingerprint is a different hash, kept internally.
+    pub fn policy_revision(&self) -> Result<String, ServiceError> {
+        let settings = self.library_settings()?;
+        Ok(crate::policy::resolve_stored(&settings).policy_revision)
+    }
+
+    /// The live registry, or `None` when the saved roots and rules no
+    /// longer carry `expected` as their policy revision (see
+    /// [`Self::policy_revision`]) or the registry does not match them.
+    pub fn registry_at(&self, expected: &str) -> Result<Option<RootRegistry>, ServiceError> {
+        let live = self.live_registry();
+        let settings = self.library_settings()?;
+        let current = crate::policy::resolve_stored(&settings).policy_revision == expected
+            && super::settings::registry_from(&settings).policy_revision()
+                == live.policy_revision();
+        Ok(current.then_some(live))
+    }
+
+    fn library_settings(&self) -> Result<Arc<Plain<TypedLibrary>>, ServiceError> {
+        self.library
+            .get()
+            .map_err(|error| ServiceError::internal(&error))
+    }
+
+    /// The shared root registry the stream gateway resolves local reads
+    /// against; every refresh swaps the roots in for all its holders.
+    pub fn root_source(&self) -> SharedResolver {
+        (*self.registry).clone()
+    }
 }
 
 /// Everything `create_app` needs to mount the library engine, built once.
@@ -237,14 +279,6 @@ pub struct LibrarySetup {
     pub identify_store: Arc<SqliteIdentifyStore>,
     /// Identify service.
     pub identify: Arc<IdentifyService>,
-    /// MusicBrainz releases for importing finished downloads: search and
-    /// release lookups, identity-critical like identification, one source
-    /// for background work and one for a person waiting.
-    pub releases:
-        super::identify::sources::Prioritised<Arc<dyn super::identify::sources::ReleaseSource>>,
-    /// AcoustID for files being imported, keyed per call and keeping
-    /// nothing; off while no AcoustID key is set.
-    pub fingerprints: Arc<dyn super::identify::sources::FingerprintSource>,
     /// Contribution service.
     pub contrib: Arc<ContributionService>,
     /// Contribution verification worker.
@@ -259,10 +293,6 @@ pub struct LibrarySetup {
     pub held_bundles: super::manage::HeldBundles,
     /// Hidden files no journal row names, from the pass after startup.
     pub leftover_files: super::manage::LeftoverFiles,
-    /// Sealed previews awaiting apply, keyed by token hash.
-    pub previews: Arc<std::sync::Mutex<HashMap<String, PreviewEntry>>>,
-    /// Watcher state across ticks.
-    pub watcher_state: Arc<std::sync::Mutex<WatcherState>>,
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
     /// The jobs table: a removed album's clean-up is queued here in the
@@ -270,8 +300,6 @@ pub struct LibrarySetup {
     pub jobs: droppedneedle_kernel::jobs::queue::JobQueue,
     /// The recycle bins removals, upgrades and replaced files go to.
     pub bins: super::publish::bin::BinSource,
-    /// What recycle-bin expiry remembers between passes.
-    pub expiry: Arc<super::publish::expiry::ExpiryMemory>,
     /// Wall time: the kernel clock, which recycle-bin expiry reads.
     pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     /// The shared outbound HTTP client, for media-server refreshes after a
@@ -288,6 +316,17 @@ pub struct LibrarySetup {
     /// The write side the fields above share, which the plugin host holds
     /// too.
     pub core: LibraryCore,
+    /// Scan requests, history and controls, and the scan loop's turns.
+    pub scans: Scans,
+    /// The activity feed and the identification pause switch.
+    pub activity: Activity,
+    /// Identification requests and reviews, and the identify loop's turns.
+    pub identification: Identification,
+    /// Previews, apply, undo, the other managed writes and publish
+    /// upkeep.
+    pub publishing: Publishing,
+    /// Finished downloads brought into the library.
+    pub imports: Imports,
 }
 
 impl LibrarySetup {
@@ -345,11 +384,11 @@ impl LibrarySetup {
         let contrib = endpoints
             .contribution_providers
             .unwrap_or_else(|| ContribProviders {
-                discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
+                discogs: Arc::new(super::contrib::live::LiveDiscogsContrib::new(
                     providers.discogs.clone(),
                     platform.clock.clone(),
                 )),
-                musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(
+                musicbrainz: Arc::new(super::contrib::live::LiveMusicBrainzContrib::new(
                     mb_client(RequestPriority::UserInitiated),
                     mb_client(RequestPriority::BackgroundSync),
                 )),
@@ -454,7 +493,7 @@ impl LibrarySetup {
             db,
             queue,
             contrib_providers,
-            Arc::new(super::adapters::IdentifyFollowUp::new(
+            Arc::new(super::contrib::live::IdentifyFollowUp::new(
                 identify_store.clone(),
             )),
             platform.clock.clone(),
@@ -467,6 +506,46 @@ impl LibrarySetup {
                 pool.clone(),
                 identify_store.clone(),
             ));
+        let scans = Scans {
+            coordinator: coordinator.clone(),
+            scan_store: scan_store.clone(),
+            core: core.clone(),
+            settings: settings.clone(),
+            pool: pool.clone(),
+            watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
+        };
+        let activity = Activity {
+            coordinator: coordinator.clone(),
+            scan_store: scan_store.clone(),
+            clock: platform.clock.clone(),
+            wakeups: wakeups.clone(),
+        };
+        let identification = Identification {
+            db: db.clone(),
+            identify_store: identify_store.clone(),
+            identify: identify.clone(),
+            settings: settings.clone(),
+            ids: platform.ids.clone(),
+            clock: platform.clock.clone(),
+        };
+        let publishing = Publishing {
+            db: db.clone(),
+            core: core.clone(),
+            identify_store: identify_store.clone(),
+            scan_store: scan_store.clone(),
+            settings: settings.clone(),
+            previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            expiry: Arc::default(),
+            jobs: jobs.clone(),
+        };
+        let imports = Imports {
+            db: db.clone(),
+            core: core.clone(),
+            identify_store: identify_store.clone(),
+            settings: settings.clone(),
+            releases,
+            fingerprints,
+        };
         Ok(Self {
             ids: platform.ids.clone(),
             management_settings: Arc::new(LibraryManagementService::new(platform.settings.clone())),
@@ -480,132 +559,25 @@ impl LibrarySetup {
             wakeups,
             identify_store,
             identify,
-            releases,
-            fingerprints,
             contrib,
             contrib_worker,
             publish: core.publish.clone(),
             placement: core.placement.clone(),
             held_bundles: core.held_bundles.clone(),
             leftover_files: super::manage::LeftoverFiles::new(db.clone(), platform.clock.clone()),
-            previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
             jobs,
             bins: core.bins.clone(),
-            expiry: Arc::default(),
             clock: platform.clock.clone(),
             http: platform.http.shared().clone(),
             enrichment,
             core,
+            scans,
+            activity,
+            identification,
+            publishing,
+            imports,
         })
-    }
-
-    /// Live root registry: re-read from the settings, never cached.
-    pub fn live_registry(&self) -> RootRegistry {
-        self.refresh_registry()
-    }
-
-    /// The policy revision pages are shown and send back as
-    /// `expected_policy_revision`: the saved settings' revision of the
-    /// roots and rules, as `GET /settings/library` shows it. The
-    /// registry's own fingerprint is a different hash, kept internally.
-    pub fn policy_revision(&self) -> Result<String, ServiceError> {
-        let settings = self.library_settings()?;
-        Ok(crate::policy::resolve_stored(&settings).policy_revision)
-    }
-
-    /// The live registry, or `None` when the saved roots and rules no
-    /// longer carry `expected` as their policy revision (see
-    /// [`Self::policy_revision`]) or the registry does not match them.
-    pub fn registry_at(&self, expected: &str) -> Result<Option<RootRegistry>, ServiceError> {
-        let live = self.live_registry();
-        let settings = self.library_settings()?;
-        let current = crate::policy::resolve_stored(&settings).policy_revision == expected
-            && super::settings::registry_from(&settings).policy_revision()
-                == live.policy_revision();
-        Ok(current.then_some(live))
-    }
-
-    fn library_settings(&self) -> Result<Arc<Plain<TypedLibrary>>, ServiceError> {
-        self.settings
-            .library
-            .get()
-            .map_err(|error| ServiceError::internal(&error))
-    }
-
-    /// Re-read the roots from the settings and swap them in when they
-    /// changed. Roots that are new or changed get a dirty mark, so the
-    /// supervisor scans them; an unreadable settings section keeps the
-    /// current registry.
-    pub fn refresh_registry(&self) -> RootRegistry {
-        self.core.refresh_registry()
-    }
-
-    /// The shared root registry the stream gateway resolves local reads
-    /// against; every refresh swaps the roots in for all its holders.
-    pub fn root_source(&self) -> SharedResolver {
-        (*self.registry).clone()
-    }
-
-    /// Startup recovery: publish reconcile (resume-or-compensate,
-    /// never half-apply) plus identify job requeue. Scan
-    /// recovery runs in the supervisor preamble. Re-running after a
-    /// clean shutdown is a no-op. Never fails boot: a publish journal
-    /// that cannot be reconciled is logged and left for an
-    /// administrator, and managed writes stay closed until it clears.
-    pub async fn run_recovery(&self) -> LibraryRecovery {
-        // Recovery waits on the database and holds the cell's mutex, so it
-        // runs off the async runtime.
-        let setup = self.clone();
-        let recovered = tokio::task::spawn_blocking(move || {
-            let registry = setup.live_registry();
-            let mut cell = setup
-                .publish
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let recoveries = cell
-                .refresh(&registry, &setup.root_dirs)
-                .unwrap_or_else(|error| {
-                    tracing::error!(%error, "publish recovery did not run; managed writes stay closed");
-                    Vec::new()
-                });
-            // Copies an interrupted download import left in the hidden
-            // import folders, once no bundle still waits on them.
-            let roots: Vec<PathBuf> = registry
-                .roots()
-                .iter()
-                .map(|root| root.path.clone())
-                .collect();
-            let held = cell.has_held().unwrap_or_else(|error| {
-                tracing::warn!(%error, "publish journal unreadable; import leftovers kept");
-                true
-            });
-            let settled = cell.cell.is_some() && !held;
-            super::publish::import_staging::sweep_import_leftovers(&roots, settled);
-            recoveries
-        })
-        .await;
-        let recoveries = recovered.unwrap_or_else(|error| {
-            tracing::error!(%error, "publish recovery panicked; managed writes stay closed");
-            Vec::new()
-        });
-        let identify = self.identify_store.clone();
-        match tokio::task::spawn_blocking(move || identify.recover()).await {
-            Ok(Ok(0)) => {}
-            Ok(Ok(requeued)) => {
-                tracing::info!(requeued, "identify jobs from the previous run requeued");
-            }
-            // The jobs' leases run out and the queue takes them again.
-            Ok(Err(error)) => tracing::warn!(%error, "identify jobs not requeued at startup"),
-            Err(error) => tracing::warn!(%error, "identify job recovery did not run"),
-        }
-        LibraryRecovery {
-            publish_recoveries: recoveries
-                .into_iter()
-                .map(|recovery| (recovery.bundle_id, format!("{:?}", recovery.action)))
-                .collect(),
-        }
     }
 }
 
@@ -613,9 +585,13 @@ impl LibrarySetup {
 /// router's state: a handler takes the service it calls as its state.
 #[derive(Clone)]
 pub struct LibraryServices {
-    /// Roots, scans, identification and publishing, which still live on
-    /// the setup.
+    /// What the services are built over, for the loops and the acquire
+    /// ports. No route takes it.
     pub setup: LibrarySetup,
+    pub scans: Scans,
+    pub activity: Activity,
+    pub identification: Identification,
+    pub publishing: Publishing,
     pub operations: Operations,
     pub repairs: Repairs,
     pub corrections: Corrections,
@@ -646,8 +622,26 @@ impl LibraryServices {
             management: Management::new(setup),
             mutations: Mutations::new(setup),
             contrib: setup.contrib.clone(),
+            scans: setup.scans.clone(),
+            activity: setup.activity.clone(),
+            identification: setup.identification.clone(),
+            publishing: setup.publishing.clone(),
             operations,
             setup: setup.clone(),
+        }
+    }
+
+    /// Startup recovery: publish reconcile (resume-or-compensate, never
+    /// half-apply) plus identify job requeue. Scan recovery runs in the
+    /// supervisor preamble. Re-running after a clean shutdown is a no-op.
+    /// Never fails boot: a publish journal that cannot be reconciled is
+    /// logged and left for an administrator, and managed writes stay
+    /// closed until it clears.
+    pub async fn run_recovery(&self) -> LibraryRecovery {
+        let recoveries = self.publishing.recover().await;
+        self.identification.recover().await;
+        LibraryRecovery {
+            publish_recoveries: recoveries,
         }
     }
 
@@ -700,7 +694,10 @@ macro_rules! substate {
 }
 
 substate!(
-    setup: LibrarySetup,
+    scans: Scans,
+    activity: Activity,
+    identification: Identification,
+    publishing: Publishing,
     operations: Operations,
     repairs: Repairs,
     corrections: Corrections,

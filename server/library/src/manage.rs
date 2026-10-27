@@ -21,7 +21,7 @@ use super::publish::{PlacementMode, PublishError, Sandbox};
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::RootRegistry;
 use super::service::ServiceError;
-use super::wiring::{LibrarySetup, RootDirs};
+use super::wiring::RootDirs;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{CancelFlag, Db, DbError};
 use droppedneedle_kernel::jobs::queue::JobQueue;
@@ -1003,10 +1003,103 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
     }
 }
 
-impl LibrarySetup {
+/// Managed writes: sealed previews and their apply, undo, baseline
+/// restore, removals and put-backs, and the publish session they all run
+/// under, plus its upkeep (snapshot purge, recycle-bin expiry, startup
+/// recovery).
+#[derive(Clone)]
+pub struct Publishing {
+    pub(crate) db: Db,
+    /// The publish cell, the roots and the recycle bins.
+    pub core: super::wiring::LibraryCore,
+    pub(crate) identify_store: Arc<super::identify::sqlite::SqliteIdentifyStore>,
+    pub(crate) scan_store: Arc<super::scan::sqlite_store::SqliteScanStore>,
+    pub(crate) settings: super::settings::LibrarySettings,
+    /// Sealed previews awaiting apply, keyed by token hash.
+    pub(crate) previews: Arc<std::sync::Mutex<HashMap<String, PreviewEntry>>>,
+    /// What recycle-bin expiry remembers between passes.
+    pub(crate) expiry: Arc<super::publish::expiry::ExpiryMemory>,
+    /// The jobs table: a removed album's clean-up is queued here in the
+    /// removal's own commit, and emptying the recycle bin is a job.
+    pub(crate) jobs: JobQueue,
+}
+
+impl Publishing {
+    /// Reconcile the publish journal at startup: resume or compensate
+    /// every unsettled bundle, never half-apply, and sweep what an
+    /// interrupted import left once nothing waits on it. Answers each
+    /// bundle's recovery. Never fails: a journal that cannot be
+    /// reconciled is logged and managed writes stay closed until it
+    /// clears.
+    pub(crate) async fn recover(&self) -> Vec<(String, String)> {
+        // Recovery waits on the database and holds the cell's mutex, so it
+        // runs off the async runtime.
+        let core = self.core.clone();
+        let recovered = tokio::task::spawn_blocking(move || {
+            let registry = core.live_registry();
+            let mut cell = core
+                .publish
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let recoveries = cell
+                .refresh(&registry, &core.root_dirs)
+                .unwrap_or_else(|error| {
+                    tracing::error!(%error, "publish recovery did not run; managed writes stay closed");
+                    Vec::new()
+                });
+            // Copies an interrupted download import left in the hidden
+            // import folders, once no bundle still waits on them.
+            let roots: Vec<PathBuf> = registry
+                .roots()
+                .iter()
+                .map(|root| root.path.clone())
+                .collect();
+            let held = cell.has_held().unwrap_or_else(|error| {
+                tracing::warn!(%error, "publish journal unreadable; import leftovers kept");
+                true
+            });
+            let settled = cell.cell.is_some() && !held;
+            super::publish::import_staging::sweep_import_leftovers(&roots, settled);
+            recoveries
+        })
+        .await;
+        recovered
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "publish recovery panicked; managed writes stay closed");
+                Vec::new()
+            })
+            .into_iter()
+            .map(|recovery| (recovery.bundle_id, format!("{:?}", recovery.action)))
+            .collect()
+    }
+
+    /// One page of the files plugin `plugin` added, newest first. Blocking.
+    pub fn plugin_files(
+        &self,
+        plugin: &str,
+        before: Option<(i64, String)>,
+        limit: u32,
+    ) -> Result<Vec<super::publish::add::PluginFile>, ServiceError> {
+        self.db
+            .read_blocking("publish.plugin_files", |conn| {
+                super::publish::add::plugin_files(
+                    conn,
+                    plugin,
+                    before.as_ref().map(|(at, id)| (*at, id.as_str())),
+                    limit,
+                )
+            })
+            .map_err(publish_error)
+    }
+
+    /// Unsettled publish bundles in the journal. Blocking.
+    pub fn held_publish_bundles(&self) -> Result<Vec<String>, ServiceError> {
+        self.core.held_bundles.list().map_err(publish_error)
+    }
+
     /// Drop expired preview seals.
     pub(crate) fn sweep_previews(&self) {
-        let today = self.clock.today_day();
+        let today = self.core.clock.today_day();
         let mut previews = self
             .previews
             .lock()
@@ -1028,7 +1121,7 @@ impl LibrarySetup {
     /// (or matches nothing) until someone confirms it, unless the edition
     /// preferences let it manage unconfirmed matches.
     fn unconfirmed_gate(&self, album_id: &str) -> Result<(), ServiceError> {
-        let allowed = super::management::planner::manage_unconfirmed(self);
+        let allowed = self.settings.editions.manage_unconfirmed();
         let reason = self
             .db
             .read_blocking("management.match_gate", |conn| {
@@ -1304,14 +1397,15 @@ impl LibrarySetup {
                 message: "Preview exceeds the per-bundle file limit".to_owned(),
             });
         }
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let sandbox = {
             let mut cell = self
+                .core
                 .publish
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let session = cell.session(&registry);
-            cell.refresh_to(session, &self.root_dirs)
+            cell.refresh_to(session, &self.core.root_dirs)
                 .map_err(publish_error)?;
             cell.open().map_err(publish_error)?.sandbox.clone()
         };
@@ -1442,7 +1536,7 @@ impl LibrarySetup {
             });
         }
         let mut bundle = PlanBundle {
-            id: self.ids.new_id(),
+            id: self.core.ids.new_id(),
             items: plan_items,
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
@@ -1454,11 +1548,11 @@ impl LibrarySetup {
         // The tracks' rows as previewed: Apply is refused if they move.
         super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
         CollisionGate::check_bundle(&sandbox, &bundle).map_err(publish_error)?;
-        DiskPreflight::check(&bundle, &FsSpaceProbe::new(self.root_dirs.clone()))
+        DiskPreflight::check(&bundle, &FsSpaceProbe::new(self.core.root_dirs.clone()))
             .map_err(publish_error)?;
-        let token = self.ids.new_id();
+        let token = self.core.ids.new_id();
         let token_hash = sha256_hex(token.as_bytes());
-        let expires_day = self.clock.today_day() + PREVIEW_TTL_DAYS;
+        let expires_day = self.core.clock.today_day() + PREVIEW_TTL_DAYS;
         let sealed = SealedPreview::seal(
             bundle.clone(),
             token_hash.clone(),
@@ -1516,17 +1610,18 @@ impl LibrarySetup {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             previews.remove(&token_hash).ok_or(ServiceError::NotFound)?
         };
-        if self.clock.today_day() >= entry.sealed.expires_day {
+        if self.core.clock.today_day() >= entry.sealed.expires_day {
             return Err(ServiceError::Conflict {
                 message: "Preview expired; plan it again".to_owned(),
             });
         }
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registry = self.live_registry();
-        cell.refresh(&registry, &self.root_dirs)
+        let registry = self.core.live_registry();
+        cell.refresh(&registry, &self.core.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let live = self.seal_live(&open.sandbox, &entry.sealed.bundle, &token_hash)?;
@@ -1614,9 +1709,9 @@ impl LibrarySetup {
             overrides,
             profile_revision: pins.profile,
             naming_revision: pins.naming,
-            policy_revision: policy_revision_u64(&self.live_registry()),
+            policy_revision: policy_revision_u64(&self.core.live_registry()),
             settings_revision: pins.settings,
-            today_day: self.clock.today_day(),
+            today_day: self.core.clock.today_day(),
             token_hash: token_hash.to_owned(),
         })
     }
@@ -1638,12 +1733,13 @@ impl LibrarySetup {
     /// stop a publish part way as a killed process would. Tests only.
     #[cfg(any(test, feature = "test-support"))]
     pub fn arm_publish_crash(&self, point: Option<super::publish::CrashPoint>) {
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if cell.refresh(&registry, &self.root_dirs).is_ok()
+        if cell.refresh(&registry, &self.core.root_dirs).is_ok()
             && let Ok(open) = cell.open()
         {
             open.publisher.set_crash_point(point);
@@ -1654,12 +1750,13 @@ impl LibrarySetup {
     /// without one of its steps. Tests only.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_publish_seams(&self, seams: super::publish::place::Seams) {
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if cell.refresh(&registry, &self.root_dirs).is_ok()
+        if cell.refresh(&registry, &self.core.root_dirs).is_ok()
             && let Ok(open) = cell.open()
         {
             open.publisher.set_place_seams(seams);
@@ -1675,12 +1772,13 @@ impl LibrarySetup {
         before_place: Option<super::publish::publisher::BeforePlace>,
         before_set_aside: Option<super::publish::publisher::BeforePlace>,
     ) {
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if cell.refresh(&registry, &self.root_dirs).is_ok()
+        if cell.refresh(&registry, &self.core.root_dirs).is_ok()
             && let Ok(open) = cell.open()
         {
             open.publisher.set_before_place(before_place);
@@ -1694,14 +1792,15 @@ impl LibrarySetup {
     /// Blocking.
     pub(crate) fn settle_publishes(&self) -> Result<(), PublishError> {
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let session = cell.session(&registry);
         let reopen = cell.needs_refresh(&session);
         let retry = !reopen && cell.has_held()?;
-        cell.refresh_to(session, &self.root_dirs)?;
+        cell.refresh_to(session, &self.core.root_dirs)?;
         if retry {
             cell.retry_held()?;
         }
@@ -1711,13 +1810,14 @@ impl LibrarySetup {
     /// The sandbox over the usable roots, opening the publish cell when
     /// the root set changed. Blocking.
     pub(crate) fn publish_sandbox(&self) -> Result<Sandbox, PublishError> {
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = cell.session(&registry);
-        cell.refresh_to(session, &self.root_dirs)?;
+        cell.refresh_to(session, &self.core.root_dirs)?;
         Ok(cell.open()?.sandbox.clone())
     }
 
@@ -1729,13 +1829,14 @@ impl LibrarySetup {
         &self,
         root_id: &str,
     ) -> Result<Option<PlacementCheck>, PublishError> {
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = cell.session(&registry);
-        cell.refresh_to(session, &self.root_dirs)?;
+        cell.refresh_to(session, &self.core.root_dirs)?;
         cell.recheck_placement(root_id)
     }
 
@@ -1760,18 +1861,19 @@ impl LibrarySetup {
         use super::publish::remove::{self, Refusal};
         let mut cell = match entry {
             RemovalEntry::Wait => self
+                .core
                 .publish
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
-            RemovalEntry::Now => match self.publish.try_lock() {
+            RemovalEntry::Now => match self.core.publish.try_lock() {
                 Ok(cell) => cell,
                 Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
                 Err(std::sync::TryLockError::WouldBlock) => return Err(Refusal::Busy),
             },
         };
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let session = cell.session(&registry);
-        cell.refresh_to(session, &self.root_dirs)?;
+        cell.refresh_to(session, &self.core.root_dirs)?;
         let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;
         let bundle_id = uuid::Uuid::new_v4().to_string();
         let mut removal = remove::plan(
@@ -1782,7 +1884,7 @@ impl LibrarySetup {
             reason_code,
             actor,
             undo,
-            self.clock.now_system(),
+            self.core.clock.now_system(),
         )?;
         removal.album_removed = album_removed;
         let track_ids: Vec<String> = removal
@@ -1801,12 +1903,12 @@ impl LibrarySetup {
             added: None,
             removal: Some(removal),
         };
-        let token_hash = sha256_hex(self.ids.new_id().as_bytes());
+        let token_hash = sha256_hex(self.core.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
             bundle,
             token_hash.clone(),
             PINNED_REVISION,
-            self.clock.today_day() + PREVIEW_TTL_DAYS,
+            self.core.clock.today_day() + PREVIEW_TTL_DAYS,
         );
         let live = SealRecheck {
             fingerprints: BTreeMap::new(),
@@ -1816,7 +1918,7 @@ impl LibrarySetup {
             naming_revision: PINNED_REVISION,
             policy_revision,
             settings_revision: PINNED_REVISION,
-            today_day: self.clock.today_day(),
+            today_day: self.core.clock.today_day(),
             token_hash,
         };
         let published = open
@@ -1830,7 +1932,7 @@ impl LibrarySetup {
         };
         if let Err(error) = published {
             let committed = self
-                .held_bundles
+                .core.held_bundles
                 .committed(bundle_id)
                 .unwrap_or_else(|read| {
                     tracing::warn!(%read, bundle_id, "could not tell whether a failed removal committed");
@@ -1891,14 +1993,14 @@ impl LibrarySetup {
     ) -> Result<Vec<String>, super::publish::put_back::Refusal> {
         use super::publish::put_back::{self, Refusal};
         let (roots, prehashed) = put_back::prepare(&self.db, removal_id, album_id)?;
-        let mut cell = match self.publish.try_lock() {
+        let mut cell = match self.core.publish.try_lock() {
             Ok(cell) => cell,
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => return Err(Refusal::Busy),
         };
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let session = cell.session(&registry);
-        cell.refresh_to(session, &self.root_dirs)?;
+        cell.refresh_to(session, &self.core.root_dirs)?;
         let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;
         let bundle_id = uuid::Uuid::new_v4().to_string();
         let plan = put_back::plan(
@@ -1924,12 +2026,12 @@ impl LibrarySetup {
             put_back: Some(plan),
             added: None,
         };
-        let token_hash = sha256_hex(self.ids.new_id().as_bytes());
+        let token_hash = sha256_hex(self.core.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
             bundle,
             token_hash.clone(),
             PINNED_REVISION,
-            self.clock.today_day() + PREVIEW_TTL_DAYS,
+            self.core.clock.today_day() + PREVIEW_TTL_DAYS,
         );
         let live = SealRecheck {
             fingerprints: BTreeMap::new(),
@@ -1939,7 +2041,7 @@ impl LibrarySetup {
             naming_revision: PINNED_REVISION,
             policy_revision,
             settings_revision: PINNED_REVISION,
-            today_day: self.clock.today_day(),
+            today_day: self.core.clock.today_day(),
             token_hash,
         };
         if let Err(error) = open
@@ -1948,7 +2050,7 @@ impl LibrarySetup {
         {
             let bundle_id = sealed.bundle.id.as_str();
             let committed = self
-                .held_bundles
+                .core.held_bundles
                 .committed(bundle_id)
                 .unwrap_or_else(|read| {
                     tracing::warn!(%read, bundle_id, "could not tell whether a failed put-back committed");
@@ -1975,11 +2077,12 @@ impl LibrarySetup {
     ) -> Result<AppliedBundle, PublishError> {
         let retention = self.undo_retention_days()?;
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registry = self.live_registry();
-        cell.refresh(&registry, &self.root_dirs)?;
+        let registry = self.core.live_registry();
+        cell.refresh(&registry, &self.core.root_dirs)?;
         let open = cell.open()?;
         let mut docs = BTreeMap::new();
         for item in &plan_items {
@@ -2006,12 +2109,12 @@ impl LibrarySetup {
         // the rows are sealed now, so the commit refuses only what moves
         // while the album is being saved.
         super::publish::planner::seal_rows(&self.db, &mut bundle)?;
-        let token_hash = sha256_hex(self.ids.new_id().as_bytes());
+        let token_hash = sha256_hex(self.core.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
             bundle,
             token_hash.clone(),
             pins.settings,
-            self.clock.today_day() + PREVIEW_TTL_DAYS,
+            self.core.clock.today_day() + PREVIEW_TTL_DAYS,
         );
         let live = self.live_seal(
             &open.sandbox,
@@ -2051,11 +2154,12 @@ impl LibrarySetup {
         only_by: Option<&str>,
     ) -> Result<AppliedBundle, ServiceError> {
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registry = self.live_registry();
-        cell.refresh(&registry, &self.root_dirs)
+        let registry = self.core.live_registry();
+        cell.refresh(&registry, &self.core.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         if let Some(caller) = only_by {
@@ -2102,13 +2206,6 @@ impl LibrarySetup {
         }
         let applied = self.publish_restoration(&mut cell, plan_items, docs)?;
         drop(cell);
-        // An undone run of the profile is not run again by itself. The
-        // undo stands either way.
-        if let Err(error) =
-            super::management::service::Management::new(self).bundle_undone(bundle_id)
-        {
-            tracing::warn!(%error, bundle_id, "undone bundle not recorded for automatic management");
-        }
         Ok(applied)
     }
 
@@ -2147,7 +2244,7 @@ impl LibrarySetup {
         let root_id = added.file.root_id.clone();
         let policy_revision = policy_revision_u64(registry);
         let bundle = PlanBundle {
-            id: self.ids.new_id(),
+            id: self.core.ids.new_id(),
             items: Vec::new(),
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
@@ -2158,9 +2255,9 @@ impl LibrarySetup {
         };
         let (sealed, live) = seal_pinned(
             bundle,
-            &self.ids.new_id(),
+            &self.core.ids.new_id(),
             policy_revision,
-            self.clock.today_day(),
+            self.core.clock.today_day(),
         );
         let bundle_id = sealed.bundle.id.clone();
         let outcome = match open
@@ -2169,7 +2266,12 @@ impl LibrarySetup {
         {
             Ok(outcome) => outcome,
             Err(error) => {
-                if !self.held_bundles.committed(&bundle_id).unwrap_or(false) {
+                if !self
+                    .core
+                    .held_bundles
+                    .committed(&bundle_id)
+                    .unwrap_or(false)
+                {
                     return Err(publish_error(error));
                 }
                 tracing::warn!(%error, bundle_id, "plugin file taken away; recovery finishes the rest");
@@ -2177,8 +2279,8 @@ impl LibrarySetup {
             }
         };
         // A track the scan made from the file goes missing at the next scan.
-        self.dirty.mark(&root_id);
-        self.wakeups.notify("scan");
+        self.core.dirty.mark(&root_id);
+        self.core.wakeups.notify("scan");
         Ok(AppliedBundle {
             bundle_id,
             outcome,
@@ -2193,12 +2295,13 @@ impl LibrarySetup {
         override_of: &dyn Fn(&str) -> u64,
     ) -> Result<UndoFiles, ServiceError> {
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let session = cell.session(&registry);
-        cell.refresh_to(session, &self.root_dirs)
+        cell.refresh_to(session, &self.core.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         self.undo_files_in(open, bundle_id, override_of)
@@ -2347,7 +2450,7 @@ impl LibrarySetup {
             locations,
             identities,
             overrides,
-            today_day: self.clock.today_day(),
+            today_day: self.core.clock.today_day(),
         };
         let sandbox = open.sandbox.clone();
         let live_paths: Vec<PathBuf> = live
@@ -2469,11 +2572,12 @@ impl LibrarySetup {
             });
         }
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registry = self.live_registry();
-        cell.refresh(&registry, &self.root_dirs)
+        let registry = self.core.live_registry();
+        cell.refresh(&registry, &self.core.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let files = self.baseline_files_in(open, track_ids, &|_| PINNED_OVERRIDE)?;
@@ -2510,12 +2614,13 @@ impl LibrarySetup {
         override_of: &dyn Fn(&str) -> u64,
     ) -> Result<BaselineFiles, ServiceError> {
         let mut cell = self
+            .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         let session = cell.session(&registry);
-        cell.refresh_to(session, &self.root_dirs)
+        cell.refresh_to(session, &self.core.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         self.baseline_files_in(open, track_ids, override_of)
@@ -2597,7 +2702,7 @@ impl LibrarySetup {
             });
         }
         let sandbox = open.sandbox.clone();
-        let registry = self.live_registry();
+        let registry = self.core.live_registry();
         // The original counts as occupied only when another file holds
         // it: a same-path restore whose subject still sits at the
         // original path is restoring tags in place, mirroring undo's
@@ -2708,11 +2813,11 @@ impl LibrarySetup {
         let retention = self.undo_retention_days().map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let mut bundle = PlanBundle {
-            id: self.ids.new_id(),
+            id: self.core.ids.new_id(),
             items: plan_items,
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
-            policy_revision: policy_revision_u64(&self.live_registry()),
+            policy_revision: policy_revision_u64(&self.core.live_registry()),
             put_back: None,
             added: None,
             removal: None,
@@ -2721,15 +2826,15 @@ impl LibrarySetup {
         // Restoration bundles re-run the dry-run gates: a restore
         // onto an occupied path blocks instead of overwriting.
         CollisionGate::check_bundle(&open.sandbox, &bundle).map_err(publish_error)?;
-        DiskPreflight::check(&bundle, &FsSpaceProbe::new(self.root_dirs.clone()))
+        DiskPreflight::check(&bundle, &FsSpaceProbe::new(self.core.root_dirs.clone()))
             .map_err(publish_error)?;
-        let token = self.ids.new_id();
+        let token = self.core.ids.new_id();
         let token_hash = sha256_hex(token.as_bytes());
         let sealed = SealedPreview::seal(
             bundle,
             token_hash.clone(),
             PINNED_REVISION,
-            self.clock.today_day() + PREVIEW_TTL_DAYS,
+            self.core.clock.today_day() + PREVIEW_TTL_DAYS,
         );
         let live = self.seal_live(&open.sandbox, &sealed.bundle, &token_hash)?;
         open.publisher.set_undo_retention_days(retention);

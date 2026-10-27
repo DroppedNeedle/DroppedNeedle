@@ -194,7 +194,11 @@ async fn identify_tick_pre_signalled_shutdown_attempts_nothing() {
     let lib = Lib::open(Arc::new(EmptyRecall)).await;
     seed_jobs(&lib.library, 3);
     shutdown_rx.cancel();
-    let attempted = lib.library.identify_tick_with_shutdown(&shutdown_rx).await;
+    let attempted = lib
+        .library
+        .identification
+        .identify_tick_with_shutdown(&shutdown_rx)
+        .await;
     assert_eq!(attempted, 0, "pre-signalled shutdown attempts nothing");
     for n in 0..3 {
         assert_eq!(
@@ -209,7 +213,11 @@ async fn identify_tick_abandons_drain_after_mid_attempt_shutdown() {
     let shutdown_rx = CancellationToken::new();
     let lib = Lib::open(Arc::new(SignalOnFirstRecall::new(shutdown_rx.clone()))).await;
     seed_jobs(&lib.library, 5);
-    let attempted = lib.library.identify_tick_with_shutdown(&shutdown_rx).await;
+    let attempted = lib
+        .library
+        .identification
+        .identify_tick_with_shutdown(&shutdown_rx)
+        .await;
     assert_eq!(
         attempted, 1,
         "drain stops after the attempt running at shutdown"
@@ -235,7 +243,12 @@ async fn identify_tick_abandons_in_flight_gate_wait_on_shutdown() {
     let lib = Lib::open(Arc::new(GateWait::new(entered_tx))).await;
     seed_jobs(&lib.library, 3);
     let library = lib.library.clone();
-    let tick = tokio::spawn(async move { library.identify_tick_with_shutdown(&shutdown_rx).await });
+    let tick = tokio::spawn(async move {
+        library
+            .identification
+            .identify_tick_with_shutdown(&shutdown_rx)
+            .await
+    });
     entered_rx.await.expect("recall entered its gate wait");
     let start = std::time::Instant::now();
     shutdown_tx.cancel();
@@ -265,6 +278,6 @@ async fn identify_tick_abandons_in_flight_gate_wait_on_shutdown() {
 async fn identify_tick_without_signal_still_drains_everything() {
     let lib = Lib::open(Arc::new(EmptyRecall)).await;
     seed_jobs(&lib.library, 3);
-    let attempted = lib.library.identify_tick().await;
+    let attempted = lib.library.identification.identify_tick().await;
     assert_eq!(attempted, 3, "no signal keeps the full drain");
 }

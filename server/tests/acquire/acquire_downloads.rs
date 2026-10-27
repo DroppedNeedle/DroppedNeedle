@@ -1234,6 +1234,7 @@ impl HeldRig {
         let music = dir.join("music");
         std::fs::create_dir_all(&music).expect("music root");
         library
+            .scans
             .add_root(
                 Some("music".to_owned()),
                 music.to_string_lossy().into_owned(),
@@ -1241,7 +1242,7 @@ impl HeldRig {
             )
             .expect("root adds");
         let landing = droppedneedle_acquire::landing::library::LibraryLanding::new(
-            library.clone(),
+            &library,
             crate::common::library::every_priority(Arc::new(Releases(releases))),
             db.pool().clone(),
         );

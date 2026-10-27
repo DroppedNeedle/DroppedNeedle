@@ -36,7 +36,7 @@ impl Management {
     /// in flight. Blocking.
     pub fn check_placement(&self, root_id: &str) -> Result<PlacementCheck, ManagementError> {
         self.setup
-            .check_placement(root_id)
+            .publishing.check_placement(root_id)
             .map_err(|error| {
                 tracing::warn!(%error, root_id, "placement check could not open the library folders");
                 ManagementError::Conflict(

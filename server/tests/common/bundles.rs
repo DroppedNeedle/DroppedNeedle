@@ -100,8 +100,8 @@ pub fn acquire_at(
         AcquireStores::open(platform, ticks),
         AcquirePorts {
             library: Arc::new(LibraryLanding::new(
-                library.clone(),
-                library.releases.clone(),
+                library,
+                library.imports.releases.clone(),
                 platform.db.sqlx().clone(),
             )),
             edition_plans: Arc::new(crate::common::library::operations(library)),
@@ -151,7 +151,7 @@ pub fn reads_at(
     let batch_requests: Arc<dyn BatchRequests> = match acquire {
         Some(acquire) => Arc::new(DiscoveryBatchRequests::new(
             acquire.requests.clone(),
-            Some(library.clone()),
+            Some(droppedneedle_library::mutations::Mutations::new(library)),
         )),
         None => Arc::new(NoBatchRequests),
     };
@@ -169,7 +169,10 @@ pub fn reads_at(
             collections,
             catalog,
             artwork,
-            library_files: LibraryFiles::new(platform.db.sqlx().clone(), library.root_source()),
+            library_files: LibraryFiles::new(
+                platform.db.sqlx().clone(),
+                library.core.root_source(),
+            ),
             batch_requests,
             download_readiness,
             cover_warm: None,

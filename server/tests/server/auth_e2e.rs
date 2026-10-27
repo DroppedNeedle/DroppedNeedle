@@ -204,7 +204,7 @@ impl E2e {
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
             p,
             auth.users.clone(),
-            library.root_source(),
+            library.core.root_source(),
             Arc::new(
                 droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
                     reads.collections.clone(),
@@ -230,7 +230,7 @@ impl E2e {
                 auth.users.clone(),
                 media.playback.clone(),
                 media.stream.engine.clone(),
-                library.clone(),
+                library.scans.clone(),
                 &reads,
             ),
         );

@@ -173,6 +173,7 @@ impl Management {
         message: &str,
     ) -> Result<RootRegistry, ManagementError> {
         self.setup
+            .core
             .registry_at(expected)
             .map_err(|error| ManagementError::Store(error.to_string()))?
             .ok_or_else(|| stale(message))
@@ -356,7 +357,7 @@ impl Management {
             }
             None => found.push("Library Management settings could not be read.".to_owned()),
         }
-        if self.setup.live_registry().policy_revision() != snapshot.policy_revision {
+        if self.setup.core.live_registry().policy_revision() != snapshot.policy_revision {
             found.push(
                 "The library folders or their rules changed after this preview was made."
                     .to_owned(),
@@ -1168,7 +1169,11 @@ impl Management {
             // the preview then.
             tracing::warn!(%error, job_id, "automatic management apply waits: the database is busy");
             for album in &albums {
-                self.setup.queue_automatic_management(album);
+                super::automatic::queue_automatic_management(
+                    &self.setup.db,
+                    &*self.setup.clock,
+                    album,
+                );
             }
         }
         Ok(())
@@ -1315,10 +1320,10 @@ impl Management {
         let intent = planning_intent(snapshot)?;
         let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
         let scripts = CompiledScripts::new(&pinned);
-        let sandbox = self.setup.publish_sandbox().map_err(|error| {
+        let sandbox = self.setup.publishing.publish_sandbox().map_err(|error| {
             ManagementError::Conflict(format!("No library folder can be written: {error}"))
         })?;
-        let registry = self.setup.live_registry();
+        let registry = self.setup.core.live_registry();
         let mut albums = self
             .setup
             .db
@@ -1552,7 +1557,7 @@ impl Management {
     ) -> Result<Vec<PlannedItem>, ManagementError> {
         let album_id = first.album_id.clone();
         let override_of = self.override_lookup(&album_id, Some((source_job, bundle_ordinal)))?;
-        let files = match self.setup.undo_files(bundle_id, &override_of) {
+        let files = match self.setup.publishing.undo_files(bundle_id, &override_of) {
             Ok(files) => files,
             Err(crate::service::ServiceError::NotFound) => Default::default(),
             Err(error) => return Err(ManagementError::Store(format!("{error:?}"))),
@@ -1910,7 +1915,7 @@ impl Management {
                 Ok::<_, ManagementError>(jobs::work_bundle(conn, job_id, ordinal)?)
             })?
         {
-            if let Err(error) = self.setup.settle_publishes() {
+            if let Err(error) = self.setup.publishing.settle_publishes() {
                 tracing::warn!(%error, bundle_id = earlier, "publish recovery did not finish");
             }
             if self.committed(&earlier) {
@@ -2064,6 +2069,7 @@ impl Management {
             settings: profile::seal_revision(&snapshot.settings_revision),
         };
         self.setup
+            .publishing
             .publish_plans(bundle_id, plans, pins, &override_of)
             .map_err(|error| {
                 // The database refused a call, or no recycle bin is known:

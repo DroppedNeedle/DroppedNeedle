@@ -8,6 +8,7 @@
 //! decisions. Excluding, restoring and retrying change what the library
 //! holds or start a job, so they are admin-only, as in v2.
 
+use crate::service::Identification;
 use axum::{
     Json,
     extract::{Path, State},
@@ -32,7 +33,7 @@ use crate::operations::reviews::{
     BulkAction, ReviewAction, ReviewFilter, ReviewOrder, ReviewRow, Tally, parse_state,
 };
 use crate::operations::service::Operations;
-use crate::wiring::{LibraryServices, LibrarySetup};
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator, User};
 
 /// Largest review page.
@@ -313,7 +314,7 @@ pub async fn get_review(
     )
 )]
 pub async fn approve_review(
-    State(service): State<LibrarySetup>,
+    State(service): State<Identification>,
     State(ops): State<Operations>,
     caller: Curator,
     Path(id): Path<String>,
@@ -351,7 +352,7 @@ pub async fn approve_review(
     )
 )]
 pub async fn reject_review(
-    State(service): State<LibrarySetup>,
+    State(service): State<Identification>,
     State(ops): State<Operations>,
     caller: Curator,
     Path(id): Path<String>,

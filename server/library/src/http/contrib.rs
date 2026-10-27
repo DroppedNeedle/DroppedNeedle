@@ -30,7 +30,7 @@ use crate::contrib::models::{
     ReleaseDraft,
 };
 use crate::contrib::service::ContributionService;
-use crate::wiring::{LibraryServices, LibrarySetup};
+use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Curator, User};
 use std::sync::Arc;
 
@@ -188,7 +188,7 @@ pub fn routes() -> Routes<LibraryServices> {
         .public(routes!(musicbrainz_callback))
 }
 
-impl LibrarySetup {
+impl LibraryServices {
     /// The MusicBrainz callback at its v1 path, for a seed opened before the
     /// upgrade. Mounted outside the session gate, like the v3 one.
     pub fn legacy_contrib_callback_router(&self) -> Router {

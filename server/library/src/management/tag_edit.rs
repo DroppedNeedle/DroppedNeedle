@@ -248,7 +248,7 @@ impl Management {
     /// Blocking.
     pub fn tag_editor(&self, track_id: &str) -> Result<EditorContext, ManagementError> {
         let subject = self.subject(track_id)?;
-        let sandbox = self.setup.publish_sandbox().map_err(|_| {
+        let sandbox = self.setup.publishing.publish_sandbox().map_err(|_| {
             ManagementError::Conflict(
                 "The track's library folder is not available right now.".to_owned(),
             )
@@ -319,6 +319,7 @@ impl Management {
             settings_revision: crate::management::settings::settings_revision(&stored),
             policy_revision: self
                 .setup
+                .core
                 .policy_revision()
                 .map_err(|error| ManagementError::Store(error.to_string()))?,
             track_revision: subject.track_revision,

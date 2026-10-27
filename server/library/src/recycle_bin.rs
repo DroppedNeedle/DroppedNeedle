@@ -18,9 +18,9 @@ use futures_util::future::BoxFuture;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::manage::Publishing;
 use crate::publish::expiry::{ExpiryReport, KeptWhy};
 use crate::publish::sql;
-use crate::wiring::LibrarySetup;
 
 /// The job that empties the bin.
 pub const EMPTY: JobKind = JobKind::new("library.recycle_bin_empty");
@@ -89,7 +89,7 @@ pub struct Emptied {
 
 /// Queue a run over the copies that reached the bin before `before_ms`.
 pub fn request_empty(
-    setup: &LibrarySetup,
+    publishing: &Publishing,
     before_ms: i64,
     actor: &str,
 ) -> Result<Enqueued, JobError> {
@@ -98,18 +98,18 @@ pub fn request_empty(
         actor: Some(actor.to_owned()),
     };
     let enqueued =
-        setup
+        publishing
             .db
             .write_blocking(Lane::Foreground, "recycle_bin.request_empty", |tx| {
-                setup.jobs.enqueue(tx, EMPTY, EMPTY_KEY, &payload)
+                publishing.jobs.enqueue(tx, EMPTY, EMPTY_KEY, &payload)
             })?;
-    setup.jobs.wake();
+    publishing.jobs.wake();
     Ok(enqueued)
 }
 
 /// Whether a run waits, runs, or the last one gave up.
-pub async fn state(setup: &LibrarySetup) -> Result<EmptyingState, DbError> {
-    Ok(match setup.jobs.latest(EMPTY, EMPTY_KEY).await? {
+pub async fn state(publishing: &Publishing) -> Result<EmptyingState, DbError> {
+    Ok(match publishing.jobs.latest(EMPTY, EMPTY_KEY).await? {
         Some(status) => match status.state {
             State::Queued | State::Running => EmptyingState::Emptying,
             State::Failed => EmptyingState::Stopped,
@@ -120,26 +120,28 @@ pub async fn state(setup: &LibrarySetup) -> Result<EmptyingState, DbError> {
 }
 
 /// What the last finished run did, if one has.
-pub fn last_emptied(setup: &LibrarySetup) -> Result<Option<Emptied>, DbError> {
+pub fn last_emptied(publishing: &Publishing) -> Result<Option<Emptied>, DbError> {
     type Last = (i64, Option<String>, u32, i64, u32, u32, u32, String);
-    let last: Option<Last> = setup.db.read_blocking("recycle_bin.last_emptied", |conn| {
-        Ok::<_, DbError>(
-            conn.prepare_cached(sql::BIN_EMPTIED_LAST.text())?
-                .query_row([], |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        row.get(7)?,
-                    ))
-                })
-                .optional()?,
-        )
-    })?;
+    let last: Option<Last> = publishing
+        .db
+        .read_blocking("recycle_bin.last_emptied", |conn| {
+            Ok::<_, DbError>(
+                conn.prepare_cached(sql::BIN_EMPTIED_LAST.text())?
+                    .query_row([], |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                        ))
+                    })
+                    .optional()?,
+            )
+        })?;
     Ok(last.map(
         |(at, by, deleted, freed, older_folders, kept, waited, names)| Emptied {
             at,
@@ -155,17 +157,17 @@ pub fn last_emptied(setup: &LibrarySetup) -> Result<Option<Emptied>, DbError> {
 }
 
 /// The handler the jobs module runs for [`EMPTY`].
-pub fn handler(setup: &LibrarySetup) -> Arc<dyn JobHandler> {
-    Arc::new(EmptyHandler(setup.clone()))
+pub fn handler(publishing: &Publishing) -> Arc<dyn JobHandler> {
+    Arc::new(EmptyHandler(publishing.clone()))
 }
 
-struct EmptyHandler(LibrarySetup);
+struct EmptyHandler(Publishing);
 
 impl JobHandler for EmptyHandler {
     fn run(&self, job: JobCtx) -> BoxFuture<'static, Outcome> {
-        let setup = self.0.clone();
+        let publishing = self.0.clone();
         Box::pin(async move {
-            match tokio::task::spawn_blocking(move || run(&setup, &job)).await {
+            match tokio::task::spawn_blocking(move || run(&publishing, &job)).await {
                 Ok(outcome) => outcome,
                 Err(error) => {
                     tracing::warn!(%error, "emptying the recycle bin stopped");
@@ -179,14 +181,14 @@ impl JobHandler for EmptyHandler {
     }
 }
 
-fn run(setup: &LibrarySetup, job: &JobCtx) -> Outcome {
+fn run(publishing: &Publishing, job: &JobCtx) -> Outcome {
     let Ok(payload) = job.payload::<EmptyPayload>() else {
         return Outcome::Fail {
             code: PAYLOAD_INVALID,
         };
     };
     let token = job.token().clone();
-    let report = match setup.empty_recycle_bin(payload.before, &|| !token.is_cancelled()) {
+    let report = match publishing.empty_recycle_bin(payload.before, &|| !token.is_cancelled()) {
         Ok(report) => report,
         Err(error) if error.wrote_nothing() => return Outcome::Busy,
         Err(error) => {
@@ -198,7 +200,7 @@ fn run(setup: &LibrarySetup, job: &JobCtx) -> Outcome {
         }
     };
     let finished = report.finished;
-    match record(setup, job, &payload, &report) {
+    match record(publishing, job, &payload, &report) {
         Ok(()) if finished => Outcome::Done,
         Ok(()) => {
             tracing::info!(
@@ -231,7 +233,7 @@ fn run(setup: &LibrarySetup, job: &JobCtx) -> Outcome {
 /// looks at those copies again. A finished attempt finishes the job in the
 /// same write.
 fn record(
-    setup: &LibrarySetup,
+    publishing: &Publishing,
     job: &JobCtx,
     payload: &EmptyPayload,
     report: &ExpiryReport,
@@ -252,9 +254,9 @@ fn record(
     let names = serde_json::to_string(&named).map_err(|_| JobError::Payload)?;
     let count = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
     let id = job.id().to_string();
-    let now = setup.clock.now_ms();
+    let now = publishing.core.clock.now_ms();
     let finished_at = report.finished.then_some(now);
-    setup
+    publishing
         .db
         .write_blocking(Lane::Background, "recycle_bin.emptied", |tx| {
             tx.prepare_cached(sql::BIN_EMPTIED_RECORD.text())?
