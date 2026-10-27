@@ -240,7 +240,7 @@ fn staging_for(journal: &Journal) -> std::path::PathBuf {
 
 async fn task_count(db: &AcquireDb) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM download_tasks")
-        .fetch_one(db.pool())
+        .fetch_one(db.db().sqlx())
         .await
         .unwrap()
 }

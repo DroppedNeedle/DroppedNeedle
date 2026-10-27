@@ -342,7 +342,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
          WHERE t.availability = 'indexed'",
     )
     .bind(GOOD_RELEASE)
-    .fetch_one(acquire.db.pool())
+    .fetch_one(acquire.db.db().sqlx())
     .await
     .expect("catalog");
     assert_eq!(
@@ -353,7 +353,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     let request: String =
         sqlx::query_scalar("SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1")
             .bind(GOOD_GROUP)
-            .fetch_one(acquire.db.pool())
+            .fetch_one(acquire.db.db().sqlx())
             .await
             .expect("request row");
     assert_eq!(request, "imported");
@@ -395,7 +395,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     let held: Vec<String> = sqlx::query_scalar(
         "SELECT path FROM acquire_held_files WHERE source_task_id = 't-bad' AND state = 'held'",
     )
-    .fetch_all(acquire.db.pool())
+    .fetch_all(acquire.db.db().sqlx())
     .await
     .expect("held rows");
     assert_eq!(held.len(), 2);
@@ -403,7 +403,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     assert!(held.iter().all(|path| held_dir.join(path).is_file()));
     let outcomes: Vec<String> =
         sqlx::query_scalar("SELECT outcome FROM download_import_decisions WHERE task_id = 't-bad'")
-            .fetch_all(acquire.db.pool())
+            .fetch_all(acquire.db.db().sqlx())
             .await
             .expect("decisions");
     assert!(outcomes.len() > 1, "failed over: {outcomes:?}");
@@ -414,7 +414,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         "SELECT reason FROM acquire_held_files WHERE source_task_id = 't-bad' \
          UNION ALL SELECT reason_code FROM download_import_decisions WHERE task_id = 't-bad'",
     )
-    .fetch_all(acquire.db.pool())
+    .fetch_all(acquire.db.db().sqlx())
     .await
     .expect("reason codes");
     assert!(
@@ -605,7 +605,7 @@ async fn a_download_with_a_junk_recording_id_is_held() {
     let decisions: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT outcome, reason_code FROM download_import_decisions WHERE task_id = 't-junk'",
     )
-    .fetch_all(acquire.db.pool())
+    .fetch_all(acquire.db.db().sqlx())
     .await
     .expect("decisions");
     assert_eq!(
@@ -796,7 +796,7 @@ async fn decisions(
          ORDER BY decided_at",
     )
     .bind(task_id)
-    .fetch_all(acquire.db.pool())
+    .fetch_all(acquire.db.db().sqlx())
     .await
     .expect("decisions")
 }
@@ -1107,7 +1107,7 @@ async fn a_file_whose_artist_tag_names_someone_else_is_held() {
         "SELECT reason, COALESCE(reason_detail, '') FROM acquire_held_files \
          WHERE source_task_id = 't-other-artist'",
     )
-    .fetch_all(acquire.db.pool())
+    .fetch_all(acquire.db.db().sqlx())
     .await
     .expect("held rows");
     assert_eq!(held.len(), 1, "{held:?}");
@@ -1191,7 +1191,7 @@ async fn a_file_heard_as_another_recording_needs_the_tracks_length() {
     );
     let held: Vec<(String,)> =
         sqlx::query_as("SELECT reason FROM acquire_held_files WHERE source_task_id = 't-heard'")
-            .fetch_all(acquire.db.pool())
+            .fetch_all(acquire.db.db().sqlx())
             .await
             .expect("held rows");
     assert_eq!(held, vec![("fingerprint_mismatch".to_owned(),)]);
@@ -1410,7 +1410,7 @@ async fn held_files_import_as_upgrades_or_discard() {
         "SELECT file_format FROM local_tracks WHERE availability = 'indexed' \
          AND relative_path LIKE '%Mysterons%'",
     )
-    .fetch_all(acquire.db.pool())
+    .fetch_all(acquire.db.db().sqlx())
     .await
     .expect("catalog");
     assert_eq!(formats, vec!["flac".to_owned()]);
@@ -1577,7 +1577,7 @@ async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
         "SELECT f.state, e.state FROM acquire_held_files f \
          JOIN acquire_held_entries e ON e.id = f.entry_id ORDER BY f.id",
     )
-    .fetch_all(acquire.db.pool())
+    .fetch_all(acquire.db.db().sqlx())
     .await
     .expect("held rows");
     assert_eq!(
@@ -1594,7 +1594,7 @@ async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
         "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed' \
          AND title = 'Mysterons'",
     )
-    .fetch_one(acquire.db.pool())
+    .fetch_one(acquire.db.db().sqlx())
     .await
     .expect("catalog");
     assert_eq!(copies, 1, "placed once");
@@ -1652,7 +1652,7 @@ async fn expired_entries_lose_their_held_copies_and_nothing_else() {
     assert_eq!(acquire.held.tend().await, 2);
     let states: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, state FROM acquire_held_entries ORDER BY id")
-            .fetch_all(acquire.db.pool())
+            .fetch_all(acquire.db.db().sqlx())
             .await
             .expect("entries");
     assert_eq!(
@@ -1679,7 +1679,7 @@ async fn expired_entries_lose_their_held_copies_and_nothing_else() {
         "the upload went"
     );
     let item: String = sqlx::query_scalar("SELECT status FROM drop_import_items WHERE id = 7")
-        .fetch_one(acquire.db.pool())
+        .fetch_one(acquire.db.db().sqlx())
         .await
         .expect("item");
     assert_eq!(item, "discarded");
@@ -1878,7 +1878,7 @@ async fn a_landing_waits_while_the_download_policy_does_not_read() {
     );
     assert!(file.exists());
     let quarantined: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_quarantine")
-        .fetch_one(acquire.db.pool())
+        .fetch_one(acquire.db.db().sqlx())
         .await
         .expect("quarantine count");
     assert_eq!(quarantined, 0);
@@ -2592,7 +2592,7 @@ async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
     assert_eq!(landing.reason, Some(Reason::LibraryFolderMissing));
     assert_eq!(landing.reason_text.as_deref(), Some(waiting.as_str()));
     let decisions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_import_decisions")
-        .fetch_one(acquire.db.pool())
+        .fetch_one(acquire.db.db().sqlx())
         .await
         .expect("decision count");
     assert_eq!(decisions, 0, "nothing was landed while it waits");
@@ -3222,7 +3222,7 @@ impl JoinRig {
         T: Send + Unpin + for<'r> sqlx::Decode<'r, sqlx::Sqlite> + sqlx::Type<sqlx::Sqlite>,
     {
         sqlx::query_scalar(sql)
-            .fetch_one(self.acquire.db.pool())
+            .fetch_one(self.acquire.db.db().sqlx())
             .await
             .expect("query runs")
     }
@@ -3240,7 +3240,7 @@ impl JoinRig {
              FROM local_tracks WHERE root_id = 'music' AND relative_path = ?1",
         )
         .bind(rel)
-        .fetch_one(self.acquire.db.pool())
+        .fetch_one(self.acquire.db.db().sqlx())
         .await
         .expect("a track at the path")
     }
@@ -3254,7 +3254,7 @@ impl JoinRig {
              WHERE local_track_id = ?1",
         )
         .bind(track)
-        .fetch_optional(self.acquire.db.pool())
+        .fetch_optional(self.acquire.db.db().sqlx())
         .await
         .expect("identity read")
     }
@@ -3269,7 +3269,7 @@ impl JoinRig {
              row_revision FROM local_album_external_identities WHERE local_album_id = ?1",
         )
         .bind(album)
-        .fetch_one(self.acquire.db.pool())
+        .fetch_one(self.acquire.db.db().sqlx())
         .await
         .expect("album identity")
     }
@@ -3284,7 +3284,7 @@ impl JoinRig {
         )
         .bind(format!("play-{track}"))
         .bind(track)
-        .fetch_one(self.acquire.db.pool())
+        .fetch_one(self.acquire.db.db().sqlx())
         .await
         .expect("history")
     }
@@ -3500,7 +3500,7 @@ async fn a_fetched_track_joins_the_copy_it_was_fetched_for() {
          LEFT JOIN local_track_external_identities i ON i.local_track_id = t.id WHERE t.id = ?1",
     )
     .bind(x_of(4))
-    .fetch_one(rig.acquire.db.pool())
+    .fetch_one(rig.acquire.db.db().sqlx())
     .await
     .expect("old row");
     rig.land(vec![rig.landed("t-join-4", &ed(4).new, 1, FIXTURES[1])])
@@ -3514,7 +3514,7 @@ async fn a_fetched_track_joins_the_copy_it_was_fetched_for() {
          ON i.local_track_id = t.id WHERE t.id = ?1",
     )
     .bind(x_of(4))
-    .fetch_one(rig.acquire.db.pool())
+    .fetch_one(rig.acquire.db.db().sqlx())
     .await
     .expect("old row");
     assert_eq!(
@@ -3546,7 +3546,7 @@ async fn a_fetched_track_joins_the_copy_it_was_fetched_for() {
     let excluded: (String, String) =
         sqlx::query_as("SELECT availability, relative_path FROM local_tracks WHERE id = ?1")
             .bind(x_of(5))
-            .fetch_one(rig.acquire.db.pool())
+            .fetch_one(rig.acquire.db.db().sqlx())
             .await
             .expect("excluded row");
     assert_eq!(excluded.0, "excluded");
@@ -3931,7 +3931,7 @@ async fn a_plain_download_prefers_a_folder_with_automatic_tags() {
             "SELECT root_id, relative_path, applied_policy FROM local_tracks \
              ORDER BY relative_path",
         )
-        .fetch_all(rig.acquire.db.pool())
+        .fetch_all(rig.acquire.db.db().sqlx())
         .await
         .expect("tracks");
         assert_eq!(rows.len(), 2, "{case}: {rows:?}");
@@ -4053,7 +4053,7 @@ async fn upgrades_and_second_copies_keep_to_their_album() {
         "SELECT id, relative_path FROM local_tracks WHERE local_album_id = ?1 ORDER BY id",
     )
     .bind(&copy_b)
-    .fetch_all(rig.acquire.db.pool())
+    .fetch_all(rig.acquire.db.db().sqlx())
     .await
     .expect("copy B");
     rig.ask(
@@ -4075,7 +4075,7 @@ async fn upgrades_and_second_copies_keep_to_their_album() {
         "SELECT id, relative_path FROM local_tracks WHERE local_album_id = ?1 ORDER BY id",
     )
     .bind(&copy_b)
-    .fetch_all(rig.acquire.db.pool())
+    .fetch_all(rig.acquire.db.db().sqlx())
     .await
     .expect("copy B");
     assert_eq!(b_after, b_before, "copy B is untouched");
@@ -4361,7 +4361,7 @@ impl JoinRig {
              (SELECT local_track_id FROM library_management_overrides WHERE id = 'title')",
         )
         .bind(old)
-        .fetch_one(self.acquire.db.pool())
+        .fetch_one(self.acquire.db.db().sqlx())
         .await
         .expect("history")
     }
@@ -4370,7 +4370,7 @@ impl JoinRig {
     async fn alias_of(&self, old: &str) -> Option<String> {
         sqlx::query_scalar("SELECT local_track_id FROM local_track_aliases WHERE alias = ?1")
             .bind(old)
-            .fetch_optional(self.acquire.db.pool())
+            .fetch_optional(self.acquire.db.db().sqlx())
             .await
             .expect("alias read")
     }
@@ -4386,7 +4386,7 @@ impl JoinRig {
     async fn held_reasons(&self, task_id: &str) -> Vec<String> {
         sqlx::query_scalar("SELECT reason FROM acquire_held_files WHERE source_task_id = ?1")
             .bind(task_id)
-            .fetch_all(self.acquire.db.pool())
+            .fetch_all(self.acquire.db.db().sqlx())
             .await
             .expect("held read")
     }
@@ -4849,14 +4849,14 @@ async fn a_failed_request_follows_its_retry_to_imported() {
 
     let rows: Vec<(String, String)> =
         sqlx::query_as("SELECT id, status FROM download_tasks ORDER BY retry_count")
-            .fetch_all(acquire.db.pool())
+            .fetch_all(acquire.db.db().sqlx())
             .await
             .expect("tasks");
     let (status, linked): (String, Option<String>) = sqlx::query_as(
         "SELECT status, download_task_id FROM request_history WHERE musicbrainz_id_lower = ?1",
     )
     .bind(GOOD_GROUP)
-    .fetch_one(acquire.db.pool())
+    .fetch_one(acquire.db.db().sqlx())
     .await
     .expect("request row");
     assert_eq!(rows.len(), 2, "one retry successor");
@@ -5146,7 +5146,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     let attempts: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM download_attempts WHERE task_id = ?1")
             .bind(&first)
-            .fetch_one(acquire.db.pool())
+            .fetch_one(acquire.db.db().sqlx())
             .await
             .expect("attempts");
     assert_eq!(attempts, 1, "no other source was tried");
@@ -5186,7 +5186,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
         "SELECT download_task_id FROM request_history WHERE musicbrainz_id_lower = ?1",
     )
     .bind(&request_key)
-    .fetch_one(acquire.db.pool())
+    .fetch_one(acquire.db.db().sqlx())
     .await
     .expect("request row");
     assert_ne!(second, first);
@@ -5202,14 +5202,14 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
         "SELECT i.recording_mbid FROM local_track_external_identities i \
          JOIN local_tracks t ON t.id = i.local_track_id WHERE t.availability = 'indexed'",
     )
-    .fetch_one(acquire.db.pool())
+    .fetch_one(acquire.db.db().sqlx())
     .await
     .expect("identity");
     assert_eq!(recording, RECORDING, "imported as the requested song");
     let held: Vec<(String, String)> =
         sqlx::query_as("SELECT state, path FROM acquire_held_files WHERE source_task_id = ?1")
             .bind(&first)
-            .fetch_all(acquire.db.pool())
+            .fetch_all(acquire.db.db().sqlx())
             .await
             .expect("held rows");
     assert!(!held.is_empty(), "the first download held its file");
@@ -5222,7 +5222,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     let status: String =
         sqlx::query_scalar("SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1")
             .bind(&request_key)
-            .fetch_one(acquire.db.pool())
+            .fetch_one(acquire.db.db().sqlx())
             .await
             .expect("request row");
     assert_eq!(status, "imported");
@@ -5924,7 +5924,7 @@ impl IntakeCase {
             "SELECT id, local_album_id FROM local_tracks WHERE availability = 'indexed' \
              AND title = 'Mysterons'",
         )
-        .fetch_all(self.rig.acquire.db.pool())
+        .fetch_all(self.rig.acquire.db.db().sqlx())
         .await
         .expect("tracks")
     }
@@ -6023,7 +6023,7 @@ impl IntakeCase {
             "SELECT reason FROM acquire_held_files WHERE source_task_id = 't-intake' \
              AND state = 'held'",
         )
-        .fetch_all(self.rig.acquire.db.pool())
+        .fetch_all(self.rig.acquire.db.db().sqlx())
         .await
         .expect("held rows");
         held.first()
@@ -6096,7 +6096,7 @@ impl IntakeCase {
         let (state, reason): (String, String) =
             sqlx::query_as("SELECT state, reason FROM acquire_held_files WHERE entry_id = ?1")
                 .bind(entry)
-                .fetch_one(self.rig.acquire.db.pool())
+                .fetch_one(self.rig.acquire.db.db().sqlx())
                 .await
                 .expect("held file");
         // A Match the library put off says why and leaves the file as it
@@ -6195,7 +6195,7 @@ impl IntakeCase {
             "SELECT reason FROM acquire_held_files WHERE path = ?1 AND state = 'held'",
         )
         .bind(&name)
-        .fetch_all(self.rig.acquire.db.pool())
+        .fetch_all(self.rig.acquire.db.db().sqlx())
         .await
         .expect("held rows");
         let reason = Reason::from_stored(still.first().expect("still held"));
@@ -6500,7 +6500,7 @@ async fn held_files_of_two_downloads_keep_their_own_plans() {
          JOIN local_album_external_identities i ON i.local_album_id = t.local_album_id \
          WHERE t.availability = 'indexed' AND t.title = 'Mysterons' ORDER BY i.release_group_mbid",
     )
-    .fetch_all(rig.acquire.db.pool())
+    .fetch_all(rig.acquire.db.db().sqlx())
     .await
     .expect("tracks");
     assert_eq!(albums.len(), 2, "{albums:?}");

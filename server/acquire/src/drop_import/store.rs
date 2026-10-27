@@ -8,11 +8,12 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::params;
-use sqlx::Row as _;
+use rusqlite::{OptionalExtension, params};
 
+use droppedneedle_kernel::db::DbError;
+
+use super::sql;
 use crate::db::AcquireDb;
-use crate::held::sql::OPEN;
 use crate::held::store::{EntryOrigin, GroupKey, HeldRows, NewEntry, NewFile};
 use crate::reason::Reason;
 
@@ -69,63 +70,88 @@ pub struct ItemRecord {
     pub staging_paths: Vec<String>,
 }
 
-/// Store failure: the database could not be read or written.
+/// Store failure: the database could not be read or written. The text
+/// goes to the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoreError(pub String);
+pub enum StoreError {
+    /// The database was busy during `operation`; the call can run again.
+    Busy { operation: String },
+    /// Any other failure.
+    Failed(String),
+}
 
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        match self {
+            Self::Busy { operation } => write!(f, "database busy during {operation}"),
+            Self::Failed(text) => f.write_str(text),
+        }
     }
 }
 
-fn read_error(error: sqlx::Error) -> StoreError {
-    StoreError(format!("drop import read: {error}"))
+fn store_error(what: &str, error: DbError) -> StoreError {
+    match error {
+        DbError::Busy { operation } => StoreError::Busy { operation },
+        other => StoreError::Failed(format!("drop import {what}: {other}")),
+    }
 }
 
-fn write_error(error: droppedneedle_kernel::db::DbError) -> StoreError {
-    StoreError(format!("drop import write: {error}"))
+fn read_error(error: DbError) -> StoreError {
+    store_error("read", error)
 }
 
-const JOB_SELECT: &str = "SELECT id, user_id, user_name, status, created_at, upload_name, \
-     staging_dir, error FROM drop_import_jobs";
-const ITEM_SELECT: &str = "SELECT id, job_id, folder_name, status, updated_at, \
-     release_group_mbid, album_title, artist_name, files_total, files_imported, detail, \
-     reason_code, staging_paths FROM drop_import_items";
-
-fn job_from(row: &sqlx::sqlite::SqliteRow) -> Result<JobRecord, sqlx::Error> {
-    Ok(JobRecord {
-        id: row.try_get(0)?,
-        user_id: row.try_get(1)?,
-        user_name: row.try_get(2)?,
-        status: row.try_get(3)?,
-        created_at: row.try_get(4)?,
-        upload_name: row.try_get(5)?,
-        staging_dir: row.try_get(6)?,
-        error: row.try_get(7)?,
-        items: Vec::new(),
-    })
+fn write_error(error: DbError) -> StoreError {
+    store_error("write", error)
 }
 
-fn item_from(row: &sqlx::sqlite::SqliteRow) -> Result<ItemRecord, sqlx::Error> {
-    let paths: String = row.try_get(12)?;
-    Ok(ItemRecord {
-        id: row.try_get(0)?,
-        job_id: row.try_get(1)?,
-        folder_name: row.try_get(2)?,
-        status: row.try_get(3)?,
-        updated_at: row.try_get(4)?,
-        release_group_mbid: row.try_get(5)?,
-        album_title: row.try_get(6)?,
-        artist_name: row.try_get(7)?,
-        files_total: row.try_get(8)?,
-        files_imported: row.try_get(9)?,
-        detail: row.try_get(10)?,
-        reason_code: row
-            .try_get::<Option<String>, _>(11)?
-            .map(|code| Reason::from_stored(&code)),
-        staging_paths: serde_json::from_str(&paths).unwrap_or_default(),
-    })
+impl JobRecord {
+    /// One row of [`sql::JOB_ROW`], without its items.
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            user_name: row.get(2)?,
+            status: row.get(3)?,
+            created_at: row.get(4)?,
+            upload_name: row.get(5)?,
+            staging_dir: row.get(6)?,
+            error: row.get(7)?,
+            items: Vec::new(),
+        })
+    }
+}
+
+impl ItemRecord {
+    /// One row of [`sql::ITEM_ROW`].
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        let paths: String = row.get(12)?;
+        Ok(Self {
+            id: row.get(0)?,
+            job_id: row.get(1)?,
+            folder_name: row.get(2)?,
+            status: row.get(3)?,
+            updated_at: row.get(4)?,
+            release_group_mbid: row.get(5)?,
+            album_title: row.get(6)?,
+            artist_name: row.get(7)?,
+            files_total: row.get(8)?,
+            files_imported: row.get(9)?,
+            detail: row.get(10)?,
+            reason_code: row
+                .get::<_, Option<String>>(11)?
+                .map(|code| Reason::from_stored(&code)),
+            staging_paths: serde_json::from_str(&paths).unwrap_or_default(),
+        })
+    }
+}
+
+/// `job` with its items, read on the same connection.
+fn with_items(conn: &rusqlite::Connection, mut job: JobRecord) -> rusqlite::Result<JobRecord> {
+    job.items = conn
+        .prepare_cached(sql::ITEMS_OF_JOB.text())?
+        .query_map(params![job.id], ItemRecord::from_row)?
+        .collect::<Result<_, _>>()?;
+    Ok(job)
 }
 
 /// Drop-import rows over the application database.
@@ -165,8 +191,7 @@ impl DropStore {
             .write("drop_import.create_job", move |tx| {
                 let (id, user_id, user_name, upload_name, staging_dir, at) = values;
                 tx.execute(
-                    "INSERT INTO drop_import_jobs (id, user_id, user_name, status, created_at, \
-                     upload_name, staging_dir) VALUES (?1, ?2, ?3, 'processing', ?4, ?5, ?6)",
+                    sql::INSERT_JOB.text(),
                     params![id, user_id, user_name, at, upload_name, staging_dir],
                 )?;
                 Ok(())
@@ -185,10 +210,7 @@ impl DropStore {
         let id = id.to_owned();
         self.db
             .write_background("drop_import.job_status", move |tx| {
-                tx.execute(
-                    "UPDATE drop_import_jobs SET status = ?2, error = ?3 WHERE id = ?1",
-                    params![id, status, error],
-                )?;
+                tx.execute(sql::SET_JOB_STATUS.text(), params![id, status, error])?;
                 Ok(())
             })
             .await
@@ -213,8 +235,7 @@ impl DropStore {
             .write_background("drop_import.add_item", move |tx| {
                 let (job_id, folder_name, paths, total, at) = values;
                 tx.execute(
-                    "INSERT INTO drop_import_items (job_id, folder_name, status, files_total, \
-                     staging_paths, updated_at) VALUES (?1, ?2, 'processing', ?3, ?4, ?5)",
+                    sql::INSERT_ITEM.text(),
                     params![job_id, folder_name, total, paths, at],
                 )?;
                 Ok(tx.last_insert_rowid())
@@ -252,8 +273,7 @@ impl DropStore {
         self.db
             .write("drop_import.claim_review", move |tx| {
                 let changed = tx.execute(
-                    "UPDATE drop_import_items SET status = 'processing', updated_at = ?2 \
-                     WHERE id = ?1 AND status = 'needs_review'",
+                    sql::CLAIM_REVIEW.text(),
                     params![item_id, crate::db::unix_secs_f64(clock.as_ref())],
                 )?;
                 Ok(changed == 1)
@@ -264,17 +284,14 @@ impl DropStore {
 
     /// One job with its items.
     pub async fn get_job(&self, id: &str) -> Result<Option<JobRecord>, StoreError> {
-        let row = sqlx::query(&format!("{JOB_SELECT} WHERE id = ?1"))
-            .bind(id)
-            .fetch_optional(self.db.pool())
-            .await
-            .map_err(read_error)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let mut job = job_from(&row).map_err(read_error)?;
-        job.items = self.items_of(&job.id).await?;
-        Ok(Some(job))
+        let id = id.to_owned();
+        self.read("drop_import.get_job", move |conn| {
+            conn.query_row(sql::JOB_BY_ID.text(), params![id], JobRecord::from_row)
+                .optional()?
+                .map(|job| with_items(conn, job))
+                .transpose()
+        })
+        .await
     }
 
     /// Newest jobs first, one user's or everyone's.
@@ -283,44 +300,37 @@ impl DropStore {
         user_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<JobRecord>, StoreError> {
-        let rows = sqlx::query(&format!(
-            "{JOB_SELECT} WHERE (?1 IS NULL OR user_id = ?1) \
-             ORDER BY created_at DESC, id DESC LIMIT ?2"
-        ))
-        .bind(user_id)
-        .bind(limit)
-        .fetch_all(self.db.pool())
+        let user_id = user_id.map(str::to_owned);
+        self.read("drop_import.list_jobs", move |conn| {
+            let jobs: Vec<JobRecord> = conn
+                .prepare(sql::LIST_JOBS.text())?
+                .query_map(params![user_id, limit], JobRecord::from_row)?
+                .collect::<Result<_, _>>()?;
+            jobs.into_iter().map(|job| with_items(conn, job)).collect()
+        })
         .await
-        .map_err(read_error)?;
-        let mut jobs = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let mut job = job_from(row).map_err(read_error)?;
-            job.items = self.items_of(&job.id).await?;
-            jobs.push(job);
-        }
-        Ok(jobs)
-    }
-
-    async fn items_of(&self, job_id: &str) -> Result<Vec<ItemRecord>, StoreError> {
-        let rows = sqlx::query(&format!("{ITEM_SELECT} WHERE job_id = ?1 ORDER BY id"))
-            .bind(job_id)
-            .fetch_all(self.db.pool())
-            .await
-            .map_err(read_error)?;
-        rows.iter()
-            .map(item_from)
-            .collect::<Result<_, _>>()
-            .map_err(read_error)
     }
 
     /// One item.
     pub async fn get_item(&self, id: i64) -> Result<Option<ItemRecord>, StoreError> {
-        let row = sqlx::query(&format!("{ITEM_SELECT} WHERE id = ?1"))
-            .bind(id)
-            .fetch_optional(self.db.pool())
+        self.read("drop_import.get_item", move |conn| {
+            conn.query_row(sql::ITEM_BY_ID.text(), params![id], ItemRecord::from_row)
+                .optional()
+        })
+        .await
+    }
+
+    /// One read on the read pool.
+    async fn read<R, F>(&self, name: &'static str, op: F) -> Result<R, StoreError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.db
+            .db()
+            .read(name, move |conn| op(conn).map_err(DbError::from))
             .await
-            .map_err(read_error)?;
-        row.as_ref().map(item_from).transpose().map_err(read_error)
+            .map_err(read_error)
     }
 
     /// Startup: undo what a restart cut off. A hand match that was
@@ -341,13 +351,7 @@ impl DropStore {
             .write_background("drop_import.fail_stale", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 let now = clock.now_ms();
-                let mut select = tx.prepare(
-                    "SELECT i.id, i.staging_paths, i.reason_code, i.release_group_mbid, \
-                     i.artist_name, i.album_title, j.user_id, j.status = 'processing', \
-                     EXISTS (SELECT 1 FROM auth_users u WHERE u.id = j.user_id) \
-                     FROM drop_import_items i JOIN drop_import_jobs j ON j.id = i.job_id \
-                     WHERE i.status = 'processing'",
-                )?;
+                let mut select = tx.prepare(sql::CUT_OFF_ITEMS.text())?;
                 type Cut = (
                     i64,
                     String,
@@ -384,9 +388,7 @@ impl DropStore {
                         .map(|code| Reason::from_stored(&code));
                     let waits = kept.unwrap_or(reason);
                     tx.execute(
-                        "UPDATE drop_import_items SET status = 'needs_review', \
-                         detail = CASE WHEN ?4 THEN COALESCE(detail, ?1) ELSE ?1 END, \
-                         reason_code = ?2, updated_at = ?3 WHERE id = ?5",
+                        sql::RETURN_TO_REVIEW.text(),
                         params![waits.message(), waits.code(), at, kept.is_some(), id],
                     )?;
                     if !user_known || rows.entry_of_item(id)?.is_some() {
@@ -423,11 +425,8 @@ impl DropStore {
                         now,
                     )?;
                 }
-                let jobs = tx.execute(
-                    "UPDATE drop_import_jobs SET status = 'failed', error = ?1 \
-                     WHERE status = 'processing'",
-                    params![reason.message()],
-                )?;
+                let jobs =
+                    tx.execute(sql::FAIL_PROCESSING_JOBS.text(), params![reason.message()])?;
                 Ok(jobs)
             })
             .await
@@ -437,29 +436,24 @@ impl DropStore {
     /// Jobs still processing that have no items yet (cut off while their
     /// upload was being unpacked), with their staging folders.
     pub async fn processing_jobs_without_items(&self) -> Result<Vec<(String, String)>, StoreError> {
-        sqlx::query_as(
-            "SELECT j.id, j.staging_dir FROM drop_import_jobs j \
-             WHERE j.status = 'processing' \
-               AND NOT EXISTS (SELECT 1 FROM drop_import_items i WHERE i.job_id = j.id)",
-        )
-        .fetch_all(self.db.pool())
+        self.read("drop_import.jobs_without_items", |conn| {
+            conn.prepare(sql::JOBS_WITHOUT_ITEMS.text())?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect()
+        })
         .await
-        .map_err(read_error)
     }
 
     /// Every job's staging folder, and whether it is kept: the job is
     /// still being worked on, or one of its items is, or waits in an open
     /// entry of the held list.
     pub async fn staging_dirs(&self) -> Result<Vec<(String, bool)>, StoreError> {
-        sqlx::query_as(&format!(
-            "SELECT j.staging_dir, (j.status = 'processing' OR EXISTS (SELECT 1 \
-               FROM drop_import_items i WHERE i.job_id = j.id AND (i.status = 'processing' \
-               OR EXISTS (SELECT 1 FROM acquire_held_entries e WHERE e.drop_item_id = i.id \
-                 AND e.state IN {OPEN})))) FROM drop_import_jobs j"
-        ))
-        .fetch_all(self.db.pool())
+        self.read("drop_import.staging_dirs", |conn| {
+            conn.prepare(sql::STAGING_DIRS.text())?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect()
+        })
         .await
-        .map_err(read_error)
     }
 }
 
@@ -472,10 +466,7 @@ pub(crate) fn write_item(
     at: f64,
 ) -> rusqlite::Result<bool> {
     let changed = conn.execute(
-        "UPDATE drop_import_items SET status = ?3, release_group_mbid = ?4, \
-         album_title = ?5, artist_name = ?6, files_total = ?7, files_imported = ?8, \
-         detail = ?9, reason_code = ?10, staging_paths = ?11, \
-         updated_at = ?12 WHERE id = ?1 AND status = ?2",
+        sql::SAVE_ITEM.text(),
         params![
             item.id,
             expected,

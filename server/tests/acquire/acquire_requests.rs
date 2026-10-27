@@ -106,7 +106,7 @@ impl Downloads {
     /// Every task id, oldest first.
     async fn ids(&self) -> Vec<String> {
         sqlx::query_scalar("SELECT id FROM download_tasks ORDER BY created_at, rowid")
-            .fetch_all(self.dispatch.journal().db().pool())
+            .fetch_all(self.dispatch.journal().db().db().sqlx())
             .await
             .expect("task ids read")
     }
@@ -157,7 +157,7 @@ impl Downloads {
             "SELECT id FROM download_tasks WHERE status = 'cancelled' \
              ORDER BY updated_at, rowid",
         )
-        .fetch_all(self.dispatch.journal().db().pool())
+        .fetch_all(self.dispatch.journal().db().db().sqlx())
         .await
         .expect("cancelled tasks read");
         let mut seen = self.cancels.lock().unwrap();
@@ -1514,7 +1514,7 @@ impl droppedneedle_library::operations::port::EditionPlans for LibraryPlan {
         Box::pin(async move {
             let files: Vec<String> =
                 sqlx::query_scalar("SELECT id FROM local_tracks WHERE local_album_id = 'al1'")
-                    .fetch_all(self.db.pool())
+                    .fetch_all(self.db.db().sqlx())
                     .await
                     .expect("library files read");
             let tracks = (1..=4)

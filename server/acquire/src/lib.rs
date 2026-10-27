@@ -73,9 +73,11 @@ pub use wiring::AcquireSetup;
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
     vec![
         downloads::sql::registered(),
+        drop_import::sql::registered(),
         flows::sql::registered(),
         follows::sql::registered(),
         held::sql::registered(),
+        imports::sql::registered(),
         landing::sql::registered(),
         requests::sql::registered(),
         search_jobs::sql::registered(),

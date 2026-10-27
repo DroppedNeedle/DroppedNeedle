@@ -33,3 +33,4 @@ pub mod spotify_client;
 pub mod spotify_models;
 pub mod spotify_oauth;
 pub mod spotify_store;
+pub(crate) mod sql;

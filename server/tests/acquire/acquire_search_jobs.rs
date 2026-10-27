@@ -695,7 +695,7 @@ impl KeptRig {
 
     async fn task_count(&self) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM download_tasks")
-            .fetch_one(self.db.pool())
+            .fetch_one(self.db.db().sqlx())
             .await
             .expect("task count")
     }
@@ -827,7 +827,7 @@ async fn a_failover_after_a_confirmed_pick_is_held_to_the_band() {
          ORDER BY decided_at",
     )
     .bind(&task_id)
-    .fetch_all(rig.db.pool())
+    .fetch_all(rig.db.db().sqlx())
     .await
     .expect("decisions");
     assert_eq!(

@@ -177,7 +177,7 @@ async fn behind(db: &AcquireDb, id: &str, status: TaskStatus) {
 async fn tasks(db: &AcquireDb) -> Vec<TaskRow> {
     let ids: Vec<String> =
         sqlx::query_scalar("SELECT id FROM download_tasks ORDER BY created_at, rowid")
-            .fetch_all(db.pool())
+            .fetch_all(db.db().sqlx())
             .await
             .expect("task ids read");
     let journal = Journal::new(db.clone(), quiet_ticks());
@@ -567,7 +567,7 @@ async fn follow_poll_baselines_then_emits() {
     let feed: Vec<String> = sqlx::query_scalar(
         "SELECT release_group_mbid FROM new_release_feed ORDER BY release_group_mbid",
     )
-    .fetch_all(db.pool())
+    .fetch_all(db.db().sqlx())
     .await
     .unwrap();
     assert_eq!(feed, ["rg-future", "rg-new"]);

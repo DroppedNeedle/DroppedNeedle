@@ -1387,7 +1387,7 @@ async fn spotify_sqlite_stores_persist_and_expire() {
     let stored: String = sqlx::query_scalar(
         "SELECT connection_data FROM user_connections WHERE user_id = 'u1' AND service = 'spotify'",
     )
-    .fetch_one(db.pool())
+    .fetch_one(db.db().sqlx())
     .await
     .expect("row reads");
     assert!(!stored.contains("SECRET"), "link is sealed at rest");
@@ -1439,7 +1439,7 @@ async fn spotify_sqlite_stores_persist_and_expire() {
     let rows: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?1")
             .bind(&id)
-            .fetch_one(db.pool())
+            .fetch_one(db.db().sqlx())
             .await
             .expect("count reads");
     assert_eq!(rows, 2);

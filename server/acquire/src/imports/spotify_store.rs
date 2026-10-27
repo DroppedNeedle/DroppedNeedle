@@ -20,12 +20,14 @@ use serde::{Deserialize, Serialize};
 use super::spotify::ImportedTrack;
 use super::spotify_client::{SpotifyError, now_unix_secs};
 use super::spotify_oauth::{PendingAuth, STATE_TTL_SECS, SpotifyConnection};
+use super::sql;
 use crate::db::AcquireDb;
 use droppedneedle_auth::times::{parse_iso, to_iso};
 use droppedneedle_catalog::reads::collections::db::StoreError;
 use droppedneedle_catalog::reads::collections::store::PlaylistStore;
 use droppedneedle_catalog::reads::collections::store::playlists::{CoverImage, NewEntry, Written};
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
 /// The `user_connections.service` tag for Spotify links (v2's).
@@ -50,13 +52,9 @@ impl SqliteSpotifyStates {
         self.db
             .write("spotify.state.store", move |tx| {
                 let now = now_unix_secs(clock.as_ref());
+                tx.execute(sql::PRUNE_STATES.text(), params![now])?;
                 tx.execute(
-                    "DELETE FROM spotify_auth_requests WHERE expires_at <= ?1",
-                    params![now],
-                )?;
-                tx.execute(
-                    "INSERT INTO spotify_auth_requests \
-                     (state, user_id, redirect_uri, expires_at) VALUES (?1, ?2, ?3, ?4)",
+                    sql::INSERT_STATE.text(),
                     params![
                         state,
                         pending.user_id,
@@ -78,17 +76,11 @@ impl SqliteSpotifyStates {
         self.db
             .write("spotify.state.consume", move |tx| {
                 let row: Option<(String, String, i64)> = tx
-                    .query_row(
-                        "SELECT user_id, redirect_uri, expires_at \
-                         FROM spotify_auth_requests WHERE state = ?1",
-                        params![state],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                    )
+                    .query_row(sql::STATE_BY_KEY.text(), params![state], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })
                     .optional()?;
-                tx.execute(
-                    "DELETE FROM spotify_auth_requests WHERE state = ?1",
-                    params![state],
-                )?;
+                tx.execute(sql::DELETE_STATE.text(), params![state])?;
                 Ok(row
                     .filter(|(_, _, expires_at)| *expires_at > now_unix_secs(clock.as_ref()))
                     .map(|(user_id, redirect_uri, _)| PendingAuth {
@@ -166,12 +158,7 @@ impl SqliteSpotifyLinks {
             .write("spotify.link.upsert", move |tx| {
                 let now = to_iso(now_unix_secs(clock.as_ref()));
                 tx.execute(
-                    "INSERT INTO user_connections \
-                     (user_id, service, connection_data, enabled, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, 1, ?4, ?4) \
-                     ON CONFLICT (user_id, service) DO UPDATE SET \
-                     connection_data = excluded.connection_data, enabled = 1, \
-                     updated_at = excluded.updated_at",
+                    sql::UPSERT_LINK.text(),
                     params![user_id, SERVICE, sealed, now],
                 )?;
                 Ok(())
@@ -193,8 +180,7 @@ impl SqliteSpotifyLinks {
         self.db
             .write("spotify.link.refresh", move |tx| {
                 let changed = tx.execute(
-                    "UPDATE user_connections SET connection_data = ?3, updated_at = ?4 \
-                     WHERE user_id = ?1 AND service = ?2",
+                    sql::UPDATE_LINK.text(),
                     params![
                         user_id,
                         SERVICE,
@@ -210,15 +196,21 @@ impl SqliteSpotifyLinks {
 
     /// Read one user's link, if any.
     pub async fn get(&self, user_id: &str) -> Result<Option<SpotifyConnection>, String> {
-        let sealed: Option<String> = sqlx::query_scalar(
-            "SELECT connection_data FROM user_connections \
-             WHERE user_id = ?1 AND service = ?2 AND enabled = 1",
-        )
-        .bind(user_id)
-        .bind(SERVICE)
-        .fetch_optional(self.db.pool())
-        .await
-        .map_err(|error| format!("spotify link read: {error}"))?;
+        let user_id = user_id.to_owned();
+        let sealed: Option<String> = self
+            .db
+            .db()
+            .read("spotify.link.get", move |conn| {
+                conn.query_row(
+                    sql::LINK_DOCUMENT.text(),
+                    params![user_id, SERVICE],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| format!("spotify link read: {error}"))?;
         let Some(sealed) = sealed else {
             return Ok(None);
         };
@@ -253,10 +245,7 @@ impl SqliteSpotifyLinks {
         let user_id = user_id.to_owned();
         self.db
             .write("spotify.link.remove", move |tx| {
-                let changed = tx.execute(
-                    "DELETE FROM user_connections WHERE user_id = ?1 AND service = ?2",
-                    params![user_id, SERVICE],
-                )?;
+                let changed = tx.execute(sql::DELETE_LINK.text(), params![user_id, SERVICE])?;
                 Ok(changed > 0)
             })
             .await
@@ -318,14 +307,17 @@ impl CollectionsPlaylistBridge {
     /// One user's `(source_ref, playlist_id)` pairs, for the imported
     /// mapping.
     pub async fn source_refs_for(&self, user_id: &str) -> Result<Vec<(String, String)>, String> {
-        sqlx::query_as(
-            "SELECT source_ref, id FROM playlists \
-             WHERE user_id = ?1 AND source_ref LIKE 'spotify:%'",
-        )
-        .bind(user_id)
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(|error| format!("spotify playlist refs read: {error}"))
+        let user_id = user_id.to_owned();
+        self.db
+            .db()
+            .read("spotify.playlist_refs", move |conn| {
+                conn.prepare(sql::SPOTIFY_SOURCE_REFS.text())?
+                    .query_map(params![user_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<rusqlite::Result<_>>()
+                    .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| format!("spotify playlist refs read: {error}"))
     }
 
     /// Replace every row on a playlist with `tracks`, in order, in one

@@ -8,7 +8,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rusqlite::Transaction;
-use sqlx::SqlitePool;
 
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
@@ -41,11 +40,6 @@ impl AcquireDb {
             #[cfg(any(test, feature = "test-support"))]
             _scratch: None,
         }
-    }
-
-    /// The sqlx reader pool.
-    pub fn pool(&self) -> &SqlitePool {
-        self.db.sqlx()
     }
 
     /// The database, for a write that is not one of the two below.

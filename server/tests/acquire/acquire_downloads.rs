@@ -1179,7 +1179,7 @@ async fn seed_held_on(
 async fn retry_of(db: &AcquireDb, entry: i64) -> (String, i64, Option<i64>) {
     sqlx::query_as("SELECT state, retry_tries, retry_at FROM acquire_held_entries WHERE id = ?1")
         .bind(entry)
-        .fetch_one(db.pool())
+        .fetch_one(db.db().sqlx())
         .await
         .expect("entry")
 }
@@ -1188,7 +1188,7 @@ async fn retry_of(db: &AcquireDb, entry: i64) -> (String, i64, Option<i64>) {
 async fn held_file(db: &AcquireDb, path: &str) -> (String, String) {
     sqlx::query_as("SELECT state, reason FROM acquire_held_files WHERE path = ?1")
         .bind(path)
-        .fetch_one(db.pool())
+        .fetch_one(db.db().sqlx())
         .await
         .expect("held file")
 }

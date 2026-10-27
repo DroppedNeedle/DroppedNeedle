@@ -25,7 +25,7 @@ use super::downloads::sources::DownloadSource;
 use super::downloads::store::StoreError;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::drop_import::DropImports;
-use super::drop_import::store::DropStore;
+use super::drop_import::store::{DropStore, StoreError as DropStoreError};
 use super::flows::loops::{
     FOLLOW_JOB, FollowDeps, PRUNE_JOB, PruneDeps, SYNC_JOB, SweepDeps, SyncDeps, UPGRADE_JOB,
     WANTED_JOB, WantedDeps, spawn_follow_loop, spawn_prune_loop, spawn_sweep_loop, spawn_sync_loop,
@@ -1066,7 +1066,13 @@ impl AcquireSetup {
     /// upload it could not read in place, a restarted download keeps its
     /// keys, and a request's cancel or dispatch reuses its key or relinks.
     pub async fn run_recovery(&self) -> Result<super::worker::RecoveryReport, RecoveryError> {
-        self.drops.sweep_stale().await;
+        self.drops
+            .sweep_stale()
+            .await
+            .map_err(|error| match error {
+                DropStoreError::Busy { operation } => RecoveryError::Busy { operation },
+                other => RecoveryError::Failed(other.to_string()),
+            })?;
         self.held.recover().await;
         let report = run_startup_recovery(&self.journal)
             .await
