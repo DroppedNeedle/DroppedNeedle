@@ -36,11 +36,21 @@ use droppedneedle_providers::{CacheKey, ProviderError, Providers, RequestPriorit
 
 /// How long a popularity refusal keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
-/// Cache lifetime of per-user listening statistics.
+/// Cache lifetime of per-user listening statistics: top artists and
+/// albums, weekly charts. ListenBrainz recomputes its statistics about
+/// once a day, and a build every six hours is fresh enough for the rest.
 pub(in crate::reads::discover::adapters) const USER_STATS_TTL: Duration =
-    Duration::from_secs(5 * 60);
-/// Cache lifetime of artist-level and chart reads.
-pub(in crate::reads::discover::adapters) const ARTIST_TTL: Duration = Duration::from_secs(60 * 60);
+    Duration::from_secs(6 * 60 * 60);
+/// Cache lifetime of what the user changes by listening or by a click:
+/// latest scrobbles and loved tracks.
+pub(in crate::reads::discover::adapters) const USER_ACTIVITY_TTL: Duration =
+    Duration::from_secs(15 * 60);
+/// Cache lifetime of artist-level and chart reads. Similar artists, an
+/// artist's albums, popularity and tags move over weeks; a cold build pays
+/// for every one of them at ListenBrainz's pace of about one read a second,
+/// so they are kept for a day.
+pub(in crate::reads::discover::adapters) const ARTIST_TTL: Duration =
+    Duration::from_secs(24 * 60 * 60);
 
 /// The live provider reads.
 pub struct LiveSources {

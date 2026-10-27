@@ -3,7 +3,7 @@
 //!
 //! A request never waits for a build. It gets the newest page there is
 //! (memory first, then the snapshot saved in SQLite, which survives a
-//! restart) and, when that page is more than five minutes old, starts a
+//! restart) and, when that page is more than an hour old, starts a
 //! rebuild in the background and says so (`refreshing`), so the page
 //! polls until the new one lands. With no page at all it starts the first
 //! build and answers with an empty, `loading` page. An empty or failed
@@ -48,7 +48,12 @@ use store::{ActivityRow, PageDb, snapshot_key};
 
 /// How long a page in memory is served before it is reloaded.
 const MEMORY_SECS: f64 = 43_200.0;
-/// A page older than this is rebuilt in the background on the next visit.
+/// A shown page older than this is rebuilt in the background on the next
+/// visit. Its reads are cached for hours and the warm cycle rebuilds every
+/// six, so a rebuild sooner would only repeat the same answers.
+const REBUILD_AFTER_SECS: f64 = 3600.0;
+/// A build that found nothing, or none yet, is tried again on a visit
+/// after this.
 const STALE_SECS: f64 = 300.0;
 /// Bound on one warm-cycle feature.
 const FEATURE_TIMEOUT: Duration = Duration::from_secs(300);
@@ -275,7 +280,7 @@ impl LiveDiscover {
     }
 
     /// The newest page for the user, starting a background rebuild when
-    /// there is none or it is more than five minutes old.
+    /// there is none or it is more than an hour old.
     pub async fn page(&self, user_id: &str, status: IntegrationStatus) -> DiscoverResponse {
         let key = self.key_for(user_id).await;
         let now = now_secs();
@@ -297,7 +302,7 @@ impl LiveDiscover {
                 let built_at = attempted_at
                     .or(page.generated_at.map(|at| at as f64))
                     .unwrap_or(0.0);
-                if !building && now - built_at > STALE_SECS {
+                if !building && now - built_at > REBUILD_AFTER_SECS {
                     self.trigger_warm(user_id);
                     building = true;
                 }
@@ -768,5 +773,19 @@ fn today(now: f64) -> (String, i64) {
             )
         }
         Err(_) => ("1970-01-01".to_owned(), 1970),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WARM_AGAIN_SECS;
+    use crate::reads::discover::adapters::queue::live_sources::{ARTIST_TTL, USER_STATS_TTL};
+
+    /// A warm build finds the previous one's artist-level and statistics
+    /// reads still cached, so it does not pay every paced read again.
+    #[test]
+    fn cached_reads_outlive_the_warm_cycle() {
+        assert!(ARTIST_TTL.as_secs_f64() > WARM_AGAIN_SECS);
+        assert!(USER_STATS_TTL.as_secs_f64() >= WARM_AGAIN_SECS);
     }
 }

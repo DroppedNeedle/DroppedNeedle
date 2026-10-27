@@ -16,7 +16,7 @@ use super::sources::{
 };
 use crate::reads::catalog::upstream::UNREADABLE_NAMESPACE;
 use crate::reads::discover::adapters::queue::live_sources::{
-    ARTIST_TTL, LiveSources, USER_STATS_TTL, lastfm_result,
+    ARTIST_TTL, LiveSources, USER_ACTIVITY_TTL, USER_STATS_TTL, lastfm_result,
 };
 use crate::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistRow, QueueSources, SourceResult, StatsRange,
@@ -441,7 +441,7 @@ impl PageSources for LiveSources {
                 &["page_recent", &username.to_lowercase(), &limit.to_string()],
             )
             .personal();
-            self.cached(key, USER_STATS_TTL, async {
+            self.cached(key, USER_ACTIVITY_TTL, async {
                 let rows = lastfm_result(
                     client
                         .user_recent_tracks(&creds, username, limit, BUILD)

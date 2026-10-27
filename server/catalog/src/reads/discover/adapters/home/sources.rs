@@ -15,7 +15,7 @@ use crate::reads::discover::adapters::page::build::weekly_exploration;
 use crate::reads::discover::adapters::page::live_sources::BUILD;
 use crate::reads::discover::adapters::page::sources::{LastFmChartAlbum, PageSources, RankedAlbum};
 use crate::reads::discover::adapters::queue::live_sources::{
-    ARTIST_TTL, LiveSources, USER_STATS_TTL, credit_name, lastfm_result,
+    ARTIST_TTL, LiveSources, USER_ACTIVITY_TTL, USER_STATS_TTL, credit_name, lastfm_result,
 };
 use crate::reads::discover::adapters::queue::sources::{
     ArtistRow, QueueSources, SourceResult, StatsRange, UserMusic,
@@ -193,7 +193,7 @@ impl HomeSources for LiveSources {
                 &["home_loved", &username.to_lowercase(), &count.to_string()],
             )
             .personal();
-            self.cached(key, USER_STATS_TTL, async {
+            self.cached(key, USER_ACTIVITY_TTL, async {
                 let rows = self.listenbrainz_result(
                     self.lb()
                         .user_loved_recordings(username, count, BUILD)
@@ -296,7 +296,7 @@ impl HomeSources for LiveSources {
                 &["home_loved", &username.to_lowercase(), &limit.to_string()],
             )
             .personal();
-            self.cached(key, USER_STATS_TTL, async {
+            self.cached(key, USER_ACTIVITY_TTL, async {
                 let rows = lastfm_result(
                     client
                         .user_loved_tracks(&creds, username, limit, BUILD)
