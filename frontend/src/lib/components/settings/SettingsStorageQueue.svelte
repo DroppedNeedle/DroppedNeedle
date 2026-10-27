@@ -91,4 +91,9 @@
 		max={1}
 		step={0.1}
 	/>
+	<ToggleRow
+		label="Blend Last.fm and ListenBrainz"
+		description="For users with both linked, base recommendations on both services, not only the primary one"
+		bind:checked={data.discover_blend_listening_services}
+	/>
 </div>

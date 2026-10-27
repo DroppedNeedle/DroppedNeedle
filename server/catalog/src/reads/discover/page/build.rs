@@ -541,6 +541,12 @@ impl Builder<'_> {
         // empty in a popularity outage; Last.fm stands in then, and always
         // for users who chose Last.fm.
         let lastfm_similar = policy.popularity() == ListenSource::Lastfm;
+        // Blended, a user with both services gets both lists, merged; a
+        // popularity outage leaves the Last.fm one alone, as above.
+        let blend_similar = self.settings.queue.blend_services
+            && user.lastfm
+            && user.listenbrainz.is_some()
+            && !listening.popularity_down();
         const SIMILAR_KEYS: [&str; SEEDS] = ["similar_0", "similar_1", "similar_2"];
         let similar_seeds = if needs(Input::Similar) { SEEDS } else { 0 };
         let similar = join_all(seeds.iter().take(similar_seeds).enumerate().map(
@@ -551,7 +557,20 @@ impl Builder<'_> {
                         return Vec::new();
                     };
                     let read = async {
-                        if lastfm_similar {
+                        if blend_similar {
+                            let (lastfm, listenbrainz) = tokio::join!(
+                                listening.lastfm_similar(user_id, seed, 20, ask),
+                                listening.similar_artists(user_id, mbid, 20, ask),
+                            );
+                            match (lastfm, listenbrainz) {
+                                (Err(cause), Err(_)) => Err(cause),
+                                (lastfm, listenbrainz) => Ok(blend_scored(
+                                    lastfm.unwrap_or_default(),
+                                    listenbrainz.unwrap_or_default(),
+                                    20,
+                                )),
+                            }
+                        } else if lastfm_similar {
                             listening.lastfm_similar(user_id, seed, 20, ask).await
                         } else {
                             listening.similar_artists(user_id, mbid, 20, ask).await
@@ -1876,6 +1895,37 @@ fn lastfm_top_genres(tags: &[(&ArtistRow, Vec<String>)]) -> Vec<String> {
     genres
 }
 
+/// Merge two services' similar artists. Each list's scores are scaled to
+/// its own best (Last.fm's match runs 0 to 1, ListenBrainz's score is a
+/// raw count), an artist both suggest adds its two scores up so agreement
+/// ranks first, and the best `limit` are kept.
+fn blend_scored(
+    one: Vec<ScoredArtist>,
+    other: Vec<ScoredArtist>,
+    limit: usize,
+) -> Vec<ScoredArtist> {
+    let mut merged: Vec<ScoredArtist> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for list in [one, other] {
+        let best = list.iter().map(|row| row.score).fold(0.0_f64, f64::max);
+        for mut row in list {
+            row.score = if best > 0.0 { row.score / best } else { 0.0 };
+            let key =
+                normalize(row.artist.mbid.as_deref()).unwrap_or_else(|| fold(&row.artist.name));
+            match index.get(&key) {
+                Some(&at) => merged[at].score += row.score,
+                None => {
+                    index.insert(key, merged.len());
+                    merged.push(row);
+                }
+            }
+        }
+    }
+    merged.sort_by(|a, b| b.score.total_cmp(&a.score));
+    merged.truncate(limit);
+    merged
+}
+
 /// The 60/40 new-to-familiar split of a Daily Mix, topped up from
 /// whichever side has more when the other runs short.
 fn mix_split(fresh: usize, familiar: usize) -> (usize, usize) {
@@ -2312,5 +2362,32 @@ mod tests {
         assert_eq!(mix_split(20, 20), (7, 5));
         assert_eq!(mix_split(2, 20), (2, 10));
         assert_eq!(mix_split(20, 1), (11, 1));
+    }
+
+    fn scored(name: &str, mbid: &str, score: f64) -> super::ScoredArtist {
+        super::ScoredArtist {
+            artist: super::ArtistRow {
+                name: name.to_owned(),
+                mbid: Some(mbid.to_owned()),
+                listen_count: 0,
+            },
+            score,
+        }
+    }
+
+    /// Last.fm's 0..1 match and ListenBrainz's raw count weigh alike once
+    /// scaled; an artist both suggest comes first, named once.
+    #[test]
+    fn blended_similar_artists_rank_agreement_first() {
+        let lastfm = vec![scored("Both", "B", 0.5), scored("Last.fm only", "L", 0.25)];
+        let listenbrainz = vec![
+            scored("ListenBrainz only", "Z", 900.0),
+            scored("Both", "b", 450.0),
+        ];
+        let blended = super::blend_scored(lastfm, listenbrainz, 10);
+        let names: Vec<&str> = blended.iter().map(|row| row.artist.name.as_str()).collect();
+        assert_eq!(names, ["Both", "ListenBrainz only", "Last.fm only"]);
+        assert!((blended[0].score - 1.5).abs() < 1e-9);
+        assert_eq!(super::blend_scored(blended, Vec::new(), 2).len(), 2);
     }
 }

@@ -378,3 +378,83 @@ async fn a_page_in_an_old_shape_is_dropped() {
         .expect("rows counted");
     assert_eq!(rows, 0, "the old row is gone");
 }
+
+/// A user with both services linked is seeded from the primary one alone,
+/// until the services are blended: then the Last.fm top artist gets a
+/// Because shelf next to the ListenBrainz one, an artist only Last.fm finds
+/// similar shows up on the page.
+#[tokio::test]
+async fn blended_services_seed_the_page_from_both() {
+    use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+
+    for blend in [false, true] {
+        let dir = crate::common::ScratchDir::new("discover-page-blend");
+        let rig = AuthRig::new("discover-page-blend").await;
+        let db = rig.platform.db.clone();
+        db.write(Lane::Foreground, "test.seed", |tx| {
+            tx.execute(
+                "INSERT INTO auth_users (id, display_name, role, created_at) \
+                 VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+                [],
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("user row");
+        rig.config
+            .save_secret_blocking(AdvancedSettings {
+                discover_blend_listening_services: blend,
+                ..AdvancedSettings::default()
+            })
+            .expect("advanced settings save");
+        let mut script = page_script();
+        script.user.lastfm = true;
+        script.user.lastfm_username = Some("scrobbler".to_owned());
+        script.lastfm_top = vec![ArtistRow {
+            name: "Scrobbled Seed".to_owned(),
+            mbid: Some(mbid('d', 9)),
+            listen_count: 40,
+        }];
+        // Three of its own per seed, so each seed's shelf has new artists.
+        for (seed, first) in [("Seed", 1u8), ("Scrobbled Seed", 4)] {
+            let picks = (first..first + 3)
+                .map(|n| ScoredArtist {
+                    artist: ArtistRow {
+                        name: format!("Last.fm Pick {n}"),
+                        mbid: Some(mbid('e', n)),
+                        listen_count: 0,
+                    },
+                    score: 0.9,
+                })
+                .collect();
+            script.lastfm_similar.insert(seed.to_owned(), picks);
+        }
+        let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
+            *network = Arc::new(script);
+        }));
+
+        call(&app, "GET", "/api/v3/discover", None).await;
+        let page = after_commits(&db, "the built page was saved", || async {
+            let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+            (page["refreshing"] == false && !page["sections"].as_array()?.is_empty())
+                .then_some(page)
+        })
+        .await;
+
+        let because = &content(&page, "because_you_listen_to")["entries"];
+        let seeds: Vec<&str> = because
+            .as_array()
+            .expect("because shelves")
+            .iter()
+            .filter_map(|entry| entry["seed_artist"].as_str())
+            .collect();
+        let shown = page.to_string().contains("Last.fm Pick");
+        if blend {
+            assert_eq!(seeds, ["Seed", "Scrobbled Seed"], "both services seed");
+            assert!(shown, "Last.fm's similar artist is on the page");
+        } else {
+            assert_eq!(seeds, ["Seed"], "the primary service alone");
+            assert!(!shown, "Last.fm is not asked for similar artists");
+        }
+    }
+}

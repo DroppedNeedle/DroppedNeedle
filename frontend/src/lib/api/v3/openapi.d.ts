@@ -9835,6 +9835,13 @@ export interface components {
              */
             direct_remote_images_enabled: boolean;
             /**
+             * @description Blend the listening services: a user with Last.fm and ListenBrainz
+             *     linked gets seed artists and similar artists from both, duplicates
+             *     merged. Off, the primary service alone.
+             * @default false
+             */
+            discover_blend_listening_services: boolean;
+            /**
              * Format: int64
              * @description Discover picks count.
              * @default 12

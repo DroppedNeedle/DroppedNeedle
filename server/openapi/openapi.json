@@ -35374,6 +35374,11 @@
             "description": "Direct remote images.",
             "default": true
           },
+          "discover_blend_listening_services": {
+            "type": "boolean",
+            "description": "Blend the listening services: a user with Last.fm and ListenBrainz\nlinked gets seed artists and similar artists from both, duplicates\nmerged. Off, the primary service alone.",
+            "default": false
+          },
           "discover_picks_count": {
             "type": "integer",
             "format": "int64",

@@ -66,6 +66,9 @@ pub struct QueueSettings {
     pub lastfm_mbid_max_lookups: usize,
     /// Whether the warm cycle may build decks.
     pub warm_cycle_build: bool,
+    /// Whether a user with Last.fm and ListenBrainz linked gets seeds and
+    /// similar artists from both, not only from the primary service.
+    pub blend_services: bool,
     /// Days an ignore is kept.
     pub ignored_retention_days: i64,
     /// How long between ignore-ledger prunes, ms.
@@ -106,6 +109,7 @@ impl QueueSettings {
                 50,
             ),
             warm_cycle_build: advanced.discover_queue_warm_cycle_build,
+            blend_services: advanced.discover_blend_listening_services,
             ignored_retention_days: advanced.ignored_releases_retention_days.max(1),
             prune_interval_ms: advanced.store_prune_interval_hours.max(1) * 3_600_000,
         }
