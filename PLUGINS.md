@@ -25,6 +25,8 @@ What DroppedNeedle does to keep a plugin in its lane:
   it. The install screen shows that commit, the plugin's version, and what it
   asks to do, before anything is written. If the repository changes between
   the preview and the install, the install stops and asks you to look again.
+  An update stays the kind of install you chose, and stops if the
+  repository at that address was deleted and created again.
 - **Each plugin is its own process.** If it crashes, only that plugin stops;
   DroppedNeedle restarts it after a short wait (1 second, doubling up to 5
   minutes). If it hangs, its calls time out and the rest of the server
@@ -67,9 +69,12 @@ disabled; enable it, fill in its settings, and save.
 To update later, press **Update** on the plugin. What moves depends on how
 it was installed:
 
-- From releases (a plain repository URL): to the newest release.
+- From releases (a plain repository URL): to the newest release. If the
+  repository has no releases any more, the update stops; install it again
+  from a `/tree/` or `/commit/` URL to pick a branch, tag or commit.
 - From a branch (a `/tree/` URL, or the default branch of a repository with
   no releases): to the branch's newest commit, only when you press Update.
+  It stays on the branch even if the repository has releases now.
 - From a tag or a commit: nowhere. Those pins stay until you install a
   different version.
 

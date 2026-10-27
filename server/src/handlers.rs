@@ -105,6 +105,7 @@ pub mod test_hooks {
                 retry_after: Some(42),
             },
             "UPSTREAM_ERROR" => Unavailable::UpstreamError,
+            "UPSTREAM_UNREADABLE" => Unavailable::UpstreamUnreadable,
             "PROVIDER_UNAVAILABLE" => Unavailable::Provider {
                 provider: "listenbrainz",
                 retry_after: Some(30),

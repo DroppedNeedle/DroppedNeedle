@@ -24944,7 +24944,7 @@
             }
           },
           "502": {
-            "description": "GitHub refused the request or could not be reached",
+            "description": "GitHub refused the request, could not be reached, or sent an unreadable answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -25032,7 +25032,7 @@
             }
           },
           "502": {
-            "description": "GitHub refused the request or could not be reached",
+            "description": "GitHub refused the request, could not be reached, or sent an unreadable answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -25328,7 +25328,7 @@
         "tags": [
           "plugins"
         ],
-        "summary": "Update one installed plugin from the GitHub repository it came from.\nA plugin installed from releases moves to the latest release; a pinned\none moves only when a new ref is given. Settings and data stay.",
+        "summary": "Update one installed plugin from the GitHub repository it came from.\nA plugin installed from releases moves to the latest release, a branch\nto its tip; a pinned one moves only when a new ref is given. An update\nnever switches the kind of install by itself, and never installs from a\nrepository GitHub knows by another id. Settings and data stay.",
         "operationId": "update_plugin_from_source",
         "parameters": [
           {
@@ -25403,7 +25403,7 @@
             }
           },
           "409": {
-            "description": "The repository moved since the preview",
+            "description": "The repository moved since the preview, was replaced, or has no releases now",
             "content": {
               "application/json": {
                 "schema": {
@@ -25413,7 +25413,7 @@
             }
           },
           "502": {
-            "description": "GitHub refused the request or could not be reached",
+            "description": "GitHub refused the request, could not be reached, or sent an unreadable answer",
             "content": {
               "application/json": {
                 "schema": {

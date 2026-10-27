@@ -6496,8 +6496,10 @@ export interface paths {
         put?: never;
         /**
          * Update one installed plugin from the GitHub repository it came from.
-         *     A plugin installed from releases moves to the latest release; a pinned
-         *     one moves only when a new ref is given. Settings and data stay.
+         *     A plugin installed from releases moves to the latest release, a branch
+         *     to its tip; a pinned one moves only when a new ref is given. An update
+         *     never switches the kind of install by itself, and never installs from a
+         *     repository GitHub knows by another id. Settings and data stay.
          */
         post: operations["update_plugin_from_source"];
         delete?: never;
@@ -41398,7 +41400,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description GitHub refused the request or could not be reached */
+            /** @description GitHub refused the request, could not be reached, or sent an unreadable answer */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -41467,7 +41469,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description GitHub refused the request or could not be reached */
+            /** @description GitHub refused the request, could not be reached, or sent an unreadable answer */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -41747,7 +41749,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The repository moved since the preview */
+            /** @description The repository moved since the preview, was replaced, or has no releases now */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -41756,7 +41758,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description GitHub refused the request or could not be reached */
+            /** @description GitHub refused the request, could not be reached, or sent an unreadable answer */
             502: {
                 headers: {
                     [name: string]: unknown;

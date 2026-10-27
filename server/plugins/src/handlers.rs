@@ -67,6 +67,12 @@ fn map_install(error: InstallError) -> PluginError {
             PluginError::Source(SourceFault::RateLimited { retry_after })
         }
         InstallError::Download => PluginError::Source(SourceFault::Unreachable),
+        InstallError::Unreadable => PluginError::Source(SourceFault::Unreadable),
+        refused @ (InstallError::NoReleasesNow | InstallError::RepositoryReplaced) => {
+            PluginError::Conflict {
+                message: refused.to_string(),
+            }
+        }
         other => PluginError::InvalidInput {
             message: other.to_string(),
         },
@@ -224,7 +230,7 @@ async fn install_staged(deps: &PluginsDeps, staged: StagedPlugin) -> Result<Stri
         (status = 400, description = "Not a usable plugin repository"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
-        (status = 502, description = "GitHub refused the request or could not be reached"),
+        (status = 502, description = "GitHub refused the request, could not be reached, or sent an unreadable answer"),
         (status = 503, description = "GitHub is rate limiting this server"),
     )
 )]
@@ -276,7 +282,7 @@ pub async fn preview_plugin_install(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 409, description = "The repository moved since the preview"),
-        (status = 502, description = "GitHub refused the request or could not be reached"),
+        (status = 502, description = "GitHub refused the request, could not be reached, or sent an unreadable answer"),
         (status = 503, description = "GitHub is rate limiting this server"),
     )
 )]
@@ -303,8 +309,10 @@ pub async fn install_plugin(
 }
 
 /// Update one installed plugin from the GitHub repository it came from.
-/// A plugin installed from releases moves to the latest release; a pinned
-/// one moves only when a new ref is given. Settings and data stay.
+/// A plugin installed from releases moves to the latest release, a branch
+/// to its tip; a pinned one moves only when a new ref is given. An update
+/// never switches the kind of install by itself, and never installs from a
+/// repository GitHub knows by another id. Settings and data stay.
 #[utoipa::path(
     post,
     tag = "plugins",
@@ -317,8 +325,8 @@ pub async fn install_plugin(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown plugin"),
-        (status = 409, description = "The repository moved since the preview"),
-        (status = 502, description = "GitHub refused the request or could not be reached"),
+        (status = 409, description = "The repository moved since the preview, was replaced, or has no releases now"),
+        (status = 502, description = "GitHub refused the request, could not be reached, or sent an unreadable answer"),
         (status = 503, description = "GitHub is rate limiting this server"),
     )
 )]
@@ -333,9 +341,17 @@ pub async fn update_plugin_from_source(
         .host
         .install_record(&name)
         .ok_or_else(|| map_install(InstallError::NoSource))?;
-    let reference = record.update_reference(body.reference.as_deref());
-    let url = format!("https://github.com/{}", record.repository);
-    let staged = stage_request(&deps, &url, reference.as_deref()).await?;
+    let source = record
+        .update_source(body.reference.as_deref())
+        .map_err(map_install)?;
+    let resolved = resolve(deps.fetcher.as_ref(), &deps.github, source)
+        .await
+        .map_err(map_install)?;
+    record.same_repository(&resolved).map_err(map_install)?;
+    let repository_id = resolved.repository_id;
+    let staged = stage(deps.fetcher.as_ref(), &deps.github, resolved)
+        .await
+        .map_err(map_install)?;
     if staged.manifest.name != name {
         return Err(ApiError::invalid_input(format!(
             "That repository now holds a plugin named '{}', not '{name}'",
@@ -356,6 +372,11 @@ pub async fn update_plugin_from_source(
     let updated = staged.resolved.commit != record.commit;
     if updated {
         install_staged(&deps, staged).await?;
+    } else if record.repository_id.is_none() {
+        // One small file, read and written in place like the record read above.
+        deps.host
+            .keep_repository_id(&name, repository_id)
+            .map_err(map_install)?;
     }
     let plugin = plugin_info(deps.host.as_ref(), deps.config.as_ref(), &name)?;
     Ok(Json(PluginSourceUpdateResponse { updated, plugin }))

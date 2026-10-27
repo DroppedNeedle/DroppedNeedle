@@ -291,7 +291,10 @@ async fn uninstall_stops_the_plugin_and_keeps_settings() {
 
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
+const REPOSITORY: &str = "https://api.github.com/repos/acme/toy";
+
 fn github(fetcher: &FakeFetcher) {
+    fetcher.insert(REPOSITORY, br#"{"id": 1001}"#);
     fetcher.insert(
         "https://api.github.com/repos/acme/toy/releases/latest",
         br#"{"tag_name": "v1.0.0"}"#,
@@ -404,6 +407,7 @@ const BRANCH_SHA: &str = "89abcdef0123456789abcdef0123456789abcdef";
 
 /// The default branch holds unreleased code that would install fine.
 fn default_branch(fetcher: &FakeFetcher) {
+    fetcher.insert(REPOSITORY, br#"{"id": 1001}"#);
     fetcher.insert(
         DEFAULT_BRANCH,
         format!(r#"{{"sha": "{BRANCH_SHA}"}}"#).as_bytes(),
@@ -579,10 +583,46 @@ async fn a_repository_without_releases_installs_its_default_branch() {
     assert_eq!(installed["install"]["commit"], BRANCH_SHA);
 }
 
+/// A repository deleted and created again under the same address holds
+/// someone else's code: an update refuses it and installs nothing.
+#[tokio::test]
+async fn an_update_never_installs_from_a_replaced_repository() {
+    let rig = rig("replaced").await;
+    let fetcher = Arc::new(FakeFetcher::new());
+    github(&fetcher);
+    let admin = with_test_principal(
+        plugin_routes()
+            .with_state(deps_for(&rig, Arc::clone(&fetcher)))
+            .into_router(),
+        session("admin-1"),
+    );
+    let body = json!({"repository_url": "https://github.com/acme/toy"});
+    let (status, _) = send(admin.clone(), "POST", "/api/v3/plugins/install", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    fetcher.insert(REPOSITORY, br#"{"id": 2002}"#);
+    fetcher.insert(LATEST_RELEASE, br#"{"tag_name": "v2.0.0"}"#);
+    fetcher.insert(
+        "https://api.github.com/repos/acme/toy/commits/v2.0.0",
+        format!(r#"{{"sha": "{BRANCH_SHA}"}}"#).as_bytes(),
+    );
+    let new_code = format!("https://codeload.github.com/acme/toy/zip/{BRANCH_SHA}");
+    fetcher.insert(&new_code, &toy_zip(None));
+    let (status, error) = send(admin, "POST", "/api/v3/plugins/toy/update", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        error["error"]["message"],
+        "The repository at this address was replaced since the plugin was installed. Install it again if you trust the new one"
+    );
+    assert_eq!(rig.host.install_record("toy").unwrap().commit, SHA);
+    assert!(!fetcher.requested.lock().unwrap().contains(&new_code));
+}
+
 #[tokio::test]
 async fn a_ref_github_does_not_know_is_the_admins_mistake_not_an_outage() {
     let rig = rig("unknown-ref").await;
     let fetcher = Arc::new(FakeFetcher::new());
+    fetcher.insert(REPOSITORY, br#"{"id": 1001}"#);
     fetcher.answer(
         "https://api.github.com/repos/acme/toy/commits/mian",
         Fetched::Failed(422),

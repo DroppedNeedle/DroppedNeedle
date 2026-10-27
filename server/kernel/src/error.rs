@@ -50,6 +50,8 @@ pub const UPSTREAM_REFUSED: &str = "UPSTREAM_REFUSED";
 pub const UPSTREAM_RATE_LIMITED: &str = "UPSTREAM_RATE_LIMITED";
 /// GitHub could not be reached during a plugin install or update.
 pub const UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
+/// GitHub answered a plugin install or update with something unreadable.
+pub const UPSTREAM_UNREADABLE: &str = "UPSTREAM_UNREADABLE";
 /// An outside service (MusicBrainz, Last.fm, ...) is down, rate limiting
 /// or unreachable. `details.provider` names it.
 pub const PROVIDER_UNAVAILABLE: &str = "PROVIDER_UNAVAILABLE";
@@ -104,6 +106,8 @@ pub enum Unavailable {
     },
     /// GitHub could not be reached during a plugin install or update.
     UpstreamError,
+    /// GitHub answered a plugin install or update with something unreadable.
+    UpstreamUnreadable,
     /// An outside service is down, rate limiting or unreachable.
     Provider {
         /// The service's lowercase key (`musicbrainz`, `lastfm`, ...).
@@ -170,6 +174,13 @@ impl Unavailable {
                 StatusCode::BAD_GATEWAY,
                 UPSTREAM_ERROR,
                 "GitHub could not be reached",
+                None,
+                false,
+            ),
+            Self::UpstreamUnreadable => (
+                StatusCode::BAD_GATEWAY,
+                UPSTREAM_UNREADABLE,
+                "GitHub sent an answer DroppedNeedle could not read.",
                 None,
                 false,
             ),

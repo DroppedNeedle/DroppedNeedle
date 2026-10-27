@@ -75,8 +75,9 @@ pub enum Fetched {
 pub enum FetchError {
     /// The body is over [`MAX_PLUGIN_ZIP_BYTES`].
     TooLarge,
-    /// The request or the download broke. The text is log-only.
-    Transport(String),
+    /// The request or the download broke: a fixed kind for the log, never
+    /// the transport's own text, which can carry the URL.
+    Transport(&'static str),
 }
 
 /// Fetch one URL and say what came back.
@@ -140,7 +141,15 @@ fn refusal(
 impl ArchiveFetcher for ReqwestFetcher {
     fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Fetched, FetchError>> {
         Box::pin(async move {
-            let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
+            let transport = |error: reqwest::Error| {
+                FetchError::Transport(if error.is_timeout() {
+                    "timed out"
+                } else if error.is_connect() {
+                    "could not connect"
+                } else {
+                    "request failed"
+                })
+            };
             let response = self
                 .http
                 .get(url)
@@ -155,7 +164,7 @@ impl ArchiveFetcher for ReqwestFetcher {
             match read_capped(response, MAX_PLUGIN_ZIP_BYTES).await {
                 Ok(body) => Ok(Fetched::Found(body)),
                 Err(BodyError::TooLarge) => Err(FetchError::TooLarge),
-                Err(BodyError::Transport(cause)) => Err(FetchError::Transport(cause)),
+                Err(error @ BodyError::Transport(_)) => Err(FetchError::Transport(error.kind())),
             }
         })
     }
@@ -251,9 +260,12 @@ pub enum InstallError {
         /// Seconds until GitHub takes requests again, when it said.
         retry_after: Option<u64>,
     },
-    /// GitHub did not answer, answered with a failure, or sent something
-    /// unreadable.
+    /// GitHub did not answer, or answered with a failure.
     Download,
+    /// GitHub answered with a body that does not decode.
+    Unreadable,
+    /// No public repository at that address.
+    NoRepository,
     /// The repository has no such release, tag, branch or commit.
     RefNotFound(String),
     /// Archive over the cap.
@@ -277,6 +289,11 @@ pub enum InstallError {
     /// The plugin was not installed from GitHub, so there is nothing to
     /// update from.
     NoSource,
+    /// An update of a release install found no releases left.
+    NoReleasesNow,
+    /// The repository at the recorded address has another GitHub id now:
+    /// it was deleted and created again, maybe by someone else.
+    RepositoryReplaced,
     /// Local filesystem failure. The message is log-only.
     Io(String),
 }
@@ -292,6 +309,8 @@ impl std::fmt::Display for InstallError {
                 f.write_str("GitHub is rate limiting this server, try again later")
             }
             Self::Download => f.write_str("GitHub could not be reached"),
+            Self::Unreadable => f.write_str("GitHub sent an answer DroppedNeedle could not read"),
+            Self::NoRepository => f.write_str("GitHub has no public repository at that address"),
             Self::RefNotFound(what) => write!(f, "GitHub has no {what} in that repository"),
             Self::TooLarge => f.write_str("That repository is too large to install as a plugin"),
             Self::TooManyFiles => f.write_str("That repository has too many files"),
@@ -308,6 +327,12 @@ impl std::fmt::Display for InstallError {
             Self::NoSource => f.write_str(
                 "This plugin was not installed from GitHub, so there is nothing to update from",
             ),
+            Self::NoReleasesNow => f.write_str(
+                "This repository has no releases now. Pick a branch, tag or commit to install",
+            ),
+            Self::RepositoryReplaced => f.write_str(
+                "The repository at this address was replaced since the plugin was installed. Install it again if you trust the new one",
+            ),
         }
     }
 }
@@ -321,6 +346,11 @@ pub struct InstallRecord {
     pub repository_url: String,
     /// `owner/repo`.
     pub repository: String,
+    /// GitHub's id for the repository, which a rename keeps and a
+    /// re-created repository does not. `None` on records written before it
+    /// was kept: the next update fills it.
+    #[serde(default)]
+    pub repository_id: Option<u64>,
     /// What the admin asked for.
     pub ref_kind: PluginRefKind,
     /// The release tag, tag, branch or commit asked for.
@@ -343,21 +373,44 @@ impl InstallRecord {
             .ok()
     }
 
-    /// The reference an update fetches. A reference the admin asked for
-    /// wins; otherwise releases move to the newest release, branches to
-    /// their tip, and tags and commits stay on the installed commit. `None`
-    /// means the repository's default (latest release or default branch).
-    pub fn update_reference(&self, asked: Option<&str>) -> Option<String> {
+    /// What an update fetches. A reference the admin asked for wins;
+    /// otherwise releases move to the newest release, branches (the
+    /// default one included) to their tip, and tags and commits stay on the
+    /// installed commit. An update never changes the kind of install by
+    /// itself: a release install with no releases left stops, and never
+    /// falls back to the default branch.
+    pub fn update_source(&self, asked: Option<&str>) -> Result<InstallSource, InstallError> {
+        let url = format!("https://github.com/{}", self.repository);
         let asked = asked
             .map(str::trim)
             .filter(|reference| !reference.is_empty());
-        match (asked, self.ref_kind) {
-            (Some(reference), _) => Some(reference.to_owned()),
-            (None, PluginRefKind::Release) => None,
-            (None, PluginRefKind::Branch) if self.reference == "HEAD" => None,
-            (None, PluginRefKind::Branch) => Some(self.reference.clone()),
-            (None, PluginRefKind::Tag | PluginRefKind::Commit) => Some(self.commit.clone()),
+        let reference = match (asked, self.ref_kind) {
+            (Some(reference), _) => reference,
+            (None, PluginRefKind::Release) => {
+                let mut source = parse_source(&url, None)?;
+                source.wanted = Wanted::NewestRelease;
+                return Ok(source);
+            }
+            (None, PluginRefKind::Branch) => &self.reference,
+            (None, PluginRefKind::Tag | PluginRefKind::Commit) => &self.commit,
+        };
+        parse_source(&url, Some(reference))
+    }
+
+    /// Refuse an update whose repository is not the one installed from.
+    /// A record without an id cannot tell, so it lets the update through.
+    pub fn same_repository(&self, resolved: &ResolvedSource) -> Result<(), InstallError> {
+        match self.repository_id {
+            Some(id) if id != resolved.repository_id => Err(InstallError::RepositoryReplaced),
+            _ => Ok(()),
         }
+    }
+
+    fn write(&self, plugin_dir: &Path) -> Result<(), InstallError> {
+        let json =
+            serde_json::to_vec_pretty(self).map_err(|error| InstallError::Io(error.to_string()))?;
+        std::fs::write(plugin_dir.join(INSTALL_RECORD), json)
+            .map_err(|error| InstallError::Io(error.to_string()))
     }
 }
 
@@ -379,6 +432,8 @@ pub struct InstallSource {
 pub enum Wanted {
     /// The newest release (or the default branch when there are none).
     LatestRelease,
+    /// The newest release and nothing else.
+    NewestRelease,
     /// One release tag.
     Tag(String),
     /// A branch, tag or commit named in a `/tree/` URL.
@@ -392,6 +447,8 @@ pub enum Wanted {
 pub struct ResolvedSource {
     /// The source.
     pub source: InstallSource,
+    /// GitHub's id for the repository.
+    pub repository_id: u64,
     /// What the reference is.
     pub ref_kind: PluginRefKind,
     /// The tag, branch or commit.
@@ -471,7 +528,7 @@ pub fn parse_source(url: &str, reference: Option<&str>) -> Result<InstallSource,
         };
     }
     let reference_ok = match &wanted {
-        Wanted::LatestRelease => true,
+        Wanted::LatestRelease | Wanted::NewestRelease => true,
         Wanted::Tag(text) | Wanted::Tree(text) => valid_ref(text),
         Wanted::Commit(text) => is_commit_sha(text),
     };
@@ -484,6 +541,14 @@ pub fn parse_source(url: &str, reference: Option<&str>) -> Result<InstallSource,
         repo,
         wanted,
     })
+}
+
+/// `GET /repos/{owner}/{repo}`, of which only the id is read. Probed
+/// 2026-10-27 against the public API: `id` is a JSON integer, and an
+/// unknown repository answers 404.
+#[derive(Deserialize)]
+struct Repository {
+    id: u64,
 }
 
 #[derive(Deserialize)]
@@ -517,6 +582,14 @@ fn body_of(answer: Result<Fetched, FetchError>) -> Result<Option<Vec<u8>>, Insta
     }
 }
 
+/// Decode one GitHub answer, or say it could not be read.
+fn decode<T: serde::de::DeserializeOwned>(body: &[u8], what: &str) -> Result<T, InstallError> {
+    serde_json::from_slice(body).map_err(|error| {
+        tracing::warn!(what, %error, "GitHub sent an unreadable answer to a plugin request");
+        InstallError::Unreadable
+    })
+}
+
 /// Resolve a commit-ish (tag, branch or SHA) to a commit SHA.
 async fn commit_for(
     fetcher: &dyn ArchiveFetcher,
@@ -539,9 +612,10 @@ async fn commit_for(
     let Some(body) = body_of(answer)? else {
         return Ok(None);
     };
-    let info: CommitInfo = serde_json::from_slice(&body).map_err(|_| InstallError::Download)?;
+    let info: CommitInfo = decode(&body, "commit")?;
     if !is_commit_sha(&info.sha) {
-        return Err(InstallError::Download);
+        tracing::warn!("GitHub named a commit that is not a SHA");
+        return Err(InstallError::Unreadable);
     }
     Ok(Some(info.sha.to_ascii_lowercase()))
 }
@@ -552,20 +626,28 @@ pub async fn resolve(
     hosts: &GitHubHosts,
     source: InstallSource,
 ) -> Result<ResolvedSource, InstallError> {
+    let url = format!("{}/repos/{}/{}", hosts.api, source.owner, source.repo);
+    let repository: Repository = match body_of(fetcher.fetch(&url).await)? {
+        Some(body) => decode(&body, "repository")?,
+        None => return Err(InstallError::NoRepository),
+    };
     let (ref_kind, reference) = match &source.wanted {
-        Wanted::LatestRelease => {
+        Wanted::LatestRelease | Wanted::NewestRelease => {
             let url = format!(
                 "{}/repos/{}/{}/releases/latest",
                 hosts.api, source.owner, source.repo
             );
             match body_of(fetcher.fetch(&url).await)? {
                 Some(body) => {
-                    let release: LatestRelease =
-                        serde_json::from_slice(&body).map_err(|_| InstallError::Download)?;
+                    let release: LatestRelease = decode(&body, "latest release")?;
                     if !valid_ref(&release.tag_name) {
-                        return Err(InstallError::Download);
+                        tracing::warn!("GitHub named a release tag that is not a usable ref");
+                        return Err(InstallError::Unreadable);
                     }
                     (PluginRefKind::Release, release.tag_name)
+                }
+                None if source.wanted == Wanted::NewestRelease => {
+                    return Err(InstallError::NoReleasesNow);
                 }
                 // No releases: take the default branch as it is now.
                 None => (PluginRefKind::Branch, "HEAD".to_owned()),
@@ -586,6 +668,7 @@ pub async fn resolve(
         })?;
     Ok(ResolvedSource {
         source,
+        repository_id: repository.id,
         ref_kind,
         reference,
         commit,
@@ -692,21 +775,19 @@ impl PluginHost {
         let staging = self.dir().join(format!(".installing-{name}"));
         let _ = std::fs::remove_dir_all(&staging);
         let written = write_entries(&staging, &staged.root, &staged.entries).and_then(|()| {
-            let record = InstallRecord {
+            InstallRecord {
                 repository_url: staged.resolved.source.url.clone(),
                 repository: format!(
                     "{}/{}",
                     staged.resolved.source.owner, staged.resolved.source.repo
                 ),
+                repository_id: Some(staged.resolved.repository_id),
                 ref_kind: staged.resolved.ref_kind,
                 reference: staged.resolved.reference.clone(),
                 commit: staged.resolved.commit.clone(),
                 installed_at,
-            };
-            let json = serde_json::to_vec_pretty(&record)
-                .map_err(|error| InstallError::Io(error.to_string()))?;
-            std::fs::write(staging.join(INSTALL_RECORD), json)
-                .map_err(|error| InstallError::Io(error.to_string()))
+            }
+            .write(&staging)
         });
         let checked = written.and_then(|()| {
             let manifest = load_manifest(&staging)
@@ -736,6 +817,23 @@ impl PluginHost {
     pub fn install_record(&self, name: &str) -> Option<InstallRecord> {
         let plugin = self.get(name)?;
         InstallRecord::read(Path::new(&plugin.directory))
+    }
+
+    /// Fill in the repository id on a record written before ids were
+    /// kept, after an update that found nothing new to install.
+    pub fn keep_repository_id(&self, name: &str, repository_id: u64) -> Result<(), InstallError> {
+        let Some(plugin) = self.get(name) else {
+            return Ok(());
+        };
+        let dir = Path::new(&plugin.directory);
+        match InstallRecord::read(dir) {
+            Some(record) if record.repository_id.is_none() => InstallRecord {
+                repository_id: Some(repository_id),
+                ..record
+            }
+            .write(dir),
+            _ => Ok(()),
+        }
     }
 }
 

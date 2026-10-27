@@ -86,6 +86,11 @@ const CLOSED_LIST: &[(&str, u16, &str)] = &[
     ),
     ("UPSTREAM_ERROR", 502, "GitHub could not be reached"),
     (
+        "UPSTREAM_UNREADABLE",
+        502,
+        "GitHub sent an answer DroppedNeedle could not read.",
+    ),
+    (
         "PROVIDER_UNAVAILABLE",
         503,
         "An outside service is not answering. Try again later.",
@@ -102,6 +107,7 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
             retry_after: Some(42),
         },
         Unavailable::UpstreamError,
+        Unavailable::UpstreamUnreadable,
         Unavailable::Provider {
             provider: "listenbrainz",
             retry_after: Some(30),
@@ -111,9 +117,10 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
     // compile here, and once listed above it needs its row in the table.
     let retry_after_of = |variant: Unavailable| match variant {
         Unavailable::ServerBusy => Some("1"),
-        Unavailable::MediaServer | Unavailable::UpstreamRefused | Unavailable::UpstreamError => {
-            None
-        }
+        Unavailable::MediaServer
+        | Unavailable::UpstreamRefused
+        | Unavailable::UpstreamError
+        | Unavailable::UpstreamUnreadable => None,
         Unavailable::UpstreamRateLimited { .. } => Some("42"),
         Unavailable::Provider { .. } => Some("30"),
     };

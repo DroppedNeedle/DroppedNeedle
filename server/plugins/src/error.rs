@@ -19,6 +19,8 @@ pub enum SourceFault {
     },
     /// It did not answer, or answered with a failure.
     Unreachable,
+    /// Its answer could not be read.
+    Unreadable,
 }
 
 /// Every failure the plugin routes can return to a caller.
@@ -86,6 +88,7 @@ impl From<PluginError> for ApiError {
                         Unavailable::UpstreamRateLimited { retry_after }
                     }
                     SourceFault::Unreachable => Unavailable::UpstreamError,
+                    SourceFault::Unreadable => Unavailable::UpstreamUnreadable,
                 };
                 ApiError::unavailable(
                     variant,
