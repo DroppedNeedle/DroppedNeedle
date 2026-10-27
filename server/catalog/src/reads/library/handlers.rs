@@ -16,8 +16,8 @@ use super::models::{
     AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView, CursorQuery,
     DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest,
     LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
-    ResolveTracksResponse, SearchQuery, SearchResults, StatsView, SuggestionsQuery,
-    SuggestionsResponse, TrackListPage, TrackPage, TrackQuery, TrackTags, TrackView,
+    ResolveTracksResponse, StatsView, SuggestionsQuery, SuggestionsResponse, TrackListPage,
+    TrackPage, TrackQuery, TrackTags, TrackView,
 };
 use super::services;
 
@@ -362,29 +362,6 @@ pub async fn list_genre_tracks(
     ValidQuery(query): ValidQuery<PageQuery>,
 ) -> Result<Json<TrackPage>, ApiError> {
     services::genre_tracks(&deps, caller.user_id(), &name, &query)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Album plus track search.
-#[utoipa::path(
-    get,
-    tag = "library",
-    path = "/api/v3/local-library/search",
-    params(SearchQuery),
-    responses(
-        (status = 200, description = "Search results", body = SearchResults),
-        (status = 400, description = "Bad query string"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn search_library(
-    State(deps): State<LibraryDeps>,
-    _caller: User,
-    ValidQuery(query): ValidQuery<SearchQuery>,
-) -> Result<Json<SearchResults>, ApiError> {
-    services::search_library(&deps, &query)
         .await
         .map(Json)
         .map_err(ApiError::from)

@@ -2,8 +2,17 @@ import { getApiUrl } from '$lib/api/api-utils';
 import { coverPath } from '$lib/api/covers';
 import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { QueueItem, SourceType } from '$lib/player/types';
+import type { components } from '$lib/api/v3/openapi';
 import type { CrateReason, CrateTrack, LocalAlbumSummary } from '$lib/types';
 import type { AlbumCardV3, LocalTrackV3, SuggestionTrackV3 } from './LocalV3Queries.svelte';
+
+type SearchItemV3 = components['schemas']['SearchResultItem'];
+
+// What playing or queueing a library album needs.
+export type SpinAlbum = Pick<
+	LocalAlbumSummary,
+	'musicbrainz_id' | 'name' | 'artist_name' | 'year' | 'cover_url'
+>;
 
 // Adapters from v3 local-library views to the listening room's track and
 // album shapes. The crate, search card, and turntable trade these shapes
@@ -59,9 +68,42 @@ export function albumCardToSummary(card: AlbumCardV3): LocalAlbumSummary {
 		year: card.year,
 		track_count: card.track_count,
 		total_size_bytes: card.total_size_bytes,
-		primary_format: card.primary_format,
+		primary_format: card.format,
 		cover_url: localCoverUrl(card.release_group_mbid),
 		date_added: unixToIso(card.date_added)
+	};
+}
+
+// A library album hit from search. The release group keys the cover and
+// the album's tracks; an unidentified album goes by its library id.
+export function searchAlbumToSpin(item: SearchItemV3): SpinAlbum {
+	const mbid = item.musicbrainz_id ?? null;
+	return {
+		musicbrainz_id: mbid ?? item.id ?? '',
+		name: item.title,
+		artist_name: item.artist ?? '',
+		year: item.year,
+		cover_url: localCoverUrl(mbid)
+	};
+}
+
+// A library song hit from search, or null for a hit without its library
+// details.
+export function searchTrackToCrateTrack(item: SearchItemV3): CrateTrack | null {
+	const detail = item.track;
+	if (!detail || !item.id) return null;
+	const albumMbid = detail.release_group_mbid ?? null;
+	return {
+		track_file_id: item.id,
+		title: item.title,
+		album_name: detail.album_title,
+		artist_name: item.artist ?? '',
+		album_mbid: albumMbid,
+		cover_url: localCoverUrl(albumMbid),
+		format: detail.format,
+		year: item.year,
+		duration_seconds: detail.duration_seconds,
+		reason: 'surprise'
 	};
 }
 

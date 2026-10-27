@@ -8,14 +8,14 @@
 use std::sync::Arc;
 
 use crate::reads::enrichment as enrich;
+use crate::reads::search::enrichment::SearchCounts;
 use droppedneedle_kernel::runtime_config::Live;
-use droppedneedle_kernel::runtime_config::secret_sections::ListenBrainzConnection;
+use droppedneedle_kernel::runtime_config::secret_sections::{
+    LastFmSettings, ListenBrainzConnection,
+};
 use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
 use droppedneedle_providers::{
-    Providers, RequestPriority,
-    degradation::IntegrationStatus as CoreStatus,
-    error::ProviderError,
-    listenbrainz::{ListenBrainzClient, ListenBrainzCredentials},
+    Providers, RequestPriority, degradation::IntegrationStatus as CoreStatus, error::ProviderError,
     lrclib::LrclibClient,
 };
 
@@ -43,30 +43,6 @@ impl From<enrich::IntegrationStatus> for CoreStatus {
 // Enrichment roles: concrete clients behind the aggregator traits
 // ---------------------------------------------------------------------------
 
-/// Live ListenBrainz popularity behind the enrichment role.
-///
-/// Popularity reads are anonymous (no token), so this adapter serves
-/// production with default credentials. An empty answer reads as empty; a
-/// failed call becomes a leg error and degrades the row. Search results
-/// and album pages wait on these reads, so they go at user priority.
-#[derive(Clone)]
-pub struct LiveListenBrainz {
-    client: ListenBrainzClient,
-    settings: Option<Live<ListenBrainzConnection>>,
-}
-
-/// Whether ListenBrainz is switched on now. Off when the section cannot
-/// be read.
-fn listenbrainz_on(settings: &Live<ListenBrainzConnection>) -> bool {
-    settings
-        .get()
-        .map(|settings| settings.enabled)
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment off");
-            false
-        })
-}
-
 /// Whether lyrics are switched on now. Off when the section cannot be
 /// read.
 pub(crate) fn lyrics_on(settings: &Live<LyricsSettings>) -> bool {
@@ -77,89 +53,6 @@ pub(crate) fn lyrics_on(settings: &Live<LyricsSettings>) -> bool {
             tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment off");
             false
         })
-}
-
-impl std::fmt::Debug for LiveListenBrainz {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LiveListenBrainz")
-            .field("client", &self.client)
-            .finish_non_exhaustive()
-    }
-}
-
-impl LiveListenBrainz {
-    /// Popularity reads through the one ListenBrainz client.
-    pub fn new(client: ListenBrainzClient) -> Self {
-        Self {
-            client,
-            settings: None,
-        }
-    }
-
-    /// Serve only while the ListenBrainz settings are switched on; off
-    /// reads as unavailable. Read on every call, so a change in Settings
-    /// takes effect at once.
-    #[must_use]
-    pub fn with_settings(mut self, settings: Live<ListenBrainzConnection>) -> Self {
-        self.settings = Some(settings);
-        self
-    }
-
-    fn enabled(&self) -> bool {
-        self.settings.as_ref().is_none_or(listenbrainz_on)
-    }
-
-    fn switched_off(&self) -> Option<ProviderError> {
-        (!self.enabled()).then(|| ProviderError::Disabled {
-            provider: "listenbrainz",
-            message: "switched off in Settings".to_owned(),
-        })
-    }
-}
-
-impl enrich::ListenBrainzClient for LiveListenBrainz {
-    fn is_available(&self) -> bool {
-        self.enabled()
-    }
-
-    fn artist_top_release_groups<'a>(
-        &'a self,
-        mbid: &'a str,
-        count: usize,
-    ) -> enrich::BoxFuture<'a, Result<Vec<enrich::TopRelease>, ProviderError>> {
-        Box::pin(async move {
-            if let Some(off) = self.switched_off() {
-                return Err(off);
-            }
-            let creds = ListenBrainzCredentials::default();
-            let top = self
-                .client
-                .artist_top_release_groups(mbid, count, &creds, RequestPriority::UserInitiated)
-                .await?;
-            Ok(top
-                .into_iter()
-                .map(|row| enrich::TopRelease {
-                    mbid: row.release_group_mbid,
-                    listen_count: row.listen_count,
-                })
-                .collect())
-        })
-    }
-
-    fn release_group_popularity_batch<'a>(
-        &'a self,
-        mbids: &'a [String],
-    ) -> enrich::BoxFuture<'a, Result<std::collections::HashMap<String, i64>, ProviderError>> {
-        Box::pin(async move {
-            if let Some(off) = self.switched_off() {
-                return Err(off);
-            }
-            let creds = ListenBrainzCredentials::default();
-            self.client
-                .release_group_popularity(mbids, &creds, RequestPriority::UserInitiated)
-                .await
-        })
-    }
 }
 
 /// Live LRCLIB lyrics behind the enrichment role, at user priority: a
@@ -376,11 +269,11 @@ impl enrich::EventsClient for UnconfiguredEvents {
     }
 }
 
-/// Live production enrichment: the search batch adapter plus the lyrics
-/// role, built once at boot and handed to [`ReadsSetup::build`](crate::reads::ReadsSetup::build).
+/// Live production enrichment: the search counts plus the lyrics role,
+/// built once at boot and handed to [`ReadsSetup::build`](crate::reads::ReadsSetup::build).
 pub struct ProductionEnrichment {
-    /// Search enrichment behind the reads `EnrichmentPort`.
-    pub search: Arc<enrich::AggregatingEnrichment>,
+    /// Search counts behind the reads `EnrichmentPort`.
+    pub search: Arc<SearchCounts>,
     /// Live lyrics role behind the reads `LyricsPort` (via
     /// `ProviderLyrics`).
     pub lyrics: Arc<LiveLrclib>,
@@ -436,33 +329,18 @@ impl enrich::LyricsClient for UnconfiguredLyrics {
     }
 }
 
-/// Build the production enrichment pair over the provider deps.
-/// ListenBrainz popularity serves only while the
-/// ListenBrainz settings are switched on, and lyrics only while the lyrics
-/// setting is, both read per call;
-/// Last.fm stays unconfigured (per-user credentials), the events feed stays
-/// unconfigured (no persistence), and MusicBrainz identity stays
-/// unconfigured (no route serves it).
+/// Build the production enrichment pair over the provider deps. Search
+/// counts follow the ListenBrainz and Last.fm settings and lyrics the
+/// lyrics setting, all read per call.
 pub fn production_enrichment(
     providers: &Arc<Providers>,
     listenbrainz: Live<ListenBrainzConnection>,
     lyrics: Live<LyricsSettings>,
+    lastfm: Live<LastFmSettings>,
 ) -> ProductionEnrichment {
-    let lb: Arc<dyn enrich::ListenBrainzClient> =
-        Arc::new(LiveListenBrainz::new(providers.listenbrainz.clone()).with_settings(listenbrainz));
-    let live_lyrics = Arc::new(LiveLrclib::new(providers.lrclib.clone()));
-    let lyrics_role: Arc<dyn enrich::LyricsClient> =
-        Arc::new(SwitchedLyrics::new(live_lyrics.clone(), lyrics.clone()));
-    let aggregator = enrich::EnrichmentAggregator::new(
-        Arc::new(UnconfiguredMusicBrainz),
-        lb,
-        Arc::new(UnconfiguredLastFm),
-        lyrics_role,
-        Arc::new(UnconfiguredEvents),
-    );
     ProductionEnrichment {
-        search: Arc::new(enrich::AggregatingEnrichment::new(Arc::new(aggregator))),
-        lyrics: live_lyrics,
+        search: Arc::new(SearchCounts::new(providers, listenbrainz, lastfm)),
+        lyrics: Arc::new(LiveLrclib::new(providers.lrclib.clone())),
         lyrics_settings: lyrics,
     }
 }
@@ -594,67 +472,6 @@ mod tests {
         }
     }
 
-    /// The role maps popularity rows onto enrichment rows and turns a dead
-    /// upstream into a leg error, against a scripted loopback peer. No live
-    /// network.
-    #[tokio::test]
-    async fn live_listenbrainz_role_maps_rows_and_failures() {
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
-        use crate::reads::enrichment::ListenBrainzClient as _;
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let role = LiveListenBrainz::new(
-            providers_with_listenbrainz(&format!("http://{address}"))
-                .listenbrainz
-                .clone(),
-        );
-        let pending =
-            tokio::spawn(async move { role.artist_top_release_groups("artist-mbid", 5).await });
-
-        let (mut socket, _) = listener.accept().await.unwrap();
-        let mut raw = Vec::new();
-        let mut chunk = [0u8; 1024];
-        loop {
-            let read = socket.read(&mut chunk).await.unwrap();
-            assert_ne!(read, 0, "client closed before sending headers");
-            raw.extend_from_slice(&chunk[..read]);
-            if raw.windows(4).any(|window| window == b"\r\n\r\n") {
-                break;
-            }
-        }
-        let head = String::from_utf8_lossy(&raw);
-        assert!(
-            head.contains("/1/popularity/top-release-groups-for-artist/artist-mbid"),
-            "role hits the popularity route: {head}"
-        );
-        let body = r#"[{"release_group_mbid":"rg-a","total_listen_count":10,"release_group":{"name":"Alpha"}},{"release_group_mbid":"","total_listen_count":99}]"#;
-        socket
-            .write_all(
-                format!(
-                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .as_bytes(),
-            )
-            .await
-            .unwrap();
-
-        let top = pending.await.unwrap().expect("role maps rows");
-        assert_eq!(top.len(), 1, "blank-mbid row skipped: {top:?}");
-        assert_eq!(top[0].mbid, "rg-a");
-        assert_eq!(top[0].listen_count, 10);
-
-        // A dead upstream becomes a leg error, never invented rows.
-        let dead = LiveListenBrainz::new(closed_providers().listenbrainz.clone());
-        let error = dead
-            .artist_top_release_groups("artist-mbid", 5)
-            .await
-            .expect_err("dead upstream errors");
-        assert_eq!(error.source(), "listenbrainz");
-    }
-
     #[tokio::test]
     async fn production_enrichment_without_listenbrainz_echoes_bare() {
         use crate::reads::search::models::{
@@ -673,7 +490,7 @@ mod tests {
         store
             .save_blocking(LyricsSettings { enabled: false })
             .unwrap();
-        let pair = production_enrichment(&providers, store.live(), store.live());
+        let pair = production_enrichment(&providers, store.live(), store.live(), store.live());
         let _ = std::fs::remove_dir_all(&dir);
         let response = pair
             .search

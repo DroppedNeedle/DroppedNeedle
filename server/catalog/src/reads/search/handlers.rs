@@ -15,7 +15,7 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::error::SearchError;
 use super::models::{BucketQuery, EnrichmentBatchRequest, SearchQuery, SuggestQuery};
-use super::service::{Bucket, BucketLimits, enrich_with_degradation};
+use super::service::{Bucket, BucketLimits};
 use super::{DEFAULT_BUCKET_LIMIT, DEFAULT_SUGGEST_LIMIT, MAX_BUCKET_LIMIT, MAX_SUGGEST_LIMIT};
 
 fn service_response<T: serde::Serialize>(
@@ -53,7 +53,8 @@ pub async fn search(
         tracks: check_limit(query.limit_tracks, DEFAULT_BUCKET_LIMIT)?,
     };
     let buckets = parse_buckets(query.buckets.as_deref())?;
-    service_response(deps.service.search(&query.q, limits, &buckets).await)
+    let scope = query.scope.unwrap_or_default();
+    service_response(deps.service.search(&query.q, limits, &buckets, scope).await)
 }
 
 /// One page of one bucket for drill-down views.
@@ -138,7 +139,7 @@ pub async fn enrich_batch(
     State(deps): State<super::SearchDeps>,
     ValidJson(body): ValidJson<EnrichmentBatchRequest>,
 ) -> Json<super::models::EnrichmentResponse> {
-    Json(enrich_with_degradation(deps.enrichment.as_ref(), body).await)
+    Json(super::enrichment::enrich_with_degradation(deps.enrichment.as_ref(), body).await)
 }
 
 /// Cap a unified-search limit at its default and ceiling.

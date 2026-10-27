@@ -84,7 +84,6 @@ pub fn routes() -> Routes<LibraryDeps> {
         .user(routes!(list_genres))
         .user(routes!(list_genre_tracks))
         .user(routes!(match_album))
-        .user(routes!(search_library))
         .user(routes!(list_decades))
         .user(routes!(list_suggestions))
 }

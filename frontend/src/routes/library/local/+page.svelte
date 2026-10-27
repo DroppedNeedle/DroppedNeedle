@@ -34,7 +34,8 @@
 		albumCoverUrl,
 		crateCoverUrl,
 		matchTrackToQueueItem,
-		suggestionToCrateTrack
+		suggestionToCrateTrack,
+		type SpinAlbum
 	} from '$lib/queries/local/LocalV3Adapters';
 	import { ChevronDown, Headphones, Play, Shuffle, Clock } from 'lucide-svelte';
 
@@ -158,7 +159,7 @@
 		void suggestionsQuery.refetch();
 	}
 
-	async function playAlbum(album: LocalAlbumSummary, shuffle = false) {
+	async function playAlbum(album: SpinAlbum, shuffle = false) {
 		try {
 			const match = await api.global.v3.GET(
 				LibraryV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
@@ -188,7 +189,7 @@
 		playerStore.addToQueue(crateToQueueItem(t));
 	}
 
-	async function queueAlbum(album: LocalAlbumSummary) {
+	async function queueAlbum(album: SpinAlbum) {
 		try {
 			const match = await api.global.v3.GET(
 				LibraryV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })

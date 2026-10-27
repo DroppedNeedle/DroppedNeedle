@@ -115,7 +115,6 @@ const ROUTES: &[&str] = &[
     "/api/v3/library/genres",
     "/api/v3/library/genres/rock/tracks",
     "/api/v3/library/albums/match/rg1",
-    "/api/v3/local-library/search?q=light",
     "/api/v3/library/decades",
     "/api/v3/library/suggestions",
 ];

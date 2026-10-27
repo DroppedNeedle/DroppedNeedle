@@ -5805,23 +5805,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/local-library/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Album plus track search. */
-        get: operations["search_library"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/me": {
         parameters: {
             query?: never;
@@ -10079,43 +10062,6 @@ export interface components {
             /**
              * Format: int32
              * @description First release year.
-             */
-            year?: number | null;
-        };
-        /** @description Compact album card for browse surfaces. */
-        AlbumCard: {
-            /** @description Linked MusicBrainz artist id, when the artist is identified. */
-            artist_mbid?: string | null;
-            /** @description Album artist display name. */
-            artist_name: string;
-            /** @description True when an artwork row exists for this album. */
-            cover_available: boolean;
-            /**
-             * Format: double
-             * @description Import time, unix seconds.
-             */
-            date_added?: number | null;
-            /** @description Local album id. */
-            id: string;
-            /** @description Most common track format, when any track exists. */
-            primary_format?: string | null;
-            /** @description Linked MusicBrainz release group, when identified. */
-            release_group_mbid?: string | null;
-            /** @description Album title. */
-            title: string;
-            /**
-             * Format: int64
-             * @description Summed streamable-track size, bytes.
-             */
-            total_size_bytes: number;
-            /**
-             * Format: int64
-             * @description Streamable tracks on this album.
-             */
-            track_count: number;
-            /**
-             * Format: int64
-             * @description Release year, when known.
              */
             year?: number | null;
         };
@@ -21920,13 +21866,6 @@ export interface components {
              * @description Release year, when known.
              */
             year?: number | null;
-        };
-        /** @description Matching albums plus playable tracks. */
-        SearchResults: {
-            /** @description Albums matching the query. */
-            albums: components["schemas"]["AlbumCard"][];
-            /** @description Tracks matching the query. */
-            tracks: components["schemas"]["SuggestionTrack"][];
         };
         /** @description What playing a library song and linking its album need. */
         SearchTrackDetail: {
@@ -39458,49 +39397,6 @@ export interface operations {
             };
         };
     };
-    search_library: {
-        parameters: {
-            query?: {
-                /** @description Substring query, case folded, at least one character. */
-                q?: string;
-                /** @description Cap applied per group, 1-50. Default 20. */
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Search results */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SearchResults"];
-                };
-            };
-            /** @description Bad query string */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     get_profile: {
         parameters: {
             query?: never;
@@ -43950,6 +43846,8 @@ export interface operations {
                 limit_tracks?: number;
                 /** @description Comma-separated subset (`artists,albums,tracks`); absent means all. */
                 buckets?: string;
+                /** @description Where to look; absent means `all`. */
+                scope?: "all" | "library";
             };
             header?: never;
             path?: never;

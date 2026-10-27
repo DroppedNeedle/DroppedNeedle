@@ -22191,75 +22191,6 @@
         ]
       }
     },
-    "/api/v3/local-library/search": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "Album plus track search.",
-        "operationId": "search_library",
-        "parameters": [
-          {
-            "name": "q",
-            "in": "query",
-            "description": "Substring query, case folded, at least one character.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Cap applied per group, 1-50. Default 20.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Search results",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResults"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad query string",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/me": {
       "get": {
         "tags": [
@@ -29350,6 +29281,20 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Where to look; absent means `all`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Where a unified search looks.",
+              "enum": [
+                "all",
+                "library"
+              ]
+            }
           }
         ],
         "responses": {
@@ -35951,84 +35896,6 @@
             ],
             "format": "int32",
             "description": "First release year."
-          }
-        }
-      },
-      "AlbumCard": {
-        "type": "object",
-        "description": "Compact album card for browse surfaces.",
-        "required": [
-          "id",
-          "title",
-          "artist_name",
-          "track_count",
-          "total_size_bytes",
-          "cover_available"
-        ],
-        "properties": {
-          "artist_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Linked MusicBrainz artist id, when the artist is identified."
-          },
-          "artist_name": {
-            "type": "string",
-            "description": "Album artist display name."
-          },
-          "cover_available": {
-            "type": "boolean",
-            "description": "True when an artwork row exists for this album."
-          },
-          "date_added": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "Import time, unix seconds."
-          },
-          "id": {
-            "type": "string",
-            "description": "Local album id."
-          },
-          "primary_format": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Most common track format, when any track exists."
-          },
-          "release_group_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Linked MusicBrainz release group, when identified."
-          },
-          "title": {
-            "type": "string",
-            "description": "Album title."
-          },
-          "total_size_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Summed streamable-track size, bytes."
-          },
-          "track_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Streamable tracks on this album.",
-            "minimum": 0
-          },
-          "year": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Release year, when known."
           }
         }
       },
@@ -62622,30 +62489,6 @@
             ],
             "format": "int32",
             "description": "Release year, when known."
-          }
-        }
-      },
-      "SearchResults": {
-        "type": "object",
-        "description": "Matching albums plus playable tracks.",
-        "required": [
-          "albums",
-          "tracks"
-        ],
-        "properties": {
-          "albums": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AlbumCard"
-            },
-            "description": "Albums matching the query."
-          },
-          "tracks": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SuggestionTrack"
-            },
-            "description": "Tracks matching the query."
           }
         }
       },

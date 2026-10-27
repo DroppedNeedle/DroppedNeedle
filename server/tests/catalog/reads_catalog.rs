@@ -852,6 +852,26 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
     assert_eq!(album["in_library"], true);
 }
 
+/// The library scope answers from the library alone: MusicBrainz is never
+/// asked, and only library rows come back.
+#[tokio::test]
+async fn library_scoped_search_never_asks_musicbrainz() {
+    let fixtures = Fixtures::start().await;
+    let (app, _auth) = app(&fixtures).await;
+
+    let body = get(&app, "/api/v3/search?q=ok%20computer&scope=library").await;
+
+    assert_eq!(
+        titles(&body["albums"]),
+        ["OK Computer", "OK Computer Live Bootleg"]
+    );
+    for row in body["albums"].as_array().unwrap() {
+        assert!(row["id"].is_string(), "library rows only: {row}");
+    }
+    assert_eq!(fixtures.hits("/mb/ws/2/release-group"), 0);
+    assert_eq!(fixtures.hits("/mb/ws/2/artist"), 0);
+}
+
 #[tokio::test]
 async fn lastfm_reads_fall_back_to_the_instance_key() {
     let rig = AuthRig::new("reads-catalog").await;

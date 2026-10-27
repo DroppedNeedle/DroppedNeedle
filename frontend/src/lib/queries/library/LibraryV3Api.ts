@@ -200,10 +200,6 @@ export const LibraryV3Api = {
 				...(params.offset !== undefined ? { offset: params.offset } : {})
 			}
 		}),
-	localSearch: (term: string, limit: number | null) =>
-		v3('/api/v3/local-library/search', {
-			query: limit === null ? { q: term } : { q: term, limit }
-		}),
 	// Identification reviews: list, read, and every way to settle one.
 	reviews: (params: LibraryReviewParams) =>
 		v3('/api/v3/library/reviews', {

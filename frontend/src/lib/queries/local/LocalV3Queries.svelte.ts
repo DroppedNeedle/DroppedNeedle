@@ -5,15 +5,31 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 import { LibraryV3Api } from '../library/LibraryV3Api';
+import { SearchV3Api } from '../search/SearchV3Api';
+import type { SearchV3Limits } from '../search/SearchQueryKeyFactory';
 import { LOCAL_KEYS, type LocalV3AlbumsParams } from './LocalV3Keys';
 
-export type AlbumCardV3 = components['schemas']['AlbumCard'];
 export type SuggestionTrackV3 = components['schemas']['SuggestionTrack'];
 export type LocalTrackV3 = components['schemas']['TrackView'];
 type AlbumViewV3 = components['schemas']['AlbumView'];
 
 // The card fields of a library album. The caller's favorite flag is left
 // out, so the shared local keys never cache one user's flags for the next.
+export type AlbumCardV3 = Pick<
+	AlbumViewV3,
+	| 'id'
+	| 'title'
+	| 'artist_name'
+	| 'artist_mbid'
+	| 'release_group_mbid'
+	| 'year'
+	| 'track_count'
+	| 'total_size_bytes'
+	| 'format'
+	| 'cover_available'
+	| 'date_added'
+>;
+
 function toCard(album: AlbumViewV3): AlbumCardV3 {
 	return {
 		id: album.id,
@@ -24,7 +40,7 @@ function toCard(album: AlbumViewV3): AlbumCardV3 {
 		year: album.year,
 		track_count: album.track_count,
 		total_size_bytes: album.total_size_bytes,
-		primary_format: album.format,
+		format: album.format,
 		cover_available: album.cover_available,
 		date_added: album.date_added
 	};
@@ -79,20 +95,25 @@ export const getLocalSuggestionsV3Query = (
 		});
 	});
 
-// keepPreviousData avoids flashing empty while a new term is in flight
-export const getLocalSearchV3Query = (
-	getTerm: Getter<string>,
-	getLimit: Getter<number | null> = () => null
-) =>
+const LIBRARY_SEARCH_LIMITS: SearchV3Limits = { artists: 0, albums: 20, tracks: 20 };
+
+// Unified search over the library alone, albums and songs. It reads no
+// per-user data, so it keeps a shared local key that library changes
+// invalidate. keepPreviousData avoids flashing empty while a new term is in
+// flight.
+export const getLibrarySearchV3Query = (getTerm: Getter<string>) =>
 	createQuery(() => {
 		const term = getTerm().trim();
-		const limit = getLimit();
 		return queryOptions({
 			enabled: term.length >= 2,
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			placeholderData: keepPreviousData,
-			queryKey: LOCAL_KEYS.search(term, limit),
-			queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.localSearch(term, limit), { signal })
+			queryKey: LOCAL_KEYS.search(term),
+			queryFn: ({ signal }) =>
+				api.global.v3.GET(
+					SearchV3Api.unified(term, LIBRARY_SEARCH_LIMITS, ['albums', 'tracks'], 'library'),
+					{ signal }
+				)
 		});
 	});
 

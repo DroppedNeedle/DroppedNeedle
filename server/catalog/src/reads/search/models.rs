@@ -192,6 +192,20 @@ pub struct SearchQuery {
     pub limit_tracks: Option<u32>,
     /// Comma-separated subset (`artists,albums,tracks`); absent means all.
     pub buckets: Option<String>,
+    /// Where to look; absent means `all`.
+    #[param(inline)]
+    pub scope: Option<SearchScope>,
+}
+
+/// Where a unified search looks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchScope {
+    /// The library and MusicBrainz.
+    #[default]
+    All,
+    /// The library alone: MusicBrainz is not asked.
+    Library,
 }
 
 /// Query params for `GET /api/v3/search/{bucket}`.

@@ -3,13 +3,15 @@
 //! MusicBrainz artists and albums joined with the library's own artists,
 //! albums and tracks: unified search, typeahead suggest, per-bucket
 //! drill-down, and one single-method enrich-batch. MusicBrainz runs
-//! through the [`catalog`](crate::reads::catalog) service; enrichment runs
-//! behind the [`ports::EnrichmentPort`] seam.
+//! through the [`catalog`](crate::reads::catalog) service; listen counts
+//! come from [`enrichment::SearchCounts`] behind the
+//! [`ports::EnrichmentPort`] seam.
 //!
 //! Wiring: the app mounts [`routes`] inside the session gate, which also
 //! registers the paths in the API document. Auth is the session gate
 //! alone: every role sees the same catalog.
 
+pub mod enrichment;
 pub mod error;
 pub mod handlers;
 pub mod models;

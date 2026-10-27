@@ -23,8 +23,7 @@ export const LOCAL_KEYS = {
 	recent: (limit: number | null) => [...LOCAL_KEYS.root, 'recent', limit] as const,
 	suggestions: (limit: number, decade: number | null) =>
 		[...LOCAL_KEYS.root, 'suggestions', limit, decade] as const,
-	search: (term: string, limit: number | null) =>
-		[...LOCAL_KEYS.root, 'search', term, limit] as const,
+	search: (term: string) => [...LOCAL_KEYS.root, 'search', term] as const,
 	decades: () => [...LOCAL_KEYS.root, 'decades'] as const,
 	// Totals only: the stats view also carries per-caller favorite counts,
 	// which no local consumer reads, so this key stays shared.

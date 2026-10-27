@@ -26,11 +26,9 @@ use crate::reads::catalog::search::{RemoteBucket, RemoteHit, RemoteKind, RemoteS
 use crate::reads::library::definitions::{musicbrainz, owned_album, owned_artist, recording_mbid};
 
 use super::models::{
-    Degradation, EnrichmentBatchRequest, EnrichmentResponse, EnrichmentSource,
     SearchBucketResponse, SearchKind, SearchRemoteStatus, SearchResponse, SearchResultItem,
-    SearchTrackDetail, SuggestResponse, SuggestResult,
+    SearchScope, SearchTrackDetail, SuggestResponse, SuggestResult,
 };
-use super::ports::{EnrichmentPort, MAX_ENRICHMENT_PER_BUCKET};
 
 /// Score for an exact folded-title match. Also the top-result bar, kept
 /// from v2 (`TOP_RESULT_SCORE_THRESHOLD`).
@@ -124,12 +122,14 @@ impl SearchService {
     /// Ranked hits per selected bucket plus each bucket's standout hit.
     /// Artists and albums join MusicBrainz hits with the library's own
     /// (local copies attach their id and the in-library flag); tracks are
-    /// local only. A blank-after-fold query matches nothing.
+    /// local only. The library scope leaves MusicBrainz out. A
+    /// blank-after-fold query matches nothing.
     pub async fn search(
         &self,
         query: &str,
         limits: BucketLimits,
         buckets: &[Bucket],
+        scope: SearchScope,
     ) -> Result<SearchResponse, sqlx::Error> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
         if folded.is_empty() {
@@ -146,6 +146,8 @@ impl SearchService {
             });
         }
         let wants = |bucket: Bucket, limit: u32| buckets.contains(&bucket) && limit > 0;
+        let remote_wants =
+            |bucket: Bucket, limit: u32| scope == SearchScope::All && wants(bucket, limit);
         let local = async {
             let artists = if wants(Bucket::Artists, limits.artists) {
                 self.search_artists(&folded, limits.artists).await?
@@ -170,7 +172,7 @@ impl SearchService {
             limits.artists,
             0,
             FULL_SEARCH_DEADLINE,
-            wants(Bucket::Artists, limits.artists),
+            remote_wants(Bucket::Artists, limits.artists),
         );
         let remote_albums = self.remote_bucket(
             Bucket::Albums,
@@ -178,7 +180,7 @@ impl SearchService {
             limits.albums,
             0,
             FULL_SEARCH_DEADLINE,
-            wants(Bucket::Albums, limits.albums),
+            remote_wants(Bucket::Albums, limits.albums),
         );
         let (local, remote_artists, remote_albums) =
             tokio::join!(local, remote_artists, remote_albums);
@@ -687,61 +689,6 @@ pub(crate) fn song_query(folded: &str, limit: u32, offset: u32) -> (String, Vec<
         album_provider = musicbrainz!("ae"),
     );
     (sql, binds)
-}
-
-/// Enrich one mixed batch through the port. A provider failure degrades
-/// into a typed note inside a successful response: ids echo back with
-/// absent counts and source `none`. The cause goes to the log only.
-pub async fn enrich_with_degradation(
-    port: &dyn EnrichmentPort,
-    request: EnrichmentBatchRequest,
-) -> EnrichmentResponse {
-    let artists: Vec<super::models::ArtistEnrichmentRequest> = request
-        .artists
-        .into_iter()
-        .filter(|item| !item.musicbrainz_id.trim().is_empty())
-        .take(MAX_ENRICHMENT_PER_BUCKET)
-        .collect();
-    let albums: Vec<super::models::AlbumEnrichmentRequest> = request
-        .albums
-        .into_iter()
-        .filter(|item| !item.musicbrainz_id.trim().is_empty())
-        .take(MAX_ENRICHMENT_PER_BUCKET)
-        .collect();
-    let trimmed = EnrichmentBatchRequest {
-        artists: artists.clone(),
-        albums: albums.clone(),
-    };
-    match port.enrich_batch(trimmed).await {
-        Ok(response) => response,
-        Err(error) => {
-            tracing::error!(source = %error.source, cause = %error.message, "search enrichment degraded");
-            EnrichmentResponse {
-                artists: artists
-                    .into_iter()
-                    .map(|item| super::models::ArtistEnrichment {
-                        musicbrainz_id: item.musicbrainz_id,
-                        release_group_count: None,
-                        listen_count: None,
-                    })
-                    .collect(),
-                albums: albums
-                    .into_iter()
-                    .map(|item| super::models::AlbumEnrichment {
-                        musicbrainz_id: item.musicbrainz_id,
-                        track_count: None,
-                        listen_count: None,
-                    })
-                    .collect(),
-                source: EnrichmentSource::None,
-                degradations: vec![Degradation {
-                    source: error.source,
-                    code: droppedneedle_kernel::error::PROVIDER_UNAVAILABLE.to_owned(),
-                    message: "Enrichment temporarily unavailable".to_owned(),
-                }],
-            }
-        }
-    }
 }
 
 /// LIKE pattern matching rows containing the folded query. Wildcards in

@@ -19,7 +19,7 @@ describe('LocalV3Queries', () => {
 			LOCAL_KEYS.albums({ limit: 1, sort: 'date_added', order: 'desc' }),
 			LOCAL_KEYS.recent(null),
 			LOCAL_KEYS.suggestions(16, null),
-			LOCAL_KEYS.search('abba', null),
+			LOCAL_KEYS.search('abba'),
 			LOCAL_KEYS.decades(),
 			LOCAL_KEYS.stats(),
 			LOCAL_KEYS.albumMatch('rg1', {})

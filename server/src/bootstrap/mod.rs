@@ -258,9 +258,14 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         sign_in_links(p),
     );
 
-    // Read live so turning ListenBrainz or lyrics on or off takes effect
+    // Read live so turning ListenBrainz, Last.fm or lyrics on or off takes effect
     // at once.
-    let enrichment = production_enrichment(&providers, config_store.live(), config_store.live());
+    let enrichment = production_enrichment(
+        &providers,
+        config_store.live(),
+        config_store.live(),
+        config_store.live(),
+    );
     let reads_inputs = ReadsInputs {
         covers_dir: config.cache_dir.join("covers"),
         cover_cache_max_bytes: config.cover_cache_max_bytes,

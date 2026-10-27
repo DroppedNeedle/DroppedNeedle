@@ -7,13 +7,12 @@ use std::collections::HashSet;
 use super::LibraryDeps;
 use super::cursor::{Cursor, fresh_seed};
 use super::models::{
-    AlbumCard, AlbumDetailView, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery,
-    ArtistView, CursorQuery, DecadeShelf, DecadesResponse, GenreList, GenreView,
-    LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse,
-    LibraryStatusTrack, LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery,
-    ResolveTracksRequest, ResolveTracksResponse, ResolvedTrack, SearchQuery, SearchResults,
-    StatsView, SuggestionTrack, SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackPage,
-    TrackQuery, TrackTags, TrackView,
+    AlbumDetailView, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery, ArtistView,
+    CursorQuery, DecadeShelf, DecadesResponse, GenreList, GenreView, LibraryAlbumStatus,
+    LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
+    LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery, ResolveTracksRequest,
+    ResolveTracksResponse, ResolvedTrack, StatsView, SuggestionTrack, SuggestionsQuery,
+    SuggestionsResponse, TrackListPage, TrackPage, TrackQuery, TrackTags, TrackView,
 };
 use super::sql;
 use super::stores::{
@@ -652,56 +651,6 @@ pub async fn genre_tracks(
         total,
         offset,
         limit,
-    })
-}
-
-/// Album plus track search. `q` is required; each group caps separately.
-pub async fn search_library(
-    deps: &LibraryDeps,
-    query: &SearchQuery,
-) -> Result<SearchResults, LibraryFailure> {
-    let q = clean_q(query.q.as_deref())
-        .ok_or_else(|| LibraryFailure::InvalidInput("q is required".to_owned()))?;
-    let (limit, _) = page(query.limit, None, 20, 50)?;
-    let album_filter = AlbumFilter {
-        q: Some(q.clone()),
-        artist_id: None,
-        decade: None,
-        format: None,
-    };
-    let track_filter = TrackFilter {
-        q: Some(q),
-        album_id: None,
-        artist_id: None,
-        genre: None,
-    };
-    let albums = deps
-        .catalog
-        .list_albums(
-            &album_filter,
-            AlbumSort::Name,
-            false,
-            limit,
-            &After::default(),
-        )
-        .await?;
-    let tracks = deps
-        .catalog
-        .list_tracks(
-            &track_filter,
-            TrackSort::Title,
-            false,
-            limit,
-            &After::default(),
-        )
-        .await?;
-    Ok(SearchResults {
-        albums: albums.items.into_iter().map(AlbumCard::from).collect(),
-        tracks: tracks
-            .items
-            .into_iter()
-            .map(|record| SuggestionTrack::from((record, "match")))
-            .collect(),
     })
 }
 
