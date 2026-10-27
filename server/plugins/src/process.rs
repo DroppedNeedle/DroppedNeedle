@@ -688,7 +688,13 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
     };
     let undeclared: Vec<&String> = implemented
         .iter()
-        .filter(|capability| !spec.manifest.capabilities.contains(capability))
+        .filter(|capability| {
+            !spec
+                .manifest
+                .capabilities
+                .iter()
+                .any(|declared| declared.as_str() == capability.as_str())
+        })
         .collect();
     if !undeclared.is_empty() {
         tracing::info!(
@@ -698,7 +704,7 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
         );
     }
     for declared in &spec.manifest.capabilities {
-        if !implemented.contains(declared) {
+        if !implemented.iter().any(|id| id == declared.as_str()) {
             tracing::warn!(
                 plugin = %shared.name,
                 capability = %declared,

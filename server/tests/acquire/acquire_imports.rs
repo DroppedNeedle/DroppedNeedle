@@ -1638,7 +1638,7 @@ fn plugin_host_with_download_client(auth: &AuthRig, dir: &std::path::Path) -> Ar
         "[plugin]\n\
          name = \"toy\"\n\
          version = \"1.0.0\"\n\
-         api_version = 1\n\
+         api_version = 2\n\
          entrypoint = \"plugin:Toy\"\n\
          capabilities = [\"download_client\"]\n\
          [[capability]]\n\

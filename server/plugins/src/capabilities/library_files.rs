@@ -33,12 +33,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::super::host::PluginHost;
+use super::super::manifest::Capability;
 use super::super::protocol::MAX_MESSAGE_BYTES;
 use droppedneedle_library::manage::PluginFileRefusal;
 use droppedneedle_library::publish::{JournalState, PublishError};
 
-/// The capability a plugin declares to write library files.
-pub const CAPABILITY: &str = "library_writer";
 /// Bytes one plugin may write per rolling day.
 pub const QUOTA_BYTES_PER_DAY: usize = 100 * 1024 * 1024;
 /// Files one plugin may write per rolling day. Each file keeps a recorded
@@ -169,11 +168,11 @@ impl PluginHost {
         let writes = &self.library_writes;
         let declared = self
             .get(plugin)
-            .is_some_and(|loaded| loaded.serves(CAPABILITY));
+            .is_some_and(|loaded| loaded.serves(Capability::LibraryWriter));
         if !declared {
             return Err(writes.refuse(
                 plugin,
-                format!("declare the {CAPABILITY} capability to write library files"),
+                "declare the library_writer capability to write library files".to_owned(),
             ));
         }
         check_rel_path(rel_path).map_err(|reason| writes.refuse(plugin, reason))?;

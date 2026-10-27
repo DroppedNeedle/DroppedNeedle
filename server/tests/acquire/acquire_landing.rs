@@ -2085,7 +2085,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
         "[plugin]\n\
          name = \"toy\"\n\
          version = \"1.0.0\"\n\
-         api_version = 1\n\
+         api_version = 2\n\
          entrypoint = \"plugin:Toy\"\n\
          capabilities = [\"download_client\"]\n\
          [[capability]]\n\

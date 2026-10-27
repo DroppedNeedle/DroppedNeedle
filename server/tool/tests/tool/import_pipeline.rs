@@ -615,8 +615,11 @@ async fn settings_replace_filters_and_preserves() {
     );
     assert_eq!(
         stored["plugins"]["demo"],
-        json!({"enabled": true, "settings": {"k": "v"}})
+        json!({"enabled": false, "settings": {"k": "v"}})
     );
+    assert!(report.items.iter().any(|item| item.key == "plugins.demo"
+        && item.outcome == "needs_porting"
+        && item.detail == "demo needs porting before it can run"));
     // A Spotify app configured on v2 keeps its registered v2 callback.
     assert_eq!(stored["spotify_settings"]["legacy_callback"], json!(true));
     assert_eq!(stored["indexers"][0]["name"], json!("first"));

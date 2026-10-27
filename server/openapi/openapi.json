@@ -55590,6 +55590,22 @@
           }
         }
       },
+      "PluginCapability": {
+        "type": "string",
+        "description": "What a plugin may declare it does.",
+        "enum": [
+          "scrobbler",
+          "purchase_links",
+          "download_client",
+          "indexer",
+          "subscriber",
+          "publisher",
+          "metadata_provider",
+          "scheduler",
+          "streaming_source",
+          "library_writer"
+        ]
+      },
       "PluginConnectionStatus": {
         "type": "object",
         "description": "One linked external account. Never carries the secret, only the name.\nThe schema rename keeps this distinct from the remotes\n`ConnectionStatus` in the one OpenAPI document; the wire shape is\nunchanged.",
@@ -55732,9 +55748,9 @@
           "active_capabilities": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/PluginCapability"
             },
-            "description": "Declared capabilities the server sends calls for while the plugin is\nenabled (those active for its `api_version`)."
+            "description": "Declared capabilities the server sends calls for while the plugin is\nenabled."
           },
           "author": {
             "type": "string",
@@ -55743,9 +55759,9 @@
           "capabilities": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/PluginCapability"
             },
-            "description": "Declared capability ids."
+            "description": "Declared capabilities."
           },
           "description": {
             "type": "string",
@@ -55917,7 +55933,7 @@
           "capabilities": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/PluginCapability"
             },
             "description": "Declared capabilities."
           },

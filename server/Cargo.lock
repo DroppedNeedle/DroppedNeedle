@@ -880,6 +880,7 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+ "toml",
  "tracing",
  "utoipa",
  "uuid",

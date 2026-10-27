@@ -2,7 +2,7 @@
 name = "events-echo-toy"
 display_name = "Events Echo (example)"
 version = "1.0.0"
-api_version = 1
+api_version = 2
 entrypoint = "plugin:EventsEcho"
 capabilities = ["subscriber", "publisher"]
 description = "Logs download events and re-publishes a note through a guarded route."

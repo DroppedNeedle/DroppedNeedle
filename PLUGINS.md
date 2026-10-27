@@ -126,7 +126,7 @@ silently ignored.
 name = "acme-music"                 # lowercase letters, digits and dashes, up to 32
 display_name = "Acme Music"
 version = "1.0.0"
-api_version = 1
+api_version = 2                     # the plugin API this host reads
 entrypoint = "plugin:AcmeMusic"     # <python module>:<class>
 capabilities = ["download_client", "indexer", "scheduler"]
 description = "One line about what it does."
@@ -164,9 +164,17 @@ pages = ["panel"]
 # external_url = "https://acme-music.test/setup"   # or a link instead
 ```
 
-`api_version = 0` is the older, frozen contract: only `scrobbler` and
-`purchase_links`, no `[schedule]`, `[[route]]` or `[plugin_ui]`. Manifests
-from DroppedNeedle v2 load unchanged.
+`plugin.toml` is ordinary TOML: arrays may span lines, and strings may use
+single quotes. A capability not in the table below is an error, and so is
+a `homepage` that is not an `http` or `https` address.
+
+This DroppedNeedle reads plugin API version 2 only. A manifest with any
+other `api_version`, including 0 and 1 from DroppedNeedle v2, is refused
+before its code runs:
+
+```
+acme-music: written for api_version 1; this DroppedNeedle reads api_version 2; see Porting a v2 plugin in PLUGINS.md
+```
 
 ### Settings
 
@@ -520,7 +528,12 @@ too, one entry per line.
 
 ### Porting a v2 plugin
 
-1. Change the imports. Everything v2 plugins imported from
+1. Set `api_version = 2` in `plugin.toml`. The rest of a v2 manifest
+   reads as it is, as long as `name` uses only lowercase letters, digits
+   and dashes, `homepage`, if set, is an `http` or `https` address, and
+   each value has its proper type (text quoted, `secret` `true` or
+   `false`).
+2. Change the imports. Everything v2 plugins imported from
    `infrastructure.plugins.protocols`, `models.common` and
    `repositories.protocols.*` now comes from `droppedneedle_plugin`:
 
@@ -528,17 +541,18 @@ too, one entry per line.
    from droppedneedle_plugin import PluginRouteResponse, ServiceStatus, TaskHandle
    ```
 
-2. If you used `ctx.http` like `httpx`, it keeps working for the common calls
+3. If you used `ctx.http` like `httpx`, it keeps working for the common calls
    above. Streaming responses and client options are not there.
-3. Anything that reached into the server's own Python code no longer exists;
+4. Anything that reached into the server's own Python code no longer exists;
    use `ctx` instead. `plugin_write_library_file(plugin_name=..., rel_path=...,
    data=...)` becomes `await ctx.write_library_file(rel_path, data)`. Paths may
    now contain dots, and an existing file is never replaced (v2 replaced it).
-4. State you kept in memory is lost when the plugin restarts (it is a separate
+5. State you kept in memory is lost when the plugin restarts (it is a separate
    process now). Keep anything important in `ctx.state_set` or in files under
    `ctx.data_dir`.
 
-`plugin.toml` stays as it was.
+A v2 plugin's settings come across in an upgrade, switched off. Once the
+ported plugin is installed, switch it on in Settings > Plugins.
 
 ## The protocol
 
@@ -556,7 +570,7 @@ of this; you need it only for a plugin in another language.
    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
      "protocol_version": 1,
      "host": {"name": "droppedneedle", "version": "3.0.0"},
-     "plugin": {"name": "acme-music", "version": "1.0.0", "api_version": 1,
+     "plugin": {"name": "acme-music", "version": "1.0.0", "api_version": 2,
                 "entrypoint": "plugin:AcmeMusic", "capabilities": ["indexer"]},
      "settings": {"api_key": "..."},
      "plugin_dir": "/app/plugins/acme-music",
@@ -626,7 +640,7 @@ at most 1000 keys and 64 MiB in total. `host.log` is a notification with `{level
 
 All in `examples/plugins/`, all using fictional hosts:
 
-- `webhook-scrobbler`: `scrobbler`, the smallest plugin (v0 manifest).
+- `webhook-scrobbler`: `scrobbler`, the smallest plugin.
 - `metadata-joke-toy`: `metadata_provider` and `purchase_links`.
 - `events-echo-toy`: `subscriber`, `publisher` and routes.
 - `stream-toy`: `streaming_source` with a file in its own folder.

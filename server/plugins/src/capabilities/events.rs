@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::super::host::{LoadedPlugin, PluginHost};
+use super::super::manifest::Capability;
 use super::super::protocol::methods;
 use super::super::runtime::{
     EventKind, EventPayload, NoticeEvent, PluginEvent, PluginPublishResult, PublishPayload,
@@ -94,7 +95,7 @@ impl PluginHost {
     /// Send one accepted play to every `scrobbler` plugin, in the
     /// background. A failing plugin is logged, never propagated.
     pub fn dispatch_scrobble(self: &Arc<Self>, event: &ScrobbleEvent) {
-        let plugins = self.serving("scrobbler");
+        let plugins = self.serving(Capability::Scrobbler);
         if plugins.is_empty() {
             return;
         }
@@ -125,7 +126,7 @@ impl PluginHost {
         if event.causation_id.is_empty() {
             event.causation_id = uuid::Uuid::new_v4().simple().to_string();
         }
-        for plugin in self.serving("subscriber") {
+        for plugin in self.serving(Capability::Subscriber) {
             let name = plugin.manifest.name.clone();
             if self.seen_before(&event.causation_id, &name) {
                 continue;
@@ -236,7 +237,7 @@ impl PluginHost {
         };
         if !self
             .get(plugin_name)
-            .is_some_and(|plugin| plugin.serves("publisher"))
+            .is_some_and(|plugin| plugin.serves(Capability::Publisher))
         {
             tracing::warn!(plugin = %plugin_name, %kind, "publish refused: unknown or disabled publisher");
             return Ok(refused(404, "unknown or disabled publisher", 0));

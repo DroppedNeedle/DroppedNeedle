@@ -663,6 +663,7 @@ fn stage_settings(
                 }
                 if *section == "plugins" {
                     note_unflagged_plugin_settings(&filtered, report);
+                    note_plugins_need_porting(&filtered, report);
                 }
                 if *section == "library_management" {
                     carry_v2_management_fields(&mut filtered);
@@ -716,6 +717,22 @@ fn note_dropped_setting(report: &mut ReportBuilder, path: String) {
         DROPPED_SETTING,
         "v3 removed this setting; it is not imported".to_owned(),
     );
+}
+
+/// Note each carried plugin: a v2 plugin cannot run in v3 until it is
+/// ported, so its entry arrives switched off.
+fn note_plugins_need_porting(plugins: &Value, report: &mut ReportBuilder) {
+    let Some(plugins) = plugins.as_object() else {
+        return;
+    };
+    for plugin in plugins.keys() {
+        report.note(
+            "settings",
+            format!("plugins.{plugin}"),
+            "needs_porting",
+            format!("{plugin} needs porting before it can run"),
+        );
+    }
 }
 
 /// Note every plugin setting the exporter sealed without knowing whether it
@@ -832,7 +849,8 @@ fn carry_v2_management_fields(section: &mut Value) {
 /// Drop fields the export spec excludes, before re-encryption:
 /// lastfm keeps the switch and the instance app key pair (v2's legacy
 /// global session key and username go), the MusicBrainz transient trio
-/// goes, plugins keep `enabled` + `settings`. A configured Spotify app
+/// goes, plugins keep `settings` and arrive switched off (a v2 plugin
+/// needs porting before v3 can run it). A configured Spotify app
 /// gains the `legacy_callback` marker.
 fn filter_section(name: &str, value: &Value) -> Value {
     match name {
@@ -873,9 +891,7 @@ fn filter_section(name: &str, value: &Value) -> Value {
             if let Some(object) = value.as_object() {
                 for (plugin, config) in object {
                     let mut entry = serde_json::Map::new();
-                    if let Some(enabled) = config.get("enabled") {
-                        entry.insert("enabled".to_owned(), enabled.clone());
-                    }
+                    entry.insert("enabled".to_owned(), Value::Bool(false));
                     if let Some(settings) = config.get("settings") {
                         entry.insert("settings".to_owned(), settings.clone());
                     }

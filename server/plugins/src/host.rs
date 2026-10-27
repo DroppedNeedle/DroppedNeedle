@@ -26,7 +26,7 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::sections::PluginConfig;
 
 use super::capabilities::events::EventState;
-use super::manifest::{PluginManifest, active_capabilities, load_manifest};
+use super::manifest::{Capability, PluginManifest, load_manifest};
 use super::models::PluginSource;
 use super::protocol::{RpcError, codes, methods};
 use super::runtime::{
@@ -48,9 +48,8 @@ pub struct LoadedPlugin {
     /// Load failure: an invalid manifest, unreadable settings, or a
     /// launch that could not start.
     pub error: Option<String>,
-    /// Declared capabilities this host dispatches to (those active for the
-    /// manifest's `api_version`). Empty while disabled.
-    pub active_capabilities: Vec<String>,
+    /// Declared capabilities this host dispatches to. Empty while disabled.
+    pub active_capabilities: Vec<Capability>,
     /// On-disk folder. It need not equal the manifest name; uninstall
     /// removes exactly this one.
     pub directory: String,
@@ -60,10 +59,8 @@ pub struct LoadedPlugin {
 
 impl LoadedPlugin {
     /// Whether calls for `capability` should go to this plugin.
-    pub fn serves(&self, capability: &str) -> bool {
-        self.enabled
-            && self.runtime.is_some()
-            && self.active_capabilities.iter().any(|c| c == capability)
+    pub fn serves(&self, capability: Capability) -> bool {
+        self.enabled && self.runtime.is_some() && self.active_capabilities.contains(&capability)
     }
 
     /// Runtime health, or `None` while disabled.
@@ -322,23 +319,7 @@ impl PluginHost {
                 return;
             }
         };
-        let active_set = active_capabilities(manifest.api_version);
-        let active: Vec<String> = manifest
-            .capabilities
-            .iter()
-            .filter(|capability| {
-                let active = active_set.contains(&capability.as_str());
-                if !active {
-                    tracing::info!(
-                        plugin = %manifest.name,
-                        %capability,
-                        "capability reserved for api_version 1, not active"
-                    );
-                }
-                active
-            })
-            .cloned()
-            .collect();
+        let active = manifest.capabilities.clone();
         plugins.insert(
             manifest.name.clone(),
             LoadedPlugin {
@@ -442,7 +423,7 @@ impl PluginHost {
 
     /// Enabled plugins serving one capability, sorted by name so fan-outs
     /// and first-hit lookups are deterministic.
-    pub fn serving(&self, capability: &str) -> Vec<LoadedPlugin> {
+    pub fn serving(&self, capability: Capability) -> Vec<LoadedPlugin> {
         let mut plugins: Vec<LoadedPlugin> = self
             .plugins
             .lock()
@@ -466,10 +447,10 @@ impl PluginHost {
             let mut display = manifest.display_name.clone();
             let mut target_source = String::new();
             for cap in &manifest.capability_configs {
-                if cap.id == "download_client" && !cap.display_name.is_empty() {
+                if cap.id == Capability::DownloadClient && !cap.display_name.is_empty() {
                     display = cap.display_name.clone();
                 }
-                if cap.id == "indexer" && !cap.target_source.is_empty() {
+                if cap.id == Capability::Indexer && !cap.target_source.is_empty() {
                     target_source = cap.target_source.clone();
                 }
             }
@@ -517,10 +498,10 @@ impl PluginHost {
                 }
             }
         };
-        for plugin in self.serving("download_client") {
+        for plugin in self.serving(Capability::DownloadClient) {
             seen(&plugin, true, false);
         }
-        for plugin in self.serving("indexer") {
+        for plugin in self.serving(Capability::Indexer) {
             seen(&plugin, false, true);
         }
         let mut sources: Vec<PluginSource> = by_key.into_values().collect();
@@ -576,7 +557,7 @@ impl PluginHost {
 
     /// Enabled scheduler plugins mapped to their loops, sorted by name.
     pub fn desired_ticks(&self) -> Vec<DesiredTick> {
-        self.serving("scheduler")
+        self.serving(Capability::Scheduler)
             .into_iter()
             .map(|plugin| {
                 let schedule = plugin.manifest.schedule.as_ref();

@@ -2,7 +2,7 @@
 name = "local-folder-indexer"
 display_name = "Local Folder Indexer (example)"
 version = "1.0.0"
-api_version = 1
+api_version = 2
 entrypoint = "plugin:LocalFolderIndexer"
 capabilities = ["indexer"]
 description = "Reference indexer paired with local-folder-client: lists source-folder files as folder-mode results."

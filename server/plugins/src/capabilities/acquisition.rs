@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::super::host::{LoadedPlugin, PluginHost};
+use super::super::manifest::Capability;
 use super::super::protocol::methods;
 use super::super::runtime::CallError;
 use super::{call, decode};
@@ -164,7 +165,7 @@ pub fn indexer_target(plugin: &LoadedPlugin) -> String {
         .manifest
         .capability_configs
         .iter()
-        .find(|config| config.id == "indexer" && !config.target_source.is_empty())
+        .find(|config| config.id == Capability::Indexer && !config.target_source.is_empty())
         .map(|config| config.target_source.clone())
         .unwrap_or_else(|| format!("plugin:{}", plugin.manifest.name))
 }
@@ -174,12 +175,12 @@ impl PluginHost {
     pub fn download_client(&self, source_key: &str) -> Option<LoadedPlugin> {
         let name = source_key.strip_prefix("plugin:")?;
         self.get(name)
-            .filter(|plugin| plugin.serves("download_client"))
+            .filter(|plugin| plugin.serves(Capability::DownloadClient))
     }
 
     /// Enabled plugin source keys with a download client, sorted.
     pub fn download_source_keys(&self) -> Vec<String> {
-        self.serving("download_client")
+        self.serving(Capability::DownloadClient)
             .iter()
             .map(|plugin| format!("plugin:{}", plugin.manifest.name))
             .collect()
@@ -187,7 +188,7 @@ impl PluginHost {
 
     /// Enabled indexers feeding one source key, in name order.
     pub fn indexers_for(&self, source_key: &str) -> Vec<LoadedPlugin> {
-        self.serving("indexer")
+        self.serving(Capability::Indexer)
             .into_iter()
             .filter(|plugin| indexer_target(plugin) == source_key)
             .collect()

@@ -1,70 +1,124 @@
 //! Plugin manifest: `plugin.toml` at a plugin package's root.
 //!
 //! The manifest is the contract's front door. The host refuses to load any
-//! code before the manifest parses, declares a supported `api_version`, and
-//! names only known capabilities. The rules below port v2's manifest module
-//! one by one, including its exact rejection messages, so a manifest that
-//! fails here fails for the same reason it fails on v2.
-//!
-//! TOML parsing is a strict subset reader, not a general parser:
-//! manifests only need comments, `[table]` and
-//! `[[array]]` headers, and string, integer, boolean, and single-line
-//! string-array values. Anything outside that subset fails the manifest
-//! instead of guessing.
+//! code before the manifest parses, declares the current `api_version`, and
+//! names only known capabilities. The file is read with the `toml` crate
+//! into raw structs that refuse unknown keys, then checked into typed
+//! values.
 
-use std::collections::HashMap;
 use std::path::Path;
 
-/// Current plugin API version.
-pub const PLUGIN_API_VERSION: i64 = 1;
-/// Legacy API version, kept byte-identical.
-pub const PLUGIN_API_VERSION_LEGACY: i64 = 0;
-/// Every API version the host speaks.
-pub const SUPPORTED_API_VERSIONS: [i64; 2] = [PLUGIN_API_VERSION_LEGACY, PLUGIN_API_VERSION];
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-/// Capabilities a v0 manifest may activate.
-pub const V0_ACTIVE_CAPABILITIES: &[&str] = &["scrobbler", "purchase_links"];
-/// Every capability id a v0 manifest may name (active plus reserved).
-pub const V0_KNOWN_CAPABILITIES: &[&str] = &[
-    "scrobbler",
-    "purchase_links",
-    "metadata_provider",
-    "streaming_source",
-];
-/// Capabilities a v1 manifest may activate.
-pub const V1_ACTIVE_CAPABILITIES: &[&str] = &[
-    "scrobbler",
-    "purchase_links",
-    "download_client",
-    "indexer",
-    "subscriber",
-    "publisher",
-    "metadata_provider",
-    "scheduler",
-    "streaming_source",
-    "library_writer",
-];
+/// The plugin API version this host reads. Any other version is refused.
+pub const PLUGIN_API_VERSION: i64 = 2;
 
-/// Active capability ids for one API version.
-pub fn active_capabilities(api_version: i64) -> &'static [&'static str] {
-    if api_version == PLUGIN_API_VERSION_LEGACY {
-        V0_ACTIVE_CAPABILITIES
-    } else {
-        V1_ACTIVE_CAPABILITIES
+/// What a plugin may declare it does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = PluginCapability)]
+pub enum Capability {
+    /// Receives accepted plays.
+    Scrobbler,
+    /// Adds buy links to album pages.
+    PurchaseLinks,
+    /// Downloads releases for requests.
+    DownloadClient,
+    /// Searches for releases.
+    Indexer,
+    /// Receives server events.
+    Subscriber,
+    /// Publishes notes and hints back, and serves `/ext/` routes.
+    Publisher,
+    /// Adds biographies, tags, links and images.
+    MetadataProvider,
+    /// Runs on a timer.
+    Scheduler,
+    /// Serves audio for tracks missing from the library.
+    StreamingSource,
+    /// Adds new files to the library.
+    LibraryWriter,
+}
+
+impl Capability {
+    /// Every capability, in the order PLUGINS.md lists them.
+    pub const ALL: [Capability; 10] = [
+        Capability::Scrobbler,
+        Capability::PurchaseLinks,
+        Capability::DownloadClient,
+        Capability::Indexer,
+        Capability::Subscriber,
+        Capability::Publisher,
+        Capability::MetadataProvider,
+        Capability::Scheduler,
+        Capability::StreamingSource,
+        Capability::LibraryWriter,
+    ];
+
+    /// The id a manifest and the protocol use.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Capability::Scrobbler => "scrobbler",
+            Capability::PurchaseLinks => "purchase_links",
+            Capability::DownloadClient => "download_client",
+            Capability::Indexer => "indexer",
+            Capability::Subscriber => "subscriber",
+            Capability::Publisher => "publisher",
+            Capability::MetadataProvider => "metadata_provider",
+            Capability::Scheduler => "scheduler",
+            Capability::StreamingSource => "streaming_source",
+            Capability::LibraryWriter => "library_writer",
+        }
+    }
+
+    /// The capability with this id, if there is one.
+    pub fn from_id(id: &str) -> Option<Capability> {
+        Capability::ALL
+            .into_iter()
+            .find(|capability| capability.as_str() == id)
     }
 }
 
-/// Known capability ids for one API version.
-pub fn known_capabilities(api_version: i64) -> &'static [&'static str] {
-    if api_version == PLUGIN_API_VERSION_LEGACY {
-        V0_KNOWN_CAPABILITIES
-    } else {
-        V1_ACTIVE_CAPABILITIES
+impl std::fmt::Display for Capability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
-/// v1 plugin/source name rule: `^[a-z0-9][a-z0-9-]{0,31}$`.
-pub fn valid_v1_name(name: &str) -> bool {
+/// HTTP method of a plugin route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteMethod {
+    /// GET.
+    Get,
+    /// POST.
+    Post,
+    /// DELETE.
+    Delete,
+}
+
+impl RouteMethod {
+    /// The method as HTTP writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RouteMethod::Get => "GET",
+            RouteMethod::Post => "POST",
+            RouteMethod::Delete => "DELETE",
+        }
+    }
+}
+
+/// Who may call a plugin route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteAuth {
+    /// Admins only.
+    Admin,
+    /// Any signed-in user.
+    User,
+}
+
+/// Plugin and source name rule: `^[a-z0-9][a-z0-9-]{0,31}$`.
+pub fn valid_plugin_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     if bytes.is_empty() || bytes.len() > 32 {
         return false;
@@ -76,14 +130,6 @@ pub fn valid_v1_name(name: &str) -> bool {
     bytes[1..]
         .iter()
         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
-}
-
-/// v0 plugin name rule: non-empty, alphanumerics plus `-` and `_`.
-pub fn valid_legacy_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Route path rule: `^[a-z0-9][a-z0-9/_-]{0,63}$`.
@@ -101,21 +147,15 @@ pub fn valid_route_path(path: &str) -> bool {
     })
 }
 
-/// Indexer target rule: `usenet` or `plugin:<v1-name>`.
+/// Indexer target rule: `usenet` or `plugin:<name>`.
 pub fn valid_plugin_target(target: &str) -> bool {
-    if target == "usenet" {
-        return true;
-    }
-    match target.strip_prefix("plugin:") {
-        Some(name) => valid_v1_name(name),
-        None => false,
-    }
+    target == "usenet" || valid_plugin_key(target)
 }
 
-/// Plugin source key rule: `plugin:<v1-name>`.
+/// Plugin source key rule: `plugin:<name>`.
 pub fn valid_plugin_key(key: &str) -> bool {
     match key.strip_prefix("plugin:") {
-        Some(name) => valid_v1_name(name),
+        Some(name) => valid_plugin_name(name),
         None => false,
     }
 }
@@ -136,8 +176,8 @@ pub struct PluginSettingField {
 /// Per-capability config from one `[[capability]]` table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginCapabilityConfig {
-    /// Capability id.
-    pub id: String,
+    /// The capability it configures.
+    pub id: Capability,
     /// Download-client source key.
     pub source: String,
     /// Indexer target (`usenet` or a plugin source key).
@@ -160,10 +200,10 @@ pub struct PluginScheduleConfig {
 pub struct PluginRouteSpec {
     /// Subpath below the plugin's `/ext/` prefix.
     pub path: String,
-    /// GET, POST, or DELETE.
-    pub method: String,
-    /// `admin` or `user`.
-    pub auth: String,
+    /// The method it answers.
+    pub method: RouteMethod,
+    /// Who may call it.
+    pub auth: RouteAuth,
     /// Per-minute request budget for one caller on this route.
     pub rate_limit_per_minute: i64,
 }
@@ -175,7 +215,7 @@ pub struct PluginManifest {
     pub name: String,
     /// Plugin version string.
     pub version: String,
-    /// Contract version, 0 or 1.
+    /// Contract version, always [`PLUGIN_API_VERSION`] once loaded.
     pub api_version: i64,
     /// `<module>:<ClassName>` inside the plugin package, run under the
     /// Python helper. Empty when `command` is set.
@@ -183,15 +223,15 @@ pub struct PluginManifest {
     /// Program plus arguments that start the plugin, for plugins not
     /// written in Python. A leading `./` points inside the plugin folder.
     pub command: Vec<String>,
-    /// Declared capability ids.
-    pub capabilities: Vec<String>,
+    /// Declared capabilities.
+    pub capabilities: Vec<Capability>,
     /// Display name (defaults to the name).
     pub display_name: String,
     /// Short description.
     pub description: String,
     /// Author string.
     pub author: String,
-    /// Homepage URL.
+    /// Homepage, an http or https address, or empty.
     pub homepage: String,
     /// Admin-editable settings fields.
     pub settings: Vec<PluginSettingField>,
@@ -203,7 +243,7 @@ pub struct PluginManifest {
     pub routes: Vec<PluginRouteSpec>,
     /// Panel bundle path inside the plugin dir, when the plugin ships UI.
     pub ui_entry: String,
-    /// Panel page ids (at most one in v1).
+    /// Panel page ids (at most one).
     pub ui_pages: Vec<String>,
     /// External panel URL, exclusive with entry/pages.
     pub ui_external_url: String,
@@ -219,6 +259,11 @@ impl PluginManifest {
             .collect()
     }
 
+    /// Whether the manifest declares `capability`.
+    pub fn declares(&self, capability: Capability) -> bool {
+        self.capabilities.contains(&capability)
+    }
+
     /// What enabling this plugin lets it do, in plain words, for the
     /// install preview. Derived from the manifest alone: it describes what
     /// the plugin asks for, not what its code will actually do.
@@ -232,15 +277,15 @@ impl PluginManifest {
             lines.push(format!("Starts the program: {}", self.command.join(" ")));
         }
         for capability in &self.capabilities {
-            let line = match capability.as_str() {
-                "scrobbler" => "Sees every play that gets scrobbled: artist, track, album and time".to_owned(),
-                "purchase_links" => "Adds buy links to album pages".to_owned(),
-                "download_client" => "Downloads files for requests and hands them to the importer".to_owned(),
-                "indexer" => "Searches for releases when music is requested".to_owned(),
-                "subscriber" => "Sees download, request, import and playback events, including user ids".to_owned(),
-                "publisher" => "Can post notes and search hints back to the server".to_owned(),
-                "metadata_provider" => "Adds biographies, tags, links and images to artist and album pages".to_owned(),
-                "scheduler" => {
+            let line = match capability {
+                Capability::Scrobbler => "Sees every play that gets scrobbled: artist, track, album and time".to_owned(),
+                Capability::PurchaseLinks => "Adds buy links to album pages".to_owned(),
+                Capability::DownloadClient => "Downloads files for requests and hands them to the importer".to_owned(),
+                Capability::Indexer => "Searches for releases when music is requested".to_owned(),
+                Capability::Subscriber => "Sees download, request, import and playback events, including user ids".to_owned(),
+                Capability::Publisher => "Can post notes and search hints back to the server".to_owned(),
+                Capability::MetadataProvider => "Adds biographies, tags, links and images to artist and album pages".to_owned(),
+                Capability::Scheduler => {
                     let minutes = self
                         .schedule
                         .as_ref()
@@ -248,21 +293,21 @@ impl PluginManifest {
                         .unwrap_or(60);
                     format!("Runs on its own every {minutes} minutes")
                 }
-                "library_writer" => "Can add new files to your music library (never replaces one), up to 100 MiB a day".to_owned(),
-                "streaming_source" => "Can serve audio for tracks missing from your library, from a file or a web address".to_owned(),
-                other => format!("Uses the {other} capability"),
+                Capability::LibraryWriter => "Can add new files to your music library (never replaces one), up to 100 MiB a day".to_owned(),
+                Capability::StreamingSource => "Can serve audio for tracks missing from your library, from a file or a web address".to_owned(),
             };
             lines.push(line);
         }
         for route in &self.routes {
-            let who = if route.auth == "admin" {
-                "admins"
-            } else {
-                "any signed-in user"
+            let who = match route.auth {
+                RouteAuth::Admin => "admins",
+                RouteAuth::User => "any signed-in user",
             };
             lines.push(format!(
                 "Answers {} /api/v3/plugins/ext/{}/{} for {who}",
-                route.method, self.name, route.path
+                route.method.as_str(),
+                self.name,
+                route.path
             ));
         }
         if !self.ui_entry.is_empty() {
@@ -297,319 +342,127 @@ impl std::fmt::Display for ManifestError {
 impl std::error::Error for ManifestError {}
 
 // ---------------------------------------------------------------------------
-// Strict TOML subset reader
+// The file as written
 // ---------------------------------------------------------------------------
 
-/// One parsed value. Manifests only need these four shapes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RawValue {
-    /// Double-quoted string.
-    Str(String),
-    /// Plain integer.
-    Int(i64),
-    /// `true` or `false`.
-    Bool(bool),
-    /// Single-line array of strings.
-    StrList(Vec<String>),
+/// The `[plugin]` name and version, read leniently before anything else so
+/// a manifest for another API version is refused with the porting pointer
+/// rather than with whatever key its version spelled differently.
+#[derive(Deserialize)]
+struct VersionProbe {
+    plugin: Option<ProbePlugin>,
 }
 
-/// One table body. A vec (not a map) so duplicate keys fail instead of
-/// silently winning.
-#[derive(Debug, Clone, Default)]
-struct RawTable {
-    values: Vec<(String, RawValue)>,
+#[derive(Deserialize)]
+struct ProbePlugin {
+    name: Option<toml::Value>,
+    api_version: Option<toml::Value>,
 }
 
-impl RawTable {
-    fn get(&self, key: &str) -> Option<&RawValue> {
-        self.values
-            .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value)
-    }
-
-    fn insert(&mut self, line_no: usize, key: String, value: RawValue) -> Result<(), String> {
-        if self.values.iter().any(|(name, _)| name == &key) {
-            return Err(format!("line {line_no}: duplicate key '{key}'"));
-        }
-        self.values.push((key, value));
-        Ok(())
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawManifest {
+    plugin: Option<RawPlugin>,
+    #[serde(default)]
+    settings: Vec<RawSetting>,
+    #[serde(default)]
+    capability: Vec<RawCapability>,
+    schedule: Option<RawSchedule>,
+    #[serde(default)]
+    route: Vec<RawRoute>,
+    plugin_ui: Option<RawUi>,
 }
 
-/// A parsed manifest file: bare top-level keys, `[tables]`, and
-/// `[[arrays]]` of tables.
-#[derive(Debug, Clone, Default)]
-struct RawDoc {
-    top: RawTable,
-    tables: HashMap<String, RawTable>,
-    arrays: HashMap<String, Vec<RawTable>>,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPlugin {
+    #[serde(default)]
+    name: String,
+    version: Option<String>,
+    api_version: i64,
+    entrypoint: Option<String>,
+    command: Option<Vec<String>>,
+    #[serde(default)]
+    capabilities: Vec<String>,
+    display_name: Option<String>,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    author: String,
+    #[serde(default)]
+    homepage: String,
 }
 
-/// Cut a `#` comment, ignoring hashes inside double-quoted strings.
-fn strip_comment(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    let mut in_string = false;
-    let mut escaped = false;
-    for (index, byte) in bytes.iter().enumerate() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if *byte == b'\\' {
-                escaped = true;
-            } else if *byte == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        if *byte == b'"' {
-            in_string = true;
-        } else if *byte == b'#' {
-            return &line[..index];
-        }
-    }
-    line
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSetting {
+    #[serde(default)]
+    key: String,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    help: String,
+    #[serde(default)]
+    secret: bool,
 }
 
-/// Split a `key = value` line on the first `=` outside a string.
-fn split_assignment(line: &str) -> Option<(&str, &str)> {
-    let bytes = line.as_bytes();
-    let mut in_string = false;
-    let mut escaped = false;
-    for (index, byte) in bytes.iter().enumerate() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if *byte == b'\\' {
-                escaped = true;
-            } else if *byte == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        if *byte == b'"' {
-            in_string = true;
-        } else if *byte == b'=' {
-            return Some((line[..index].trim(), line[index + 1..].trim()));
-        }
-    }
-    None
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCapability {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    source: String,
+    #[serde(default)]
+    target_source: String,
+    #[serde(default)]
+    display_name: String,
 }
 
-fn valid_key_chars(text: &str) -> bool {
-    !text.is_empty()
-        && text
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSchedule {
+    interval_minutes: Option<i64>,
+    #[serde(default)]
+    run_on_load: bool,
 }
 
-/// Parse one double-quoted string starting at the first byte of `text`.
-/// Returns the value plus the unconsumed remainder.
-fn parse_quoted(text: &str, line_no: usize) -> Result<(String, &str), String> {
-    let bytes = text.as_bytes();
-    if bytes.first() != Some(&b'"') {
-        return Err(format!("line {line_no}: expected a quoted string"));
-    }
-    let mut out: Vec<u8> = Vec::new();
-    let mut index = 1;
-    let mut escaped = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if escaped {
-            match byte {
-                b'"' => out.push(b'"'),
-                b'\\' => out.push(b'\\'),
-                b'n' => out.push(b'\n'),
-                b't' => out.push(b'\t'),
-                b'r' => out.push(b'\r'),
-                _ => {
-                    return Err(format!("line {line_no}: unsupported escape in string"));
-                }
-            }
-            escaped = false;
-            index += 1;
-            continue;
-        }
-        if byte == b'\\' {
-            escaped = true;
-            index += 1;
-            continue;
-        }
-        if byte == b'"' {
-            return match String::from_utf8(out) {
-                Ok(value) => Ok((value, &text[index + 1..])),
-                Err(_) => Err(format!("line {line_no}: string is not valid UTF-8")),
-            };
-        }
-        if byte < 0x20 {
-            return Err(format!("line {line_no}: unterminated string"));
-        }
-        out.push(byte);
-        index += 1;
-    }
-    Err(format!("line {line_no}: unterminated string"))
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRoute {
+    #[serde(default)]
+    path: String,
+    method: Option<String>,
+    auth: Option<String>,
+    rate_limit_per_minute: Option<i64>,
 }
 
-/// Parse one value: string, integer, boolean, or string array.
-fn parse_value(text: &str, line_no: usize) -> Result<RawValue, String> {
-    if text.starts_with('"') {
-        let (value, rest) = parse_quoted(text, line_no)?;
-        if !rest.trim().is_empty() {
-            return Err(format!("line {line_no}: unexpected text after value"));
-        }
-        return Ok(RawValue::Str(value));
-    }
-    if text == "true" {
-        return Ok(RawValue::Bool(true));
-    }
-    if text == "false" {
-        return Ok(RawValue::Bool(false));
-    }
-    if text.starts_with('[') {
-        if !text.ends_with(']') {
-            return Err(format!(
-                "line {line_no}: multi-line arrays are not supported"
-            ));
-        }
-        let inner = text[1..text.len() - 1].trim();
-        if inner.is_empty() {
-            return Ok(RawValue::StrList(Vec::new()));
-        }
-        let mut items = Vec::new();
-        let mut rest = inner;
-        loop {
-            rest = rest.trim_start();
-            if rest.is_empty() {
-                break;
-            }
-            if !rest.starts_with('"') {
-                return Err(format!("line {line_no}: arrays hold strings only"));
-            }
-            let (value, after) = parse_quoted(rest, line_no)?;
-            items.push(value);
-            let after = after.trim_start();
-            if after.is_empty() {
-                break;
-            }
-            if !after.starts_with(',') {
-                return Err(format!("line {line_no}: expected a comma in array"));
-            }
-            rest = &after[1..];
-        }
-        return Ok(RawValue::StrList(items));
-    }
-    let digits = text.strip_prefix('-').unwrap_or(text);
-    if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
-        return match text.parse::<i64>() {
-            Ok(number) => Ok(RawValue::Int(number)),
-            Err(_) => Err(format!("line {line_no}: integer out of range")),
-        };
-    }
-    Err(format!("line {line_no}: unsupported value"))
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawUi {
+    #[serde(default)]
+    entry: String,
+    #[serde(default)]
+    pages: Vec<String>,
+    #[serde(default)]
+    external_url: String,
 }
 
-/// Parse a manifest file into tables. Anything outside the supported subset
-/// is an error naming its line.
-fn parse_manifest_toml(text: &str) -> Result<RawDoc, String> {
-    let mut doc = RawDoc::default();
-    // Currently open section: table name, or array name plus element index.
-    let mut current_table: Option<String> = None;
-    let mut current_array: Option<(String, usize)> = None;
-    for (index, raw_line) in text.lines().enumerate() {
-        let line_no = index + 1;
-        let line = strip_comment(raw_line).trim();
-        if line.is_empty() {
-            continue;
+/// Describe a TOML or shape error by its line and message.
+fn describe(text: &str, error: &toml::de::Error) -> String {
+    let message = error.message().trim_end();
+    match error.span() {
+        Some(span) => {
+            let line = text[..span.start.min(text.len())].matches('\n').count() + 1;
+            format!("line {line}: {message}")
         }
-        if line.starts_with('[') {
-            current_table = None;
-            current_array = None;
-            if line.starts_with("[[") {
-                if !line.ends_with("]]") || line.len() <= 4 {
-                    return Err(format!("line {line_no}: bad array header"));
-                }
-                let name = line[2..line.len() - 2].trim().to_owned();
-                if !valid_key_chars(&name) {
-                    return Err(format!("line {line_no}: bad array header"));
-                }
-                let elements = doc.arrays.entry(name.clone()).or_default();
-                elements.push(RawTable::default());
-                current_array = Some((name, elements.len() - 1));
-                continue;
-            }
-            if !line.ends_with(']') || line.len() <= 2 {
-                return Err(format!("line {line_no}: bad table header"));
-            }
-            let name = line[1..line.len() - 1].trim().to_owned();
-            if !valid_key_chars(&name) {
-                return Err(format!("line {line_no}: bad table header"));
-            }
-            if doc.tables.contains_key(&name) {
-                return Err(format!("line {line_no}: duplicate table '{name}'"));
-            }
-            doc.tables.insert(name.clone(), RawTable::default());
-            current_table = Some(name);
-            continue;
-        }
-        let Some((key, raw_value)) = split_assignment(line) else {
-            return Err(format!("line {line_no}: expected key = value"));
-        };
-        if !valid_key_chars(key) {
-            return Err(format!("line {line_no}: bad key '{key}'"));
-        }
-        let value = parse_value(raw_value, line_no)?;
-        if let Some((name, element)) = current_array.clone() {
-            let elements = doc.arrays.get_mut(&name);
-            match elements.and_then(|items| items.get_mut(element)) {
-                Some(table) => table.insert(line_no, key.to_owned(), value)?,
-                None => return Err(format!("line {line_no}: keys must live under a table")),
-            }
-        } else if let Some(name) = current_table.clone() {
-            match doc.tables.get_mut(&name) {
-                Some(table) => table.insert(line_no, key.to_owned(), value)?,
-                None => return Err(format!("line {line_no}: keys must live under a table")),
-            }
-        } else {
-            doc.top.insert(line_no, key.to_owned(), value)?;
-        }
+        None => message.to_owned(),
     }
-    Ok(doc)
 }
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
-
-/// Read one string field, defaulting to empty when absent. Non-string values
-/// read as empty the way v2's `str(value or "")` does for optional fields.
-fn raw_str(table: &RawTable, key: &str) -> String {
-    match table.get(key) {
-        Some(RawValue::Str(value)) => value.clone(),
-        Some(RawValue::Int(number)) => number.to_string(),
-        Some(RawValue::Bool(true)) => "true".to_owned(),
-        Some(RawValue::Bool(false)) => "false".to_owned(),
-        _ => String::new(),
-    }
-}
-
-fn raw_bool(table: &RawTable, key: &str) -> bool {
-    matches!(table.get(key), Some(RawValue::Bool(true)))
-}
-
-/// Format a string list the way Python renders `['a', 'b']` in messages.
-fn py_list(items: &[String]) -> String {
-    let mut out = String::from('[');
-    for (index, item) in items.iter().enumerate() {
-        if index > 0 {
-            out.push_str(", ");
-        }
-        out.push('\'');
-        out.push_str(item);
-        out.push('\'');
-    }
-    out.push(']');
-    out
-}
 
 /// Reproduce v2's localhost check for `http://` panel URLs exactly: split
 /// off the path, strip userinfo, take the pre-colon host, strip brackets.
@@ -643,165 +496,110 @@ pub fn load_manifest(plugin_dir: &Path) -> Result<PluginManifest, ManifestError>
 /// Validate manifest bytes. `dir_name` names the plugin in errors when the
 /// manifest has no usable name of its own.
 pub fn parse_manifest(dir_name: &str, text: &[u8]) -> Result<PluginManifest, ManifestError> {
-    let text = match String::from_utf8(text.to_vec()) {
-        Ok(text) => text,
-        Err(error) => {
+    let unreadable =
+        |reason: String| ManifestError(format!("{dir_name}: unreadable plugin.toml ({reason})"));
+    let text = std::str::from_utf8(text).map_err(|error| unreadable(error.to_string()))?;
+    let probe: VersionProbe =
+        toml::from_str(text).map_err(|error| unreadable(describe(text, &error)))?;
+    let Some(plugin) = probe.plugin else {
+        return Err(ManifestError(format!("{dir_name}: missing [plugin] table")));
+    };
+    let who = match &plugin.name {
+        Some(toml::Value::String(name)) if !name.trim().is_empty() => name.trim().to_owned(),
+        _ => dir_name.to_owned(),
+    };
+    let api_version = match plugin.api_version {
+        Some(toml::Value::Integer(number)) => number,
+        _ => {
             return Err(ManifestError(format!(
-                "{dir_name}: unreadable plugin.toml ({error})"
+                "{who}: api_version must be a whole number; this DroppedNeedle reads \
+                 api_version {PLUGIN_API_VERSION}; see Porting a v2 plugin in PLUGINS.md"
             )));
         }
     };
-    let doc = match parse_manifest_toml(&text) {
-        Ok(doc) => doc,
-        Err(reason) => {
-            return Err(ManifestError(format!(
-                "{dir_name}: unreadable plugin.toml ({reason})"
-            )));
-        }
-    };
-    validate_manifest(dir_name, &doc)
+    if api_version != PLUGIN_API_VERSION {
+        return Err(ManifestError(format!(
+            "{who}: written for api_version {api_version}; this DroppedNeedle reads \
+             api_version {PLUGIN_API_VERSION}; see Porting a v2 plugin in PLUGINS.md"
+        )));
+    }
+    let raw: RawManifest = toml::from_str(text)
+        .map_err(|error| ManifestError(format!("{who}: {}", describe(text, &error))))?;
+    validate_manifest(dir_name, raw)
 }
 
-fn validate_manifest(dir_name: &str, doc: &RawDoc) -> Result<PluginManifest, ManifestError> {
+fn validate_manifest(dir_name: &str, raw: RawManifest) -> Result<PluginManifest, ManifestError> {
     let fail = |message: String| ManifestError(message);
-    let Some(plugin) = doc.tables.get("plugin") else {
+    let Some(plugin) = raw.plugin else {
         return Err(fail(format!("{dir_name}: missing [plugin] table")));
     };
-
-    let raw_name = raw_str(plugin, "name").trim().to_owned();
-    // v2 coerces with `int(...)`, which accepts bools (True == 1); the
-    // strict integer check below applies to every other numeric field.
-    let api_version = match plugin.get("api_version") {
-        Some(RawValue::Int(number)) => *number,
-        Some(RawValue::Bool(true)) => 1,
-        Some(RawValue::Bool(false)) => 0,
-        _ => {
-            return Err(fail(format!(
-                "{}: api_version must be an integer",
-                display_name(&raw_name, dir_name)
-            )));
-        }
-    };
-    if !SUPPORTED_API_VERSIONS.contains(&api_version) {
-        return Err(fail(format!(
-            "{}: api_version {api_version} unsupported (host speaks (0, 1))",
-            display_name(&raw_name, dir_name)
-        )));
-    }
-    let legacy = api_version == PLUGIN_API_VERSION_LEGACY;
-    let name_ok = if legacy {
-        valid_legacy_name(&raw_name)
-    } else {
-        valid_v1_name(&raw_name)
-    };
-    if !name_ok {
-        return Err(fail(format!(
-            "{dir_name}: invalid plugin name '{raw_name}'"
-        )));
-    }
-    let name = raw_name;
-
-    for key in doc
-        .top
-        .values
-        .iter()
-        .map(|(name, _)| name)
-        .chain(doc.tables.keys())
-        .chain(doc.arrays.keys())
-    {
-        if !matches!(
-            key.as_str(),
-            "plugin" | "settings" | "capability" | "schedule" | "route" | "plugin_ui"
-        ) {
-            return Err(fail(format!("{name}: unknown key '{key}'")));
-        }
-    }
-    for (key, _) in &plugin.values {
-        if !matches!(
-            key.as_str(),
-            "name"
-                | "version"
-                | "api_version"
-                | "entrypoint"
-                | "command"
-                | "capabilities"
-                | "display_name"
-                | "description"
-                | "author"
-                | "homepage"
-        ) {
-            return Err(fail(format!("{name}: unknown [plugin] key '{key}'")));
-        }
+    let name = plugin.name.trim().to_owned();
+    if !valid_plugin_name(&name) {
+        return Err(fail(format!("{dir_name}: invalid plugin name '{name}'")));
     }
 
-    let command = match plugin.get("command") {
+    let command = match plugin.command {
         None => Vec::new(),
-        Some(RawValue::StrList(items)) if !items.is_empty() && !items[0].trim().is_empty() => {
-            items.clone()
-        }
+        Some(items) if items.first().is_some_and(|first| !first.trim().is_empty()) => items,
         Some(_) => {
             return Err(fail(format!(
                 "{name}: command must be a non-empty list of strings"
             )));
         }
     };
-    let entrypoint = raw_str(plugin, "entrypoint").trim().to_owned();
+    let entrypoint = plugin.entrypoint.unwrap_or_default().trim().to_owned();
     if command.is_empty() && !entrypoint.contains(':') {
         return Err(fail(format!(
             "{name}: entrypoint must be '<module>:<ClassName>'"
         )));
     }
 
-    let capabilities = match plugin.get("capabilities") {
-        Some(RawValue::StrList(items)) if !items.is_empty() => items.clone(),
-        _ => {
-            return Err(fail(format!("{name}: at least one capability is required")));
+    if plugin.capabilities.is_empty() {
+        return Err(fail(format!("{name}: at least one capability is required")));
+    }
+    let mut capabilities = Vec::new();
+    for id in &plugin.capabilities {
+        let Some(capability) = Capability::from_id(id) else {
+            return Err(fail(format!("{name}: unknown capability '{id}'")));
+        };
+        if !capabilities.contains(&capability) {
+            capabilities.push(capability);
         }
-    };
-    let known = known_capabilities(api_version);
-    let unknown: Vec<String> = capabilities
-        .iter()
-        .filter(|item| !known.contains(&item.as_str()))
-        .cloned()
-        .collect();
-    if !unknown.is_empty() {
+    }
+
+    let homepage = plugin.homepage.trim().to_owned();
+    if !homepage.is_empty() && droppedneedle_auth::federated::web_address(&homepage).is_none() {
         return Err(fail(format!(
-            "{name}: unknown capabilities {}",
-            py_list(&unknown)
+            "{name}: homepage must be an http or https address"
         )));
     }
 
-    let settings = validate_settings(&name, doc)?;
-    let capability_configs = validate_capability_configs(&name, doc, &capabilities)?;
-    let schedule = validate_schedule(&name, doc, legacy, &capabilities)?;
-    let routes = validate_routes(&name, doc, legacy, &capabilities)?;
-    let (ui_entry, ui_pages, ui_external_url) = validate_ui(&name, doc, legacy)?;
+    let settings = validate_settings(&name, raw.settings)?;
+    let capability_configs = validate_capability_configs(&name, raw.capability, &capabilities)?;
+    let schedule = validate_schedule(&name, raw.schedule, &capabilities)?;
+    let routes = validate_routes(&name, raw.route, &capabilities)?;
+    let (ui_entry, ui_pages, ui_external_url) = match raw.plugin_ui {
+        Some(ui) => validate_ui(&name, ui)?,
+        None => (String::new(), Vec::new(), String::new()),
+    };
 
     Ok(PluginManifest {
-        display_name: {
-            let display = raw_str(plugin, "display_name");
-            if display.is_empty() {
-                name.clone()
-            } else {
-                display
-            }
-        },
-        version: {
-            let version = raw_str(plugin, "version");
-            if version.is_empty() {
-                "0.0.0".to_owned()
-            } else {
-                version
-            }
-        },
+        display_name: plugin
+            .display_name
+            .filter(|display| !display.is_empty())
+            .unwrap_or_else(|| name.clone()),
+        version: plugin
+            .version
+            .filter(|version| !version.is_empty())
+            .unwrap_or_else(|| "0.0.0".to_owned()),
         name,
-        api_version,
+        api_version: plugin.api_version,
         entrypoint,
         command,
         capabilities,
-        description: raw_str(plugin, "description"),
-        author: raw_str(plugin, "author"),
-        homepage: raw_str(plugin, "homepage"),
+        description: plugin.description,
+        author: plugin.author,
+        homepage,
         settings,
         capability_configs,
         schedule,
@@ -812,41 +610,26 @@ fn validate_manifest(dir_name: &str, doc: &RawDoc) -> Result<PluginManifest, Man
     })
 }
 
-fn display_name<'a>(raw_name: &'a str, dir_name: &'a str) -> &'a str {
-    if raw_name.is_empty() {
-        dir_name
-    } else {
-        raw_name
-    }
-}
-
-fn validate_settings(name: &str, doc: &RawDoc) -> Result<Vec<PluginSettingField>, ManifestError> {
-    if doc.tables.contains_key("settings") {
-        return Err(ManifestError(format!(
-            "{name}: [[settings]] must be a list"
-        )));
-    }
+fn validate_settings(
+    name: &str,
+    entries: Vec<RawSetting>,
+) -> Result<Vec<PluginSettingField>, ManifestError> {
     let mut fields = Vec::new();
-    for entry in doc.arrays.get("settings").map(Vec::as_slice).unwrap_or(&[]) {
-        let key = raw_str(entry, "key");
-        if key.is_empty() {
+    for entry in entries {
+        if entry.key.is_empty() {
             return Err(ManifestError(format!(
                 "{name}: each [[settings]] entry needs a key"
             )));
         }
-        for (entry_key, _) in &entry.values {
-            if !matches!(entry_key.as_str(), "key" | "label" | "help" | "secret") {
-                return Err(ManifestError(format!(
-                    "{name}: unknown [[settings]] key '{entry_key}'"
-                )));
-            }
-        }
-        let label = raw_str(entry, "label");
         fields.push(PluginSettingField {
-            key: key.clone(),
-            label: if label.is_empty() { key } else { label },
-            help: raw_str(entry, "help"),
-            secret: raw_bool(entry, "secret"),
+            label: if entry.label.is_empty() {
+                entry.key.clone()
+            } else {
+                entry.label
+            },
+            key: entry.key,
+            help: entry.help,
+            secret: entry.secret,
         });
     }
     Ok(fields)
@@ -854,72 +637,50 @@ fn validate_settings(name: &str, doc: &RawDoc) -> Result<Vec<PluginSettingField>
 
 fn validate_capability_configs(
     name: &str,
-    doc: &RawDoc,
-    declared: &[String],
+    entries: Vec<RawCapability>,
+    declared: &[Capability],
 ) -> Result<Vec<PluginCapabilityConfig>, ManifestError> {
-    if doc.tables.contains_key("capability") {
-        return Err(ManifestError(format!(
-            "{name}: [[capability]] must be a list"
-        )));
-    }
     let mut configs = Vec::new();
-    for entry in doc
-        .arrays
-        .get("capability")
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-    {
-        let id = raw_str(entry, "id");
-        if id.is_empty() {
+    for entry in entries {
+        if entry.id.is_empty() {
             return Err(ManifestError(format!(
                 "{name}: each [[capability]] entry needs an id"
             )));
         }
-        for (entry_key, _) in &entry.values {
-            if !matches!(
-                entry_key.as_str(),
-                "id" | "source" | "target_source" | "display_name"
-            ) {
-                return Err(ManifestError(format!(
-                    "{name}: unknown [[capability]] key '{entry_key}'"
-                )));
-            }
-        }
-        let source = raw_str(entry, "source");
-        if !source.is_empty() && !valid_v1_name(&source) {
+        let Some(id) = Capability::from_id(&entry.id) else {
             return Err(ManifestError(format!(
-                "{name}: [[capability]] source '{source}' must match ^[a-z0-9][a-z0-9-]{{0,31}}$"
+                "{name}: unknown capability '{}' in [[capability]]",
+                entry.id
+            )));
+        };
+        if !declared.contains(&id) {
+            return Err(ManifestError(format!(
+                "{name}: [[capability]] id '{id}' must also appear in capabilities"
             )));
         }
-        let target_source = raw_str(entry, "target_source");
-        if !target_source.is_empty() && !valid_plugin_target(&target_source) {
+        if !entry.source.is_empty() && !valid_plugin_name(&entry.source) {
             return Err(ManifestError(format!(
-                "{name}: [[capability]] target_source '{target_source}' must be 'usenet' or a plugin source key"
+                "{name}: [[capability]] source '{}' must match ^[a-z0-9][a-z0-9-]{{0,31}}$",
+                entry.source
+            )));
+        }
+        if !entry.target_source.is_empty() && !valid_plugin_target(&entry.target_source) {
+            return Err(ManifestError(format!(
+                "{name}: [[capability]] target_source '{}' must be 'usenet' or a plugin source key",
+                entry.target_source
             )));
         }
         configs.push(PluginCapabilityConfig {
             id,
-            source,
-            target_source,
-            display_name: raw_str(entry, "display_name"),
+            source: entry.source,
+            target_source: entry.target_source,
+            display_name: entry.display_name,
         });
     }
-    let outside: Vec<String> = configs
-        .iter()
-        .filter(|config| !declared.contains(&config.id))
-        .map(|config| config.id.clone())
-        .collect();
-    if !outside.is_empty() {
-        return Err(ManifestError(format!(
-            "{name}: [[capability]] ids {} must also appear in capabilities",
-            py_list(&outside)
-        )));
-    }
-    if declared.contains(&"indexer".to_owned()) && !declared.contains(&"download_client".to_owned())
-    {
+    if declared.contains(&Capability::Indexer) && !declared.contains(&Capability::DownloadClient) {
         let targeted = configs
             .iter()
-            .any(|config| config.id == "indexer" && !config.target_source.is_empty());
+            .any(|config| config.id == Capability::Indexer && !config.target_source.is_empty());
         if !targeted {
             return Err(ManifestError(format!(
                 "{name}: indexer capability requires target_source ('usenet' or a plugin source key)"
@@ -931,144 +692,81 @@ fn validate_capability_configs(
 
 fn validate_schedule(
     name: &str,
-    doc: &RawDoc,
-    legacy: bool,
-    declared: &[String],
+    table: Option<RawSchedule>,
+    declared: &[Capability],
 ) -> Result<Option<PluginScheduleConfig>, ManifestError> {
-    if doc.arrays.contains_key("schedule") {
-        return Err(ManifestError(format!("{name}: [schedule] must be a table")));
-    }
-    let Some(table) = doc.tables.get("schedule") else {
-        if declared.contains(&"scheduler".to_owned()) {
+    let Some(table) = table else {
+        if declared.contains(&Capability::Scheduler) {
             return Err(ManifestError(format!(
                 "{name}: scheduler capability requires a [schedule] table with interval_minutes in [5, 1440]"
             )));
         }
         return Ok(None);
     };
-    if legacy {
+    let Some(interval) = table.interval_minutes else {
         return Err(ManifestError(format!(
-            "{name}: [schedule] requires api_version 1"
+            "{name}: [schedule] interval_minutes must be an integer in [5, 1440]"
         )));
-    }
-    for (key, _) in &table.values {
-        if !matches!(key.as_str(), "interval_minutes" | "run_on_load") {
-            return Err(ManifestError(format!(
-                "{name}: unknown [schedule] key '{key}'"
-            )));
-        }
-    }
-    let interval = match table.get("interval_minutes") {
-        Some(RawValue::Int(number)) => *number,
-        _ => {
-            return Err(ManifestError(format!(
-                "{name}: [schedule] interval_minutes must be an integer in [5, 1440]"
-            )));
-        }
     };
     if !(5..=1440).contains(&interval) {
         return Err(ManifestError(format!(
             "{name}: [schedule] interval_minutes {interval} must be in [5, 1440]"
         )));
     }
-    match table.get("run_on_load") {
-        None => {}
-        Some(RawValue::Bool(_)) => {}
-        Some(_) => {
-            return Err(ManifestError(format!(
-                "{name}: [schedule] run_on_load must be a boolean"
-            )));
-        }
-    }
     Ok(Some(PluginScheduleConfig {
         interval_minutes: interval,
-        run_on_load: raw_bool(table, "run_on_load"),
+        run_on_load: table.run_on_load,
     }))
 }
 
 fn validate_routes(
     name: &str,
-    doc: &RawDoc,
-    legacy: bool,
-    declared: &[String],
+    entries: Vec<RawRoute>,
+    declared: &[Capability],
 ) -> Result<Vec<PluginRouteSpec>, ManifestError> {
-    if doc.tables.contains_key("route") {
-        return Err(ManifestError(format!("{name}: [[route]] must be a list")));
-    }
-    let entries = doc.arrays.get("route").map(Vec::as_slice).unwrap_or(&[]);
     if entries.is_empty() {
         return Ok(Vec::new());
     }
-    if legacy {
-        return Err(ManifestError(format!(
-            "{name}: [[route]] requires api_version 1"
-        )));
-    }
-    if !declared.contains(&"publisher".to_owned()) {
+    if !declared.contains(&Capability::Publisher) {
         return Err(ManifestError(format!(
             "{name}: [[route]] requires the publisher capability"
         )));
     }
     let mut routes = Vec::new();
     for entry in entries {
-        for (key, _) in &entry.values {
-            if !matches!(
-                key.as_str(),
-                "path" | "method" | "auth" | "rate_limit_per_minute"
-            ) {
+        if !valid_route_path(&entry.path) {
+            return Err(ManifestError(format!(
+                "{name}: [[route]] path '{}' must match ^[a-z0-9][a-z0-9/_-]{{0,63}}$",
+                entry.path
+            )));
+        }
+        let method = match entry.method.as_deref().unwrap_or("GET") {
+            "GET" => RouteMethod::Get,
+            "POST" => RouteMethod::Post,
+            "DELETE" => RouteMethod::Delete,
+            other => {
                 return Err(ManifestError(format!(
-                    "{name}: unknown [[route]] key '{key}'"
-                )));
-            }
-        }
-        let path = raw_str(entry, "path");
-        if !valid_route_path(&path) {
-            return Err(ManifestError(format!(
-                "{name}: [[route]] path '{path}' must match ^[a-z0-9][a-z0-9/_-]{{0,63}}$"
-            )));
-        }
-        let method = {
-            let method = raw_str(entry, "method");
-            if method.is_empty() {
-                "GET".to_owned()
-            } else {
-                method
-            }
-        };
-        if !matches!(method.as_str(), "GET" | "POST" | "DELETE") {
-            return Err(ManifestError(format!(
-                "{name}: [[route]] method '{method}' must be one of GET, POST, DELETE"
-            )));
-        }
-        let auth = {
-            let auth = raw_str(entry, "auth");
-            if auth.is_empty() {
-                "admin".to_owned()
-            } else {
-                auth
-            }
-        };
-        if !matches!(auth.as_str(), "admin" | "user") {
-            return Err(ManifestError(format!(
-                "{name}: [[route]] auth '{auth}' must be admin or user"
-            )));
-        }
-        let rate = match entry.get("rate_limit_per_minute") {
-            None => 60,
-            Some(RawValue::Int(number)) => *number,
-            Some(_) => {
-                return Err(ManifestError(format!(
-                    "{name}: [[route]] rate_limit_per_minute must be an integer"
+                    "{name}: [[route]] method '{other}' must be one of GET, POST, DELETE"
                 )));
             }
         };
+        let auth = match entry.auth.as_deref().unwrap_or("admin") {
+            "admin" => RouteAuth::Admin,
+            "user" => RouteAuth::User,
+            other => {
+                return Err(ManifestError(format!(
+                    "{name}: [[route]] auth '{other}' must be admin or user"
+                )));
+            }
+        };
+        let rate = entry.rate_limit_per_minute.unwrap_or(60);
         if !(1..=600).contains(&rate) {
             return Err(ManifestError(format!(
                 "{name}: [[route]] rate_limit_per_minute {rate} must be in [1, 600]"
             )));
         }
         routes.push(PluginRouteSpec {
-            path,
+            path: entry.path,
             method,
             auth,
             rate_limit_per_minute: rate,
@@ -1077,32 +775,8 @@ fn validate_routes(
     Ok(routes)
 }
 
-fn validate_ui(
-    name: &str,
-    doc: &RawDoc,
-    legacy: bool,
-) -> Result<(String, Vec<String>, String), ManifestError> {
-    if doc.arrays.contains_key("plugin_ui") {
-        return Err(ManifestError(format!(
-            "{name}: [plugin_ui] must be a table"
-        )));
-    }
-    let Some(table) = doc.tables.get("plugin_ui") else {
-        return Ok((String::new(), Vec::new(), String::new()));
-    };
-    if legacy {
-        return Err(ManifestError(format!(
-            "{name}: [plugin_ui] requires api_version 1"
-        )));
-    }
-    for (key, _) in &table.values {
-        if !matches!(key.as_str(), "entry" | "pages" | "external_url") {
-            return Err(ManifestError(format!(
-                "{name}: unknown [plugin_ui] key '{key}'"
-            )));
-        }
-    }
-    let entry = raw_str(table, "entry");
+fn validate_ui(name: &str, table: RawUi) -> Result<(String, Vec<String>, String), ManifestError> {
+    let entry = table.entry;
     if !entry.is_empty() {
         let normalized = entry.replace('\\', "/");
         if normalized.starts_with('/')
@@ -1115,32 +789,22 @@ fn validate_ui(
             )));
         }
     }
-    let pages = match table.get("pages") {
-        None => Vec::new(),
-        Some(RawValue::StrList(items)) => {
-            if items.iter().any(|item| item.is_empty()) {
-                return Err(ManifestError(format!(
-                    "{name}: [plugin_ui] pages must be a list of page ids"
-                )));
-            }
-            items.clone()
-        }
-        Some(_) => {
-            return Err(ManifestError(format!(
-                "{name}: [plugin_ui] pages must be a list of page ids"
-            )));
-        }
-    };
-    if pages.len() > 1 {
+    let pages = table.pages;
+    if pages.iter().any(String::is_empty) {
         return Err(ManifestError(format!(
-            "{name}: [plugin_ui] pages allows a single page id in v1"
+            "{name}: [plugin_ui] pages must be a list of page ids"
         )));
     }
-    let external_url = raw_str(table, "external_url");
+    if pages.len() > 1 {
+        return Err(ManifestError(format!(
+            "{name}: [plugin_ui] pages allows a single page id"
+        )));
+    }
+    let external_url = table.external_url;
     if !external_url.is_empty() {
         if external_url.starts_with("https://") {
             // Allowed anywhere.
-        } else if let Some(_rest) = external_url.strip_prefix("http://") {
+        } else if external_url.starts_with("http://") {
             let host = http_loopback_host(&external_url);
             if host != "localhost" && !host.starts_with("127.") && host != "::1" {
                 return Err(ManifestError(format!(
@@ -1166,8 +830,7 @@ mod tests {
     use super::*;
 
     fn parse(text: &str) -> Result<PluginManifest, ManifestError> {
-        let doc = parse_manifest_toml(text).map_err(ManifestError)?;
-        validate_manifest("toy", &doc)
+        parse_manifest("toy", text.as_bytes())
     }
 
     #[test]
@@ -1176,27 +839,53 @@ mod tests {
             "[plugin]\n\
              name = \"toy\"\n\
              version = \"1.0.0\"\n\
-             api_version = 1\n\
+             api_version = 2\n\
              entrypoint = \"plugin:Toy\"\n\
              capabilities = [\"subscriber\"]\n",
         )
         .unwrap();
         assert_eq!(manifest.name, "toy");
         assert_eq!(manifest.display_name, "toy");
+        assert_eq!(manifest.capabilities, [Capability::Subscriber]);
         assert!(manifest.schedule.is_none());
     }
 
+    /// The protocol and the API send a capability as its manifest id.
     #[test]
-    fn unknown_capability_lists_the_offenders() {
+    fn capabilities_serialize_as_their_manifest_ids() {
+        for capability in Capability::ALL {
+            assert_eq!(
+                serde_json::to_value(capability).unwrap(),
+                serde_json::Value::String(capability.as_str().to_owned())
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_capability_is_named() {
         let error = parse(
             "[plugin]\n\
              name = \"toy\"\n\
-             api_version = 1\n\
+             api_version = 2\n\
              entrypoint = \"plugin:Toy\"\n\
              capabilities = [\"subscriber\", \"mind-reading\"]\n",
         )
         .unwrap_err();
-        assert_eq!(error.0, "toy: unknown capabilities ['mind-reading']");
+        assert_eq!(error.0, "toy: unknown capability 'mind-reading'");
+    }
+
+    #[test]
+    fn a_misspelt_key_is_named() {
+        let error = parse(
+            "[plugin]\n\
+             name = \"toy\"\n\
+             api_version = 2\n\
+             entrypoint = \"plugin:Toy\"\n\
+             capabilites = [\"subscriber\"]\n",
+        )
+        .unwrap_err();
+        assert!(error.0.contains("line 5"), "{error}");
+        assert!(error.0.contains("capabilites"), "{error}");
     }
 
     #[test]
@@ -1204,7 +893,7 @@ mod tests {
         let error = parse(
             "[plugin]\n\
              name = \"toy\"\n\
-             api_version = 1\n\
+             api_version = 2\n\
              entrypoint = \"plugin:Toy\"\n\
              capabilities = [\"scheduler\"]\n",
         )
@@ -1213,34 +902,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_manifest_keeps_its_narrow_name_rule() {
-        assert!(
-            parse(
-                "[plugin]\n\
-             name = \"Old_Name-1\"\n\
-             api_version = 0\n\
-             entrypoint = \"plugin:Toy\"\n\
-             capabilities = [\"scrobbler\"]\n",
-            )
-            .is_ok()
-        );
-        let error = parse(
-            "[plugin]\n\
-             name = \"Old_Name-1\"\n\
-             api_version = 1\n\
-             entrypoint = \"plugin:Toy\"\n\
-             capabilities = [\"scrobbler\"]\n",
-        )
-        .unwrap_err();
-        assert!(error.0.contains("invalid plugin name"));
-    }
-
-    #[test]
     fn routes_need_the_publisher_capability() {
         let error = parse(
             "[plugin]\n\
              name = \"toy\"\n\
-             api_version = 1\n\
+             api_version = 2\n\
              entrypoint = \"plugin:Toy\"\n\
              capabilities = [\"subscriber\"]\n\
              [[route]]\n\
@@ -1251,18 +917,22 @@ mod tests {
     }
 
     #[test]
-    fn subset_parser_rejects_multi_line_arrays() {
-        let error = parse_manifest_toml("[plugin]\ncapabilities = [\n\"a\",\n]\n").unwrap_err();
-        assert!(error.contains("multi-line arrays"));
-    }
-
-    #[test]
-    fn subset_parser_keeps_hashes_inside_strings() {
-        let doc = parse_manifest_toml("[plugin]\ndescription = \"a # b\"\n").unwrap();
-        assert_eq!(
-            doc.tables["plugin"].get("description"),
-            Some(&RawValue::Str("a # b".to_owned()))
-        );
+    fn homepage_must_be_a_web_address() {
+        let manifest = |homepage: &str| {
+            parse(&format!(
+                "[plugin]\nname = \"toy\"\napi_version = 2\nentrypoint = \"plugin:Toy\"\n\
+                 capabilities = [\"subscriber\"]\nhomepage = \"{homepage}\"\n"
+            ))
+        };
+        assert!(manifest("https://toy.test/about").is_ok());
+        for bad in [
+            "javascript:alert(1)",
+            "ftp://toy.test",
+            "https://user:pw@toy.test",
+        ] {
+            let error = manifest(bad).unwrap_err();
+            assert!(error.0.contains("homepage"), "{bad}: {error}");
+        }
     }
 
     #[test]
@@ -1270,7 +940,7 @@ mod tests {
         let error = parse(
             "[plugin]\n\
              name = \"toy\"\n\
-             api_version = 1\n\
+             api_version = 2\n\
              entrypoint = \"plugin:Toy\"\n\
              capabilities = [\"indexer\"]\n\
              [[capability]]\n\

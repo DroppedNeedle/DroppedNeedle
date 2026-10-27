@@ -12,6 +12,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::super::host::PluginHost;
+use super::super::manifest::Capability;
 use super::super::protocol::methods;
 use super::super::runtime::PluginPurchaseLink;
 use super::{call, decode};
@@ -29,7 +30,7 @@ impl PluginHost {
         album: &str,
         release_group_mbid: &str,
     ) -> Vec<PluginPurchaseLink> {
-        let plugins = self.serving("purchase_links");
+        let plugins = self.serving(Capability::PurchaseLinks);
         let params = json!({
             "artist": artist,
             "album": album,

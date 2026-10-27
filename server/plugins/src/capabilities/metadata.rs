@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::super::host::PluginHost;
+use super::super::manifest::Capability;
 use super::super::protocol::methods;
 use super::{call, decode};
 
@@ -114,7 +115,7 @@ impl PluginHost {
     }
 
     async fn enrich(&self, method: &str, params: serde_json::Value) -> Vec<PluginEnrichment> {
-        let plugins = self.serving("metadata_provider");
+        let plugins = self.serving(Capability::MetadataProvider);
         let answers = futures_util::future::join_all(plugins.iter().map(|plugin| {
             let params = params.clone();
             async move {

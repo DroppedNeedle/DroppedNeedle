@@ -8,13 +8,15 @@
 //! plugins. PLUGINS.md documents every method below.
 //!
 //! The protocol is versioned separately from the manifest's
-//! `api_version`: `api_version` says which capabilities a manifest may
-//! declare, [`PROTOCOL_VERSION`] says how the messages look. The host
+//! `api_version`: `api_version` says which manifest the host reads,
+//! [`PROTOCOL_VERSION`] says how the messages look. The host
 //! sends its version in `initialize` and refuses a plugin that answers
 //! with one it does not speak.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use super::manifest::Capability;
 
 /// Wire protocol version this host speaks.
 pub const PROTOCOL_VERSION: i64 = 1;
@@ -308,8 +310,8 @@ pub struct PluginIdentity {
     pub api_version: i64,
     /// Manifest entrypoint (`module:Class`), empty for custom commands.
     pub entrypoint: String,
-    /// Declared capabilities.
-    pub capabilities: Vec<String>,
+    /// Declared capabilities, sent as their manifest ids.
+    pub capabilities: Vec<Capability>,
 }
 
 /// `initialize` result.

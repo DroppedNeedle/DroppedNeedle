@@ -24,6 +24,7 @@ use droppedneedle_kernel::jobs::plugin_ticks::{
 };
 
 use super::host::PluginHost;
+use super::manifest::Capability;
 use super::protocol::methods;
 
 /// Default cancel grace for tick loops.
@@ -35,7 +36,7 @@ impl PluginHost {
     pub async fn fire_tick(&self, name: &str, budget: Duration) -> Result<(), String> {
         let plugin = self
             .get(name)
-            .filter(|plugin| plugin.serves("scheduler"))
+            .filter(|plugin| plugin.serves(Capability::Scheduler))
             .ok_or_else(|| "unknown or disabled scheduler".to_owned())?;
         super::capabilities::call(&plugin, methods::TICK, serde_json::Value::Null, budget)
             .await
@@ -67,7 +68,7 @@ impl JobsTickPlugin for PluginTick {
     fn tick_enabled(&self) -> bool {
         self.host
             .get(&self.name)
-            .is_some_and(|plugin| plugin.serves("scheduler"))
+            .is_some_and(|plugin| plugin.serves(Capability::Scheduler))
     }
 }
 

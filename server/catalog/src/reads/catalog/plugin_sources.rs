@@ -12,6 +12,7 @@ use droppedneedle_plugins::capabilities::metadata::{
     EnrichmentFields, PluginEnrichment, plain_text,
 };
 use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_plugins::manifest::Capability;
 
 /// Every plugin's answer merged by the gap rule, as the catalog shows it.
 /// Text is reduced to plain text, links to `http(s)` and the image to
@@ -57,7 +58,7 @@ pub struct PluginDetailsSource(pub Arc<PluginHost>);
 impl DetailsSource for PluginDetailsSource {
     fn token(&self) -> String {
         self.0
-            .serving("metadata_provider")
+            .serving(Capability::MetadataProvider)
             .iter()
             .map(|plugin| plugin.manifest.name.as_str())
             .collect::<Vec<_>>()
@@ -84,7 +85,7 @@ pub struct PluginPurchaseLinks(pub Arc<PluginHost>);
 impl PurchaseLinkSource for PluginPurchaseLinks {
     fn token(&self) -> String {
         self.0
-            .serving("purchase_links")
+            .serving(Capability::PurchaseLinks)
             .iter()
             .map(|plugin| plugin.manifest.name.as_str())
             .collect::<Vec<_>>()

@@ -2,7 +2,7 @@
 name = "http-catalog"
 display_name = "HTTP Catalog (example)"
 version = "1.0.0"
-api_version = 1
+api_version = 2
 entrypoint = "plugin:HttpCatalog"
 capabilities = ["download_client", "indexer", "scheduler"]
 description = "Reference download source: searches a user-hosted JSON catalog and downloads its files."

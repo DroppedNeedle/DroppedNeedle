@@ -156,7 +156,7 @@ async fn send(
 const TOY_MANIFEST: &str = "[plugin]\n\
      name = \"toy\"\n\
      version = \"1.0.0\"\n\
-     api_version = 1\n\
+     api_version = 2\n\
      entrypoint = \"plugin:Toy\"\n\
      capabilities = [\"scheduler\", \"subscriber\", \"publisher\"]\n\
      [schedule]\n\
@@ -223,7 +223,7 @@ async fn secrets_seal_at_rest_and_saves_reach_the_running_plugin() {
     let rig = rig("secrets").await;
     let manifest = "[plugin]\n\
          name = \"toy\"\n\
-         api_version = 1\n\
+         api_version = 2\n\
          entrypoint = \"plugin:Toy\"\n\
          capabilities = [\"subscriber\"]\n\
          [[settings]]\n\
@@ -925,7 +925,7 @@ async fn fanout_reaches_subscribers_once_per_causation() {
     let rig = rig("fanout").await;
     let manifest = "[plugin]\n\
          name = \"toy\"\n\
-         api_version = 1\n\
+         api_version = 2\n\
          entrypoint = \"plugin:Toy\"\n\
          capabilities = [\"subscriber\", \"scrobbler\"]\n";
     let runtime = enable_toy(&rig, manifest);
@@ -1001,7 +1001,7 @@ async fn ticks_run_through_the_jobs_loop_and_state_persists() {
 const WRITER_MANIFEST: &str = "[plugin]\n\
      name = \"toy\"\n\
      version = \"1.0.0\"\n\
-     api_version = 1\n\
+     api_version = 2\n\
      entrypoint = \"plugin:Toy\"\n\
      capabilities = [\"library_writer\"]\n";
 
@@ -1212,7 +1212,7 @@ async fn the_daily_allowance_survives_a_restart() {
 
 const BIG_MANIFEST: &str = "[plugin]\n\
      name = \"big\"\n\
-     api_version = 1\n\
+     api_version = 2\n\
      entrypoint = \"plugin:Big\"\n\
      capabilities = [\"library_writer\", \"purchase_links\"]\n";
 

@@ -26,7 +26,7 @@ catalog-watch/
 name = "catalog-watch"
 display_name = "Catalog Watch"
 version = "1.0.0"
-api_version = 1
+api_version = 2
 entrypoint = "plugin:CatalogWatch"
 capabilities = ["scheduler", "purchase_links"]
 description = "Checks a catalog feed every hour and links to its shop."
@@ -102,7 +102,7 @@ python3 -m droppedneedle_plugin plugin:CatalogWatch
 Then paste one line at a time:
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol_version":1,"host":{"name":"me","version":"0"},"plugin":{"name":"catalog-watch","version":"1.0.0","api_version":1,"entrypoint":"plugin:CatalogWatch","capabilities":["scheduler","purchase_links"]},"settings":{},"plugin_dir":".","data_dir":"/tmp"}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol_version":1,"host":{"name":"me","version":"0"},"plugin":{"name":"catalog-watch","version":"1.0.0","api_version":2,"entrypoint":"plugin:CatalogWatch","capabilities":["scheduler","purchase_links"]},"settings":{},"plugin_dir":".","data_dir":"/tmp"}}
 {"jsonrpc":"2.0","id":2,"method":"purchase_links.get","params":{"artist":"Test Artist","album":"x","release_group_mbid":""}}
 ```
 

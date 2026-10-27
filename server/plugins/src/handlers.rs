@@ -31,6 +31,7 @@ use super::host::{PluginHost, UninstallError, UpdateError};
 use super::install::{
     ArchiveFetcher, InstallError, StagedPlugin, TRUST_WARNING, parse_source, resolve, stage,
 };
+use super::manifest::{Capability, RouteAuth};
 use super::models::{
     PluginInfo, PluginInstallInfo, PluginInstallPreview, PluginInstallRequest, PluginListResponse,
     PluginRefKind, PluginRuntimeInfo, PluginSettingFieldInfo, PluginSourceUpdateRequest,
@@ -560,18 +561,18 @@ async fn serve_ext(
         });
     }
     let plugin = match deps.host.get(plugin_name) {
-        Some(plugin) if plugin.serves("publisher") => plugin,
+        Some(plugin) if plugin.serves(Capability::Publisher) => plugin,
         _ => return Err(PluginError::NotFound),
     };
     let spec = plugin
         .manifest
         .routes
         .iter()
-        .find(|route| route.path == subpath && route.method.to_ascii_uppercase() == method);
+        .find(|route| route.path == subpath && route.method.as_str() == method);
     let Some(spec) = spec else {
         return Err(PluginError::NotFound);
     };
-    if spec.auth == "admin" {
+    if spec.auth == RouteAuth::Admin {
         Admin::try_from(caller.clone()).map_err(|refused| PluginError::Forbidden {
             message: refused.to_string(),
         })?;

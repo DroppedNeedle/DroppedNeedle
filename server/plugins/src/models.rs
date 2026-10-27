@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::manifest::Capability;
+
 /// One settings field a plugin declares.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PluginSettingFieldInfo {
@@ -35,13 +37,13 @@ pub struct PluginInfo {
     pub version: String,
     /// Whether the plugin is enabled and loaded.
     pub enabled: bool,
-    /// Declared capability ids.
+    /// Declared capabilities.
     #[serde(default)]
-    pub capabilities: Vec<String>,
+    pub capabilities: Vec<Capability>,
     /// Declared capabilities the server sends calls for while the plugin is
-    /// enabled (those active for its `api_version`).
+    /// enabled.
     #[serde(default)]
-    pub active_capabilities: Vec<String>,
+    pub active_capabilities: Vec<Capability>,
     /// Short description.
     #[serde(default)]
     pub description: String,
@@ -154,7 +156,7 @@ pub struct PluginInstallPreview {
     #[serde(default)]
     pub homepage: String,
     /// Declared capabilities.
-    pub capabilities: Vec<String>,
+    pub capabilities: Vec<Capability>,
     /// What the plugin asks to do, in plain words.
     pub permissions: Vec<String>,
     /// `owner/repo`.

@@ -18854,6 +18854,11 @@ export interface components {
             valid: boolean;
         };
         /**
+         * @description What a plugin may declare it does.
+         * @enum {string}
+         */
+        PluginCapability: "scrobbler" | "purchase_links" | "download_client" | "indexer" | "subscriber" | "publisher" | "metadata_provider" | "scheduler" | "streaming_source" | "library_writer";
+        /**
          * @description One linked external account. Never carries the secret, only the name.
          *     The schema rename keeps this distinct from the remotes
          *     `ConnectionStatus` in the one OpenAPI document; the wire shape is
@@ -18918,13 +18923,13 @@ export interface components {
         PluginInfo: {
             /**
              * @description Declared capabilities the server sends calls for while the plugin is
-             *     enabled (those active for its `api_version`).
+             *     enabled.
              */
-            active_capabilities?: string[];
+            active_capabilities?: components["schemas"]["PluginCapability"][];
             /** @description Author string. */
             author?: string;
-            /** @description Declared capability ids. */
-            capabilities?: string[];
+            /** @description Declared capabilities. */
+            capabilities?: components["schemas"]["PluginCapability"][];
             /** @description Short description. */
             description?: string;
             /** @description Display name. */
@@ -18983,7 +18988,7 @@ export interface components {
             /** @description Author string. */
             author?: string;
             /** @description Declared capabilities. */
-            capabilities: string[];
+            capabilities: components["schemas"]["PluginCapability"][];
             /**
              * @description The exact commit that will be installed. Send it back to install
              *     exactly this code.

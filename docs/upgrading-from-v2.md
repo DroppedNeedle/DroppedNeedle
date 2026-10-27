@@ -206,8 +206,9 @@ report lists it too (`left_behind`). In short:
 - MusicBrainz contributions that were already linked, cancelled or out of
   date. A linked album keeps its match.
 - Caches, which v3 fills again on its own.
-- Plugins. Install them again from Settings > Plugins; their settings come
-  across.
+- Plugins. Their settings come across, switched off, and the report lists
+  each one as needing porting. Port it, install it again from Settings >
+  Plugins, then switch it on.
 
 ## What changed from v2
 
@@ -273,9 +274,10 @@ machine and its data folders can run it.
   your library. If Free Music was your only source, set up slskd, Usenet or
   a plugin source.
 - **v2 plugins.** v2 plugins do not load in v3. Only plugins written for
-  the current plugin API are accepted. Port yours first ("Porting a v2
-  plugin" in [PLUGINS.md](../PLUGINS.md)), or ask its author to, then
-  install it again from Settings > Plugins.
+  plugin API version 2 are accepted, and a manifest with `api_version` 0
+  or 1 is refused. Port yours first ("Porting a v2 plugin" in
+  [PLUGINS.md](../PLUGINS.md)), or ask its author to, then install it
+  again from Settings > Plugins.
 - **v2 profile share codes.** A Library Management profile share code made
   in v2 does not import into v3. Share the profile again from v3 to get a
   code v3 reads.

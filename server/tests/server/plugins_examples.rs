@@ -13,7 +13,7 @@ use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::capabilities::acquisition::PluginEnqueue;
 use droppedneedle_plugins::capabilities::stream::PluginStream;
 use droppedneedle_plugins::host::PluginHost;
-use droppedneedle_plugins::manifest::load_manifest;
+use droppedneedle_plugins::manifest::{load_manifest, parse_manifest};
 use droppedneedle_plugins::process::ProcessLauncher;
 use droppedneedle_plugins::runtime::{
     DownloadTaskEvent, EventKind, EventPayload, PluginEvent, RuntimeState, ScrobbleEvent,
@@ -133,6 +133,26 @@ fn every_example_manifest_validates() {
             "webhook-scrobbler",
         ]
     );
+}
+
+/// A manifest written for an older plugin API is refused before any of its
+/// code runs, and the message says where the porting guide is.
+#[test]
+fn manifests_for_older_plugin_apis_are_refused() {
+    for version in [0, 1] {
+        let text = format!(
+            "[plugin]\nname = \"old-toy\"\napi_version = {version}\n\
+             entrypoint = \"plugin:Toy\"\ncapabilities = [\"scrobbler\"]\n"
+        );
+        let error = parse_manifest("old-toy", text.as_bytes()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "old-toy: written for api_version {version}; this DroppedNeedle reads \
+                 api_version 2; see Porting a v2 plugin in PLUGINS.md"
+            )
+        );
+    }
 }
 
 /// One-request HTTP server: answers 200 and hands back the request.
@@ -368,7 +388,7 @@ async fn streaming_source_resolves_inside_its_own_folder() {
 
 const PROBE_MANIFEST: &str = "[plugin]\n\
      name = \"probe\"\n\
-     api_version = 1\n\
+     api_version = 2\n\
      entrypoint = \"plugin:Probe\"\n\
      capabilities = [\"scheduler\", \"purchase_links\"]\n\
      [schedule]\n\

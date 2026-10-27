@@ -14,6 +14,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::super::host::PluginHost;
+use super::super::manifest::Capability;
 use super::super::protocol::methods;
 use super::super::runtime::{PluginRouteBody, PluginRouteResponse};
 use super::call;
@@ -64,7 +65,7 @@ impl PluginHost {
     ) -> PluginRouteResponse {
         let Some(plugin) = self
             .get(plugin_name)
-            .filter(|plugin| plugin.serves("publisher"))
+            .filter(|plugin| plugin.serves(Capability::Publisher))
         else {
             return not_found();
         };
@@ -76,7 +77,7 @@ impl PluginHost {
             .manifest
             .routes
             .iter()
-            .any(|route| route.path == subpath && route.method.eq_ignore_ascii_case(&verb));
+            .any(|route| route.path == subpath && route.method.as_str() == verb);
         if !declared {
             return not_found();
         }

@@ -2,7 +2,7 @@
 name = "local-folder-client"
 display_name = "Local Folder (example)"
 version = "1.0.0"
-api_version = 1
+api_version = 2
 entrypoint = "plugin:LocalFolderClient"
 capabilities = ["download_client"]
 description = "Reference folder-mode client: stages files from a local source folder for import."

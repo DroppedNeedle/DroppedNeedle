@@ -2,7 +2,7 @@
 name = "webhook-scrobbler"
 display_name = "Webhook Scrobbler"
 version = "1.0.0"
-api_version = 0
+api_version = 2
 entrypoint = "plugin:WebhookScrobbler"
 capabilities = ["scrobbler"]
 description = "POSTs every accepted play to a webhook URL you configure - wire it to Home Assistant, n8n, a Discord webhook, anything."

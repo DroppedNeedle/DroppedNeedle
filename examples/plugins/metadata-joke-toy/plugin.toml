@@ -2,7 +2,7 @@
 name = "metadata-joke-toy"
 display_name = "Metadata Joke (example)"
 version = "1.0.0"
-api_version = 1
+api_version = 2
 entrypoint = "plugin:MetadataJoke"
 capabilities = ["metadata_provider", "purchase_links"]
 description = "Returns a fixed biography, tags and a buy link for one fictional test artist."
