@@ -288,10 +288,6 @@ const IDENTITY_RULES: &[Rule] = &[
                 ..IDENTITY
             },
             IDENTITY_TOOL,
-            place(
-                "auth/src/sqlite/users.rs",
-                "reads the manifests' sealer to refuse deleting an account history names",
-            ),
         ],
     },
 ];

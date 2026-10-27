@@ -20,16 +20,14 @@ use droppedneedle_auth::prod::{
 };
 use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
 use droppedneedle_auth::session::tokens;
-use droppedneedle_auth::sqlite::{AuthDb, LoginWrite, SqliteUserStore};
+use droppedneedle_auth::sqlite::{AuthDb, LoginWrite, Users};
 use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
 use droppedneedle_auth::users::models::{
     AppPasswordRecord, LocalCredential, PasswordReset, UserRecord,
 };
 use droppedneedle_auth::users::roles::{Role, SessionKind as UserSessionKind};
 use droppedneedle_auth::users::services::{self, verify_app_password};
-use droppedneedle_auth::users::stores::{
-    AppPasswordStore as _, BoxFuture, RoleChange, SessionManager as _, UserDeletion, UserStore as _,
-};
+use droppedneedle_auth::users::stores::{BoxFuture, RoleChange, SessionManager as _, UserDeletion};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
@@ -154,7 +152,7 @@ fn md5_keeps_rfc_and_v2_spot_values() {
 async fn deployment_with(tag: &str, local: String) -> E2e {
     let e2e = E2e::open(tag).await;
     let auth_db = AuthDb::new(e2e.db(), Arc::new(SystemClock));
-    SqliteUserStore::new(&auth_db)
+    Users::new(&auth_db)
         .insert(user_row("user-1", "ada", Role::User))
         .await
         .unwrap();
@@ -716,7 +714,7 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
     let fx = fixture("recovery").await;
     let mut deps = fx.deps.clone();
     let hibp = Arc::new(CountingHibp::default());
-    deps.screen = Arc::new(HibpScreen::new(hibp.clone()));
+    deps.screen = HibpScreen::new(hibp.clone(), fx.config.live());
     fx.config
         .save_blocking(SecuritySettings {
             hibp_check: true,

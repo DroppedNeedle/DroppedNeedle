@@ -11,8 +11,8 @@
 //! user and admin groups sit inside the session middleware (it puts the
 //! request's [`Principal`] in the extensions, which the role extractors read).
 //! `POST /api/v3/auth/password-recovery/reset` is in the public group; the
-//! origin check guards cookie mutations. Stores are the `sqlite.rs`
-//! adapters over the 0001 baseline tables; hashing is
+//! origin check guards cookie mutations. The repositories are the
+//! concrete types in [`crate::sqlite`] and [`crate::avatars`]; hashing is
 //! [`Passwords`][prod-hasher] (bcrypt verify, Argon2id hash, rehash of a
 //! weaker hash on login). The `auth_providers` scheme tag lives in
 //! the `provider_data` JSON (`{"password_hash", "scheme"}`); no migration
@@ -41,31 +41,31 @@ use droppedneedle_kernel::mount::{Routes, routes};
 pub use error::UsersError;
 pub use roles::{Admin, Curator, Principal, Role, RoleRequired, SessionKind, User};
 
+use crate::avatars::Avatars;
+use crate::sqlite::{AppPasswords, LastFmLinks, RecoveryCodes, Users};
 use droppedneedle_kernel::{clock::Clock, ids::IdGenerator, runtime_config::crypto::Crypto};
-use stores::{
-    AppPasswordStore, AvatarStore, LastFmAuthClient, LastFmStore, LastFmSwitch, PasswordScreen,
-    RecoveryStore, SecurityPolicy, SessionManager, UserDirectory, UserStore,
-};
+use hibp::HibpScreen;
+use stores::{LastFmAuthClient, LastFmSwitch, SessionManager, UserDirectory};
 
 /// Every dependency the users routes need, injected by constructor.
 #[derive(Clone)]
 pub struct UsersDeps {
     /// Account and credential rows.
-    pub users: Arc<dyn UserStore>,
+    pub users: Users,
     /// Session management rows (the session-list backend over `auth_tokens`).
     pub sessions: Arc<dyn SessionManager>,
     /// App-password rows.
-    pub app_passwords: Arc<dyn AppPasswordStore>,
+    pub app_passwords: AppPasswords,
     /// Per-user Last.fm links.
-    pub lastfm: Arc<dyn LastFmStore>,
+    pub lastfm: LastFmLinks,
     /// Recovery code rows.
-    pub recovery: Arc<dyn RecoveryStore>,
+    pub recovery: RecoveryCodes,
     /// Avatar image bytes.
-    pub avatars: Arc<dyn AvatarStore>,
+    pub avatars: Avatars,
     /// Password hashing and verification.
     pub passwords: super::passwords::Passwords,
-    /// Breach-corpus screening.
-    pub screen: Arc<dyn PasswordScreen>,
+    /// Breach-corpus screening, switched by the live `security` section.
+    pub screen: HibpScreen,
     /// Clock for issue/expiry stamps.
     pub clock: Arc<dyn Clock>,
     /// Fresh ids for rows.
@@ -75,11 +75,9 @@ pub struct UsersDeps {
     /// Last.fm auth web calls.
     pub lastfm_client: Arc<dyn LastFmAuthClient>,
     /// Last.fm switch and instance key pair (live read).
-    pub lastfm_switch: Arc<dyn LastFmSwitch>,
+    pub lastfm_switch: LastFmSwitch,
     /// Last.fm sign-in tokens waiting for approval, per requesting user.
     pub lastfm_pending: Arc<lastfm_pending::LastFmPending>,
-    /// HIBP knobs (live read).
-    pub security: Arc<dyn SecurityPolicy>,
     /// Jellyfin accounts for the admin user import.
     pub jellyfin_directory: Arc<dyn UserDirectory>,
     /// Plex accounts for the admin user import.

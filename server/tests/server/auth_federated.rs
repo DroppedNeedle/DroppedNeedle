@@ -1034,7 +1034,7 @@ async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
         ),
     );
     let signing = store
-        .lastfm_session(&jane_id, users.lastfm_switch.as_ref())
+        .lastfm_session(&jane_id, &users.lastfm_switch)
         .expect("jane scrobbles");
     assert_eq!(
         (

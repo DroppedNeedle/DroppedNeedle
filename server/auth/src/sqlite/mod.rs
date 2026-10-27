@@ -1,17 +1,22 @@
-//! Production SQLite adapters over the auth tables.
+//! The auth repositories over SQLite.
 //!
-//! One adapter per auth port, all sharing a single [`AuthDb`] handle (the
-//! reader pool plus the writer lane, cloned out of the database runtime):
+//! Every repository shares a single [`AuthDb`] handle (the read pools plus
+//! the writer lane, cloned out of the database runtime):
 //!
 //! - [`sessions`]: [`SqliteSessionStore`] (logins and the middleware),
 //!   [`SqliteSessionManager`] (the session-list backend) and
 //!   [`SqliteSessionIssuer`] (federated logins), over `auth_tokens`;
-//! - [`users`]: [`SqliteUserStore`] and [`SqliteCredentialLookup`] over
-//!   `auth_users` plus the `local` rows of `auth_providers`;
+//! - [`users`]: [`Users`], accounts and their local credentials and
+//!   sign-in bindings, over `auth_users` and `auth_providers`, and the
+//!   sign-in lookup;
 //! - [`federated`]: [`SqliteFederatedStore`] over `auth_users` plus the
 //!   federated rows of `auth_providers`;
-//! - [`app_passwords`], [`recovery`], [`lastfm`], [`oidc`]: one adapter
-//!   each over their like-named tables.
+//! - [`app_passwords`] ([`AppPasswords`]), [`recovery`] ([`RecoveryCodes`]),
+//!   [`lastfm`] ([`LastFmLinks`]) and [`oidc`]: one each over their
+//!   like-named tables.
+//!
+//! The account, credential, app-password, recovery and Last.fm statements
+//! are in [`sql`]; their reads run on the read pool.
 //!
 //! Conventions shared by every adapter:
 //!
@@ -28,9 +33,9 @@
 //!   sealed on every write and never decrypted on read (no port reads it).
 //! - A busy database (a lock, a full lane queue, no free reader in time)
 //!   is its own error, never the generic failure: the session store, the
-//!   login lookup and the user stores answer busy, which the routes render
-//!   as a 503 with `Retry-After`. The federated store has no busy variant,
-//!   so there a busy database is still the generic failure.
+//!   login lookup and the repositories answer busy, which the routes
+//!   render as a 503 with `Retry-After`. The federated store has no busy
+//!   variant, so there a busy database is still the generic failure.
 
 mod app_passwords;
 mod federated;
@@ -38,11 +43,11 @@ mod lastfm;
 mod oidc;
 mod recovery;
 mod sessions;
+mod sql;
 mod users;
 
 use std::sync::Arc;
 
-use rusqlite::OptionalExtension as _;
 use sqlx::SqlitePool;
 
 use super::federated::FederatedError;
@@ -51,15 +56,23 @@ use super::users::stores::StoreError;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 
-pub use app_passwords::SqliteAppPasswordStore;
+pub use app_passwords::AppPasswords;
 pub use federated::SqliteFederatedStore;
-pub use lastfm::SqliteLastFmStore;
+pub use lastfm::LastFmLinks;
 pub use oidc::SqliteOidcStateStore;
-pub use recovery::SqliteRecoveryStore;
+pub use recovery::RecoveryCodes;
 pub use sessions::{
     LoginWrite, SqliteSessionIssuer, SqliteSessionManager, SqliteSessionStore, session_expires_at,
 };
-pub use users::{SqliteCredentialLookup, SqliteUserStore};
+pub use users::Users;
+
+use sql::USER_COLUMNS;
+
+/// Every `sql.rs` of this crate, one line each, for the schema test.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
+    vec![sql::registered()]
+}
 
 /// What [`forget_sealed`] cleared.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -77,15 +90,8 @@ pub struct ForgottenAuth {
 /// keeps its row with no tokens, which is how a pre-linked one looks and
 /// is refilled at the next sign-in. Local password rows hold no ciphertext.
 pub fn forget_sealed(conn: &rusqlite::Connection) -> rusqlite::Result<ForgottenAuth> {
-    let app_passwords = conn.execute(
-        "UPDATE connect_app_passwords SET revoked = 1, secret_encrypted = '' \
-         WHERE secret_encrypted LIKE 'v3:%'",
-        [],
-    )?;
-    let sign_in_tokens = conn.execute(
-        "UPDATE auth_providers SET provider_data = NULL WHERE provider_data LIKE 'v3:%'",
-        [],
-    )?;
+    let app_passwords = conn.execute(sql::FORGET_APP_PASSWORD_SECRETS.text(), [])?;
+    let sign_in_tokens = conn.execute(sql::FORGET_SIGN_IN_TOKENS.text(), [])?;
     Ok(ForgottenAuth {
         app_passwords,
         sign_in_tokens,
@@ -120,6 +126,18 @@ impl AuthDb {
     /// The sqlx reader pool.
     fn pool(&self) -> &SqlitePool {
         self.db.sqlx()
+    }
+
+    /// One read on the request read pool. A busy database stays busy.
+    async fn read<R, F>(&self, name: &'static str, op: F) -> Result<R, StoreError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.db
+            .read(name, move |conn| op(conn).map_err(DbError::from))
+            .await
+            .map_err(store_error)
     }
 
     /// The writer lane, its closures failing with [`WriteError`].
@@ -199,14 +217,10 @@ fn render_local_data(scheme: &str, hash: &str) -> String {
     serde_json::json!({ "password_hash": hash, "scheme": scheme }).to_string()
 }
 
-/// Columns read for every user row, in mapping order.
-const USER_COLUMNS: &str = "id, display_name, email, avatar_url, role, created_at, \
-    last_login_at, username, username_display";
-
-/// What an auth write closure fails with. The transaction rolls back
-/// either way.
+/// What an auth write fails with, inside the lane or inside a caller's
+/// own transaction. The transaction rolls back either way.
 #[derive(Debug, thiserror::Error)]
-enum WriteError {
+pub enum WriteError {
     /// A constraint refused the write: the caller's domain conflict.
     #[error("conflicting state")]
     Conflict,
@@ -234,19 +248,4 @@ fn op_error(error: rusqlite::Error) -> WriteError {
 /// True when a write failed on a constraint.
 fn is_write_conflict(error: &WriteError) -> bool {
     matches!(error, WriteError::Conflict)
-}
-
-/// True when a row with `id` exists in `table`. Used after updates that may
-/// legitimately change nothing, so an unchanged row still reads as found.
-/// The table name is always a literal at the call site, never caller input.
-fn row_exists(tx: &rusqlite::Transaction, table: &str, id: &str) -> Result<bool, WriteError> {
-    let found: Option<i64> = tx
-        .query_row(
-            &format!("SELECT 1 FROM {table} WHERE id = ?"),
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(op_error)?;
-    Ok(found.is_some())
 }

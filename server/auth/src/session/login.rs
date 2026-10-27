@@ -32,7 +32,7 @@ use super::{
     tokens,
 };
 use crate::passwords::{Passwords, StoredPassword, Verdict};
-use crate::sqlite::{LoginWrite, SqliteSessionStore};
+use crate::sqlite::{LoginWrite, SqliteSessionStore, Users};
 
 /// Login transport: cookie (browser default) or Bearer (devices and scripts).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -93,7 +93,7 @@ pub enum LoginError {
     Busy,
 }
 
-/// Stored local credential returned by the user lookup.
+/// Stored local credential returned by [`Users::login_credential`].
 #[derive(Debug, Clone)]
 pub struct LocalCredential {
     /// User id.
@@ -104,16 +104,6 @@ pub struct LocalCredential {
     pub password: StoredPassword,
 }
 
-/// User-lookup port. Production reads `auth_users` + the `local` provider row.
-pub trait CredentialLookup: Clone + Send + Sync + 'static {
-    /// Local credential for a lowercased username, `None` when the user or
-    /// its local credential is absent, `Err` when the store failed.
-    fn local_user(
-        &self,
-        username_lc: &str,
-    ) -> impl Future<Output = Result<Option<LocalCredential>, LoginError>> + Send;
-}
-
 /// `Cache-Control` value on every login/token-mint response.
 pub const NO_STORE: &str = "no-store";
 
@@ -122,22 +112,19 @@ pub const INVALID_CREDENTIALS: &str = "Invalid username or password";
 
 /// Local-login service: lookup, verify-or-dummy, mint, hand off.
 #[derive(Debug, Clone)]
-pub struct LoginService<C> {
+pub struct LoginService {
     sessions: SqliteSessionStore,
     passwords: Passwords,
-    users: C,
+    users: Users,
 }
 
 /// Login attempts before a credential that keeps changing answers busy:
 /// the first, and one re-check after a change.
 const LOGIN_ATTEMPTS: usize = 2;
 
-impl<C> LoginService<C>
-where
-    C: CredentialLookup,
-{
+impl LoginService {
     /// Wire the service from its parts.
-    pub fn new(sessions: SqliteSessionStore, passwords: Passwords, users: C) -> Self {
+    pub fn new(sessions: SqliteSessionStore, passwords: Passwords, users: Users) -> Self {
         Self {
             sessions,
             passwords,
@@ -155,7 +142,7 @@ where
         let username_lc = request.username.trim().to_lowercase();
         let raw_token = tokens::mint_token().map_err(|_| LoginError::Unavailable)?;
         for _ in 0..LOGIN_ATTEMPTS {
-            let credential = self.users.local_user(&username_lc).await?;
+            let credential = self.users.login_credential(&username_lc).await?;
             let passwords = self.passwords.clone();
             let stored = credential.as_ref().map(|found| found.password.clone());
             let password = request.password.clone();

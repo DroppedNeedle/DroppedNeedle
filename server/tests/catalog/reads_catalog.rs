@@ -851,7 +851,6 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
 #[tokio::test]
 async fn lastfm_reads_fall_back_to_the_instance_key() {
     let rig = AuthRig::new("reads-catalog").await;
-    let switch = Arc::new(crate::common::auth_fakes::InstanceKeySwitch::default());
     let upstream = Upstream::new(
         Arc::new(Providers::unpaced(Arc::new(
             droppedneedle_providers::executor::ScriptedWire::new(),
@@ -859,16 +858,13 @@ async fn lastfm_reads_fall_back_to_the_instance_key() {
         Arc::new(TestSettings {
             mb_url: String::new(),
         }),
-        droppedneedle_auth::users::UsersDeps {
-            lastfm_switch: switch.clone(),
-            ..rig.deps.clone()
-        },
+        rig.deps.clone(),
     );
     assert!(
         upstream.lastfm("no-key-user").await.is_none(),
         "no user key and no instance key"
     );
-    switch.set("instance-key");
+    rig.set_lastfm_instance_key("instance-key");
     let (_, creds) = upstream.lastfm("no-key-user").await.expect("instance key");
     assert_eq!(creds.api_key, "instance-key");
 }

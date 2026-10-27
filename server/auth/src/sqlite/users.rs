@@ -1,295 +1,286 @@
 //! Accounts and local credentials over `auth_users` plus the `local`
-//! rows of `auth_providers`, and the native login lookup.
+//! rows of `auth_providers`, and the sign-in lookup.
 
 use rusqlite::OptionalExtension as _;
-use sqlx::Row as _;
+use rusqlite::Transaction;
 
+use super::sql;
 use super::{
-    AuthDb, USER_COLUMNS, is_write_conflict, op_error, parse_local_data, render_local_data,
-    row_exists, store_error,
+    AuthDb, WriteError, is_write_conflict, op_error, parse_local_data, render_local_data,
+    store_error,
 };
 use crate::federated::users::ProviderBinding;
-use crate::session::login::{CredentialLookup, LocalCredential, LoginError};
+use crate::session::login::{LocalCredential as LoginCredential, LoginError};
 use crate::times::{parse_iso, to_iso};
-use crate::users::models::{LocalCredential as UsersLocalCredential, UserRecord};
+use crate::users::models::{LocalCredential, UserRecord};
 use crate::users::roles::Role;
-use crate::users::stores::{BoxFuture, RoleChange, StoreError, UserDeletion, UserStore};
-use droppedneedle_kernel::db::{DbError, Lane, map_sqlx_busy};
+use crate::users::stores::{RoleChange, StoreError, UserDeletion};
+use droppedneedle_kernel::db::statement::{ListLen, Statement};
+use droppedneedle_kernel::db::{DbError, Lane};
 
-/// Account and credential rows over `auth_users` plus the `local` rows of
-/// `auth_providers`.
+/// Accounts and their credentials over `auth_users` plus `auth_providers`.
 ///
-/// The local credential lives in `provider_data` as
-/// `{"password_hash": ..., "scheme": ...}` (see [`parse_local_data`]); there
-/// is no password column and none is needed. Renames sync the local
-/// `provider_uid` in the same transaction; deletes cascade through the
-/// baseline foreign keys.
+/// The local credential lives in the `local` row's `provider_data` as
+/// `{"password_hash": ..., "scheme": ...}` (see [`parse_local_data`]); a
+/// missing scheme reads as `bcrypt` (v2 rows predate it). Renames sync the
+/// local `provider_uid` in the same transaction; deletes cascade through
+/// the baseline foreign keys.
 #[derive(Clone, Debug)]
-pub struct SqliteUserStore {
+pub struct Users {
     db: AuthDb,
 }
 
-impl SqliteUserStore {
-    /// Adapter over one handle.
-    pub fn new(db: &AuthDb) -> Self {
-        Self { db: db.clone() }
-    }
-}
-
-/// Map one `auth_users` row. Unknown roles degrade to least privilege;
-/// unparseable display times degrade to 0.
-fn map_user(row: &sqlx::sqlite::SqliteRow) -> UserRecord {
-    let created_raw: String = row.get("created_at");
-    let login_raw: Option<String> = row.get("last_login_at");
-    let role_raw: String = row.get("role");
-    UserRecord {
-        id: row.get("id"),
-        username: row.get("username"),
-        username_display: row.get("username_display"),
-        display_name: row.get("display_name"),
-        email: row.get("email"),
-        avatar_url: row.get("avatar_url"),
+/// Map one `auth_users` row read with [`sql::USER_COLUMNS`]. Unknown roles
+/// degrade to least privilege; unparseable display times degrade to 0.
+fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
+    let created_raw: String = row.get(5)?;
+    let login_raw: Option<String> = row.get(6)?;
+    let role_raw: String = row.get(4)?;
+    Ok(UserRecord {
+        id: row.get(0)?,
+        display_name: row.get(1)?,
+        email: row.get(2)?,
+        avatar_url: row.get(3)?,
         role: Role::from_stored(&role_raw),
         created_at: parse_iso(&created_raw).unwrap_or(0),
         last_login_at: login_raw.as_deref().and_then(parse_iso),
+        username: row.get(7)?,
+        username_display: row.get(8)?,
+    })
+}
+
+/// Tables that keep a user's name on library history with
+/// `ON DELETE RESTRICT`, as (statement, readable name).
+const RESTRICTING_HISTORY: [(Statement, &str); 3] = [
+    (
+        sql::HELD_BY_RECONCILIATION_DISMISSALS,
+        "artist reconciliation dismissals",
+    ),
+    (sql::HELD_BY_EDITION_MANIFESTS, "custom edition manifests"),
+    (
+        sql::HELD_BY_MANAGEMENT_EXCLUSIONS,
+        "library management exclusions",
+    ),
+];
+
+/// Per-user discovery rows with no foreign key (the tables predate it),
+/// deleted with the account as in v2. The batch items go first; v2 left
+/// the batches behind.
+const DISCOVERY_ROWS: [Statement; 5] = [
+    sql::DELETE_DISCOVERY_BATCH_ITEMS,
+    sql::DELETE_DISCOVERY_BATCHES,
+    sql::DELETE_IGNORED_RELEASES,
+    sql::DELETE_DISCOVERY_SNAPSHOTS,
+    sql::DELETE_DISCOVERY_ACTIVITY,
+];
+
+/// A constraint conflict is the caller's `Conflict`; the rest as
+/// [`store_error`].
+fn conflict_or_store<R>(outcome: Result<R, WriteError>) -> Result<R, StoreError> {
+    match outcome {
+        Ok(value) => Ok(value),
+        Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
+        Err(error) => Err(store_error(error)),
     }
 }
 
-impl UserStore for SqliteUserStore {
-    fn get_by_id<'a>(
-        &'a self,
-        id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<UserRecord>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.db.pool();
-            let row = sqlx::query(&format!(
-                "SELECT {USER_COLUMNS} FROM auth_users WHERE id = ?"
-            ))
-            .bind(id)
-            .fetch_optional(pool)
+impl Users {
+    /// Accounts over one handle.
+    pub fn new(db: &AuthDb) -> Self {
+        Self { db: db.clone() }
+    }
+
+    /// One user read by a statement taking one text value.
+    async fn one_user(
+        &self,
+        name: &'static str,
+        statement: Statement,
+        value: &str,
+    ) -> Result<Option<UserRecord>, StoreError> {
+        let value = value.to_owned();
+        self.db
+            .read(name, move |conn| {
+                conn.prepare_cached(statement.text())?
+                    .query_row([value], map_user)
+                    .optional()
+            })
             .await
-            .map_err(|error| store_error(map_sqlx_busy("auth.users.get", error)))?;
-            Ok(row.as_ref().map(map_user))
-        })
     }
 
-    fn get_by_username<'a>(
-        &'a self,
-        username: &'a str,
-    ) -> BoxFuture<'a, Result<Option<UserRecord>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.db.pool();
-            let row = sqlx::query(&format!(
-                "SELECT {USER_COLUMNS} FROM auth_users WHERE username = ?"
-            ))
-            .bind(username)
-            .fetch_optional(pool)
+    /// Fetch one user by id. None is absence, never failure.
+    pub async fn get_by_id(&self, id: &str) -> Result<Option<UserRecord>, StoreError> {
+        self.one_user("auth.users.get", sql::USER_BY_ID, id).await
+    }
+
+    /// Fetch one user by lowercased username.
+    pub async fn get_by_username(&self, username: &str) -> Result<Option<UserRecord>, StoreError> {
+        self.one_user("auth.users.get", sql::USER_BY_USERNAME, username)
             .await
-            .map_err(|error| store_error(map_sqlx_busy("auth.users.get", error)))?;
-            Ok(row.as_ref().map(map_user))
-        })
     }
 
-    fn get_by_email<'a>(
-        &'a self,
-        email: &'a str,
-    ) -> BoxFuture<'a, Result<Option<UserRecord>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.db.pool();
-            let row = sqlx::query(&format!(
-                "SELECT {USER_COLUMNS} FROM auth_users WHERE email = ?"
-            ))
-            .bind(email)
-            .fetch_optional(pool)
+    /// Fetch one user by lowercased email.
+    pub async fn get_by_email(&self, email: &str) -> Result<Option<UserRecord>, StoreError> {
+        self.one_user("auth.users.get", sql::USER_BY_EMAIL, email)
             .await
-            .map_err(|error| store_error(map_sqlx_busy("auth.users.get", error)))?;
-            Ok(row.as_ref().map(map_user))
-        })
     }
 
-    fn get_by_ids<'a>(
-        &'a self,
-        ids: &'a [String],
-    ) -> BoxFuture<'a, Result<Vec<UserRecord>, StoreError>> {
-        Box::pin(async move {
-            if ids.is_empty() {
-                return Ok(Vec::new());
-            }
-            let pool = self.db.pool();
-            let placeholders = vec!["?"; ids.len()].join(", ");
-            let sql = format!("SELECT {USER_COLUMNS} FROM auth_users WHERE id IN ({placeholders})");
-            let mut query = sqlx::query(&sql);
-            for id in ids {
-                query = query.bind(id);
-            }
-            let rows = query
-                .fetch_all(pool)
-                .await
-                .map_err(|error| store_error(map_sqlx_busy("auth.users.get", error)))?;
-            Ok(rows.iter().map(map_user).collect())
-        })
+    /// Fetch several users by id (admin app-password owner enrichment).
+    pub async fn get_by_ids(&self, ids: &[String]) -> Result<Vec<UserRecord>, StoreError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = ids.to_vec();
+        self.db
+            .read("auth.users.get", move |conn| {
+                conn.prepare_cached(&sql::users_by_ids(ListLen::new(ids.len())))?
+                    .query_map(rusqlite::params_from_iter(ids.iter()), map_user)?
+                    .collect()
+            })
+            .await
     }
 
-    fn insert<'a>(&'a self, user: UserRecord) -> BoxFuture<'a, Result<(), StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let outcome = lane
-                .write(Lane::Foreground, "auth.users.insert", move |tx| {
-                    insert_user_row(tx, &user)
-                })
-                .await;
-            conflict_or_internal(outcome)
-        })
+    /// Insert a user row. Conflict when the id, username, or email is taken.
+    pub async fn insert(&self, user: UserRecord) -> Result<(), StoreError> {
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.users.insert", move |tx| {
+                Self::insert_user_in(tx, &user)
+            })
+            .await;
+        conflict_or_store(outcome)
     }
 
-    fn insert_with_local_credential<'a>(
-        &'a self,
+    /// Insert a user row and its local credential in one transaction.
+    /// Conflict when the id, username, or email is taken; nothing is
+    /// written then.
+    pub async fn insert_with_local_credential(
+        &self,
         user: UserRecord,
-        credential: UsersLocalCredential,
-    ) -> BoxFuture<'a, Result<(), StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let created_at = self.db.now_unix();
-            let outcome = lane
-                .write(Lane::Foreground, "auth.users.create", move |tx| {
-                    insert_user_row(tx, &user)?;
-                    insert_local_row(tx, &credential, created_at)
-                })
-                .await;
-            conflict_or_internal(outcome)
-        })
+        credential: LocalCredential,
+    ) -> Result<(), StoreError> {
+        let created_at = self.db.now_unix();
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.users.create", move |tx| {
+                Self::insert_user_in(tx, &user)?;
+                Self::insert_local_credential_in(tx, &credential, created_at)
+            })
+            .await;
+        conflict_or_store(outcome)
     }
 
-    fn insert_first_user<'a>(
-        &'a self,
+    /// First-run setup: insert the user and its local credential only when
+    /// no user exists yet, decided inside the same transaction. `Ok(false)`
+    /// when any user (local or federated) is already there; nothing is
+    /// written then.
+    pub async fn insert_first_user(
+        &self,
         user: UserRecord,
-        credential: UsersLocalCredential,
-    ) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let created_at = self.db.now_unix();
-            let outcome = lane
-                .write(Lane::Foreground, "auth.users.create_first", move |tx| {
-                    let any: Option<i64> = tx
-                        .query_row("SELECT 1 FROM auth_users LIMIT 1", [], |row| row.get(0))
-                        .optional()
-                        .map_err(op_error)?;
-                    if any.is_some() {
-                        return Ok(false);
-                    }
-                    insert_user_row(tx, &user)?;
-                    insert_local_row(tx, &credential, created_at)?;
-                    Ok(true)
-                })
-                .await;
-            match outcome {
-                Ok(created) => Ok(created),
-                Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(store_error(error)),
-            }
-        })
+        credential: LocalCredential,
+    ) -> Result<bool, StoreError> {
+        let created_at = self.db.now_unix();
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.users.create_first", move |tx| {
+                let any: Option<i64> = tx
+                    .query_row(sql::ANY_USER.text(), [], |row| row.get(0))
+                    .optional()
+                    .map_err(op_error)?;
+                if any.is_some() {
+                    return Ok(false);
+                }
+                Self::insert_user_in(tx, &user)?;
+                Self::insert_local_credential_in(tx, &credential, created_at)?;
+                Ok(true)
+            })
+            .await;
+        conflict_or_store(outcome)
     }
 
-    fn update_profile<'a>(
-        &'a self,
-        id: &'a str,
-        display_name: Option<&'a str>,
-        avatar_url: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let (id, display_name, avatar_url) = (
-                id.to_owned(),
-                display_name.map(str::to_owned),
-                avatar_url.map(str::to_owned),
-            );
-            lane.write(Lane::Foreground, "auth.users.profile", move |tx| {
+    /// Update display name and/or avatar URL. None fields stay untouched.
+    /// False for an unknown id.
+    pub async fn update_profile(
+        &self,
+        id: &str,
+        display_name: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        let (id, display_name, avatar_url) = (
+            id.to_owned(),
+            display_name.map(str::to_owned),
+            avatar_url.map(str::to_owned),
+        );
+        self.db
+            .lane()
+            .write(Lane::Foreground, "auth.users.profile", move |tx| {
                 tx.execute(
-                    "UPDATE auth_users SET display_name = COALESCE(?, display_name), \
-                     avatar_url = COALESCE(?, avatar_url) WHERE id = ?",
+                    sql::UPDATE_PROFILE.text(),
                     rusqlite::params![display_name, avatar_url, id],
                 )
                 .map_err(op_error)?;
-                row_exists(tx, "auth_users", &id)
+                user_exists(tx, &id)
             })
             .await
             .map_err(store_error)
-        })
     }
 
-    fn update_username<'a>(
-        &'a self,
-        id: &'a str,
-        username: &'a str,
-        username_display: &'a str,
-    ) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let (id, username, username_display) = (
-                id.to_owned(),
-                username.to_owned(),
-                username_display.to_owned(),
-            );
-            let outcome: Result<bool, super::WriteError> = lane
-                .write(Lane::Foreground, "auth.users.rename", move |tx| {
-                    tx.execute(
-                        "UPDATE auth_users SET username = ?, username_display = ? WHERE id = ?",
-                        rusqlite::params![username, username_display, id],
-                    )
+    /// Rename a user, syncing the local `provider_uid` in the same write.
+    /// Conflict when the username is taken. Returns false for unknown ids.
+    pub async fn update_username(
+        &self,
+        id: &str,
+        username: &str,
+        username_display: &str,
+    ) -> Result<bool, StoreError> {
+        let (id, username, username_display) = (
+            id.to_owned(),
+            username.to_owned(),
+            username_display.to_owned(),
+        );
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.users.rename", move |tx| {
+                tx.execute(
+                    sql::UPDATE_USERNAME.text(),
+                    rusqlite::params![username, username_display, id],
+                )
+                .map_err(op_error)?;
+                // Same transaction: the local binding tracks the rename.
+                tx.execute(sql::SET_LOCAL_UID.text(), rusqlite::params![username, id])
                     .map_err(op_error)?;
-                    // Same transaction: the local binding tracks the rename.
-                    tx.execute(
-                        "UPDATE auth_providers SET provider_uid = ? \
-                         WHERE user_id = ? AND provider = 'local'",
-                        rusqlite::params![username, id],
-                    )
-                    .map_err(op_error)?;
-                    row_exists(tx, "auth_users", &id)
-                })
-                .await;
-            match outcome {
-                Ok(exists) => Ok(exists),
-                Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(store_error(error)),
-            }
-        })
+                user_exists(tx, &id)
+            })
+            .await;
+        conflict_or_store(outcome)
     }
 
-    fn update_email<'a>(
-        &'a self,
-        id: &'a str,
-        email: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let (id, email) = (id.to_owned(), email.map(str::to_owned));
-            let outcome: Result<bool, super::WriteError> = lane
-                .write(Lane::Foreground, "auth.users.email", move |tx| {
-                    tx.execute(
-                        "UPDATE auth_users SET email = ? WHERE id = ?",
-                        rusqlite::params![email, id],
-                    )
+    /// Set or clear the email. Conflict when another account holds it.
+    /// Returns false for unknown ids.
+    pub async fn update_email(&self, id: &str, email: Option<&str>) -> Result<bool, StoreError> {
+        let (id, email) = (id.to_owned(), email.map(str::to_owned));
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.users.email", move |tx| {
+                tx.execute(sql::UPDATE_EMAIL.text(), rusqlite::params![email, id])
                     .map_err(op_error)?;
-                    row_exists(tx, "auth_users", &id)
-                })
-                .await;
-            match outcome {
-                Ok(exists) => Ok(exists),
-                Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(store_error(error)),
-            }
-        })
+                user_exists(tx, &id)
+            })
+            .await;
+        conflict_or_store(outcome)
     }
 
-    fn set_role<'a>(
-        &'a self,
-        id: &'a str,
-        role: Role,
-    ) -> BoxFuture<'a, Result<RoleChange, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let id = id.to_owned();
-            lane.write(Lane::Foreground, "auth.users.role", move |tx| {
+    /// Set the role, refusing to demote the last admin. The admin count is
+    /// read inside the same write transaction as the update.
+    pub async fn set_role(&self, id: &str, role: Role) -> Result<RoleChange, StoreError> {
+        let id = id.to_owned();
+        self.db
+            .lane()
+            .write(Lane::Foreground, "auth.users.role", move |tx| {
                 let Some(current) = role_of(tx, &id)? else {
                     return Ok(RoleChange::NotFound);
                 };
@@ -297,7 +288,7 @@ impl UserStore for SqliteUserStore {
                     return Ok(RoleChange::LastAdmin);
                 }
                 tx.execute(
-                    "UPDATE auth_users SET role = ? WHERE id = ?",
+                    sql::UPDATE_ROLE.text(),
                     rusqlite::params![role.as_str(), id],
                 )
                 .map_err(op_error)?;
@@ -305,31 +296,30 @@ impl UserStore for SqliteUserStore {
             })
             .await
             .map_err(store_error)
-        })
     }
 
-    fn touch_login<'a>(&'a self, id: &'a str, at: i64) -> BoxFuture<'a, Result<(), StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let id = id.to_owned();
-            lane.write(Lane::Foreground, "auth.users.touch", move |tx| {
-                tx.execute(
-                    "UPDATE auth_users SET last_login_at = ? WHERE id = ?",
-                    rusqlite::params![to_iso(at), id],
-                )
-                .map_err(op_error)?;
+    /// Stamp the last-login time.
+    pub async fn touch_login(&self, id: &str, at: i64) -> Result<(), StoreError> {
+        let id = id.to_owned();
+        self.db
+            .lane()
+            .write(Lane::Foreground, "auth.users.touch", move |tx| {
+                tx.execute(sql::TOUCH_LOGIN.text(), rusqlite::params![to_iso(at), id])
+                    .map_err(op_error)?;
                 Ok(())
             })
             .await
             .map_err(store_error)
-        })
     }
 
-    fn delete<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<UserDeletion, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let id = id.to_owned();
-            lane.write(Lane::Foreground, "auth.users.delete", move |tx| {
+    /// Delete a user, refusing the last admin and users that library
+    /// history still names. Cascades to providers, tokens, codes, app
+    /// passwords, and connections via the baseline foreign keys.
+    pub async fn delete(&self, id: &str) -> Result<UserDeletion, StoreError> {
+        let id = id.to_owned();
+        self.db
+            .lane()
+            .write(Lane::Foreground, "auth.users.delete", move |tx| {
                 let Some(current) = role_of(tx, &id)? else {
                     return Ok(UserDeletion::NotFound);
                 };
@@ -337,163 +327,183 @@ impl UserStore for SqliteUserStore {
                     return Ok(UserDeletion::LastAdmin);
                 }
                 let mut holders = Vec::new();
-                for (table, column, label) in RESTRICTING_HISTORY {
+                for (statement, label) in RESTRICTING_HISTORY {
                     let found: Option<i64> = tx
-                        .query_row(
-                            &format!("SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1"),
-                            rusqlite::params![id],
-                            |row| row.get(0),
-                        )
+                        .query_row(statement.text(), rusqlite::params![id], |row| row.get(0))
                         .optional()
                         .map_err(op_error)?;
                     if found.is_some() {
-                        holders.push(*label);
+                        holders.push(label);
                     }
                 }
                 if !holders.is_empty() {
                     return Ok(UserDeletion::Referenced(holders));
                 }
-                // Discover keeps per-user rows without a foreign key (the
-                // tables predate it); they go with the account, as in v2.
-                // Discovery batches go too; v2 left them behind.
-                tx.execute(
-                    "DELETE FROM discovery_batch_items WHERE batch_id IN \
-                     (SELECT id FROM discovery_batches WHERE user_id = ?)",
-                    rusqlite::params![id],
-                )
-                .map_err(op_error)?;
-                for table in [
-                    "discovery_batches",
-                    "ignored_releases",
-                    "discovery_snapshots",
-                    "discovery_activity",
-                ] {
-                    tx.execute(
-                        &format!("DELETE FROM {table} WHERE user_id = ?"),
-                        rusqlite::params![id],
-                    )
-                    .map_err(op_error)?;
+                for statement in DISCOVERY_ROWS {
+                    tx.execute(statement.text(), rusqlite::params![id])
+                        .map_err(op_error)?;
                 }
-                tx.execute("DELETE FROM auth_users WHERE id = ?", rusqlite::params![id])
+                tx.execute(sql::DELETE_USER.text(), rusqlite::params![id])
                     .map_err(op_error)?;
                 Ok(UserDeletion::Deleted)
             })
             .await
             .map_err(store_error)
-        })
     }
 
-    fn list<'a>(
-        &'a self,
+    /// One page of users (creation order, id tiebreak) plus the total count.
+    pub async fn list(
+        &self,
         limit: u64,
         offset: u64,
-    ) -> BoxFuture<'a, Result<(Vec<UserRecord>, u64), StoreError>> {
-        Box::pin(async move {
-            let pool = self.db.pool();
-            let rows = sqlx::query(&format!(
-                "SELECT {USER_COLUMNS} FROM auth_users ORDER BY created_at ASC, id ASC \
-                 LIMIT ? OFFSET ?"
-            ))
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| store_error(map_sqlx_busy("auth.users.list", error)))?;
-            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM auth_users")
-                .fetch_one(pool)
-                .await
-                .map_err(|error| store_error(map_sqlx_busy("auth.users.list", error)))?;
-            Ok((rows.iter().map(map_user).collect(), total.max(0) as u64))
-        })
+    ) -> Result<(Vec<UserRecord>, u64), StoreError> {
+        let (limit, offset) = (
+            i64::try_from(limit).unwrap_or(i64::MAX),
+            i64::try_from(offset).unwrap_or(i64::MAX),
+        );
+        let rows = self
+            .db
+            .read("auth.users.list", move |conn| {
+                conn.prepare_cached(sql::USER_PAGE.text())?
+                    .query_map(rusqlite::params![limit, offset], map_user)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await?;
+        let total: i64 = self
+            .db
+            .read("auth.users.list", |conn| {
+                conn.prepare_cached(sql::USER_COUNT.text())?
+                    .query_row([], |row| row.get(0))
+            })
+            .await?;
+        Ok((rows, total.max(0) as u64))
     }
 
-    fn provider_names<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.db.pool();
-            let rows: Vec<String> = sqlx::query_scalar(
-                "SELECT provider FROM auth_providers WHERE user_id = ? \
-                 ORDER BY provider ASC",
-            )
-            .bind(id)
-            .fetch_all(pool)
+    /// Bound provider names for one user, e.g. `["local"]`.
+    pub async fn provider_names(&self, id: &str) -> Result<Vec<String>, StoreError> {
+        let id = id.to_owned();
+        self.db
+            .read("auth.users.providers", move |conn| {
+                conn.prepare_cached(sql::USER_PROVIDERS.text())?
+                    .query_map([id], |row| row.get(0))?
+                    .collect()
+            })
             .await
-            .map_err(|error| store_error(map_sqlx_busy("auth.users.providers", error)))?;
-            Ok(rows)
-        })
     }
 
-    fn local_credential<'a>(
-        &'a self,
-        id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<UsersLocalCredential>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.db.pool();
-            let row = sqlx::query(
-                "SELECT id, provider_data FROM auth_providers \
-                 WHERE user_id = ? AND provider = 'local'",
-            )
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| store_error(map_sqlx_busy("auth.users.credential", error)))?;
-            let Some(row) = row else {
-                return Ok(None);
-            };
-            let data: Option<String> = row.get("provider_data");
-            let Some(data) = data else {
-                return Ok(None);
-            };
-            let Some((scheme, hash)) = parse_local_data(&data) else {
-                return Ok(None);
-            };
-            Ok(Some(UsersLocalCredential {
-                id: row.get("id"),
+    /// The local credential, when the account has one. A corrupt document
+    /// reads as none.
+    pub async fn local_credential(&self, id: &str) -> Result<Option<LocalCredential>, StoreError> {
+        let user_id = id.to_owned();
+        let row: Option<(String, Option<String>)> = self
+            .db
+            .read("auth.users.credential", move |conn| {
+                conn.prepare_cached(sql::LOCAL_CREDENTIAL.text())?
+                    .query_row([user_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .optional()
+            })
+            .await?;
+        let Some((credential_id, Some(data))) = row else {
+            return Ok(None);
+        };
+        Ok(
+            parse_local_data(&data).map(|(scheme, hash)| LocalCredential {
+                id: credential_id,
                 user_id: id.to_owned(),
                 scheme,
                 hash,
-            }))
-        })
+            }),
+        )
     }
 
-    fn insert_local_credential<'a>(
-        &'a self,
-        credential: UsersLocalCredential,
-    ) -> BoxFuture<'a, Result<(), StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let created_at = self.db.now_unix();
-            let outcome = lane
-                .write(Lane::Foreground, "auth.users.credential", move |tx| {
-                    insert_local_row(tx, &credential, created_at)
-                })
-                .await;
-            conflict_or_internal(outcome)
-        })
+    /// The stored credential for a lowercased username, for the sign-in to
+    /// verify. Unknown users, missing local rows and corrupt documents all
+    /// read as absent so the caller burns exactly one dummy verify.
+    pub async fn login_credential(
+        &self,
+        username_lc: &str,
+    ) -> Result<Option<LoginCredential>, LoginError> {
+        let username = username_lc.to_owned();
+        let row: Option<(String, String, Option<String>)> = self
+            .db
+            .db
+            .read("auth.login.lookup", move |conn| {
+                conn.prepare_cached(sql::LOGIN_CREDENTIAL.text())
+                    .and_then(|mut statement| {
+                        statement
+                            .query_row([username], |row| {
+                                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                            })
+                            .optional()
+                    })
+                    .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| match error {
+                DbError::Busy { .. } => LoginError::Busy,
+                error => {
+                    tracing::error!(%error, "login lookup failed");
+                    LoginError::Unavailable
+                }
+            })?;
+        let Some((user_id, display_name, data)) = row else {
+            return Ok(None);
+        };
+        let Some((scheme, hash)) = data.as_deref().and_then(parse_local_data) else {
+            return Ok(None);
+        };
+        Ok(Some(LoginCredential {
+            user_id,
+            display_name,
+            password: crate::passwords::StoredPassword { scheme, hash },
+        }))
     }
 
-    fn change_local_hash<'a>(
-        &'a self,
-        id: &'a str,
-        expected_hash: &'a str,
-        scheme: &'a str,
-        new_hash: &'a str,
-        keep_session_id: &'a str,
-    ) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let (id, expected_hash, scheme, new_hash, keep) = (
-                id.to_owned(),
-                expected_hash.to_owned(),
-                scheme.to_owned(),
-                new_hash.to_owned(),
-                keep_session_id.to_owned(),
-            );
-            lane.write(Lane::Foreground, "auth.users.password", move |tx| {
+    /// Insert the local credential. Conflict when one already exists or the
+    /// `(local, username)` binding is taken.
+    pub async fn insert_local_credential(
+        &self,
+        credential: LocalCredential,
+    ) -> Result<(), StoreError> {
+        let created_at = self.db.now_unix();
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.users.credential", move |tx| {
+                Self::insert_local_credential_in(tx, &credential, created_at)
+            })
+            .await;
+        conflict_or_store(outcome)
+    }
+
+    /// Replace the local hash and revoke every other session of the user,
+    /// in one transaction. Guarded by the expected current hash so a
+    /// concurrent change fails instead of silently winning; returns false
+    /// (and writes nothing) when the guard mismatches. `keep_session_id`
+    /// is the session making the change, which stays live.
+    pub async fn change_local_hash(
+        &self,
+        id: &str,
+        expected_hash: &str,
+        scheme: &str,
+        new_hash: &str,
+        keep_session_id: &str,
+    ) -> Result<bool, StoreError> {
+        let (id, expected_hash, scheme, new_hash, keep) = (
+            id.to_owned(),
+            expected_hash.to_owned(),
+            scheme.to_owned(),
+            new_hash.to_owned(),
+            keep_session_id.to_owned(),
+        );
+        self.db
+            .lane()
+            .write(Lane::Foreground, "auth.users.password", move |tx| {
                 if !swap_local_hash(tx, &id, &expected_hash, &scheme, &new_hash)? {
                     return Ok(false);
                 }
                 tx.execute(
-                    "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ? AND id != ?",
+                    sql::REVOKE_OTHER_SESSIONS.text(),
                     rusqlite::params![id, keep],
                 )
                 .map_err(op_error)?;
@@ -501,67 +511,68 @@ impl UserStore for SqliteUserStore {
             })
             .await
             .map_err(store_error)
-        })
     }
 
-    fn complete_recovery_reset<'a>(
-        &'a self,
-        id: &'a str,
-        expected_hash: &'a str,
-        scheme: &'a str,
-        new_hash: &'a str,
-    ) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let (id, expected_hash, scheme, new_hash) = (
-                id.to_owned(),
-                expected_hash.to_owned(),
-                scheme.to_owned(),
-                new_hash.to_owned(),
-            );
-            lane.write(Lane::Foreground, "auth.users.recovery_reset", move |tx| {
+    /// Complete a recovery reset atomically: the guarded hash replace plus
+    /// revoking every session of the user plus deleting the consumed
+    /// recovery code, in one transaction (v2 parity). Returns false when
+    /// the guard mismatches (nothing is revoked or deleted then).
+    pub async fn complete_recovery_reset(
+        &self,
+        id: &str,
+        expected_hash: &str,
+        scheme: &str,
+        new_hash: &str,
+    ) -> Result<bool, StoreError> {
+        let (id, expected_hash, scheme, new_hash) = (
+            id.to_owned(),
+            expected_hash.to_owned(),
+            scheme.to_owned(),
+            new_hash.to_owned(),
+        );
+        self.db
+            .lane()
+            .write(Lane::Foreground, "auth.users.recovery_reset", move |tx| {
                 // One transaction: the new hash, no live sessions, no live
                 // code. A crash mid-reset retries cleanly (same guard).
                 if !swap_local_hash(tx, &id, &expected_hash, &scheme, &new_hash)? {
                     return Ok(false);
                 }
-                tx.execute(
-                    "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ?",
-                    rusqlite::params![id],
-                )
-                .map_err(op_error)?;
-                tx.execute(
-                    "DELETE FROM auth_password_recovery_codes WHERE user_id = ?",
-                    rusqlite::params![id],
-                )
-                .map_err(op_error)?;
+                tx.execute(sql::REVOKE_USER_SESSIONS.text(), rusqlite::params![id])
+                    .map_err(op_error)?;
+                tx.execute(sql::DELETE_USER_RECOVERY_CODE.text(), rusqlite::params![id])
+                    .map_err(op_error)?;
                 Ok(true)
             })
             .await
             .map_err(store_error)
-        })
     }
 
-    fn complete_recovery_first_password<'a>(
-        &'a self,
-        credential: UsersLocalCredential,
-        code_hash: &'a str,
+    /// Complete a recovery reset for an account with no local password:
+    /// consume the code, insert the credential and revoke every session of
+    /// the user, in one transaction. The code is the only authorisation
+    /// here, so it is checked again inside the transaction. Returns false
+    /// (and writes nothing) when the code with `code_hash` is gone or
+    /// expired at `now`, the account already has a local credential, or it
+    /// has no username to sign in with.
+    pub async fn complete_recovery_first_password(
+        &self,
+        credential: LocalCredential,
+        code_hash: &str,
         now: i64,
-    ) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let created_at = self.db.now_unix();
-            let code_hash = code_hash.to_owned();
-            lane.write(
+    ) -> Result<bool, StoreError> {
+        let created_at = self.db.now_unix();
+        let code_hash = code_hash.to_owned();
+        self.db
+            .lane()
+            .write(
                 Lane::Foreground,
                 "auth.users.recovery_first_password",
                 move |tx| {
                     let id = credential.user_id.as_str();
                     let ready: bool = tx
                         .query_row(
-                            "SELECT username IS NOT NULL AND NOT EXISTS (SELECT 1 FROM \
-                             auth_providers WHERE user_id = auth_users.id AND provider = 'local') \
-                             FROM auth_users WHERE id = ?",
+                            sql::FIRST_PASSWORD_READY.text(),
                             rusqlite::params![id],
                             |row| row.get(0),
                         )
@@ -575,188 +586,176 @@ impl UserStore for SqliteUserStore {
                     // it, no password.
                     let consumed = tx
                         .execute(
-                            "DELETE FROM auth_password_recovery_codes \
-                             WHERE user_id = ? AND code_hash = ? AND expires_at > ?",
+                            sql::CONSUME_RECOVERY_CODE.text(),
                             rusqlite::params![id, code_hash, to_iso(now)],
                         )
                         .map_err(op_error)?;
                     if consumed == 0 {
                         return Ok(false);
                     }
-                    insert_local_row(tx, &credential, created_at)?;
-                    tx.execute(
-                        "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ?",
-                        rusqlite::params![id],
-                    )
-                    .map_err(op_error)?;
+                    Self::insert_local_credential_in(tx, &credential, created_at)?;
+                    tx.execute(sql::REVOKE_USER_SESSIONS.text(), rusqlite::params![id])
+                        .map_err(op_error)?;
                     Ok(true)
                 },
             )
             .await
             .map_err(store_error)
-        })
     }
 
-    fn get_provider_binding<'a>(
-        &'a self,
-        provider: &'a str,
-        provider_uid: &'a str,
-    ) -> BoxFuture<'a, Result<Option<ProviderBinding>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.db.pool();
-            let row = sqlx::query(
-                "SELECT id, user_id, provider, provider_uid FROM auth_providers \
-                 WHERE provider = ? AND provider_uid = ?",
-            )
-            .bind(provider)
-            .bind(provider_uid)
-            .fetch_optional(pool)
+    /// Fetch one sign-in binding by `(provider, provider_uid)`. None is
+    /// absence, never failure.
+    pub async fn get_provider_binding(
+        &self,
+        provider: &str,
+        provider_uid: &str,
+    ) -> Result<Option<ProviderBinding>, StoreError> {
+        let (provider, provider_uid) = (provider.to_owned(), provider_uid.to_owned());
+        self.db
+            .read("auth.users.binding", move |conn| {
+                conn.prepare_cached(sql::PROVIDER_BINDING.text())?
+                    .query_row([provider, provider_uid], |row| {
+                        Ok(ProviderBinding {
+                            id: row.get(0)?,
+                            user_id: row.get(1)?,
+                            provider: row.get(2)?,
+                            provider_uid: row.get(3)?,
+                        })
+                    })
+                    .optional()
+            })
             .await
-            .map_err(|error| store_error(map_sqlx_busy("auth.users.binding", error)))?;
-            Ok(row.map(|row| ProviderBinding {
-                id: row.get("id"),
-                user_id: row.get("user_id"),
-                provider: row.get("provider"),
-                provider_uid: row.get("provider_uid"),
-            }))
-        })
     }
 
-    fn insert_provider_binding<'a>(
-        &'a self,
+    /// Insert a pre-linked sign-in binding: `provider_data` stays NULL (a
+    /// login identity, not a credential store; the first SSO login seals the
+    /// real tokens). Conflict when the `(provider, provider_uid)` pair is
+    /// taken.
+    pub async fn insert_provider_binding(
+        &self,
         binding: ProviderBinding,
-    ) -> BoxFuture<'a, Result<(), StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let created_at = self.db.now_unix();
-            let outcome: Result<(), super::WriteError> = lane
-                .write(Lane::Foreground, "auth.users.bind", move |tx| {
-                    tx.execute(
-                        "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
-                         provider_data, created_at) VALUES (?, ?, ?, ?, NULL, ?)",
-                        rusqlite::params![
-                            binding.id,
-                            binding.user_id,
-                            binding.provider,
-                            binding.provider_uid,
-                            to_iso(created_at),
-                        ],
-                    )
-                    .map_err(op_error)?;
-                    Ok(())
-                })
-                .await;
-            match outcome {
-                Ok(()) => Ok(()),
-                Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(store_error(error)),
-            }
-        })
+    ) -> Result<(), StoreError> {
+        let created_at = self.db.now_unix();
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.users.bind", move |tx| {
+                Self::insert_provider_binding_in(tx, &binding, None, created_at)
+            })
+            .await;
+        conflict_or_store(outcome)
     }
-}
 
-/// Tables that keep a user's name on library history with
-/// `ON DELETE RESTRICT`, as (table, column, readable name).
-const RESTRICTING_HISTORY: &[(&str, &str, &str)] = &[
-    (
-        "library_artist_reconciliation_dismissals",
-        "dismissed_by_user_id",
-        "artist reconciliation dismissals",
-    ),
-    (
-        "library_custom_edition_manifests",
-        "sealed_by_user_id",
-        "custom edition manifests",
-    ),
-    (
-        "library_management_exclusions",
-        "excluded_by_user_id",
-        "library management exclusions",
-    ),
-];
-
-/// Map a write outcome: constraint conflicts become `Conflict`.
-fn conflict_or_internal(outcome: Result<(), super::WriteError>) -> Result<(), StoreError> {
-    match outcome {
-        Ok(()) => Ok(()),
-        Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-        Err(error) => Err(store_error(error)),
-    }
-}
-
-/// Insert one `auth_users` row.
-fn insert_user_row(tx: &rusqlite::Transaction, user: &UserRecord) -> Result<(), super::WriteError> {
-    tx.execute(
-        "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
-         created_at, last_login_at, username, username_display) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        rusqlite::params![
-            user.id,
-            user.display_name,
-            user.email,
-            user.avatar_url,
-            user.role.as_str(),
-            to_iso(user.created_at),
-            user.last_login_at.map(to_iso),
-            user.username,
-            user.username_display,
-        ],
-    )
-    .map_err(op_error)?;
-    Ok(())
-}
-
-/// Insert the `local` provider row; the binding's uid is the username.
-fn insert_local_row(
-    tx: &rusqlite::Transaction,
-    credential: &UsersLocalCredential,
-    created_at: i64,
-) -> Result<(), super::WriteError> {
-    let username: Option<String> = tx
-        .query_row(
-            "SELECT username FROM auth_users WHERE id = ?",
-            rusqlite::params![credential.user_id],
-            |row| row.get(0),
+    /// Insert one `auth_users` row inside the caller's transaction. A taken
+    /// id, username or email is [`WriteError::Conflict`].
+    pub fn insert_user_in(tx: &Transaction<'_>, user: &UserRecord) -> Result<(), WriteError> {
+        tx.execute(
+            sql::INSERT_USER.text(),
+            rusqlite::params![
+                user.id,
+                user.display_name,
+                user.email,
+                user.avatar_url,
+                user.role.as_str(),
+                to_iso(user.created_at),
+                user.last_login_at.map(to_iso),
+                user.username,
+                user.username_display,
+            ],
         )
+        .map_err(op_error)?;
+        Ok(())
+    }
+
+    /// Insert the `local` provider row inside the caller's transaction; the
+    /// binding's uid is the account's username, read through `tx`. An
+    /// account with no username fails; a taken binding is
+    /// [`WriteError::Conflict`].
+    pub fn insert_local_credential_in(
+        tx: &Transaction<'_>,
+        credential: &LocalCredential,
+        created_at: i64,
+    ) -> Result<(), WriteError> {
+        let username: Option<String> = tx
+            .query_row(
+                sql::USER_USERNAME.text(),
+                rusqlite::params![credential.user_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(op_error)?
+            .flatten();
+        let Some(username) = username else {
+            return Err(WriteError::Db(DbError::WriteFailed {
+                operation: "auth.users.local_row".to_owned(),
+                cause: "cannot set a local password without a username".to_owned(),
+            }));
+        };
+        tx.execute(
+            sql::INSERT_PROVIDER.text(),
+            rusqlite::params![
+                credential.id,
+                credential.user_id,
+                "local",
+                username,
+                render_local_data(&credential.scheme, &credential.hash),
+                to_iso(created_at),
+            ],
+        )
+        .map_err(op_error)?;
+        Ok(())
+    }
+
+    /// Insert one sign-in binding inside the caller's transaction, with its
+    /// sealed token document when there is one. A taken
+    /// `(provider, provider_uid)` pair is [`WriteError::Conflict`].
+    pub fn insert_provider_binding_in(
+        tx: &Transaction<'_>,
+        binding: &ProviderBinding,
+        provider_data: Option<&str>,
+        created_at: i64,
+    ) -> Result<(), WriteError> {
+        tx.execute(
+            sql::INSERT_PROVIDER.text(),
+            rusqlite::params![
+                binding.id,
+                binding.user_id,
+                binding.provider,
+                binding.provider_uid,
+                provider_data,
+                to_iso(created_at),
+            ],
+        )
+        .map_err(op_error)?;
+        Ok(())
+    }
+}
+
+/// True when the account exists. Used after updates that may legitimately
+/// change nothing, so an unchanged row still reads as found.
+fn user_exists(tx: &Transaction<'_>, id: &str) -> Result<bool, WriteError> {
+    let found: Option<i64> = tx
+        .query_row(sql::USER_EXISTS.text(), rusqlite::params![id], |row| {
+            row.get(0)
+        })
         .optional()
-        .map_err(op_error)?
-        .flatten();
-    let Some(username) = username else {
-        return Err(super::WriteError::Db(DbError::WriteFailed {
-            operation: "auth.users.local_row".to_owned(),
-            cause: "cannot set a local password without a username".to_owned(),
-        }));
-    };
-    tx.execute(
-        "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
-         provider_data, created_at) VALUES (?, ?, 'local', ?, ?, ?)",
-        rusqlite::params![
-            credential.id,
-            credential.user_id,
-            username,
-            render_local_data(&credential.scheme, &credential.hash),
-            to_iso(created_at),
-        ],
-    )
-    .map_err(op_error)?;
-    Ok(())
+        .map_err(op_error)?;
+    Ok(found.is_some())
 }
 
 /// Replace the local hash when it still equals `expected_hash`. Returns
 /// false (writing nothing) when the row is gone or the hash moved on.
 fn swap_local_hash(
-    tx: &rusqlite::Transaction,
+    tx: &Transaction<'_>,
     id: &str,
     expected_hash: &str,
     scheme: &str,
     new_hash: &str,
-) -> Result<bool, super::WriteError> {
+) -> Result<bool, WriteError> {
     let current: Option<Option<String>> = tx
-        .query_row(
-            "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
+        .query_row(sql::LOCAL_DATA.text(), rusqlite::params![id], |row| {
+            row.get(0)
+        })
         .optional()
         .map_err(op_error)?;
     let Some(Some(data)) = current else {
@@ -769,7 +768,7 @@ fn swap_local_hash(
         return Ok(false);
     }
     tx.execute(
-        "UPDATE auth_providers SET provider_data = ? WHERE user_id = ? AND provider = 'local'",
+        sql::SET_LOCAL_DATA.text(),
         rusqlite::params![render_local_data(scheme, new_hash), id],
     )
     .map_err(op_error)?;
@@ -777,75 +776,22 @@ fn swap_local_hash(
 }
 
 /// Current role of one user, or `None` when the row is gone.
-fn role_of(tx: &rusqlite::Transaction, id: &str) -> Result<Option<Role>, super::WriteError> {
+fn role_of(tx: &Transaction<'_>, id: &str) -> Result<Option<Role>, WriteError> {
     let raw: Option<String> = tx
-        .query_row(
-            "SELECT role FROM auth_users WHERE id = ?",
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
+        .query_row(sql::USER_ROLE.text(), rusqlite::params![id], |row| {
+            row.get(0)
+        })
         .optional()
         .map_err(op_error)?;
     Ok(raw.as_deref().map(Role::from_stored))
 }
 
 /// Admin accounts right now, read inside the caller's transaction.
-fn admin_count(tx: &rusqlite::Transaction) -> Result<i64, super::WriteError> {
+fn admin_count(tx: &Transaction<'_>) -> Result<i64, WriteError> {
     tx.query_row(
-        "SELECT COUNT(*) FROM auth_users WHERE role = ?",
+        sql::ROLE_COUNT.text(),
         rusqlite::params![Role::Admin.as_str()],
         |row| row.get(0),
     )
     .map_err(op_error)
-}
-
-/// Native login lookup over `auth_users` plus the `local` provider row.
-///
-/// Returns the stored scheme tag and hash for the login to verify;
-/// unknown users, missing local rows, and corrupt documents all read as
-/// absent so the caller burns exactly one dummy verify.
-#[derive(Clone, Debug)]
-pub struct SqliteCredentialLookup {
-    db: AuthDb,
-}
-
-impl SqliteCredentialLookup {
-    /// Lookup over one handle.
-    pub fn new(db: &AuthDb) -> Self {
-        Self { db: db.clone() }
-    }
-}
-
-impl CredentialLookup for SqliteCredentialLookup {
-    async fn local_user(&self, username_lc: &str) -> Result<Option<LocalCredential>, LoginError> {
-        let pool = self.db.pool();
-        let row = sqlx::query(
-            "SELECT u.id AS id, u.display_name AS display_name, \
-             p.provider_data AS provider_data FROM auth_users u \
-             LEFT JOIN auth_providers p ON p.user_id = u.id AND p.provider = 'local' \
-             WHERE u.username = ?",
-        )
-        .bind(username_lc)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| match map_sqlx_busy("auth.login.lookup", error) {
-            droppedneedle_kernel::db::DbError::Busy { .. } => LoginError::Busy,
-            error => {
-                tracing::error!(%error, "login lookup failed");
-                LoginError::Unavailable
-            }
-        })?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let data: Option<String> = row.get("provider_data");
-        let Some((scheme, hash)) = data.as_deref().and_then(parse_local_data) else {
-            return Ok(None);
-        };
-        Ok(Some(LocalCredential {
-            user_id: row.get("id"),
-            display_name: row.get("display_name"),
-            password: crate::passwords::StoredPassword { scheme, hash },
-        }))
-    }
 }

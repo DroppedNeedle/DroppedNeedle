@@ -145,7 +145,7 @@ impl E2e {
                 ..droppedneedle_providers::ProviderEndpoints::closed()
             },
         );
-        AuthSetup::build_with_upstreams(
+        AuthSetup::build(
             p,
             self.bundle.clone(),
             &self.upstreams,
@@ -2013,12 +2013,31 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
     .await;
     let (_, token) = setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     let auth = bearer(token.as_str().expect("setup token"));
-    // Every reader checked out: the stand-in for a host too busy to hand
-    // one over before the checkout limit.
+    // Every reader of both read pools checked out: the stand-in for a host
+    // too busy to hand one over before the checkout limit.
+    let readers = droppedneedle_kernel::db::MAX_READERS as usize;
     let mut held = Vec::new();
-    for _ in 0..droppedneedle_kernel::db::MAX_READERS {
+    for _ in 0..readers {
         held.push(e2e.pool().acquire().await.expect("reader checks out"));
     }
+    let started = Arc::new(std::sync::Barrier::new(readers + 1));
+    let release = Arc::new(std::sync::Barrier::new(readers + 1));
+    let mut holders = Vec::new();
+    for _ in 0..readers {
+        let (started, release) = (Arc::clone(&started), Arc::clone(&release));
+        let db = e2e.db().clone();
+        holders.push(tokio::spawn(async move {
+            db.read("test.hold", move |_| {
+                started.wait();
+                release.wait();
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            })
+            .await
+        }));
+    }
+    tokio::task::spawn_blocking(move || started.wait())
+        .await
+        .expect("readers check out");
     let headers = [("authorization", auth.as_str())];
     let setup = json!({"username": "second", "password": "second-password-12"});
     let sign_in = json!({
@@ -2047,6 +2066,12 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
         assert!(body["error"]["details"]["error_id"].is_string(), "{body}");
     }
     drop(held);
+    tokio::task::spawn_blocking(move || release.wait())
+        .await
+        .expect("readers release");
+    for holder in holders {
+        holder.await.expect("holder joins").expect("held read ends");
+    }
     let (status, body, _) =
         login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     assert_eq!(status, StatusCode::OK, "{body}");

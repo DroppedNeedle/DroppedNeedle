@@ -863,7 +863,7 @@ async fn reset_key_clears_every_secret_of_a_lost_key() {
 #[tokio::test]
 async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     use crate::common::auth::AuthRig;
-    use droppedneedle_auth::prod::{AuthDb, Passwords, SqliteCredentialLookup, SqliteSessionStore};
+    use droppedneedle_auth::prod::{AuthDb, Passwords, SqliteSessionStore, Users};
     use droppedneedle_auth::session::login::{
         LoginContext, LoginRequest, LoginService, TransportParam,
     };
@@ -1017,7 +1017,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     let login = LoginService::new(
         SqliteSessionStore::new(&auth_db),
         Passwords::new(),
-        SqliteCredentialLookup::new(&auth_db),
+        Users::new(&auth_db),
     );
     let sign_in = || {
         login.login(

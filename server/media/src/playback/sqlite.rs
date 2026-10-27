@@ -201,11 +201,7 @@ impl PlaybackStore {
 
     /// The user's Last.fm signing material; `None` while Last.fm is
     /// switched off or the user has no usable session.
-    pub fn lastfm_session(
-        &self,
-        user_id: &str,
-        lastfm: &dyn LastFmSwitch,
-    ) -> Option<LastFmSession> {
+    pub fn lastfm_session(&self, user_id: &str, lastfm: &LastFmSwitch) -> Option<LastFmSession> {
         off_worker(|| self.listening.lastfm_session_blocking(user_id, lastfm))
     }
 

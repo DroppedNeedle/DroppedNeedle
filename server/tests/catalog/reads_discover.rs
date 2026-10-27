@@ -444,17 +444,13 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
             ..ProviderEndpoints::closed()
         },
     );
-    let switch = Arc::new(crate::common::auth_fakes::InstanceKeySwitch::default());
     let auth = AuthRig::new("charts").await;
     let charts = LiveCharts::new(
         providers.listenbrainz.clone(),
         Arc::new(MemoryListenBrainzLinkStore::new(auth.deps.crypto.clone())),
         Some(LastFmCharts::new(
             providers.lastfm.clone(),
-            droppedneedle_auth::users::UsersDeps {
-                lastfm_switch: switch.clone(),
-                ..auth.deps.clone()
-            },
+            auth.deps.clone(),
         )),
         sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap(),
     );
@@ -466,7 +462,7 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     assert!(matches!(off, ProviderFailure::NotConfigured(_)), "{off:?}");
     assert!(seen.lock().unwrap().is_empty(), "no key, no call");
 
-    switch.set("instance-key");
+    auth.set_lastfm_instance_key("instance-key");
     let page = charts
         .trending_artists(ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
         .await

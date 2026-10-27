@@ -10,13 +10,13 @@
 //! catalog drifted instead of silently dropping toggles.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 use sqlx::{Row as _, SqlitePool};
 
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
-use droppedneedle_auth::users::stores::{LastFmStore, StoreError};
+use droppedneedle_auth::sqlite::LastFmLinks;
+use droppedneedle_auth::users::stores::StoreError;
 use droppedneedle_kernel::db::{Db, DbError, Lane, sqlx_is_busy};
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
@@ -371,7 +371,7 @@ pub struct SqliteLinkStatus {
     /// Reader pool.
     pub pool: SqlitePool,
     /// Last.fm link store.
-    pub lastfm: Arc<dyn LastFmStore>,
+    pub lastfm: LastFmLinks,
 }
 
 impl LinkStatus for SqliteLinkStatus {

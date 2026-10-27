@@ -87,7 +87,7 @@ pub struct PlaybackDeps {
     /// External now-playing sinks (Last.fm / ListenBrainz).
     pub sinks: Arc<dyn ScrobbleSinks>,
     /// The admin's Last.fm switch: plays go to Last.fm only while it is on.
-    pub lastfm_switch: Arc<dyn LastFmSwitch>,
+    pub lastfm_switch: LastFmSwitch,
     /// Outbound remote attribution (Jellyfin / Navidrome / Plex).
     pub remotes: Arc<dyn RemoteReporters>,
     /// Bounded playback sessions.

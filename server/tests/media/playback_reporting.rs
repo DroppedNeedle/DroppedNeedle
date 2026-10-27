@@ -142,6 +142,21 @@ struct Rig {
     scratch: ScratchDir,
 }
 
+/// The Last.fm switch over settings in `scratch` with Last.fm on and no
+/// instance key pair.
+fn lastfm_on(scratch: &ScratchDir) -> droppedneedle_auth::users::stores::LastFmSwitch {
+    let settings = crate::common::config_store(&scratch.join("settings"));
+    settings
+        .save_secret_blocking(
+            droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings {
+                enabled: true,
+                ..Default::default()
+            },
+        )
+        .expect("Last.fm settings save");
+    droppedneedle_auth::users::stores::LastFmSwitch::new(settings.live())
+}
+
 fn rig() -> Rig {
     let scratch = ScratchDir::new("playback-rig");
     let path = scratch.join("app.db");
@@ -167,7 +182,7 @@ fn rig() -> Rig {
     let deps = PlaybackDeps {
         store,
         sinks: sinks.clone(),
-        lastfm_switch: Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
+        lastfm_switch: lastfm_on(&scratch),
         remotes: remotes.clone(),
         sessions: SessionStore::new(),
         presence: PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new()),

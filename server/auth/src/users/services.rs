@@ -17,10 +17,9 @@ use super::models::{
     RecoveryCode, RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
 };
 use super::roles::{Admin, Principal, Role};
-use super::stores::{
-    LastFmError, LastFmKeys, RecoveryStore, RoleChange, StoreError, UserDeletion, UserStore,
-};
+use super::stores::{LastFmError, LastFmKeys, RoleChange, StoreError, UserDeletion};
 use super::{UsersDeps, clock_now};
+use crate::sqlite::{RecoveryCodes, Users};
 
 // ---------------------------------------------------------------------------
 // Validation and crypto helpers
@@ -156,8 +155,7 @@ pub fn validate_device_label(raw: &str) -> Result<String, UsersError> {
 /// Run the breach screen. A corpus hit is a 400; the screen itself fails
 /// open, so only hits surface here.
 async fn screen_password(deps: &UsersDeps, password: &str) -> Result<(), UsersError> {
-    let policy = deps.security.hibp();
-    if deps.screen.screen(password, &policy).await {
+    if deps.screen.screen(password).await {
         return Err(UsersError::InvalidInput {
             message: "This password has appeared in a known data breach. Please choose a different password."
                 .to_owned(),
@@ -938,8 +936,8 @@ pub struct IssuedRecoveryCode {
 /// user (a new one replaces the last), only the hash stored. The admin
 /// route and the offline tool both issue through here.
 pub async fn issue_recovery_code(
-    users: &dyn UserStore,
-    recovery: &dyn RecoveryStore,
+    users: &Users,
+    recovery: &RecoveryCodes,
     user_id: &str,
     reach: RecoveryReach,
     now: i64,
@@ -985,8 +983,8 @@ pub async fn admin_mint_recovery_code(
     user_id: &str,
 ) -> Result<RecoveryCodeResponse, UsersError> {
     issue_recovery_code(
-        deps.users.as_ref(),
-        deps.recovery.as_ref(),
+        &deps.users,
+        &deps.recovery,
         user_id,
         RecoveryReach::LocalPasswordOnly,
         clock_now(deps),

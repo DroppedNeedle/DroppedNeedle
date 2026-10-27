@@ -16,7 +16,7 @@ use super::wrapped::{
     ServerWrappedResponse, UserWrappedResponse, WrappedAlbum, WrappedArtist, WrappedData,
     WrappedGenre, WrappedLeaderboardEntry, WrappedTrack, WrappedUserSummary,
 };
-use droppedneedle_auth::users::stores::UserStore;
+use droppedneedle_auth::sqlite::Users;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_media::playback::listening::ListenBrainzLinkStore;
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
@@ -37,7 +37,7 @@ const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
 /// Wrapped over the user store, the ListenBrainz links, and the
 /// ListenBrainz client.
 pub struct ListenBrainzWrapped {
-    users: Arc<dyn UserStore>,
+    users: Users,
     links: Arc<dyn ListenBrainzLinkStore>,
     client: ListenBrainzClient,
     clock: Arc<dyn Clock>,
@@ -46,7 +46,7 @@ pub struct ListenBrainzWrapped {
 impl ListenBrainzWrapped {
     /// Wire the data source; `clock` says which year is current.
     pub fn new(
-        users: Arc<dyn UserStore>,
+        users: Users,
         links: Arc<dyn ListenBrainzLinkStore>,
         client: ListenBrainzClient,
         clock: Arc<dyn Clock>,

@@ -166,7 +166,7 @@ pub struct Courier {
     listenbrainz: ListenBrainzClient,
     lastfm: LastFmClient,
     store: Arc<PlaybackStore>,
-    lastfm_switch: Arc<dyn LastFmSwitch>,
+    lastfm_switch: LastFmSwitch,
     clock: Arc<dyn Clock>,
 }
 
@@ -178,7 +178,7 @@ impl Courier {
         listenbrainz: ListenBrainzClient,
         lastfm: LastFmClient,
         store: Arc<PlaybackStore>,
-        lastfm_switch: Arc<dyn LastFmSwitch>,
+        lastfm_switch: LastFmSwitch,
         clock: Arc<dyn Clock>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -492,7 +492,7 @@ impl Slot {
 pub struct NowPlayingSender {
     slots: [Arc<Slot>; 2],
     store: Arc<PlaybackStore>,
-    lastfm_switch: Arc<dyn LastFmSwitch>,
+    lastfm_switch: LastFmSwitch,
 }
 
 /// The slots the worker drains.
@@ -505,7 +505,7 @@ impl NowPlayingSender {
     /// `store`; Last.fm also needs the admin's switch on.
     pub fn channel(
         store: Arc<PlaybackStore>,
-        lastfm_switch: Arc<dyn LastFmSwitch>,
+        lastfm_switch: LastFmSwitch,
     ) -> (Self, NowPlayingSlots) {
         let slots = [Arc::new(Slot::default()), Arc::new(Slot::default())];
         (
@@ -613,10 +613,7 @@ impl Courier {
                     .await
             }
             Service::LastFm => {
-                let Some(session) = self
-                    .store
-                    .lastfm_session(user_id, self.lastfm_switch.as_ref())
-                else {
+                let Some(session) = self.store.lastfm_session(user_id, &self.lastfm_switch) else {
                     return;
                 };
                 let duration = (track.duration_ms / 1_000).to_string();

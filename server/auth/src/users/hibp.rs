@@ -12,8 +12,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::stores::{BoxFuture, HibpPolicy, PasswordScreen};
+use super::stores::BoxFuture;
 use droppedneedle_kernel::http_client::read_capped;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
 /// Number of SHA-1 hex chars sent to the range API (k-anonymity prefix).
 pub const RANGE_PREFIX_LEN: usize = 5;
@@ -85,6 +87,8 @@ pub fn sha1_hex_upper(data: &[u8]) -> String {
 }
 
 /// One HTTP range lookup. Unit error: transport details never escape.
+/// A trait because it reaches the breach service: tests answer with a
+/// scripted range instead of the network.
 pub trait HibpHttp: Send + Sync {
     /// Suffix set for a 5-char prefix (each `SUFFIX:COUNT` line's suffix,
     /// uppercased). Transport failure is `Err` and fails open upstream.
@@ -144,39 +148,48 @@ impl HibpHttp for PwnedPasswordsHttp {
 }
 
 /// The v2 breach screen: local file first, range API second, fail open.
+/// Its switch and local file are read live from the `security` section.
+#[derive(Clone)]
 pub struct HibpScreen {
     http: Arc<dyn HibpHttp>,
+    settings: Live<SecuritySettings>,
 }
 
 impl HibpScreen {
-    /// Build over one HTTP seam.
-    pub fn new(http: Arc<dyn HibpHttp>) -> Self {
-        Self { http }
+    /// Build over one HTTP seam and the live `security` section.
+    pub fn new(http: Arc<dyn HibpHttp>, settings: Live<SecuritySettings>) -> Self {
+        Self { http, settings }
     }
-}
 
-impl PasswordScreen for HibpScreen {
-    fn screen<'a>(&'a self, password: &'a str, policy: &'a HibpPolicy) -> BoxFuture<'a, bool> {
-        Box::pin(async move {
-            if !policy.check {
-                return false;
+    /// True when the password appears in the corpus. Screening is off when
+    /// the section is off or cannot be read (advisory only; auth itself
+    /// never depends on it). Transport and file errors fail open (false),
+    /// exactly like v2; only a hit returns true.
+    pub async fn screen(&self, password: &str) -> bool {
+        let Some(local_path) = self
+            .settings
+            .get()
+            .ok()
+            .filter(|section| section.hibp_check)
+            .map(|section| section.hibp_local_path.clone())
+        else {
+            return false;
+        };
+        let digest = sha1_hex_upper(password.as_bytes());
+        if !local_path.is_empty() {
+            return screen_local_file(&local_path, &digest).await;
+        }
+        let prefix = digest[..RANGE_PREFIX_LEN].to_owned();
+        let suffix = digest[RANGE_PREFIX_LEN..].to_owned();
+        match self.http.range(&prefix).await {
+            Ok(suffixes) => suffixes.contains(&suffix),
+            Err(_) => {
+                tracing::warn!(
+                    "pwnedpasswords range check failed; proceeding without breach check"
+                );
+                false
             }
-            let digest = sha1_hex_upper(password.as_bytes());
-            if !policy.local_path.is_empty() {
-                return screen_local_file(&policy.local_path, &digest).await;
-            }
-            let prefix = digest[..RANGE_PREFIX_LEN].to_owned();
-            let suffix = digest[RANGE_PREFIX_LEN..].to_owned();
-            match self.http.range(&prefix).await {
-                Ok(suffixes) => suffixes.contains(&suffix),
-                Err(_) => {
-                    tracing::warn!(
-                        "pwnedpasswords range check failed; proceeding without breach check"
-                    );
-                    false
-                }
-            }
-        })
+        }
     }
 }
 

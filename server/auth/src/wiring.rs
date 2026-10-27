@@ -1,9 +1,8 @@
 //! Production auth wiring: live sign-in clients, config bridges, one bundle.
 //!
-//! The auth modules define ports and the adapters implement them. This
-//! module binds the live ones for serving traffic: the OIDC, Jellyfin,
-//! plex.tv and Last.fm clients over the shared HTTP client, bridges from
-//! the config store to the live-read policy traits, and [`AuthSetup`], the
+//! This module binds the live parts for serving traffic: the OIDC,
+//! Jellyfin, plex.tv, Last.fm and breach-check clients over the shared HTTP
+//! client, the live settings sections auth reads, and [`AuthSetup`], the
 //! single bundle `create_app` builds its routers from. The sign-in media
 //! links and the configured Plex server come in through the
 //! [`MediaLinks`] and [`PlexServerIdentity`] ports.
@@ -28,16 +27,13 @@ use super::session::rate_limit::RateLimiter;
 use super::session::stated::StatedAddresses;
 use super::users::UsersDeps;
 use super::users::lastfm_http::LastFmAuthHttp;
-use super::users::stores::{
-    HibpPolicy, LastFmKeys, LastFmState, LastFmSwitch, LastFmUnreadable, SecurityPolicy,
-};
+use super::users::stores::LastFmSwitch;
 use axum::extract::FromRef;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Live;
-use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
 /// One stored exchange code: owning user, sealed token, expiry in unix
@@ -115,80 +111,6 @@ impl OidcExchangeStore for MemoryOidcExchangeStore {
     }
 }
 
-/// Live-read HIBP knobs. An unreadable section disables screening
-/// (advisory only; auth itself never depends on it).
-#[derive(Debug, Clone)]
-pub struct StoreSecurityPolicy {
-    settings: Live<SecuritySettings>,
-}
-
-impl StoreSecurityPolicy {
-    pub fn new(settings: Live<SecuritySettings>) -> Self {
-        Self { settings }
-    }
-}
-
-impl SecurityPolicy for StoreSecurityPolicy {
-    fn hibp(&self) -> HibpPolicy {
-        self.settings
-            .get()
-            .map(|section| HibpPolicy {
-                check: section.hibp_check,
-                local_path: section.hibp_local_path.clone(),
-            })
-            .unwrap_or(HibpPolicy {
-                check: false,
-                local_path: String::new(),
-            })
-    }
-}
-
-/// Live-read Last.fm switch and instance key pair.
-#[derive(Debug, Clone)]
-pub struct StoreLastFmSwitch {
-    settings: Live<LastFmSettings>,
-}
-
-impl StoreLastFmSwitch {
-    pub fn new(settings: Live<LastFmSettings>) -> Self {
-        Self { settings }
-    }
-}
-
-impl LastFmSwitch for StoreLastFmSwitch {
-    fn enabled(&self) -> bool {
-        // Fail closed: an unreadable section disables fan-out. Last.fm is
-        // optional enrichment, never auth-critical, so a broken read must
-        // degrade to off rather than guess at enabled.
-        self.settings
-            .get()
-            .map(|section| section.enabled)
-            .unwrap_or(false)
-    }
-
-    fn instance_keys(&self) -> Option<LastFmKeys> {
-        self.read()
-            .inspect_err(|_| tracing::warn!("cannot read the Last.fm app key pair"))
-            .ok()
-            .and_then(|state| state.instance_keys)
-    }
-
-    fn read(&self) -> Result<LastFmState, LastFmUnreadable> {
-        let section = self.settings.get().map_err(|error| {
-            tracing::warn!(%error, "cannot read the Last.fm settings");
-            LastFmUnreadable
-        })?;
-        let (api_key, shared_secret) = (section.api_key.expose(), section.shared_secret.expose());
-        Ok(LastFmState {
-            enabled: section.enabled,
-            instance_keys: (!api_key.is_empty() && !shared_secret.is_empty()).then(|| LastFmKeys {
-                api_key: api_key.to_owned(),
-                shared_secret: shared_secret.to_owned(),
-            }),
-        })
-    }
-}
-
 /// Where the plex.tv and breach-check clients send their calls.
 /// Production uses the real services; the integration tests point them at
 /// local mocks. OIDC and Jellyfin need no entry: their URLs come from the
@@ -201,8 +123,6 @@ pub struct Upstreams {
     pub pwned_passwords: String,
 }
 
-/// Production login, logout and setup route state.
-pub type ProdNativeAuth = NativeAuthState<super::prod::SqliteCredentialLookup>;
 /// Production OIDC route state.
 pub type ProdOidcRoutes = OidcRouteState<
     SqliteFederatedStore,
@@ -230,7 +150,7 @@ pub struct AuthSetup {
     /// Request limiter, mounted inside the session gate.
     pub limits: Arc<RateLimiter>,
     /// Login/logout/setup routes.
-    pub native: ProdNativeAuth,
+    pub native: NativeAuthState,
     /// OIDC routes.
     pub oidc: ProdOidcRoutes,
     /// Jellyfin login route.
@@ -269,7 +189,7 @@ impl AuthSetup {
     /// client, which account linking goes through; `plex_server` reads
     /// the configured Plex server's machine id for the membership gate;
     /// `links` saves the media link a Plex or Jellyfin sign-in hands back.
-    pub fn build_with_upstreams(
+    pub fn build(
         platform: &Platform,
         auth: ProdAuth,
         upstreams: &Upstreams,
@@ -294,24 +214,26 @@ impl AuthSetup {
         );
         let jellyfin_http = JellyfinHttp::new(http.clone(), config_store.clone());
         let users = UsersDeps {
-            users: Arc::new(auth.users.clone()),
+            users: auth.users.clone(),
             sessions: Arc::new(auth.session_manager.clone()),
-            app_passwords: Arc::new(auth.app_passwords.clone()),
-            lastfm: Arc::new(auth.lastfm.clone()),
-            recovery: Arc::new(auth.recovery.clone()),
-            avatars: Arc::new(auth.avatars.clone()),
+            app_passwords: auth.app_passwords.clone(),
+            lastfm: auth.lastfm.clone(),
+            recovery: auth.recovery.clone(),
+            avatars: auth.avatars.clone(),
             passwords: auth.passwords.clone(),
-            screen: Arc::new(HibpScreen::new(Arc::new(PwnedPasswordsHttp {
-                client: http.clone(),
-                range_url: upstreams.pwned_passwords.clone(),
-            }))),
+            screen: HibpScreen::new(
+                Arc::new(PwnedPasswordsHttp {
+                    client: http.clone(),
+                    range_url: upstreams.pwned_passwords.clone(),
+                }),
+                config_store.live(),
+            ),
             clock: clock.clone(),
             ids: ids.clone(),
             crypto: crypto.clone(),
             lastfm_client: Arc::new(LastFmAuthHttp::new(lastfm.clone())),
-            lastfm_switch: Arc::new(StoreLastFmSwitch::new(config_store.live())),
+            lastfm_switch: LastFmSwitch::new(config_store.live()),
             lastfm_pending: Arc::default(),
-            security: Arc::new(StoreSecurityPolicy::new(config_store.live())),
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
             plex_directory: Arc::new(plex_tv.clone()),
         };
@@ -322,7 +244,6 @@ impl AuthSetup {
         let native = NativeAuthState::new(
             auth.sessions.clone(),
             auth.passwords.clone(),
-            auth.credentials.clone(),
             users.clone(),
             base_path,
         )
@@ -449,7 +370,7 @@ impl FromRef<AuthSetup> for UsersDeps {
     }
 }
 
-impl FromRef<AuthSetup> for ProdNativeAuth {
+impl FromRef<AuthSetup> for NativeAuthState {
     fn from_ref(setup: &AuthSetup) -> Self {
         setup.native.clone()
     }

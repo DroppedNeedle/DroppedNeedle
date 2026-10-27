@@ -17,7 +17,6 @@ use crate::sqlite::SqliteSessionStore;
 use crate::users::UsersDeps;
 use crate::users::models::UserResponse;
 use crate::users::{clock_now, services};
-use crate::wiring::ProdNativeAuth;
 use axum::{
     Json,
     extract::{ConnectInfo, FromRequestParts, State},
@@ -54,11 +53,11 @@ pub struct AuthSessionBody {
 /// the login service owns local login, and the users deps own user creation,
 /// the setup probe, logout revocation, and login enrichment.
 #[derive(Clone)]
-pub struct NativeAuthState<C> {
+pub struct NativeAuthState {
     /// Token store (setup session mint).
     pub sessions: SqliteSessionStore,
     /// Local-login service.
-    pub login: LoginService<C>,
+    pub login: LoginService,
     /// User stores, clock, ids, passwords (setup, probe, logout, enrichment).
     pub users: UsersDeps,
     /// Deployment base path (`""` at the domain root).
@@ -73,22 +72,18 @@ pub struct NativeAuthState<C> {
     pub limits: Arc<RateLimiter>,
 }
 
-impl<C> NativeAuthState<C>
-where
-    C: crate::session::login::CredentialLookup,
-{
+impl NativeAuthState {
     /// Wire the state from its parts. The login service is built here from
     /// the same handles so wiring passes each dependency once.
     pub fn new(
         sessions: SqliteSessionStore,
         passwords: crate::passwords::Passwords,
-        credentials: C,
         users: UsersDeps,
         base_path: &str,
     ) -> Self {
         Self {
             sessions: sessions.clone(),
-            login: LoginService::new(sessions, passwords, credentials),
+            login: LoginService::new(sessions, passwords, users.users.clone()),
             users,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
@@ -132,7 +127,7 @@ where
     )
 )]
 pub async fn login_handler(
-    State(state): State<ProdNativeAuth>,
+    State(state): State<NativeAuthState>,
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
@@ -190,7 +185,7 @@ pub async fn login_handler(
     responses((status = 204, description = "Logged out; cookie cleared"))
 )]
 pub async fn logout_handler(
-    State(state): State<ProdNativeAuth>,
+    State(state): State<NativeAuthState>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let presented = match extract::extract(&headers) {
@@ -238,7 +233,7 @@ pub async fn logout_handler(
     )
 )]
 pub async fn setup_handler(
-    State(state): State<ProdNativeAuth>,
+    State(state): State<NativeAuthState>,
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
@@ -309,7 +304,7 @@ pub async fn setup_handler(
     responses((status = 200, description = "Whether setup must run", body = SetupStatusBody))
 )]
 pub async fn setup_status_handler(
-    State(state): State<ProdNativeAuth>,
+    State(state): State<NativeAuthState>,
 ) -> Result<Json<SetupStatusBody>, ApiError> {
     Ok(Json(SetupStatusBody {
         setup_required: !users_exist(&state.users).await?,

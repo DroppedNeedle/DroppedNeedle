@@ -245,7 +245,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // stays shared with the admin stats and clear routes.
     let providers = Arc::new(Providers::build(p, outbound.providers(), cache_db.clone()));
     let provider_cache = providers.cache.clone();
-    let auth = AuthSetup::build_with_upstreams(
+    let auth = AuthSetup::build(
         p,
         ProdAuth::new(p),
         &outbound.sign_in(),

@@ -1,13 +1,13 @@
 //! Per-user Last.fm links over `user_connections`.
 
+use rusqlite::OptionalExtension as _;
+
+use super::sql;
 use super::{AuthDb, op_error, store_error};
 use crate::times::to_iso;
 use crate::users::models::LastFmConnection;
-use crate::users::stores::{BoxFuture, LastFmStore, StoreError};
-use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
-
-/// Last.fm rows in `user_connections` carry this service tag.
-const LASTFM_SERVICE: &str = "lastfm";
+use crate::users::stores::StoreError;
+use droppedneedle_kernel::db::Lane;
 
 /// Per-user Last.fm links over `user_connections` (`service = 'lastfm'`).
 ///
@@ -15,15 +15,8 @@ const LASTFM_SERVICE: &str = "lastfm";
 /// a plain JSON document; the record round-trips exactly, and only the service
 /// layer decrypts, in memory.
 #[derive(Clone, Debug)]
-pub struct SqliteLastFmStore {
+pub struct LastFmLinks {
     db: AuthDb,
-}
-
-impl SqliteLastFmStore {
-    /// Adapter over one handle.
-    pub fn new(db: &AuthDb) -> Self {
-        Self { db: db.clone() }
-    }
 }
 
 /// Render a link into the `connection_data` document.
@@ -61,81 +54,66 @@ fn parse_lastfm(data: &str) -> Option<LastFmConnection> {
     })
 }
 
-impl LastFmStore for SqliteLastFmStore {
-    fn get<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<LastFmConnection>, StoreError>> {
-        Box::pin(async move {
-            let pool = self.db.pool();
-            let row: Option<String> = sqlx::query_scalar(
-                "SELECT connection_data FROM user_connections WHERE user_id = ? AND service = ?",
-            )
-            .bind(user_id)
-            .bind(LASTFM_SERVICE)
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| store_error(map_sqlx_busy("auth.lastfm.get", error)))?;
-            let Some(data) = row else {
-                return Ok(None);
-            };
-            match parse_lastfm(&data) {
-                Some(link) => Ok(Some(link)),
-                None => {
-                    tracing::warn!("last.fm connection row is corrupt; treating as unlinked");
-                    Ok(None)
-                }
-            }
-        })
+impl LastFmLinks {
+    /// Last.fm links over one handle.
+    pub fn new(db: &AuthDb) -> Self {
+        Self { db: db.clone() }
     }
 
-    fn upsert<'a>(
-        &'a self,
-        user_id: &'a str,
-        link: LastFmConnection,
-    ) -> BoxFuture<'a, Result<(), StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let user_id = user_id.to_owned();
-            let now = to_iso(self.db.now_unix());
-            lane.write(Lane::Foreground, "auth.lastfm.upsert", move |tx| {
+    /// Fetch one user's link. None is absence, never failure; a corrupt
+    /// row reads as unlinked, with a warning.
+    pub async fn get(&self, user_id: &str) -> Result<Option<LastFmConnection>, StoreError> {
+        let user_id = user_id.to_owned();
+        let row: Option<String> = self
+            .db
+            .read("auth.lastfm.get", move |conn| {
+                conn.prepare_cached(sql::LASTFM_LINK.text())?
+                    .query_row([user_id], |row| row.get(0))
+                    .optional()
+            })
+            .await?;
+        let Some(data) = row else {
+            return Ok(None);
+        };
+        match parse_lastfm(&data) {
+            Some(link) => Ok(Some(link)),
+            None => {
+                tracing::warn!("last.fm connection row is corrupt; treating as unlinked");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Insert or replace one user's link.
+    pub async fn upsert(&self, user_id: &str, link: LastFmConnection) -> Result<(), StoreError> {
+        let user_id = user_id.to_owned();
+        let now = to_iso(self.db.now_unix());
+        self.db
+            .lane()
+            .write(Lane::Foreground, "auth.lastfm.upsert", move |tx| {
                 tx.execute(
-                    "INSERT INTO user_connections (user_id, service, connection_data, enabled, \
-                     created_at, updated_at) VALUES (?, 'lastfm', ?, 1, ?, ?) \
-                     ON CONFLICT (user_id, service) DO UPDATE SET connection_data = ?, \
-                     updated_at = ?",
-                    rusqlite::params![
-                        user_id,
-                        render_lastfm(&link),
-                        now,
-                        now,
-                        render_lastfm(&link),
-                        now
-                    ],
+                    sql::UPSERT_LASTFM_LINK.text(),
+                    rusqlite::params![user_id, render_lastfm(&link), now],
                 )
                 .map_err(op_error)?;
                 Ok(())
             })
             .await
             .map_err(store_error)
-        })
     }
 
-    fn delete<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
-        Box::pin(async move {
-            let lane = self.db.lane();
-            let user_id = user_id.to_owned();
-            let changed: usize = lane
-                .write(Lane::Foreground, "auth.lastfm.delete", move |tx| {
-                    tx.execute(
-                        "DELETE FROM user_connections WHERE user_id = ? AND service = 'lastfm'",
-                        rusqlite::params![user_id],
-                    )
+    /// Delete one user's link. Returns false when none existed.
+    pub async fn delete(&self, user_id: &str) -> Result<bool, StoreError> {
+        let user_id = user_id.to_owned();
+        let changed: usize = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.lastfm.delete", move |tx| {
+                tx.execute(sql::DELETE_LASTFM_LINK.text(), rusqlite::params![user_id])
                     .map_err(op_error)
-                })
-                .await
-                .map_err(store_error)?;
-            Ok(changed > 0)
-        })
+            })
+            .await
+            .map_err(store_error)?;
+        Ok(changed > 0)
     }
 }

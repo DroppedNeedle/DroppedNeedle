@@ -3931,6 +3931,7 @@ type StatementFiles = fn() -> Vec<StatementFile>;
 /// for the server crate), with the function that lists its files.
 const REGISTRIES: &[(&str, StatementFiles)] = &[
     ("kernel", droppedneedle_kernel::statement_files),
+    ("auth", droppedneedle_auth::statement_files),
     ("catalog", droppedneedle_catalog::statement_files),
     ("acquire", droppedneedle_acquire::statement_files),
     ("library", droppedneedle_library::statement_files),

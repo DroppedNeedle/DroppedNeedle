@@ -286,7 +286,7 @@ impl ListeningStore {
     pub fn lastfm_session_blocking(
         &self,
         user_id: &str,
-        lastfm: &dyn LastFmSwitch,
+        lastfm: &LastFmSwitch,
     ) -> Option<LastFmSession> {
         if !lastfm.enabled() {
             return None;

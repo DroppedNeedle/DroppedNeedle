@@ -1,9 +1,9 @@
 //! Production auth adapters: the wiring surface the app owns.
 //!
 //! This module is the single import point for the production auth types:
-//! the password hasher and the SQLite adapters over the 0001
-//! baseline tables. The auth modules define ports; this module re-exports the production types
-//! behind them plus one bundle constructor, so app wiring touches one path.
+//! the password hasher, the repositories over the auth tables and the
+//! avatar files, re-exported with one bundle constructor so app wiring
+//! touches one path.
 //!
 //! ## What the wiring calls
 //!
@@ -12,8 +12,8 @@
 //! use droppedneedle_auth::prod::ProdAuth;
 //!
 //! let auth = ProdAuth::new(&platform);
-//! // Native login: LoginService::new(auth.sessions.clone(), auth.passwords.clone(), auth.credentials.clone())
-//! // UsersDeps: users/auth.sessions/auth.app_passwords/auth.recovery/auth.lastfm/auth.avatars,
+//! // Native login: LoginService::new(auth.sessions.clone(), auth.passwords.clone(), auth.users.clone())
+//! // UsersDeps: users/auth.session_manager/auth.app_passwords/auth.recovery/auth.lastfm/auth.avatars,
 //! //   passwords: auth.passwords.clone()
 //! // Federated: auth.federated.clone() + auth.issuer.clone()
 //! // OIDC states: auth.oidc_states.clone()
@@ -39,14 +39,13 @@
 //!   exports can re-encrypt it under a fresh key.
 //!
 
-pub use super::avatars::FileAvatarStore;
+pub use super::avatars::Avatars;
 pub use super::passwords::{
     OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, Passwords, StoredPassword, Verdict,
 };
 pub use super::sqlite::{
-    AuthDb, SqliteAppPasswordStore, SqliteCredentialLookup, SqliteFederatedStore,
-    SqliteLastFmStore, SqliteOidcStateStore, SqliteRecoveryStore, SqliteSessionIssuer,
-    SqliteSessionManager, SqliteSessionStore, SqliteUserStore, session_expires_at,
+    AppPasswords, AuthDb, LastFmLinks, RecoveryCodes, SqliteFederatedStore, SqliteOidcStateStore,
+    SqliteSessionIssuer, SqliteSessionManager, SqliteSessionStore, Users, session_expires_at,
 };
 pub use super::times::{parse_iso, to_iso};
 
@@ -64,24 +63,23 @@ pub struct ProdAuth {
     pub sessions: SqliteSessionStore,
     /// Session list/revoke surface over `auth_tokens`.
     pub session_manager: SqliteSessionManager,
-    /// Accounts + local credentials over `auth_users` / `auth_providers`.
-    pub users: SqliteUserStore,
+    /// Accounts, local credentials and the sign-in lookup over
+    /// `auth_users` / `auth_providers`.
+    pub users: Users,
     /// Federated import over `auth_users` / `auth_providers`.
     pub federated: SqliteFederatedStore,
     /// Post-login session mint + `last_login_at`.
     pub issuer: SqliteSessionIssuer,
-    /// Native login lookup (`scheme$hash` tagged rows).
-    pub credentials: SqliteCredentialLookup,
     /// Compat secrets over `connect_app_passwords`.
-    pub app_passwords: SqliteAppPasswordStore,
+    pub app_passwords: AppPasswords,
     /// Single-active-code rows over `auth_password_recovery_codes`.
-    pub recovery: SqliteRecoveryStore,
+    pub recovery: RecoveryCodes,
     /// Per-user links over `user_connections`.
-    pub lastfm: SqliteLastFmStore,
+    pub lastfm: LastFmLinks,
     /// PKCE states over `auth_oidc_states`.
     pub oidc_states: SqliteOidcStateStore,
     /// Avatar bytes under `<avatar_dir>/avatars/`.
-    pub avatars: FileAvatarStore,
+    pub avatars: Avatars,
 }
 
 impl ProdAuth {
@@ -99,15 +97,14 @@ impl ProdAuth {
             passwords: Passwords::new(),
             sessions: SqliteSessionStore::new(&db),
             session_manager: SqliteSessionManager::new(&db, clock),
-            users: SqliteUserStore::new(&db),
+            users: Users::new(&db),
             federated: SqliteFederatedStore::new(&db, crypto, ids.clone()),
             issuer: SqliteSessionIssuer::new(&db, ids),
-            credentials: SqliteCredentialLookup::new(&db),
-            app_passwords: SqliteAppPasswordStore::new(&db),
-            recovery: SqliteRecoveryStore::new(&db),
-            lastfm: SqliteLastFmStore::new(&db),
+            app_passwords: AppPasswords::new(&db),
+            recovery: RecoveryCodes::new(&db),
+            lastfm: LastFmLinks::new(&db),
             oidc_states: SqliteOidcStateStore::new(&db),
-            avatars: FileAvatarStore::new(&platform.config.cache_dir),
+            avatars: Avatars::new(&platform.config.cache_dir),
             db,
         }
     }

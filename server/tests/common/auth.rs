@@ -22,14 +22,13 @@ use droppedneedle_auth::sqlite::SqliteSessionStore;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::models::{LocalCredential, UserRecord};
 use droppedneedle_auth::users::roles::{Admin, Principal, Role};
-use droppedneedle_auth::users::stores::UserStore as _;
 use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_kernel::clock::{Clock, ManualClock};
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::platform::Platform;
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Secret};
 
 use super::{ScratchDir, TestPlatform, closed_outbound, scratch_runtime};
 
@@ -102,7 +101,7 @@ impl AuthRig {
             })
             .expect("Last.fm settings save");
         let auth = ProdAuth::new(&platform);
-        let setup = AuthSetup::build_with_upstreams(
+        let setup = AuthSetup::build(
             &platform,
             auth.clone(),
             &closed_outbound().sign_in(),
@@ -126,6 +125,17 @@ impl AuthRig {
             runtime: None,
             _scratch: None,
         }
+    }
+
+    /// Save `api_key` as Last.fm's instance key, with Last.fm on.
+    pub fn set_lastfm_instance_key(&self, api_key: &str) {
+        self.config
+            .save_secret_blocking(LastFmSettings {
+                enabled: true,
+                api_key: Secret::new(api_key),
+                shared_secret: Secret::new("instance-secret"),
+            })
+            .expect("Last.fm settings save");
     }
 
     /// The rig's own database. Only a rig from [`AuthRig::new`] has one.

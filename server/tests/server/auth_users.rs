@@ -411,9 +411,10 @@ async fn breached_passwords_reject_when_screening_is_on() {
 
     let (mut rig, _, user) = rig_with_admin().await;
     let digest = droppedneedle_auth::users::hibp::sha1_hex_upper(b"password12xxxx");
-    rig.deps.screen = Arc::new(HibpScreen::new(Arc::new(FakeHibpHttp::with_hits(&[
-        digest.as_str(),
-    ]))));
+    rig.deps.screen = HibpScreen::new(
+        Arc::new(FakeHibpHttp::with_hits(&[digest.as_str()])),
+        rig.config.live(),
+    );
     rig.config
         .save_blocking(SecuritySettings {
             hibp_check: true,
