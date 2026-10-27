@@ -33,9 +33,9 @@ async fn item_state(
 /// Change one item's state for the caller with `write`, then answer the
 /// item's state as its own read gives it. An unknown id, or one whose read
 /// finds nothing, is `missing` (Jellyfin's 404) and nothing is written; a
-/// playlist, genre or library is 400, and a failed read 503 when busy or
-/// 500. The answer names the item's current id, also when the app sent an
-/// old album or artist id.
+/// playlist, genre or library is 400, and a failed read before the write
+/// 503 when busy or 500. The answer names the item's current id, also when
+/// the app sent an old album or artist id.
 async fn change_item<W>(
     state: &JellyfinState,
     user_id: &str,
@@ -62,10 +62,14 @@ where
     if let Err(refusal) = write(kind.clone(), internal.clone()).await {
         return refused(refusal);
     }
+    // The write is done: a busy read now answers 500, since a busy answer
+    // tells the app nothing was written.
     match item_state(state, user_id, &kind, &internal).await {
         Ok(Some(answer)) => json(StatusCode::OK, &answer),
         Ok(None) => missing,
-        Err(failed) => ApiError::from(failed).into_response(),
+        Err(ReadFailed::Busy(cause) | ReadFailed::Failed(cause)) => {
+            ApiError::internal(format!("item read after the write failed: {cause}")).into_response()
+        }
     }
 }
 

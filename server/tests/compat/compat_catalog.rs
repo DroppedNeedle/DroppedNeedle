@@ -37,7 +37,7 @@ use crate::common::auth::AuthRig;
 use crate::common::compat::{CompatApp, rest};
 
 /// One album by Portishead with one track, as a scan writes them.
-const LIBRARY: &str = "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+pub(crate) const LIBRARY: &str = "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
     VALUES ('art-1', 'Portishead', 'portishead', 'group', 1, 1); \
     INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, album_artist_name, \
     album_artist_name_folded, album_artist_id, year, grouping_source, created_at, updated_at) \
@@ -70,15 +70,9 @@ async fn subsonic(rig: &CompatApp, endpoint: &str, pairs: &[(&str, &str)]) -> St
     let mut url = reqwest::Url::parse("http://test.local/").expect("base parses");
     url.query_pairs_mut().extend_pairs(pairs);
     let call = format!("{endpoint}?{}", url.query().unwrap_or(""));
-    let (status, _, body) = rig
-        .app
-        .raw(
-            "GET",
-            &rest(&call, &rig.subsonic_auth("catalog")),
-            &[],
-            None,
-        )
-        .await;
+    let uri = rest(&call, &rig.subsonic_auth("catalog"));
+    let (status, _, body) =
+        crate::common::through_busy(|| rig.app.raw("GET", &uri, &[], None)).await;
     assert_eq!(status, StatusCode::OK, "{endpoint}");
     String::from_utf8(body).expect("utf-8 answer")
 }
@@ -88,7 +82,7 @@ async fn jellyfin_items(rig: &CompatApp, query: &str) -> (Vec<Value>, u64) {
     let token = rig.jellyfin_auth();
     let (status, body) = rig
         .app
-        .call(
+        .call_through_busy(
             "GET",
             &format!("/jellyfin/Items?Recursive=true&{query}"),
             &[("X-Emby-Authorization", token.as_str())],

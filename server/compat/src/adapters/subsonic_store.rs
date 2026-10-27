@@ -23,7 +23,7 @@ use crate::subsonic::store::{
 };
 use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewRating, ViewTrack};
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_catalog::reads::collections::service::Visible;
+use droppedneedle_catalog::reads::collections::service::{SavedPlaylist, Visible};
 use droppedneedle_catalog::reads::collections::store::ratings::{ItemRating, RatedKind};
 use droppedneedle_catalog::reads::library::player::{
     AlbumIds, AlbumOrder, AlbumQuery, PlayerAlbum, PlayerIds, PlayerTrack, TrackOrder, TrackQuery,
@@ -180,6 +180,16 @@ fn record(visible: &Visible) -> PlaylistRecord {
         is_public: visible.row.is_public,
         created_at: iso_text(visible.row.created_at),
         changed_at: iso_text(visible.row.updated_at),
+    }
+}
+
+fn saved_record(saved: SavedPlaylist) -> PlaylistRecord {
+    PlaylistRecord {
+        id: saved.id,
+        name: saved.name,
+        is_public: saved.is_public,
+        created_at: iso_text(saved.created_at),
+        changed_at: iso_text(saved.updated_at),
     }
 }
 
@@ -834,19 +844,35 @@ impl SubsonicStore {
             .collect())
     }
 
-    /// Create a playlist.
+    /// Create a playlist holding the library files `file_ids`, as one
+    /// write. Nothing is read back.
     pub async fn create_playlist(
         &self,
         name: &str,
         user_id: &str,
+        file_ids: &[String],
     ) -> Result<PlaylistRecord, CompatError> {
-        let id = self.library.create_playlist(user_id, name).await?;
-        let visible = self
+        let saved = self
             .library
-            .playlist(user_id, &id)
-            .await?
-            .ok_or_else(|| CompatError::Internal("created playlist vanished".to_owned()))?;
-        Ok(record(&visible))
+            .create_playlist(user_id, name, file_ids)
+            .await?;
+        Ok(saved_record(saved))
+    }
+
+    /// Replace a playlist's entries with the library files `file_ids` and,
+    /// when `name` is given, rename it, as one write. Nothing is read back.
+    pub async fn replace_playlist(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+        name: Option<&str>,
+        file_ids: &[String],
+    ) -> Result<PlaylistRecord, CompatError> {
+        let saved = self
+            .library
+            .replace_playlist(user_id, playlist_id, name, file_ids)
+            .await?;
+        Ok(saved_record(saved))
     }
 
     /// Rename a playlist.
@@ -885,16 +911,14 @@ impl SubsonicStore {
             .await
     }
 
-    /// Append a library file to a playlist.
-    pub async fn add_playlist_file(
+    /// Append library files to a playlist, as one write.
+    pub async fn add_playlist_files(
         &self,
         playlist_id: &str,
-        file_id: &str,
+        file_ids: &[String],
         user_id: &str,
     ) -> Result<(), CompatError> {
-        self.library
-            .add_files(user_id, playlist_id, &[file_id.to_owned()])
-            .await
+        self.library.add_files(user_id, playlist_id, file_ids).await
     }
 
     /// Delete a playlist.

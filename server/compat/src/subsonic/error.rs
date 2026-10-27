@@ -47,13 +47,15 @@ pub struct SubsonicError {
     pub fault: Option<ServerFault>,
 }
 
-/// The server fault behind a code 0 failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The server fault behind a code 0 failure, with its cause for the log
+/// only.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerFault {
-    /// The database was too busy: 503 with `Retry-After`.
-    Busy,
+    /// The database was too busy and nothing was written: 503 with
+    /// `Retry-After`.
+    Busy(String),
     /// Anything else: 500.
-    Internal,
+    Internal(String),
 }
 
 impl SubsonicError {

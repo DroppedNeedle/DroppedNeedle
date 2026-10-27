@@ -404,8 +404,9 @@ impl<'a> Trace<'a> {
         self.call("GET", uri, headers, None).await
     }
 
-    /// Send one request and record its status, framing headers and body.
-    /// Returns the body as it came, for the ids the next request needs.
+    /// Send one request, asking again while it answers busy, and record its
+    /// status, framing headers and body. Returns the body as it came, for
+    /// the ids the next request needs.
     pub async fn call(
         &mut self,
         method: &str,
@@ -413,7 +414,8 @@ impl<'a> Trace<'a> {
         headers: &[(&str, &str)],
         json_body: Option<Value>,
     ) -> Value {
-        let (status, header_map, raw) = self.rig.app.raw(method, uri, headers, json_body).await;
+        let (status, header_map, raw) =
+            super::through_busy(|| self.rig.app.raw(method, uri, headers, json_body.clone())).await;
         let header = |name: &str| header_map.get(name).and_then(|value| value.to_str().ok());
         let mut headers_out = serde_json::Map::new();
         for name in [

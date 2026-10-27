@@ -588,19 +588,31 @@ impl JellyfinLibrary {
         Ok(self.readable_entries(user_id, id).await?)
     }
 
-    pub async fn create_playlist(&self, user_id: &str, name: &str) -> Result<String, WriteRefusal> {
-        Ok(self.library.create_playlist(user_id, name).await?)
+    /// Create a playlist holding the library files `file_ids`, as one
+    /// write; returns its id.
+    pub async fn create_playlist(
+        &self,
+        user_id: &str,
+        name: &str,
+        file_ids: &[String],
+    ) -> Result<String, WriteRefusal> {
+        Ok(self
+            .library
+            .create_playlist(user_id, name, file_ids)
+            .await?
+            .id)
     }
 
-    pub async fn add_playlist_entry(
+    /// Append the library files `file_ids`, as one write.
+    pub async fn add_playlist_entries(
         &self,
         user_id: &str,
         playlist_id: &str,
-        file_id: &str,
+        file_ids: &[String],
     ) -> Result<(), WriteRefusal> {
         Ok(self
             .library
-            .add_files(user_id, playlist_id, &[file_id.to_owned()])
+            .add_files(user_id, playlist_id, file_ids)
             .await?)
     }
 

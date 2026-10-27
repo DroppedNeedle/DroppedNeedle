@@ -729,7 +729,7 @@ async fn subsonic_dispatch(
         now_unix: state.clock.now_ms() as f64 / 1000.0,
         picture_base,
     };
-    let rendered = dispatch_with(
+    let (rendered, fault) = dispatch_with(
         &state.verifier,
         &state.store,
         &state.audio,
@@ -738,7 +738,11 @@ async fn subsonic_dispatch(
         principal,
     )
     .await;
-    rendered_response(&rendered, method == "HEAD")
+    let mut response = rendered_response(&rendered, method == "HEAD");
+    if let Some(fault) = fault {
+        response.extensions_mut().insert(fault);
+    }
+    response
 }
 
 /// Render a pre-dispatch auth denial through the binary-vs-envelope split.

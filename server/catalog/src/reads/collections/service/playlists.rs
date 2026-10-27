@@ -51,6 +51,22 @@ pub struct Visible {
     pub full: bool,
 }
 
+/// A playlist as one write left it, without its entries. Times are epoch
+/// seconds.
+#[derive(Debug, Clone)]
+pub struct SavedPlaylist {
+    /// Playlist id.
+    pub id: String,
+    /// Name as stored.
+    pub name: String,
+    /// Public flag.
+    pub is_public: bool,
+    /// When it was made.
+    pub created_at: u64,
+    /// When it last changed.
+    pub updated_at: u64,
+}
+
 /// Trimmed non-empty name or 400.
 fn clean_name(raw: &str) -> Result<String, CollectionsError> {
     let name = raw.trim();
@@ -311,6 +327,57 @@ impl CollectionsService<'_> {
             })
     }
 
+    /// Create a playlist owned by the caller holding `entries`, as one
+    /// write.
+    pub async fn create_with_entries(
+        &self,
+        user_id: &str,
+        name: &str,
+        entries: Vec<NewEntry>,
+    ) -> Result<SavedPlaylist, CollectionsError> {
+        let name = clean_name(name)?;
+        let (id, at) = self
+            .state
+            .stores
+            .playlists
+            .create_with(user_id, &name, entries)
+            .await?;
+        Ok(SavedPlaylist {
+            id,
+            name,
+            is_public: false,
+            created_at: at,
+            updated_at: at,
+        })
+    }
+
+    /// Replace a playlist's entries with `entries` and, when `name` is
+    /// given, rename it, as one write.
+    pub async fn replace_with_entries(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        name: Option<&str>,
+        entries: Vec<NewEntry>,
+    ) -> Result<SavedPlaylist, CollectionsError> {
+        let name = name.map(clean_name).transpose()?;
+        let row = self.owned_playlist(user_id, playlist_id).await?;
+        let at = found(
+            self.state
+                .stores
+                .playlists
+                .replace_named(playlist_id, name.as_deref(), entries)
+                .await?,
+        )?;
+        Ok(SavedPlaylist {
+            id: row.id,
+            name: name.unwrap_or(row.name),
+            is_public: row.is_public,
+            created_at: row.created_at,
+            updated_at: at,
+        })
+    }
+
     /// Create a playlist (native body).
     pub async fn create_playlist(
         &self,
@@ -330,18 +397,31 @@ impl CollectionsService<'_> {
         playlist_id: &str,
         body: &UpdatePlaylistBody,
     ) -> Result<PlaylistDetail, CollectionsError> {
-        let name = body.name.as_deref().map(clean_name).transpose()?;
-        self.owned_playlist(user_id, playlist_id).await?;
-        if let Some(name) = name {
-            found(
-                self.state
-                    .stores
-                    .playlists
-                    .rename(playlist_id, &name)
-                    .await?,
-            )?;
+        match body.name.as_deref() {
+            Some(name) => self.rename(user_id, playlist_id, name).await?,
+            None => {
+                self.owned_playlist(user_id, playlist_id).await?;
+            }
         }
         self.get_playlist(user_id, playlist_id).await
+    }
+
+    /// Rename a playlist, reading nothing back.
+    pub async fn rename(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        name: &str,
+    ) -> Result<(), CollectionsError> {
+        let name = clean_name(name)?;
+        self.owned_playlist(user_id, playlist_id).await?;
+        found(
+            self.state
+                .stores
+                .playlists
+                .rename(playlist_id, &name)
+                .await?,
+        )
     }
 
     /// Delete a playlist.
@@ -361,6 +441,18 @@ impl CollectionsService<'_> {
         playlist_id: &str,
         public: bool,
     ) -> Result<PlaylistSummary, CollectionsError> {
+        self.set_public(user_id, playlist_id, public).await?;
+        let row = self.readable_playlist(user_id, playlist_id).await?;
+        Ok(summary(&row, user_id))
+    }
+
+    /// Flip visibility, reading nothing back.
+    pub async fn set_public(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        public: bool,
+    ) -> Result<(), CollectionsError> {
         self.owned_playlist(user_id, playlist_id).await?;
         found(
             self.state
@@ -368,9 +460,7 @@ impl CollectionsService<'_> {
                 .playlists
                 .set_public(playlist_id, public)
                 .await?,
-        )?;
-        let row = self.readable_playlist(user_id, playlist_id).await?;
-        Ok(summary(&row, user_id))
+        )
     }
 
     /// Insert ready-made entries at a position (None appends); returns the

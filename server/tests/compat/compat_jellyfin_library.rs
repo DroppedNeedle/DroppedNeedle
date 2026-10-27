@@ -54,6 +54,7 @@ fn finamp(token: &str) -> String {
     format!("MediaBrowser Client=\"Finamp\", Device=\"Test\", DeviceId=\"dev1\", Token=\"{token}\"")
 }
 
+/// One request, asked again while the app answers busy.
 async fn raw(
     rig: &CompatApp,
     method: &str,
@@ -65,7 +66,8 @@ async fn raw(
     if let Some(auth) = auth {
         headers.push(("authorization", auth));
     }
-    let (status, headers, body) = rig.app.raw(method, uri, &headers, body).await;
+    let (status, headers, body) =
+        crate::common::through_busy(|| rig.app.raw(method, uri, &headers, body.clone())).await;
     Reply {
         status,
         headers,

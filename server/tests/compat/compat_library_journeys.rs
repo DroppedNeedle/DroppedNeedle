@@ -591,7 +591,7 @@ async fn album_ids_sent(rig: &CompatApp, album: &str, track: &str) -> (Value, Va
     let auth = [("X-Emby-Authorization", token.as_str())];
     let (status, item) = rig
         .app
-        .call(
+        .call_through_busy(
             "GET",
             &format!("/jellyfin/Items/{}", unkeyed_id("track", track)),
             &auth,
@@ -602,7 +602,7 @@ async fn album_ids_sent(rig: &CompatApp, album: &str, track: &str) -> (Value, Va
     let album_id = item["AlbumId"].as_str().expect("AlbumId");
     let (status, album) = rig
         .app
-        .call("GET", &format!("/jellyfin/Items/{album_id}"), &auth, None)
+        .call_through_busy("GET", &format!("/jellyfin/Items/{album_id}"), &auth, None)
         .await;
     assert_eq!(status, StatusCode::OK, "{album}");
     (
@@ -979,7 +979,7 @@ async fn stream_ids(
 ) -> (String, String, String, i64) {
     let (_, found) = rig
         .app
-        .call(
+        .call_through_busy(
             "GET",
             &rest(&format!("search3?query={title}&songCount=5"), auth),
             &[],
@@ -1936,21 +1936,18 @@ async fn plant_artist_picture(rig: &CompatApp, mbid: &str) {
     .await;
 }
 
-/// One picture request with no credentials, or with `api_key` when given.
+/// One picture request with no credentials, or with `api_key` when given,
+/// asked again while the app answers busy.
 async fn picture(
     rig: &CompatApp,
     id: &str,
     api_key: Option<&str>,
 ) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let query = api_key.map_or(String::new(), |key| format!("?api_key={key}"));
-    rig.app
-        .raw(
-            "GET",
-            &format!("/jellyfin/Items/{id}/Images/Primary{query}"),
-            &[],
-            None,
-        )
-        .await
+    let uri = format!(
+        "/jellyfin/Items/{id}/Images/Primary{}",
+        api_key.map_or(String::new(), |key| format!("?api_key={key}"))
+    );
+    crate::common::through_busy(|| rig.app.raw("GET", &uri, &[], None)).await
 }
 
 /// The Jellyfin picture address opens only for ids the server handed out.
@@ -2101,7 +2098,7 @@ async fn jellyfin_old_album_ids_still_work_signed_in() {
 async fn jellyfin_album_ids_survive_a_restart() {
     let (mut rig, ids) = covered_jellyfin("compat-jellyfin-restart").await;
     rig.app = rig.app.restart().await;
-    let (status, _, body) = crate::common::through_busy(|| picture(&rig, &ids.album, None)).await;
+    let (status, _, body) = picture(&rig, &ids.album, None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(!body.is_empty());
 
@@ -2195,7 +2192,7 @@ async fn jellyfin_album_id(rig: &CompatApp, name: &str) -> String {
     let token = rig.jellyfin_auth();
     let (_, albums) = rig
         .app
-        .call(
+        .call_through_busy(
             "GET",
             "/jellyfin/Items?IncludeItemTypes=MusicAlbum&Recursive=true",
             &[("X-Emby-Authorization", token.as_str())],
@@ -2214,7 +2211,7 @@ async fn jellyfin_artist_id(rig: &CompatApp, track: &str) -> String {
     let token = rig.jellyfin_auth();
     let (status, item) = rig
         .app
-        .call(
+        .call_through_busy(
             "GET",
             &format!("/jellyfin/Items/{}", unkeyed_id("track", track)),
             &[("X-Emby-Authorization", token.as_str())],
@@ -2235,12 +2232,12 @@ async fn jellyfin_item(rig: &CompatApp, id: &str) -> (Value, Vec<String>) {
     let auth = [("X-Emby-Authorization", token.as_str())];
     let (status, item) = rig
         .app
-        .call("GET", &format!("/jellyfin/Items/{id}"), &auth, None)
+        .call_through_busy("GET", &format!("/jellyfin/Items/{id}"), &auth, None)
         .await;
     assert_eq!(status, StatusCode::OK, "{id}: {item}");
     let (_, children) = rig
         .app
-        .call(
+        .call_through_busy(
             "GET",
             &format!("/jellyfin/Items?ParentId={id}"),
             &auth,
@@ -2260,7 +2257,10 @@ async fn jellyfin_item(rig: &CompatApp, id: &str) -> (Value, Vec<String>) {
 /// The Subsonic answer to `call`, which must succeed.
 async fn subsonic_ok(rig: &CompatApp, call: &str) -> Value {
     let auth = rig.subsonic_auth("merged");
-    let (_, body) = rig.app.call("GET", &rest(call, &auth), &[], None).await;
+    let (_, body) = rig
+        .app
+        .call_through_busy("GET", &rest(call, &auth), &[], None)
+        .await;
     let answer = &body["subsonic-response"];
     assert_eq!(answer["status"], json!("ok"), "{call}: {body}");
     answer.clone()
@@ -2706,7 +2706,10 @@ fn library_goldens_carry_no_credentials() {
 
 /// One Subsonic call as `auth`, answered 200: its `subsonic-response`.
 async fn subsonic(rig: &CompatApp, call: &str, auth: &str) -> Value {
-    let (status, body) = rig.app.call("GET", &rest(call, auth), &[], None).await;
+    let (status, body) = rig
+        .app
+        .call_through_busy("GET", &rest(call, auth), &[], None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{call}: {body}");
     body["subsonic-response"].clone()
 }
@@ -3177,7 +3180,7 @@ async fn lyrics_come_from_the_file_first() {
 async fn jellyfin_get(rig: &CompatApp, auth: &str, uri: &str) -> Value {
     let (status, body) = rig
         .app
-        .call("GET", uri, &[("X-Emby-Authorization", auth)], None)
+        .call_through_busy("GET", uri, &[("X-Emby-Authorization", auth)], None)
         .await;
     assert_eq!(status, StatusCode::OK, "{uri}: {body}");
     body

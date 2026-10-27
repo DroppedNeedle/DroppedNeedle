@@ -201,6 +201,25 @@ fn touch(tx: &Transaction, playlist_id: &str, now: u64) -> rusqlite::Result<bool
     Ok(changed > 0)
 }
 
+/// Insert one empty playlist row made at `now`, epoch seconds.
+fn insert_playlist(
+    tx: &Transaction,
+    id: &str,
+    name: &str,
+    now: i64,
+    source_ref: Option<&str>,
+    owner_id: &str,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO playlists (id, name, cover_image_path, created_at, updated_at, \
+         source_ref, user_id, is_public) VALUES (?1, ?2, NULL, \
+         strftime('%Y-%m-%dT%H:%M:%SZ', ?3, 'unixepoch'), \
+         strftime('%Y-%m-%dT%H:%M:%SZ', ?3, 'unixepoch'), ?4, ?5, 0)",
+        params![id, name, now, source_ref, owner_id],
+    )?;
+    Ok(())
+}
+
 /// Entry ids in position order.
 fn entry_order(tx: &Transaction, playlist_id: &str) -> rusqlite::Result<Vec<String>> {
     let mut stmt =
@@ -459,14 +478,29 @@ impl PlaylistStore {
                         return Ok(None);
                     }
                 }
-                tx.execute(
-                    "INSERT INTO playlists (id, name, cover_image_path, created_at, updated_at, \
-                     source_ref, user_id, is_public) VALUES (?1, ?2, NULL, \
-                     strftime('%Y-%m-%dT%H:%M:%SZ', ?3, 'unixepoch'), \
-                     strftime('%Y-%m-%dT%H:%M:%SZ', ?3, 'unixepoch'), ?4, ?5, 0)",
-                    params![new_id, name, now, source_ref, owner_id],
-                )?;
+                insert_playlist(tx, &new_id, &name, now, source_ref.as_deref(), &owner_id)?;
                 Ok(Some(new_id))
+            })
+            .await
+    }
+
+    /// Create a playlist holding `entries`, in order, in one transaction:
+    /// a write that fails leaves nothing behind. Returns its id and when it
+    /// was made, epoch seconds.
+    pub async fn create_with(
+        &self,
+        owner_id: &str,
+        name: &str,
+        entries: Vec<NewEntry>,
+    ) -> Result<(String, u64), StoreError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let (owner_id, name) = (owner_id.to_owned(), name.to_owned());
+        let now = self.db.now_epoch();
+        self.db
+            .write("playlists.create_with", move |tx| {
+                insert_playlist(tx, &id, &name, now as i64, None, &owner_id)?;
+                insert_entries(tx, &id, None, &entries, now)?;
+                Ok((id, now))
             })
             .await
     }
@@ -557,19 +591,42 @@ impl PlaylistStore {
         playlist_id: &str,
         entries: Vec<NewEntry>,
     ) -> Result<Written<()>, StoreError> {
-        let playlist_id = playlist_id.to_owned();
+        Ok(
+            match self.replace_named(playlist_id, None, entries).await? {
+                Written::Done(_) => Written::Done(()),
+                Written::Missing => Written::Missing,
+            },
+        )
+    }
+
+    /// Replace every entry with `entries` and, when `name` is given, rename
+    /// the playlist, in one transaction. Returns when it changed, epoch
+    /// seconds.
+    pub async fn replace_named(
+        &self,
+        playlist_id: &str,
+        name: Option<&str>,
+        entries: Vec<NewEntry>,
+    ) -> Result<Written<u64>, StoreError> {
+        let (playlist_id, name) = (playlist_id.to_owned(), name.map(str::to_owned));
         let now = self.db.now_epoch();
         self.db
             .write("playlists.replace_entries", move |tx| {
                 if !touch(tx, &playlist_id, now)? {
                     return Ok(Written::Missing);
                 }
+                if let Some(name) = &name {
+                    tx.execute(
+                        "UPDATE playlists SET name = ?1 WHERE id = ?2",
+                        params![name, playlist_id],
+                    )?;
+                }
                 tx.execute(
                     "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
                     params![playlist_id],
                 )?;
                 insert_entries(tx, &playlist_id, None, &entries, now)?;
-                Ok(Written::Done(()))
+                Ok(Written::Done(now))
             })
             .await
     }

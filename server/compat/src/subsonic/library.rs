@@ -11,10 +11,11 @@ use super::models::{
 };
 use super::params::SubsonicParameters;
 use super::picture::{INFO_SIZES, PictureKind};
-use super::store::PlaylistDetail;
+use super::store::{PlaylistDetail, PlaylistRecord};
 use super::value::{Val, obj};
-use super::views::iso;
+use super::views::{ViewTrack, iso};
 use super::{Ctx, Outcome};
+use crate::adapters::library::CompatError;
 use crate::adapters::principal::CompatPrincipal;
 
 /// Max play-queue items (v2 `_MAX_QUEUE_ITEMS`).
@@ -32,38 +33,59 @@ pub async fn playlist_detail(
     ctx: &Ctx<'_>,
     detail: &PlaylistDetail,
 ) -> Result<SPlaylist, SubsonicError> {
-    let mut songs = Vec::new();
-    let mut total = 0i64;
+    let mut tracks = Vec::new();
     for entry in &detail.tracks {
         let Some(file_id) = entry.library_file_id.as_deref() else {
             continue;
         };
-        let Some(track) = ctx.store.get_track(file_id).await.map_err(Ctx::store_err)? else {
-            continue;
-        };
-        total += track.duration_seconds.round() as i64;
-        songs.push(ctx.child(&track));
+        if let Some(track) = ctx.store.get_track(file_id).await.map_err(Ctx::store_err)? {
+            tracks.push(track);
+        }
     }
-    let record = &detail.record;
     let owner = if detail.is_owner {
         ctx.user()?.username().to_owned()
     } else {
         detail.owner_name.clone()
     };
-    Ok(SPlaylist {
+    Ok(playlist_view(
+        ctx,
+        &detail.record,
+        &tracks,
+        owner,
+        detail.is_owner,
+    ))
+}
+
+/// A playlist with the tracks it serves.
+fn playlist_view(
+    ctx: &Ctx<'_>,
+    record: &PlaylistRecord,
+    tracks: &[ViewTrack],
+    owner: String,
+    is_owner: bool,
+) -> SPlaylist {
+    let total = tracks
+        .iter()
+        .map(|track| track.duration_seconds.round() as i64)
+        .sum::<i64>();
+    let songs = tracks
+        .iter()
+        .map(|track| ctx.child(track))
+        .collect::<Vec<_>>();
+    SPlaylist {
         id: encode(IdKind::Playlist, &record.id),
         name: record.name.clone(),
         comment: None,
         owner: Some(owner),
         public: Some(record.is_public),
-        readonly: !detail.is_owner,
+        readonly: !is_owner,
         songCount: songs.len() as i64,
         duration: Some(total),
         created: record.created_at.clone(),
         changed: record.changed_at.clone(),
         coverArt: Some(encode(IdKind::Playlist, &record.id)),
         entry: Some(songs),
-    })
+    }
 }
 
 /// Playlist list with streamable-only counts (#181); redacted private
@@ -131,7 +153,10 @@ pub async fn playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     ))
 }
 
-/// Create a playlist, or replace contents when `playlistId` is given.
+/// Create a playlist, or replace its contents when `playlistId` is given.
+/// Every read comes first and the change is one write with nothing read
+/// back, so a busy answer means nothing was written and asking again is
+/// safe. The answer lists the songs as read before the write.
 pub async fn create_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let user_id = ctx.user()?.user_id().to_owned();
     let song_file_ids = ctx
@@ -140,31 +165,20 @@ pub async fn create_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .map(|sid| decode_expect(sid, IdKind::Track))
         .collect::<Result<Vec<_>, _>>()?;
     let song_file_ids = current_tracks(ctx, song_file_ids).await?;
-    let pid = match ctx.p("playlistId")? {
+    let mut tracks = Vec::new();
+    for fid in &song_file_ids {
+        if let Some(track) = ctx.store.get_track(fid).await.map_err(Ctx::store_err)? {
+            tracks.push(track);
+        }
+    }
+    let record = match ctx.p("playlistId")? {
         Some(playlist_id) => {
             let pid = decode_expect(&playlist_id, IdKind::Playlist)?;
-            let existing = ctx
-                .store
-                .get_playlist_tracks(&pid)
+            let name = ctx.p("name")?;
+            ctx.store
+                .replace_playlist(&pid, &user_id, name.as_deref(), &song_file_ids)
                 .await
-                .map_err(Ctx::store_err)?;
-            if !existing.is_empty() {
-                let entry_ids = existing
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .collect::<Vec<_>>();
-                ctx.store
-                    .remove_playlist_tracks(&pid, &user_id, &entry_ids)
-                    .await
-                    .map_err(Ctx::store_err)?;
-            }
-            if let Some(name) = ctx.p("name")? {
-                ctx.store
-                    .update_playlist(&pid, &user_id, &name)
-                    .await
-                    .map_err(Ctx::store_err)?;
-            }
-            pid
+                .map_err(Ctx::store_err)?
         }
         None => {
             let name = ctx.p("name")?.unwrap_or_default();
@@ -172,31 +186,23 @@ pub async fn create_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                 return Err(SubsonicError::missing("name"));
             }
             ctx.store
-                .create_playlist(&name, &user_id)
+                .create_playlist(&name, &user_id, &song_file_ids)
                 .await
                 .map_err(Ctx::store_err)?
-                .id
         }
     };
-    for fid in &song_file_ids {
-        ctx.store
-            .add_playlist_file(&pid, fid, &user_id)
-            .await
-            .map_err(Ctx::store_err)?;
-    }
-    let detail = ctx
-        .store
-        .get_playlist_with_tracks(&pid, &user_id)
-        .await
-        .map_err(Ctx::store_err)?
-        .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Playlist not found"))?;
+    let owner = ctx.user()?.username().to_owned();
     Ok(Outcome::keyed(
         "playlist",
-        playlist_detail(ctx, &detail).await?.render(),
+        playlist_view(ctx, &record, &tracks, owner, true).render(),
     ))
 }
 
-/// Update a playlist: rename, visibility, remove-by-index, append.
+/// Update a playlist: rename, visibility, remove-by-index, append. Every
+/// read and check comes first, and each kind of change is one write. A
+/// request asking for more than one kind makes more than one write, so
+/// after the first lands a busy database answers as a failure: a busy
+/// answer tells the app nothing was done and to ask again.
 pub async fn update_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let pid = decode_expect(&ctx.p("playlistId")?.unwrap_or_default(), IdKind::Playlist)?;
     let user_id = ctx.user()?.user_id().to_owned();
@@ -216,43 +222,57 @@ pub async fn update_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             Some(2_147_483_647),
         )?);
     }
-    if let Some(name) = ctx.p("name")? {
-        ctx.store
-            .update_playlist(&pid, &user_id, &name)
-            .await
-            .map_err(Ctx::store_err)?;
-    }
-    if let Some(public) = ctx.p("public")? {
-        let single = SubsonicParameters::new(vec![("public".to_owned(), public)]);
-        let is_public = single.boolean("public", false)?;
-        ctx.store
-            .set_playlist_public(&pid, &user_id, is_public)
-            .await
-            .map_err(Ctx::store_err)?;
-    }
-    if !remove_indices.is_empty() {
+    let public = match ctx.p("public")? {
+        Some(public) => {
+            let single = SubsonicParameters::new(vec![("public".to_owned(), public)]);
+            Some(single.boolean("public", false)?)
+        }
+        None => None,
+    };
+    let remove_ids = if remove_indices.is_empty() {
+        Vec::new()
+    } else {
         let entries = ctx
             .store
             .get_playlist_tracks(&pid)
             .await
             .map_err(Ctx::store_err)?;
-        let ids = remove_indices
+        remove_indices
             .into_iter()
             .flatten()
             .filter_map(|index| entries.get(index as usize).map(|entry| entry.id.clone()))
-            .collect::<Vec<_>>();
-        if !ids.is_empty() {
-            ctx.store
-                .remove_playlist_tracks(&pid, &user_id, &ids)
-                .await
-                .map_err(Ctx::store_err)?;
-        }
-    }
-    for fid in &add_file_ids {
+            .collect::<Vec<_>>()
+    };
+    let mut wrote = false;
+    let failed = |wrote: bool| {
+        move |err: CompatError| Ctx::store_err(if wrote { err.after_write() } else { err })
+    };
+    if let Some(name) = ctx.p("name")? {
         ctx.store
-            .add_playlist_file(&pid, fid, &user_id)
+            .update_playlist(&pid, &user_id, &name)
             .await
-            .map_err(Ctx::store_err)?;
+            .map_err(failed(wrote))?;
+        wrote = true;
+    }
+    if let Some(is_public) = public {
+        ctx.store
+            .set_playlist_public(&pid, &user_id, is_public)
+            .await
+            .map_err(failed(wrote))?;
+        wrote = true;
+    }
+    if !remove_ids.is_empty() {
+        ctx.store
+            .remove_playlist_tracks(&pid, &user_id, &remove_ids)
+            .await
+            .map_err(failed(wrote))?;
+        wrote = true;
+    }
+    if !add_file_ids.is_empty() {
+        ctx.store
+            .add_playlist_files(&pid, &add_file_ids, &user_id)
+            .await
+            .map_err(failed(wrote))?;
     }
     Ok(Outcome::ok())
 }
@@ -549,6 +569,10 @@ pub async fn scrobble(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             .map_err(Ctx::store_err)?;
         return Ok(Outcome::ok());
     }
+    // Every id is resolved before the first play is recorded, so a busy
+    // read answers before anything is written and asking again records
+    // each play once.
+    let mut plays = Vec::with_capacity(ids.len());
     for (index, sid) in ids.iter().enumerate() {
         let fid = decode_expect(sid, IdKind::Track)?;
         let fid = current_id(ctx, IdKind::Track, fid).await?;
@@ -557,6 +581,9 @@ pub async fn scrobble(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             .copied()
             .flatten()
             .map(|ms| ms as f64 / 1000.0);
+        plays.push((fid, played_at));
+    }
+    for (fid, played_at) in plays {
         ctx.store
             .scrobble(&fid, &user_id, client.as_deref(), played_at, &user_name)
             .await

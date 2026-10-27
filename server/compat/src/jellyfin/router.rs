@@ -353,14 +353,20 @@ pub(super) fn no_content() -> Response {
 }
 
 /// Map a refused library write to its status (v2 maps not-found to 404
-/// and permission errors to 403).
+/// and permission errors to 403). A busy write wrote nothing, so it is
+/// 503 with `Retry-After`; the request boundary logs a server fault once,
+/// with its cause.
 pub(super) fn refused(refusal: WriteRefusal) -> Response {
+    use droppedneedle_kernel::error::{ApiError, Unavailable};
     error(match refusal {
         WriteRefusal::NotFound => StatusCode::NOT_FOUND,
         WriteRefusal::Forbidden => StatusCode::FORBIDDEN,
         WriteRefusal::Invalid => StatusCode::BAD_REQUEST,
         WriteRefusal::Conflict => StatusCode::CONFLICT,
-        WriteRefusal::Failed => StatusCode::INTERNAL_SERVER_ERROR,
+        WriteRefusal::Busy(cause) => {
+            return ApiError::unavailable(Unavailable::ServerBusy, cause).into_response();
+        }
+        WriteRefusal::Failed(cause) => return ApiError::internal(cause).into_response(),
     })
 }
 

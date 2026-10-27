@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use droppedneedle_catalog::reads::collections::service::{
-    CollectionsService, LOCAL_SOURCE, Visible,
+    CollectionsService, LOCAL_SOURCE, SavedPlaylist, Visible,
 };
 use droppedneedle_catalog::reads::collections::store::play_marks::MarkScope;
 use droppedneedle_catalog::reads::collections::store::playlists::NewEntry;
@@ -117,6 +117,16 @@ impl CompatError {
             Self::Busy(_) | Self::Internal(_) => None,
         }
     }
+
+    /// The error of a step taken after the request already wrote. A busy
+    /// answer tells an app nothing was done and to ask again, which would
+    /// repeat the write, so busy here answers as a failure.
+    pub fn after_write(self) -> Self {
+        match self {
+            Self::Busy(cause) => Self::Internal(format!("{cause}, after the request wrote")),
+            other => other,
+        }
+    }
 }
 
 impl From<CompatError> for crate::jellyfin::seams::WriteRefusal {
@@ -127,10 +137,8 @@ impl From<CompatError> for crate::jellyfin::seams::WriteRefusal {
             CompatError::Forbidden => WriteRefusal::Forbidden,
             CompatError::Invalid(_) => WriteRefusal::Invalid,
             CompatError::Conflict(_) => WriteRefusal::Conflict,
-            CompatError::Busy(cause) | CompatError::Internal(cause) => {
-                tracing::error!(%cause, "jellyfin library write failed");
-                WriteRefusal::Failed
-            }
+            CompatError::Busy(cause) => WriteRefusal::Busy(cause),
+            CompatError::Internal(cause) => WriteRefusal::Failed(cause),
         }
     }
 }
@@ -549,9 +557,35 @@ impl CompatLibrary {
             .collect())
     }
 
-    /// Create a playlist owned by the user; returns its id.
-    pub async fn create_playlist(&self, user_id: &str, name: &str) -> Result<String, CompatError> {
-        Ok(self.service().create_named(user_id, name, None).await?)
+    /// Create a playlist owned by the user holding the library files
+    /// `file_ids`, in order, as one write. Unknown files are skipped.
+    pub async fn create_playlist(
+        &self,
+        user_id: &str,
+        name: &str,
+        file_ids: &[String],
+    ) -> Result<SavedPlaylist, CompatError> {
+        let entries = self.file_entries(file_ids).await?;
+        Ok(self
+            .service()
+            .create_with_entries(user_id, name, entries)
+            .await?)
+    }
+
+    /// Replace the entries of a playlist the user owns with the library
+    /// files `file_ids` and, when `name` is given, rename it, as one write.
+    pub async fn replace_playlist(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        name: Option<&str>,
+        file_ids: &[String],
+    ) -> Result<SavedPlaylist, CompatError> {
+        let entries = self.file_entries(file_ids).await?;
+        Ok(self
+            .service()
+            .replace_with_entries(user_id, playlist_id, name, entries)
+            .await?)
     }
 
     /// Rename a playlist the user owns.
@@ -561,13 +595,7 @@ impl CompatLibrary {
         playlist_id: &str,
         name: &str,
     ) -> Result<(), CompatError> {
-        let body = droppedneedle_catalog::reads::collections::models::UpdatePlaylistBody {
-            name: Some(name.to_owned()),
-        };
-        self.service()
-            .update_playlist(user_id, playlist_id, &body)
-            .await?;
-        Ok(())
+        Ok(self.service().rename(user_id, playlist_id, name).await?)
     }
 
     /// Flip visibility of a playlist the user owns.
@@ -577,10 +605,10 @@ impl CompatLibrary {
         playlist_id: &str,
         public: bool,
     ) -> Result<(), CompatError> {
-        self.service()
-            .set_visibility(user_id, playlist_id, public)
-            .await?;
-        Ok(())
+        Ok(self
+            .service()
+            .set_public(user_id, playlist_id, public)
+            .await?)
     }
 
     /// Delete a playlist the user owns.
@@ -619,23 +647,35 @@ impl CompatLibrary {
         Ok(())
     }
 
-    /// Append library files to a playlist the user owns. Each entry keeps
-    /// the file's names so the web UI shows it too (v2 `add_file_id_entry`).
-    /// A file asked twice is added twice, as v2 appends each; unknown files
-    /// are skipped.
+    /// Append library files to a playlist the user owns, as one write.
     pub async fn add_files(
         &self,
         user_id: &str,
         playlist_id: &str,
         file_ids: &[String],
     ) -> Result<(), CompatError> {
+        let entries = self.file_entries(file_ids).await?;
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.service()
+            .add_entries(user_id, playlist_id, None, entries)
+            .await?;
+        Ok(())
+    }
+
+    /// Playlist entries for library files, in order. Each entry keeps the
+    /// file's names so the web UI shows it too (v2 `add_file_id_entry`). A
+    /// file asked twice is added twice, as v2 appends each; unknown files
+    /// are skipped.
+    async fn file_entries(&self, file_ids: &[String]) -> Result<Vec<NewEntry>, CompatError> {
         let by_id = self
             .tracks_by_ids(file_ids)
             .await?
             .into_iter()
             .map(|track| (track.id.clone(), track))
             .collect::<HashMap<_, _>>();
-        let entries = file_ids
+        Ok(file_ids
             .iter()
             .filter_map(|id| by_id.get(id).cloned())
             .map(|track| NewEntry {
@@ -655,14 +695,7 @@ impl CompatLibrary {
                 plex_rating_key: None,
                 library_file_id: Some(track.id),
             })
-            .collect::<Vec<_>>();
-        if entries.is_empty() {
-            return Ok(());
-        }
-        self.service()
-            .add_entries(user_id, playlist_id, None, entries)
-            .await?;
-        Ok(())
+            .collect())
     }
 
     /// Cover of a readable playlist: the uploaded one, else a picture made

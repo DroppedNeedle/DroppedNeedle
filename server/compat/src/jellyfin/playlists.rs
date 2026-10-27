@@ -27,8 +27,9 @@ pub(super) async fn decode_playlist(
 }
 
 /// The track file ids of `jf_ids`, in order; unknown and non-track ids
-/// drop out. Every id is read before a playlist write, so a failed read
-/// writes nothing and asking again never repeats an entry.
+/// drop out. Every id is read before the playlist write, which is one
+/// transaction, so a busy answer means nothing was written and asking
+/// again never repeats an entry.
 async fn track_file_ids(
     state: &JellyfinState,
     jf_ids: &[String],
@@ -70,21 +71,12 @@ pub(super) async fn create_playlist(
     };
     let internal = match state
         .library
-        .create_playlist(&authed.principal.id, &name)
+        .create_playlist(&authed.principal.id, &name, &file_ids)
         .await
     {
         Ok(internal) => internal,
         Err(refusal) => return refused(refusal),
     };
-    for file_id in &file_ids {
-        if let Err(refusal) = state
-            .library
-            .add_playlist_entry(&authed.principal.id, &internal, file_id)
-            .await
-        {
-            return refused(refusal);
-        }
-    }
     json(
         StatusCode::OK,
         &serde_json::json!({ "Id": state.ids.to_jf("playlist", &internal).await }),
@@ -213,14 +205,12 @@ pub(super) async fn playlist_add(
         Ok(file_ids) => file_ids,
         Err(failed) => return ApiError::from(failed).into_response(),
     };
-    for file_id in &file_ids {
-        if let Err(refusal) = state
-            .library
-            .add_playlist_entry(&authed.principal.id, &internal, file_id)
-            .await
-        {
-            return refused(refusal);
-        }
+    if let Err(refusal) = state
+        .library
+        .add_playlist_entries(&authed.principal.id, &internal, &file_ids)
+        .await
+    {
+        return refused(refusal);
     }
     no_content()
 }

@@ -356,9 +356,9 @@ pub enum ArtistScope {
     Album,
 }
 
-/// Why a library write was refused. The routes answer 404, 403, 400, 409
-/// or 500.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why a library write was refused. The routes answer 404, 403, 400, 409,
+/// 503 or 500.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WriteRefusal {
     /// The item does not exist for this caller.
     NotFound,
@@ -368,8 +368,11 @@ pub enum WriteRefusal {
     Invalid,
     /// Valid input against the wrong state.
     Conflict,
-    /// Server fault (already logged).
-    Failed,
+    /// The database was too busy and nothing was written; the text is for
+    /// the log only.
+    Busy(String),
+    /// Server fault; the text is for the log only.
+    Failed(String),
 }
 
 /// Track filters for one page; every set field narrows.
