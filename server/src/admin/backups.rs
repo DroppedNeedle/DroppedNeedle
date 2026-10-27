@@ -24,8 +24,14 @@ use super::{
     models::{BackupListResponse, BackupRunResponse, BackupView, RestoreCheck, RestoreReport},
 };
 use droppedneedle_kernel::db::{
-    BACKUP_KEEP, BackupManifest, BackupReport, BackupService, backup::MANIFEST_SUFFIX,
+    BACKUP_KEEP, BackupManifest, BackupReport, BackupService, UndoDir,
+    backup::{MANIFEST_SUFFIX, named_undo_copies},
+    undo_dir::UNDO_DIR_NAME,
 };
+
+/// The restore report's check on the backup's undo copies. A restore
+/// does not stop on it.
+pub const UNDO_COPIES_CHECK: &str = "undo-copies";
 
 /// List the backups on disk, oldest first. Blocking file IO. Files without a manifest sidecar
 /// still list with their on-disk size; only the manifest fields stay empty.
@@ -69,6 +75,7 @@ pub fn list_backups(backup_dir: &Path) -> Result<BackupListResponse, AdminError>
             created_at_unix: manifest
                 .as_ref()
                 .and_then(|found| unix_secs(found.created_at)),
+            undo_bytes: manifest.as_ref().map(|found| found.undo_bytes),
         });
     }
     Ok(BackupListResponse {
@@ -200,6 +207,8 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
         }
     };
 
+    checks.push(undo_copies_check(backup_dir, &path, manifest.as_ref()));
+
     let ok = checks.iter().all(|check| check.passed);
     Ok(RestoreReport {
         backup: safe.to_owned(),
@@ -207,6 +216,45 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
         restorable: present && integrity && version_ok,
         checks,
     })
+}
+
+/// Whether the pool beside the backups holds every undo copy the backup
+/// names. For information only: a restore goes ahead without a missing
+/// copy and lists it, and Undo then skips only the files that need it.
+fn undo_copies_check(
+    backup_dir: &Path,
+    path: &Path,
+    manifest: Option<&BackupManifest>,
+) -> RestoreCheck {
+    let name = UNDO_COPIES_CHECK.to_owned();
+    let named = match named_undo_copies(path) {
+        Ok(named) => named,
+        Err(_) => {
+            return RestoreCheck {
+                name,
+                passed: false,
+                detail: "The undo copies this backup names could not be read".to_owned(),
+            };
+        }
+    };
+    let pool = UndoDir::new(backup_dir.join(UNDO_DIR_NAME));
+    let known_missing = manifest.map_or(&[][..], |found| found.undo_missing.as_slice());
+    let missing = named
+        .iter()
+        .filter(|sha256| known_missing.contains(*sha256) || !pool.contains(sha256))
+        .count();
+    RestoreCheck {
+        name,
+        passed: missing == 0,
+        detail: if missing == 0 {
+            format!("All {} undo copies are beside the backup", named.len())
+        } else {
+            format!(
+                "{missing} of {} undo copies are missing; undo skips the files that need them",
+                named.len()
+            )
+        },
+    }
 }
 
 /// Accept only plain backup file names: no separators, no parent climbs,

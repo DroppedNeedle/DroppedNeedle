@@ -3,7 +3,7 @@
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
-use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, CancellationToken, Next, Schedule, Supervisor, Tick, TickCtx, TickError,
@@ -17,7 +17,7 @@ use super::manage::Publishing;
 use super::publish::PublishError;
 use super::publish::expiry::{self, ExpiryPass, ExpiryReport};
 use super::publish::paths::{Root, Sandbox};
-use super::publish::snapshots;
+use super::publish::snapshots::{self, BlobStore};
 use super::scan::ScanStoreError;
 use super::scan::coordinator::{ResolverSource as _, ScanRequestError};
 use super::scan::models::EffectivePolicy;
@@ -42,6 +42,12 @@ pub const IDENTIFY_JOB: &str = "library-identify";
 pub const PUBLISH_JOB: &str = "library-publish";
 /// The one look for leftover hidden files after startup recovery.
 pub const LEFTOVERS_JOB: &str = "library-leftovers";
+/// The move of undo copies out of the database, once at start.
+pub const UNDO_MOVE_JOB: &str = "library-undo-move";
+/// The first wait, and the longest, before the move tries again after
+/// the database answered busy.
+const UNDO_MOVE_BUSY_RETRY: Duration = Duration::from_secs(5);
+const UNDO_MOVE_BUSY_CAP: Duration = Duration::from_secs(300);
 /// Recycle-bin expiry.
 pub const RECYCLE_EXPIRY_JOB: &str = "library-recycle-expiry";
 
@@ -498,10 +504,8 @@ impl Publishing {
         if retry {
             cell.retry_held()?;
         }
-        // Under the cell, so no publish is between storing a blob and
-        // referring to it. Each step is a short background write, never
-        // held back while the WAL is full, so the cell is not held for
-        // long.
+        // Each step is a short background write, never held back while
+        // the WAL is full, so the cell is not held for long.
         let purged = match cell.cell.as_ref() {
             Some(_) => {
                 let purged = snapshots::purge_expired(&self.db, self.core.clock.today_day())?;
@@ -513,15 +517,18 @@ impl Publishing {
                             .execute([])?;
                         Ok::<_, PublishError>(())
                     })?;
-                let freed = snapshots::sweep_unreferenced_blobs(&self.db)?;
-                if freed > 0 {
-                    tracing::info!(freed, "freed before-states no undo needs any more");
-                }
                 purged
             }
             None => 0,
         };
         drop(cell);
+        // Outside the cell: the undo folder's own lock keeps the sweep off
+        // a copy whose reference is still being written.
+        let freed =
+            snapshots::sweep_unreferenced_blobs(&self.db)? + self.core.blobs.sweep(&self.db)?;
+        if freed > 0 {
+            tracing::info!(freed, "freed before-states no undo needs any more");
+        }
         self.sweep_previews();
         Ok(purged)
     }
@@ -680,6 +687,8 @@ pub(crate) fn start_loops(
     supervisor.one_shot(LEFTOVERS_JOB, move |ctx| {
         leftover_pass(core, leftovers, ctx)
     })?;
+    let (db, blobs) = (setup.db.clone(), setup.core.blobs.clone());
+    supervisor.one_shot(UNDO_MOVE_JOB, move |ctx| undo_move(db, blobs, ctx))?;
     let publish = services.publishing.clone();
     supervisor.periodic_blocking(
         PUBLISH_JOB,
@@ -857,6 +866,46 @@ impl Tick for WatcherTick {
         };
         ctx.sleep(Duration::from_secs_f64(sleep_secs)).await;
         Ok(Next::Continue)
+    }
+}
+
+/// Move the undo copies still kept in the database out into the undo
+/// folder. Runs at every start; it finds nothing to do once they are out.
+/// A busy database puts the move off and it tries again, backing off,
+/// until the server stops. Any other failure leaves the rest for the next
+/// start. Reads take the copies from the database meanwhile.
+async fn undo_move(db: Db, blobs: BlobStore, ctx: TickCtx) -> Result<(), TickError> {
+    let stop = ctx.token().clone();
+    let ctx = Arc::new(ctx);
+    let mut wait = UNDO_MOVE_BUSY_RETRY;
+    loop {
+        let (db, blobs, ctx, go) = (db.clone(), blobs.clone(), ctx.clone(), stop.clone());
+        let moved = tokio::task::spawn_blocking(move || {
+            blobs.move_out_of_database(&db, &|| {
+                ctx.heartbeat();
+                !go.is_cancelled()
+            })
+        });
+        match moved.await {
+            Ok(Ok(0)) => {}
+            Ok(Ok(moved)) => tracing::info!(moved, "undo copies moved out of the database"),
+            Ok(Err(error)) if error.is_interrupted() && !stop.is_cancelled() => {
+                tracing::info!(%error, "the database is busy; the move of undo copies tries again");
+                let jitter = SplitMix64::new(SplitMix64::seed_from_time()).below_duration(wait);
+                tokio::select! {
+                    biased;
+                    () = stop.cancelled() => return Ok(()),
+                    () = tokio::time::sleep(wait + jitter) => {}
+                }
+                wait = (wait * 2).min(UNDO_MOVE_BUSY_CAP);
+                continue;
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "undo copies left in the database until the next start")
+            }
+            Err(error) => tracing::warn!(%error, "the move of undo copies panicked"),
+        }
+        return Ok(());
     }
 }
 

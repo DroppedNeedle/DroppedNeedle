@@ -11,7 +11,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle::admin::{AdminDb, AdminSetup};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
-use droppedneedle_kernel::db::{BACKUP_KEEP, DbRuntime};
+use droppedneedle_kernel::db::undo_dir::{Stored, UNDO_DIR_NAME, UndoDir};
+use droppedneedle_kernel::db::{BACKUP_KEEP, BackupService, DbRuntime};
 use serde_json::Value;
 use tower::ServiceExt as _;
 
@@ -210,6 +211,7 @@ async fn backup_rotation_keeps_five() {
                 .to_string_lossy()
                 .into_owned()
         })
+        .filter(|name| name != UNDO_DIR_NAME)
         .collect();
     files.sort();
     assert_eq!(files.len(), BACKUP_KEEP * 2, "{files:?}");
@@ -250,4 +252,98 @@ async fn restore_report_catches_a_tampered_backup() {
         .find(|check| check["name"] == "manifest-sha256")
         .expect("sha check runs");
     assert_eq!(sha["passed"], Value::Bool(false));
+}
+
+/// A backup copies the undo copies its database names into the pool
+/// beside the backups, and only those. A restore puts them back beside the
+/// database; one the pool lost is listed and the restore still goes
+/// ahead. What an interrupted restore left is cleared first. Once no kept
+/// backup names a copy, the pool lets it go.
+#[tokio::test]
+async fn a_backup_carries_the_undo_copies_its_database_names() {
+    let rig = Rig::open("undo").await;
+    let live = UndoDir::new(rig.dir.join(UNDO_DIR_NAME));
+    let hold = live.hold_shared().unwrap();
+    let kept = live.put(&hold, b"kept-copy").unwrap();
+    let lost = live.put(&hold, b"lost-copy").unwrap();
+    let loose = live.put(&hold, b"loose-copy").unwrap();
+    drop(hold);
+    let conn = rusqlite::Connection::open(rig.dir.join("app.db")).unwrap();
+    for (sha256, owner) in [(&kept, "t1"), (&lost, "t2")] {
+        conn.execute(
+            "INSERT INTO library_publish_blob_refs (sha256, owner_kind, owner_id) \
+             VALUES (?1, 'baseline', ?2)",
+            rusqlite::params![sha256, owner],
+        )
+        .unwrap();
+    }
+
+    let (status, run) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
+    assert_eq!(status, StatusCode::CREATED, "{run}");
+    let name = run["name"]
+        .as_str()
+        .expect("run names the backup")
+        .to_owned();
+    let backups = rig.dir.join("backups");
+    let pool = UndoDir::new(backups.join(UNDO_DIR_NAME));
+    assert!(pool.contains(&kept) && pool.contains(&lost));
+    assert!(!pool.contains(&loose), "a copy nothing names was backed up");
+    let (status, list) = call(rig.admin_app(), "GET", "/api/v3/admin/backups", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["backups"][0]["undo_bytes"], Value::from(18));
+
+    // The lost copy cannot be read at all: a folder stands at its name.
+    assert!(pool.remove(&pool.hold_exclusive().unwrap(), &lost).unwrap());
+    std::fs::create_dir(pool.file_path(&lost).unwrap()).unwrap();
+    let uri = format!("/api/v3/admin/backups/{name}/restore-report");
+    let (status, report) = call(rig.admin_app(), "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["restorable"], Value::Bool(true));
+    let undo_check = report["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["name"] == "undo-copies")
+        .expect("undo copies are checked")
+        .clone();
+    assert_eq!(undo_check["passed"], Value::Bool(false), "{undo_check}");
+
+    let target = rig.dir.join("restored");
+    std::fs::create_dir_all(target.join(UNDO_DIR_NAME)).unwrap();
+    std::fs::write(target.join(".restore-in-progress"), b"").unwrap();
+    std::fs::write(target.join(".restore-1-2-3.tmp"), b"half").unwrap();
+    let backup = backups.join(&name);
+    let service = BackupService::new(
+        &backup,
+        &backups,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    let restored = service.restore(&backup, &target, false).unwrap();
+    assert_eq!(restored.undo_blobs, 1);
+    assert_eq!(restored.undo_missing, vec![lost.clone()]);
+    assert_eq!(
+        UndoDir::new(target.join(UNDO_DIR_NAME))
+            .read(&kept)
+            .unwrap(),
+        Stored::Found(b"kept-copy".to_vec())
+    );
+    let mut left: Vec<String> = std::fs::read_dir(&target)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, vec!["library.db", UNDO_DIR_NAME]);
+
+    std::fs::remove_dir(pool.file_path(&lost).unwrap()).unwrap();
+    conn.execute("DELETE FROM library_publish_blob_refs", [])
+        .unwrap();
+    for _ in 0..BACKUP_KEEP {
+        next_millisecond().await;
+        let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+    assert!(
+        !pool.contains(&kept),
+        "the pool kept a copy no backup names"
+    );
 }

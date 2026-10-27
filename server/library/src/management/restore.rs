@@ -14,12 +14,12 @@ use super::models::{
 use super::profile;
 use super::reasons::{self, ItemReason};
 use super::selection;
-use super::service::{JobSpec, Management, stale};
+use super::service::{JobSpec, Management, UNDO_COPY_MISSING, stale};
 use super::store::Snapshot;
 use crate::clock::LibraryClock as _;
 use crate::manage::BaselineSkip;
 use crate::publish::record::changed_since_written;
-use crate::publish::snapshots::{BlobStore, sha256_hex};
+use crate::publish::snapshots::sha256_hex;
 use crate::publish::undo::BaselineBlock;
 
 /// The phrase a purge must be confirmed with (as in v2).
@@ -72,6 +72,11 @@ fn baseline_reason(skip: &BaselineSkip) -> ItemReason {
     };
     match skip {
         BaselineSkip::Gone => reasons::file_changed(),
+        BaselineSkip::CopyMissing => reason(
+            UNDO_COPY_MISSING,
+            "The saved copy of this file's earlier tags is missing.",
+            "This file stays as it is.",
+        ),
         BaselineSkip::Plan(BaselineBlock::MissingBaseline) => reason(
             "BASELINE_SNAPSHOT_MISSING",
             "DroppedNeedle never changed this file, so there is no original to go back to.",
@@ -300,10 +305,14 @@ impl Management {
                     )?;
                 }
             }
-            if items
-                .iter()
-                .any(|item| item.eligibility == Eligibility::Blocked)
-            {
+            // A file whose saved copy is gone cannot be restored at all,
+            // so it does not hold the rest of the album back.
+            if items.iter().any(|item| {
+                item.eligibility == Eligibility::Blocked
+                    && item
+                        .reason()
+                        .is_none_or(|reason| reason.code != UNDO_COPY_MISSING)
+            }) {
                 for item in items
                     .iter_mut()
                     .filter(|item| item.eligibility.writes() && item.diff.changes_anything())
@@ -327,9 +336,20 @@ impl Management {
 
     /// What purging every saved original would remove. Blocking.
     pub fn purge_impact(&self) -> Result<PurgeImpact, ManagementError> {
-        self.setup
+        let (mut impact, kept) = self
+            .setup
             .db
-            .read_blocking("management.purge_impact", |conn| Ok(purge_impact(conn)?))
+            .read_blocking("management.purge_impact", |conn| {
+                Ok::<_, ManagementError>((purge_impact(conn)?, baseline_blob_sizes(conn)?))
+            })?;
+        let dir = self.setup.core.blobs.dir();
+        impact.referenced_blob_bytes = kept
+            .into_iter()
+            .map(|(sha256, in_database)| {
+                in_database.unwrap_or_else(|| dir.size_of(&sha256).unwrap_or(0) as i64)
+            })
+            .sum();
+        Ok(impact)
     }
 
     /// Drop every saved original for good, once the typed confirmation
@@ -353,7 +373,7 @@ impl Management {
         }
         // Under the publish lock: no write is between saving an original
         // and referring to it while the purge runs.
-        let _publishing = self
+        let publishing = self
             .setup
             .publish
             .lock()
@@ -431,15 +451,13 @@ impl Management {
                 existing: false,
             })
         })?;
-        let cleaned = self.setup.db.write_blocking(
-            Lane::Foreground,
-            "management.sweep_unreferenced",
-            |conn| {
-                BlobStore::new(conn)
-                    .sweep_unreferenced()
-                    .map_err(|error| ManagementError::Store(error.to_string()))
-            },
-        )?;
+        // The sweep needs no publish lock: the undo folder's own lock keeps
+        // it off a copy that is being kept.
+        drop(publishing);
+        let blobs = &self.setup.core.blobs;
+        let cleaned = crate::publish::snapshots::sweep_unreferenced_blobs(&self.setup.db)
+            .and_then(|rows| Ok(rows + blobs.sweep(&self.setup.db)?))
+            .map_err(|error| ManagementError::Store(error.to_string()))?;
         tracing::info!(
             purged = outcome.purged_baseline_count,
             cleaned,
@@ -452,7 +470,22 @@ impl Management {
     }
 }
 
-/// Count what a purge would remove, and the token that proves it.
+/// Each blob a saved original holds, with its size when its bytes are
+/// still in the database. The rest are files, sized outside the read.
+fn baseline_blob_sizes(
+    conn: &rusqlite::Connection,
+) -> rusqlite::Result<Vec<(String, Option<i64>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.sha256, (SELECT LENGTH(b.bytes) FROM library_publish_blobs b \
+         WHERE b.sha256 = r.sha256) FROM (SELECT DISTINCT sha256 FROM library_publish_blob_refs \
+         WHERE owner_kind IN ('baseline', 'v2_baseline')) r",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
+/// Count what a purge would remove, and the token that proves it. The
+/// size of the copies is filled in by the caller, outside any write.
 fn purge_impact(conn: &rusqlite::Connection) -> rusqlite::Result<PurgeImpact> {
     let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0));
     let v3 = count("SELECT COUNT(*) FROM library_publish_baselines")?;
@@ -461,12 +494,9 @@ fn purge_impact(conn: &rusqlite::Connection) -> rusqlite::Result<PurgeImpact> {
          (SELECT 1 FROM library_publish_baselines p WHERE p.track_id = b.local_track_id)",
     )?;
     let newest = count("SELECT COALESCE(MAX(created_day), 0) FROM library_publish_baselines")?;
-    let (blobs, bytes) = conn.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(LENGTH(bytes)), 0) FROM library_publish_blobs \
-         WHERE sha256 IN (SELECT sha256 FROM library_publish_blob_refs \
-         WHERE owner_kind IN ('baseline', 'v2_baseline'))",
-        [],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    let blobs = count(
+        "SELECT COUNT(DISTINCT sha256) FROM library_publish_blob_refs \
+         WHERE owner_kind IN ('baseline', 'v2_baseline')",
     )?;
     let journals = count(
         "SELECT COUNT(*) FROM library_publish_journal \
@@ -483,7 +513,7 @@ fn purge_impact(conn: &rusqlite::Connection) -> rusqlite::Result<PurgeImpact> {
     Ok(PurgeImpact {
         baseline_count,
         referenced_blob_count: blobs,
-        referenced_blob_bytes: bytes,
+        referenced_blob_bytes: 0,
         blocked_journal_count: journals,
         active_restore_count: restores,
         impact_token: sha256_hex(material.as_bytes()),

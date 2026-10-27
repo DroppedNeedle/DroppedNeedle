@@ -542,7 +542,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("library/src/http/mod.rs", 1, REQUEST),
     ("library/src/identify/sources.rs", 2, LOOP_STEP),
     ("library/src/identify/stores.rs", 2, LOOP_STEP),
-    ("library/src/loops.rs", 3, LOOP_STEP),
+    ("library/src/loops.rs", 4, LOOP_STEP),
     ("library/src/manage.rs", 1, LOOP_STEP),
     ("library/src/management/mod.rs", 2, LOOP_STEP),
     ("library/src/mutations.rs", 1, REQUEST),

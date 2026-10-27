@@ -21,6 +21,10 @@ pub struct BackupView {
     /// Manifest creation time as unix seconds, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at_unix: Option<u64>,
+    /// Size of the undo copies the backup holds beside it, from the
+    /// manifest, when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo_bytes: Option<u64>,
 }
 
 /// Backup listing, oldest first.

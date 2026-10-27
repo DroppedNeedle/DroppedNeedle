@@ -132,6 +132,8 @@ pub struct LibraryCore {
     pub(crate) bins: super::publish::bin::BinSource,
     /// Wall time: the kernel clock.
     pub(crate) clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    /// The undo copies, in the folder beside the database.
+    pub(crate) blobs: super::publish::BlobStore,
 }
 
 impl LibraryCore {
@@ -160,11 +162,15 @@ impl LibraryCore {
             settings.library.clone(),
             download_trees,
         );
+        let blobs = super::publish::BlobStore::new(droppedneedle_kernel::db::UndoDir::new(
+            platform.config.undo_dir(),
+        ));
         let publish = PublishCell::new(
             platform.db.clone(),
             bins.clone(),
             queue,
             platform.clock.clone(),
+            blobs.clone(),
         );
         Ok(Self {
             ids: platform.ids.clone(),
@@ -178,6 +184,7 @@ impl LibraryCore {
             held_bundles: super::manage::HeldBundles::new(platform.db.clone()),
             bins,
             clock: platform.clock.clone(),
+            blobs,
         })
     }
 

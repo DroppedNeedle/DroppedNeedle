@@ -2345,8 +2345,13 @@ async fn open_library(scratch: &Scratch) -> LibrarySetup {
     );
     let db = droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
         .expect("database opens");
+    // The database is `app.db`, so the undo folder sits beside it as it
+    // does beside a server's database.
+    let mut app_config = droppedneedle_kernel::config::AppConfig::with_root(0, scratch);
+    app_config.library_db_path = scratch.join("app.db");
     let platform = crate::common::TestPlatform::on(&db, scratch)
         .settings(config)
+        .config(app_config)
         .build()
         .await;
     library_with(
@@ -3048,6 +3053,121 @@ async fn undo_restores_values_no_new_edit_could_write() {
         .undo_bundle(&bundle, None)
         .expect("undo publishes");
     assert_eq!(read_fields(&file).expect("fields read"), before);
+}
+
+/// A backup carries the undo copies with the database: restored into an
+/// empty folder, it still undoes a change made before the backup and
+/// still restores originals. A copy the backup lost does not stop the
+/// restore; it is listed, and only the file that needed it is left out.
+#[tokio::test]
+async fn a_restored_backup_still_undoes_and_restores_originals() {
+    use droppedneedle_kernel::db::undo_dir::{UNDO_DIR_NAME, UndoDir};
+    use droppedneedle_kernel::db::{BackupService, CancelFlag};
+    use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::service::ServiceError;
+    use droppedneedle_library::tags::read_fields;
+
+    let (scratch, library, music) = bare_library("lib-backup-round-trip").await;
+    let first = plant(&music, "album/01.flac", "flac_full_01.flac");
+    let second = plant(&music, "album/02.flac", "flac_full_02.flac");
+    add_music_root(&library, &music).await;
+    let track = |rel: &str| {
+        library
+            .scan_store
+            .track_at("music", rel)
+            .unwrap()
+            .expect("track indexed")
+    };
+    let (one, two) = (track("album/01.flac"), track("album/02.flac"));
+    let album = library
+        .scan_store
+        .album_for_track(&one)
+        .unwrap()
+        .expect("album");
+    approve_first_candidate(&library, &scratch.identify, &album).await;
+    let original = read_fields(&first).expect("fields read");
+    let retag = |rel: &str, title: &str| {
+        publish_one(
+            &library,
+            PlanKind::SamePath,
+            &album,
+            rel,
+            None,
+            &[("title", title)],
+        )
+    };
+    retag("album/01.flac", "First pass");
+    let first_pass = read_fields(&first).expect("fields read");
+    let later = retag("album/01.flac", "Second pass");
+    let other = retag("album/02.flac", "Other");
+    let other_title = read_fields(&second).expect("fields read");
+
+    let backups = scratch.join("backups");
+    let service = BackupService::new(
+        &scratch.join("app.db"),
+        &backups,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    let report = service
+        .backup(None, &CancelFlag::never())
+        .await
+        .expect("backup runs");
+    // The pool loses the copy the second file's undo and original need.
+    let lost: String = scratch_db(&scratch)
+        .query_row(
+            "SELECT blob_sha256 FROM library_publish_baselines WHERE track_id = ?1",
+            [&two],
+            |row| row.get(0),
+        )
+        .expect("baseline kept");
+    let pool = UndoDir::new(backups.join(UNDO_DIR_NAME));
+    assert!(pool.remove(&pool.hold_exclusive().unwrap(), &lost).unwrap());
+
+    let restored = Scratch {
+        dir: ScratchDir::new("lib-backup-round-trip-restored"),
+        identify: scratch.identify.clone(),
+        enrichment: None,
+    };
+    let target = restored.join("data");
+    let outcome = service
+        .restore(&report.path, &target, false)
+        .expect("restore runs");
+    assert_eq!(outcome.undo_missing, vec![lost]);
+    // Move the restored database and its undo folder to where the
+    // library opens them, with the settings beside them.
+    std::fs::rename(target.join("library.db"), restored.join("app.db")).unwrap();
+    std::fs::rename(target.join(UNDO_DIR_NAME), restored.join(UNDO_DIR_NAME)).unwrap();
+    rusqlite::Connection::open(scratch.join("settings.db"))
+        .unwrap()
+        .backup(
+            rusqlite::DatabaseName::Main,
+            restored.join("settings.db"),
+            None,
+        )
+        .unwrap();
+    let library = open_library(&restored).await;
+
+    crate::common::library::services(&library)
+        .management
+        .undo_bundle(&later, None)
+        .expect("undo of a change made before the backup publishes");
+    assert_eq!(read_fields(&first).expect("fields read"), first_pass);
+    match crate::common::library::services(&library)
+        .management
+        .undo_bundle(&other, None)
+    {
+        Err(ServiceError::Conflict { message }) => {
+            assert!(message.contains("copy_missing"), "{message}")
+        }
+        Err(error) => panic!("an undo with no saved copy failed otherwise: {error:?}"),
+        Ok(_) => panic!("an undo with no saved copy went ahead"),
+    }
+    library
+        .publishing
+        .baseline_restore(&[one, two])
+        .expect("restore of originals publishes");
+    assert_eq!(read_fields(&first).expect("fields read"), original);
+    assert_eq!(read_fields(&second).expect("fields read"), other_title);
 }
 
 /// Baseline restore takes a file back to how it was before its first

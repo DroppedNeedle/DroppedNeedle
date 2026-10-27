@@ -269,6 +269,11 @@ impl AppConfig {
         self.root_app_dir.join("imports")
     }
 
+    /// The folder of undo copies, beside the database file.
+    pub fn undo_dir(&self) -> PathBuf {
+        crate::db::undo_dir::beside(&self.library_db_path)
+    }
+
     /// The web UI as served, rebuilt from [`AppConfig::static_dir`] on boot.
     pub fn served_static_dir(&self) -> PathBuf {
         self.cache_dir.join("static")

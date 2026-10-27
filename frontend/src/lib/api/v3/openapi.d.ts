@@ -11300,6 +11300,12 @@ export interface components {
             size_bytes: number;
             /**
              * Format: int64
+             * @description Size of the undo copies the backup holds beside it, from the
+             *     manifest, when present.
+             */
+            undo_bytes?: number | null;
+            /**
+             * Format: int64
              * @description Schema stamp from the manifest, when present.
              */
             user_version?: number | null;

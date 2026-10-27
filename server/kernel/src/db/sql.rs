@@ -32,6 +32,15 @@ crate::sql! {
                      analyzed_at = excluded.analyzed_at, indexed_tracks = excluded.indexed_tracks";
     /// The user table count of a database file, beside its stamp.
     pub(super) USER_TABLE_COUNT = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'";
+    /// How many of the two undo-copy tables a database file has (2 since
+    /// migration 0012).
+    pub(super) UNDO_TABLES_PRESENT = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
+             AND name IN ('library_publish_blob_refs', 'library_publish_blobs')";
+    /// The undo copies a database names that its own table does not hold:
+    /// the ones that live in the undo folder.
+    pub(super) UNDO_NAMED_IN_FOLDER = "SELECT DISTINCT r.sha256 FROM library_publish_blob_refs r \
+             WHERE NOT EXISTS (SELECT 1 FROM library_publish_blobs b WHERE b.sha256 = r.sha256) \
+             ORDER BY r.sha256";
     /// Foreign-key violations in a database copy.
     pub(super) FOREIGN_KEY_VIOLATIONS = "SELECT COUNT(*) FROM pragma_foreign_key_check";
 }

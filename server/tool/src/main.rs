@@ -77,9 +77,11 @@ environment says otherwise). upgrade --undo --yes deletes everything in
 the two folders except the v2-backup folders, then puts the v2 files back.
 remove-v2-backup deletes the kept v2 files.
 
-restore copies a server backup into an empty folder as library.db. The
-settings come with the database. Keep the instance's config/data_enc.key
-with it: without that key, stored passwords and API keys cannot be read.
+restore copies a server backup into an empty folder as library.db, with
+the undo copies it names in undo/ beside it (read from the undo folder
+next to the backup). The settings come with the database. Keep the
+instance's config/data_enc.key with it: without that key, stored
+passwords and API keys cannot be read.
 
 The passphrase comes from --passphrase-file or stdin, never from argv.
 Export writes <file> plus <name>.bundle.sqlite beside it; keep the two

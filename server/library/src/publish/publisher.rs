@@ -759,6 +759,8 @@ pub struct Publisher<P: SpaceProbe> {
     now_ms: i64,
     today_day: i64,
     undo_retention_days: i64,
+    /// The undo folder before-states are kept in.
+    blobs: BlobStore,
 }
 
 /// What a file fails with when no safe step can place it and the unwind
@@ -812,29 +814,26 @@ pub(super) fn durable<R>(
     db.write_durable(DurableLane::Background, name, op)
 }
 
-/// Keep the picture bytes a before-state names, owned like it.
-fn keep_pictures(
-    conn: &Connection,
-    before: &TagDocument,
-    owner_kind: &str,
-    owner_id: &str,
-) -> Result<(), PublishError> {
-    let blobs = BlobStore::new(conn);
-    let snapshots = SnapshotStore::new(conn);
-    for (sha256, bytes) in &before.picture_bytes {
-        let stored = blobs.put(bytes)?;
-        if &stored != sha256 {
-            return Err(PublishError::Snapshot("picture bytes hash mismatch".into()));
-        }
-        snapshots.add_ref(sha256, owner_kind, owner_id)?;
-    }
-    Ok(())
+/// The management state a track's before-state records: `None` when it
+/// has none.
+fn management_state(conn: &Connection, track_id: &str) -> Result<Option<String>, PublishError> {
+    Ok(locate(conn, track_id)?
+        .map(|(_, _, _, state)| state)
+        .filter(|state| !state.is_empty()))
 }
 
 impl<P: SpaceProbe> Publisher<P> {
     /// A publisher over `db`, queueing a commit's follow-up work on `jobs`.
-    /// `clock` is the wall clock its stamps and day boundaries read.
-    pub fn new(sandbox: Sandbox, db: Db, space: P, jobs: JobQueue, clock: Arc<dyn Clock>) -> Self {
+    /// `clock` is the wall clock its stamps and day boundaries read;
+    /// before-states are kept in `blobs`.
+    pub fn new(
+        sandbox: Sandbox,
+        db: Db,
+        space: P,
+        jobs: JobQueue,
+        clock: Arc<dyn Clock>,
+        blobs: BlobStore,
+    ) -> Self {
         let now_ms = clock.now_ms();
         Self {
             sandbox,
@@ -855,6 +854,7 @@ impl<P: SpaceProbe> Publisher<P> {
             today_day: day_of(now_ms),
             clock,
             undo_retention_days: super::DEFAULT_UNDO_RETENTION_DAYS as i64,
+            blobs,
         }
     }
 
@@ -1441,7 +1441,7 @@ impl<P: SpaceProbe> Publisher<P> {
     /// One blob's bytes, hash-verified.
     fn blob(&self, sha256: &str) -> Result<Vec<u8>, PublishError> {
         long_read(&self.db, "publish.blob", |conn| {
-            BlobStore::new(conn).get(sha256)
+            self.blobs.get(conn, sha256)
         })
     }
 
@@ -1476,9 +1476,10 @@ impl<P: SpaceProbe> Publisher<P> {
         Ok(Some(specs))
     }
 
-    /// Before-state for undo and the first-management baseline, in one
-    /// ordinary write. The durable `Staged` write that follows puts it on
-    /// disk before the file is overwritten.
+    /// Before-state for undo and the first-management baseline: its
+    /// files in the undo folder first, then the rows naming them in one
+    /// ordinary write. The durable `Staged` write that follows puts the
+    /// rows on disk before the file is overwritten.
     fn capture_before(
         &self,
         bundle: &PlanBundle,
@@ -1486,29 +1487,50 @@ impl<P: SpaceProbe> Publisher<P> {
         before: TagDocument,
     ) -> Result<(), PublishError> {
         let (today, expires) = (self.today_day, self.today_day + self.undo_retention_days);
-        self.db
-            .write_blocking(Lane::Background, "publish.capture_before", |tx| {
-                let prior_mgmt = locate(tx, &item.track_id)?
-                    .map(|(_, _, _, state)| state)
-                    .filter(|state| !state.is_empty());
-                let before_state = super::undo::BeforeState {
-                    doc: before,
-                    source_root: item.source_root.clone(),
-                    source_rel: item.source_rel.clone(),
-                    source_sha256: item.fingerprint.sha256.clone(),
-                    mgmt_state_before: prior_mgmt,
-                };
-                let blobs = BlobStore::new(tx);
+        let prior_mgmt = long_read(&self.db, "publish.capture_state", |conn| {
+            management_state(conn, &item.track_id)
+        })?;
+        let before_state = super::undo::BeforeState {
+            doc: before,
+            source_root: item.source_root.clone(),
+            source_sha256: item.fingerprint.sha256.clone(),
+            source_rel: item.source_rel.clone(),
+            mgmt_state_before: prior_mgmt.clone(),
+        };
+        let doc = before_state.to_bytes()?;
+        let pictures = &before_state.doc.picture_bytes;
+        let mut blobs: Vec<&[u8]> = vec![&doc];
+        blobs.extend(pictures.values().map(Vec::as_slice));
+        self.blobs.keep(
+            &self.db,
+            Lane::Background,
+            "publish.capture_before",
+            &blobs,
+            |tx, hashes| {
+                if management_state(tx, &item.track_id)? != prior_mgmt {
+                    return Err(PublishError::Snapshot(format!(
+                        "track {} changed while its before-state was kept",
+                        item.track_id
+                    )));
+                }
+                if !pictures.keys().eq(hashes.iter().skip(1)) {
+                    return Err(PublishError::Snapshot("picture bytes hash mismatch".into()));
+                }
+                let blob = hashes
+                    .first()
+                    .ok_or_else(|| PublishError::Snapshot("before-state was not kept".into()))?;
+                let snapshots = SnapshotStore::new(tx);
                 let baselines = super::snapshots::BaselineStore::new(tx);
                 // First-management baseline: captured once, immutable
                 // forever. A baseline that appeared concurrently wins; the
                 // only Snapshot error capture raises is already-exists.
                 if baselines.get(&item.track_id)?.is_none() {
-                    keep_pictures(tx, &before_state.doc, "baseline", &item.track_id)?;
-                    let baseline_blob = blobs.put(&before_state.to_bytes()?)?;
+                    for sha256 in pictures.keys() {
+                        snapshots.add_ref(sha256, "baseline", &item.track_id)?;
+                    }
                     match baselines.capture(
                         &item.track_id,
-                        &baseline_blob,
+                        blob,
                         &item.source_root,
                         &item.source_rel,
                         today,
@@ -1517,17 +1539,19 @@ impl<P: SpaceProbe> Publisher<P> {
                         Err(other) => return Err(other),
                     }
                 }
-                keep_pictures(tx, &before_state.doc, "operation", &bundle.id)?;
-                let blob = blobs.put(&before_state.to_bytes()?)?;
-                SnapshotStore::new(tx).record(
+                for sha256 in pictures.keys() {
+                    snapshots.add_ref(sha256, "operation", &bundle.id)?;
+                }
+                snapshots.record(
                     &format!("{}-{}", bundle.id, item.track_id),
                     &bundle.id,
                     &item.track_id,
-                    &blob,
+                    blob,
                     today,
                     expires,
                 )
-            })
+            },
+        )
     }
 
     /// Stage one sidecar as a verified byte copy with its own journal.

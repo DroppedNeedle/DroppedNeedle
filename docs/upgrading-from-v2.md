@@ -642,6 +642,15 @@ without it, v3 refuses to start on that database rather than lose the
 stored secrets. The database remembers which key it belongs to, so a key
 file from another instance or another backup is refused as well.
 
+The copies Undo and "Restore originals" need live in the `undo` folder
+beside the database, and each backup copies the ones it names into
+`cache/backups/undo`, which all kept backups share. Copy the whole
+`backups` folder when you move backups elsewhere, not only the `.db`
+files: `droppedneedle-tool restore` reads the copies from the `undo`
+folder next to the backup and puts them back beside the restored
+database. A copy that is missing there does not stop the restore; it is
+listed, and Undo then leaves out only the file that needed it.
+
 Backups leave out `metadata-cache.db` on purpose: it holds only provider
 answers that are fetched again when needed.
 

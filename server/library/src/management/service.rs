@@ -81,6 +81,11 @@ pub struct Management {
     shutdown: Option<droppedneedle_kernel::jobs::CancellationToken>,
 }
 
+/// The reason a file is left out of an undo or a restore whose saved copy
+/// is missing or damaged. It is the one block that does not hold the rest
+/// of its bundle back.
+pub(super) const UNDO_COPY_MISSING: &str = "UNDO_COPY_MISSING";
+
 pub(super) fn stale(message: &str) -> ManagementError {
     ManagementError::Conflict(message.to_owned())
 }
@@ -478,11 +483,7 @@ impl Management {
             .setup
             .db
             .read_blocking("management.preview_artwork", |conn| {
-                Ok::<_, ManagementError>(
-                    crate::publish::snapshots::BlobStore::new(conn)
-                        .get(sha256)
-                        .ok(),
-                )
+                Ok::<_, ManagementError>(self.setup.core.blobs.get(conn, sha256).ok())
             })?
             .ok_or(ManagementError::NotFound(
                 "That artwork is no longer kept; make a new preview.",
@@ -1649,6 +1650,11 @@ impl Management {
                             .to_owned(),
                     action: "Rescan the library, then make a new undo preview.".to_owned(),
                 },
+                crate::manage::UndoSkip::CopyMissing => ItemReason {
+                    code: UNDO_COPY_MISSING.to_owned(),
+                    message: "The saved copy of this file's earlier tags is missing.".to_owned(),
+                    action: "This file stays as it is.".to_owned(),
+                },
             });
             items.push(item);
         }
@@ -1657,7 +1663,15 @@ impl Management {
             item.block(reasons::undo_nothing());
             items.push(item);
         }
-        if items.iter().any(|item| !item.eligibility.writes()) {
+        // A file whose saved copy is gone cannot be undone at all, now or
+        // later, so it does not hold the rest of the bundle back.
+        let holds_back = |item: &PlannedItem| {
+            !item.eligibility.writes()
+                && item
+                    .reason()
+                    .is_none_or(|reason| reason.code != UNDO_COPY_MISSING)
+        };
+        if items.iter().any(holds_back) {
             for item in items.iter_mut().filter(|item| item.eligibility.writes()) {
                 item.block(reasons::bundle_blocked());
             }

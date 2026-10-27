@@ -38812,6 +38812,15 @@
             "description": "File size in bytes.",
             "minimum": 0
           },
+          "undo_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Size of the undo copies the backup holds beside it, from the\nmanifest, when present.",
+            "minimum": 0
+          },
           "user_version": {
             "type": [
               "integer",

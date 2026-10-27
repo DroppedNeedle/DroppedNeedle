@@ -74,7 +74,8 @@
 //! write under, [`statement`] declares the SQL every area keeps in its
 //! `sql.rs`, `sql` is this module's own, [`error`] holds the typed
 //! errors, and [`cache`] is the provider cache's own throwaway file, with
-//! its own writer and readers.
+//! its own writer and readers, and [`undo_dir`] is the folder of undo
+//! copies beside the database, which backups carry with it.
 
 pub mod analyze;
 pub mod backup;
@@ -96,6 +97,7 @@ mod scope;
 pub mod scratch;
 pub(crate) mod sql;
 pub mod statement;
+pub mod undo_dir;
 pub mod writer;
 
 pub use analyze::AnalyzeService;
@@ -120,6 +122,7 @@ pub use handle::Db;
 pub use read_pool::{LONG_READERS, OldestRead, ReadActivity};
 pub use savepoint::savepoint;
 pub use scope::block_on;
+pub use undo_dir::UndoDir;
 #[cfg(any(test, feature = "test-support"))]
 pub use writer::TEST_PATIENCE;
 pub use writer::{

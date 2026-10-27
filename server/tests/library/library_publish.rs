@@ -21,7 +21,8 @@ use std::path::PathBuf;
 
 use crate::common::ScratchDir;
 use droppedneedle_kernel::clock::{ManualClock, SystemClock};
-use droppedneedle_kernel::db::{Db, DurableLane};
+use droppedneedle_kernel::db::undo_dir::{self, Stored, UndoDir};
+use droppedneedle_kernel::db::{Db, DurableLane, Lane};
 use droppedneedle_kernel::jobs::queue::JobQueue;
 use publish::add::{Added, AddedFile, Origin, TakeBackRefusal};
 use publish::paths::Root;
@@ -140,6 +141,18 @@ fn track_row(conn: &Connection, id: &str) -> (String, String, Option<f64>) {
 /// A side connection for seeding and checking rows.
 fn open_db(fix: &Fixture) -> Connection {
     droppedneedle_kernel::db::open_connection(&fix.db_path).unwrap()
+}
+
+/// The undo copies beside the fixture's database.
+fn blobs(fix: &Fixture) -> BlobStore {
+    BlobStore::new(UndoDir::new(undo_dir::beside(&fix.db_path)))
+}
+
+/// Put bytes in the fixture's undo folder, naming them by their hash.
+fn undo_put(fix: &Fixture, bytes: &[u8]) -> String {
+    let dir = blobs(fix).dir().clone();
+    let hold = dir.hold_shared().unwrap();
+    dir.put(&hold, bytes).unwrap()
 }
 
 /// The database as the next start sees it: a new handle on the file. The
@@ -352,6 +365,7 @@ fn open_publisher(fix: &Fixture) -> Publisher<FixedSpace> {
         FixedSpace(u64::MAX),
         jobs(&restart(fix)),
         std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+        blobs(fix),
     )
 }
 
@@ -915,6 +929,7 @@ fn a_write_counts_as_stuck_after_24_hours() {
         FixedSpace(u64::MAX),
         jobs(&restart(&fix)),
         std::sync::Arc::new(now.clone()),
+        blobs(&fix),
     );
     // Day 53, 23:00.
     let made = 53 * 86_400_000 + 23 * HOUR;
@@ -2004,7 +2019,7 @@ fn replacement_recycles_only_after_commit() {
 fn generated_files_land_and_go_away_journaled() {
     let fix = fixture("generated");
     let cover = b"generated-cover-bytes".to_vec();
-    let sha = BlobStore::new(&open_db(&fix)).put(&cover).unwrap();
+    let sha = undo_put(&fix, &cover);
     let output = publish::GeneratedOutput {
         dest_root: "music".to_string(),
         dest_rel: "staging/cover.jpg".to_string(),
@@ -2087,7 +2102,7 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
     use std::os::unix::fs::MetadataExt as _;
     let fix = fixture("generated-put-back");
     let cover = b"generated-cover-bytes".to_vec();
-    let sha = BlobStore::new(&open_db(&fix)).put(&cover).unwrap();
+    let sha = undo_put(&fix, &cover);
     let path = fix.sandbox.resolve("music", "staging/cover.jpg").unwrap();
     let audio = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
     let fp = write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
@@ -2284,6 +2299,7 @@ fn bin_entries_never_follow_a_symlink_below_the_bin() {
         FixedSpace(u64::MAX),
         jobs(&restart(&fix)),
         std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+        blobs(&fix),
     );
     assert_eq!(
         publisher.publish(&sealed, &live, &docs).unwrap(),
@@ -2366,6 +2382,7 @@ fn nothing_goes_to_a_bin_while_the_bins_are_unknown() {
         FixedSpace(u64::MAX),
         jobs(&restart(&fix)),
         std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+        blobs(&fix),
     );
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
     assert!(matches!(err, PublishError::Interrupted(_)), "got {err:?}");
@@ -3056,6 +3073,7 @@ fn a_remove_only_root_takes_removals_only() {
         FixedSpace(u64::MAX),
         jobs(&restart(&fix)),
         std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+        blobs(&fix),
     );
 
     let removal = removal_bundle(&fix, &sandbox, "excluded", &[("t", "s.flac")]);
@@ -3455,12 +3473,27 @@ fn baseline_purge_requires_phrase_token_and_quiet_journals() {
 #[test]
 fn snapshots_expire_baselines_stay_and_blobs_dedup() {
     let fix = fixture("snapshots");
+    let db = restart(&fix);
     let conn = open_db(&fix);
-    let blobs = BlobStore::new(&conn);
-    let first = blobs.put(b"same-bytes").unwrap();
-    let second = blobs.put(b"same-bytes").unwrap();
+    let blobs = blobs(&fix);
+    let keep = |bytes: &[u8], job: &str| {
+        blobs
+            .keep(
+                &db,
+                Lane::Background,
+                "test.keep",
+                &[bytes],
+                |tx, hashes| {
+                    SnapshotStore::new(tx).add_ref(&hashes[0], "preview", job)?;
+                    Ok(hashes[0].clone())
+                },
+            )
+            .unwrap()
+    };
+    let first = keep(b"same-bytes", "job-1");
+    let second = keep(b"same-bytes", "job-2");
     assert_eq!(first, second);
-    assert_eq!(blobs.get(&first).unwrap(), b"same-bytes");
+    assert_eq!(blobs.get(&conn, &first).unwrap(), b"same-bytes");
 
     let snapshots = SnapshotStore::new(&conn);
     snapshots.record("old", "b1", "t1", &first, 10, 20).unwrap();
@@ -3484,6 +3517,97 @@ fn snapshots_expire_baselines_stay_and_blobs_dedup() {
             .is_err()
     );
     assert_eq!(baselines.impact().unwrap(), (1, 1));
+
+    // A copy whose bytes do not match its name is refused, never used;
+    // keeping the right bytes again puts them back.
+    let path = blobs.dir().file_path(&first).unwrap();
+    std::fs::write(&path, b"other-bytes").unwrap();
+    assert!(blobs.get(&conn, &first).is_err());
+    keep(b"same-bytes", "job-3");
+    assert_eq!(blobs.get(&conn, &first).unwrap(), b"same-bytes");
+
+    // The sweep removes only the copies nothing names.
+    let loose = undo_put(&fix, b"loose-bytes");
+    assert_eq!(blobs.sweep(&db).unwrap(), 1);
+    assert!(blobs.get(&conn, &loose).is_err());
+    assert_eq!(blobs.get(&conn, &first).unwrap(), b"same-bytes");
+
+    // A copy whose reference is still being written is held, so a sweep
+    // in between leaves it.
+    let dir = blobs.dir().clone();
+    let hold = dir.hold_shared().unwrap();
+    let pending = dir.put(&hold, b"pending-bytes").unwrap();
+    assert_eq!(blobs.sweep(&db).unwrap(), 0);
+    drop(hold);
+    assert_eq!(blobs.get(&conn, &pending).unwrap(), b"pending-bytes");
+}
+
+/// The one-time move of undo copies out of the database survives a crash
+/// at every point it can stop: a file written whose row is still there, a
+/// file at its name with the wrong bytes, a file left half written. After
+/// the move runs again every copy reads from the folder and its row is
+/// gone. A row whose bytes do not match its name is never moved or used.
+#[test]
+fn a_crash_in_the_move_out_of_the_database_loses_no_undo_copy() {
+    let fix = fixture("undo-move");
+    let conn = open_db(&fix);
+    let blobs = blobs(&fix);
+    let dir = blobs.dir().clone();
+    let copies: [&[u8]; 4] = [
+        b"written-before-the-crash",
+        b"not-started",
+        b"wrong-bytes-at-its-name",
+        b"half-written",
+    ];
+    let hashes: Vec<String> = copies.iter().map(|bytes| sha256_hex(bytes)).collect();
+    for (index, (sha256, bytes)) in hashes.iter().zip(copies).enumerate() {
+        conn.execute(
+            "INSERT INTO library_publish_blobs (sha256, bytes) VALUES (?1, ?2)",
+            rusqlite::params![sha256, bytes],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO library_publish_blob_refs (sha256, owner_kind, owner_id) \
+             VALUES (?1, 'baseline', ?2)",
+            rusqlite::params![sha256, format!("t{index}")],
+        )
+        .unwrap();
+    }
+    let damaged = sha256_hex(b"what-it-should-hold");
+    conn.execute(
+        "INSERT INTO library_publish_blobs (sha256, bytes) VALUES (?1, ?2)",
+        rusqlite::params![damaged, b"what-it-holds".as_slice()],
+    )
+    .unwrap();
+    undo_put(&fix, copies[0]);
+    let wrong = dir.file_path(&hashes[2]).unwrap();
+    std::fs::create_dir_all(wrong.parent().unwrap()).unwrap();
+    std::fs::write(&wrong, b"something else").unwrap();
+    let half = dir.file_path(&hashes[3]).unwrap();
+    std::fs::create_dir_all(half.parent().unwrap()).unwrap();
+    std::fs::write(
+        half.with_file_name(format!(".tmp-{}-1-0", hashes[3])),
+        b"half",
+    )
+    .unwrap();
+
+    let db = restart(&fix);
+    assert_eq!(blobs.move_out_of_database(&db, &|| true).unwrap(), 4);
+    blobs.sweep(&db).unwrap();
+    for (sha256, bytes) in hashes.iter().zip(copies) {
+        assert_eq!(dir.read(sha256).unwrap(), Stored::Found(bytes.to_vec()));
+        assert_eq!(blobs.get(&conn, sha256).unwrap(), bytes);
+    }
+    let left: Vec<String> = conn
+        .prepare("SELECT sha256 FROM library_publish_blobs")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(left, vec![damaged.clone()]);
+    assert!(dir.shard(&hashes[3][..2]).unwrap().temps.is_empty());
+    assert!(blobs.get(&conn, &damaged).is_err());
 }
 
 // --- Publish hardening briefs: seal coverage, gate strictness, 4xx path

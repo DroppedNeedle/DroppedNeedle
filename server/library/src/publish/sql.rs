@@ -303,6 +303,22 @@ droppedneedle_kernel::sql! {
     pub(super) DELETE_UNREFERENCED_BLOB = "DELETE FROM library_publish_blobs \
              WHERE sha256 = ?1 AND NOT EXISTS (SELECT 1 FROM library_publish_blob_refs r \
              WHERE r.sha256 = ?1)";
+    /// The bytes of one blob (`?1`) still kept in the database.
+    pub(super) LEGACY_BLOB = "SELECT bytes FROM library_publish_blobs WHERE sha256 = ?1";
+    /// The blobs still kept in the database after hash `?1`, in order.
+    pub(super) LEGACY_BLOBS_AFTER = "SELECT sha256, bytes FROM library_publish_blobs \
+             WHERE sha256 > ?1 ORDER BY sha256";
+    /// One blob (`?1`) the undo folder now holds.
+    pub(super) DELETE_LEGACY_BLOB = "DELETE FROM library_publish_blobs WHERE sha256 = ?1";
+    /// Which of the hashes in the JSON array `?1` some row refers to.
+    pub(super) REFERENCED_AMONG = "SELECT DISTINCT sha256 FROM library_publish_blob_refs \
+             WHERE sha256 IN (SELECT value FROM json_each(?1))";
+    /// A marker row, written and deleted in one durable write so that the
+    /// write has something to sync.
+    pub(super) SYNC_MARK_INSERT = "INSERT INTO library_publish_blobs (sha256, bytes) \
+             VALUES ('sync', x'')";
+    /// The marker row again.
+    pub(super) SYNC_MARK_DELETE = "DELETE FROM library_publish_blobs WHERE sha256 = 'sync'";
     /// Writes made at or before `?1` (unix milliseconds) that recovery has
     /// neither finished nor undone, at most `?2`.
     pub(crate) RETRYING_BUNDLES = "SELECT j.bundle_id, COUNT(*), \

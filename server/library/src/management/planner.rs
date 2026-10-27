@@ -826,21 +826,28 @@ fn keep_blob(ctx: &PlanContext<'_>, bytes: &[u8]) -> Result<String, ItemReason> 
 }
 
 /// Store `bytes` in the blob store with a reference held by the planning
-/// job, in one write.
+/// job: the file first, then the reference.
 fn keep_bytes(
     ctx: &PlanContext<'_>,
     name: &'static str,
     bytes: &[u8],
 ) -> Result<String, ManagementError> {
-    use crate::publish::snapshots::{BlobStore, SnapshotStore};
-    ctx.setup.db.write_blocking(Lane::Background, name, |tx| {
-        let stored = BlobStore::new(tx).put(bytes).and_then(|sha| {
-            SnapshotStore::new(tx)
-                .add_ref(&sha, "preview", ctx.job_id)
-                .map(|()| sha)
-        });
-        stored.map_err(|error| ManagementError::Store(error.to_string()))
-    })
+    use crate::publish::snapshots::SnapshotStore;
+    ctx.setup
+        .core
+        .blobs
+        .keep(
+            &ctx.setup.db,
+            Lane::Background,
+            name,
+            &[bytes],
+            |tx, shas| {
+                let sha = shas[0].clone();
+                SnapshotStore::new(tx).add_ref(&sha, "preview", ctx.job_id)?;
+                Ok(sha)
+            },
+        )
+        .map_err(|error| ManagementError::Store(error.to_string()))
 }
 
 fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {

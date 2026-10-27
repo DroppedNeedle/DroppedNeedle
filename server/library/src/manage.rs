@@ -95,6 +95,8 @@ pub struct PublishCell {
     bins: BinSource,
     /// The jobs table a commit queues its follow-up work on.
     jobs: JobQueue,
+    /// The undo folder each publisher keeps before-states in.
+    blobs: BlobStore,
     pub(crate) cell: Option<OpenPublish>,
     placement: RootPlacement,
     /// The roots last left out of the session, so each change is logged
@@ -286,13 +288,20 @@ impl LeftoverFiles {
 impl PublishCell {
     /// An unopened cell over the application database, taking its
     /// recycle bins from `bins` and queueing a commit's follow-up work on
-    /// `jobs`.
-    pub(crate) fn new(db: Db, bins: BinSource, jobs: JobQueue, clock: Arc<dyn Clock>) -> Self {
+    /// `jobs`, with before-states kept in `blobs`.
+    pub(crate) fn new(
+        db: Db,
+        bins: BinSource,
+        jobs: JobQueue,
+        clock: Arc<dyn Clock>,
+        blobs: BlobStore,
+    ) -> Self {
         Self {
             db,
             clock,
             bins,
             jobs,
+            blobs,
             cell: None,
             placement: RootPlacement::default(),
             left_out: std::sync::Mutex::default(),
@@ -455,6 +464,7 @@ impl PublishCell {
             FsSpaceProbe::new(space_roots.clone()),
             self.jobs.clone(),
             Arc::clone(&self.clock),
+            self.blobs.clone(),
         );
         self.placement.follow(Some(sandbox.clone()));
         self.cell = Some(OpenPublish {
@@ -793,6 +803,8 @@ pub(crate) enum UndoSkip {
     Plan(super::publish::undo::UndoBlock),
     /// The file is no longer in the library, unreadable, or unmatched.
     Gone,
+    /// The saved copy of its earlier tags is missing or damaged.
+    CopyMissing,
 }
 
 /// One file undo would restore, with its tags as they are now.
@@ -817,6 +829,8 @@ pub(crate) enum BaselineSkip {
     Plan(super::publish::undo::BaselineBlock),
     /// The file is no longer in the library, unreadable, or unmatched.
     Gone,
+    /// The saved copy of its original tags is missing or damaged.
+    CopyMissing,
 }
 
 /// What restoring files to their originals would do.
@@ -2184,7 +2198,13 @@ impl Publishing {
             return self.take_back(open, &registry, added);
         }
         let files = self.undo_files_in(open, bundle_id, &|_| PINNED_OVERRIDE)?;
-        if !files.blocked.is_empty() || files.eligible.is_empty() {
+        // A file whose saved copy is gone can never be undone, so it does
+        // not hold the rest of the bundle back.
+        let held = files
+            .blocked
+            .iter()
+            .any(|(_, skip)| !matches!(skip, UndoSkip::CopyMissing));
+        if held || files.eligible.is_empty() {
             return Err(ServiceError::Conflict {
                 message: format!("Undo blocked: {}", undo_blocks(&files.blocked)),
             });
@@ -2357,7 +2377,7 @@ impl Publishing {
                 };
                 let snapshots = SnapshotStore::new(conn).bundle(bundle_id)?;
                 let journals = JournalStore::new(conn).bundle(bundle_id)?;
-                let blobs = BlobStore::new(conn);
+                let blobs = &self.core.blobs;
                 let mut rows = Vec::new();
                 for (_, track_id, blob_sha, expires_day) in snapshots {
                     let Some(item) = source.items.iter().find(|item| item.track_id == track_id)
@@ -2370,7 +2390,7 @@ impl Publishing {
                     else {
                         continue;
                     };
-                    let bytes = blobs.get(&blob_sha)?;
+                    let bytes = blobs.fetch(conn, &blob_sha)?;
                     let located = locate(conn, &track_id)?;
                     rows.push((
                         track_id,
@@ -2388,7 +2408,12 @@ impl Publishing {
         let mut inputs = Vec::new();
         let mut locations_read = HashMap::new();
         let mut by_track: HashMap<String, PlanItem> = HashMap::new();
+        let mut copies_missing = Vec::new();
         for (track_id, item, journal, bytes, expires_day, located) in sources {
+            let Some(bytes) = bytes else {
+                copies_missing.push(track_id);
+                continue;
+            };
             locations_read.insert(track_id.clone(), located);
             by_track.insert(track_id.clone(), item.clone());
             let before =
@@ -2416,6 +2441,11 @@ impl Publishing {
             });
         }
         let mut files = UndoFiles::default();
+        files.blocked.extend(
+            copies_missing
+                .into_iter()
+                .map(|track_id| (track_id, UndoSkip::CopyMissing)),
+        );
         let mut fingerprints = BTreeMap::new();
         let mut locations = BTreeMap::new();
         let mut identities = BTreeMap::new();
@@ -2580,7 +2610,11 @@ impl Publishing {
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let files = self.baseline_files_in(open, track_ids, &|_| PINNED_OVERRIDE)?;
-        if !files.blocked.is_empty() || files.eligible.is_empty() {
+        let held = files
+            .blocked
+            .iter()
+            .any(|(_, skip)| !matches!(skip, BaselineSkip::CopyMissing));
+        if held || files.eligible.is_empty() {
             return Err(ServiceError::Conflict {
                 message: format!(
                     "Baseline restore blocked: {}",
@@ -2641,13 +2675,13 @@ impl Publishing {
         let sources = self
             .db
             .read_blocking("publish.baseline_sources", |conn| {
-                let blobs = BlobStore::new(conn);
+                let blobs = &self.core.blobs;
                 let baselines = BaselineStore::new(conn);
                 track_ids
                     .iter()
                     .map(|track_id| {
                         let bytes = match baselines.get(track_id)? {
-                            Some((blob_sha, _, _)) => Some(blobs.get(&blob_sha)?),
+                            Some((blob_sha, _, _)) => Some(blobs.fetch(conn, &blob_sha)?),
                             None => None,
                         };
                         Ok((bytes, locate(conn, track_id)?))
@@ -2661,9 +2695,15 @@ impl Publishing {
         let mut live: HashMap<String, (FileFingerprint, String, ReleaseIdentity)> = HashMap::new();
         for (track_id, (bytes, located)) in track_ids.iter().zip(sources) {
             let baseline = match bytes {
-                Some(bytes) => Some(
+                Some(Some(bytes)) => Some(
                     super::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?,
                 ),
+                Some(None) => {
+                    files
+                        .blocked
+                        .push((track_id.clone(), BaselineSkip::CopyMissing));
+                    continue;
+                }
                 None => None,
             };
             let state = match located {
@@ -2868,6 +2908,7 @@ fn undo_blocks(blocked: &[(String, UndoSkip)]) -> String {
         .map(|(track_id, skip)| match skip {
             UndoSkip::Plan(block) => format!("{track_id} {}", undo_block_label(block)),
             UndoSkip::Gone => format!("{track_id} not_managed"),
+            UndoSkip::CopyMissing => format!("{track_id} copy_missing"),
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -2905,6 +2946,7 @@ fn baseline_blocks(blocked: &[(String, BaselineSkip)]) -> String {
         .map(|(track_id, skip)| match skip {
             BaselineSkip::Plan(block) => format!("{track_id} {}", baseline_block_label(block)),
             BaselineSkip::Gone => format!("{track_id} not_managed"),
+            BaselineSkip::CopyMissing => format!("{track_id} copy_missing"),
         })
         .collect::<Vec<_>>()
         .join(", ")

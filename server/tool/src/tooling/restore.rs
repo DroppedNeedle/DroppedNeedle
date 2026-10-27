@@ -2,7 +2,9 @@
 //!
 //! The mechanism is [`BackupService::restore`](droppedneedle_kernel::db::BackupService):
 //! verify the backup (integrity plus schema stamp), copy it into an empty
-//! directory as `library.db`, and verify the copy. This module adds the
+//! directory as `library.db`, verify the copy, and put the undo copies it
+//! names back beside it in `undo`, from the `undo` folder beside the
+//! backup. This module adds the
 //! operator face: a read-only preflight over the backup restore report
 //! (manifest identity when a sidecar exists), fail-closed refusals with
 //! plain messages, and a small JSON summary on success.
@@ -16,7 +18,7 @@ use std::path::Path;
 use serde::Serialize;
 use thiserror::Error;
 
-use droppedneedle::admin::backups::restore_report;
+use droppedneedle::admin::backups::{UNDO_COPIES_CHECK, restore_report};
 use droppedneedle_kernel::db::BackupService;
 
 /// Restore failures. Messages name the fix, never file contents.
@@ -57,6 +59,12 @@ pub struct RestoreSummary {
     pub bytes: u64,
     /// Schema stamp of the restored file.
     pub user_version: i64,
+    /// Undo copies put back.
+    pub undo_copies: u64,
+    /// Undo copies the database names that the backup did not hold. Undo
+    /// skips the files that need them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub undo_missing: Vec<String>,
     /// Preflight check names that passed.
     pub checks_passed: Vec<String>,
 }
@@ -100,6 +108,8 @@ pub fn restore_backup(
         restored: restored.path.display().to_string(),
         bytes: restored.bytes,
         user_version: restored.user_version,
+        undo_copies: restored.undo_blobs,
+        undo_missing: restored.undo_missing,
         checks_passed,
     })
 }
@@ -141,6 +151,10 @@ fn preflight(backup_db: &Path, allow_downgrade: bool) -> Result<Vec<String>, Res
             passed.push(check.name.clone());
         } else if check.name == "schema-version" && allow_downgrade {
             passed.push(format!("{}-overridden", check.name));
+        } else if check.name == UNDO_COPIES_CHECK {
+            // Informational: the restore goes ahead and lists what is
+            // missing.
+            passed.push(format!("{}-incomplete", check.name));
         } else if check.name == "manifest-present" {
             // A hand-placed backup restores without a sidecar; the
             // integrity check below still guards the copy.
