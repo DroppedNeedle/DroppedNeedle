@@ -353,6 +353,11 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "the answer a single-flight lookup hands its waiters, none if it panicked; not a port",
     ),
     (
+        "providers/src/limiter.rs",
+        "door",
+        "the shared budget a row also draws from, none for a row outside every shared budget",
+    ),
+    (
         "src/app.rs",
         "state",
         "the API document is built from the routes with no app state behind them",
