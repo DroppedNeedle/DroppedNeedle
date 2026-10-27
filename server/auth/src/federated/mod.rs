@@ -11,11 +11,13 @@
 //! store's username derivation (`_derive_username`, `_slugify`), and the
 //! auth, connection and Plex auth routes.
 //!
-//! Every network edge sits behind a trait (`OidcIdp`, `JellyfinIdp`,
-//! `PlexPinClient`, `UserDirectory`) whose live implementation lives in a
-//! `*_http` module and talks through the shared outbound client. Wire
-//! shapes live in the matching `*_models` module. The services stay free
-//! of HTTP, and the integration tests run them against local mock servers.
+//! Each provider has one concrete client in a `*_http` module that talks
+//! through the shared outbound client: [`oidc_http::OidcHttp`] at the
+//! issuer and endpoints the OIDC settings and discovery name,
+//! [`jellyfin_http::JellyfinHttp`] at the Jellyfin settings' server, and
+//! [`plex_http::PlexTv`] at the plex.tv root the server's outbound
+//! addresses give. Wire shapes live in the matching `*_models` module. The
+//! integration tests point the same clients at local mock servers.
 //!
 //! Contracts with the rest of auth:
 //!
@@ -24,9 +26,9 @@
 //!   a fresh token, a `Standard` row and a `last_login_at` update.
 //! - Imported password hashes verify through [`crate::passwords::Passwords`],
 //!   over the `bcrypt` and `argon2` crates.
-//! - The user/provider tables adapter implements
-//!   [`users::FederatedUserStore`] and must seal `token_json` at rest with
-//!   the deployment key before writing `provider_data`.
+//! - Federated accounts are read and written through
+//!   [`FederatedUsers`](crate::sqlite::FederatedUsers), which seals
+//!   `token_json` with the deployment key before writing `provider_data`.
 
 pub mod jellyfin_http;
 pub mod jellyfin_login;
@@ -45,10 +47,11 @@ pub mod users;
 
 use std::sync::Arc;
 
+use reqwest::Url;
 use thiserror::Error;
 
-use self::jellyfin_login::{JellyfinConnectionLink, JellyfinProfile};
-use self::plex::{PlexConnectionLink, PlexProfile};
+use self::jellyfin_login::JellyfinProfile;
+use self::plex::PlexProfile;
 use crate::users::stores::BoxFuture;
 
 /// Failure of a federated login or import step. HTTP mapping lives in the
@@ -81,8 +84,8 @@ pub enum FederatedError {
 }
 
 /// Saves the media link a Plex or Jellyfin sign-in hands back into the
-/// user's media connections. A port so auth need not reach into the
-/// media-server connection store for it.
+/// user's media connections. A trait because it cuts a crate dependency:
+/// the connection store lives in the media crate, above auth.
 pub trait MediaLinkStore: Send + Sync {
     /// Store the user's fresh Plex tokens for later playback.
     fn link_plex<'a>(
@@ -109,18 +112,46 @@ impl MediaLinks {
     pub fn new(store: Arc<dyn MediaLinkStore>) -> Self {
         Self(store)
     }
-}
 
-impl PlexConnectionLink for MediaLinks {
-    async fn link(&self, user_id: &str, profile: &PlexProfile) -> Result<(), String> {
+    /// Store the user's fresh Plex tokens for later playback.
+    pub async fn link_plex(&self, user_id: &str, profile: &PlexProfile) -> Result<(), String> {
         self.0.link_plex(user_id, profile).await
     }
-}
 
-impl JellyfinConnectionLink for MediaLinks {
-    async fn link(&self, user_id: &str, profile: &JellyfinProfile) -> Result<(), String> {
+    /// Store the user's fresh Jellyfin token for later playback.
+    pub async fn link_jellyfin(
+        &self,
+        user_id: &str,
+        profile: &JellyfinProfile,
+    ) -> Result<(), String> {
         self.0.link_jellyfin(user_id, profile).await
     }
+}
+
+/// `raw` as a web address: http or https, with a host and no credentials.
+/// Anything else is `None`.
+pub fn web_address(raw: &str) -> Option<Url> {
+    let url = Url::parse(raw.trim()).ok()?;
+    let usable = matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some_and(|host| !host.is_empty())
+        && url.username().is_empty()
+        && url.password().is_none();
+    usable.then_some(url)
+}
+
+/// The non-empty `segments` appended to the path of `base`, each
+/// percent-encoded as one segment, with the base's query and fragment
+/// dropped. A value from a server's answer goes in here, never into the URL
+/// as text.
+pub fn endpoint(base: &Url, segments: &[&str]) -> Url {
+    let mut url = base.clone();
+    url.set_query(None);
+    url.set_fragment(None);
+    if let Ok(mut path) = url.path_segments_mut() {
+        path.pop_if_empty();
+        path.extend(segments.iter().filter(|segment| !segment.is_empty()));
+    }
+    url
 }
 
 /// Append `value` as one JSON string literal (quotes included).

@@ -67,10 +67,7 @@ const RULES: &[Rule] = &[
         what: "a memory or fake twin under auth",
         under: "auth/src/",
         pattern: r"\bstruct\s+((?:Memory|Fake)\w*)",
-        allowed: &[(
-            "auth/src/wiring.rs",
-            "MemoryOidcExchangeStore is production code: 60 second codes, no table",
-        )],
+        allowed: &[],
     },
 ];
 
@@ -143,10 +140,5 @@ fn errors_and_extractors_have_one_way_in() {
         "kernel/src/error.rs",
         r"impl\s*(?:<[^>]*>)?\s*(?:[\w:]+::)?IntoResponse\s+for\s+(\w+)",
         &["ApiError"],
-    );
-    only(
-        "auth/src/wiring.rs",
-        r"\bstruct\s+((?:Memory|Fake)\w*)",
-        &["MemoryOidcExchangeStore"],
     );
 }

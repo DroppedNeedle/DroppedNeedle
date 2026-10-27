@@ -1,16 +1,21 @@
 //! The live Jellyfin client for sign-in and the admin user import.
 //!
-//! Settings are read live on each call. Passwords and tokens never reach a log line;
-//! transport errors are logged without their URL.
+//! The server's address comes from the Jellyfin settings, read live on
+//! each call and parsed as a web address; every request URL is built from
+//! that parsed base, and an id from the server's answer goes in as one
+//! path segment. Passwords and tokens never reach a log line; transport
+//! errors are logged without their URL.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::FederatedError;
-use super::jellyfin_login::{JellyfinIdp, JellyfinProfile, emby_auth_header};
+use reqwest::Url;
+
+use super::jellyfin_login::{JellyfinProfile, emby_auth_header};
 use super::jellyfin_models::{AuthenticationResultWire, UserWire};
 use super::settings::{InstallIds, SignInSettings};
 use super::users::PROVIDER_JELLYFIN;
+use super::{FederatedError, endpoint, web_address};
 use crate::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
 use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::runtime_config::secret_sections::JellyfinConnection;
@@ -21,7 +26,7 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 /// Largest answer read from a Jellyfin server.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// Live [`JellyfinIdp`] and Jellyfin [`UserDirectory`].
+/// The Jellyfin client for sign-in, and the Jellyfin [`UserDirectory`].
 #[derive(Clone)]
 pub struct JellyfinHttp {
     http: reqwest::Client,
@@ -40,19 +45,15 @@ impl JellyfinHttp {
             http,
         }
     }
-}
 
-fn avatar_url(base_url: &str, user: &UserWire) -> Option<String> {
-    user.has_avatar()
-        .then(|| format!("{base_url}/Users/{}/Images/Primary", user.id))
-}
-
-impl JellyfinIdp for JellyfinHttp {
-    fn is_configured(&self) -> bool {
-        self.sign_in.jellyfin_login_server().is_some()
-    }
-
-    async fn authenticate_by_name(
+    /// Check credentials with no DroppedNeedle side effects (v2 parity):
+    /// POST `{base}/Users/AuthenticateByName` with [`emby_auth_header`] and
+    /// `{"Username","Pw"}`. No configured server is
+    /// `Authentication("Jellyfin is not configured on this server")`;
+    /// timeouts and connect failures are `ProviderUnavailable`; 401 and 403
+    /// are `Authentication`; any other non-2xx, bad JSON, or a missing user
+    /// id or token is `ProviderUnavailable`.
+    pub async fn authenticate_by_name(
         &self,
         username: &str,
         password: &str,
@@ -65,7 +66,7 @@ impl JellyfinIdp for JellyfinHttp {
         let body = serde_json::json!({ "Username": username, "Pw": password });
         let response = self
             .http
-            .post(format!("{base_url}/Users/AuthenticateByName"))
+            .post(endpoint(&base_url, &["Users", "AuthenticateByName"]))
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(
@@ -118,7 +119,10 @@ impl JellyfinIdp for JellyfinHttp {
             ));
         }
         Ok(JellyfinProfile {
-            avatar_url: avatar_url(&base_url, &result.user),
+            avatar_url: result
+                .user
+                .has_avatar()
+                .then(|| avatar_url(&base_url, &result.user.id)),
             username: result
                 .user
                 .name
@@ -129,6 +133,11 @@ impl JellyfinIdp for JellyfinHttp {
             access_token: result.access_token,
         })
     }
+}
+
+/// The primary image of user `id` on the server at `base`.
+fn avatar_url(base: &Url, id: &str) -> String {
+    endpoint(base, &["Users", id, "Images", "Primary"]).into()
 }
 
 impl UserDirectory for JellyfinHttp {
@@ -142,14 +151,17 @@ impl UserDirectory for JellyfinHttp {
                 tracing::warn!(%error, "cannot read jellyfin settings for user import");
                 DirectoryError::NotConfigured
             })?;
-            let base_url = section.jellyfin_url.trim_end_matches('/');
             let api_key = section.api_key.expose();
-            if !section.enabled || base_url.is_empty() || api_key.is_empty() {
+            if !section.enabled || section.jellyfin_url.trim().is_empty() || api_key.is_empty() {
                 return Err(DirectoryError::NotConfigured);
             }
+            let Some(base_url) = web_address(&section.jellyfin_url) else {
+                tracing::warn!("the saved Jellyfin address is not a web address");
+                return Err(DirectoryError::NotConfigured);
+            };
             let response = self
                 .http
-                .get(format!("{base_url}/Users"))
+                .get(endpoint(&base_url, &["Users"]))
                 .header(reqwest::header::ACCEPT, "application/json")
                 .header(
                     reqwest::header::AUTHORIZATION,
@@ -179,7 +191,7 @@ impl UserDirectory for JellyfinHttp {
                 .map(|user| DirectoryUser {
                     // GET /Users may omit the avatar flags, so the picker
                     // always gets the URL and falls back on a 404 (v2).
-                    avatar_url: Some(format!("{base_url}/Users/{}/Images/Primary", user.id)),
+                    avatar_url: Some(avatar_url(&base_url, &user.id)),
                     display_name: user.name.unwrap_or_else(|| "Unknown".to_owned()),
                     provider_uid: user.id,
                     email: None,

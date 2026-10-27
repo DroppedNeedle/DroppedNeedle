@@ -11,10 +11,7 @@ use std::sync::atomic::Ordering;
 
 use axum::http::StatusCode;
 use droppedneedle_auth::compat_auth::subsonic::md5_hex;
-use droppedneedle_auth::federated::oidc::OidcStateStore as _;
-use droppedneedle_auth::federated::users::{
-    FederatedProfile, FederatedUserStore as _, find_or_create_federated_user,
-};
+use droppedneedle_auth::federated::users::{FederatedProfile, find_or_create_federated_user};
 use droppedneedle_auth::prod::{
     OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, Passwords, StoredPassword, Verdict, to_iso,
 };

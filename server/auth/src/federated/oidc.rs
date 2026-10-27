@@ -18,17 +18,16 @@ use base64::{
 };
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use droppedneedle_kernel::clock::Clock;
 
 use super::jwt::{IdTokenError, IdTokenRules, verify_id_token};
-use super::oidc_models::Jwk;
-use super::users::{
-    FederatedProfile, FederatedUserStore, PROVIDER_OIDC, StoredUser, find_or_create_federated_user,
-};
+use super::oidc_http::OidcHttp;
+use super::users::{FederatedProfile, PROVIDER_OIDC, StoredUser, find_or_create_federated_user};
 use super::{FederatedError, json_string};
-use crate::sqlite::Sessions;
+use crate::sqlite::{FederatedUsers, OidcStates, Sessions};
 
 /// Discovery document path appended to the issuer.
 pub const DISCOVERY_SUFFIX: &str = "/.well-known/openid-configuration";
@@ -147,100 +146,99 @@ pub struct OidcClaims {
     pub thumb: Option<String>,
 }
 
-/// Network edge for OIDC. Production adapter rules (v2 parity where v2
-/// had the step): discovery with a 10s timeout, cached per issuer (non-200
-/// is `ProviderUnavailable`, a document missing an endpoint or `jwks_uri`
-/// is `NotConfigured`); token POST with a 15s timeout (transport failure
-/// is `ProviderUnavailable`, non-2xx is `Authentication("OIDC token
-/// exchange failed")`, bad JSON is `ProviderUnavailable`); signing keys
-/// cached per `jwks_uri` and refetched when `refresh` is set; userinfo
-/// answers `None` on any failure so the verified `id_token` claims stand.
-pub trait OidcIdp: Clone + Send + Sync + 'static {
-    /// Fetch (and cache) the discovery document for `issuer`.
-    fn discover(
-        &self,
-        issuer: &str,
-    ) -> impl Future<Output = Result<DiscoveryDoc, FederatedError>> + Send;
+/// One stored exchange code: owning user, raw session token, expiry in
+/// unix milliseconds.
+type StoredExchange = (String, String, i64);
 
-    /// Exchange an authorization code for tokens.
-    fn exchange_code(
-        &self,
-        request: &TokenRequest,
-    ) -> impl Future<Output = Result<OidcTokens, FederatedError>> + Send;
+/// Insert count past which storing a code also sweeps expired ones.
+const EXCHANGE_PURGE_THRESHOLD: usize = 1024;
 
-    /// The provider's published signing keys. `refresh` bypasses the cache
-    /// (used once when a token names a key the cached set lacks).
-    fn signing_keys(
-        &self,
-        jwks_uri: &str,
-        refresh: bool,
-    ) -> impl Future<Output = Result<Vec<Jwk>, FederatedError>> + Send;
-
-    /// Userinfo claims, or `None` when the endpoint fails.
-    fn userinfo(
-        &self,
-        userinfo_endpoint: &str,
-        access_token: &str,
-    ) -> impl Future<Output = Option<RawClaims>> + Send;
+/// Single-use exchange codes bridging the callback and the SPA, held in
+/// process. There is no table for these 60-second codes: a restart drops
+/// in-flight logins and the SPA restarts the flow cleanly.
+///
+/// Inserts past [`EXCHANGE_PURGE_THRESHOLD`] entries sweep expired codes so
+/// abandoned logins cannot grow the map without bound.
+#[derive(Clone)]
+pub struct OidcExchangeCodes {
+    codes: Arc<Mutex<HashMap<String, StoredExchange>>>,
+    clock: Arc<dyn Clock>,
 }
 
-/// Short-lived PKCE state rows (`auth_oidc_states` in production).
-pub trait OidcStateStore: Clone + Send + Sync + 'static {
-    /// Persist `state` with its verifier for [`STATE_TTL_SECS`].
-    fn store_state(
-        &self,
-        state: &str,
-        code_verifier: &str,
-    ) -> impl Future<Output = Result<(), FederatedError>> + Send;
-
-    /// Take and delete `state`; `None` means unknown or expired.
-    fn consume_state(
-        &self,
-        state: &str,
-    ) -> impl Future<Output = Result<Option<String>, FederatedError>> + Send;
+impl std::fmt::Debug for OidcExchangeCodes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcExchangeCodes").finish_non_exhaustive()
+    }
 }
 
-/// Single-use exchange codes bridging the callback and the SPA.
-pub trait OidcExchangeStore: Clone + Send + Sync + 'static {
-    /// Persist an exchange code for [`EXCHANGE_TTL_SECS`].
-    fn store_exchange(
-        &self,
-        code: &str,
-        user_id: &str,
-        raw_token: &str,
-    ) -> impl Future<Output = Result<(), FederatedError>> + Send;
+impl OidcExchangeCodes {
+    /// No codes yet; they expire by `clock`.
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            codes: Arc::default(),
+            clock,
+        }
+    }
+
+    /// Keep an exchange code for [`EXCHANGE_TTL_SECS`].
+    pub fn store(&self, code: &str, user_id: &str, raw_token: &str) -> Result<(), FederatedError> {
+        let now = self.clock.now_ms();
+        let expires =
+            now.saturating_add(i64::try_from(EXCHANGE_TTL_SECS * 1000).unwrap_or(i64::MAX));
+        let mut codes = self
+            .codes
+            .lock()
+            .map_err(|_| FederatedError::StoreUnavailable("exchange store lock".to_owned()))?;
+        codes.insert(
+            code.to_owned(),
+            (user_id.to_owned(), raw_token.to_owned(), expires),
+        );
+        if codes.len() > EXCHANGE_PURGE_THRESHOLD {
+            codes.retain(|_, (_, _, expires)| *expires > now);
+        }
+        Ok(())
+    }
 
     /// Take and delete an exchange code; `None` means unknown or expired.
-    fn take_exchange(
-        &self,
-        code: &str,
-    ) -> impl Future<Output = Result<Option<(String, String)>, FederatedError>> + Send;
+    pub fn take(&self, code: &str) -> Result<Option<(String, String)>, FederatedError> {
+        let mut codes = self
+            .codes
+            .lock()
+            .map_err(|_| FederatedError::StoreUnavailable("exchange store lock".to_owned()))?;
+        let Some((user_id, raw_token, expires)) = codes.remove(code) else {
+            return Ok(None);
+        };
+        if self.clock.now_ms() > expires {
+            return Ok(None);
+        }
+        Ok(Some((user_id, raw_token)))
+    }
 }
 
-/// OIDC login service. Generic over stores so tests inject fakes.
+/// The OIDC login service.
 #[derive(Clone)]
-pub struct OidcLogin<S, I, T, E> {
-    users: S,
-    idp: I,
-    states: T,
-    exchanges: E,
+pub struct OidcLogin {
+    users: FederatedUsers,
+    idp: OidcHttp,
+    states: OidcStates,
+    exchanges: OidcExchangeCodes,
     sessions: Sessions,
     clock: Arc<dyn Clock>,
 }
 
-impl<S, I, T, E> std::fmt::Debug for OidcLogin<S, I, T, E> {
+impl std::fmt::Debug for OidcLogin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OidcLogin").finish_non_exhaustive()
     }
 }
 
-impl<S, I, T, E> OidcLogin<S, I, T, E> {
-    /// Wire the service from its ports; `clock` dates the id token checks.
+impl OidcLogin {
+    /// Build the service; `clock` dates the id token checks and expires
+    /// the exchange codes.
     pub fn new(
-        users: S,
-        idp: I,
-        states: T,
-        exchanges: E,
+        users: FederatedUsers,
+        idp: OidcHttp,
+        states: OidcStates,
         sessions: Sessions,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -248,20 +246,12 @@ impl<S, I, T, E> OidcLogin<S, I, T, E> {
             users,
             idp,
             states,
-            exchanges,
+            exchanges: OidcExchangeCodes::new(clock.clone()),
             sessions,
             clock,
         }
     }
-}
 
-impl<S, I, T, E> OidcLogin<S, I, T, E>
-where
-    S: FederatedUserStore,
-    I: OidcIdp,
-    T: OidcStateStore,
-    E: OidcExchangeStore,
-{
     /// Start a login: discover, mint PKCE + state, return the browser URL.
     /// The nonce is derived from the verifier, so the state row holds
     /// everything the callback needs.
@@ -335,9 +325,7 @@ where
         .await?;
         let raw_token = self.sessions.issue_session(&user.id, user_agent).await?;
         let exchange_code = generate_state()?;
-        self.exchanges
-            .store_exchange(&exchange_code, &user.id, &raw_token)
-            .await?;
+        self.exchanges.store(&exchange_code, &user.id, &raw_token)?;
         Ok(exchange_code)
     }
 
@@ -386,13 +374,9 @@ where
         &self,
         exchange_code: &str,
     ) -> Result<(StoredUser, String), FederatedError> {
-        let (user_id, raw_token) = self
-            .exchanges
-            .take_exchange(exchange_code)
-            .await?
-            .ok_or_else(|| {
-                FederatedError::Authentication("Invalid or expired exchange code".to_owned())
-            })?;
+        let (user_id, raw_token) = self.exchanges.take(exchange_code)?.ok_or_else(|| {
+            FederatedError::Authentication("Invalid or expired exchange code".to_owned())
+        })?;
         let user = self
             .users
             .get_user_by_id(&user_id)
@@ -635,5 +619,17 @@ mod tests {
         let state = generate_state().unwrap();
         assert_eq!(state.len(), 44);
         assert!(state.ends_with('='));
+    }
+
+    #[test]
+    fn exchange_inserts_past_threshold_keep_every_code() {
+        let codes = OidcExchangeCodes::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
+        for n in 0..EXCHANGE_PURGE_THRESHOLD + 50 {
+            codes.store(&format!("code-{n}"), "user-1", "raw").unwrap();
+        }
+        for n in 0..EXCHANGE_PURGE_THRESHOLD + 50 {
+            let taken = codes.take(&format!("code-{n}")).unwrap();
+            assert_eq!(taken, Some(("user-1".to_owned(), "raw".to_owned())));
+        }
     }
 }

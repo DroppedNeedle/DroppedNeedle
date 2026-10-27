@@ -1,22 +1,25 @@
 //! The live plex.tv client for the PIN sign-in and the admin user import.
 //!
-//! Account calls go to plex.tv with the user's own token; the machine id
-//! comes from the admin's configured server, read through
-//! [`PlexServerIdentity`]. Settings are read per call.
-//! Tokens never reach a log line; transport errors are logged without
-//! their URL.
+//! Calls go to the plex.tv root the server's outbound addresses give, with
+//! the user's own token for account calls; the machine id comes from the
+//! admin's configured server, read through [`PlexServerIdentity`].
+//! Settings are read per call. Transport failures surface as
+//! [`FederatedError::ProviderUnavailable`]; the journey maps them to the
+//! v2 user-facing messages at each step. Tokens never reach a log line;
+//! transport errors are logged without their URL.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use reqwest::Url;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 
-use super::FederatedError;
-use super::plex::{PRODUCT, PlexAccount, PlexPin, PlexPinClient, PlexServerIdentity};
+use super::plex::{PRODUCT, PlexAccount, PlexPin, PlexServerIdentity};
 use super::plex_models::{AccountListWire, AccountWire, PinPollWire, PinWire};
 use super::settings::{InstallIds, SignInSettings};
 use super::users::PROVIDER_PLEX;
+use super::{FederatedError, endpoint, web_address};
 use crate::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 use droppedneedle_kernel::runtime_config::secret_sections::PlexConnection;
@@ -30,14 +33,16 @@ const POLL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Largest answer read from plex.tv.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// Live [`PlexPinClient`] and Plex [`UserDirectory`].
+/// The plex.tv client for the PIN sign-in, and the Plex [`UserDirectory`].
 #[derive(Clone)]
 pub struct PlexTv {
     http: reqwest::Client,
     sign_in: SignInSettings,
     connection: Live<PlexConnection>,
     ids: InstallIds,
-    base: String,
+    /// `None` when the root given was not a web address: every call then
+    /// fails as plex.tv being unreachable.
+    base: Option<Url>,
     server: Arc<dyn PlexServerIdentity>,
 }
 
@@ -50,14 +55,28 @@ impl PlexTv {
         base: &str,
         server: Arc<dyn PlexServerIdentity>,
     ) -> Self {
+        let base = web_address(base);
+        if base.is_none() {
+            tracing::error!("the plex.tv address is not a web address; Plex sign-in is off");
+        }
         Self {
             sign_in: SignInSettings::new(&store),
             connection: store.live(),
             ids: InstallIds::new(store),
             http,
-            base: base.trim_end_matches('/').to_owned(),
+            base,
             server,
         }
+    }
+
+    /// `segments` under the plex.tv root.
+    fn url(&self, segments: &[&str]) -> Result<Url, FederatedError> {
+        self.base
+            .as_ref()
+            .map(|base| endpoint(base, segments))
+            .ok_or_else(|| {
+                FederatedError::ProviderUnavailable("Could not reach plex.tv".to_owned())
+            })
     }
 
     /// Headers for one plex.tv call, with an account token when given.
@@ -77,16 +96,17 @@ impl PlexTv {
         headers
     }
 
-    /// One account-scoped GET; JSON body on 200.
+    /// One account-scoped GET of a fixed `path`; JSON body on 200.
     async fn get_json(
         &self,
         path: &str,
         token: &str,
         query: &[(&str, &str)],
     ) -> Result<serde_json::Value, FederatedError> {
+        let segments: Vec<&str> = path.split('/').collect();
         let response = self
             .http
-            .get(format!("{}{path}", self.base))
+            .get(self.url(&segments)?)
             .query(query)
             .headers(self.headers(Some(token)))
             .timeout(TIMEOUT)
@@ -167,19 +187,22 @@ fn is_server(device: &Resource) -> bool {
         .is_some_and(|provides| provides.contains("server"))
 }
 
-impl PlexPinClient for PlexTv {
-    fn client_id(&self) -> String {
+impl PlexTv {
+    /// Stable install id (`plex_client_id` setting).
+    pub fn client_id(&self) -> String {
         self.ids.plex_client_id()
     }
 
-    fn login_enabled(&self) -> bool {
+    /// The admin's Plex login switch, read live.
+    pub fn login_enabled(&self) -> bool {
         self.sign_in.plex_login_enabled()
     }
 
-    async fn create_pin(&self) -> Result<PlexPin, FederatedError> {
+    /// Mint a PIN.
+    pub async fn create_pin(&self) -> Result<PlexPin, FederatedError> {
         let response = self
             .http
-            .post(format!("{}/pins", self.base))
+            .post(self.url(&["pins"])?)
             .headers(self.headers(None))
             .header(
                 reqwest::header::CONTENT_TYPE,
@@ -209,10 +232,12 @@ impl PlexPinClient for PlexTv {
         })
     }
 
-    async fn poll_pin(&self, pin_id: i64) -> Result<Option<String>, FederatedError> {
+    /// Poll a PIN: `Ok(None)` while pending, `Ok(Some(token))` once the
+    /// user authorizes.
+    pub async fn poll_pin(&self, pin_id: i64) -> Result<Option<String>, FederatedError> {
         let response = self
             .http
-            .get(format!("{}/pins/{pin_id}", self.base))
+            .get(self.url(&["pins", &pin_id.to_string()])?)
             .headers(self.headers(None))
             .timeout(POLL_TIMEOUT)
             .send()
@@ -231,7 +256,8 @@ impl PlexPinClient for PlexTv {
         Ok(poll.auth_token.filter(|token| !token.is_empty()))
     }
 
-    async fn account_profile(&self, auth_token: &str) -> Result<PlexAccount, FederatedError> {
+    /// Fetch the account profile behind an auth token.
+    pub async fn account_profile(&self, auth_token: &str) -> Result<PlexAccount, FederatedError> {
         let value = self.get_json("/user", auth_token, &[]).await?;
         let account: AccountWire = serde_json::from_value(value).map_err(|_| {
             FederatedError::ProviderUnavailable("Plex /user response missing uuid".to_owned())
@@ -250,11 +276,18 @@ impl PlexPinClient for PlexTv {
         })
     }
 
-    async fn server_machine_id(&self) -> Result<Option<String>, FederatedError> {
+    /// The configured server's machine id. `Ok(None)` only when no Plex
+    /// server URL is set; a configured server that cannot be read is an
+    /// error, so the membership gate never fails open.
+    pub async fn server_machine_id(&self) -> Result<Option<String>, FederatedError> {
         self.server.machine_id().await
     }
 
-    async fn account_server_ids(&self, auth_token: &str) -> Result<Vec<String>, FederatedError> {
+    /// Machine ids of servers this account can access.
+    pub async fn account_server_ids(
+        &self,
+        auth_token: &str,
+    ) -> Result<Vec<String>, FederatedError> {
         Ok(self
             .resources(auth_token)
             .await?
@@ -264,7 +297,8 @@ impl PlexPinClient for PlexTv {
             .collect())
     }
 
-    async fn server_access_token(
+    /// Server-scoped token for this account; `None` when unresolvable.
+    pub async fn server_access_token(
         &self,
         auth_token: &str,
         machine_id: &str,

@@ -4,7 +4,7 @@ use rusqlite::OptionalExtension as _;
 
 use super::{AuthDb, op_error, store_unavailable};
 use crate::federated::FederatedError;
-use crate::federated::oidc::{OidcStateStore, STATE_TTL_SECS};
+use crate::federated::oidc::STATE_TTL_SECS;
 use crate::times::{parse_iso, to_iso};
 use droppedneedle_kernel::db::Lane;
 
@@ -14,19 +14,22 @@ use droppedneedle_kernel::db::Lane;
 /// transaction that reads it, and expired rows consume as absent. Storing
 /// a state sweeps the expired ones.
 #[derive(Clone, Debug)]
-pub struct SqliteOidcStateStore {
+pub struct OidcStates {
     db: AuthDb,
 }
 
-impl SqliteOidcStateStore {
-    /// Adapter over one handle.
+impl OidcStates {
+    /// The states over one handle.
     pub fn new(db: &AuthDb) -> Self {
         Self { db: db.clone() }
     }
-}
 
-impl OidcStateStore for SqliteOidcStateStore {
-    async fn store_state(&self, state: &str, code_verifier: &str) -> Result<(), FederatedError> {
+    /// Persist `state` with its verifier for [`STATE_TTL_SECS`].
+    pub async fn store_state(
+        &self,
+        state: &str,
+        code_verifier: &str,
+    ) -> Result<(), FederatedError> {
         let lane = self.db.lane();
         let (state, code_verifier) = (state.to_owned(), code_verifier.to_owned());
         let now = self.db.now_unix();
@@ -55,7 +58,8 @@ impl OidcStateStore for SqliteOidcStateStore {
         .map_err(store_unavailable)
     }
 
-    async fn consume_state(&self, state: &str) -> Result<Option<String>, FederatedError> {
+    /// Take and delete `state`; `None` means unknown or expired.
+    pub async fn consume_state(&self, state: &str) -> Result<Option<String>, FederatedError> {
         let lane = self.db.lane();
         let state = state.to_owned();
         let now = self.db.now_unix();

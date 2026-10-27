@@ -6,12 +6,12 @@
 //! email is always `None` (the endpoint exposes none), and the auto-link is
 //! best-effort: it never fails the login.
 
+use super::jellyfin_http::JellyfinHttp;
 use super::users::{
-    FederatedProfile, FederatedUserStore, PROVIDER_JELLYFIN, StoredUser,
-    find_or_create_federated_user,
+    FederatedProfile, PROVIDER_JELLYFIN, StoredUser, find_or_create_federated_user,
 };
-use super::{FederatedError, json_string};
-use crate::sqlite::Sessions;
+use super::{FederatedError, MediaLinks, json_string};
+use crate::sqlite::{FederatedUsers, Sessions};
 
 /// Product token in the outbound auth header.
 pub const PRODUCT: &str = "DroppedNeedle";
@@ -31,52 +31,30 @@ pub struct JellyfinProfile {
     pub avatar_url: Option<String>,
 }
 
-/// Network edge for Jellyfin credential checks. Production adapter rules
-/// (v2 parity): POST `{base}/Users/AuthenticateByName` with
-/// [`emby_auth_header`] and `{"Username","Pw"}`; timeouts and connect
-/// failures are `ProviderUnavailable`; 401 is
-/// `Authentication("Invalid Jellyfin username or password")`; 403 is
-/// `Authentication("This Jellyfin account does not have access")`; any
-/// other non-2xx is `ProviderUnavailable`; bad JSON is
-/// `ProviderUnavailable("Jellyfin returned an unexpected response")`;
-/// missing user id or token is `ProviderUnavailable("Jellyfin returned
-/// incomplete auth data")`.
-pub trait JellyfinIdp: Clone + Send + Sync + 'static {
-    /// False when no Jellyfin server is configured.
-    fn is_configured(&self) -> bool;
-
-    /// Check credentials; no DroppedNeedle side effects.
-    fn authenticate_by_name(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> impl Future<Output = Result<JellyfinProfile, FederatedError>> + Send;
-}
-
-/// Stores a user's Jellyfin media link (the per-user connection used for
-/// playback). The login treats a failure as a warning: a failed link must
-/// never fail the sign-in.
-pub trait JellyfinConnectionLink: Clone + Send + Sync + 'static {
-    /// Store the fresh user-scoped token for later playback.
-    fn link(
-        &self,
-        user_id: &str,
-        profile: &JellyfinProfile,
-    ) -> impl Future<Output = Result<(), String>> + Send;
-}
-
-/// Jellyfin login service. Generic over stores so tests inject fakes.
-#[derive(Debug, Clone)]
-pub struct JellyfinLogin<S, I, L> {
-    users: S,
-    idp: I,
-    links: L,
+/// The Jellyfin login service.
+#[derive(Clone)]
+pub struct JellyfinLogin {
+    users: FederatedUsers,
+    idp: JellyfinHttp,
+    links: MediaLinks,
     sessions: Sessions,
 }
 
-impl<S, I, L> JellyfinLogin<S, I, L> {
-    /// Wire the service from its ports.
-    pub fn new(users: S, idp: I, links: L, sessions: Sessions) -> Self {
+impl std::fmt::Debug for JellyfinLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JellyfinLogin").finish_non_exhaustive()
+    }
+}
+
+impl JellyfinLogin {
+    /// Build the service over the Jellyfin client and the media links a
+    /// sign-in saves.
+    pub fn new(
+        users: FederatedUsers,
+        idp: JellyfinHttp,
+        links: MediaLinks,
+        sessions: Sessions,
+    ) -> Self {
         Self {
             users,
             idp,
@@ -84,14 +62,7 @@ impl<S, I, L> JellyfinLogin<S, I, L> {
             sessions,
         }
     }
-}
 
-impl<S, I, L> JellyfinLogin<S, I, L>
-where
-    S: FederatedUserStore,
-    I: JellyfinIdp,
-    L: JellyfinConnectionLink,
-{
     /// Check credentials, import the user, auto-link the connection, and
     /// mint a session.
     pub async fn login(
@@ -100,7 +71,7 @@ where
         password: &str,
         user_agent: Option<&str>,
     ) -> Result<(StoredUser, String), FederatedError> {
-        let profile = self.authenticate_credentials(username, password).await?;
+        let profile = self.idp.authenticate_by_name(username, password).await?;
         let user = find_or_create_federated_user(
             &self.users,
             PROVIDER_JELLYFIN,
@@ -114,25 +85,11 @@ where
             },
         )
         .await?;
-        if let Err(error) = self.links.link(&user.id, &profile).await {
+        if let Err(error) = self.links.link_jellyfin(&user.id, &profile).await {
             tracing::warn!(%error, "could not link the signed-in Jellyfin account; the user can link it by hand");
         }
         let raw_token = self.sessions.issue_session(&user.id, user_agent).await?;
         Ok((user, raw_token))
-    }
-
-    /// Check credentials with no DroppedNeedle side effects.
-    async fn authenticate_credentials(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<JellyfinProfile, FederatedError> {
-        if !self.idp.is_configured() {
-            return Err(FederatedError::Authentication(
-                "Jellyfin is not configured on this server".to_owned(),
-            ));
-        }
-        self.idp.authenticate_by_name(username, password).await
     }
 }
 

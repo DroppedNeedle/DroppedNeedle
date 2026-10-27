@@ -32,12 +32,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::users::{
-    FederatedProfile, FederatedUserStore, PROVIDER_PLEX, StoredUser, find_or_create_federated_user,
-};
-use super::{FederatedError, json_string};
+use super::plex_http::PlexTv;
+use super::users::{FederatedProfile, PROVIDER_PLEX, StoredUser, find_or_create_federated_user};
+use super::{FederatedError, MediaLinks, json_string};
 use crate::session::tokens::{constant_time_eq, hash_token, mint_token};
-use crate::sqlite::Sessions;
+use crate::sqlite::{FederatedUsers, Sessions};
 use crate::users::stores::BoxFuture;
 
 /// Product token in the `app.plex.tv` URL.
@@ -89,74 +88,14 @@ pub struct PlexProfile {
     pub server_access_token: String,
 }
 
-/// Network edge for the Plex PIN flow. The production adapter speaks to
-/// `plex.tv` (PIN create/poll, account profile, resources) and to the
-/// configured server (machine identifier). Transport failures surface as
-/// [`FederatedError::ProviderUnavailable`]; the journey maps them to the
-/// v2 user-facing messages at each step.
-pub trait PlexPinClient: Clone + Send + Sync + 'static {
-    /// Stable install id (`plex_client_id` setting).
-    fn client_id(&self) -> String;
-
-    /// The admin's Plex login switch, read live.
-    fn login_enabled(&self) -> bool;
-
-    /// Mint a PIN.
-    fn create_pin(&self) -> impl Future<Output = Result<PlexPin, FederatedError>> + Send;
-
-    /// Poll a PIN: `Ok(None)` while pending, `Ok(Some(token))` once the
-    /// user authorizes.
-    fn poll_pin(
-        &self,
-        pin_id: i64,
-    ) -> impl Future<Output = Result<Option<String>, FederatedError>> + Send;
-
-    /// Fetch the account profile behind an auth token.
-    fn account_profile(
-        &self,
-        auth_token: &str,
-    ) -> impl Future<Output = Result<PlexAccount, FederatedError>> + Send;
-
-    /// The configured server's machine id. `Ok(None)` only when no Plex
-    /// server URL is set; a configured server that cannot be read is an
-    /// error, so the membership gate never fails open.
-    fn server_machine_id(
-        &self,
-    ) -> impl Future<Output = Result<Option<String>, FederatedError>> + Send;
-
-    /// Machine ids of servers this account can access.
-    fn account_server_ids(
-        &self,
-        auth_token: &str,
-    ) -> impl Future<Output = Result<Vec<String>, FederatedError>> + Send;
-
-    /// Server-scoped token for this account; `None` when unresolvable.
-    fn server_access_token(
-        &self,
-        auth_token: &str,
-        machine_id: &str,
-    ) -> impl Future<Output = Result<Option<String>, FederatedError>> + Send;
-}
-
-/// Reads the admin's configured Plex server's machine id. A port so auth
-/// need not reach into the media-server adapters for it.
+/// Reads the admin's configured Plex server's machine id. A trait because
+/// it cuts a crate dependency: the media-server adapters live in the media
+/// crate, above auth.
 pub trait PlexServerIdentity: Send + Sync {
     /// `Ok(None)` only when no Plex server URL is saved; a configured
     /// server that cannot be read is an error, so the membership gate
     /// never fails open.
     fn machine_id(&self) -> BoxFuture<'_, Result<Option<String>, FederatedError>>;
-}
-
-/// Stores a user's Plex media link (the per-user connection used for
-/// playback). The login flow treats a failure as a warning; the link flow,
-/// where linking is the whole point, fails the request.
-pub trait PlexConnectionLink: Clone + Send + Sync + 'static {
-    /// Store the fresh user-scoped tokens for later playback.
-    fn link(
-        &self,
-        user_id: &str,
-        profile: &PlexProfile,
-    ) -> impl Future<Output = Result<(), String>> + Send;
 }
 
 /// Poll outcome: still pending, or finished with a value.
@@ -298,19 +237,31 @@ impl PendingPins {
     }
 }
 
-/// The unified journey. Generic over stores so tests inject fakes.
-#[derive(Debug, Clone)]
-pub struct PlexJourney<S, C, L> {
-    users: S,
-    client: C,
-    links: L,
+/// The unified journey.
+#[derive(Clone)]
+pub struct PlexJourney {
+    users: FederatedUsers,
+    client: PlexTv,
+    links: MediaLinks,
     sessions: Sessions,
     pins: PendingPins,
 }
 
-impl<S, C, L> PlexJourney<S, C, L> {
-    /// Wire the journey from its ports.
-    pub fn new(users: S, client: C, links: L, sessions: Sessions) -> Self {
+impl std::fmt::Debug for PlexJourney {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlexJourney").finish_non_exhaustive()
+    }
+}
+
+impl PlexJourney {
+    /// Build the journey over the plex.tv client and the media links a
+    /// sign-in saves.
+    pub fn new(
+        users: FederatedUsers,
+        client: PlexTv,
+        links: MediaLinks,
+        sessions: Sessions,
+    ) -> Self {
         Self {
             users,
             client,
@@ -319,14 +270,7 @@ impl<S, C, L> PlexJourney<S, C, L> {
             pins: PendingPins::default(),
         }
     }
-}
 
-impl<S, C, L> PlexJourney<S, C, L>
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-{
     /// Start a flow: check who may start it, mint a PIN, and bind it to
     /// the caller with a fresh secret. `caller` is the signed-in user for
     /// link and connect (the routes require a session for those). A
@@ -432,7 +376,7 @@ where
         )
         .await?;
         // v2 parity: a failed auto-link never fails the sign-in.
-        if let Err(error) = self.links.link(&user.id, &profile).await {
+        if let Err(error) = self.links.link_plex(&user.id, &profile).await {
             tracing::warn!(%error, "could not link the signed-in Plex account; the user can link it by hand");
         }
         let raw_token = self.sessions.issue_session(&user.id, user_agent).await?;
@@ -452,7 +396,7 @@ where
         };
         let profile = self.verified_profile(&auth_token, true).await?;
         self.links
-            .link(user_id, &profile)
+            .link_plex(user_id, &profile)
             .await
             .map_err(FederatedError::StoreUnavailable)?;
         Ok(PlexPoll::Complete(profile))

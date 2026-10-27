@@ -6,7 +6,10 @@
 
 use std::sync::Arc;
 
+use reqwest::Url;
+
 use super::oidc::OidcConfig;
+use super::web_address;
 use droppedneedle_kernel::db::DurableLane;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, OidcConnection, PlexConnection,
@@ -72,14 +75,22 @@ impl SignInSettings {
         }
     }
 
-    /// The Jellyfin base URL when Jellyfin login is on and the server is
-    /// set up, else `None`.
+    /// The Jellyfin server's address when Jellyfin login is on and the
+    /// server is set up with a web address, else `None`.
     #[must_use]
-    pub fn jellyfin_login_server(&self) -> Option<String> {
+    pub fn jellyfin_login_server(&self) -> Option<Url> {
         match self.jellyfin.get() {
             Ok(section) if section.enabled && section.login_enabled => {
-                let url = section.jellyfin_url.trim_end_matches('/');
-                (!url.is_empty()).then(|| url.to_owned())
+                if section.jellyfin_url.trim().is_empty() {
+                    return None;
+                }
+                let url = web_address(&section.jellyfin_url);
+                if url.is_none() {
+                    tracing::warn!(
+                        "the saved Jellyfin address is not a web address; jellyfin login is off"
+                    );
+                }
+                url
             }
             Ok(_) => None,
             Err(error) => {

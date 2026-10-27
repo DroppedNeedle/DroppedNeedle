@@ -16,6 +16,7 @@
 //! leave an account the next sign-in would not find.
 
 use super::FederatedError;
+use crate::sqlite::FederatedUsers;
 
 /// New-user role when the instance already has users.
 pub const ROLE_USER: &str = "user";
@@ -101,69 +102,14 @@ pub struct FederatedProfile {
     pub email_verified: bool,
     /// Avatar URL from the provider.
     pub avatar_url: Option<String>,
-    /// Plaintext token JSON, e.g. `{"access_token":"..."}`. The production
-    /// store must seal this with the deployment key before persisting it
-    /// as `provider_data`; fakes keep it in memory only.
+    /// Plaintext token JSON, e.g. `{"access_token":"..."}`. The store seals
+    /// it with the deployment key before persisting it as `provider_data`.
     pub token_json: String,
 }
 
-/// Persistence port for federated user import. The production adapter is
-/// the auth tables adapter; id generation is adapter-owned.
-pub trait FederatedUserStore: Clone + Send + Sync + 'static {
-    /// Look up a provider binding by `(provider, provider_uid)`.
-    fn get_provider(
-        &self,
-        provider: &str,
-        provider_uid: &str,
-    ) -> impl Future<Output = Result<Option<ProviderBinding>, FederatedError>> + Send;
-
-    /// Look up a user by id.
-    fn get_user_by_id(
-        &self,
-        user_id: &str,
-    ) -> impl Future<Output = Result<Option<StoredUser>, FederatedError>> + Send;
-
-    /// Look up a user by lowercased email.
-    fn get_user_by_email(
-        &self,
-        email: &str,
-    ) -> impl Future<Output = Result<Option<StoredUser>, FederatedError>> + Send;
-
-    /// Look up a user by lowercased username (drives derivation).
-    fn get_user_by_username(
-        &self,
-        username: &str,
-    ) -> impl Future<Output = Result<Option<StoredUser>, FederatedError>> + Send;
-
-    /// Insert a user and its provider binding in one transaction, making
-    /// the user admin when no user exists yet. Maps a uniqueness race (the
-    /// username, or the same provider account signing in twice at once) to
-    /// [`FederatedError::UsernameTaken`] so the caller looks again.
-    fn create_user(
-        &self,
-        user: NewFederatedUser,
-    ) -> impl Future<Output = Result<StoredUser, FederatedError>> + Send;
-
-    /// Insert a `(provider, provider_uid)` binding with sealed tokens.
-    fn create_provider(
-        &self,
-        user_id: &str,
-        provider: &str,
-        provider_uid: &str,
-        token_json: &str,
-    ) -> impl Future<Output = Result<ProviderBinding, FederatedError>> + Send;
-
-    /// Replace the sealed tokens on a binding (called on every login).
-    fn update_provider_tokens(
-        &self,
-        binding_id: &str,
-        token_json: &str,
-    ) -> impl Future<Output = Result<(), FederatedError>> + Send;
-}
-
 /// Run the shared import: existing binding, email link, or fresh create.
-pub async fn find_or_create_federated_user<S: FederatedUserStore>(
-    store: &S,
+pub async fn find_or_create_federated_user(
+    store: &FederatedUsers,
     provider: &str,
     profile: &FederatedProfile,
 ) -> Result<StoredUser, FederatedError> {
@@ -250,8 +196,8 @@ pub async fn find_or_create_federated_user<S: FederatedUserStore>(
 /// display-name-only while bulk import passed email-first; v3 runs every
 /// provider through the email-first rule (fresh assignment, no continuity
 /// impact).
-pub async fn derive_username<S: FederatedUserStore>(
-    store: &S,
+pub async fn derive_username(
+    store: &FederatedUsers,
     email: Option<&str>,
     display_name: &str,
 ) -> Result<(String, String), FederatedError> {

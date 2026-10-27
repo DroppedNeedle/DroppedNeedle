@@ -7,17 +7,16 @@
 //! links and the configured Plex server come in through the
 //! [`MediaLinks`] and [`PlexServerIdentity`] ports.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use super::federated::MediaLinks;
 use super::federated::jellyfin_http::JellyfinHttp;
-use super::federated::oidc::{EXCHANGE_TTL_SECS, OidcExchangeStore, OidcLogin};
+use super::federated::oidc::OidcLogin;
 use super::federated::oidc_http::OidcHttp;
 use super::federated::plex::PlexServerIdentity;
 use super::federated::plex_http::PlexTv;
 use super::federated::settings::SignInSettings;
-use super::federated::{FederatedError, MediaLinks};
-use super::prod::{ProdAuth, SqliteFederatedStore, SqliteOidcStateStore};
+use super::prod::ProdAuth;
 use super::routes::federated::{JellyfinRouteState, OidcRouteState, PlexRouteState};
 use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
@@ -27,87 +26,11 @@ use super::users::UsersDeps;
 use super::users::lastfm_http::LastFmAuthHttp;
 use super::users::stores::LastFmSwitch;
 use axum::extract::FromRef;
-use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
-
-/// One stored exchange code: owning user, sealed token, expiry in unix
-/// milliseconds.
-type StoredExchange = (String, String, i64);
-
-/// Process-local single-use OIDC exchange codes. There is no baseline table
-/// for these 60-second bridge codes: a restart drops in-flight logins and
-/// the SPA restarts the flow cleanly, so a mutex map is enough.
-///
-/// Inserts past [`EXCHANGE_PURGE_THRESHOLD`] entries sweep expired codes so
-/// abandoned logins cannot grow the map without bound.
-#[derive(Clone)]
-pub struct MemoryOidcExchangeStore {
-    codes: Arc<Mutex<HashMap<String, StoredExchange>>>,
-    clock: Arc<dyn Clock>,
-}
-
-impl std::fmt::Debug for MemoryOidcExchangeStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoryOidcExchangeStore")
-            .finish_non_exhaustive()
-    }
-}
-
-impl MemoryOidcExchangeStore {
-    /// An empty store whose codes expire by `clock`.
-    pub fn new(clock: Arc<dyn Clock>) -> Self {
-        Self {
-            codes: Arc::default(),
-            clock,
-        }
-    }
-}
-
-/// Insert count past which storing a code also sweeps expired ones.
-const EXCHANGE_PURGE_THRESHOLD: usize = 1024;
-
-impl OidcExchangeStore for MemoryOidcExchangeStore {
-    async fn store_exchange(
-        &self,
-        code: &str,
-        user_id: &str,
-        raw_token: &str,
-    ) -> Result<(), FederatedError> {
-        let now = self.clock.now_ms();
-        let expires =
-            now.saturating_add(i64::try_from(EXCHANGE_TTL_SECS * 1000).unwrap_or(i64::MAX));
-        let mut codes = self
-            .codes
-            .lock()
-            .map_err(|_| FederatedError::StoreUnavailable("exchange store lock".to_owned()))?;
-        codes.insert(
-            code.to_owned(),
-            (user_id.to_owned(), raw_token.to_owned(), expires),
-        );
-        if codes.len() > EXCHANGE_PURGE_THRESHOLD {
-            codes.retain(|_, (_, _, expires)| *expires > now);
-        }
-        Ok(())
-    }
-
-    async fn take_exchange(&self, code: &str) -> Result<Option<(String, String)>, FederatedError> {
-        let mut codes = self
-            .codes
-            .lock()
-            .map_err(|_| FederatedError::StoreUnavailable("exchange store lock".to_owned()))?;
-        let Some((user_id, raw_token, expires)) = codes.remove(code) else {
-            return Ok(None);
-        };
-        if self.clock.now_ms() > expires {
-            return Ok(None);
-        }
-        Ok(Some((user_id, raw_token)))
-    }
-}
 
 /// Where the plex.tv and breach-check clients send their calls.
 /// Production uses the real services; the integration tests point them at
@@ -120,19 +43,6 @@ pub struct Upstreams {
     /// The breach check's range URL, up to the hash prefix.
     pub pwned_passwords: String,
 }
-
-/// Production OIDC route state.
-pub type ProdOidcRoutes = OidcRouteState<
-    SqliteFederatedStore,
-    OidcHttp,
-    SqliteOidcStateStore,
-    MemoryOidcExchangeStore,
-    SignInSettings,
->;
-/// Production Jellyfin route state.
-pub type ProdJellyfinRoutes = JellyfinRouteState<SqliteFederatedStore, JellyfinHttp, MediaLinks>;
-/// Production Plex route state.
-pub type ProdPlexRoutes = PlexRouteState<SqliteFederatedStore, PlexTv, MediaLinks>;
 
 /// Everything `create_app` needs to mount the auth routes and the session
 /// gate, built once at boot.
@@ -147,11 +57,11 @@ pub struct AuthSetup {
     /// Login/logout/setup routes.
     pub native: NativeAuthState,
     /// OIDC routes.
-    pub oidc: ProdOidcRoutes,
+    pub oidc: OidcRouteState,
     /// Jellyfin login route.
-    pub jellyfin: ProdJellyfinRoutes,
+    pub jellyfin: JellyfinRouteState,
     /// Plex journey routes.
-    pub plex: ProdPlexRoutes,
+    pub plex: PlexRouteState,
     /// The sign-in sections, read by the provider list.
     pub sign_in: SignInSettings,
     /// The security section, read by the response security headers.
@@ -249,7 +159,6 @@ impl AuthSetup {
                 auth.federated.clone(),
                 OidcHttp::new(no_redirect),
                 auth.oidc_states.clone(),
-                MemoryOidcExchangeStore::new(clock.clone()),
                 auth.sessions.clone(),
                 clock.clone(),
             ),
@@ -377,41 +286,20 @@ impl FromRef<AuthSetup> for SignInSettings {
     }
 }
 
-impl FromRef<AuthSetup> for ProdOidcRoutes {
+impl FromRef<AuthSetup> for OidcRouteState {
     fn from_ref(setup: &AuthSetup) -> Self {
         setup.oidc.clone()
     }
 }
 
-impl FromRef<AuthSetup> for ProdJellyfinRoutes {
+impl FromRef<AuthSetup> for JellyfinRouteState {
     fn from_ref(setup: &AuthSetup) -> Self {
         setup.jellyfin.clone()
     }
 }
 
-impl FromRef<AuthSetup> for ProdPlexRoutes {
+impl FromRef<AuthSetup> for PlexRouteState {
     fn from_ref(setup: &AuthSetup) -> Self {
         setup.plex.clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn exchange_inserts_past_threshold_keep_every_code() {
-        let store =
-            MemoryOidcExchangeStore::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
-        for n in 0..EXCHANGE_PURGE_THRESHOLD + 50 {
-            store
-                .store_exchange(&format!("code-{n}"), "user-1", "raw")
-                .await
-                .unwrap();
-        }
-        for n in 0..EXCHANGE_PURGE_THRESHOLD + 50 {
-            let taken = store.take_exchange(&format!("code-{n}")).await.unwrap();
-            assert_eq!(taken, Some(("user-1".to_owned(), "raw".to_owned())));
-        }
     }
 }

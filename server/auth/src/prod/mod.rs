@@ -45,8 +45,8 @@ pub use super::passwords::{
     OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, Passwords, StoredPassword, Verdict,
 };
 pub use super::sqlite::{
-    AppPasswords, AuthDb, LastFmLinks, RecoveryCodes, Sessions, SqliteFederatedStore,
-    SqliteOidcStateStore, Users, session_expires_at,
+    AppPasswords, AuthDb, FederatedUsers, LastFmLinks, OidcStates, RecoveryCodes, Sessions, Users,
+    session_expires_at,
 };
 pub use super::times::{parse_iso, to_iso};
 
@@ -67,7 +67,7 @@ pub struct ProdAuth {
     /// `auth_users` / `auth_providers`.
     pub users: Users,
     /// Federated import over `auth_users` / `auth_providers`.
-    pub federated: SqliteFederatedStore,
+    pub federated: FederatedUsers,
     /// Compat secrets over `connect_app_passwords`.
     pub app_passwords: AppPasswords,
     /// Single-active-code rows over `auth_password_recovery_codes`.
@@ -75,7 +75,7 @@ pub struct ProdAuth {
     /// Per-user links over `user_connections`.
     pub lastfm: LastFmLinks,
     /// PKCE states over `auth_oidc_states`.
-    pub oidc_states: SqliteOidcStateStore,
+    pub oidc_states: OidcStates,
     /// Avatar bytes under `<avatar_dir>/avatars/`.
     pub avatars: Avatars,
 }
@@ -91,11 +91,11 @@ impl ProdAuth {
             passwords: Passwords::new(),
             sessions: Sessions::new(&db, ids.clone()),
             users: Users::new(&db),
-            federated: SqliteFederatedStore::new(&db, crypto, ids),
+            federated: FederatedUsers::new(&db, crypto, ids),
             app_passwords: AppPasswords::new(&db),
             recovery: RecoveryCodes::new(&db),
             lastfm: LastFmLinks::new(&db),
-            oidc_states: SqliteOidcStateStore::new(&db),
+            oidc_states: OidcStates::new(&db),
             avatars: Avatars::new(&platform.config.cache_dir),
             db,
         }

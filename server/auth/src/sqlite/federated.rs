@@ -8,7 +8,7 @@ use sqlx::Row as _;
 use super::{AuthDb, USER_COLUMNS, is_write_conflict, op_error, store_unavailable};
 use crate::federated::FederatedError;
 use crate::federated::users::{
-    FederatedUserStore, NewFederatedUser, ProviderBinding, ROLE_ADMIN, ROLE_USER, StoredUser,
+    NewFederatedUser, ProviderBinding, ROLE_ADMIN, ROLE_USER, StoredUser,
 };
 use crate::times::to_iso;
 use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
@@ -20,23 +20,23 @@ use droppedneedle_kernel::runtime_config::crypto::Crypto;
 ///
 /// Every `token_json` is sealed with the deployment key before it reaches
 /// `provider_data`, on both insert and rotation. No read path decrypts: the
-/// port never returns token material.
+/// store never returns token material.
 #[derive(Clone)]
-pub struct SqliteFederatedStore {
+pub struct FederatedUsers {
     db: AuthDb,
     crypto: Arc<Crypto>,
     ids: Arc<dyn IdGenerator>,
 }
 
-impl std::fmt::Debug for SqliteFederatedStore {
+impl std::fmt::Debug for FederatedUsers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SqliteFederatedStore")
+        f.debug_struct("FederatedUsers")
             .field("db", &self.db)
             .finish_non_exhaustive()
     }
 }
 
-impl SqliteFederatedStore {
+impl FederatedUsers {
     /// Adapter over one handle, sealing tokens with `crypto` and minting ids
     /// with `ids`.
     pub fn new(db: &AuthDb, crypto: Arc<Crypto>, ids: Arc<dyn IdGenerator>) -> Self {
@@ -65,8 +65,9 @@ fn map_federated_user(row: &sqlx::sqlite::SqliteRow) -> StoredUser {
     }
 }
 
-impl FederatedUserStore for SqliteFederatedStore {
-    async fn get_provider(
+impl FederatedUsers {
+    /// Look up a provider binding by `(provider, provider_uid)`.
+    pub async fn get_provider(
         &self,
         provider: &str,
         provider_uid: &str,
@@ -89,7 +90,11 @@ impl FederatedUserStore for SqliteFederatedStore {
         }))
     }
 
-    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<StoredUser>, FederatedError> {
+    /// Look up a user by id.
+    pub async fn get_user_by_id(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<StoredUser>, FederatedError> {
         let pool = self.db.pool();
         let row = sqlx::query(&format!(
             "SELECT {USER_COLUMNS} FROM auth_users WHERE id = ?"
@@ -101,7 +106,11 @@ impl FederatedUserStore for SqliteFederatedStore {
         Ok(row.as_ref().map(map_federated_user))
     }
 
-    async fn get_user_by_email(&self, email: &str) -> Result<Option<StoredUser>, FederatedError> {
+    /// Look up a user by lowercased email.
+    pub async fn get_user_by_email(
+        &self,
+        email: &str,
+    ) -> Result<Option<StoredUser>, FederatedError> {
         let pool = self.db.pool();
         let row = sqlx::query(&format!(
             "SELECT {USER_COLUMNS} FROM auth_users WHERE email = ?"
@@ -113,7 +122,8 @@ impl FederatedUserStore for SqliteFederatedStore {
         Ok(row.as_ref().map(map_federated_user))
     }
 
-    async fn get_user_by_username(
+    /// Look up a user by lowercased username (drives derivation).
+    pub async fn get_user_by_username(
         &self,
         username: &str,
     ) -> Result<Option<StoredUser>, FederatedError> {
@@ -128,7 +138,11 @@ impl FederatedUserStore for SqliteFederatedStore {
         Ok(row.as_ref().map(map_federated_user))
     }
 
-    async fn create_user(&self, user: NewFederatedUser) -> Result<StoredUser, FederatedError> {
+    /// Insert a user and its provider binding in one transaction, making
+    /// the user admin when no user exists yet. Maps a uniqueness race (the
+    /// username, or the same provider account signing in twice at once) to
+    /// [`FederatedError::UsernameTaken`] so the caller looks again.
+    pub async fn create_user(&self, user: NewFederatedUser) -> Result<StoredUser, FederatedError> {
         let lane = self.db.lane();
         let id = self.ids.new_id();
         let binding_id = self.ids.new_id();
@@ -196,7 +210,8 @@ impl FederatedUserStore for SqliteFederatedStore {
         }
     }
 
-    async fn create_provider(
+    /// Insert a `(provider, provider_uid)` binding with sealed tokens.
+    pub async fn create_provider(
         &self,
         user_id: &str,
         provider: &str,
@@ -240,7 +255,8 @@ impl FederatedUserStore for SqliteFederatedStore {
         })
     }
 
-    async fn update_provider_tokens(
+    /// Replace the sealed tokens on a binding (called on every login).
+    pub async fn update_provider_tokens(
         &self,
         binding_id: &str,
         token_json: &str,

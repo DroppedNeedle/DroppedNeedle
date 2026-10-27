@@ -1,23 +1,32 @@
 //! The live OIDC client over the factory's no-redirect HTTP client.
 //!
-//! Discovery documents are cached per issuer for a day and signing keys
-//! per `jwks_uri` for an hour (a token naming an unknown key forces one
-//! refetch). Every provider URL passes the transport rule in
-//! [`super::transport`] before it is used, redirects are never followed
-//! (one could downgrade a call to plain http after the check), and bodies
-//! are capped at 1 MiB. Tokens, secrets and codes never reach a log line.
+//! The issuer comes from the OIDC settings on each login; every other
+//! address comes from its discovery document. Discovery documents are
+//! cached per issuer for a day and signing keys per `jwks_uri` for an hour
+//! (a token naming an unknown key forces one refetch). Every provider URL
+//! passes the transport rule in [`super::transport`] before it is used,
+//! redirects are never followed (one could downgrade a call to plain http
+//! after the check), and bodies are capped at 1 MiB. Tokens, secrets and
+//! codes never reach a log line.
+//!
+//! Rules (v2 parity where v2 had the step): discovery with a 10s timeout
+//! (non-200 is `ProviderUnavailable`, a document missing an endpoint or
+//! `jwks_uri`, or naming a browser address that is not http or https, is
+//! `NotConfigured`); token POST with a 15s timeout (transport failure is
+//! `ProviderUnavailable`, non-2xx is `Authentication("OIDC token exchange
+//! failed")`, bad JSON is `ProviderUnavailable`); userinfo answers `None`
+//! on any failure so the verified `id_token` claims stand.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::FederatedError;
 use super::oidc::{
-    DISCOVERY_SUFFIX, DiscoveryDoc, OidcIdp, OidcTokens, RawClaims, TokenRequest, form_encode,
-    raw_claims,
+    DISCOVERY_SUFFIX, DiscoveryDoc, OidcTokens, RawClaims, TokenRequest, form_encode, raw_claims,
 };
 use super::oidc_models::{DiscoveryWire, Jwk, JwksWire, TokenWire};
 use super::transport::check_provider_url;
+use super::{FederatedError, endpoint, web_address};
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Discovery fetch timeout (v2 parity).
@@ -39,7 +48,7 @@ struct Cache {
     keys: HashMap<String, (Instant, Vec<Jwk>)>,
 }
 
-/// Live [`OidcIdp`]. Cheap to clone; clones share the cache.
+/// The OIDC client. Cheap to clone; clones share the cache.
 #[derive(Clone)]
 pub struct OidcHttp {
     http: reqwest::Client,
@@ -118,16 +127,23 @@ fn same_issuer(left: &str, right: &str) -> bool {
     left.trim_end_matches('/') == right.trim_end_matches('/')
 }
 
-impl OidcIdp for OidcHttp {
-    async fn discover(&self, issuer: &str) -> Result<DiscoveryDoc, FederatedError> {
+impl OidcHttp {
+    /// Fetch (and cache) the discovery document for `issuer`.
+    pub async fn discover(&self, issuer: &str) -> Result<DiscoveryDoc, FederatedError> {
         let key = issuer.trim_end_matches('/').to_owned();
         if let Some(doc) = self.cached(|cache| cache.discovery.get(&key), DISCOVERY_TTL) {
             return Ok(doc);
         }
         require_allowed(&key).await?;
+        let Some(base) = web_address(&key) else {
+            return Err(FederatedError::NotConfigured(
+                "OIDC issuer is not a web address".to_owned(),
+            ));
+        };
+        let segments: Vec<&str> = DISCOVERY_SUFFIX.split('/').collect();
         let response = self
             .http
-            .get(format!("{key}{DISCOVERY_SUFFIX}"))
+            .get(endpoint(&base, &segments))
             .header(reqwest::header::ACCEPT, "application/json")
             .timeout(DISCOVERY_TIMEOUT)
             .send()
@@ -141,9 +157,10 @@ impl OidcIdp for OidcHttp {
             ));
         }
         let bytes = read_body(response).await?;
-        let wire: DiscoveryWire = serde_json::from_slice(&bytes).map_err(|_| {
+        let wire: DiscoveryWire = serde_json::from_slice(&bytes).map_err(|error| {
+            tracing::warn!(%error, "OIDC discovery document refused");
             FederatedError::NotConfigured(
-                "OIDC discovery document is missing a required field".to_owned(),
+                "OIDC discovery document is incomplete or names an invalid address".to_owned(),
             )
         })?;
         if !same_issuer(&wire.issuer, issuer) {
@@ -153,7 +170,7 @@ impl OidcIdp for OidcHttp {
         }
         let doc = DiscoveryDoc {
             issuer: wire.issuer,
-            authorization_endpoint: wire.authorization_endpoint,
+            authorization_endpoint: wire.authorization_endpoint.into(),
             token_endpoint: wire.token_endpoint,
             userinfo_endpoint: wire.userinfo_endpoint.filter(|url| !url.is_empty()),
             jwks_uri: wire.jwks_uri,
@@ -179,7 +196,11 @@ impl OidcIdp for OidcHttp {
         Ok(doc)
     }
 
-    async fn exchange_code(&self, request: &TokenRequest) -> Result<OidcTokens, FederatedError> {
+    /// Exchange an authorization code for tokens.
+    pub async fn exchange_code(
+        &self,
+        request: &TokenRequest,
+    ) -> Result<OidcTokens, FederatedError> {
         let mut form = vec![
             ("grant_type", "authorization_code"),
             ("code", request.code.as_str()),
@@ -233,7 +254,9 @@ impl OidcIdp for OidcHttp {
         })
     }
 
-    async fn signing_keys(
+    /// The provider's published signing keys. `refresh` bypasses the cache
+    /// (used once when a token names a key the cached set lacks).
+    pub async fn signing_keys(
         &self,
         jwks_uri: &str,
         refresh: bool,
@@ -269,7 +292,8 @@ impl OidcIdp for OidcHttp {
         Ok(keys)
     }
 
-    async fn userinfo(&self, userinfo_endpoint: &str, access_token: &str) -> Option<RawClaims> {
+    /// Userinfo claims, or `None` when the endpoint fails.
+    pub async fn userinfo(&self, userinfo_endpoint: &str, access_token: &str) -> Option<RawClaims> {
         let response = self
             .http
             .get(userinfo_endpoint)

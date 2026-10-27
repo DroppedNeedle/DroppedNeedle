@@ -7,7 +7,7 @@
 //! - [`users`]: [`Users`], accounts and their local credentials and
 //!   sign-in bindings, over `auth_users` and `auth_providers`, and the
 //!   sign-in lookup;
-//! - [`federated`]: [`SqliteFederatedStore`] over `auth_users` plus the
+//! - [`federated`]: [`FederatedUsers`] over `auth_users` plus the
 //!   federated rows of `auth_providers`;
 //! - [`app_passwords`] ([`AppPasswords`]), [`recovery`] ([`RecoveryCodes`]),
 //!   [`lastfm`] ([`LastFmLinks`]) and [`oidc`]: one each over their
@@ -55,9 +55,9 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 
 pub use app_passwords::AppPasswords;
-pub use federated::SqliteFederatedStore;
+pub use federated::FederatedUsers;
 pub use lastfm::LastFmLinks;
-pub use oidc::SqliteOidcStateStore;
+pub use oidc::OidcStates;
 pub use recovery::RecoveryCodes;
 pub use sessions::{LoginWrite, Sessions, session_expires_at};
 pub use users::Users;
