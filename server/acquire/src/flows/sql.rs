@@ -22,12 +22,18 @@ droppedneedle_kernel::sql! {
     /// The quality facts of the library's tracks of release group `?1`.
     pub(crate) GROUP_TRACK_QUALITY = "SELECT t.file_format, t.bit_rate, t.bit_depth "
         + OWNED_TRACKS_FROM;
-    /// The quality facts of the library's tracks of recording `?1`.
+    /// The quality facts of the library's tracks of recording `?1`. The
+    /// `t.id IN` list names every track either id could match, through the
+    /// lowered-id indexes, so the tracks are reached by key.
     pub(crate) RECORDING_TRACK_QUALITY = "SELECT t.file_format, t.bit_rate, t.bit_depth \
          FROM local_tracks t \
          JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
          WHERE t.availability = 'indexed' \
+           AND t.id IN (SELECT local_track_id FROM local_track_external_identities \
+               WHERE lower(recording_mbid) = ?1 \
+             UNION ALL SELECT id FROM local_tracks \
+               WHERE lower(COALESCE(embedded_recording_mbid, '')) = ?1) \
            AND lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')) = ?1";
     /// The quality facts of several tracks: `(id, format, bitrate, depth)`.
     family TRACK_QUALITY_IN = track_quality_in;

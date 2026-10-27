@@ -28,12 +28,20 @@ use droppedneedle_providers::RequestPriority;
 /// the one notion of "the library holds it" the landing and the wanted
 /// watcher share: an album identified as the group, or, in an album with
 /// no identity yet, a file whose own tags name the group. An album
-/// identified as another group never counts for its files' tags.
+/// identified as another group never counts for its files' tags. The
+/// `t.id IN` list names every track either side could match, through the
+/// lowered-id indexes, so the tracks are reached by key.
 pub(crate) const OWNED_TRACKS_FROM: &str = "FROM local_tracks t \
      JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
      LEFT JOIN local_album_external_identities ai ON ai.local_album_id = b.id \
      LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
      WHERE t.availability = 'indexed' \
+       AND t.id IN (SELECT gt.id FROM local_album_external_identities ga \
+           JOIN local_tracks gt ON gt.local_album_id = ga.local_album_id \
+           WHERE lower(ga.release_group_mbid) = ?1 \
+         UNION ALL SELECT id FROM local_tracks \
+           WHERE embedded_release_group_mbid IS NOT NULL \
+             AND lower(embedded_release_group_mbid) = ?1) \
        AND (lower(ai.release_group_mbid) = ?1 \
          OR (ai.local_album_id IS NULL AND lower(t.embedded_release_group_mbid) = ?1))";
 
