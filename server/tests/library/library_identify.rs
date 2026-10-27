@@ -3302,7 +3302,7 @@ async fn person_commands_leave_what_their_rule_says() {
                 .collect(),
             vec![format!(
                 "{:?}",
-                Ok::<_, String>("cleared_to_review".to_owned())
+                Ok::<_, String>(droppedneedle_library::identity::AutomaticUndone::ClearedToReview)
             )]
             .into_iter()
             .chain(flag)
