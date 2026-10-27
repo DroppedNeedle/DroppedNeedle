@@ -15,7 +15,7 @@
 //! - The session row, a rehash of a stored hash weaker than the pin and
 //!   `last_login_at` are written in one transaction, and only while the
 //!   stored credential is still the one the password was checked against
-//!   ([`SqliteSessionStore::insert_login`]). If it changed in between, the
+//!   ([`Sessions::insert_login`]). If it changed in between, the
 //!   login checks the password once more against the current row; a second
 //!   change in that window answers busy. A session is never stored for a
 //!   credential the login did not verify.
@@ -23,16 +23,15 @@
 //!   store too busy to answer in time is [`LoginError::Busy`], never either.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use super::{
     extract::Transport,
-    store::{SessionKind, SessionRecord, SessionStoreError},
+    store::{NewSession, SessionStoreError},
     tokens,
 };
 use crate::passwords::{Passwords, StoredPassword, Verdict};
-use crate::sqlite::{LoginWrite, SqliteSessionStore, Users};
+use crate::sqlite::{LoginWrite, Sessions, Users};
 
 /// Login transport: cookie (browser default) or Bearer (devices and scripts).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -113,7 +112,7 @@ pub const INVALID_CREDENTIALS: &str = "Invalid username or password";
 /// Local-login service: lookup, verify-or-dummy, mint, hand off.
 #[derive(Debug, Clone)]
 pub struct LoginService {
-    sessions: SqliteSessionStore,
+    sessions: Sessions,
     passwords: Passwords,
     users: Users,
 }
@@ -124,7 +123,7 @@ const LOGIN_ATTEMPTS: usize = 2;
 
 impl LoginService {
     /// Wire the service from its parts.
-    pub fn new(sessions: SqliteSessionStore, passwords: Passwords, users: Users) -> Self {
+    pub fn new(sessions: Sessions, passwords: Passwords, users: Users) -> Self {
         Self {
             sessions,
             passwords,
@@ -153,21 +152,15 @@ impl LoginService {
             let (Some(credential), Verdict::Verified { rehash }) = (credential, verdict) else {
                 return Err(LoginError::InvalidCredentials);
             };
-            let record = SessionRecord {
-                id: uuid_simple(&raw_token, ctx.now_unix),
+            let session = NewSession {
                 user_id: credential.user_id.clone(),
                 token_hash: tokens::hash_token(&raw_token),
-                kind: SessionKind::Standard,
-                label: None,
                 issued_at: ctx.now_unix,
-                expires_at: tokens::expires_at(ctx.now_unix),
-                last_seen_at: ctx.now_unix,
-                revoked: false,
                 user_agent: ctx.user_agent.clone(),
             };
             let written = self
                 .sessions
-                .insert_login(record, &credential.password, rehash)
+                .insert_login(session, &credential.password, rehash)
                 .await
                 .map_err(|error| match error {
                     SessionStoreError::Busy => LoginError::Busy,
@@ -198,11 +191,4 @@ impl From<TransportParam> for Transport {
             TransportParam::Bearer => Transport::Bearer,
         }
     }
-}
-
-/// Stable session-row id derived from the token hash, so this layer needs
-/// no uuid dependency.
-fn uuid_simple(raw_token: &str, now_unix: i64) -> String {
-    let digest = Sha256::digest(format!("{raw_token}:{now_unix}").as_bytes());
-    format!("{digest:x}")
 }

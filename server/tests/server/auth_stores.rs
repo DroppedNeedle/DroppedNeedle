@@ -18,7 +18,7 @@ use droppedneedle_auth::federated::users::{
 use droppedneedle_auth::prod::{
     OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, Passwords, StoredPassword, Verdict, to_iso,
 };
-use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
+use droppedneedle_auth::session::store::{NewSession, SessionKind, SessionRecord};
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::sqlite::{AuthDb, LoginWrite, Users};
 use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
@@ -27,7 +27,7 @@ use droppedneedle_auth::users::models::{
 };
 use droppedneedle_auth::users::roles::{Role, SessionKind as UserSessionKind};
 use droppedneedle_auth::users::services::{self, verify_app_password};
-use droppedneedle_auth::users::stores::{BoxFuture, RoleChange, SessionManager as _, UserDeletion};
+use droppedneedle_auth::users::stores::{BoxFuture, RoleChange, UserDeletion};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
@@ -82,6 +82,15 @@ fn session_row(id: &str, user_id: &str, token: &str, at: i64) -> SessionRecord {
         expires_at: tokens::expires_at(at),
         last_seen_at: at,
         revoked: false,
+        user_agent: None,
+    }
+}
+
+fn new_session(user_id: &str, token: &str, at: i64) -> NewSession {
+    NewSession {
+        user_id: user_id.to_owned(),
+        token_hash: tokens::hash_token(token),
+        issued_at: at,
         user_agent: None,
     }
 }
@@ -276,7 +285,7 @@ async fn login_write_needs_the_credential_it_verified() {
         .auth
         .sessions
         .insert_login(
-            session_row("stale", &user.id, "stale-token", TEST_NOW),
+            new_session(&user.id, "stale-token", TEST_NOW),
             &verified,
             Some("a rehash of the old password".to_owned()),
         )
@@ -290,7 +299,7 @@ async fn login_write_needs_the_credential_it_verified() {
         .auth
         .sessions
         .insert_login(
-            session_row("fresh", &user.id, "fresh-token", TEST_NOW),
+            new_session(&user.id, "fresh-token", TEST_NOW),
             &current,
             Some(rehash.clone()),
         )
@@ -310,16 +319,16 @@ async fn sessions_reject_unknown_revoked_and_expired_tokens() {
         .unwrap();
     let sessions = &fx.auth.sessions;
     sessions
-        .insert(session_row("live", "user-1", "live-token", TEST_NOW))
+        .seed(session_row("live", "user-1", "live-token", TEST_NOW))
         .await
         .unwrap();
     sessions
-        .insert(session_row("revoked", "user-1", "revoked-token", TEST_NOW))
+        .seed(session_row("revoked", "user-1", "revoked-token", TEST_NOW))
         .await
         .unwrap();
     assert!(
         fx.auth
-            .session_manager
+            .sessions
             .revoke_scoped("user-1", "revoked")
             .await
             .unwrap()
@@ -357,20 +366,20 @@ async fn logins_sweep_dead_token_rows() {
     let sessions = &fx.auth.sessions;
     let long_ago = TEST_NOW - 2 * tokens::SESSION_MAX_AGE_SECS;
     sessions
-        .insert(session_row("expired", "user-1", "expired-token", long_ago))
+        .seed(session_row("expired", "user-1", "expired-token", long_ago))
         .await
         .unwrap();
     sessions
-        .insert(session_row("revoked", "user-1", "revoked-token", TEST_NOW))
+        .seed(session_row("revoked", "user-1", "revoked-token", TEST_NOW))
         .await
         .unwrap();
     fx.auth
-        .session_manager
+        .sessions
         .revoke_scoped("user-1", "revoked")
         .await
         .unwrap();
     sessions
-        .insert(session_row("fresh", "user-1", "fresh-token", TEST_NOW))
+        .seed(session_row("fresh", "user-1", "fresh-token", TEST_NOW))
         .await
         .unwrap();
     assert_eq!(
@@ -664,11 +673,10 @@ async fn companion_concurrent_remint_leaves_exactly_one_live_row() {
         .unwrap();
     let mut handles = Vec::new();
     for n in 0..8u32 {
-        let manager = fx.auth.session_manager.clone();
+        let manager = fx.auth.sessions.clone();
         handles.push(tokio::spawn(async move {
             manager
                 .replace_companion(
-                    &format!("sess-{n}"),
                     "user-1",
                     &tokens::hash_token(&format!("token-{n}")),
                     "phone",
@@ -681,12 +689,7 @@ async fn companion_concurrent_remint_leaves_exactly_one_live_row() {
     for handle in handles {
         handle.await.unwrap().unwrap();
     }
-    let rows = fx
-        .auth
-        .session_manager
-        .list_for_user("user-1")
-        .await
-        .unwrap();
+    let rows = fx.auth.sessions.list_for_user("user-1").await.unwrap();
     assert_eq!(
         rows.iter()
             .filter(|row| row.kind == UserSessionKind::Companion)
@@ -736,7 +739,7 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
         .unwrap();
     fx.auth
         .sessions
-        .insert(session_row("sess-1", "user-1", "prior-token", TEST_NOW))
+        .seed(session_row("sess-1", "user-1", "prior-token", TEST_NOW))
         .await
         .unwrap();
     let reset = |code: &str| PasswordReset {

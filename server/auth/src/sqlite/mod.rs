@@ -3,9 +3,7 @@
 //! Every repository shares a single [`AuthDb`] handle (the read pools plus
 //! the writer lane, cloned out of the database runtime):
 //!
-//! - [`sessions`]: [`SqliteSessionStore`] (logins and the middleware),
-//!   [`SqliteSessionManager`] (the session-list backend) and
-//!   [`SqliteSessionIssuer`] (federated logins), over `auth_tokens`;
+//! - [`sessions`]: [`Sessions`], every session over `auth_tokens`;
 //! - [`users`]: [`Users`], accounts and their local credentials and
 //!   sign-in bindings, over `auth_users` and `auth_providers`, and the
 //!   sign-in lookup;
@@ -61,9 +59,7 @@ pub use federated::SqliteFederatedStore;
 pub use lastfm::LastFmLinks;
 pub use oidc::SqliteOidcStateStore;
 pub use recovery::RecoveryCodes;
-pub use sessions::{
-    LoginWrite, SqliteSessionIssuer, SqliteSessionManager, SqliteSessionStore, session_expires_at,
-};
+pub use sessions::{LoginWrite, Sessions, session_expires_at};
 pub use users::Users;
 
 use sql::USER_COLUMNS;

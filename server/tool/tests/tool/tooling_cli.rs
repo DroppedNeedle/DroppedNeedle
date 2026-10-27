@@ -863,11 +863,11 @@ async fn reset_key_clears_every_secret_of_a_lost_key() {
 #[tokio::test]
 async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     use crate::common::auth::AuthRig;
-    use droppedneedle_auth::prod::{AuthDb, Passwords, SqliteSessionStore, Users};
+    use droppedneedle_auth::prod::{AuthDb, Passwords, Sessions, Users};
     use droppedneedle_auth::session::login::{
         LoginContext, LoginRequest, LoginService, TransportParam,
     };
-    use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
+    use droppedneedle_auth::session::store::{SessionKind, SessionRecord};
     use droppedneedle_auth::session::tokens;
     use droppedneedle_auth::users::models::PasswordReset;
     use droppedneedle_auth::users::services;
@@ -1014,11 +1014,11 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
         "the admin route refuses an account with no password"
     );
 
-    let login = LoginService::new(
-        SqliteSessionStore::new(&auth_db),
-        Passwords::new(),
-        Users::new(&auth_db),
+    let sessions = Sessions::new(
+        &auth_db,
+        std::sync::Arc::new(droppedneedle_kernel::ids::UuidGenerator),
     );
+    let login = LoginService::new(sessions.clone(), Passwords::new(), Users::new(&auth_db));
     let sign_in = || {
         login.login(
             LoginRequest {
@@ -1037,8 +1037,8 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     assert!(sign_in().await.is_err(), "no password before the reset");
     let now =
         droppedneedle_kernel::clock::Clock::now_unix(&droppedneedle_kernel::clock::SystemClock);
-    SqliteSessionStore::new(&auth_db)
-        .insert(SessionRecord {
+    sessions
+        .seed(SessionRecord {
             id: "sess-alice".to_owned(),
             user_id: alice.id.clone(),
             token_hash: tokens::hash_token("a session from before the reset"),

@@ -42,10 +42,10 @@ pub use error::UsersError;
 pub use roles::{Admin, Curator, Principal, Role, RoleRequired, SessionKind, User};
 
 use crate::avatars::Avatars;
-use crate::sqlite::{AppPasswords, LastFmLinks, RecoveryCodes, Users};
+use crate::sqlite::{AppPasswords, LastFmLinks, RecoveryCodes, Sessions, Users};
 use droppedneedle_kernel::{clock::Clock, ids::IdGenerator, runtime_config::crypto::Crypto};
 use hibp::HibpScreen;
-use stores::{LastFmAuthClient, LastFmSwitch, SessionManager, UserDirectory};
+use stores::{LastFmAuthClient, LastFmSwitch, UserDirectory};
 
 /// Every dependency the users routes need, injected by constructor.
 #[derive(Clone)]
@@ -53,7 +53,7 @@ pub struct UsersDeps {
     /// Account and credential rows.
     pub users: Users,
     /// Session management rows (the session-list backend over `auth_tokens`).
-    pub sessions: Arc<dyn SessionManager>,
+    pub sessions: Sessions,
     /// App-password rows.
     pub app_passwords: AppPasswords,
     /// Per-user Last.fm links.

@@ -11,7 +11,6 @@ use axum::routing::{get, post};
 use axum::{Form, Json, Router, extract::Path, extract::Query, extract::State};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use droppedneedle_auth::federated::SessionIssuer;
 use droppedneedle_auth::federated::jellyfin_login::emby_auth_header;
 use droppedneedle_auth::federated::oidc::{
     AuthorizeParams, OidcConfig, RawClaims, authorize_url, form_encode, normalise_claims,
@@ -23,10 +22,8 @@ use droppedneedle_auth::federated::users::{
     FederatedProfile, derive_username, find_or_create_federated_user, username_base,
 };
 use droppedneedle_auth::prod::{StoredPassword, Verdict};
-use droppedneedle_auth::session::store::SessionStore as _;
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_auth::users::stores::SessionManager as _;
 use droppedneedle_auth::wiring::Upstreams;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -1189,12 +1186,12 @@ async fn old_sessions_die_on_import_while_new_logins_work() {
                 .is_some()
         }
     };
-    let issuer = &rig.auth.issuer;
+    let issuer = &rig.auth.sessions;
     let live = issuer.issue_session(&user.id, None).await.unwrap();
     assert!(is_live(live.clone()).await);
 
     rig.auth
-        .session_manager
+        .sessions
         .revoke_all_for_user(&user.id)
         .await
         .expect("sessions revoke");

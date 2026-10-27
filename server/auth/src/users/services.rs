@@ -536,7 +536,6 @@ pub async fn mint_device_session(
     let row = deps
         .sessions
         .replace_companion(
-            &deps.ids.new_id(),
             caller.user_id(),
             &tokens::hash_token(&token),
             &label,

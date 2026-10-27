@@ -10,7 +10,8 @@ use super::users::{
     FederatedProfile, FederatedUserStore, PROVIDER_JELLYFIN, StoredUser,
     find_or_create_federated_user,
 };
-use super::{FederatedError, SessionIssuer, json_string};
+use super::{FederatedError, json_string};
+use crate::sqlite::Sessions;
 
 /// Product token in the outbound auth header.
 pub const PRODUCT: &str = "DroppedNeedle";
@@ -66,16 +67,16 @@ pub trait JellyfinConnectionLink: Clone + Send + Sync + 'static {
 
 /// Jellyfin login service. Generic over stores so tests inject fakes.
 #[derive(Debug, Clone)]
-pub struct JellyfinLogin<S, I, L, N> {
+pub struct JellyfinLogin<S, I, L> {
     users: S,
     idp: I,
     links: L,
-    sessions: N,
+    sessions: Sessions,
 }
 
-impl<S, I, L, N> JellyfinLogin<S, I, L, N> {
+impl<S, I, L> JellyfinLogin<S, I, L> {
     /// Wire the service from its ports.
-    pub fn new(users: S, idp: I, links: L, sessions: N) -> Self {
+    pub fn new(users: S, idp: I, links: L, sessions: Sessions) -> Self {
         Self {
             users,
             idp,
@@ -85,12 +86,11 @@ impl<S, I, L, N> JellyfinLogin<S, I, L, N> {
     }
 }
 
-impl<S, I, L, N> JellyfinLogin<S, I, L, N>
+impl<S, I, L> JellyfinLogin<S, I, L>
 where
     S: FederatedUserStore,
     I: JellyfinIdp,
     L: JellyfinConnectionLink,
-    N: SessionIssuer,
 {
     /// Check credentials, import the user, auto-link the connection, and
     /// mint a session.

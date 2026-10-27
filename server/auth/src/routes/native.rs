@@ -11,9 +11,9 @@ use crate::session::login::{
 };
 use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
-use crate::session::store::{SessionKind, SessionRecord, SessionStore as _};
+use crate::session::store::NewSession;
 use crate::session::tokens;
-use crate::sqlite::SqliteSessionStore;
+use crate::sqlite::Sessions;
 use crate::users::UsersDeps;
 use crate::users::models::UserResponse;
 use crate::users::{clock_now, services};
@@ -55,7 +55,7 @@ pub struct AuthSessionBody {
 #[derive(Clone)]
 pub struct NativeAuthState {
     /// Token store (setup session mint).
-    pub sessions: SqliteSessionStore,
+    pub sessions: Sessions,
     /// Local-login service.
     pub login: LoginService,
     /// User stores, clock, ids, passwords (setup, probe, logout, enrichment).
@@ -76,7 +76,7 @@ impl NativeAuthState {
     /// Wire the state from its parts. The login service is built here from
     /// the same handles so wiring passes each dependency once.
     pub fn new(
-        sessions: SqliteSessionStore,
+        sessions: Sessions,
         passwords: crate::passwords::Passwords,
         users: UsersDeps,
         base_path: &str,
@@ -259,16 +259,10 @@ pub async fn setup_handler(
     let raw_token = tokens::mint_token().map_err(|error| AuthRouteError::internal(&error))?;
     state
         .sessions
-        .insert(SessionRecord {
-            id: state.users.ids.new_id(),
+        .insert(NewSession {
             user_id: user.id.clone(),
             token_hash: tokens::hash_token(&raw_token),
-            kind: SessionKind::Standard,
-            label: None,
             issued_at: now,
-            expires_at: tokens::expires_at(now),
-            last_seen_at: now,
-            revoked: false,
             user_agent: user_agent_of(&headers),
         })
         .await

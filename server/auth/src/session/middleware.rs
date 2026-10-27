@@ -73,9 +73,10 @@ use super::{
     origin::{OriginDecision, check_origin, is_unsafe_method, named_origin},
     rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited},
     stated::StatedAddresses,
-    store::{SessionStore, SessionStoreError},
+    store::SessionStoreError,
     tokens::hash_token,
 };
+use crate::sqlite::Sessions;
 use crate::users::roles::Principal;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
@@ -96,9 +97,9 @@ impl WarnOnce {
 
 /// Shared middleware state: the session store plus deployment facts.
 #[derive(Clone)]
-pub struct SessionAuth<S> {
+pub struct SessionAuth {
     /// Token store.
-    pub store: S,
+    pub store: Sessions,
     /// Wall time a token's expiry is checked against.
     pub clock: Arc<dyn Clock>,
     /// Deployment base path (`""` at the domain root). The router strips
@@ -121,7 +122,7 @@ pub struct SessionAuth<S> {
     unlisted_proxy_warned: WarnOnce,
 }
 
-impl<S: std::fmt::Debug> std::fmt::Debug for SessionAuth<S> {
+impl std::fmt::Debug for SessionAuth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionAuth")
             .field("store", &self.store)
@@ -131,10 +132,10 @@ impl<S: std::fmt::Debug> std::fmt::Debug for SessionAuth<S> {
     }
 }
 
-impl<S> SessionAuth<S> {
+impl SessionAuth {
     /// Build the shared state. Trusted proxies default to loopback; use
     /// [`SessionAuth::with_trusted_proxies`] when a proxy fronts the app.
-    pub fn new(store: S, clock: Arc<dyn Clock>, base_path: &str) -> Self {
+    pub fn new(store: Sessions, clock: Arc<dyn Clock>, base_path: &str) -> Self {
         Self {
             store,
             clock,
@@ -170,14 +171,11 @@ impl<S> SessionAuth<S> {
 }
 
 /// Deny-by-default session gate. See module docs for the check order.
-pub async fn require_session<S>(
-    State(auth): State<SessionAuth<S>>,
+pub async fn require_session(
+    State(auth): State<SessionAuth>,
     request: Request,
     next: Next,
-) -> Response
-where
-    S: SessionStore,
-{
+) -> Response {
     warn_unlisted_proxy(&auth.unlisted_proxy_warned, &request, &auth.trusted_proxies);
     let Some((raw_token, transport)) = super::extract::extract(request.headers()) else {
         return auth_failure(&auth.limits, &request, "Not authenticated");
@@ -329,8 +327,8 @@ fn refusal_hint(
 /// proxy that misreports this server's address shows up as more than 403s
 /// in the browser. The line names the parsed origin, never the header's
 /// own text.
-fn warn_refused_origin<S>(
-    auth: &SessionAuth<S>,
+fn warn_refused_origin(
+    auth: &SessionAuth,
     headers: &axum::http::HeaderMap,
     target: Option<&Origin>,
 ) {

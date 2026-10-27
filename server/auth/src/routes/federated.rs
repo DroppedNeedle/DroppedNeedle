@@ -13,7 +13,6 @@
 use std::sync::Arc;
 
 use crate::federated::FederatedError;
-use crate::federated::SessionIssuer;
 use crate::federated::jellyfin_login::{JellyfinConnectionLink, JellyfinIdp, JellyfinLogin};
 use crate::federated::oidc::{
     OidcConfig, OidcExchangeStore, OidcIdp, OidcLogin, OidcStateStore, STATE_TTL_SECS,
@@ -28,6 +27,7 @@ use crate::session::cookies;
 use crate::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens::{constant_time_eq, hash_token};
+use crate::sqlite::Sessions;
 use crate::users::roles::{Admin, RoleRequired, User};
 use crate::wiring::{ProdJellyfinRoutes, ProdOidcRoutes, ProdPlexRoutes};
 use axum::{
@@ -91,9 +91,9 @@ pub async fn providers_handler(State(settings): State<SignInSettings>) -> Json<A
 
 /// State for the OIDC routes.
 #[derive(Clone)]
-pub struct OidcRouteState<S, I, T, E, N, F> {
+pub struct OidcRouteState<S, I, T, E, F> {
     /// OIDC login service.
-    pub login: OidcLogin<S, I, T, E, N>,
+    pub login: OidcLogin<S, I, T, E>,
     /// Live settings source.
     pub config: F,
     /// Deployment base path (`""` at the domain root).
@@ -106,17 +106,16 @@ pub struct OidcRouteState<S, I, T, E, N, F> {
     pub stated: StatedAddresses,
 }
 
-impl<S, I, T, E, N, F> OidcRouteState<S, I, T, E, N, F>
+impl<S, I, T, E, F> OidcRouteState<S, I, T, E, F>
 where
     S: FederatedUserStore,
     I: OidcIdp,
     T: OidcStateStore,
     E: OidcExchangeStore,
-    N: SessionIssuer,
     F: OidcConfigSource,
 {
     /// Wire the state from the login service plus its HTTP ports.
-    pub fn new(login: OidcLogin<S, I, T, E, N>, config: F, base_path: &str) -> Self {
+    pub fn new(login: OidcLogin<S, I, T, E>, config: F, base_path: &str) -> Self {
         Self {
             login,
             config,
@@ -299,9 +298,9 @@ pub async fn oidc_exchange_handler(
 
 /// State for the Jellyfin route.
 #[derive(Clone)]
-pub struct JellyfinRouteState<S, I, L, N> {
+pub struct JellyfinRouteState<S, I, L> {
     /// Jellyfin login service.
-    pub login: JellyfinLogin<S, I, L, N>,
+    pub login: JellyfinLogin<S, I, L>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
@@ -315,15 +314,14 @@ pub struct JellyfinRouteState<S, I, L, N> {
     pub limits: Arc<RateLimiter>,
 }
 
-impl<S, I, L, N> JellyfinRouteState<S, I, L, N>
+impl<S, I, L> JellyfinRouteState<S, I, L>
 where
     S: FederatedUserStore,
     I: JellyfinIdp,
     L: JellyfinConnectionLink,
-    N: SessionIssuer,
 {
     /// Wire the state from its ports.
-    pub fn new(users: S, idp: I, links: L, sessions: N, base_path: &str) -> Self {
+    pub fn new(users: S, idp: I, links: L, sessions: Sessions, base_path: &str) -> Self {
         Self {
             login: JellyfinLogin::new(users, idp, links, sessions),
             base_path: base_path.to_owned(),
@@ -412,9 +410,9 @@ pub async fn jellyfin_login_handler(
 
 /// State for the Plex journey routes.
 #[derive(Clone)]
-pub struct PlexRouteState<S, C, L, N> {
+pub struct PlexRouteState<S, C, L> {
     /// Unified Plex journey.
-    pub journey: PlexJourney<S, C, L, N>,
+    pub journey: PlexJourney<S, C, L>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
@@ -425,15 +423,14 @@ pub struct PlexRouteState<S, C, L, N> {
     pub stated: StatedAddresses,
 }
 
-impl<S, C, L, N> PlexRouteState<S, C, L, N>
+impl<S, C, L> PlexRouteState<S, C, L>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
     L: PlexConnectionLink,
-    N: SessionIssuer,
 {
     /// Wire the state from its ports.
-    pub fn new(users: S, client: C, links: L, sessions: N, base_path: &str) -> Self {
+    pub fn new(users: S, client: C, links: L, sessions: Sessions, base_path: &str) -> Self {
         Self {
             journey: PlexJourney::new(users, client, links, sessions),
             base_path: base_path.to_owned(),
@@ -720,7 +717,7 @@ struct Handoff<'a> {
 }
 
 /// One login-shaped federated response. The session row already exists (the
-/// `SessionIssuer` wrote it); this only hands the token over under the login
+/// session issue wrote it); this only hands the token over under the login
 /// transport rule.
 fn federated_login_response(
     handoff: &Handoff<'_>,

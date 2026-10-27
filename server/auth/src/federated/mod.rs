@@ -19,9 +19,9 @@
 //!
 //! Contracts with the rest of auth:
 //!
-//! - The production [`SessionIssuer`] wraps `tokens::mint_token`,
-//!   `tokens::hash_token`, `SessionStore::insert` (kind `Standard`), and a
-//!   `last_login_at` update.
+//! - A federated login's session comes from
+//!   [`Sessions::issue_session`](crate::sqlite::Sessions::issue_session):
+//!   a fresh token, a `Standard` row and a `last_login_at` update.
 //! - Imported password hashes verify through [`crate::passwords::Passwords`],
 //!   over the `bcrypt` and `argon2` crates.
 //! - The user/provider tables adapter implements
@@ -78,19 +78,6 @@ pub enum FederatedError {
     /// The OS random source failed; the request fails, never falls back.
     #[error("random source unavailable")]
     RngUnavailable,
-}
-
-/// Issues a native opaque session after a federated login succeeds.
-/// The production impl mints via
-/// `session::tokens`, stores a `Standard` row through
-/// `session::SessionStore`, and updates `last_login_at`.
-pub trait SessionIssuer: Clone + Send + Sync + 'static {
-    /// Mint a session for `user_id` and return the raw token once.
-    fn issue_session(
-        &self,
-        user_id: &str,
-        user_agent: Option<&str>,
-    ) -> impl Future<Output = Result<String, FederatedError>> + Send;
 }
 
 /// Saves the media link a Plex or Jellyfin sign-in hands back into the

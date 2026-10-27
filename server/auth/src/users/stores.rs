@@ -3,16 +3,14 @@
 //!
 //! The repositories themselves are concrete types in [`crate::sqlite`]
 //! and [`crate::avatars`]. A trait here stays only where tests stand in for
-//! an outside service ([`LastFmAuthClient`], [`UserDirectory`]) or until
-//! the sessions are concrete too ([`SessionManager`]). Futures are boxed by
-//! hand because `async fn` is not object-safe.
+//! an outside service ([`LastFmAuthClient`], [`UserDirectory`]). Futures
+//! are boxed by hand because `async fn` is not object-safe.
 
 use std::future::Future;
 use std::pin::Pin;
 
 use thiserror::Error;
 
-use super::models::{ManagedSession, SessionOwner};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 
@@ -59,58 +57,6 @@ pub enum UserDeletion {
     /// tables reference it with `ON DELETE RESTRICT`); nothing was deleted.
     /// Holds a readable name per kind of record.
     Referenced(Vec<&'static str>),
-}
-
-/// Session management rows (the session-list backend).
-///
-/// The session module owns the middleware/login store
-/// (`session::store::SessionStore`: insert + valid lookup) and assigns the
-/// list/revoke surface to the users routes. This port is that surface, plus the
-/// atomic companion replace and a lookup used only to pin native/compat
-/// credential separation. [`crate::sqlite::SqliteSessionManager`] is its one
-/// implementation, over the one `auth_tokens` table; the trait stays until
-/// the session stores are made concrete together.
-///
-/// Table mapping: `auth_tokens`. Companion rows carry
-/// `user_agent = "DroppedNeedle companion · {label}"` and
-/// `session_kind = 'companion'`; listing strips the prefix back to the label.
-pub trait SessionManager: Send + Sync {
-    /// Live sessions for one user (unrevoked, unexpired): newest first, id tiebreak.
-    /// Rows carry no token hashes.
-    fn list_for_user<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<ManagedSession>, StoreError>>;
-    /// Revoke one session, but only when it belongs to the user. Returns
-    /// false for unknown or foreign ids (no cross-user oracle).
-    fn revoke_scoped<'a>(
-        &'a self,
-        user_id: &'a str,
-        session_id: &'a str,
-    ) -> BoxFuture<'a, Result<bool, StoreError>>;
-    /// Revoke every session of one user. Returns the revoked count.
-    fn revoke_all_for_user<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<u64, StoreError>>;
-    /// Insert a companion token and revoke the prior live same-label
-    /// companion token for the user, atomically, in one transaction.
-    fn replace_companion<'a>(
-        &'a self,
-        id: &'a str,
-        user_id: &'a str,
-        token_hash: &'a str,
-        label: &'a str,
-        issued_at: i64,
-        expires_at: i64,
-    ) -> BoxFuture<'a, Result<ManagedSession, StoreError>>;
-    /// Resolve a live token hash to its owner. None for unknown, revoked,
-    /// or expired hashes. Exists so tests can pin that app-password
-    /// secrets never resolve as native sessions.
-    fn owner_by_hash<'a>(
-        &'a self,
-        token_hash: &'a str,
-    ) -> BoxFuture<'a, Result<Option<SessionOwner>, StoreError>>;
 }
 
 /// One Last.fm API key pair, plaintext in memory only.

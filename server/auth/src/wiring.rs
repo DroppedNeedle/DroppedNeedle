@@ -17,9 +17,7 @@ use super::federated::plex::PlexServerIdentity;
 use super::federated::plex_http::PlexTv;
 use super::federated::settings::SignInSettings;
 use super::federated::{FederatedError, MediaLinks};
-use super::prod::{
-    ProdAuth, SqliteFederatedStore, SqliteOidcStateStore, SqliteSessionIssuer, SqliteSessionStore,
-};
+use super::prod::{ProdAuth, SqliteFederatedStore, SqliteOidcStateStore};
 use super::routes::federated::{JellyfinRouteState, OidcRouteState, PlexRouteState};
 use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
@@ -129,15 +127,12 @@ pub type ProdOidcRoutes = OidcRouteState<
     OidcHttp,
     SqliteOidcStateStore,
     MemoryOidcExchangeStore,
-    SqliteSessionIssuer,
     SignInSettings,
 >;
 /// Production Jellyfin route state.
-pub type ProdJellyfinRoutes =
-    JellyfinRouteState<SqliteFederatedStore, JellyfinHttp, MediaLinks, SqliteSessionIssuer>;
+pub type ProdJellyfinRoutes = JellyfinRouteState<SqliteFederatedStore, JellyfinHttp, MediaLinks>;
 /// Production Plex route state.
-pub type ProdPlexRoutes =
-    PlexRouteState<SqliteFederatedStore, PlexTv, MediaLinks, SqliteSessionIssuer>;
+pub type ProdPlexRoutes = PlexRouteState<SqliteFederatedStore, PlexTv, MediaLinks>;
 
 /// Everything `create_app` needs to mount the auth routes and the session
 /// gate, built once at boot.
@@ -146,7 +141,7 @@ pub struct AuthSetup {
     /// Account, device, recovery, and app-password routes.
     pub users: UsersDeps,
     /// Session gate state for the middleware layer.
-    pub session_auth: SessionAuth<SqliteSessionStore>,
+    pub session_auth: SessionAuth,
     /// Request limiter, mounted inside the session gate.
     pub limits: Arc<RateLimiter>,
     /// Login/logout/setup routes.
@@ -215,7 +210,7 @@ impl AuthSetup {
         let jellyfin_http = JellyfinHttp::new(http.clone(), config_store.clone());
         let users = UsersDeps {
             users: auth.users.clone(),
-            sessions: Arc::new(auth.session_manager.clone()),
+            sessions: auth.sessions.clone(),
             app_passwords: auth.app_passwords.clone(),
             lastfm: auth.lastfm.clone(),
             recovery: auth.recovery.clone(),
@@ -255,7 +250,7 @@ impl AuthSetup {
                 OidcHttp::new(no_redirect),
                 auth.oidc_states.clone(),
                 MemoryOidcExchangeStore::new(clock.clone()),
-                auth.issuer.clone(),
+                auth.sessions.clone(),
                 clock.clone(),
             ),
             sign_in.clone(),
@@ -266,7 +261,7 @@ impl AuthSetup {
             auth.federated.clone(),
             jellyfin_http,
             links.clone(),
-            auth.issuer.clone(),
+            auth.sessions.clone(),
             base_path,
         )
         .with_limits(limits.clone())
@@ -275,7 +270,7 @@ impl AuthSetup {
             auth.federated.clone(),
             plex_tv,
             links,
-            auth.issuer.clone(),
+            auth.sessions.clone(),
             base_path,
         )
         .with_stated_addresses(stated.clone());

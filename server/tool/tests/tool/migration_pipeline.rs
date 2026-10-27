@@ -906,7 +906,7 @@ async fn login_rehashes(
     use droppedneedle_auth::session::login::{
         LoginContext, LoginError, LoginRequest, LoginService, TransportParam,
     };
-    use droppedneedle_auth::sqlite::{AuthDb, SqliteSessionStore, Users};
+    use droppedneedle_auth::sqlite::{AuthDb, Sessions, Users};
 
     let before: String = sqlx::query_scalar(
         "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
@@ -922,7 +922,10 @@ async fn login_rehashes(
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
     let login = LoginService::new(
-        SqliteSessionStore::new(&auth_db),
+        Sessions::new(
+            &auth_db,
+            std::sync::Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+        ),
         droppedneedle_auth::passwords::Passwords::new(),
         Users::new(&auth_db),
     );

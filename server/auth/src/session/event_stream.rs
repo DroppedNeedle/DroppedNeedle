@@ -26,7 +26,8 @@ use axum::{
 use futures_util::future::BoxFuture;
 use tokio::time::Instant;
 
-use super::{extract::extract, store::SessionStore, tokens::hash_token};
+use super::{extract::extract, tokens::hash_token};
+use crate::sqlite::Sessions;
 use crate::users::roles::User;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::events::{EventHub, StreamEvent, Subscription};
@@ -56,7 +57,7 @@ pub enum SessionStatus {
 pub type SessionCheck = Arc<dyn Fn(String) -> BoxFuture<'static, SessionStatus> + Send + Sync>;
 
 /// A session check over the session store and clock the gate uses.
-pub fn session_check<S: SessionStore>(store: S, clock: Arc<dyn Clock>) -> SessionCheck {
+pub fn session_check(store: Sessions, clock: Arc<dyn Clock>) -> SessionCheck {
     Arc::new(move |token_hash: String| {
         let store = store.clone();
         let now_unix = clock.now_unix();

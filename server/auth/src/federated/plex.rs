@@ -35,8 +35,9 @@ use std::time::{Duration, Instant};
 use super::users::{
     FederatedProfile, FederatedUserStore, PROVIDER_PLEX, StoredUser, find_or_create_federated_user,
 };
-use super::{FederatedError, SessionIssuer, json_string};
+use super::{FederatedError, json_string};
 use crate::session::tokens::{constant_time_eq, hash_token, mint_token};
+use crate::sqlite::Sessions;
 use crate::users::stores::BoxFuture;
 
 /// Product token in the `app.plex.tv` URL.
@@ -299,17 +300,17 @@ impl PendingPins {
 
 /// The unified journey. Generic over stores so tests inject fakes.
 #[derive(Debug, Clone)]
-pub struct PlexJourney<S, C, L, N> {
+pub struct PlexJourney<S, C, L> {
     users: S,
     client: C,
     links: L,
-    sessions: N,
+    sessions: Sessions,
     pins: PendingPins,
 }
 
-impl<S, C, L, N> PlexJourney<S, C, L, N> {
+impl<S, C, L> PlexJourney<S, C, L> {
     /// Wire the journey from its ports.
-    pub fn new(users: S, client: C, links: L, sessions: N) -> Self {
+    pub fn new(users: S, client: C, links: L, sessions: Sessions) -> Self {
         Self {
             users,
             client,
@@ -320,12 +321,11 @@ impl<S, C, L, N> PlexJourney<S, C, L, N> {
     }
 }
 
-impl<S, C, L, N> PlexJourney<S, C, L, N>
+impl<S, C, L> PlexJourney<S, C, L>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
     L: PlexConnectionLink,
-    N: SessionIssuer,
 {
     /// Start a flow: check who may start it, mint a PIN, and bind it to
     /// the caller with a fresh secret. `caller` is the signed-in user for

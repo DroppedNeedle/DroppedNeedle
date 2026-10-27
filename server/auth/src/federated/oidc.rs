@@ -27,7 +27,8 @@ use super::oidc_models::Jwk;
 use super::users::{
     FederatedProfile, FederatedUserStore, PROVIDER_OIDC, StoredUser, find_or_create_federated_user,
 };
-use super::{FederatedError, SessionIssuer, json_string};
+use super::{FederatedError, json_string};
+use crate::sqlite::Sessions;
 
 /// Discovery document path appended to the issuer.
 pub const DISCOVERY_SUFFIX: &str = "/.well-known/openid-configuration";
@@ -218,29 +219,29 @@ pub trait OidcExchangeStore: Clone + Send + Sync + 'static {
 
 /// OIDC login service. Generic over stores so tests inject fakes.
 #[derive(Clone)]
-pub struct OidcLogin<S, I, T, E, N> {
+pub struct OidcLogin<S, I, T, E> {
     users: S,
     idp: I,
     states: T,
     exchanges: E,
-    sessions: N,
+    sessions: Sessions,
     clock: Arc<dyn Clock>,
 }
 
-impl<S, I, T, E, N> std::fmt::Debug for OidcLogin<S, I, T, E, N> {
+impl<S, I, T, E> std::fmt::Debug for OidcLogin<S, I, T, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OidcLogin").finish_non_exhaustive()
     }
 }
 
-impl<S, I, T, E, N> OidcLogin<S, I, T, E, N> {
+impl<S, I, T, E> OidcLogin<S, I, T, E> {
     /// Wire the service from its ports; `clock` dates the id token checks.
     pub fn new(
         users: S,
         idp: I,
         states: T,
         exchanges: E,
-        sessions: N,
+        sessions: Sessions,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -254,13 +255,12 @@ impl<S, I, T, E, N> OidcLogin<S, I, T, E, N> {
     }
 }
 
-impl<S, I, T, E, N> OidcLogin<S, I, T, E, N>
+impl<S, I, T, E> OidcLogin<S, I, T, E>
 where
     S: FederatedUserStore,
     I: OidcIdp,
     T: OidcStateStore,
     E: OidcExchangeStore,
-    N: SessionIssuer,
 {
     /// Start a login: discover, mint PKCE + state, return the browser URL.
     /// The nonce is derived from the verifier, so the state row holds

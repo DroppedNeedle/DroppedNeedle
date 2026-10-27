@@ -1,13 +1,6 @@
-//! Session store port.
-//!
-//! The port is what the middleware and login service program against; the
-//! production adapter over `auth_tokens` is
-//! [`SqliteSessionStore`](crate::sqlite::SqliteSessionStore). The
-//! store only ever sees hashes: callers
+//! The session row types and errors of [`Sessions`](crate::sqlite::Sessions),
+//! the one repository over `auth_tokens`. It only ever sees hashes: callers
 //! hash the presented token before lookup, so raw tokens never reach storage.
-//!
-//! Throttled `last_seen_at` writes (at most one per ~5 min per token) and the
-//! list/revoke surface belong to the users session management, not here.
 
 use serde::Serialize;
 use thiserror::Error;
@@ -22,6 +15,21 @@ pub enum SessionKind {
     Standard,
     /// Named companion Bearer token for one trusted device; must never mint (403).
     Companion,
+}
+
+/// A standard session to store. The repository gives it its id, expires
+/// it [`SESSION_MAX_AGE_SECS`](super::tokens::SESSION_MAX_AGE_SECS) after
+/// `issued_at` and counts it as last seen then.
+#[derive(Debug, Clone)]
+pub struct NewSession {
+    /// Owning user id.
+    pub user_id: String,
+    /// SHA-256 hex of the raw token.
+    pub token_hash: String,
+    /// Issue time, unix seconds.
+    pub issued_at: i64,
+    /// Client label from login.
+    pub user_agent: Option<String>,
 }
 
 /// One row of the token store. `token_hash` is SHA-256 hex, never the raw token.
@@ -77,23 +85,4 @@ pub enum SessionStoreError {
     /// A programming error supplied a duplicate hash.
     #[error("token hash already stored")]
     Duplicate,
-}
-
-/// Persistence port for opaque sessions. `Clone` so axum state shares it.
-pub trait SessionStore: Clone + Send + Sync + 'static {
-    /// Persist a freshly minted session.
-    fn insert(
-        &self,
-        record: SessionRecord,
-    ) -> impl Future<Output = Result<(), SessionStoreError>> + Send;
-
-    /// Look up by storage hash, reading the token and its owner together;
-    /// returns `None` for unknown, revoked or expired rows and for a token
-    /// whose owner is gone. Comparison is constant-time over the candidate
-    /// hash.
-    fn lookup_valid(
-        &self,
-        token_hash: &str,
-        now_unix: i64,
-    ) -> impl Future<Output = Result<Option<ValidSession>, SessionStoreError>> + Send;
 }

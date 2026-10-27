@@ -469,6 +469,7 @@ const REQUEST: &str = "blocking file or store work, awaited by the request that 
 const CATALOG_WARM: &str =
     "a background catalog warm a read starts, once per key; it logs its own end";
 const DISCOVER_BUILD: &str = "a discover or home build a visit starts; it logs its own end";
+const SESSION_TOUCH: &str = "a session's last-seen touch, queued off the request path, one per session; it logs its own failure";
 const WARM_ENQUEUE: &str =
     "a page's image warm, queued off the request path; it logs its own failure";
 const FAN_OUT: &str = "enrichment calls fanned out and joined by their caller";
@@ -513,6 +514,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/worker/review.rs", 1, WORKER_CHILD),
     ("auth/src/avatars.rs", 2, REQUEST),
     ("auth/src/session/login.rs", 1, REQUEST),
+    ("auth/src/sqlite/sessions.rs", 1, SESSION_TOUCH),
     ("auth/src/users/hibp.rs", 1, REQUEST),
     ("auth/src/users/services.rs", 2, REQUEST),
     ("catalog/src/reads/catalog/artist.rs", 1, CATALOG_WARM),
