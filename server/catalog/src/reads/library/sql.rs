@@ -185,10 +185,10 @@ droppedneedle_kernel::sql! {
         AND (? IS NULL OR t.title_folded LIKE ? ESCAPE '\\' \
         OR t.artist_name_folded LIKE ? ESCAPE '\\' \
         OR t.album_title_folded LIKE ? ESCAPE '\\')";
-    /// Track rowids whose text matches an FTS expression. The FTS rowid
-    /// mirrors the track rowid.
+    /// Tracks whose text matches an FTS expression. The FTS rowid is the
+    /// track's `search_key`.
     pub(crate) fragment TRACK_TEXT_MATCH =
-        "t.rowid IN (SELECT rowid FROM local_tracks_fts WHERE local_tracks_fts MATCH ?)";
+        "t.search_key IN (SELECT rowid FROM local_tracks_fts WHERE local_tracks_fts MATCH ?)";
     /// One short word that must appear in the title, artist or album.
     pub(crate) fragment TRACK_WORD_LIKE = " AND (t.title_folded LIKE ? ESCAPE '\\' \
         OR t.artist_name_folded LIKE ? ESCAPE '\\' OR t.album_title_folded LIKE ? ESCAPE '\\')";
@@ -569,22 +569,22 @@ droppedneedle_kernel::sql! {
     /// shuffle works it out, with the seed's three numbers from
     /// [`shuffle_values`] bound as the statement's first three values, so
     /// the key reads no other row.
-    pub(crate) fragment PLAYER_SHUFFLE_KEY = "((((t.rowid * ?1 + ?2) % 2147483647) \
-        * ((t.rowid * ?1 + ?2) % 2147483647)) % 2147483647 * ?3 \
-        + ((t.rowid * ?1 + ?2) % 2147483647)) % 2147483647";
-    /// Every streamable track in insertion order, one page at an offset:
-    /// the full-library sync. The rowids come from the index over
-    /// availability and the time a track went missing, which holds them in
-    /// order for each time; nearly every streamable track has none, and the
-    /// few that have one are merged in. Only the page's rows are read for
-    /// their ids. Binds: limit, offset.
+    pub(crate) fragment PLAYER_SHUFFLE_KEY = "((((t.search_key * ?1 + ?2) % 2147483647) \
+        * ((t.search_key * ?1 + ?2) % 2147483647)) % 2147483647 * ?3 \
+        + ((t.search_key * ?1 + ?2) % 2147483647)) % 2147483647";
+    /// Every streamable track in insertion (`search_key`) order, one page
+    /// at an offset: the full-library sync. The keys come from the index
+    /// over availability and the time a track went missing, which holds
+    /// them in order for each time; nearly every streamable track has
+    /// none, and the few that have one are merged in. Only the page's rows
+    /// are read for their ids. Binds: limit, offset.
     pub(crate) fragment PLAYER_NATURAL_PAGE = "SELECT pt.id FROM (\
-        SELECT t.rowid AS k FROM local_tracks t \
+        SELECT t.search_key AS k, t.rowid AS r FROM local_tracks t \
         WHERE t.availability = 'indexed' AND t.missing_since IS NULL \
-        UNION ALL SELECT t.rowid FROM local_tracks t \
+        UNION ALL SELECT t.search_key, t.rowid FROM local_tracks t \
         WHERE t.availability = 'indexed' AND t.missing_since IS NOT NULL \
         ORDER BY 1 LIMIT ? OFFSET ?) p CROSS JOIN local_tracks pt \
-        WHERE pt.rowid = p.k ORDER BY p.k";
+        WHERE pt.rowid = p.r ORDER BY p.k";
     /// One page of player track ids in a catalog order, over the whole
     /// library.
     family PLAYER_TRACK_PAGE = player_track_page;
@@ -759,21 +759,22 @@ fn marks(len: ListLen) -> String {
 /// cursor names one place in it.
 pub(crate) type OrderKey = (&'static str, bool);
 
-/// A seeded shuffle key over an alias's rowid: `h = (rowid * a + b) mod p`,
-/// then `(k * h^2 + h) mod p`, with `p` the prime 2^31 - 1, above any
-/// realistic rowid so every product stays inside 64 bits. The square makes
-/// it non-linear, so neighbouring rows land far apart. One seed is one
-/// fixed order.
+/// A seeded shuffle key over a row's integer key (an album's rowid, a
+/// track's `search_key`): `h = (key * a + b) mod p`, then
+/// `(k * h^2 + h) mod p`, with `p` the prime 2^31 - 1, above any realistic
+/// key so every product stays inside 64 bits. The square makes it
+/// non-linear, so neighbouring rows land far apart. One seed is one fixed
+/// order.
 macro_rules! shuffle_key {
-    ($alias:literal) => {
+    ($key:literal) => {
         concat!(
             "((((",
-            $alias,
-            ".rowid * s.sa + s.sb) % 2147483647) * ((",
-            $alias,
-            ".rowid * s.sa + s.sb) % 2147483647)) % 2147483647 * s.sk + ((",
-            $alias,
-            ".rowid * s.sa + s.sb) % 2147483647)) % 2147483647"
+            $key,
+            " * s.sa + s.sb) % 2147483647) * ((",
+            $key,
+            " * s.sa + s.sb) % 2147483647)) % 2147483647 * s.sk + ((",
+            $key,
+            " * s.sa + s.sb) % 2147483647)) % 2147483647"
         )
     };
 }
@@ -902,7 +903,7 @@ pub(crate) fn album_keys(sort: AlbumSort, descending: bool) -> Vec<OrderKey> {
             ("a.title_folded", d),
             ("a.id", d),
         ],
-        AlbumSort::Random => vec![(shuffle_key!("a"), false), ("a.id", false)],
+        AlbumSort::Random => vec![(shuffle_key!("a.rowid"), false), ("a.id", false)],
     }
 }
 
@@ -985,7 +986,7 @@ pub(crate) fn track_keys(sort: TrackSort, descending: bool) -> Vec<OrderKey> {
             ("t.track_number", false),
             ("t.id", false),
         ],
-        TrackSort::Random => vec![(shuffle_key!("t"), false), ("t.id", false)],
+        TrackSort::Random => vec![(shuffle_key!("t.search_key"), false), ("t.id", false)],
     }
 }
 
@@ -1401,8 +1402,8 @@ fn player_track_order(sequence: TrackSequence) -> String {
         TrackSequence::Disc => "t.disc_number ASC, t.track_number ASC, t.id ASC".to_owned(),
         TrackSequence::Title => "t.title_folded ASC, t.id ASC".to_owned(),
         TrackSequence::Newest => "t.imported_at DESC, t.id ASC".to_owned(),
-        TrackSequence::Random | TrackSequence::Shuffle => "t.rowid ASC".to_owned(),
-        TrackSequence::Natural => "t.rowid ASC".to_owned(),
+        TrackSequence::Random | TrackSequence::Shuffle => "t.search_key ASC".to_owned(),
+        TrackSequence::Natural => "t.search_key ASC".to_owned(),
         TrackSequence::AddedUp => "t.imported_at ASC, t.id ASC".to_owned(),
         TrackSequence::AddedDown => "t.imported_at DESC, t.id DESC".to_owned(),
         TrackSequence::TitleDown => "t.title_folded DESC, t.id DESC".to_owned(),
@@ -1454,12 +1455,12 @@ fn track_page(shape: TrackShape, key: TrackKey, sequence: TrackSequence) -> Stri
         }
     };
     // A random order sorts every track: the keys are worked out from the
-    // rowids alone, which a narrow index holds, and only the page's rows
-    // are read for their ids.
+    // search keys alone, which a narrow index holds, and only the page's
+    // rows are read for their ids.
     format!(
-        "SELECT pt.id FROM (SELECT t.rowid AS k, {order} AS o FROM {rows} WHERE {filter} \
-         ORDER BY o, t.rowid LIMIT ? OFFSET ?) p CROSS JOIN local_tracks pt \
-         WHERE pt.rowid = p.k ORDER BY p.o, p.k"
+        "SELECT pt.id FROM (SELECT t.search_key AS k, t.rowid AS r, {order} AS o \
+         FROM {rows} WHERE {filter} ORDER BY o, k LIMIT ? OFFSET ?) p \
+         CROSS JOIN local_tracks pt WHERE pt.rowid = p.r ORDER BY p.o, p.k"
     )
 }
 
@@ -1762,7 +1763,7 @@ fn player_album_order(sequence: AlbumSequence) -> String {
         AlbumSequence::YearDescending => {
             "(a.year IS NULL) ASC, a.year DESC, a.title_folded ASC, a.id ASC".to_owned()
         }
-        AlbumSequence::Shuffle => format!("{}, a.rowid", shuffle_key!("a")),
+        AlbumSequence::Shuffle => format!("{}, a.rowid", shuffle_key!("a.rowid")),
         AlbumSequence::Natural => "a.rowid ASC".to_owned(),
         AlbumSequence::AddedUp => "a.created_at ASC, a.id ASC".to_owned(),
         AlbumSequence::AddedDown => "a.created_at DESC, a.id DESC".to_owned(),

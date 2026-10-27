@@ -6886,3 +6886,106 @@ async fn lowered_mbid_indexes_arrive_on_upgrade() {
         ("GROUP-A".to_owned(), "REC-A".to_owned(), "REC-B".to_owned())
     );
 }
+
+/// Migration 0094 gives every track a search key equal to its rowid, so
+/// orders read from it stay as they were, and rebuilds the search index on
+/// that key: a catalog seeded before it, with gaps where tracks were
+/// deleted, finds the same tracks after. A track added later takes the
+/// next key and is found by its text.
+#[tokio::test]
+async fn tracks_gain_a_search_key_on_upgrade() {
+    let pool = scratch_pool().await;
+    migrator_through(93).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('ar1', 'A', 'a', 'person', 0, 0); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, album_artist_name, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'al1', 'Blue Hour', 'blue hour', 'ar1', 'A', 'automatic', 0, 0);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (step, title) in ["amber road", "cobalt sea", "amber sky", "dune", "amber"]
+        .iter()
+        .enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+                 path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+                 album_title, album_title_folded, file_format, ingest_source, imported_at, \
+                 membership_source) \
+             VALUES (?1, 'al1', 'r1', ?1, ?1, ?1, 1, 0, 's', ?2, ?2, 'Blue Hour', 'blue hour', \
+                 'mp3', 'scan', 0, 'automatic')",
+        )
+        .bind(format!("t{step}"))
+        .bind(title)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM local_tracks WHERE id = 't1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let rowids: Vec<(String, i64)> =
+        sqlx::query_as("SELECT id, rowid FROM local_tracks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let keys: Vec<(String, i64)> =
+        sqlx::query_as("SELECT id, search_key FROM local_tracks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(keys, rowids, "the key is the rowid each track had");
+    let hits = |phrase: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM local_tracks WHERE search_key IN \
+                 (SELECT rowid FROM local_tracks_fts WHERE local_tracks_fts MATCH ?) ORDER BY id",
+            )
+            .bind(phrase)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(hits("\"amber\"").await, ["t0", "t2", "t4"]);
+    assert_eq!(hits("\"blue hour\"").await, ["t0", "t2", "t3", "t4"]);
+    assert!(hits("\"cobalt\"").await.is_empty());
+
+    sqlx::query(
+        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source) \
+         VALUES ('t5', 'al1', 'r1', 't5', 't5', 't5', 1, 0, 's', 'Amber Late', 'amber late', \
+             'Blue Hour', 'blue hour', 'mp3', 'scan', 0, 'automatic')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let next: i64 = sqlx::query_scalar("SELECT search_key FROM local_tracks WHERE id = 't5'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(next, 6, "one more than the largest key");
+    assert_eq!(hits("\"amber\"").await, ["t0", "t2", "t4", "t5"]);
+    sqlx::query("UPDATE local_tracks SET title_folded = 'ember' WHERE id = 't0'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(hits("\"amber\"").await, ["t2", "t4", "t5"]);
+    sqlx::query(
+        "INSERT INTO local_tracks_fts(local_tracks_fts, rank) VALUES ('integrity-check', 1)",
+    )
+    .execute(&pool)
+    .await
+    .expect("the index matches the table");
+}

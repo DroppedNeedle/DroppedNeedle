@@ -177,9 +177,9 @@ pub enum TrackOrder {
     /// One fixed shuffle per seed: pages of the same seed never repeat or
     /// skip a track. Callers draw the seed with [`ShuffleSeeds`].
     Shuffle(u32),
-    /// Insertion order (rowid): the full-library sync order. Pages walk the
-    /// table in rowid order, and pages already read stay put while a scan
-    /// appends tracks.
+    /// Insertion order (`search_key`): the full-library sync order. Pages
+    /// walk the tracks in key order, and pages already read stay put while
+    /// a scan appends tracks.
     Natural,
     /// One key, ascending or (`true`) descending; ids break ties in the
     /// same direction.

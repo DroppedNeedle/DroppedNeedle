@@ -634,3 +634,138 @@ async fn leak_db_failure_renders_fixed_500_with_error_id() {
     assert!(!raw.contains("local_artists"));
     assert!(!raw.contains("no such table"));
 }
+
+/// The ids a track search answers, in order.
+async fn track_hits(app: &axum::Router, query: &str) -> Vec<String> {
+    let uri = format!("/api/v3/search/tracks?{}&limit=50", urlencode_query(query));
+    let (status, _, bytes) = call(app.clone(), Method::GET, &uri, Some(TEST_TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK, "{query}");
+    json(&bytes)["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Copies the track table into a new one and swaps it in, the way a table
+/// is reshaped. The copy numbers its rows afresh, so the gaps deleted
+/// tracks left close up.
+async fn rebuild_tracks(pool: &SqlitePool) {
+    let table: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'local_tracks'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let dependents: Vec<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE tbl_name = 'local_tracks' \
+         AND type IN ('index', 'trigger') AND sql IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let columns: String = sqlx::query_scalar(
+        "SELECT group_concat(name, ', ') FROM pragma_table_info('local_tracks')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let create = table.replacen(
+        "CREATE TABLE local_tracks",
+        "CREATE TABLE local_tracks_rebuilt",
+        1,
+    );
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::raw_sql("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::raw_sql(&format!(
+        "BEGIN; {create}; \
+         INSERT INTO local_tracks_rebuilt ({columns}) SELECT {columns} FROM local_tracks; \
+         DROP TABLE local_tracks; \
+         ALTER TABLE local_tracks_rebuilt RENAME TO local_tracks; {}; COMMIT",
+        dependents.join("; ")
+    ))
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::raw_sql("PRAGMA legacy_alter_table = OFF; PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+}
+
+/// Track search answers the same after the database is vacuumed and after
+/// the track table is rebuilt over the gaps deleted tracks left: the
+/// search index never names a track by a number a copy reassigns.
+#[tokio::test]
+async fn track_search_survives_vacuum_and_a_table_rebuild() {
+    let (pool, _dir) = crate::common::migrated_pool("reads-search-rebuild").await;
+    seed_catalog(&pool).await;
+    let words = ["amber", "cobalt", "dune"];
+    for step in 0..30 {
+        let id = format!("t-needle-{step:02}");
+        let title = format!("Needle {step:02} {}", words[step % 3]);
+        seed_track(
+            &pool,
+            &id,
+            "album-gulag",
+            &title,
+            "Gulag Orkestar",
+            "indexed",
+        )
+        .await;
+    }
+    sqlx::query(
+        "DELETE FROM local_tracks WHERE id IN ('t-needle-04', 't-needle-05', \
+         't-needle-11', 't-needle-12', 't-needle-13', 't-needle-20')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (app, _held) = app(
+        pool.clone(),
+        Arc::new(search::ports::UnconfiguredEnrichment),
+    )
+    .await;
+    let queries = ["amber", "cobalt", "dune", "needle 1", "needle"];
+    let mut before = Vec::new();
+    for query in queries {
+        before.push(track_hits(&app, query).await);
+    }
+    assert_eq!(
+        before[0],
+        [
+            "t-needle-00",
+            "t-needle-03",
+            "t-needle-06",
+            "t-needle-09",
+            "t-needle-15",
+            "t-needle-18",
+            "t-needle-21",
+            "t-needle-24",
+            "t-needle-27",
+        ]
+    );
+    assert_eq!(before[4].len(), 24);
+
+    sqlx::query("VACUUM").execute(&pool).await.unwrap();
+    for (query, expected) in queries.iter().zip(&before) {
+        assert_eq!(
+            &track_hits(&app, query).await,
+            expected,
+            "{query} after VACUUM"
+        );
+    }
+
+    rebuild_tracks(&pool).await;
+    for (query, expected) in queries.iter().zip(&before) {
+        assert_eq!(
+            &track_hits(&app, query).await,
+            expected,
+            "{query} after a table rebuild"
+        );
+    }
+}
