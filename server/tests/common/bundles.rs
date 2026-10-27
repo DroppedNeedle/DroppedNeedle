@@ -102,7 +102,6 @@ pub fn acquire_at(
             library: Arc::new(LibraryLanding::new(
                 library,
                 library.imports.releases.clone(),
-                platform.db.sqlx().clone(),
             )),
             edition_plans: Arc::new(crate::common::library::operations(library)),
             album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(

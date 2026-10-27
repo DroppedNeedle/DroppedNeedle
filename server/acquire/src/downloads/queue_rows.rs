@@ -92,12 +92,7 @@ impl DownloadStore<'_> {
     ) -> Result<AlbumPurge, StoreError> {
         let cancelled: Vec<String> = self
             .conn
-            .prepare(
-                "UPDATE download_tasks SET status = 'cancelled', cancelled_at = ?2, \
-                     remote_queued = 0, updated_at = ?2 \
-                 WHERE lower(release_group_mbid) = lower(?1) AND status IN ('failed', 'partial') \
-                 AND created_at <= ?3 RETURNING id",
-            )?
+            .prepare(sql::PURGE_ALBUM_TASKS.text())?
             .query_map(params![release_group_mbid, now, removed_at], |row| {
                 row.get(0)
             })?
@@ -115,8 +110,7 @@ impl DownloadStore<'_> {
             held_removed += held.resolve(entry, &[file], FileState::Discarded, now_ms)?;
         }
         self.conn.execute(
-            "DELETE FROM download_quarantine WHERE lower(release_group_mbid) = lower(?1) \
-             AND quarantined_at <= ?2",
+            sql::PURGE_ALBUM_QUARANTINE.text(),
             params![release_group_mbid, removed_at],
         )?;
         Ok(AlbumPurge {
@@ -133,12 +127,7 @@ impl DownloadStore<'_> {
         now: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE download_tasks SET downloaded_bytes = ?2, \
-                 total_size_bytes = COALESCE(?3, total_size_bytes), progress_percent = ?4, \
-                 files_total = ?5, files_completed = ?6, files_failed = ?7, \
-                 queue_position_start = ?8, queue_position_end = ?9, remote_queued = ?10, \
-                 last_polled_at = ?11 \
-             WHERE id = ?1 AND status IN ('downloading', 'processing')",
+            sql::RECORD_PROGRESS.text(),
             params![
                 task_id,
                 progress.downloaded_bytes,
@@ -172,12 +161,9 @@ impl DownloadStore<'_> {
                 }
             }
             TaskStatus::Failed | TaskStatus::Partial => {
-                let changed = self.conn.execute(
-                    "UPDATE download_tasks SET status = 'cancelled', cancelled_at = ?2, \
-                         remote_queued = 0, updated_at = ?2 \
-                     WHERE id = ?1 AND status IN ('failed', 'partial')",
-                    params![task.id, now],
-                )?;
+                let changed = self
+                    .conn
+                    .execute(sql::STOP_RETRIES.text(), params![task.id, now])?;
                 if changed == 0 {
                     Stopped::AlreadySettled
                 } else {
@@ -189,9 +175,7 @@ impl DownloadStore<'_> {
         };
         if outcome != Stopped::AlreadySettled && !task.release_group_mbid.is_empty() {
             self.conn.execute(
-                "UPDATE wanted_watches SET state = 'stopped' \
-                 WHERE release_group_mbid_lower = lower(?1) AND user_id = ?2 \
-                   AND state = 'watching'",
+                sql::STOP_WATCH.text(),
                 params![task.release_group_mbid, task.user_id],
             )?;
         }
@@ -232,11 +216,9 @@ impl DownloadStore<'_> {
     /// outlives the queue row by design, and files still kept for a
     /// removed task go to cleanup at the next hourly sweep.
     pub fn clear_finished(&self, owner: Option<&str>) -> Result<i64, StoreError> {
-        let removed = self.conn.execute(
-            "DELETE FROM download_tasks WHERE status IN ('completed', 'cancelled') \
-             AND (?1 IS NULL OR user_id = ?1)",
-            params![owner],
-        )?;
+        let removed = self
+            .conn
+            .execute(sql::CLEAR_FINISHED.text(), params![owner])?;
         Ok(removed as i64)
     }
 
@@ -245,7 +227,7 @@ impl DownloadStore<'_> {
     pub fn delete_quarantine(&self, id: i64) -> Result<bool, StoreError> {
         let removed = self
             .conn
-            .execute("DELETE FROM download_quarantine WHERE id = ?1", params![id])?;
+            .execute(sql::DELETE_QUARANTINE.text(), params![id])?;
         Ok(removed > 0)
     }
 }

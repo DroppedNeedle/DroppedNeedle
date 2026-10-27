@@ -117,8 +117,7 @@ impl AcquireDb {
         let (id, display_name, role) = (id.to_owned(), display_name.to_owned(), role.to_owned());
         self.write("test.add_user", move |tx| {
             tx.execute(
-                "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
-                 VALUES (?1, ?2, ?3, '2024-01-01T00:00:00Z')",
+                crate::sql::INSERT_TEST_USER.text(),
                 rusqlite::params![id, display_name, role],
             )?;
             Ok(())

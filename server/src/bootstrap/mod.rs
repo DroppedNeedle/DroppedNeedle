@@ -328,7 +328,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         auth.users.clone(),
         acquire_stores,
         acquire_ports(
-            p,
             &library_services,
             &providers,
             mb_source,
@@ -621,7 +620,6 @@ fn library_ports(
 /// pace through the shared limiters. Plugins act as download sources, feed
 /// usenet and hear acquisition events.
 fn acquire_ports(
-    p: &Platform,
     library: &LibraryServices,
     providers: &Arc<Providers>,
     mb_source: droppedneedle_providers::musicbrainz::LiveSource,
@@ -633,7 +631,6 @@ fn acquire_ports(
             droppedneedle_acquire::landing::library::LibraryLanding::new(
                 &library.setup,
                 library.setup.imports.releases.clone(),
-                p.db.sqlx().clone(),
             ),
         ),
         edition_plans: Arc::new(library.operations.clone()),

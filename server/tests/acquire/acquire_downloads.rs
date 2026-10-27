@@ -1244,7 +1244,6 @@ impl HeldRig {
         let landing = droppedneedle_acquire::landing::library::LibraryLanding::new(
             &library,
             crate::common::library::every_priority(Arc::new(Releases(releases))),
-            db.pool().clone(),
         );
         let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
             db.clone(),

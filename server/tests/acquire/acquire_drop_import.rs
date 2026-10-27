@@ -245,7 +245,6 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
     let mysterons = tagged(&work, "flac_full_01.flac", "Dummy", "Mysterons", 1);
     let impostor = tagged(&work, "flac_full_01.flac", "Dummy", "Glory Box", 1);
     let lengths = [None, length_ms(&sour_times, &work)];
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
@@ -254,7 +253,6 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
                 &["Mysterons", "Sour Times"],
                 &lengths,
             )))),
-            pool,
         )),
     );
 
@@ -418,7 +416,6 @@ async fn same_named_files_on_two_discs_both_wait() {
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
-            db.pool().clone(),
         )),
     );
     let curator = Viewer {
@@ -463,7 +460,6 @@ async fn an_upgrade_the_bin_cannot_take_keeps_the_upload() {
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
-            db.pool().clone(),
         )),
     );
     let curator = Viewer {
@@ -608,13 +604,11 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
     let (db, library, dir, _auth) = bundles().await;
     let mut known = editions(1);
     known.extend(editions(2));
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(LargeGroups(known))),
-            pool,
         )),
     );
     let curator = Viewer {
@@ -694,13 +688,11 @@ async fn a_deferred_upload_match_leaves_its_files_as_they_were() {
     guess.tracks[0].id = "9d0b7a1e-0000-4000-8000-000000000003".to_owned();
     let guessed_track = guess.tracks[0].clone();
     let (db, library, dir, _auth) = bundles().await;
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(LargeGroups(vec![picked, guess]))),
-            pool,
         )),
     );
     let curator = Viewer {
@@ -789,13 +781,11 @@ async fn a_matched_uploads_bonus_track_is_not_retried_onto_the_old_guess() {
     guess.tracks[0].recording_id = "9d0b7a1e-0000-4000-8000-000000000014".to_owned();
     let guessed = guess.tracks[0].clone();
     let (db, library, dir, _auth) = bundles().await;
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(LargeGroups(vec![picked, guess]))),
-            pool,
         )),
     );
     let curator = Viewer {
@@ -962,13 +952,11 @@ async fn upload_and_settle(
 #[tokio::test]
 async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
     let (db, library, _dir, _auth) = bundles().await;
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(OneRelease(release(&["Big"], &[None])))),
-            pool,
         )),
     );
     let curator = Viewer {

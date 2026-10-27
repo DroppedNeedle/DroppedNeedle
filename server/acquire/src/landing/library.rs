@@ -7,12 +7,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use sqlx::SqlitePool;
+use rusqlite::{Connection, OptionalExtension, Params, params};
 
 use super::ports::{
     ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, OwnedCopy, OwnedTracks, VersionRow,
 };
+use super::sql;
 use crate::downloads::plan::PlannedAlbum;
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_library::identify::sources::{
     Prioritised, ReleaseHit, ReleaseSource, SourceError, group_editions,
 };
@@ -24,63 +26,10 @@ use droppedneedle_library::scan::EffectivePolicy;
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_providers::RequestPriority;
 
-/// Indexed library tracks with their album's identity and their own,
-/// the one notion of "the library holds it" the landing and the wanted
-/// watcher share: an album identified as the group, or, in an album with
-/// no identity yet, a file whose own tags name the group. An album
-/// identified as another group never counts for its files' tags. The
-/// `t.id IN` list names every track either side could match, through the
-/// lowered-id indexes, so the tracks are reached by key.
-pub(crate) const OWNED_TRACKS_FROM: &str = "FROM local_tracks t \
-     JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
-     LEFT JOIN local_album_external_identities ai ON ai.local_album_id = b.id \
-     LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
-     WHERE t.availability = 'indexed' \
-       AND t.id IN (SELECT gt.id FROM local_album_external_identities ga \
-           JOIN local_tracks gt ON gt.local_album_id = ga.local_album_id \
-           WHERE lower(ga.release_group_mbid) = ?1 \
-         UNION ALL SELECT id FROM local_tracks \
-           WHERE embedded_release_group_mbid IS NOT NULL \
-             AND lower(embedded_release_group_mbid) = ?1) \
-       AND (lower(ai.release_group_mbid) = ?1 \
-         OR (ai.local_album_id IS NULL AND lower(t.embedded_release_group_mbid) = ?1))";
-
-/// [`OWNED_TRACKS_FROM`] kept to one library album when `?2` names one,
-/// followed to the album it was merged into.
-const IN_ALBUM: &str = " AND (?2 IS NULL OR b.id = (SELECT COALESCE(retired_into_album_id, id) \
-     FROM local_albums WHERE id = ?2))";
-
-/// Indexed tracks of one release group: release track and recording
-/// (sealed identity first, then the file's own tags) and quality facts.
-fn group_tracks_sql() -> String {
-    format!(
-        "SELECT lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')), \
-         lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')), \
-         t.file_format, t.bit_rate, t.bit_depth {OWNED_TRACKS_FROM}{IN_ALBUM}"
-    )
-}
-
 type GroupTrack = (String, String, String, Option<i64>, Option<i64>);
 
-/// Every indexed copy in a group, with the album it sits in, that album's
-/// release (sealed identity first, then the file's own tags) and the
-/// release its identity names, the copy's release track and recording,
-/// and its quality facts.
-fn group_copies_sql() -> String {
-    format!(
-        "SELECT t.id AS track_id, b.id AS album_id, \
-         lower(COALESCE(ai.release_mbid, t.embedded_release_mbid, '')) AS release_mbid, \
-         COALESCE(ai.release_mbid, '') AS album_release_mbid, \
-         lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')) \
-           AS release_track_mbid, \
-         lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')) AS recording_mbid, \
-         t.file_format AS format, t.bit_rate AS bitrate, t.bit_depth AS depth \
-         {OWNED_TRACKS_FROM}{IN_ALBUM}"
-    )
-}
-
-/// One row of [`group_copies_sql`].
-#[derive(Debug, Clone, Default, PartialEq, sqlx::FromRow)]
+/// One row of `sql::GROUP_COPIES`.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct GroupCopy {
     pub track_id: String,
     pub album_id: String,
@@ -93,6 +42,47 @@ pub struct GroupCopy {
     pub bitrate: Option<i64>,
     pub depth: Option<i64>,
 }
+
+impl GroupCopy {
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            track_id: row.get(0)?,
+            album_id: row.get(1)?,
+            release_mbid: row.get(2)?,
+            album_release_mbid: row.get(3)?,
+            release_track_mbid: row.get(4)?,
+            recording_mbid: row.get(5)?,
+            format: row.get(6)?,
+            bitrate: row.get(7)?,
+            depth: row.get(8)?,
+        })
+    }
+}
+
+/// Every row one statement selects, mapped by `map`.
+fn read_rows<T>(
+    conn: &Connection,
+    text: &str,
+    values: impl Params,
+    map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+) -> rusqlite::Result<Vec<T>> {
+    let mut statement = conn.prepare_cached(text)?;
+    let rows = statement.query_map(values, map)?;
+    rows.collect()
+}
+
+/// One row of `sql::VERSION_ROW`: availability, format, bitrate, depth,
+/// on the planned album, an alias, on the release, and the album.
+type TrackVersion = (
+    String,
+    String,
+    Option<i64>,
+    Option<i64>,
+    bool,
+    bool,
+    bool,
+    String,
+);
 
 /// The copies an upgrade of one release track replaces. Only the local
 /// album holding the release being imported counts (the album whose
@@ -148,33 +138,42 @@ pub struct LibraryLanding {
     library: Imports,
     management: Management,
     releases: Prioritised<Arc<dyn ReleaseSource>>,
-    pool: SqlitePool,
 }
 
 impl LibraryLanding {
-    /// Port over the imports and management services `library` built,
-    /// its release sources, and the reader pool of the application
+    /// Port over the imports and management services `library` built and
+    /// its release sources. The library's reads run on the imports'
     /// database.
-    pub fn new(
-        library: &LibrarySetup,
-        releases: Prioritised<Arc<dyn ReleaseSource>>,
-        pool: SqlitePool,
-    ) -> Self {
+    pub fn new(library: &LibrarySetup, releases: Prioritised<Arc<dyn ReleaseSource>>) -> Self {
         Self {
             library: library.imports.clone(),
             management: Management::new(library),
             releases,
-            pool,
         }
     }
 
     async fn group_tracks(&self, release_group_mbid: &str, album: Option<&str>) -> Vec<GroupTrack> {
-        match sqlx::query_as::<_, GroupTrack>(&group_tracks_sql())
-            .bind(release_group_mbid.to_ascii_lowercase())
-            .bind(album)
-            .fetch_all(&self.pool)
-            .await
-        {
+        let values = (
+            release_group_mbid.to_ascii_lowercase(),
+            album.map(str::to_owned),
+        );
+        let read = self
+            .library
+            .db
+            .read("landing.group_tracks", move |conn| {
+                read_rows(conn, sql::GROUP_TRACKS.text(), values, |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })
+                .map_err(DbError::from)
+            })
+            .await;
+        match read {
             Ok(rows) => rows,
             Err(error) => {
                 tracing::warn!(%error, "library holdings unreadable; landing treats the group as empty");
@@ -266,12 +265,19 @@ impl LandingLibrary for LibraryLanding {
         recording_mbid: &'a str,
     ) -> BoxFuture<'a, Vec<OwnedCopy>> {
         Box::pin(async move {
-            let rows: Vec<GroupCopy> = match sqlx::query_as(&group_copies_sql())
-                .bind(release_group_mbid.to_ascii_lowercase())
-                .bind(album)
-                .fetch_all(&self.pool)
-                .await
-            {
+            let values = (
+                release_group_mbid.to_ascii_lowercase(),
+                album.map(str::to_owned),
+            );
+            let read = self
+                .library
+                .db
+                .read("landing.owned_copies", move |conn| {
+                    read_rows(conn, sql::GROUP_COPIES.text(), values, GroupCopy::from_row)
+                        .map_err(DbError::from)
+                })
+                .await;
+            let rows: Vec<GroupCopy> = match read {
                 Ok(rows) => rows,
                 Err(error) => {
                     tracing::warn!(%error, "library copies unreadable; nothing is replaced");
@@ -307,36 +313,37 @@ impl LandingLibrary for LibraryLanding {
                     .collect::<Vec<_>>(),
             )
             .unwrap_or_default();
-            type Row = (
-                String,
-                String,
-                Option<i64>,
-                Option<i64>,
-                bool,
-                bool,
-                bool,
-                String,
+            let values = (
+                track_id.to_owned(),
+                planned.album_id.clone(),
+                planned.release_mbid.clone(),
+                release_tracks,
             );
-            let row: Option<Row> = match sqlx::query_as(
-                "SELECT t.availability, t.file_format, t.bit_rate, t.bit_depth, \
-                 t.local_album_id = (SELECT COALESCE(retired_into_album_id, id) \
-                   FROM local_albums WHERE id = ?2) \
-                 AND EXISTS (SELECT 1 FROM local_album_external_identities e \
-                   WHERE e.local_album_id = t.local_album_id AND e.provider = 'musicbrainz' \
-                   AND lower(trim(e.release_mbid)) = lower(trim(?3))), \
-                 EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id), \
-                 EXISTS (SELECT 1 FROM local_track_external_identities i, json_each(?4) j \
-                   WHERE i.local_track_id = t.id AND i.provider = 'musicbrainz' \
-                   AND lower(i.release_track_mbid) = j.value), \
-                 t.local_album_id FROM local_tracks t WHERE t.id = ?1",
-            )
-            .bind(track_id)
-            .bind(&planned.album_id)
-            .bind(&planned.release_mbid)
-            .bind(release_tracks)
-            .fetch_optional(&self.pool)
-            .await
-            {
+            let read = self
+                .library
+                .db
+                .read("landing.version_row", move |conn| {
+                    conn.query_row(
+                        sql::VERSION_ROW.text(),
+                        params![values.0, values.1, values.2, values.3],
+                        |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                                row.get(6)?,
+                                row.get(7)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(DbError::from)
+                })
+                .await;
+            let row: Option<TrackVersion> = match read {
                 Ok(row) => row,
                 Err(error) => {
                     tracing::warn!(%error, track_id, "track to replace unreadable; nothing is replaced");
@@ -512,15 +519,15 @@ impl LandingLibrary for LibraryLanding {
                 "{}import/{staging}/",
                 droppedneedle_library::publish::HIDDEN_PREFIX
             );
-            let hashes: Vec<String> = sqlx::query_scalar(
-                "SELECT DISTINCT source_sha256 FROM library_publish_journal \
-                 WHERE substr(source_rel, 1, length(?1)) = ?1 AND source_sha256 IS NOT NULL \
-                   AND state IN ('committed', 'cleanup_pending', 'cleaned')",
-            )
-            .bind(folder)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| format!("publish journal unreadable: {error}"))?;
+            let hashes: Vec<String> = self
+                .library
+                .db
+                .read("landing.placed_sources", move |conn| {
+                    read_rows(conn, sql::PLACED_SOURCES.text(), [folder], |row| row.get(0))
+                        .map_err(DbError::from)
+                })
+                .await
+                .map_err(|error| format!("publish journal unreadable: {error}"))?;
             Ok(Some(hashes.into_iter().collect()))
         })
     }

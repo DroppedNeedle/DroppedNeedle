@@ -23,6 +23,7 @@
 
 pub mod candidates;
 pub mod review;
+pub(crate) mod sql;
 pub mod store;
 
 use std::collections::HashMap;
@@ -668,20 +669,14 @@ pub async fn pinned(
     }
     let job_id = task.search_job_id.as_deref()?;
     let index = usize::try_from(task.candidate_index?).ok()?;
-    let blob: Option<String> = match sqlx::query_scalar(
-        "SELECT candidates_blob FROM search_jobs WHERE id = ?1",
-    )
-    .bind(job_id)
-    .fetch_optional(journal.db().pool())
-    .await
-    {
-        Ok(blob) => blob,
+    let job = match JobStore::new(journal.db().clone()).get(job_id).await {
+        Ok(job) => job,
         Err(error) => {
             tracing::warn!(task_id = %task.id, %error, "picked candidate unreadable; searching instead");
             return None;
         }
     };
-    let Some(payload) = blob.as_deref().and_then(JobPayload::decode) else {
+    let Some(payload) = job.and_then(|job| JobPayload::decode(&job.blob)) else {
         tracing::warn!(task_id = %task.id, job_id, "picked candidate's search is gone; searching instead");
         return None;
     };

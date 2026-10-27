@@ -1,12 +1,8 @@
 # Folders under server/ whose source still holds raw SQL outside a sql.rs.
 # The gate in tests/server/persist_schema.rs skips them. An area that moves
 # its statements into sql.rs deletes its line.
-acquire/src/db.rs
-acquire/src/downloads/
 acquire/src/drop_import/
 acquire/src/imports/
-acquire/src/landing/
-acquire/src/search_jobs/
 auth/src/
 catalog/src/reads/collections/
 catalog/src/reads/discover/

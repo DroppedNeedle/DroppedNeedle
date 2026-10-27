@@ -35,6 +35,7 @@ pub mod ports;
 pub mod probe;
 pub mod quality;
 pub mod specs;
+pub(crate) mod sql;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

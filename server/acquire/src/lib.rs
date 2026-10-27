@@ -60,6 +60,7 @@ pub mod search_jobs;
 pub mod settings;
 pub mod slskd;
 pub mod sources;
+mod sql;
 pub mod target;
 pub mod usenet;
 pub mod wiring;
@@ -75,6 +76,9 @@ pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFi
         flows::sql::registered(),
         follows::sql::registered(),
         held::sql::registered(),
+        landing::sql::registered(),
         requests::sql::registered(),
+        search_jobs::sql::registered(),
+        sql::registered(),
     ]
 }

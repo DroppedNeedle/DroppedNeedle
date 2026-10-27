@@ -593,7 +593,6 @@ async fn kept_rig(copies: &[Copy]) -> KeptRig {
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            db.pool().clone(),
         ))),
         settings.live(),
         dir.join("held"),

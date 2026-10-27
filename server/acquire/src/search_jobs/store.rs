@@ -4,9 +4,9 @@
 
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 
 use super::candidates::Candidate;
+use super::sql;
 use crate::db::AcquireDb;
 use crate::downloads::store::{DownloadStore, NewTask, StoreError, TaskDetails};
 use droppedneedle_kernel::db::{DbError, Lane};
@@ -58,6 +58,28 @@ pub struct JobRow {
     pub blob: String,
     /// Reason code when the job failed.
     pub error_message: Option<String>,
+}
+
+impl JobRow {
+    /// Decode one row of `sql::JOB_BY_ID`. An empty release group reads
+    /// as none, and a year outside `i32` as unknown.
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            artist_name: row.get(2)?,
+            album_title: row.get(3)?,
+            year: row
+                .get::<_, Option<i64>>(4)?
+                .and_then(|year| i32::try_from(year).ok()),
+            release_group_mbid: row
+                .get::<_, Option<String>>(5)?
+                .filter(|mbid| !mbid.is_empty()),
+            status: row.get(6)?,
+            blob: row.get(7)?,
+            error_message: row.get(8)?,
+        })
+    }
 }
 
 /// A new job.
@@ -118,11 +140,6 @@ fn store_failed(operation: &str, error: StoreError) -> DbError {
     }
 }
 
-/// The download parked on a job: queued, linked to the job, no candidate
-/// picked yet.
-const PARKED_TASK_SQL: &str = "SELECT id FROM download_tasks WHERE search_job_id = ?1 \
-     AND candidate_index IS NULL AND status = 'queued' ORDER BY created_at LIMIT 1";
-
 /// What the automatic downloader decided about its search.
 #[derive(Debug, Clone)]
 pub enum ReviewOutcome {
@@ -162,9 +179,7 @@ impl JobStore {
             .write("search_jobs.insert", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 tx.execute(
-                    "INSERT INTO search_jobs (id, user_id, artist_name, album_title, year, \
-                     release_group_mbid, search_query, status, candidates_blob, created_at, \
-                     updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                    sql::INSERT_JOB.text(),
                     params![
                         job.id,
                         job.user_id,
@@ -186,47 +201,35 @@ impl JobStore {
 
     /// One job.
     pub async fn get(&self, job_id: &str) -> Result<Option<JobRow>, String> {
-        let row = sqlx::query(
-            "SELECT id, user_id, artist_name, album_title, year, release_group_mbid, status, \
-             candidates_blob, error_message FROM search_jobs WHERE id = ?1",
-        )
-        .bind(job_id)
-        .fetch_optional(self.db.pool())
+        let job_id = job_id.to_owned();
+        self.read("search_jobs.get", move |conn| {
+            conn.query_row(sql::JOB_BY_ID.text(), params![job_id], JobRow::from_row)
+                .optional()
+        })
         .await
-        .map_err(|error| error.to_string())?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let decode = |error: sqlx::Error| error.to_string();
-        Ok(Some(JobRow {
-            id: row.try_get(0).map_err(decode)?,
-            user_id: row.try_get(1).map_err(decode)?,
-            artist_name: row.try_get(2).map_err(decode)?,
-            album_title: row.try_get(3).map_err(decode)?,
-            year: row
-                .try_get::<Option<i64>, _>(4)
-                .map_err(decode)?
-                .and_then(|year| i32::try_from(year).ok()),
-            release_group_mbid: row
-                .try_get::<Option<String>, _>(5)
-                .map_err(decode)?
-                .filter(|mbid| !mbid.is_empty()),
-            status: row.try_get(6).map_err(decode)?,
-            blob: row.try_get(7).map_err(decode)?,
-            error_message: row.try_get(8).map_err(decode)?,
-        }))
     }
 
     /// The download a pick started from this job, if any.
     pub async fn picked_task(&self, job_id: &str) -> Result<Option<String>, String> {
-        sqlx::query_scalar(
-            "SELECT id FROM download_tasks WHERE search_job_id = ?1 \
-             ORDER BY created_at DESC LIMIT 1",
-        )
-        .bind(job_id)
-        .fetch_optional(self.db.pool())
+        let job_id = job_id.to_owned();
+        self.read("search_jobs.picked_task", move |conn| {
+            conn.query_row(sql::PICKED_TASK.text(), params![job_id], |row| row.get(0))
+                .optional()
+        })
         .await
-        .map_err(|error| error.to_string())
+    }
+
+    /// One read on the read pool. The text goes to the log.
+    async fn read<R, F>(&self, name: &'static str, op: F) -> Result<R, String>
+    where
+        F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.db
+            .db()
+            .read(name, move |conn| op(conn).map_err(DbError::from))
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// Store the outcome of a search that is still running. Answers false
@@ -244,9 +247,7 @@ impl JobStore {
             .write_background("search_jobs.finish", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 let changed = tx.execute(
-                    "UPDATE search_jobs SET status = ?2, candidates_blob = ?3, \
-                     error_message = ?4, completed_at = ?5, updated_at = ?5 \
-                     WHERE id = ?1 AND status = ?6",
+                    sql::FINISH_JOB.text(),
                     params![job_id, status, payload.encode()?, reason, at, SEARCHING],
                 )?;
                 Ok(changed > 0)
@@ -273,12 +274,10 @@ impl JobStore {
         self.db
             .write("search_jobs.review", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
-                let open: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM download_tasks WHERE id = ?1 \
-                     AND status = 'queued' AND search_job_id IS NULL)",
-                    params![task_id],
-                    |row| row.get(0),
-                )?;
+                let open: bool =
+                    tx.query_row(sql::TASK_OPEN_FOR_REVIEW.text(), params![task_id], |row| {
+                        row.get(0)
+                    })?;
                 if !open {
                     return Ok(false);
                 }
@@ -287,10 +286,7 @@ impl JobStore {
                     ReviewOutcome::Park => COMPLETED,
                 };
                 tx.execute(
-                    "INSERT INTO search_jobs (id, user_id, artist_name, album_title, year, \
-                     release_group_mbid, search_query, status, candidates_blob, created_at, \
-                     updated_at, completed_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?10)",
+                    sql::INSERT_REVIEWED_JOB.text(),
                     params![
                         job.id,
                         job.user_id,
@@ -317,11 +313,7 @@ impl JobStore {
                         )
                         .map_err(|error| store_failed("search_jobs.review", error))?,
                     ReviewOutcome::Park => {
-                        tx.execute(
-                            "UPDATE download_tasks SET search_job_id = ?2, updated_at = ?3 \
-                             WHERE id = ?1",
-                            params![task_id, job.id, at],
-                        )?;
+                        tx.execute(sql::PARK_TASK.text(), params![task_id, job.id, at])?;
                     }
                 }
                 Ok(true)
@@ -341,12 +333,11 @@ impl JobStore {
             .write("search_jobs.close", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 let moved = tx.execute(
-                    "UPDATE search_jobs SET status = ?2, updated_at = ?3 \
-                     WHERE id = ?1 AND status IN (?4, ?5, ?6)",
+                    sql::CLOSE_JOB.text(),
                     params![job_id, CANCELLED, at, SEARCHING, COMPLETED, FAILED],
                 )?;
                 let parked: Option<String> = tx
-                    .query_row(PARKED_TASK_SQL, params![job_id], |row| row.get(0))
+                    .query_row(sql::PARKED_TASK.text(), params![job_id], |row| row.get(0))
                     .optional()?;
                 if let Some(task_id) = parked {
                     DownloadStore::new(tx)
@@ -376,8 +367,7 @@ impl JobStore {
                 let mut moved = 0;
                 for status in from {
                     moved += tx.execute(
-                        "UPDATE search_jobs SET status = ?2, error_message = COALESCE(?3, \
-                         error_message), updated_at = ?4 WHERE id = ?1 AND status = ?5",
+                        sql::TRANSITION_JOB.text(),
                         params![job_id, to, reason, at, status],
                     )?;
                 }
@@ -398,18 +388,10 @@ impl JobStore {
         self.db
             .write_background("search_jobs.prune", move |tx| {
                 let stale = tx.execute(
-                    "DELETE FROM search_jobs WHERE status IN (?1, ?2, ?3, ?4) \
-                     AND updated_at < ?5 AND NOT EXISTS ( \
-                     SELECT 1 FROM download_tasks t WHERE t.search_job_id = search_jobs.id \
-                     AND t.status = 'queued')",
+                    sql::PRUNE_STALE.text(),
                     params![SEARCHING, COMPLETED, FAILED, CANCELLED, cutoff],
                 )?;
-                let picked = tx.execute(
-                    "DELETE FROM search_jobs WHERE status = ?1 AND NOT EXISTS ( \
-                     SELECT 1 FROM download_tasks t WHERE t.search_job_id = search_jobs.id \
-                     AND t.status IN ('queued', 'downloading', 'processing'))",
-                    params![MATCHED],
-                )?;
+                let picked = tx.execute(sql::PRUNE_PICKED.text(), params![MATCHED])?;
                 Ok(u64::try_from(stale + picked).unwrap_or(u64::MAX))
             })
             .await
@@ -436,18 +418,14 @@ impl JobStore {
             .write(Lane::Foreground, "search_jobs.pick", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 let status: Option<String> = tx
-                    .query_row(
-                        "SELECT status FROM search_jobs WHERE id = ?1",
-                        params![job_id],
-                        |row| row.get(0),
-                    )
+                    .query_row(sql::JOB_STATUS.text(), params![job_id], |row| row.get(0))
                     .optional()?;
                 let status = status.unwrap_or_default();
                 if status != COMPLETED {
                     return Err(PickError::Refused(PickRefusal::NotOpen(status)));
                 }
                 let parked: Option<String> = tx
-                    .query_row(PARKED_TASK_SQL, params![job_id], |row| row.get(0))
+                    .query_row(sql::PARKED_TASK.text(), params![job_id], |row| row.get(0))
                     .optional()?;
                 let store = DownloadStore::new(tx);
                 let store_error = |error| PickError::Db(store_failed("search_jobs.pick", error));
@@ -472,10 +450,7 @@ impl JobStore {
                         )
                         .map_err(store_error)?;
                     waive(&task_id).map_err(store_error)?;
-                    tx.execute(
-                        "UPDATE search_jobs SET status = ?2, updated_at = ?3 WHERE id = ?1",
-                        params![job_id, MATCHED, at],
-                    )?;
+                    tx.execute(sql::SET_JOB_STATUS.text(), params![job_id, MATCHED, at])?;
                     return Ok(task_id);
                 }
                 if !picked.task.release_group_mbid.is_empty()
@@ -502,10 +477,7 @@ impl JobStore {
                     )
                     .map_err(store_error)?;
                 waive(&picked.task.id).map_err(store_error)?;
-                tx.execute(
-                    "UPDATE search_jobs SET status = ?2, updated_at = ?3 WHERE id = ?1",
-                    params![job_id, MATCHED, at],
-                )?;
+                tx.execute(sql::SET_JOB_STATUS.text(), params![job_id, MATCHED, at])?;
                 Ok(picked.task.id.clone())
             })
             .await;

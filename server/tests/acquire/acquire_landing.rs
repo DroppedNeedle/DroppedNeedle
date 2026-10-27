@@ -269,13 +269,11 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
             &lengths,
         ),
     ]));
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            pool,
         ))),
     );
     let worker = |paths: Vec<PathBuf>| {
@@ -541,13 +539,11 @@ async fn land_with_recording(
         releases: Releases(vec![good]),
         retired: RETIRED,
     });
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            pool,
         ))),
     );
     acquire
@@ -725,13 +721,11 @@ async fn land_heard(
     let files = downloads(&downloads_dir);
     let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
     let releases = source(&lengths);
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            pool,
         ))),
     );
     let task_id = task.id.clone();
@@ -1287,13 +1281,11 @@ async fn held_files_import_as_upgrades_or_discard() {
     );
     let first = release.tracks[0].clone();
     let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            pool,
         ))),
     );
     let worker = |paths: Vec<PathBuf>| {
@@ -1500,13 +1492,11 @@ async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
     );
     let tracks = release.tracks.clone();
     let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            pool,
         ))),
     );
     let held_dir = acquire.held.folders().held.clone();
@@ -1941,7 +1931,6 @@ async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
             Some(Arc::new(LibraryLanding::new(
                 &library,
                 every_priority(releases),
-                db.pool().clone(),
             ))),
         );
         // Lossy only: the FLAC files are outside the band.
@@ -2247,7 +2236,6 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     let port: Arc<dyn LandingLibrary> = Arc::new(LibraryLanding::new(
         &library,
         every_priority(Arc::new(Releases(vec![release.clone()]))),
-        db.pool().clone(),
     ));
     let acquire = acquire_over(&db, Some(port.clone()));
     let receipt = port
@@ -2367,7 +2355,6 @@ async fn a_failed_downloads_kept_folder_stays_until_it_expires() {
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(Releases(Vec::new()))),
-            db.pool().clone(),
         ))),
     );
     let complete = dir.join("complete");
@@ -2540,7 +2527,6 @@ async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            db.pool().clone(),
         ))),
     );
     let source = Arc::new(FixedSource::new(downloads.clone(), files.clone()));
@@ -2690,7 +2676,6 @@ async fn a_read_only_archive_folder_does_not_hold_downloads() {
     let port: Arc<dyn LandingLibrary> = Arc::new(LibraryLanding::new(
         &library,
         every_priority(Arc::new(Releases(Vec::new()))),
-        db.pool().clone(),
     ));
     assert_eq!(port.import_folder(), Some(music.clone()));
     let acquire = acquire_over(&db, Some(port));
@@ -2922,7 +2907,6 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(Releases(releases.clone()))),
-            db.pool().clone(),
         ))),
     );
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
@@ -4228,7 +4212,6 @@ async fn a_held_release_track_is_not_given_away() {
     let port = LibraryLanding::new(
         &rig.library,
         every_priority(Arc::new(Releases(vec![e.new.clone()]))),
-        rig.acquire.db.pool().clone(),
     );
     let file = rig.landed("t-held", &e.new, 1, FIXTURES[1]);
     port.import(ImportRequest {
@@ -4808,13 +4791,11 @@ async fn a_failed_request_follows_its_retry_to_imported() {
         &["Mysterons", "Sour Times"],
         &lengths,
     )]));
-    let pool = db.pool().clone();
     let acquire = acquire_over(
         &db,
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            pool,
         ))),
     );
     // The first attempt failed and its request says so.
@@ -4942,7 +4923,6 @@ async fn land_single(task_id: &'static str, title: &str) -> Vec<(String, Option<
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(Releases(vec![single]))),
-            db.pool().clone(),
         ))),
     );
     let task = NewTask {
@@ -5055,7 +5035,6 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
         Some(Arc::new(LibraryLanding::new(
             &library,
             every_priority(releases),
-            db.pool().clone(),
         ))),
     );
 
@@ -5403,11 +5382,7 @@ async fn land_swapped(
         SwapAt::Import => Arc::new(releases),
     };
     let port: Arc<dyn LandingLibrary> = Arc::new(Shaky {
-        inner: Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(source),
-            db.pool().clone(),
-        )),
+        inner: Arc::new(LibraryLanding::new(&library, every_priority(source))),
         changes: 0.into(),
         after_import: (at == SwapAt::Import).then_some(swap),
     });
@@ -5820,7 +5795,6 @@ impl IntakeCase {
             inner: Arc::new(LibraryLanding::new(
                 &library,
                 every_priority(Arc::new(GroupListing(releases.clone()))),
-                db.pool().clone(),
             )),
             changes: row.changes.into(),
             after_import: None,

@@ -43,10 +43,7 @@ impl DownloadStore<'_> {
     /// Record one landing's decision.
     pub fn record_import_decision(&self, row: &ImportDecisionRow) -> Result<(), StoreError> {
         self.conn.execute(
-            "INSERT INTO download_import_decisions (task_id, attempt_id, outcome, reason_code, \
-             detail, release_mbid, distance, files_total, files_imported, files_held, \
-             checks_json, missing_positions, decided_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            sql::INSERT_DECISION.text(),
             params![
                 row.task_id,
                 row.attempt_id,
@@ -103,21 +100,15 @@ impl DownloadStore<'_> {
         detail: &str,
         now: f64,
     ) -> Result<(), StoreError> {
-        self.conn.execute(
-            "UPDATE download_tasks SET wrong_product_verdict_at = ?, wrong_product_detail = ? \
-             WHERE id = ? AND wrong_product_verdict_at IS NULL",
-            params![now, detail, task_id],
-        )?;
+        self.conn
+            .execute(sql::SET_WRONG_PRODUCT.text(), params![now, detail, task_id])?;
         Ok(())
     }
 
     /// Clear a task's wrong-product verdict once none of its files is held.
     pub fn clear_wrong_product_verdict(&self, task_id: &str) -> Result<(), StoreError> {
-        self.conn.execute(
-            "UPDATE download_tasks SET wrong_product_verdict_at = NULL, \
-             wrong_product_detail = NULL WHERE id = ?",
-            params![task_id],
-        )?;
+        self.conn
+            .execute(sql::CLEAR_WRONG_PRODUCT.text(), params![task_id])?;
         Ok(())
     }
 
@@ -131,9 +122,7 @@ impl DownloadStore<'_> {
         now: f64,
     ) -> Result<bool, StoreError> {
         let changed = self.conn.execute(
-            "UPDATE download_tasks SET status = 'completed', error_message = NULL, \
-                 outcome_code = NULL, completed_at = ?1, updated_at = ?1 \
-             WHERE id = ?2 AND status IN ('failed', 'partial')",
+            sql::COMPLETE_AFTER_MANUAL_IMPORT.text(),
             params![now, task_id],
         )?;
         if changed > 0 {
