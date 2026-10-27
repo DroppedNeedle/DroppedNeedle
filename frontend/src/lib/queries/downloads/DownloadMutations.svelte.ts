@@ -2,6 +2,7 @@ import { createMutation } from '@tanstack/svelte-query';
 import { get } from 'svelte/store';
 
 import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
@@ -132,13 +133,7 @@ export function requestAlbum() {
 	}));
 }
 
-export interface BatchAlbumItem {
-	musicbrainz_id: string;
-	artist_name?: string;
-	album_title?: string;
-	year?: number | null;
-	artist_mbid?: string;
-}
+export type BatchAlbumItem = components['schemas']['BatchItem'];
 
 export interface BatchRequestResult {
 	success: boolean;

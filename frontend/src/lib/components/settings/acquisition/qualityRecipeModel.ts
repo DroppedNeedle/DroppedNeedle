@@ -1,9 +1,30 @@
-import type {
-	DownloadPolicySettings,
-	QualityRecipeEntry,
-	QualityRecipeQuality,
-	QualityRecipeStatus
-} from '$lib/types';
+import type { components } from '$lib/api/v3/openapi';
+import type { DownloadPolicySettings } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+
+export type QualityRecipeFormat = 'flac' | 'mp3';
+
+export type QualityRecipeQuality =
+	| 'below_192'
+	| '192_255'
+	| '256_319'
+	| '320_plus'
+	| 'cd'
+	| '24_48'
+	| '24_96'
+	| '24_192'
+	| 'hi_res'
+	| 'custom';
+
+/** A recipe entry as the editor works on it: the server sends format and quality as plain strings. */
+export type QualityRecipeEntry = Omit<
+	components['schemas']['QualityRecipeEntry'],
+	'format' | 'quality'
+> & {
+	format: QualityRecipeFormat;
+	quality: QualityRecipeQuality;
+};
+
+export type QualityRecipeStatus = 'v1' | 'v2' | 'non_convertible' | 'invalid';
 
 export type RecipeMigrationStatus = QualityRecipeStatus | 'projected' | 'current';
 
@@ -361,7 +382,7 @@ export function migrationStatusFromPolicy(
 ): { status: RecipeMigrationStatus; message?: string | null } | null {
 	if (policy.quality_recipe_status) {
 		return {
-			status: policy.quality_recipe_status,
+			status: policy.quality_recipe_status as QualityRecipeStatus,
 			message: policy.quality_recipe_error ?? null
 		};
 	}
@@ -465,7 +486,8 @@ export function recipeFromPolicy(policy: DownloadPolicySettings): RecipeMigratio
 		};
 	}
 	if (policy.quality_recipe && policy.quality_recipe.length > 0) {
-		const stored = recipeWithIds(policy.quality_recipe);
+		// Each stored entry is checked below before the editor takes it.
+		const stored = recipeWithIds(policy.quality_recipe as QualityRecipeEntry[]);
 		const hasInvalidEntry = stored.some(
 			(entry, index) =>
 				!validStoredEntry(entry) || validateRecipeEntry(entry, stored.slice(0, index)) !== null

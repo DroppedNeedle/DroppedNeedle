@@ -26,7 +26,9 @@ vi.mock('$lib/queries/downloads/DownloadClientQueries.svelte', () => ({
 		data: {
 			// Non-"Connected" status header so the only /Connected/ match is the test result line below.
 			configured: true,
-			client: { status: 'error', version: null, message: 'Not reachable' },
+			reachable: false,
+			version: null,
+			message: 'Not reachable',
 			mount: { ok: true, move_supported: true, reason: 'ok', path: '/data/downloads/slskd' },
 			// Mount passes but nothing resolves, so the subfolder box renders.
 			mount_advisory: 'slskd has 5 finished downloads but nothing is visible.',

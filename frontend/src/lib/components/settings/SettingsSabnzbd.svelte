@@ -9,7 +9,10 @@
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { getIndexersQuery } from '$lib/queries/downloads/IndexerQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import type { SabnzbdConnectionSettings, SabnzbdTestResult } from '$lib/types';
+	import type {
+		SabnzbdConnectionSettings,
+		SabnzbdTestResult
+	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';

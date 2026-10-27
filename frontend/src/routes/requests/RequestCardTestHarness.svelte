@@ -1,6 +1,5 @@
 <script lang="ts">
-	import type { RequestKind } from '$lib/constants';
-	import type { RequestItem } from '$lib/queries/requests/types';
+	import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
 
 	interface Props {
 		item: RequestItem;

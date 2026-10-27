@@ -6,7 +6,6 @@
 		saveDownloadPolicy
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import type { DownloadPolicySettings as DownloadPolicyView } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
-	import type { DownloadPolicySettings } from '$lib/types';
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
@@ -49,7 +48,7 @@
 		return {
 			...view,
 			search_review: view.search_review ?? 'when_unsure',
-			recipe: recipeFromPolicy(view as DownloadPolicySettings).recipe
+			recipe: recipeFromPolicy(view).recipe
 		};
 	}
 
@@ -98,9 +97,7 @@
 		{ savedMessage: 'Saved.' }
 	);
 
-	const migration = $derived(
-		section.saved ? recipeFromPolicy(section.saved as DownloadPolicySettings) : null
-	);
+	const migration = $derived(section.saved ? recipeFromPolicy(section.saved) : null);
 	const baselineRecipe = $derived(section.saved?.recipe ?? []);
 
 	// A stored policy that is not in the shape this form saves (a projected v1

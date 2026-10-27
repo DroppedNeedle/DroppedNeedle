@@ -11,7 +11,6 @@
 		X
 	} from 'lucide-svelte';
 
-	import type { QualityRecipeEntry, QualityRecipeQuality } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -33,6 +32,8 @@
 		standardRecipeEntry,
 		validateRecipeEntry,
 		type PresetKey,
+		type QualityRecipeEntry,
+		type QualityRecipeQuality,
 		type RecipeDraftEntry,
 		type RecipeMigrationStatus
 	} from './qualityRecipeModel';

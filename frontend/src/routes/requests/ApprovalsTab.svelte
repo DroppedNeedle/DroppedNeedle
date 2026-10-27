@@ -2,13 +2,12 @@
 	import { fade, fly } from '$lib/ui/motion';
 	import { Check, CircleCheck, TriangleAlert, X } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import type { RequestKind } from '$lib/constants';
 	import { getApprovalsQuery } from '$lib/queries/requests/RequestQueries.svelte';
 	import {
 		createApproveRequestMutation,
 		createRejectRequestMutation
 	} from '$lib/queries/requests/RequestMutations.svelte';
-	import type { RequestItem } from '$lib/queries/requests/types';
+	import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

@@ -4,14 +4,25 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { PluginSourceHealth, PluginSourceInfo, PluginSourcesResponse } from '$lib/types';
 
 import { PluginQueryKeyFactory } from './PluginQueryKeyFactory';
 import { PLUGIN_ENDPOINTS } from './endpoints';
 
+type PluginSource = components['schemas']['PluginSource'];
+
+// The server leaves a plugin's optional fields out; the screens read them
+// filled in, with an unknown health value read as unknown.
+export type PluginSourceHealth = 'ok' | 'degraded' | 'error' | 'unknown';
+export type PluginSourceInfo = Required<Omit<PluginSource, 'health'>> & {
+	health: PluginSourceHealth;
+};
+export interface PluginSourceList {
+	sources: PluginSourceInfo[];
+}
+
 const HEALTH: readonly PluginSourceHealth[] = ['ok', 'degraded', 'error', 'unknown'];
 
-function toSourceInfo(source: components['schemas']['PluginSource']): PluginSourceInfo {
+function toSourceInfo(source: PluginSource): PluginSourceInfo {
 	return {
 		key: source.key,
 		plugin: source.plugin ?? '',
@@ -24,7 +35,7 @@ function toSourceInfo(source: components['schemas']['PluginSource']): PluginSour
 	};
 }
 
-export async function fetchPluginSources(signal?: AbortSignal): Promise<PluginSourcesResponse> {
+export async function fetchPluginSources(signal?: AbortSignal): Promise<PluginSourceList> {
 	const data = await api.global.v3.GET(PLUGIN_ENDPOINTS.sources(), { signal });
 	return { sources: data.sources.map(toSourceInfo) };
 }

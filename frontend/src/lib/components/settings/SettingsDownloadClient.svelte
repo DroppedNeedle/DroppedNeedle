@@ -42,12 +42,12 @@
 	);
 
 	const status = $derived(statusQuery.data);
-	const connected = $derived(status?.configured === true && status?.client.status === 'ok');
+	const connected = $derived(status?.configured === true && status?.reachable === true);
 	const statusText = $derived(
 		connected
-			? `Connected${status?.client.version ? ` · v${status.client.version}` : ''}`
+			? `Connected${status?.version ? ` · v${status.version}` : ''}`
 			: status?.configured
-				? (status?.client.message ?? 'Not reachable')
+				? (status?.message ?? 'Not reachable')
 				: 'Not configured'
 	);
 	const mount = $derived(status?.mount);

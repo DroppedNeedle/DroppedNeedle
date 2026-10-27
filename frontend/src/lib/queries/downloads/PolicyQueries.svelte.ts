@@ -1,13 +1,10 @@
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
-
-export type PolicySummary = components['schemas']['PolicySummaryResponse'];
 
 const policySummaryOptions = () =>
 	queryOptions({

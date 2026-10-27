@@ -2,6 +2,7 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 
@@ -25,13 +26,7 @@ async function invalidateAfterUpgrade() {
 	});
 }
 
-export interface UpgradeAlbumInput {
-	release_group_mbid: string;
-	artist_name: string;
-	album_title: string;
-	year?: number | null;
-	artist_mbid?: string | null;
-}
+export type UpgradeAlbumInput = components['schemas']['UpgradeAlbumRequest'];
 
 export function requestUpgradeAlbum() {
 	return createMutation(() => ({
@@ -41,15 +36,7 @@ export function requestUpgradeAlbum() {
 	}));
 }
 
-export interface UpgradeTrackInput {
-	recording_mbid: string;
-	artist_name: string;
-	track_title: string;
-	album_title?: string | null;
-	duration_seconds?: number | null;
-	release_group_mbid?: string | null;
-	artist_mbid?: string | null;
-}
+export type UpgradeTrackInput = components['schemas']['UpgradeTrackRequest'];
 
 export function requestUpgradeTrack() {
 	return createMutation(() => ({

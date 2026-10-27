@@ -1,6 +1,3 @@
-/** Album vs track request lane, carried on request query strings. */
-export type RequestKind = 'album' | 'track';
-
 export const AUTH_FREE_PATHS = ['/login', '/setup', '/auth/callback', '/recover-password'];
 
 // concert distances are stored in km but displayed in miles

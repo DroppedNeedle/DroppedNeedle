@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DownloadPolicySettings } from '$lib/types';
+import type { DownloadPolicySettings } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 
 import {
 	customFlacError,

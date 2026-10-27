@@ -1,4 +1,4 @@
-import type { RequestKind } from '$lib/constants';
+import type { RequestKind } from './types';
 import { v3, type V3QueryOf } from '$lib/api/v3/endpoint';
 
 // v3 requests URLs, built through the typed registry: every template is a

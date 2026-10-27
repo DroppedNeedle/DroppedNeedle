@@ -10,10 +10,7 @@ import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
 
 export type IndexerSettings = components['schemas']['NewznabIndexer'];
-export type IndexerSavedResponse = components['schemas']['IndexerSavedResponse'];
 export type IndexerTestResult = components['schemas']['IndexerTestResponse'];
-export type OperationResult = components['schemas']['OperationResult'];
-export type UsenetSearchBackend = components['schemas']['UsenetSearchBackend'];
 export type UsenetSearchBackendName = components['schemas']['UsenetBackend'];
 
 const getIndexersQueryOptions = () =>

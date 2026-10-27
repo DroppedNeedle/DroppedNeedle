@@ -1,6 +1,5 @@
-import type { RequestKind } from '$lib/constants';
 import { derivedDownloadStatus } from '$lib/queries/downloads/downloadStatus';
-import type { RequestItem } from '$lib/queries/requests/types';
+import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
 import type { DownloadTask } from '$lib/types';
 
 export type RequestsTab =

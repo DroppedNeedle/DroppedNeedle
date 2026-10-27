@@ -3,8 +3,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import AlbumImage from './AlbumImage.svelte';
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
-	import type { RequestItem } from '$lib/queries/requests/types';
-	import type { RequestKind } from '$lib/constants';
+	import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
 	import { reimportDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { createFromAlbumMutation } from '$lib/queries/requests/RequestMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';

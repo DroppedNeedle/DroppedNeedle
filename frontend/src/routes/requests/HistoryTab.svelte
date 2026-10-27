@@ -4,13 +4,12 @@
 	import { Clock } from 'lucide-svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 	import RequestCard from '$lib/components/RequestCard.svelte';
-	import type { RequestKind } from '$lib/constants';
 	import { getRequestHistoryQuery } from '$lib/queries/requests/RequestQueries.svelte';
 	import {
 		createClearHistoryMutation,
 		createRetryRequestMutation
 	} from '$lib/queries/requests/RequestMutations.svelte';
-	import type { RequestItem } from '$lib/queries/requests/types';
+	import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
 	import { getWantedWatchesQuery } from '$lib/queries/wanted/WantedQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';

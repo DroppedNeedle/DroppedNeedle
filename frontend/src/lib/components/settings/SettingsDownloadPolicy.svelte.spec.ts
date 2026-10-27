@@ -2,7 +2,9 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import type { DownloadPolicySettings, QualityRecipeEntry } from '$lib/types';
+import type { DownloadPolicySettings } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+
+import type { QualityRecipeEntry } from './acquisition/qualityRecipeModel';
 
 const recipe: QualityRecipeEntry[] = [
 	{ format: 'flac', quality: 'cd' },
@@ -37,6 +39,13 @@ const basePolicy: DownloadPolicySettings = {
 	background_upgrade_scan_enabled: false,
 	background_upgrade_scan_interval_hours: 12,
 	background_upgrade_max_per_run: 3,
+	ignored_terms: [],
+	required_terms: [],
+	max_size_mb: 0,
+	recycle_bin_path: '',
+	recycle_retention_days: 30,
+	search_review: 'when_unsure',
+	usenet_retention_days: 0,
 	quality_recipe: recipe,
 	quality_recipe_status: 'v2',
 	quality_recipe_error: null

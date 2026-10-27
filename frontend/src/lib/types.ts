@@ -560,78 +560,6 @@ export type YouTubeTrackLinkResponse = components['schemas']['YouTubeTrackLinkRe
 
 export type YouTubeTrackLinkBatchResponse = components['schemas']['YouTubeTrackLinkBatchResponse'];
 
-export type StatusMessage = {
-	title?: string | null;
-	messages: string[];
-};
-
-export type RequestKind = components['schemas']['RequestKind'];
-
-export type ActiveRequestItem = {
-	musicbrainz_id: string;
-	artist_name: string;
-	album_title: string;
-	artist_mbid?: string | null;
-	year?: number | null;
-	cover_url?: string | null;
-	requested_at: string;
-	status: string;
-	progress?: number | null;
-	eta?: string | null;
-	size?: number | null;
-	size_remaining?: number | null;
-	download_status?: string | null;
-	download_state?: string | null;
-	status_messages?: StatusMessage[] | null;
-	error_message?: string | null;
-	library_queue_id?: number | null;
-	quality?: string | null;
-	protocol?: string | null;
-	download_client?: string | null;
-	user_id?: string | null;
-	requested_by_name?: string | null;
-	request_kind: RequestKind;
-	track_title?: string | null;
-	duration_seconds?: number | null;
-	track_release_group_mbid?: string | null;
-};
-
-export type RequestHistoryItem = {
-	musicbrainz_id: string;
-	artist_name: string;
-	album_title: string;
-	artist_mbid?: string | null;
-	year?: number | null;
-	cover_url?: string | null;
-	requested_at: string;
-	completed_at?: string | null;
-	status: string;
-	in_library: boolean;
-	user_id?: string | null;
-	requested_by_name?: string | null;
-	reviewed_by_name?: string | null;
-	reviewed_at?: string | null;
-	download_task_id?: string | null;
-	can_reimport?: boolean;
-	request_kind: RequestKind;
-	track_title?: string | null;
-	duration_seconds?: number | null;
-	track_release_group_mbid?: string | null;
-};
-
-export type ActiveRequestsResponse = {
-	items: ActiveRequestItem[];
-	count: number;
-};
-
-export type RequestHistoryResponse = {
-	items: RequestHistoryItem[];
-	total: number;
-	page: number;
-	page_size: number;
-	total_pages: number;
-};
-
 export type NavidromePlaylistSyncResult = components['schemas']['PlaylistSyncResult'];
 
 export type BrowseHeroCard = {
@@ -691,10 +619,6 @@ export type LocalAlbumSummary = {
 	download_allowed?: boolean;
 };
 
-export type DownloadAccessResponse = {
-	allowed: boolean;
-};
-
 export type CrateReason = 'recent' | 'rediscover' | 'surprise' | 'same_era';
 
 export type CrateTrack = {
@@ -752,8 +676,6 @@ export type LocalStorageStats = {
 
 export type LastFmConnectionSettingsResponse = components['schemas']['LastFmSettings'];
 
-export type SpotifySettings = components['schemas']['SpotifySettings'];
-
 // mirrors backend api/v1/schemas/settings.py (GetItSettings)
 export type GetItSettings = components['schemas']['GetIt'];
 
@@ -766,24 +688,6 @@ export type PurchaseLink = components['schemas']['PurchaseLink'];
 export type EventsSettings = components['schemas']['EventsSettings'];
 
 export type WrappedSettingsResponse = components['schemas']['WrappedSettings'];
-
-export type SpotifyPlaylistItem = {
-	id: string;
-	name: string;
-	description: string;
-	track_count: number;
-	cover_url: string | null;
-	owner: string;
-	imported_playlist_id: string | null;
-};
-
-export type SpotifyPlaylistListResponse = {
-	playlists: SpotifyPlaylistItem[];
-};
-
-export type SpotifyImportResponse = {
-	playlist_id: string;
-};
 
 export type ScrobbleSettings = {
 	scrobble_to_lastfm: boolean;
@@ -1328,12 +1232,6 @@ export interface TargetCatalogRemovalResponse {
 export type AlbumEditionItem = components['schemas']['AlbumEditionItem'];
 export type AlbumEditionsResponse = components['schemas']['AlbumEditionsResponse'];
 
-export type CutoffUnmetItem = components['schemas']['CutoffUnmetItem'];
-
-export type CutoffUnmetResponse = components['schemas']['CutoffUnmetResponse'];
-
-export type UpgradeRequestResponse = components['schemas']['UpgradeRequestResponse'];
-
 export interface LibraryStats {
 	total_albums: number;
 	total_artists: number;
@@ -1369,36 +1267,6 @@ export interface StatusMessageResponse {
 	message: string;
 }
 
-export interface DownloadClientConfig {
-	enabled: boolean;
-	url: string;
-	api_key: string;
-	downloads_subpath: string;
-	slskd_incomplete_mount: string;
-}
-
-export interface DownloadsMountStatus {
-	ok: boolean;
-	move_supported: boolean;
-	reason: string;
-	path: string;
-}
-
-export interface DownloadClientHealth {
-	status: 'ok' | 'error';
-	version?: string | null;
-	message?: string | null;
-}
-
-export interface DownloadClientStatus {
-	configured: boolean;
-	client: DownloadClientHealth;
-	mount: DownloadsMountStatus;
-	mount_advisory?: string | null;
-	slskd_downloads_dir?: string | null;
-	effective_downloads_path?: string | null;
-}
-
 export interface HomeIntegrationStatus {
 	listenbrainz: boolean;
 	jellyfin: boolean;
@@ -1411,144 +1279,6 @@ export interface HomeIntegrationStatus {
 	library: boolean;
 	localfiles: boolean;
 }
-
-export interface TestConnectionResult {
-	valid: boolean;
-	version?: string | null;
-	message: string;
-}
-
-export interface IndexerSettings {
-	id: string;
-	name: string;
-	url: string;
-	api_key: string;
-	categories: number[];
-	enabled: boolean;
-	priority: number;
-}
-
-export type IndexerTestResult = components['schemas']['IndexerTestResponse'];
-
-export interface IndexerSavedResponse {
-	id: string;
-}
-
-export interface ProwlarrConnectionSettings {
-	enabled: boolean;
-	url: string;
-	api_key: string;
-}
-
-export type ProwlarrTestResult = components['schemas']['ProwlarrTestResponse'];
-
-export type UsenetSearchBackendName = 'indexers' | 'prowlarr';
-
-export interface UsenetSearchBackend {
-	backend: UsenetSearchBackendName;
-}
-
-export interface OperationResult {
-	success: boolean;
-	message?: string | null;
-}
-
-export interface SabnzbdConnectionSettings {
-	enabled: boolean;
-	url: string;
-	api_key: string;
-	category: string;
-	priority: number;
-	downloads_mount: string;
-}
-
-export type SabnzbdTestResult = components['schemas']['SabnzbdTestResponse'];
-
-export type QualityRecipeFormat = 'flac' | 'mp3';
-
-export type QualityRecipeQuality =
-	| 'below_192'
-	| '192_255'
-	| '256_319'
-	| '320_plus'
-	| 'cd'
-	| '24_48'
-	| '24_96'
-	| '24_192'
-	| 'hi_res'
-	| 'custom';
-
-export interface QualityRecipeEntry {
-	format: QualityRecipeFormat;
-	quality: QualityRecipeQuality;
-	min_bitrate_kbps?: number | null;
-	max_bitrate_kbps?: number | null;
-	bit_depth?: number | null;
-	sample_rate_hz?: number | null;
-}
-
-export interface SourcePriority {
-	order: string[];
-}
-export type QualityRecipeStatus = 'v1' | 'v2' | 'non_convertible' | 'invalid';
-
-export interface DownloadPolicySettings {
-	quality_min: string;
-	quality_max: string;
-	flac_mp3_only: boolean;
-	preflight_score_auto_accept: number;
-	preflight_score_manual_min: number;
-	download_stall_timeout_minutes: number;
-	download_queued_timeout_minutes: number;
-	preferred_quality_wait_minutes: number;
-	max_failover_attempts: number;
-	max_concurrent_downloads: number;
-	auto_retry_enabled: boolean;
-	auto_retry_max_attempts: number;
-	auto_retry_base_interval_minutes: number;
-	quality_cutoff: string;
-	upgrade_allowed: boolean;
-	max_library_size_gb: number;
-	default_request_quota_count: number;
-	default_request_quota_days: number;
-	default_storage_quota_gb: number;
-	background_upgrade_scan_enabled: boolean;
-	background_upgrade_scan_interval_hours: number;
-	background_upgrade_max_per_run: number;
-	/** when an automatic download waits for a pick: when_unsure, always or off */
-	search_review?: string;
-	quality_recipe?: QualityRecipeEntry[];
-	quality_recipe_status?: QualityRecipeStatus;
-	quality_recipe_error?: string | null;
-}
-
-// Hand-mirrors backend WantedWatcherSettings (api/v1/schemas/settings.py).
-export interface WantedWatcherSettings {
-	enabled: boolean;
-	auto_download_on_find: boolean;
-	watch_partial_albums: boolean;
-	max_checks_per_sweep: number;
-}
-
-// Hand-mirrors backend PluginSourceInfo (api/v1/schemas/plugins.py).
-export type PluginSourceHealth = 'ok' | 'degraded' | 'error' | 'unknown';
-export interface PluginSourceInfo {
-	key: string;
-	plugin: string;
-	display_name: string;
-	has_client: boolean;
-	has_indexer: boolean;
-	target_source: string;
-	configured: boolean;
-	health: PluginSourceHealth;
-}
-
-// Hand-mirrors backend PluginSourcesResponse (api/v1/schemas/plugins.py).
-export interface PluginSourcesResponse {
-	sources: PluginSourceInfo[];
-}
-// Alias used by acquisition surfaces; same wire shape as PluginSourcesResponse.
-export type PluginSourceListResponse = PluginSourcesResponse;
 
 // Hand-mirrors backend PluginRouteRequest/PluginRouteResponse
 // (infrastructure/plugins/protocols.py). Typed transport for one /ext/ call.
@@ -1590,16 +1320,8 @@ export type DownloadTask = components['schemas']['DownloadTaskResponse'] & {
 	manual_quality_override?: boolean;
 };
 
-export type DownloadReason = components['schemas']['DownloadReason'];
-
 /** Why a download, held file or upload sits where it does. */
 export type Reason = components['schemas']['Reason'];
-
-export type ReasonKind = components['schemas']['ReasonKind'];
-
-export type DownloadTaskReason = components['schemas']['DownloadTaskReason'];
-
-export type DownloadImportDecision = components['schemas']['ImportDecisionView'];
 
 export type DownloadListResponse = components['schemas']['DownloadListResponse'];
 
@@ -1621,78 +1343,6 @@ export interface HeldFileInEntry {
 export type HeldActionResult = components['schemas']['HeldActionResponse'];
 
 export type HeldRecheckAllResult = components['schemas']['HeldRecheckAllResponse'];
-
-export interface DownloadSourceUpdate {
-	candidate_index: number | null;
-	source: string | null;
-	quality_format?: string | null;
-	quality_bitrate?: number | null;
-	quality_bit_depth?: number | null;
-	quality_sample_rate: number | null;
-	advertised_queue_depth: number | null;
-	queue_position_start: number | null;
-	queue_position_end: number | null;
-	remote_queued: boolean;
-	preferred_quality_fallback_at: number | null;
-	attempt_number: number;
-	attempt_total: number;
-	has_next_source: boolean;
-}
-
-// SSE payload on the `download:
-
-// ---------------------------------------------------------------------------
-// Acquisition-quality policy (Acquisition plan, 2026-08-27) - hand-mirrored.
-// ---------------------------------------------------------------------------
-
-export type QualityPreferenceOrder = string[];
-
-export interface PolicySummary {
-	summary: string;
-	source_mode: 'source_first' | 'quality_first' | string;
-	legacy_rollback_compatible: boolean;
-	quality_recipe_status: QualityRecipeStatus;
-	quality_recipe_error: string | null;
-}
-
-export interface RestartWithPolicyRequest {
-	expected_snapshot_hash?: string | null;
-}
-
-export interface RestartWithPolicyResponse {
-	accepted: boolean;
-	snapshot_summary: string | null;
-	message?: string | null;
-}
-// SSE payload on the `download:{task_id}` channel `progress` event
-export interface DownloadProgress extends DownloadSourceUpdate {
-	bytes_downloaded: number;
-	bytes_total: number;
-	files_completed: number;
-	files_total: number;
-	progress_percent: number;
-}
-
-// mirrors backend RequestAcceptedResponse (api/v1/schemas/request.py)
-export type RequestAcceptedStatus =
-	'pending' | 'awaiting_approval' | 'queued' | 'downloading' | 'cancelling' | 'failed' | 'imported';
-
-export interface RequestAccepted {
-	success: boolean;
-	message: string;
-	musicbrainz_id: string;
-	status: RequestAcceptedStatus;
-	quality_snapshot_summary?: string | null;
-}
-
-export type TrackRequestStatus = 'awaiting_approval' | 'queued' | 'already_in_library';
-
-export interface TrackRequestResponse {
-	status: TrackRequestStatus;
-	task_id?: string | null;
-}
-
-export type QuarantineListResponse = components['schemas']['QuarantineListResponse'];
 
 // Connect Apps (inbound OpenSubsonic + Jellyfin compatibility)
 export type ConnectAppsSettings = components['schemas']['ConnectApps'];

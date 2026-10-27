@@ -10,7 +10,8 @@
 	import { withBasePath } from '$lib/utils/basePath';
 
 	import { tryNextSource } from '$lib/queries/downloads/DownloadMutations.svelte';
-	import type { DownloadSourceUpdate, DownloadTask } from '$lib/types';
+	import type { DownloadSourceUpdate } from '$lib/queries/downloads/DownloadSSE.svelte';
+	import type { DownloadTask } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {

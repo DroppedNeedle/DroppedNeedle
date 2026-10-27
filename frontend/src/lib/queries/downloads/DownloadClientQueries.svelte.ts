@@ -10,43 +10,6 @@ import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
 
 export type DownloadClientConfig = components['schemas']['SlskdConnection'];
-export type DownloadClientStatusResponse = components['schemas']['SlskdStatusResponse'];
-export type TestConnectionResult = components['schemas']['TestConnectionResponse'];
-
-// The live probe maps onto the old client shape so the connection display is
-// unchanged. The mount half is filled by the server's periodic probe pass, so
-// it is absent until the first pass after a restart.
-export type SlskdMountView = components['schemas']['DownloadsMountView'];
-
-export interface DownloadClientStatus {
-	configured: boolean;
-	reachable: boolean;
-	version: string | null;
-	message: string;
-	client: { status: 'ok' | 'error'; version: string | null; message: string };
-	mount?: SlskdMountView | null;
-	mount_advisory?: string | null;
-	slskd_downloads_dir?: string | null;
-	effective_downloads_path?: string | null;
-}
-
-function toStatusView(status: DownloadClientStatusResponse): DownloadClientStatus {
-	return {
-		configured: status.configured,
-		reachable: status.reachable,
-		version: status.version ?? null,
-		message: status.message,
-		client: {
-			status: status.reachable ? 'ok' : 'error',
-			version: status.version ?? null,
-			message: status.message
-		},
-		mount: status.mount ?? null,
-		mount_advisory: status.mount_advisory ?? null,
-		slskd_downloads_dir: status.slskd_downloads_dir ?? null,
-		effective_downloads_path: status.effective_downloads_path ?? null
-	};
-}
 
 const getDownloadClientConfigQueryOptions = () =>
 	queryOptions({
@@ -63,8 +26,8 @@ const getDownloadClientStatusQueryOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.clientStatus(),
-		queryFn: async ({ signal }) =>
-			toStatusView(await api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.slskdStatus(), { signal }))
+		queryFn: ({ signal }) =>
+			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.slskdStatus(), { signal })
 	});
 
 export const getDownloadClientStatusQuery = () =>

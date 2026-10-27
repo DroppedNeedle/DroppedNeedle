@@ -12,7 +12,7 @@
 	import { fade, fly } from '$lib/ui/motion';
 	import { CircleCheck, TriangleAlert } from 'lucide-svelte';
 	import RequestCard from '$lib/components/RequestCard.svelte';
-	import type { RequestKind } from '$lib/constants';
+	import type { RequestKind } from '$lib/queries/requests/types';
 	import { getRequestDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
 	import { getActiveRequestsQuery } from '$lib/queries/requests/RequestQueries.svelte';
 	import {

@@ -4,7 +4,7 @@ import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import type { RequestKind } from '$lib/constants';
+import type { RequestKind } from './types';
 import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
 
 import { invalidateQueriesWithPersister } from '../QueryClient';

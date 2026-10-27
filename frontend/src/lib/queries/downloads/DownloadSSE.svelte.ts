@@ -3,7 +3,6 @@ import {
 	type MuxEventStream,
 	type MuxUnsubscribe
 } from '$lib/queries/events/MuxEventStream';
-import type { DownloadProgress, DownloadSourceUpdate } from '$lib/types';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { getDownloadScope } from './downloadScope.svelte';
@@ -24,8 +23,34 @@ function refreshObservedActivity() {
 	}, 100);
 }
 
+// The source fields of a task, kept across `download_progress` events: an
+// event that leaves a field out keeps its last value.
+export interface DownloadSourceUpdate {
+	candidate_index: number | null;
+	source: string | null;
+	quality_format?: string | null;
+	quality_bit_depth?: number | null;
+	quality_sample_rate: number | null;
+	advertised_queue_depth: number | null;
+	queue_position_start: number | null;
+	queue_position_end: number | null;
+	remote_queued: boolean;
+	preferred_quality_fallback_at: number | null;
+	attempt_number: number;
+	attempt_total: number;
+	has_next_source: boolean;
+}
+
+interface DownloadStreamProgress extends DownloadSourceUpdate {
+	bytes_downloaded: number;
+	bytes_total: number;
+	files_completed: number;
+	files_total: number;
+	progress_percent: number;
+}
+
 interface DownloadStreamState {
-	progress: DownloadProgress | null;
+	progress: DownloadStreamProgress | null;
 	status: string | null;
 	source: DownloadSourceUpdate | null;
 	done: boolean;
