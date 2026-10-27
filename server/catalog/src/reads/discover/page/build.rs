@@ -10,7 +10,6 @@
 //! set so an artist appears once on the page, ownership is marked from
 //! the library, and album shelves are deduplicated.
 
-use droppedneedle_providers::RequestPriority;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Mutex;
@@ -22,7 +21,10 @@ use super::library::{LibraryReads, fold};
 use super::memo::BuildMemo;
 use super::picks::{self, Candidate};
 use super::shelves::{self, SHELF_SIZE, album, artist, genre, shelf};
-use super::sources::{LastFmChartAlbum, PageSources, ScoredArtist};
+use crate::reads::discover::listening::{
+    AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenedAlbum, ListeningData, MusicSource,
+    PlayedArtist, ScoredArtist, StatsRange, UserMusic,
+};
 use crate::reads::discover::models::{
     BecauseYouListenTo, ChartAlbum, ChartSection, DiscoverResponse, SectionItem, TopPickItem,
     TopPicksSection, WeeklyExploration, WeeklyTrack,
@@ -34,9 +36,6 @@ use crate::reads::discover::queue::build::{
     resolve_release_groups, seed_artists, similar_artist_pools,
 };
 use crate::reads::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
-use crate::reads::discover::queue::sources::{
-    AlbumRow, ArtistRow, MusicSource, StatsRange, UserMusic,
-};
 use crate::reads::discover::queue::store::QueueDb;
 
 /// Bound on any one upstream read in a build.
@@ -82,7 +81,10 @@ pub struct PageSettings {
 /// What one build reads from.
 pub struct Builder<'a> {
     /// Provider reads.
-    pub sources: &'a dyn PageSources,
+    pub listening: &'a ListeningData,
+    /// The build's background priority and its cap on provider calls in
+    /// flight, shared by every read the build makes.
+    pub ask: Ask,
     /// The queue tables (ignores, remembered release groups).
     pub queue_db: &'a QueueDb,
     /// Library reads.
@@ -174,7 +176,7 @@ struct Shared {
     fresh: Vec<AlbumRow>,
     genres: Option<Vec<(String, i64)>>,
     lastfm_genre_artists: Vec<ArtistRow>,
-    jellyfin: Vec<super::sources::PlayedArtist>,
+    jellyfin: Vec<PlayedArtist>,
     library_albums: Vec<super::library::LibraryAlbum>,
 }
 
@@ -227,10 +229,10 @@ fn days_since(iso: &str, now: f64) -> Option<f64> {
 impl Builder<'_> {
     fn queue_ctx<'b>(&'b self, settings: &'b QueueSettings) -> BuildContext<'b> {
         BuildContext {
-            sources: self.sources,
+            listening: self.listening,
             db: self.queue_db,
             settings,
-            priority: RequestPriority::BackgroundSync,
+            ask: self.ask.clone(),
         }
     }
 
@@ -238,13 +240,14 @@ impl Builder<'_> {
     /// ListenBrainz refuses popularity reads, and only when the user has
     /// Last.fm.
     fn lastfm_for_popularity(&self, user: &UserMusic) -> bool {
-        user.lastfm && self.sources.listenbrainz_popularity_down()
+        self.listening.policy_for(user).lastfm_stands_in()
     }
 
     /// Build the page.
     pub async fn build(&self, user_id: &str) -> Built {
-        let user = self.sources.user_music(user_id).await;
-        let primary = user.resolved_source();
+        let policy = self.listening.policy(user_id).await;
+        let primary = policy.listening();
+        let user = policy.user().clone();
         let lb_user = user.listenbrainz.clone();
         let lfm_user = user.lastfm_username.clone().filter(|_| user.lastfm);
         let mut seed_settings = self.settings.queue.clone();
@@ -404,12 +407,13 @@ impl Builder<'_> {
         lb_user: Option<&str>,
         lfm_user: Option<&str>,
     ) -> Shared {
-        let sources = self.sources;
+        let listening = self.listening;
+        let ask = &self.ask;
+        let policy = listening.policy_for(user);
         // ListenBrainz's similar-artist read is popularity ranked, so it goes
         // empty in a popularity outage; Last.fm stands in then, and always
         // for users who chose Last.fm.
-        let lastfm_similar = user.lastfm
-            && (primary == MusicSource::LastFm || sources.listenbrainz_popularity_down());
+        let lastfm_similar = policy.popularity() == MusicSource::LastFm;
         const SIMILAR_KEYS: [&str; SEEDS] = ["similar_0", "similar_1", "similar_2"];
         let similar = join_all(seeds.iter().take(SEEDS).enumerate().map(|(index, seed)| {
             let key = SIMILAR_KEYS[index];
@@ -419,25 +423,28 @@ impl Builder<'_> {
                 };
                 let read = async {
                     if lastfm_similar {
-                        sources.lastfm_similar_scored(user_id, seed, 20).await
+                        listening.lastfm_similar(user_id, seed, 20, ask).await
                     } else {
-                        sources.listenbrainz_similar_scored(user_id, mbid, 20).await
+                        listening.similar_artists(user_id, mbid, 20, ask).await
                     }
                 };
                 tracker.run(key, read).await.unwrap_or_default()
             }
         }));
         let trending = async {
-            if primary == MusicSource::LastFm && user.lastfm {
+            if policy.sitewide() == MusicSource::LastFm {
                 tracker
                     .run(
                         "lfm_global_top",
-                        sources.lastfm_chart_artists(user_id, 20, RequestPriority::BackgroundSync),
+                        listening.lastfm_chart_artists(user_id, 20, ask),
                     )
                     .await
             } else {
                 tracker
-                    .run("lb_trending", sources.listenbrainz_sitewide_artists(20))
+                    .run(
+                        "lb_trending",
+                        listening.sitewide_artists(StatsRange::ThisWeek, 20, 0, ask),
+                    )
                     .await
             }
             .unwrap_or_default()
@@ -451,7 +458,7 @@ impl Builder<'_> {
                     tracker
                         .run(
                             "lfm_weekly_artists",
-                            sources.lastfm_weekly_artists(user_id, username),
+                            listening.lastfm_weekly_artists(user_id, username, ask),
                         )
                         .await
                         .unwrap_or_default()
@@ -460,7 +467,7 @@ impl Builder<'_> {
                     tracker
                         .run(
                             "lfm_weekly_albums",
-                            sources.lastfm_weekly_albums(user_id, username),
+                            listening.lastfm_weekly_albums(user_id, username, ask),
                         )
                         .await
                         .unwrap_or_default()
@@ -469,7 +476,7 @@ impl Builder<'_> {
                     tracker
                         .run(
                             "lfm_recent",
-                            sources.lastfm_recent_albums(user_id, username, 20),
+                            listening.lastfm_recent_albums(user_id, username, 20, ask),
                         )
                         .await
                         .unwrap_or_default()
@@ -483,17 +490,11 @@ impl Builder<'_> {
             tokio::join!(
                 async {
                     tracker
-                        .run(
-                            "lb_fresh",
-                            sources.listenbrainz_fresh_releases(
-                                username,
-                                RequestPriority::BackgroundSync,
-                            ),
-                        )
+                        .run("lb_fresh", listening.fresh_releases(username, ask))
                         .await
                         .unwrap_or_default()
                 },
-                tracker.run("lb_genres", sources.listenbrainz_genre_counts(username)),
+                tracker.run("lb_genres", listening.genres(username, ask)),
             )
         };
         let lastfm_genre_artists = async {
@@ -501,12 +502,7 @@ impl Builder<'_> {
                 Some(username) if primary == MusicSource::LastFm => tracker
                     .run(
                         "lfm_user_top_artists_for_genres",
-                        sources.lastfm_top_artists(
-                            user_id,
-                            username,
-                            5,
-                            RequestPriority::BackgroundSync,
-                        ),
+                        listening.lastfm_user_artists(user_id, username, 5, ask),
                     )
                     .await
                     .unwrap_or_default(),
@@ -518,7 +514,7 @@ impl Builder<'_> {
                 return Vec::new();
             }
             tracker
-                .run("jf_most_played", sources.jellyfin_artist_plays(user_id, 50))
+                .run("jf_most_played", listening.jellyfin_plays(user_id, 50, ask))
                 .await
                 .unwrap_or_default()
         };
@@ -582,8 +578,8 @@ impl Builder<'_> {
         let found = join_all(artists.iter().map(|(artist_mbid, _)| async move {
             or_empty(
                 "listenbrainz artist albums",
-                self.sources
-                    .listenbrainz_artist_ranked(user_id, artist_mbid, 10)
+                self.listening
+                    .artist_albums(user_id, artist_mbid, 10, &self.ask)
                     .await,
             )
         }))
@@ -827,12 +823,12 @@ impl Builder<'_> {
         let label = title_case(genre);
         daily_shuffler(&self.today, &["daily-mix", user_id, genre]).shuffle(&mut artists);
         artists.truncate(3);
-        let names = if self.sources.listenbrainz_popularity_down() {
+        let names = if self.listening.popularity_down() {
             vec![None; artists.len()]
         } else {
             join_all(artists.iter().map(|mbid| async move {
-                self.sources
-                    .listenbrainz_artist_ranked(user_id, mbid, 1)
+                self.listening
+                    .artist_albums(user_id, mbid, 1, &self.ask)
                     .await
                     .ok()
                     .and_then(|rows| rows.into_iter().next())
@@ -1074,8 +1070,8 @@ impl Builder<'_> {
             }
         } else {
             let albums = join_all(ranked.iter().map(|(mbid, _)| async move {
-                self.sources
-                    .listenbrainz_artist_ranked(user_id, mbid, 2)
+                self.listening
+                    .artist_albums(user_id, mbid, 2, &self.ask)
                     .await
                     .unwrap_or_default()
             }))
@@ -1107,11 +1103,12 @@ impl Builder<'_> {
         }
         let trending = match tokio::time::timeout(
             Duration::from_secs(30),
-            self.sources.listenbrainz_trending_ranked(100),
+            self.listening
+                .sitewide_albums(StatsRange::ThisWeek, 100, 0, &self.ask),
         )
         .await
         {
-            Ok(Ok(rows)) => rows,
+            Ok(Ok(rows)) => rows.into_iter().filter_map(ListenedAlbum::ranked).collect(),
             _ => Vec::new(),
         };
         for row in trending {
@@ -1231,8 +1228,8 @@ impl Builder<'_> {
             })
             .collect();
         let albums = join_all(rows.iter().map(|artist| {
-            self.sources
-                .lastfm_artist_albums(user_id, artist, 3, RequestPriority::BackgroundSync)
+            self.listening
+                .lastfm_artist_albums(user_id, artist, 3, &self.ask)
         }))
         .await;
         let releases: Vec<String> = albums
@@ -1272,8 +1269,8 @@ impl Builder<'_> {
     /// Albums ListenBrainz users with similar taste play this month.
     async fn listeners_like_you(&self, user_id: &str, username: &str) -> Option<ChartSection> {
         let names = self
-            .sources
-            .listenbrainz_similar_users(username)
+            .listening
+            .similar_users(username, &self.ask)
             .await
             .unwrap_or_else(|cause| {
                 tracing::debug!(%cause, "similar listeners unavailable");
@@ -1289,14 +1286,14 @@ impl Builder<'_> {
             .await
             .unwrap_or_default();
         let lists = join_all(names.iter().map(|name| {
-            self.sources
-                .listenbrainz_user_ranked(name, StatsRange::ThisMonth, 15)
+            self.listening
+                .user_albums(name, StatsRange::ThisMonth, 15, 0, &self.ask)
         }))
         .await;
         let mut seen = HashSet::new();
         let mut items = Vec::new();
         'lists: for list in lists.into_iter().flatten() {
-            for row in list {
+            for row in list.into_iter().filter_map(ListenedAlbum::ranked) {
                 let Some(group) = normalize(Some(&row.album.release_group_mbid)) else {
                     continue;
                 };
@@ -1329,7 +1326,7 @@ impl Builder<'_> {
 
     /// The user's ListenBrainz weekly exploration playlist.
     async fn weekly_exploration(&self, user_id: &str, username: &str) -> Option<WeeklyExploration> {
-        weekly_exploration(self.sources, user_id, username).await
+        weekly_exploration(self.listening, &self.ask, user_id, username).await
     }
 
     /// Library albums turning 10, 20, 25, ... years old this year,
@@ -1418,7 +1415,7 @@ impl Builder<'_> {
         let found = join_all(
             genres
                 .iter()
-                .map(|genre| self.sources.musicbrainz_tag_artists(genre, 10)),
+                .map(|genre| self.listening.tag_artists(genre, 10, 0, &self.ask)),
         )
         .await;
         let mut items = Vec::new();
@@ -1439,6 +1436,24 @@ impl Builder<'_> {
         )
     }
 
+    /// An artist's Last.fm tags, most used first.
+    async fn artist_tags(
+        &self,
+        user_id: &str,
+        artist: &ArtistRow,
+    ) -> crate::reads::discover::listening::ListeningResult<Vec<String>> {
+        let facts = self
+            .listening
+            .lastfm_artist(user_id, &artist.name, artist.mbid.as_deref(), &self.ask)
+            .await?;
+        Ok(facts
+            .map(|facts| facts.tags)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|name| !name.trim().is_empty())
+            .collect())
+    }
+
     async fn popular_in_genres_lastfm(
         &self,
         user_id: &str,
@@ -1452,7 +1467,7 @@ impl Builder<'_> {
         let tags = join_all(
             top.iter()
                 .take(5)
-                .map(|artist| self.sources.lastfm_artist_tags(user_id, artist)),
+                .map(|artist| self.artist_tags(user_id, artist)),
         )
         .await;
         let mut genres: Vec<String> = Vec::new();
@@ -1470,8 +1485,8 @@ impl Builder<'_> {
             return None;
         }
         let found = join_all(genres.iter().map(|genre| {
-            self.sources
-                .lastfm_tag_artists(user_id, genre, 10, RequestPriority::BackgroundSync)
+            self.listening
+                .lastfm_tag_artists(user_id, genre, 10, &self.ask)
         }))
         .await;
         let mut items = Vec::new();
@@ -1704,7 +1719,7 @@ fn fresh_releases(rows: &[AlbumRow]) -> Option<ChartSection> {
 }
 
 /// Jellyfin artists played a lot but not in the last three months.
-fn rediscover(plays: &[super::sources::PlayedArtist], now: f64) -> Option<ChartSection> {
+fn rediscover(plays: &[PlayedArtist], now: f64) -> Option<ChartSection> {
     let mut seen = HashSet::new();
     let mut items = Vec::new();
     for row in plays {
@@ -1747,14 +1762,12 @@ fn rediscover(plays: &[super::sources::PlayedArtist], now: f64) -> Option<ChartS
 /// each track's release group where it can be found in time. Home shows
 /// the same playlist.
 pub async fn weekly_exploration(
-    sources: &dyn PageSources,
+    listening: &ListeningData,
+    ask: &Ask,
     user_id: &str,
     username: &str,
 ) -> Option<WeeklyExploration> {
-    let playlist = match sources
-        .listenbrainz_weekly_playlist(user_id, username)
-        .await
-    {
+    let playlist = match listening.weekly_playlist(user_id, username, ask).await {
         Ok(Some(playlist)) => playlist,
         Ok(None) => return None,
         Err(cause) => {
@@ -1767,8 +1780,8 @@ pub async fn weekly_exploration(
         .iter()
         .filter_map(|track| track.recording_mbid.clone())
         .collect();
-    let by_recording = sources
-        .listenbrainz_recording_groups(user_id, &recordings)
+    let by_recording = listening
+        .recording_groups(user_id, &recordings, ask)
         .await
         .unwrap_or_default();
     let group_of = |recording: &Option<String>| {
@@ -1787,8 +1800,8 @@ pub async fn weekly_exploration(
     let release_groups: HashMap<String, String> = match tokio::time::timeout(
         RESOLVE_BUDGET,
         join_all(releases.iter().map(|release| async move {
-            let group = sources
-                .musicbrainz_release_group_of(release, RequestPriority::BackgroundSync)
+            let group = listening
+                .release_group_of(release, ask)
                 .await
                 .ok()
                 .flatten();

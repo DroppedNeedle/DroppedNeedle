@@ -33,17 +33,16 @@ use std::time::{Duration, Instant};
 use futures_util::future::join_all;
 use futures_util::stream::{self, StreamExt};
 
+use super::listening::{ArtistRow, Ask, ListeningData, MusicSource, SourcePolicy, UserMusic};
 use super::page::build::daily_shuffler;
 use super::page::library::{LibraryReads, fold};
 use super::page::shelves;
-use super::page::sources::PageSources;
 use super::queue::QueueSettings;
 use super::queue::build::{
     BuildContext, VARIOUS_ARTISTS_MBID, cover_url, is_various_artists, lastfm_pools, normalize,
     similar_artist_pools, timed,
 };
 use super::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
-use super::queue::sources::{ArtistRow, MusicSource, UserMusic};
 use super::queue::store::QueueDb;
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::error::CatalogError;
@@ -77,7 +76,7 @@ const SUGGESTIONS_TITLE: &str = "Suggestions for your playlist";
 /// What the radio reads from.
 pub struct RadioInputs {
     /// Provider reads (shared with the page and the queue).
-    pub sources: Arc<dyn PageSources>,
+    pub listening: ListeningData,
     /// The queue tables (the Last.fm release-group map).
     pub queue_db: QueueDb,
     /// The advanced settings the queue settings come from, read per call.
@@ -94,7 +93,7 @@ pub struct RadioInputs {
 
 /// Radio over the live providers and the library.
 pub struct LiveRadio {
-    sources: Arc<dyn PageSources>,
+    listening: ListeningData,
     queue_db: QueueDb,
     settings: Live<AdvancedSettings>,
     genres: LibraryReads,
@@ -139,26 +138,12 @@ fn source_label(source: MusicSource) -> &'static str {
 }
 
 /// The source a request follows: the one asked for, else the user's
-/// primary, switched to the other when only that one is set up (v2
-/// `resolve_source`).
-fn resolve_source(asked: Option<&str>, user: &UserMusic) -> MusicSource {
-    let preferred = match asked.and_then(ChartSource::parse) {
-        Some(ChartSource::Listenbrainz) => MusicSource::ListenBrainz,
-        Some(ChartSource::Lastfm) => MusicSource::LastFm,
-        None => user.primary,
-    };
-    let listenbrainz = user.listenbrainz.is_some();
-    match preferred {
-        MusicSource::ListenBrainz if !listenbrainz && user.lastfm => MusicSource::LastFm,
-        MusicSource::LastFm if !user.lastfm && listenbrainz => MusicSource::ListenBrainz,
-        other => other,
-    }
-}
-
-fn source_ready(source: MusicSource, user: &UserMusic) -> bool {
-    match source {
-        MusicSource::ListenBrainz => user.listenbrainz.is_some(),
-        MusicSource::LastFm => user.lastfm,
+/// primary, switched to the other when only that one is set up.
+fn resolve_source(asked: Option<&str>, policy: &SourcePolicy) -> MusicSource {
+    match asked.and_then(ChartSource::parse) {
+        Some(ChartSource::Listenbrainz) => policy.asked(MusicSource::ListenBrainz),
+        Some(ChartSource::Lastfm) => policy.asked(MusicSource::LastFm),
+        None => policy.listening(),
     }
 }
 
@@ -225,7 +210,7 @@ impl LiveRadio {
     /// Radio over these inputs.
     pub fn new(inputs: RadioInputs) -> Self {
         Self {
-            sources: inputs.sources,
+            listening: inputs.listening,
             queue_db: inputs.queue_db,
             settings: inputs.settings,
             genres: LibraryReads::new(inputs.pool.clone()),
@@ -254,10 +239,10 @@ impl LiveRadio {
         };
         // A radio plan is built while the listener waits.
         let ctx = BuildContext {
-            sources: self.sources.as_ref(),
+            listening: &self.listening,
             db: &self.queue_db,
             settings: &settings,
-            priority: RequestPriority::UserInitiated,
+            ask: Ask::build(RequestPriority::UserInitiated),
         };
         let excluded = HashSet::new();
         if use_lastfm && user.lastfm {
@@ -304,17 +289,13 @@ impl LiveRadio {
     async fn artist_name(&self, user_id: &str, mbid: &str) -> String {
         timed(
             "listenbrainz artist albums",
-            self.sources.listenbrainz_artist_albums(
-                user_id,
-                mbid,
-                1,
-                RequestPriority::UserInitiated,
-            ),
+            self.listening
+                .artist_albums(user_id, mbid, 1, &Ask::person()),
         )
         .await
         .into_iter()
         .next()
-        .map(|album| album.artist_name)
+        .map(|ranked| ranked.album.artist_name)
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| mbid.to_owned())
     }
@@ -338,9 +319,10 @@ impl LiveRadio {
         user_id: &str,
         request: &RadioRequest,
     ) -> Result<ChartSection, RadioFailure> {
-        let user = self.sources.user_music(user_id).await;
-        let source = resolve_source(request.source.as_deref(), &user);
-        if !source_ready(source, &user) {
+        let policy = self.listening.policy(user_id).await;
+        let user = policy.user().clone();
+        let source = resolve_source(request.source.as_deref(), &policy);
+        if !policy.ready(source) {
             return Ok(empty_shelf(
                 "Radio",
                 source,
@@ -354,7 +336,7 @@ impl LiveRadio {
             ));
         }
         let count = usize::try_from(request.count).unwrap_or(10);
-        let lastfm = self.sources.listenbrainz_popularity_down();
+        let lastfm = policy.lastfm_stands_in();
         let (title, seed_id, items) = match request.seed_type.as_str() {
             "artist" => {
                 let mbid = normalize(Some(&request.seed_id))
@@ -509,16 +491,12 @@ impl LiveRadio {
         };
         let similar = timed(
             "listenbrainz similar artists",
-            self.sources.listenbrainz_similar_artists(
-                user_id,
-                &base.0,
-                MAX_SEED_ARTISTS + 1,
-                RequestPriority::UserInitiated,
-            ),
+            self.listening
+                .similar_artists(user_id, &base.0, MAX_SEED_ARTISTS + 1, &Ask::person()),
         )
         .await;
         let mut seeds = vec![base];
-        for artist in similar {
+        for artist in similar.into_iter().map(|scored| scored.artist) {
             if seeds.len() >= MAX_SEED_ARTISTS {
                 break;
             }
@@ -551,8 +529,8 @@ impl LiveRadio {
         if seeds.len() < MAX_SEED_ARTISTS {
             let tagged = timed(
                 "lastfm tag artists",
-                self.sources
-                    .lastfm_tag_artists(user_id, genre, 10, RequestPriority::UserInitiated),
+                self.listening
+                    .lastfm_tag_artists(user_id, genre, 10, &Ask::person()),
             )
             .await;
             for artist in tagged {
@@ -578,7 +556,7 @@ impl LiveRadio {
             return found;
         }
         let found = timed("radio top tracks", async {
-            Ok(self.fetch_top_tracks(user_id, mbid, name).await)
+            Ok::<_, std::convert::Infallible>(self.fetch_top_tracks(user_id, mbid, name).await)
         })
         .await;
         if !found.is_empty() {
@@ -783,16 +761,17 @@ impl LiveRadio {
             return found;
         }
         let found = timed("radio album samples", async {
-            Ok(self
-                .previews
-                .get_album_preview_tracks(
-                    &item.artist_name,
-                    &item.album_name,
-                    per_album,
-                    RequestPriority::UserInitiated,
-                )
-                .await
-                .0)
+            Ok::<_, std::convert::Infallible>(
+                self.previews
+                    .get_album_preview_tracks(
+                        &item.artist_name,
+                        &item.album_name,
+                        per_album,
+                        RequestPriority::UserInitiated,
+                    )
+                    .await
+                    .0,
+            )
         })
         .await;
         let artist_mbid = normalize(Some(&item.artist_mbid)).unwrap_or_default();
@@ -850,14 +829,15 @@ impl LiveRadio {
             genre_distribution,
             track_count,
         };
-        let user = self.sources.user_music(user_id).await;
-        let source = resolve_source(request.source.as_deref(), &user);
+        let policy = self.listening.policy(user_id).await;
+        let user = policy.user().clone();
+        let source = resolve_source(request.source.as_deref(), &policy);
         let respond = |suggestions: ChartSection| PlaylistSuggestionsResponse {
             suggestions,
             playlist_id: request.playlist_id.clone(),
             profile: profile.clone(),
         };
-        if !source_ready(source, &user) {
+        if !policy.ready(source) {
             return Ok(respond(empty_shelf(
                 SUGGESTIONS_TITLE,
                 source,
@@ -913,11 +893,12 @@ impl LiveRadio {
                 }
             }
         }
+        let ask = Ask::build(RequestPriority::UserInitiated);
+        let ask = &ask;
         let found = join_all(genres.iter().map(|genre| {
             timed(
                 "musicbrainz tag albums",
-                self.sources
-                    .musicbrainz_tag_albums(genre, 8, RequestPriority::UserInitiated),
+                self.listening.tag_albums(genre, 8, 0, ask),
             )
         }))
         .await;

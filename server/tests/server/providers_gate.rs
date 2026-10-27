@@ -70,6 +70,7 @@ const RULES: &[Rule] = &[
                 "the scripted job kind's gate, which holds a run until a test releases it",
             ),
             ("catalog/src/reads/platform/artwork/mod.rs", LOCAL),
+            ("catalog/src/reads/discover/listening/mod.rs", LOCAL),
             (
                 "acquire/src/slskd/repository.rs",
                 "slskd runs one search and one enqueue at a time; a LAN service is never paced",

@@ -16,6 +16,7 @@ pub mod error;
 pub mod genre;
 pub mod handlers;
 pub mod home;
+pub mod listening;
 pub mod models;
 pub mod ownership;
 pub mod page;

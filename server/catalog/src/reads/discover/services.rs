@@ -640,6 +640,7 @@ pub async fn genre_detail(
 /// still carries teasers for the overview use case.
 pub async fn trending_artists(
     deps: &ReadsDeps,
+    user_id: &str,
     range: Option<&str>,
     limit: Option<i64>,
     offset: Option<i64>,
@@ -651,13 +652,14 @@ pub async fn trending_artists(
     let offset = offset.unwrap_or(0).max(0);
     Ok(deps
         .charts
-        .trending_artists(range, limit, offset, source)
+        .trending_artists(user_id, range, limit, offset, source)
         .await?)
 }
 
 /// One popular-albums page (same redesign as trending artists).
 pub async fn popular_albums(
     deps: &ReadsDeps,
+    user_id: &str,
     range: Option<&str>,
     limit: Option<i64>,
     offset: Option<i64>,
@@ -669,7 +671,7 @@ pub async fn popular_albums(
     let offset = offset.unwrap_or(0).max(0);
     Ok(deps
         .charts
-        .popular_albums(range, limit, offset, source)
+        .popular_albums(user_id, range, limit, offset, source)
         .await?)
 }
 

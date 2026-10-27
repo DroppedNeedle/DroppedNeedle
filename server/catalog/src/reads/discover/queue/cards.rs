@@ -9,27 +9,22 @@
 
 use crate::reads::cache_hold::CacheHold;
 use crate::reads::catalog::mapping::clean_lastfm_bio;
+use crate::reads::discover::listening::{Ask, ListeningData, ListeningError, ListeningResult};
 use crate::reads::discover::models::{DiscoverQueuePreview, QueueEnrichment};
 use crate::reads::discover::ports::ProviderFailure;
 use crate::reads::discover::youtube::LiveYouTube;
-use droppedneedle_providers::RequestPriority;
-
-use super::sources::{QueueSources, SourceResult};
 
 /// Most tags a card shows.
 const MAX_TAGS: usize = 10;
 /// Recordings tried for a video before falling back to search.
 const PREVIEW_RECORDINGS: usize = 3;
 
-fn quiet<T: Default>(what: &str, result: SourceResult<T>, hold: &mut CacheHold) -> T {
+fn quiet<T: Default>(what: &str, result: ListeningResult<T>, hold: &mut CacheHold) -> T {
     result.unwrap_or_else(|cause| {
         tracing::debug!(read = what, %cause, "queue card read failed; leaving it out");
         match &cause {
-            ProviderFailure::Provider(error) => hold.provider(error),
-            ProviderFailure::Failed(_) => hold.local(),
-            ProviderFailure::NotConfigured(_)
-            | ProviderFailure::NotBuilt(_)
-            | ProviderFailure::Exhausted(_) => {}
+            ListeningError::Provider(error) => hold.provider(error),
+            ListeningError::MediaServer(_) => hold.local(),
         }
         T::default()
     })
@@ -67,17 +62,16 @@ pub fn youtube_search_url(artist: &str, album: &str) -> String {
 /// Build the enrichment for one release group, with how long it may be
 /// cached given the reads that failed.
 pub async fn enrich(
-    sources: &dyn QueueSources,
+    listening: &ListeningData,
     youtube: &LiveYouTube,
     user_id: &str,
     release_group_mbid: &str,
 ) -> (QueueEnrichment, CacheHold) {
+    let ask = Ask::person();
     let mut hold = CacheHold::default();
     let facts = quiet(
         "musicbrainz release group",
-        sources
-            .musicbrainz_release_group(release_group_mbid, RequestPriority::UserInitiated)
-            .await,
+        listening.release_group(release_group_mbid, &ask).await,
         &mut hold,
     )
     .unwrap_or_default();
@@ -99,16 +93,21 @@ pub async fn enrich(
         let mut hold = CacheHold::default();
         let count = quiet(
             "listenbrainz listen counts",
-            sources
-                .listenbrainz_listen_counts(user_id, &ids, RequestPriority::UserInitiated)
-                .await,
+            listening.listen_counts(user_id, &ids, &ask).await,
             &mut hold,
         )
         .get(release_group_mbid)
         .copied();
         (count, hold)
     };
-    let about = artist_details(sources, user_id, &facts.artist_mbid, &artist, &album);
+    let about = artist_details(
+        listening,
+        &ask,
+        user_id,
+        &facts.artist_mbid,
+        &artist,
+        &album,
+    );
     let ((listen_count, listens_hold), (country, description, extra)) =
         tokio::join!(listens, about);
     hold.merge(listens_hold);
@@ -140,7 +139,8 @@ struct Fallback {
 /// Country and bio from MusicBrainz and Wikipedia, then Last.fm for the
 /// bio and tags when those are still missing.
 async fn artist_details(
-    sources: &dyn QueueSources,
+    listening: &ListeningData,
+    ask: &Ask,
     user_id: &str,
     artist_mbid: &Option<String>,
     artist: &str,
@@ -152,9 +152,7 @@ async fn artist_details(
     if let Some(mbid) = artist_mbid {
         let facts = quiet(
             "musicbrainz artist",
-            sources
-                .musicbrainz_artist(mbid, RequestPriority::UserInitiated)
-                .await,
+            listening.artist(mbid, ask).await,
             &mut fallback.hold,
         );
         if let Some(facts) = facts {
@@ -162,7 +160,7 @@ async fn artist_details(
             if let Some(url) = facts.wiki_url {
                 description = quiet(
                     "wikipedia",
-                    sources.wikipedia_extract(&url).await,
+                    listening.wikipedia_extract(&url, ask).await,
                     &mut fallback.hold,
                 )
                 .filter(|text| !text.trim().is_empty());
@@ -174,9 +172,7 @@ async fn artist_details(
     }
     let album_facts = quiet(
         "lastfm album",
-        sources
-            .lastfm_album_facts(user_id, artist, album, RequestPriority::UserInitiated)
-            .await,
+        listening.lastfm_album(user_id, artist, album, ask).await,
         &mut fallback.hold,
     );
     if let Some(facts) = album_facts {
@@ -190,13 +186,8 @@ async fn artist_details(
     }
     let artist_facts = quiet(
         "lastfm artist",
-        sources
-            .lastfm_artist_facts(
-                user_id,
-                artist,
-                artist_mbid.as_deref(),
-                RequestPriority::UserInitiated,
-            )
+        listening
+            .lastfm_artist(user_id, artist, artist_mbid.as_deref(), ask)
             .await,
         &mut fallback.hold,
     );
@@ -216,13 +207,12 @@ async fn artist_details(
 /// first release, then on that release's first recordings, then a
 /// YouTube search when an API key is set (v2 `preview_queue_item`).
 pub async fn preview(
-    sources: &dyn QueueSources,
+    listening: &ListeningData,
     youtube: &LiveYouTube,
     release_group_mbid: &str,
 ) -> Result<DiscoverQueuePreview, ProviderFailure> {
-    let facts = sources
-        .musicbrainz_release_group(release_group_mbid, RequestPriority::UserInitiated)
-        .await?;
+    let ask = Ask::person();
+    let facts = listening.release_group(release_group_mbid, &ask).await?;
     let Some(facts) = facts else {
         return Ok(DiscoverQueuePreview {
             status: "not_found".to_owned(),
@@ -252,7 +242,7 @@ pub async fn preview(
         // itself has no video link.
         let video = quiet(
             "musicbrainz release links",
-            sources.musicbrainz_release_video(release).await,
+            listening.release_video(release, &ask).await,
             &mut hold,
         );
         if let Some(answer) = found(video) {
@@ -260,15 +250,15 @@ pub async fn preview(
         }
         let recordings = quiet(
             "musicbrainz release recordings",
-            sources
-                .musicbrainz_release_recordings(release, PREVIEW_RECORDINGS)
+            listening
+                .release_recordings(release, PREVIEW_RECORDINGS, &ask)
                 .await,
             &mut hold,
         );
         for recording in recordings {
             let video = quiet(
                 "musicbrainz recording links",
-                sources.musicbrainz_recording_video(&recording).await,
+                listening.recording_video(&recording, &ask).await,
                 &mut hold,
             );
             if let Some(answer) = found(video) {

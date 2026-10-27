@@ -19,11 +19,9 @@
 
 pub mod build;
 pub mod library;
-pub mod live_sources;
 pub mod memo;
 pub mod picks;
 pub mod shelves;
-pub mod sources;
 pub mod store;
 
 use std::collections::{HashMap, HashSet};
@@ -31,6 +29,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::reads::discover::content::IntegrationSettings;
+use crate::reads::discover::listening::{Ask, ListeningData};
 use crate::reads::discover::models::{
     ChartSection, DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, QueueBuildStatus,
     SectionItem,
@@ -44,7 +43,6 @@ use build::{Builder, PageSettings};
 use droppedneedle_kernel::runtime_config::{Live, Plain, secret_sections::AdvancedSettings};
 use library::LibraryReads;
 use memo::BuildMemo;
-use sources::PageSources;
 use store::{ActivityRow, PageDb, snapshot_key};
 
 /// How long a page in memory is served before it is reloaded.
@@ -157,7 +155,7 @@ struct State {
 }
 
 struct Inner {
-    sources: Arc<dyn PageSources>,
+    listening: ListeningData,
     queue_db: QueueDb,
     library: LibraryReads,
     db: PageDb,
@@ -180,7 +178,7 @@ pub struct LiveDiscover {
 /// Everything the page reads from.
 pub struct PageInputs {
     /// Provider reads.
-    pub sources: Arc<dyn PageSources>,
+    pub listening: ListeningData,
     /// The queue tables.
     pub queue_db: QueueDb,
     /// The page tables.
@@ -243,7 +241,7 @@ impl LiveDiscover {
         let library = LibraryReads::new(inputs.db.pool().clone());
         Self {
             inner: Arc::new(Inner {
-                sources: inputs.sources,
+                listening: inputs.listening,
                 queue_db: inputs.queue_db,
                 library,
                 db: inputs.db,
@@ -271,7 +269,7 @@ impl LiveDiscover {
     }
 
     async fn key_for(&self, user_id: &str) -> String {
-        let user = self.inner.sources.user_music(user_id).await;
+        let user = self.inner.listening.accounts(user_id).await;
         snapshot_key(user_id, user.listenbrainz.is_some(), user.lastfm)
     }
 
@@ -466,12 +464,13 @@ impl LiveDiscover {
             user_id: user_id.to_owned(),
             key: key.clone(),
         };
-        let source = self.inner.sources.source_context();
+        let source = self.inner.listening.source();
         let download_client = self.inner.integrations.download_client_ready();
         let now = now_secs();
         let (today, year) = today(now);
         let builder = Builder {
-            sources: self.inner.sources.as_ref(),
+            listening: &self.inner.listening,
+            ask: Ask::build(droppedneedle_providers::RequestPriority::BackgroundSync),
             queue_db: &self.inner.queue_db,
             library: &self.inner.library,
             memo: &self.inner.memo,
@@ -481,13 +480,13 @@ impl LiveDiscover {
             now,
         };
         let built = builder.build(user_id).await;
-        if self.inner.sources.source_context() != source {
+        if self.inner.listening.source() != source {
             tracing::info!("MusicBrainz source changed during a discover build; dropping it");
             return false;
         }
         let mut page = built.page;
         let mut degraded = built.degraded;
-        if self.inner.sources.listenbrainz_popularity_down() {
+        if self.inner.listening.popularity_down() {
             degraded
                 .entry("listenbrainz".to_owned())
                 .or_insert_with(|| "degraded".to_owned());
@@ -557,7 +556,7 @@ impl LiveDiscover {
         section: Option<&str>,
         provider: Option<&str>,
     ) -> Result<DiscoverActivityResponse, ProviderFailure> {
-        let source = self.inner.sources.source_context();
+        let source = self.inner.listening.source();
         self.inner
             .db
             .record_activity(
@@ -589,7 +588,7 @@ impl LiveDiscover {
         if !self.inner.warmer_enabled {
             return;
         }
-        let source = self.inner.sources.source_context();
+        let source = self.inner.listening.source();
         let rows = match self
             .inner
             .db
@@ -631,7 +630,7 @@ impl LiveDiscover {
             }
         }
         for row in rows.iter().filter(|row| row.user_id == user_id) {
-            if self.inner.sources.source_context() != source {
+            if self.inner.listening.source() != source {
                 break;
             }
             let (success, retry) = self.warm_feature(row).await;

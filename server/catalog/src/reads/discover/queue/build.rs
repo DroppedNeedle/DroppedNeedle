@@ -12,7 +12,6 @@
 //! Every provider read is allowed to fail: the failure is logged and that
 //! pool is simply empty.
 
-use droppedneedle_providers::RequestPriority;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -20,11 +19,11 @@ use futures_util::future::join_all;
 
 use super::QueueSettings;
 use super::select::{self, Shuffler};
-use super::sources::{
-    AlbumRow, ArtistRow, JellyfinList, LastFmAlbum, MusicSource, QueueSources, SourceResult,
-    StatsRange, UserMusic,
-};
 use super::store::QueueDb;
+use crate::reads::discover::listening::{
+    AlbumRow, ArtistRow, Ask, JellyfinList, LastFmAlbum, ListenedAlbum, ListeningData, MusicSource,
+    StatsRange, TagAlbum, UserMusic,
+};
 use crate::reads::discover::models::QueueItemLight;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
@@ -38,14 +37,14 @@ const DECADE_TAGS: [&str; 6] = ["2020s", "2010s", "2000s", "1990s", "1980s", "19
 /// What one build reads from.
 pub struct BuildContext<'a> {
     /// Provider reads.
-    pub sources: &'a dyn QueueSources,
+    pub listening: &'a ListeningData,
     /// The queue tables.
     pub db: &'a QueueDb,
     /// Settings read at the start of this build.
     pub settings: &'a QueueSettings,
-    /// User-initiated while someone waits for the build, background for
-    /// the warm cycle.
-    pub priority: RequestPriority,
+    /// The build's priority (a person waiting, or the warm cycle) and
+    /// its cap on provider calls in flight.
+    pub ask: Ask,
 }
 
 /// The cover URL a card shows.
@@ -95,9 +94,9 @@ pub(in crate::reads::discover) fn or_empty<T: Default, E: std::fmt::Display>(
 }
 
 /// Run one read under the per-call timeout.
-pub(in crate::reads::discover) async fn timed<T: Default>(
+pub(in crate::reads::discover) async fn timed<T: Default, E: std::fmt::Display>(
     what: &str,
-    read: impl std::future::Future<Output = SourceResult<T>>,
+    read: impl std::future::Future<Output = Result<T, E>>,
 ) -> T {
     match tokio::time::timeout(READ_TIMEOUT, read).await {
         Ok(result) => or_empty(what, result),
@@ -116,8 +115,9 @@ pub async fn build_deck(
     user_id: &str,
     count: usize,
 ) -> Result<Vec<QueueItemLight>, String> {
-    let user = ctx.sources.user_music(user_id).await;
-    let source = user.resolved_source();
+    let policy = ctx.listening.policy(user_id).await;
+    let source = policy.listening();
+    let user = policy.user().clone();
     let ignored = ctx.db.ignored_mbids(user_id).await.unwrap_or_else(|cause| {
         tracing::warn!(%cause, "ignored releases unreadable; the deck may repeat them");
         HashSet::new()
@@ -129,7 +129,7 @@ pub async fn build_deck(
     let mut items = if has_services {
         personalized(ctx, user_id, &user, source, count, &ignored, &mut shuffler).await
     } else {
-        anonymous(ctx, user_id, &user, source, count, &ignored, &mut shuffler).await
+        anonymous(ctx, user_id, &user, count, &ignored, &mut shuffler).await
     };
     let mut owned = owned_of(ctx, &items).await?;
     items.retain(|item| !owned.contains(&item.release_group_mbid.to_ascii_lowercase()));
@@ -143,7 +143,6 @@ pub async fn build_deck(
             ctx,
             user_id,
             &user,
-            source,
             count - items.len(),
             &skip,
             &seen,
@@ -214,8 +213,8 @@ pub(in crate::reads::discover) async fn seed_artists(
     {
         let rows = or_empty(
             "lastfm top artists",
-            ctx.sources
-                .lastfm_top_artists(user_id, username, 10.max(wanted as u32), ctx.priority)
+            ctx.listening
+                .lastfm_user_artists(user_id, username, 10.max(wanted as u32), &ctx.ask)
                 .await,
         );
         take(rows, &mut seeds);
@@ -236,8 +235,8 @@ pub(in crate::reads::discover) async fn seed_artists(
             }
             let rows = or_empty(
                 "listenbrainz top artists",
-                ctx.sources
-                    .listenbrainz_top_artists(username, range, 10.max(wanted as u32), ctx.priority)
+                ctx.listening
+                    .user_artists(username, range, 10.max(wanted as u32), &ctx.ask)
                     .await,
             );
             take(rows, &mut seeds);
@@ -250,8 +249,8 @@ pub(in crate::reads::discover) async fn seed_artists(
             }
             let rows = or_empty(
                 "jellyfin artists",
-                ctx.sources
-                    .jellyfin_artists(user_id, list, 10.max(wanted as u32))
+                ctx.listening
+                    .jellyfin_artists(user_id, list, 10.max(wanted as u32), &ctx.ask)
                     .await,
             );
             take(rows, &mut seeds);
@@ -274,11 +273,12 @@ pub(in crate::reads::discover) async fn listened_albums(
     }
     let rows = or_empty(
         "listenbrainz listened albums",
-        ctx.sources
-            .listenbrainz_top_albums(username, StatsRange::AllTime, 100, ctx.priority)
+        ctx.listening
+            .user_albums(username, StatsRange::AllTime, 100, 0, &ctx.ask)
             .await,
     );
     rows.into_iter()
+        .filter_map(ListenedAlbum::row)
         .map(|row| row.release_group_mbid.to_ascii_lowercase())
         .collect()
 }
@@ -295,13 +295,12 @@ async fn personalized(
 ) -> Vec<QueueItemLight> {
     let seeds = seed_artists(ctx, user_id, user, source).await;
     if seeds.is_empty() {
-        return anonymous(ctx, user_id, user, source, count, ignored, shuffler).await;
+        return anonymous(ctx, user_id, user, count, ignored, shuffler).await;
     }
     let settings = ctx.settings;
     // During a ListenBrainz popularity outage, Last.fm stands in for the
     // album reads even for a ListenBrainz-first user.
-    let use_lastfm = (source == MusicSource::LastFm || ctx.sources.listenbrainz_popularity_down())
-        && user.lastfm;
+    let use_lastfm = ctx.listening.policy_for(user).popularity() == MusicSource::LastFm;
     let wildcard_slots = settings.wildcard_slots;
     let target = count.saturating_sub(wildcard_slots);
     let per_seed = (target / seeds.len().max(1) + 3).max(4);
@@ -314,17 +313,8 @@ async fn personalized(
     let picked = select::round_robin(pools, target, select::MAX_PER_ARTIST, shuffler);
     let seen = lower_ids(&picked);
     let wildcard_count = wildcard_slots.max(count.saturating_sub(picked.len()));
-    let wildcards = trending_filler(
-        ctx,
-        user_id,
-        user,
-        source,
-        wildcard_count,
-        ignored,
-        &seen,
-        shuffler,
-    )
-    .await;
+    let wildcards =
+        trending_filler(ctx, user_id, user, wildcard_count, ignored, &seen, shuffler).await;
     let mut deck = select::interleave(picked, wildcards, &select::WILDCARD_POSITIONS);
     if deck.len() < count {
         let seen = lower_ids(&deck);
@@ -332,7 +322,6 @@ async fn personalized(
             ctx,
             user_id,
             user,
-            source,
             count - deck.len(),
             ignored,
             &seen,
@@ -390,18 +379,18 @@ pub(in crate::reads::discover) async fn similar_artist_pools(
         };
         let similar = timed(
             "listenbrainz similar artists",
-            ctx.sources.listenbrainz_similar_artists(
+            ctx.listening.similar_artists(
                 user_id,
                 seed_mbid,
                 settings.similar_artists_limit,
-                ctx.priority,
+                &ctx.ask,
             ),
         )
         .await;
         let reason = format!("Similar to {}", seed.name);
         let mut pool = Vec::new();
         let mut seen = HashSet::new();
-        for artist in similar {
+        for artist in similar.into_iter().map(|scored| scored.artist) {
             let Some(artist_mbid) = normalize(artist.mbid.as_deref()) else {
                 continue;
             };
@@ -410,15 +399,15 @@ pub(in crate::reads::discover) async fn similar_artist_pools(
             }
             let albums = timed(
                 "listenbrainz artist albums",
-                ctx.sources.listenbrainz_artist_albums(
+                ctx.listening.artist_albums(
                     user_id,
                     &artist_mbid,
                     settings.albums_per_similar,
-                    ctx.priority,
+                    &ctx.ask,
                 ),
             )
             .await;
-            for album in albums {
+            for album in albums.into_iter().map(|ranked| ranked.album) {
                 let Some(group) = normalize(Some(&album.release_group_mbid)) else {
                     continue;
                 };
@@ -451,14 +440,12 @@ async fn genre_albums(
     }
     let genres = or_empty(
         "listenbrainz genres",
-        ctx.sources
-            .listenbrainz_genres(username, ctx.priority)
-            .await,
+        ctx.listening.genres(username, &ctx.ask).await,
     );
-    let top: Vec<String> = genres.into_iter().take(4).collect();
+    let top: Vec<String> = genres.into_iter().take(4).map(|(name, _)| name).collect();
     let found = join_all(
         top.iter()
-            .map(|genre| ctx.sources.musicbrainz_tag_albums(genre, 8, ctx.priority)),
+            .map(|genre| ctx.listening.tag_albums(genre, 8, 0, &ctx.ask)),
     )
     .await;
     let mut items = Vec::new();
@@ -499,9 +486,7 @@ async fn fresh_releases(
     }
     let rows = or_empty(
         "listenbrainz fresh releases",
-        ctx.sources
-            .listenbrainz_fresh_releases(username, ctx.priority)
-            .await,
+        ctx.listening.fresh_releases(username, &ctx.ask).await,
     );
     let mut items = Vec::new();
     let mut seen = HashSet::new();
@@ -538,12 +523,10 @@ async fn loved_artist_albums(
     }
     let loved = or_empty(
         "listenbrainz loved recordings",
-        ctx.sources
-            .listenbrainz_loved_artists(username, 50, ctx.priority)
-            .await,
+        ctx.listening.loved(username, 50, &ctx.ask).await,
     );
     let mut artists: Vec<String> = Vec::new();
-    for mbid in loved {
+    for mbid in loved.into_iter().filter_map(|track| track.artist_mbid) {
         if let Some(mbid) = normalize(Some(&mbid))
             && !artists.contains(&mbid)
         {
@@ -554,14 +537,17 @@ async fn loved_artist_albums(
         }
     }
     let found = join_all(artists.iter().map(|artist| {
-        ctx.sources
-            .listenbrainz_artist_albums(user_id, artist, per_artist, ctx.priority)
+        ctx.listening
+            .artist_albums(user_id, artist, per_artist, &ctx.ask)
     }))
     .await;
     let mut items = Vec::new();
     let mut seen = HashSet::new();
     for (artist, result) in artists.iter().zip(found) {
-        for album in or_empty("listenbrainz artist albums", result) {
+        for album in or_empty("listenbrainz artist albums", result)
+            .into_iter()
+            .map(|ranked| ranked.album)
+        {
             let Some(group) = normalize(Some(&album.release_group_mbid)) else {
                 continue;
             };
@@ -596,10 +582,13 @@ async fn deep_cuts(
     }
     let top = or_empty(
         "listenbrainz top albums",
-        ctx.sources
-            .listenbrainz_top_albums(username, StatsRange::ThisMonth, 25, ctx.priority)
+        ctx.listening
+            .user_albums(username, StatsRange::ThisMonth, 25, 0, &ctx.ask)
             .await,
-    );
+    )
+    .into_iter()
+    .filter_map(ListenedAlbum::row)
+    .collect::<Vec<AlbumRow>>();
     let current: HashSet<String> = top
         .iter()
         .map(|album| album.release_group_mbid.to_ascii_lowercase())
@@ -617,14 +606,17 @@ async fn deep_cuts(
     }
     let wanted = (per_artist + 2).max(4);
     let found = join_all(artists.iter().map(|(artist, _)| {
-        ctx.sources
-            .listenbrainz_artist_albums(user_id, artist, wanted, ctx.priority)
+        ctx.listening
+            .artist_albums(user_id, artist, wanted, &ctx.ask)
     }))
     .await;
     let mut items = Vec::new();
     let mut seen = HashSet::new();
     for ((artist, name), result) in artists.iter().zip(found) {
-        for album in or_empty("listenbrainz artist albums", result) {
+        for album in or_empty("listenbrainz artist albums", result)
+            .into_iter()
+            .map(|ranked| ranked.album)
+        {
             let Some(group) = normalize(Some(&album.release_group_mbid)) else {
                 continue;
             };
@@ -669,28 +661,29 @@ pub(in crate::reads::discover) async fn lastfm_pools(
         }
         let similar = or_empty(
             "lastfm similar artists",
-            ctx.sources
-                .lastfm_similar_artists(
+            ctx.listening
+                .lastfm_similar(
                     user_id,
                     seed,
                     settings.similar_artists_limit as u32,
-                    ctx.priority,
+                    &ctx.ask,
                 )
                 .await,
         );
         let similar: Vec<ArtistRow> = similar
             .into_iter()
+            .map(|scored| scored.artist)
             .filter(|artist| {
                 normalize(artist.mbid.as_deref()).is_some()
                     && !is_various_artists(artist.mbid.as_deref())
             })
             .collect();
         let albums = join_all(similar.iter().map(|artist| {
-            ctx.sources.lastfm_artist_albums(
+            ctx.listening.lastfm_artist_albums(
                 user_id,
                 artist,
                 settings.albums_per_similar as u32,
-                ctx.priority,
+                &ctx.ask,
             )
         }))
         .await;
@@ -804,18 +797,10 @@ pub async fn resolve_release_groups(
         .into_iter()
         .take(ctx.settings.lastfm_mbid_max_lookups)
     {
-        let group = match ctx
-            .sources
-            .musicbrainz_release_group_of(&release, ctx.priority)
-            .await
-        {
+        let group = match ctx.listening.release_group_of(&release, &ctx.ask).await {
             Ok(Some(group)) => Some(group.to_ascii_lowercase()),
             Ok(None) if is_valid_mbid(&release) => {
-                match ctx
-                    .sources
-                    .musicbrainz_release_group(&release, ctx.priority)
-                    .await
-                {
+                match ctx.listening.release_group(&release, &ctx.ask).await {
                     Ok(Some(_)) => Some(release.clone()),
                     Ok(None) => None,
                     Err(cause) => {
@@ -839,6 +824,18 @@ pub async fn resolve_release_groups(
     resolved
 }
 
+/// This week's sitewide ListenBrainz albums, as rows.
+async fn trending(
+    ctx: &BuildContext<'_>,
+    count: u32,
+) -> crate::reads::discover::listening::ListeningResult<Vec<AlbumRow>> {
+    let rows = ctx
+        .listening
+        .sitewide_albums(StatsRange::ThisWeek, count, 0, &ctx.ask)
+        .await?;
+    Ok(rows.into_iter().filter_map(ListenedAlbum::row).collect())
+}
+
 /// Trending albums to fill wildcard slots and short decks: Last.fm's
 /// chart for Last.fm users (or during a ListenBrainz popularity outage),
 /// else ListenBrainz's weekly chart, else MusicBrainz decade tags.
@@ -847,7 +844,6 @@ async fn trending_filler(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &UserMusic,
-    source: MusicSource,
     count: usize,
     ignored: &HashSet<String>,
     seen: &HashSet<String>,
@@ -857,14 +853,13 @@ async fn trending_filler(
         return Vec::new();
     }
     let mut exclude: HashSet<String> = ignored.union(seen).cloned().collect();
-    let use_lastfm = (source == MusicSource::LastFm || ctx.sources.listenbrainz_popularity_down())
-        && user.lastfm;
+    let use_lastfm = ctx.listening.policy_for(user).popularity() == MusicSource::LastFm;
     let target = (count * 2).max(6);
     let mut wildcards = if use_lastfm {
         let mut artists = or_empty(
             "lastfm chart",
-            ctx.sources
-                .lastfm_chart_artists(user_id, 15, ctx.priority)
+            ctx.listening
+                .lastfm_chart_artists(user_id, 15, &ctx.ask)
                 .await,
         );
         shuffler.shuffle(&mut artists);
@@ -875,10 +870,7 @@ async fn trending_filler(
             .collect();
         lastfm_trending(ctx, user_id, artists, &exclude, target).await
     } else {
-        let mut albums = or_empty(
-            "listenbrainz trending",
-            ctx.sources.listenbrainz_trending(25, ctx.priority).await,
-        );
+        let mut albums = or_empty("listenbrainz trending", trending(ctx, 25).await);
         shuffler.shuffle(&mut albums);
         trending_cards(albums, &mut exclude, target, "Trending This Week")
     };
@@ -891,9 +883,10 @@ async fn trending_filler(
             }
             let albums = or_empty(
                 "musicbrainz decade tags",
-                ctx.sources
-                    .musicbrainz_tag_albums(tag, 25, ctx.priority)
-                    .await,
+                ctx.listening
+                    .tag_albums(tag, 25, 0, &ctx.ask)
+                    .await
+                    .map(|rows| rows.into_iter().map(TagAlbum::row).collect()),
             );
             let left = target - wildcards.len();
             wildcards.extend(trending_cards(albums, &mut exclude, left, "Trending"));
@@ -914,8 +907,8 @@ async fn lastfm_trending(
     target: usize,
 ) -> Vec<QueueItemLight> {
     let albums = join_all(artists.iter().map(|artist| {
-        ctx.sources
-            .lastfm_artist_albums(user_id, artist, 3, ctx.priority)
+        ctx.listening
+            .lastfm_artist_albums(user_id, artist, 3, &ctx.ask)
     }))
     .await;
     let pairs: Vec<(ArtistRow, Vec<LastFmAlbum>)> = artists
@@ -974,17 +967,16 @@ async fn anonymous(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &UserMusic,
-    source: MusicSource,
     count: usize,
     ignored: &HashSet<String>,
     shuffler: &mut Shuffler,
 ) -> Vec<QueueItemLight> {
     let mut exclude = ignored.clone();
-    let mut items = if source == MusicSource::LastFm && user.lastfm {
+    let mut items = if ctx.listening.policy_for(user).sitewide() == MusicSource::LastFm {
         let mut artists = or_empty(
             "lastfm chart",
-            ctx.sources
-                .lastfm_chart_artists(user_id, 15, ctx.priority)
+            ctx.listening
+                .lastfm_chart_artists(user_id, 15, &ctx.ask)
                 .await,
         );
         shuffler.shuffle(&mut artists);
@@ -994,10 +986,7 @@ async fn anonymous(
             .collect();
         lastfm_trending(ctx, user_id, artists, &exclude, count).await
     } else {
-        let mut albums = or_empty(
-            "listenbrainz trending",
-            ctx.sources.listenbrainz_trending(50, ctx.priority).await,
-        );
+        let mut albums = or_empty("listenbrainz trending", trending(ctx, 50).await);
         shuffler.shuffle(&mut albums);
         trending_cards(albums, &mut exclude, count, "Trending This Week")
     };
@@ -1007,7 +996,6 @@ async fn anonymous(
             ctx,
             user_id,
             user,
-            source,
             count - items.len(),
             ignored,
             &seen,

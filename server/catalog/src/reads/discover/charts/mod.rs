@@ -2,133 +2,60 @@
 //!
 //! Ports v2's `HomeChartsService` range pages. Every row is marked when the
 //! library holds it (best effort: a failed lookup leaves rows unmarked).
+//! Every read goes through the listening data, so a chart shares its cache
+//! with home and Discover: sitewide pages are kept an hour, a user's own
+//! five minutes.
 //!
 //! ListenBrainz (the default source): trending artists and popular albums
 //! come from the sitewide stats, "your top albums" from the user's own
 //! stats through their linked ListenBrainz account. One row more than asked
 //! for tells whether another page follows. As in v2, artists without an
-//! MBID are dropped (they cannot link anywhere).
+//! MBID are dropped (they cannot link anywhere). When ListenBrainz is down
+//! and the user can read Last.fm, trending artists and "your top albums"
+//! come from Last.fm instead, marked as Last.fm rows.
 //!
-//! Last.fm (`source=lastfm`): trending artists come from Last.fm's chart
-//! with the instance API key, read on every call, so a key saved in
-//! Settings applies at once. Without a key, or with Last.fm switched off,
-//! these routes answer "not configured". Last.fm has no sitewide album
-//! chart; v2 showed the admin's own Last.fm account there, which this
-//! server does not keep, so popular albums from Last.fm are an empty page.
-//! "Your top albums" read the user's linked Last.fm account with their own
-//! key, else the instance key.
+//! Last.fm (`source=lastfm`): trending artists come from Last.fm's chart,
+//! read with the user's own key, else the instance key. With Last.fm
+//! switched off or no key, these routes answer "not configured". Last.fm
+//! has no sitewide album chart; v2 showed the admin's own Last.fm account
+//! there, which this server does not keep, so popular albums from Last.fm
+//! are an empty page.
 //!
 //! As in v2, "your top albums" fall back to whichever service the user
 //! has linked, and a user with neither gets an empty page. Genre pages are
-//! served by the home genre pages in front of this source.
-
-use std::sync::Arc;
+//! served by the genre pages in front of this source.
 
 use sqlx::SqlitePool;
 
 use super::ownership::{owned_albums, owned_artists};
-use crate::reads::catalog::upstream::{instance_lastfm_key, user_lastfm};
+use crate::reads::discover::listening::{
+    ArtistRow, Ask, LastFmChartAlbum, ListenedAlbum, ListeningData, ListeningError, MusicSource,
+    SourcePolicy, StatsRange,
+};
 use crate::reads::discover::{
     models::{
         ChartAlbum, ChartArtist, ChartRange, ChartSource, PopularAlbumsPage, TrendingArtistsPage,
     },
     ports::{BoxFuture, ProviderFailure},
 };
-use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_media::playback::listening::ListenBrainzLinkStore;
-use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials, TopItem};
-use droppedneedle_providers::listenbrainz::{
-    ListenBrainzClient,
-    stats::{ArtistStat, ReleaseGroupStat},
-};
-use droppedneedle_providers::{ProviderError, RequestPriority};
+use droppedneedle_providers::lastfm;
 
 /// Most rows one Last.fm range page reads (v2 `min(limit + offset + 1, 200)`).
 const LASTFM_MAX_ROWS: i64 = 200;
 
-/// The chart pages are read while a person waits.
-const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
+/// The sentence a Last.fm chart answers while Last.fm cannot be read.
+const LASTFM_OFF: &str = "Last.fm charts need Last.fm switched on and an API key saved under Settings > Last.fm. ListenBrainz charts work without one.";
 
-/// Live charts: ListenBrainz always, Last.fm when its client could be paced.
+/// Live charts over the listening data and the catalog.
 pub struct LiveCharts {
-    client: ListenBrainzClient,
-    links: Arc<dyn ListenBrainzLinkStore>,
-    lastfm: Option<LastFmCharts>,
+    listening: ListeningData,
     pool: SqlitePool,
 }
 
-/// The Last.fm half of the charts.
-pub struct LastFmCharts {
-    client: LastFmClient,
-    users: UsersDeps,
-}
-
-impl LastFmCharts {
-    /// Last.fm charts over the one Last.fm client. `users` holds the
-    /// Last.fm switch with the instance key, read on every call, and the
-    /// users' links.
-    pub fn new(client: LastFmClient, users: UsersDeps) -> Self {
-        Self { client, users }
-    }
-
-    /// The instance key, while Last.fm is switched on and a key is saved.
-    fn instance_key(&self) -> Option<String> {
-        if !self.users.lastfm_switch.enabled() {
-            return None;
-        }
-        instance_lastfm_key(&self.users)
-    }
-
-    /// The user's Last.fm username and the key to read it with (their own,
-    /// else the instance key), when both exist.
-    async fn user(&self, user_id: &str) -> Option<(String, LastFmCredentials)> {
-        if !self.users.lastfm_switch.enabled() {
-            return None;
-        }
-        let link = user_lastfm(&self.users, user_id).await;
-        let username = link.username?;
-        let api_key = match link.api_key {
-            Some(key) => key,
-            None => self.instance_key()?,
-        };
-        Some((username, credentials(api_key)))
-    }
-}
-
-fn credentials(api_key: String) -> LastFmCredentials {
-    LastFmCredentials {
-        api_key,
-        ..LastFmCredentials::default()
-    }
-}
-
 impl LiveCharts {
-    /// Charts over the ListenBrainz client, the users' links, the Last.fm
-    /// half (when it could be built) and the catalog.
-    pub fn new(
-        client: ListenBrainzClient,
-        links: Arc<dyn ListenBrainzLinkStore>,
-        lastfm: Option<LastFmCharts>,
-        pool: SqlitePool,
-    ) -> Self {
-        Self {
-            client,
-            links,
-            lastfm,
-            pool,
-        }
-    }
-
-    /// The Last.fm half with the instance key, or "not configured".
-    fn sitewide_lastfm(&self) -> Result<(&LastFmCharts, LastFmCredentials), ProviderFailure> {
-        self.lastfm
-            .as_ref()
-            .and_then(|lastfm| Some((lastfm, credentials(lastfm.instance_key()?))))
-            .ok_or_else(|| {
-                ProviderFailure::not_configured(
-                    "Last.fm charts need Last.fm switched on and an API key saved under Settings > Last.fm. ListenBrainz charts work without one.",
-                )
-            })
+    /// Charts over `listening`, marked against the catalog in `pool`.
+    pub fn new(listening: ListeningData, pool: SqlitePool) -> Self {
+        Self { listening, pool }
     }
 
     async fn artist_page(
@@ -194,12 +121,21 @@ impl LiveCharts {
     }
 }
 
-fn listenbrainz_artists(rows: Vec<ArtistStat>) -> Vec<ChartArtist> {
+fn stats_range(range: ChartRange) -> StatsRange {
+    match range {
+        ChartRange::ThisWeek => StatsRange::ThisWeek,
+        ChartRange::ThisMonth => StatsRange::ThisMonth,
+        ChartRange::ThisYear => StatsRange::ThisYear,
+        ChartRange::AllTime => StatsRange::AllTime,
+    }
+}
+
+fn listenbrainz_artists(rows: Vec<ArtistRow>) -> Vec<ChartArtist> {
     rows.into_iter()
         .filter_map(|row| {
-            let mbid = row.artist_mbids.into_iter().next()?;
+            let mbid = row.mbid?;
             Some(ChartArtist {
-                name: row.artist_name,
+                name: row.name,
                 mbid: Some(mbid),
                 local_id: None,
                 image_url: None,
@@ -211,14 +147,14 @@ fn listenbrainz_artists(rows: Vec<ArtistStat>) -> Vec<ChartArtist> {
         .collect()
 }
 
-fn listenbrainz_albums(rows: Vec<ReleaseGroupStat>) -> Vec<ChartAlbum> {
+fn listenbrainz_albums(rows: Vec<ListenedAlbum>) -> Vec<ChartAlbum> {
     rows.into_iter()
         .map(|row| ChartAlbum {
-            name: row.release_group_name,
+            name: row.title,
             mbid: row.release_group_mbid,
             local_id: None,
             artist_name: Some(row.artist_name),
-            artist_mbid: row.artist_mbids.into_iter().next(),
+            artist_mbid: row.artist_mbid,
             image_url: None,
             release_date: None,
             listen_count: Some(row.listen_count),
@@ -230,21 +166,21 @@ fn listenbrainz_albums(rows: Vec<ReleaseGroupStat>) -> Vec<ChartAlbum> {
 }
 
 /// Last.fm chart artists keep rows without an MBID, as v2 did.
-fn lastfm_artists(rows: Vec<TopItem>) -> Vec<ChartArtist> {
+fn lastfm_artists(rows: Vec<ArtistRow>) -> Vec<ChartArtist> {
     rows.into_iter()
         .map(|row| ChartArtist {
             name: row.name,
             mbid: row.mbid,
             local_id: None,
             image_url: None,
-            listen_count: Some(row.playcount),
+            listen_count: Some(row.listen_count),
             in_library: false,
             source: Some(lastfm::SOURCE.to_owned()),
         })
         .collect()
 }
 
-fn lastfm_albums(rows: Vec<TopItem>) -> Vec<ChartAlbum> {
+fn lastfm_albums(rows: Vec<LastFmChartAlbum>) -> Vec<ChartAlbum> {
     rows.into_iter()
         .map(|row| ChartAlbum {
             name: row.name,
@@ -301,79 +237,112 @@ fn lastfm_period(range: ChartRange) -> &'static str {
     }
 }
 
-/// The rows, or the provider failure.
-fn rows<T>(result: Result<Vec<T>, ProviderError>) -> Result<Vec<T>, ProviderFailure> {
-    result.map_err(ProviderFailure::Provider)
-}
-
-/// The Last.fm counterpart of [`rows`], skipping the earlier pages.
-fn lastfm_rows(
-    result: Result<Vec<TopItem>, ProviderError>,
-    skip: usize,
-) -> Result<Vec<TopItem>, ProviderFailure> {
-    Ok(rows(result)?.into_iter().skip(skip).collect())
-}
-
 impl LiveCharts {
-    /// One trending-artists page.
-    pub fn trending_artists(
+    /// The Last.fm sitewide artist chart for this page. Last.fm's chart
+    /// has no ranges; every range reads the same global list, as in v2.
+    async fn lastfm_trending(
         &self,
+        user_id: &str,
+        limit: i64,
+        offset: i64,
+        ask: &Ask,
+    ) -> Result<Vec<ChartArtist>, ProviderFailure> {
+        let (count, skip) = lastfm_window(limit, offset);
+        let rows = self
+            .listening
+            .lastfm_chart_artists(user_id, count, ask)
+            .await?;
+        Ok(lastfm_artists(rows.into_iter().skip(skip).collect()))
+    }
+
+    /// The user's Last.fm top albums for this page.
+    async fn lastfm_top(
+        &self,
+        user_id: &str,
+        username: &str,
+        range: ChartRange,
+        limit: i64,
+        offset: i64,
+        ask: &Ask,
+    ) -> Result<Vec<ChartAlbum>, ProviderFailure> {
+        let (count, skip) = lastfm_window(limit, offset);
+        let rows = self
+            .listening
+            .lastfm_user_albums(user_id, username, lastfm_period(range), count, ask)
+            .await?;
+        Ok(lastfm_albums(rows.into_iter().skip(skip).collect()))
+    }
+
+    /// One trending-artists page for the user.
+    pub fn trending_artists<'a>(
+        &'a self,
+        user_id: &'a str,
         range: ChartRange,
         limit: i64,
         offset: i64,
         source: ChartSource,
-    ) -> BoxFuture<'_, Result<TrendingArtistsPage, ProviderFailure>> {
+    ) -> BoxFuture<'a, Result<TrendingArtistsPage, ProviderFailure>> {
         Box::pin(async move {
+            let ask = Ask::person();
+            let policy = self.listening.policy(user_id).await;
             let artists = match source {
                 ChartSource::Lastfm => {
-                    // Last.fm's chart has no ranges; every range reads the
-                    // same global list, as in v2.
-                    let (lastfm, creds) = self.sitewide_lastfm()?;
-                    let (count, skip) = lastfm_window(limit, offset);
-                    lastfm_artists(lastfm_rows(
-                        lastfm
-                            .client
-                            .chart_top_artists(&creds, count, PRIORITY)
-                            .await,
-                        skip,
-                    )?)
+                    if !policy.ready(MusicSource::LastFm) {
+                        return Err(ProviderFailure::not_configured(LASTFM_OFF));
+                    }
+                    self.lastfm_trending(user_id, limit, offset, &ask).await?
                 }
                 ChartSource::Listenbrainz => {
                     let (count, skip) = window(limit, offset);
-                    listenbrainz_artists(rows(
-                        self.client
-                            .sitewide_top_artists(range.as_str(), count, skip, PRIORITY)
-                            .await,
-                    )?)
+                    match self
+                        .listening
+                        .sitewide_artists(stats_range(range), count, skip, &ask)
+                        .await
+                    {
+                        Ok(rows) => listenbrainz_artists(rows),
+                        Err(error) => {
+                            self.stand_in(&policy, &error)?;
+                            self.lastfm_trending(user_id, limit, offset, &ask).await?
+                        }
+                    }
                 }
             };
             self.artist_page(range, limit, offset, artists).await
         })
     }
 
-    /// One popular-albums page.
-    pub fn popular_albums(
-        &self,
+    /// One popular-albums page. Last.fm has no sitewide album chart, so a
+    /// ListenBrainz outage has no stand-in here.
+    pub fn popular_albums<'a>(
+        &'a self,
+        user_id: &'a str,
         range: ChartRange,
         limit: i64,
         offset: i64,
         source: ChartSource,
-    ) -> BoxFuture<'_, Result<PopularAlbumsPage, ProviderFailure>> {
+    ) -> BoxFuture<'a, Result<PopularAlbumsPage, ProviderFailure>> {
         Box::pin(async move {
             let albums = match source {
                 ChartSource::Lastfm => {
                     // No sitewide Last.fm album chart and no admin account
                     // to stand in for one (see the module docs).
-                    self.sitewide_lastfm()?;
+                    if !self
+                        .listening
+                        .policy(user_id)
+                        .await
+                        .ready(MusicSource::LastFm)
+                    {
+                        return Err(ProviderFailure::not_configured(LASTFM_OFF));
+                    }
                     Vec::new()
                 }
                 ChartSource::Listenbrainz => {
                     let (count, skip) = window(limit, offset);
-                    listenbrainz_albums(rows(
-                        self.client
-                            .sitewide_top_release_groups(range.as_str(), count, skip, PRIORITY)
-                            .await,
-                    )?)
+                    listenbrainz_albums(
+                        self.listening
+                            .sitewide_albums(stats_range(range), count, skip, &Ask::person())
+                            .await?,
+                    )
                 }
             };
             self.album_page(range, limit, offset, albums).await
@@ -390,49 +359,61 @@ impl LiveCharts {
         source: ChartSource,
     ) -> BoxFuture<'a, Result<PopularAlbumsPage, ProviderFailure>> {
         Box::pin(async move {
-            let listenbrainz = self.links.status(user_id).await;
-            let lastfm = match &self.lastfm {
-                Some(lastfm) => lastfm.user(user_id).await.map(|user| (lastfm, user)),
-                None => None,
+            let ask = Ask::person();
+            let policy = self.listening.policy(user_id).await;
+            let user = policy.user();
+            let lastfm_user = user
+                .lastfm_username
+                .clone()
+                .filter(|_| policy.ready(MusicSource::LastFm));
+            let asked = match source {
+                ChartSource::Lastfm => MusicSource::LastFm,
+                ChartSource::Listenbrainz => MusicSource::ListenBrainz,
             };
             // v2 `resolve_source_value`: the asked source when the user has
             // it linked, else the other one.
-            let use_lastfm =
-                lastfm.is_some() && (source == ChartSource::Lastfm || listenbrainz.is_none());
-            let albums = match (use_lastfm, lastfm, listenbrainz) {
-                (true, Some((lastfm, (username, creds))), _) => {
-                    let (count, skip) = lastfm_window(limit, offset);
-                    lastfm_albums(lastfm_rows(
-                        lastfm
-                            .client
-                            .user_top_albums(
-                                &creds,
-                                &username,
-                                lastfm_period(range),
-                                count,
-                                PRIORITY,
-                            )
-                            .await,
-                        skip,
-                    )?)
+            let use_lastfm = lastfm_user.is_some()
+                && (asked == MusicSource::LastFm || user.listenbrainz.is_none());
+            let albums = match (use_lastfm, &lastfm_user, &user.listenbrainz) {
+                (true, Some(username), _) => {
+                    self.lastfm_top(user_id, username, range, limit, offset, &ask)
+                        .await?
                 }
-                (_, _, Some(link)) => {
+                (_, _, Some(listenbrainz)) => {
                     let (count, skip) = window(limit, offset);
-                    listenbrainz_albums(rows(
-                        self.client
-                            .user_top_release_groups(
-                                &link.username,
-                                range.as_str(),
-                                count,
-                                skip,
-                                PRIORITY,
-                            )
-                            .await,
-                    )?)
+                    match self
+                        .listening
+                        .user_albums(listenbrainz, stats_range(range), count, skip, &ask)
+                        .await
+                    {
+                        Ok(rows) => listenbrainz_albums(rows),
+                        Err(error) => match &lastfm_user {
+                            Some(username) if policy.stand_in(&error).is_some() => {
+                                self.lastfm_top(user_id, username, range, limit, offset, &ask)
+                                    .await?
+                            }
+                            _ => return Err(error.into()),
+                        },
+                    }
                 }
                 _ => Vec::new(),
             };
             self.album_page(range, limit, offset, albums).await
         })
+    }
+
+    /// `Ok` when Last.fm stands in after `error`, else the error itself.
+    fn stand_in(
+        &self,
+        policy: &SourcePolicy,
+        error: &ListeningError,
+    ) -> Result<(), ProviderFailure> {
+        match policy.stand_in(error) {
+            Some(_) => {
+                tracing::info!(%error, "listenbrainz chart unavailable; serving last.fm");
+                Ok(())
+            }
+            None => Err(error.clone().into()),
+        }
     }
 }

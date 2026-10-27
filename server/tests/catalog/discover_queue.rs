@@ -17,17 +17,19 @@ use axum::{
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Admin, Principal, Role};
 use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests};
-use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
-use droppedneedle_catalog::reads::discover::queue::sources::{
-    AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
-    QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
+use droppedneedle_catalog::reads::discover::listening::{
+    AlbumRow, ArtistFacts, ArtistRow, Ask, JellyfinList, LastFmAlbum, LastFmChartAlbum,
+    LastFmFacts, ListenedAlbum, ListeningData, ListeningError, ListeningNetwork, LovedTrack,
+    PlayedArtist, RankedAlbum, Read, ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange,
+    TagAlbum, UserMusic, WeeklyPlaylist,
 };
+use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
-use droppedneedle_catalog::reads::discover::wiring::{DiscoverInputs, DiscoverSources, deps_over};
+use droppedneedle_catalog::reads::discover::wiring::{DiscoverInputs, deps_over, live_network};
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_media::playback::listening::MemoryListenBrainzLinkStore;
-use droppedneedle_providers::{ProviderError, Providers};
+use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -41,17 +43,340 @@ fn group(n: u8) -> String {
     format!("{n:08x}-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 }
 
-/// ListenBrainz answers for one linked user: one seed artist, one similar
-/// artist with five albums, and five trending albums. Everything else is
-/// empty. MusicBrainz release group reads fail while `musicbrainz_down`
-/// is set.
+/// Scripted listening answers, the network behind the listening data.
+/// Each read answers its field (empty by default). Release-group facts
+/// fail while `musicbrainz_down` is set.
 #[derive(Default)]
-struct Scripted {
-    musicbrainz_down: AtomicBool,
+pub(crate) struct Script {
+    pub user: UserMusic,
+    /// Users who can read Last.fm, besides `user`'s own setting.
+    pub lastfm_users: Vec<String>,
+    /// The Last.fm chart, answered to users who can read Last.fm.
+    pub lastfm_chart: Vec<ArtistRow>,
+    pub source: Option<SourceContext>,
+    pub user_artists: Vec<ArtistRow>,
+    pub user_albums: Vec<ListenedAlbum>,
+    pub sitewide_artists: Vec<ArtistRow>,
+    pub sitewide_albums: Vec<ListenedAlbum>,
+    pub similar: HashMap<String, Vec<ScoredArtist>>,
+    pub artist_albums: HashMap<String, Vec<RankedAlbum>>,
+    pub genres: Vec<(String, i64)>,
+    pub fresh: Vec<AlbumRow>,
+    pub loved: Vec<LovedTrack>,
+    pub tag_artists: Vec<ArtistRow>,
+    pub tag_albums: Vec<TagAlbum>,
+    pub release_group: Option<ReleaseGroupFacts>,
+    pub musicbrainz_down: AtomicBool,
 }
 
-fn ok<T: Send + 'static>(value: T) -> BoxFuture<'static, SourceResult<T>> {
+type Answer<'a, T> = Read<'a, T>;
+
+fn ok<T: Send + 'static>(value: T) -> Answer<'static, T> {
     Box::pin(async move { Ok(value) })
+}
+
+impl ListeningNetwork for Script {
+    fn source(&self) -> SourceContext {
+        self.source.clone().unwrap_or_else(|| SourceContext {
+            mode: "official".to_owned(),
+            id: "official".to_owned(),
+            generation: 0,
+        })
+    }
+    fn accounts<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, UserMusic> {
+        let mut user = self.user.clone();
+        user.lastfm |= self.lastfm_users.iter().any(|id| id == user_id);
+        Box::pin(async move { user })
+    }
+    fn sitewide_artists(
+        &self,
+        _r: StatsRange,
+        _c: u32,
+        _o: u32,
+        _p: RequestPriority,
+    ) -> Answer<'_, Vec<ArtistRow>> {
+        ok(self.sitewide_artists.clone())
+    }
+    fn sitewide_albums(
+        &self,
+        _r: StatsRange,
+        _c: u32,
+        _o: u32,
+        _p: RequestPriority,
+    ) -> Answer<'_, Vec<ListenedAlbum>> {
+        ok(self.sitewide_albums.clone())
+    }
+    fn user_artists<'a>(
+        &'a self,
+        _u: &'a str,
+        _r: StatsRange,
+        _c: u32,
+        _o: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ArtistRow>> {
+        ok(self.user_artists.clone())
+    }
+    fn user_albums<'a>(
+        &'a self,
+        _u: &'a str,
+        _r: StatsRange,
+        _c: u32,
+        _o: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ListenedAlbum>> {
+        ok(self.user_albums.clone())
+    }
+    fn similar_artists<'a>(
+        &'a self,
+        _u: &'a str,
+        artist: &'a str,
+        _l: usize,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ScoredArtist>> {
+        ok(self.similar.get(artist).cloned().unwrap_or_default())
+    }
+    fn artist_albums<'a>(
+        &'a self,
+        _u: &'a str,
+        artist: &'a str,
+        _c: usize,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<RankedAlbum>> {
+        ok(self.artist_albums.get(artist).cloned().unwrap_or_default())
+    }
+    fn genres<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<(String, i64)>> {
+        ok(self.genres.clone())
+    }
+    fn fresh_releases<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<AlbumRow>> {
+        ok(self.fresh.clone())
+    }
+    fn loved<'a>(
+        &'a self,
+        _u: &'a str,
+        _c: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<LovedTrack>> {
+        ok(self.loved.clone())
+    }
+    fn similar_users<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<String>> {
+        ok(Vec::new())
+    }
+    fn weekly_playlist<'a>(
+        &'a self,
+        _id: &'a str,
+        _u: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Option<WeeklyPlaylist>> {
+        ok(None)
+    }
+    fn recording_groups<'a>(
+        &'a self,
+        _id: &'a str,
+        _r: &'a [String],
+        _p: RequestPriority,
+    ) -> Answer<'a, HashMap<String, String>> {
+        ok(HashMap::new())
+    }
+    fn listen_counts<'a>(
+        &'a self,
+        _id: &'a str,
+        _g: &'a [String],
+        _p: RequestPriority,
+    ) -> Answer<'a, HashMap<String, i64>> {
+        ok(HashMap::new())
+    }
+    fn lastfm_user_artists<'a>(
+        &'a self,
+        _id: &'a str,
+        _u: &'a str,
+        _period: &'a str,
+        _l: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ArtistRow>> {
+        ok(Vec::new())
+    }
+    fn lastfm_user_albums<'a>(
+        &'a self,
+        _id: &'a str,
+        _u: &'a str,
+        _period: &'a str,
+        _l: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<LastFmChartAlbum>> {
+        ok(Vec::new())
+    }
+    fn lastfm_similar<'a>(
+        &'a self,
+        _id: &'a str,
+        _a: &'a ArtistRow,
+        _l: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ScoredArtist>> {
+        ok(Vec::new())
+    }
+    fn lastfm_artist_albums<'a>(
+        &'a self,
+        _id: &'a str,
+        _a: &'a ArtistRow,
+        _l: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<LastFmAlbum>> {
+        ok(Vec::new())
+    }
+    fn lastfm_chart_artists<'a>(
+        &'a self,
+        id: &'a str,
+        _l: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ArtistRow>> {
+        // Like the live network: no Last.fm for this user, no rows.
+        let reads = self.user.lastfm || self.lastfm_users.iter().any(|user| user == id);
+        ok(if reads {
+            self.lastfm_chart.clone()
+        } else {
+            Vec::new()
+        })
+    }
+    fn lastfm_album<'a>(
+        &'a self,
+        _id: &'a str,
+        _a: &'a str,
+        _b: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Option<LastFmFacts>> {
+        ok(None)
+    }
+    fn lastfm_artist<'a>(
+        &'a self,
+        _id: &'a str,
+        _a: &'a str,
+        _m: Option<&'a str>,
+        _p: RequestPriority,
+    ) -> Answer<'a, Option<LastFmFacts>> {
+        ok(None)
+    }
+    fn lastfm_weekly_artists<'a>(
+        &'a self,
+        _id: &'a str,
+        _u: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ArtistRow>> {
+        ok(Vec::new())
+    }
+    fn lastfm_weekly_albums<'a>(
+        &'a self,
+        _id: &'a str,
+        _u: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<LastFmChartAlbum>> {
+        ok(Vec::new())
+    }
+    fn lastfm_recent_albums<'a>(
+        &'a self,
+        _id: &'a str,
+        _u: &'a str,
+        _l: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<LastFmChartAlbum>> {
+        ok(Vec::new())
+    }
+    fn lastfm_tag_artists<'a>(
+        &'a self,
+        _id: &'a str,
+        _t: &'a str,
+        _l: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ArtistRow>> {
+        ok(Vec::new())
+    }
+    fn lastfm_loved<'a>(
+        &'a self,
+        _id: &'a str,
+        _u: &'a str,
+        _l: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<LovedTrack>> {
+        ok(Vec::new())
+    }
+    fn tag_albums<'a>(
+        &'a self,
+        _t: &'a str,
+        _l: u32,
+        _o: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<TagAlbum>> {
+        ok(self.tag_albums.clone())
+    }
+    fn tag_artists<'a>(
+        &'a self,
+        _t: &'a str,
+        _l: u32,
+        _o: u32,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<ArtistRow>> {
+        ok(self.tag_artists.clone())
+    }
+    fn release_group_of<'a>(
+        &'a self,
+        _r: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Option<String>> {
+        ok(None)
+    }
+    fn release_group<'a>(
+        &'a self,
+        _m: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Option<ReleaseGroupFacts>> {
+        if self.musicbrainz_down.load(Ordering::SeqCst) {
+            return Box::pin(async {
+                Err(ListeningError::Provider(ProviderError::Unavailable {
+                    provider: "musicbrainz",
+                    retry_after: None,
+                }))
+            });
+        }
+        ok(self.release_group.clone())
+    }
+    fn artist<'a>(&'a self, _m: &'a str, _p: RequestPriority) -> Answer<'a, Option<ArtistFacts>> {
+        ok(None)
+    }
+    fn release_video<'a>(&'a self, _r: &'a str, _p: RequestPriority) -> Answer<'a, Option<String>> {
+        ok(None)
+    }
+    fn release_recordings<'a>(
+        &'a self,
+        _r: &'a str,
+        _l: usize,
+        _p: RequestPriority,
+    ) -> Answer<'a, Vec<String>> {
+        ok(Vec::new())
+    }
+    fn recording_video<'a>(
+        &'a self,
+        _r: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Option<String>> {
+        ok(None)
+    }
+    fn wikipedia_extract<'a>(
+        &'a self,
+        _u: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Option<String>> {
+        ok(None)
+    }
+    fn jellyfin_artists<'a>(
+        &'a self,
+        _id: &'a str,
+        _list: JellyfinList,
+        _l: u32,
+    ) -> Answer<'a, Vec<ArtistRow>> {
+        ok(Vec::new())
+    }
+    fn jellyfin_plays<'a>(&'a self, _id: &'a str, _l: u32) -> Answer<'a, Vec<PlayedArtist>> {
+        ok(Vec::new())
+    }
 }
 
 fn album(n: u8, artist: &str) -> AlbumRow {
@@ -63,245 +388,63 @@ fn album(n: u8, artist: &str) -> AlbumRow {
     }
 }
 
-impl QueueSources for Scripted {
-    fn source_key(&self) -> String {
-        "official:g0".to_owned()
-    }
-    fn user_music<'a>(&'a self, _user_id: &'a str) -> BoxFuture<'a, UserMusic> {
-        Box::pin(async {
-            UserMusic {
-                listenbrainz: Some("listener".to_owned()),
-                lastfm_username: None,
-                lastfm: false,
-                jellyfin: false,
-                primary: MusicSource::ListenBrainz,
-            }
-        })
-    }
-    fn listenbrainz_top_artists<'a>(
-        &'a self,
-        _username: &'a str,
-        _range: StatsRange,
-        _count: u32,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
-        ok(vec![ArtistRow {
+/// ListenBrainz answers for one linked user: one seed artist, one similar
+/// artist with five albums, and five trending albums. Everything else is
+/// empty.
+fn queue_script() -> Script {
+    Script {
+        user: UserMusic {
+            listenbrainz: Some("listener".to_owned()),
+            ..UserMusic::default()
+        },
+        user_artists: vec![ArtistRow {
             name: "Seed".to_owned(),
             mbid: Some(SEED.to_owned()),
             listen_count: 10,
-        }])
-    }
-    fn listenbrainz_top_albums<'a>(
-        &'a self,
-        _username: &'a str,
-        _range: StatsRange,
-        _count: u32,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
-        ok(Vec::new())
-    }
-    fn listenbrainz_similar_artists<'a>(
-        &'a self,
-        _user_id: &'a str,
-        artist_mbid: &'a str,
-        _limit: usize,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
-        let rows = if artist_mbid == SEED {
-            vec![ArtistRow {
-                name: "Similar".to_owned(),
-                mbid: Some(SIMILAR.to_owned()),
-                listen_count: 5,
-            }]
-        } else {
-            Vec::new()
-        };
-        ok(rows)
-    }
-    fn listenbrainz_artist_albums<'a>(
-        &'a self,
-        _user_id: &'a str,
-        artist_mbid: &'a str,
-        _count: usize,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
-        let rows = if artist_mbid == SIMILAR {
-            (1..=5).map(|n| album(n, SIMILAR)).collect()
-        } else {
-            Vec::new()
-        };
-        ok(rows)
-    }
-    fn listenbrainz_genres<'a>(
-        &'a self,
-        _u: &'a str,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
-        ok(Vec::new())
-    }
-    fn listenbrainz_fresh_releases<'a>(
-        &'a self,
-        _u: &'a str,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
-        ok(Vec::new())
-    }
-    fn listenbrainz_loved_artists<'a>(
-        &'a self,
-        _u: &'a str,
-        _c: u32,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
-        ok(Vec::new())
-    }
-    fn listenbrainz_trending(
-        &self,
-        _count: u32,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>> {
+        }],
+        similar: HashMap::from([(
+            SEED.to_owned(),
+            vec![ScoredArtist {
+                artist: ArtistRow {
+                    name: "Similar".to_owned(),
+                    mbid: Some(SIMILAR.to_owned()),
+                    listen_count: 5,
+                },
+                score: 5.0,
+            }],
+        )]),
+        artist_albums: HashMap::from([(
+            SIMILAR.to_owned(),
+            (1..=5)
+                .map(|n| RankedAlbum {
+                    album: album(n, SIMILAR),
+                    listen_count: 0,
+                })
+                .collect(),
+        )]),
         // Distinct artists each, so the per-artist cap never bites.
-        ok((11..=15)
-            .map(|n| album(n, &format!("{n:08x}-bbbb-4bbb-8bbb-bbbbbbbbbbbb")))
-            .collect())
-    }
-    fn listenbrainz_listen_counts<'a>(
-        &'a self,
-        _user_id: &'a str,
-        _ids: &'a [String],
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<HashMap<String, i64>>> {
-        ok(HashMap::new())
-    }
-    fn listenbrainz_popularity_down(&self) -> bool {
-        false
-    }
-    fn lastfm_top_artists<'a>(
-        &'a self,
-        _u: &'a str,
-        _n: &'a str,
-        _l: u32,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
-        ok(Vec::new())
-    }
-    fn lastfm_similar_artists<'a>(
-        &'a self,
-        _u: &'a str,
-        _a: &'a ArtistRow,
-        _l: u32,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
-        ok(Vec::new())
-    }
-    fn lastfm_artist_albums<'a>(
-        &'a self,
-        _u: &'a str,
-        _a: &'a ArtistRow,
-        _l: u32,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<LastFmAlbum>>> {
-        ok(Vec::new())
-    }
-    fn lastfm_chart_artists<'a>(
-        &'a self,
-        _u: &'a str,
-        _l: u32,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
-        ok(Vec::new())
-    }
-    fn lastfm_album_facts<'a>(
-        &'a self,
-        _u: &'a str,
-        _a: &'a str,
-        _b: &'a str,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Option<LastFmFacts>>> {
-        ok(None)
-    }
-    fn lastfm_artist_facts<'a>(
-        &'a self,
-        _u: &'a str,
-        _a: &'a str,
-        _m: Option<&'a str>,
-        _priority: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Option<LastFmFacts>>> {
-        ok(None)
-    }
-    fn jellyfin_artists<'a>(
-        &'a self,
-        _u: &'a str,
-        _list: JellyfinList,
-        _l: u32,
-    ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
-        ok(Vec::new())
-    }
-    fn musicbrainz_tag_albums<'a>(
-        &'a self,
-        _t: &'a str,
-        _l: u32,
-        _p: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
-        ok(Vec::new())
-    }
-    fn musicbrainz_release_group_of<'a>(
-        &'a self,
-        _r: &'a str,
-        _p: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Option<String>>> {
-        ok(None)
-    }
-    fn musicbrainz_release_group<'a>(
-        &'a self,
-        mbid: &'a str,
-        _p: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Option<ReleaseGroupFacts>>> {
-        if self.musicbrainz_down.load(Ordering::SeqCst) {
-            return Box::pin(async {
-                Err(ProviderFailure::Provider(ProviderError::Unavailable {
-                    provider: "musicbrainz",
-                    retry_after: None,
-                }))
-            });
-        }
-        ok(Some(ReleaseGroupFacts {
-            title: format!("Album {mbid}"),
+        sitewide_albums: (11..=15)
+            .map(|n| {
+                let row = album(n, &format!("{n:08x}-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
+                ListenedAlbum {
+                    release_group_mbid: Some(row.release_group_mbid),
+                    title: row.title,
+                    artist_name: row.artist_name,
+                    artist_mbid: row.artist_mbid,
+                    listen_count: 0,
+                }
+            })
+            .collect(),
+        release_group: Some(ReleaseGroupFacts {
+            title: "Album".to_owned(),
             artist_mbid: Some(SIMILAR.to_owned()),
             artist_name: Some("Similar".to_owned()),
             tags: vec!["shoegaze".to_owned()],
             youtube_url: Some("https://youtu.be/dQw4w9WgXcQ".to_owned()),
             first_release_id: None,
             first_release_date: Some("1991-11-04".to_owned()),
-        }))
-    }
-    fn musicbrainz_artist<'a>(
-        &'a self,
-        _m: &'a str,
-        _p: droppedneedle_providers::RequestPriority,
-    ) -> BoxFuture<'a, SourceResult<Option<ArtistFacts>>> {
-        ok(None)
-    }
-    fn musicbrainz_release_video<'a>(
-        &'a self,
-        _r: &'a str,
-    ) -> BoxFuture<'a, SourceResult<Option<String>>> {
-        ok(None)
-    }
-    fn musicbrainz_release_recordings<'a>(
-        &'a self,
-        _r: &'a str,
-        _l: usize,
-    ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
-        ok(Vec::new())
-    }
-    fn musicbrainz_recording_video<'a>(
-        &'a self,
-        _r: &'a str,
-    ) -> BoxFuture<'a, SourceResult<Option<String>>> {
-        ok(None)
-    }
-    fn wikipedia_extract<'a>(&'a self, _u: &'a str) -> BoxFuture<'a, SourceResult<Option<String>>> {
-        ok(None)
+        }),
+        ..Script::default()
     }
 }
 
@@ -339,21 +482,20 @@ impl BatchRequests for NoBatchRequests {
     }
 }
 
-/// Discover's services as the production builder wires them over `rig`'s
-/// platform and `providers`, with the provider reads `script` swaps in.
-/// Calling it again over the same rig is a restart.
-pub(crate) fn discover_deps(
+/// What production discover is built from, over `rig`'s platform,
+/// `providers` and the users' ListenBrainz `links`.
+pub(crate) fn discover_inputs(
     rig: &AuthRig,
     dir: &Path,
     providers: Providers,
-    script: impl FnOnce(&mut DiscoverSources),
-) -> ReadsDeps {
+    links: MemoryListenBrainzLinkStore,
+) -> DiscoverInputs {
     let platform = &rig.platform;
-    let inputs = DiscoverInputs {
+    DiscoverInputs {
         db: platform.db.clone(),
         http: platform.http.shared().clone(),
         providers: Arc::new(providers),
-        listenbrainz_links: Arc::new(MemoryListenBrainzLinkStore::new(platform.crypto.clone())),
+        listenbrainz_links: Arc::new(links),
         youtube_quota_path: dir.join("youtube_quota.json"),
         users: rig.deps.clone(),
         discover_warmer: false,
@@ -362,10 +504,23 @@ pub(crate) fn discover_deps(
         batch_requests: Arc::new(NoBatchRequests),
         download_readiness: Arc::new(NoDownloadSource),
         remotes: Arc::new(remotes_resolver(platform)),
-    };
-    let mut sources = DiscoverSources::live(&inputs, &rig.config);
-    script(&mut sources);
-    deps_over(inputs, &rig.config, sources)
+    }
+}
+
+/// Discover's services as the production builder wires them over `rig`'s
+/// platform and `providers`, with the listening network `script` swaps
+/// in. Calling it again over the same rig is a restart.
+pub(crate) fn discover_deps(
+    rig: &AuthRig,
+    dir: &Path,
+    providers: Providers,
+    script: impl FnOnce(&mut Arc<dyn ListeningNetwork>),
+) -> ReadsDeps {
+    let links = MemoryListenBrainzLinkStore::new(rig.platform.crypto.clone());
+    let inputs = discover_inputs(rig, dir, providers, links);
+    let mut network = live_network(&inputs, &rig.config);
+    script(&mut network);
+    deps_over(inputs, &rig.config, network)
 }
 
 /// Discover's routes over `deps`, signed in as `user-1`.
@@ -407,8 +562,8 @@ fn queue_app(rig: &AuthRig, dir: &Path) -> Router {
             ..AdvancedSettings::default()
         })
         .expect("queue settings save");
-    discover_routes(discover_deps(rig, dir, Providers::closed(), |sources| {
-        sources.queue = Arc::new(Scripted::default());
+    discover_routes(discover_deps(rig, dir, Providers::closed(), |network| {
+        *network = Arc::new(queue_script());
     }))
 }
 
@@ -575,17 +730,45 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
 async fn a_card_built_during_an_outage_is_not_kept() {
     let dir = crate::common::ScratchDir::new("discover-queue-outage");
     let rig = AuthRig::new("discover-queue-outage").await;
-    let sources = Arc::new(Scripted::default());
-    let queue = discover_deps(&rig, &dir, Providers::closed(), |live| {
-        live.queue = sources.clone();
+    let script = Arc::new(queue_script());
+    let queue = discover_deps(&rig, &dir, Providers::closed(), |network| {
+        *network = script.clone();
     })
     .queues;
 
-    sources.musicbrainz_down.store(true, Ordering::SeqCst);
+    script.musicbrainz_down.store(true, Ordering::SeqCst);
     let card = queue.enrich("user-1", &group(1)).await.unwrap();
     assert!(card.tags.is_empty(), "MusicBrainz is down");
 
-    sources.musicbrainz_down.store(false, Ordering::SeqCst);
+    script.musicbrainz_down.store(false, Ordering::SeqCst);
     let card = queue.enrich("user-1", &group(1)).await.unwrap();
     assert_eq!(card.tags, ["shoegaze"], "the card fills in once it answers");
+}
+
+/// Last.fm answers are kept under keys every user shares, so a user who
+/// cannot read Last.fm never leaves an empty answer behind for the others.
+#[tokio::test]
+async fn a_user_without_lastfm_leaves_no_empty_answer_for_others() {
+    let script = Script {
+        lastfm_users: vec!["with-lastfm".to_owned()],
+        lastfm_chart: vec![ArtistRow {
+            name: "Charted".to_owned(),
+            mbid: Some(SIMILAR.to_owned()),
+            listen_count: 7,
+        }],
+        ..Script::default()
+    };
+    let listening = ListeningData::new(Arc::new(script), Providers::closed().cache);
+    let ask = Ask::person();
+
+    let without = listening
+        .lastfm_chart_artists("without-lastfm", 10, &ask)
+        .await
+        .unwrap();
+    assert!(without.is_empty());
+    let with = listening
+        .lastfm_chart_artists("with-lastfm", 10, &ask)
+        .await
+        .unwrap();
+    assert_eq!(with.len(), 1, "the chart is not an empty kept answer");
 }

@@ -1,14 +1,14 @@
 //! Pure shaping for the home page: rows into shelves (v2
 //! `HomeSectionBuilders`), and the connect-a-service cards.
 
+use super::super::listening::LovedTrack;
 use super::library::{HomeAlbum, HomeArtist, Play};
-use super::sources::LovedTrack;
+use crate::reads::discover::listening::ArtistRow;
+use crate::reads::discover::listening::{LastFmChartAlbum, RankedAlbum};
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartSection, ChartTrack, SectionItem, ServicePrompt,
 };
 use crate::reads::discover::page::shelves::{SHELF_SIZE, album, shelf};
-use crate::reads::discover::page::sources::{LastFmChartAlbum, RankedAlbum};
-use crate::reads::discover::queue::sources::ArtistRow;
 
 /// A library album row: its own art when it has some, else the release
 /// group's cover.

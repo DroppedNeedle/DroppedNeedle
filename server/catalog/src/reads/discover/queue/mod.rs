@@ -8,16 +8,13 @@
 //! from the user replaces a warm-cycle build that is still running.
 //! Ignores are durable and every later deck skips them.
 //!
-//! The pieces: [`sources`] is the provider boundary, [`build`] assembles
-//! a deck from it, [`select`] holds the pure picking logic, [`cards`] the
-//! per-card details, [`store`] the tables, and [`live_sources`] the
-//! production provider reads.
+//! The pieces: [`build`] assembles a deck from the listening reads,
+//! [`select`] holds the pure picking logic, [`cards`] the per-card
+//! details and [`store`] the tables.
 
 pub mod build;
 pub mod cards;
-pub mod live_sources;
 pub mod select;
-pub mod sources;
 pub mod store;
 
 use droppedneedle_providers::RequestPriority;
@@ -27,6 +24,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::reads::discover::listening::{Ask, ListeningData};
 use crate::reads::discover::models::{
     DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueBuildStatus,
     QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
@@ -40,7 +38,6 @@ use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderCacheStore, Sou
 use crate::reads::cache_hold::CacheHold;
 
 use build::{BuildContext, build_deck};
-use sources::QueueSources;
 use store::QueueDb;
 
 /// The queue settings one call works with, read fresh each time.
@@ -231,7 +228,7 @@ fn generate_response(action: &str, status: DiscoverQueueStatusResponse) -> Queue
 }
 
 struct Inner {
-    sources: Arc<dyn QueueSources>,
+    listening: ListeningData,
     db: QueueDb,
     youtube: Arc<LiveYouTube>,
     cache: ProviderCacheStore,
@@ -247,11 +244,11 @@ pub struct LiveQueue {
 }
 
 impl LiveQueue {
-    /// A queue over `sources`, storing in `db`, previewing through
+    /// A queue over `listening`, storing in `db`, previewing through
     /// `youtube`, caching card details in `cache`, and reading its
     /// settings through `settings` on every call.
     pub fn new(
-        sources: Arc<dyn QueueSources>,
+        listening: ListeningData,
         db: QueueDb,
         youtube: Arc<LiveYouTube>,
         cache: ProviderCacheStore,
@@ -259,7 +256,7 @@ impl LiveQueue {
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
-                sources,
+                listening,
                 db,
                 youtube,
                 cache,
@@ -299,7 +296,7 @@ impl Inner {
 
     /// Load the user's saved deck once per source.
     async fn ensure_loaded(&self, user_id: &str) {
-        let source = self.sources.source_key();
+        let source = self.listening.namespace();
         {
             let mut states = self.states();
             if Self::state(&mut states, user_id, &source).loaded {
@@ -340,14 +337,14 @@ impl Inner {
     async fn status(&self, user_id: &str) -> DiscoverQueueStatusResponse {
         self.ensure_loaded(user_id).await;
         let settings = QueueSettings::read(&self.settings);
-        let source = self.sources.source_key();
+        let source = self.listening.namespace();
         let mut states = self.states();
         Self::state(&mut states, user_id, &source).status(&settings, now_secs())
     }
 
     async fn current(&self, user_id: &str) -> Option<QueueDeck> {
         self.ensure_loaded(user_id).await;
-        let source = self.sources.source_key();
+        let source = self.listening.namespace();
         let mut states = self.states();
         Self::state(&mut states, user_id, &source)
             .deck
@@ -362,7 +359,7 @@ impl Inner {
     ) -> QueueGenerateResponse {
         self.ensure_loaded(user_id).await;
         let settings = QueueSettings::read(&self.settings);
-        let source = self.sources.source_key();
+        let source = self.listening.namespace();
         let scheduled = trigger == QueueTrigger::Scheduled;
         let force = trigger == QueueTrigger::Request { force: true };
         let now = now_secs();
@@ -418,11 +415,12 @@ impl Inner {
     ) {
         let settings = QueueSettings::read(&self.settings);
         self.prune_if_due(&settings).await;
+        let ask = Ask::build(priority);
         let ctx = BuildContext {
-            sources: self.sources.as_ref(),
+            listening: &self.listening,
             db: &self.db,
             settings: &settings,
-            priority,
+            ask: ask.clone(),
         };
         let outcome = build_deck(&ctx, &user_id, settings.queue_size).await;
         let saved = {
@@ -482,11 +480,7 @@ impl Inner {
             .iter()
             .map(|item| item.release_group_mbid.clone())
             .collect();
-        if let Err(cause) = self
-            .sources
-            .listenbrainz_listen_counts(&user_id, &ids, priority)
-            .await
-        {
+        if let Err(cause) = self.listening.listen_counts(&user_id, &ids, &ask).await {
             tracing::debug!(%cause, "queue listen counts not prefetched");
         }
     }
@@ -525,10 +519,10 @@ impl Inner {
         let settings = QueueSettings::read(&self.settings);
         // The request waits for this deck.
         let ctx = BuildContext {
-            sources: self.sources.as_ref(),
+            listening: &self.listening,
             db: &self.db,
             settings: &settings,
-            priority: RequestPriority::UserInitiated,
+            ask: Ask::build(RequestPriority::UserInitiated),
         };
         let items = build_deck(&ctx, user_id, count.unwrap_or(settings.queue_size))
             .await
@@ -547,7 +541,7 @@ impl Inner {
         let group = release_group_mbid.trim().to_ascii_lowercase();
         let key = CacheKey::new(
             Source::MusicBrainz,
-            &[&self.sources.source_key(), "queue_card", &group],
+            &[&self.listening.namespace(), "queue_card", &group],
         );
         let lifetime = QueueSettings::read(&self.settings).enrich_ttl;
         let policy = Policy {
@@ -563,13 +557,9 @@ impl Inner {
                 policy,
                 RequestPriority::UserInitiated,
                 move |_| async move {
-                    let (enrichment, hold) = cards::enrich(
-                        inner.sources.as_ref(),
-                        inner.youtube.as_ref(),
-                        &user,
-                        &group,
-                    )
-                    .await;
+                    let (enrichment, hold) =
+                        cards::enrich(&inner.listening, inner.youtube.as_ref(), &user, &group)
+                            .await;
                     // Details built past a failed read are shown, not kept.
                     Ok::<_, String>(if hold == CacheHold::default() {
                         Fetched::Found(enrichment)
@@ -660,7 +650,7 @@ impl LiveQueue {
     ) -> BoxFuture<'a, Result<DiscoverQueuePreview, ProviderFailure>> {
         Box::pin(async move {
             cards::preview(
-                self.inner.sources.as_ref(),
+                &self.inner.listening,
                 self.inner.youtube.as_ref(),
                 release_group_mbid,
             )

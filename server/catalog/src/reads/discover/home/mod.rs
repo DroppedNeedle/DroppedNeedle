@@ -19,7 +19,6 @@
 
 pub mod library;
 pub mod shelves;
-pub mod sources;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -28,11 +27,11 @@ use std::time::Duration;
 use sqlx::SqlitePool;
 
 use super::content::IntegrationSettings;
+use super::listening::{Ask, ListenedAlbum, ListeningData, MusicSource, StatsRange, UserMusic};
 use super::ownership;
-use super::page::build::genre_list;
+use super::page::build::{genre_list, weekly_exploration};
 use super::page::shelves::SHELF_SIZE;
 use super::page::{FeatureWarmer, GENRE_ARTWORK_SCHEMA, LiveDiscover, add_section};
-use super::queue::sources::{MusicSource, UserMusic};
 use crate::reads::discover::genre::{self, artwork::GenreArt};
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartSection, DiscoverPreview, HomeResponse, IntegrationStatus,
@@ -41,7 +40,6 @@ use crate::reads::discover::models::{
 use crate::reads::discover::ports::BoxFuture;
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 use library::HomeLibrary;
-use sources::HomeSources;
 
 /// How long a built page is kept.
 const KEEP_SECS: f64 = 3600.0;
@@ -233,7 +231,7 @@ struct State {
 }
 
 struct Inner {
-    sources: Arc<dyn HomeSources>,
+    listening: ListeningData,
     library: HomeLibrary,
     pool: SqlitePool,
     art: Arc<GenreArt>,
@@ -262,6 +260,11 @@ impl Drop for BuildGuard {
     }
 }
 
+/// Sitewide or user album rows that map to a release group.
+fn ranked(rows: Vec<ListenedAlbum>) -> Vec<super::listening::RankedAlbum> {
+    rows.into_iter().filter_map(ListenedAlbum::ranked).collect()
+}
+
 /// The cache key: the user plus which services are linked, so linking or
 /// unlinking one starts a fresh page.
 fn key_for(user_id: &str, music: &UserMusic) -> String {
@@ -273,11 +276,11 @@ fn key_for(user_id: &str, music: &UserMusic) -> String {
 }
 
 impl LiveHome {
-    /// Home over the provider reads in `sources`, the library in `pool`
+    /// Home over the provider reads in `listening`, the library in `pool`
     /// and the integration flags in `integrations`, with genre art from
     /// `art`; a kept page queues its image warm on `warm`, when given.
     pub fn new(
-        sources: Arc<dyn HomeSources>,
+        listening: ListeningData,
         pool: SqlitePool,
         integrations: IntegrationSettings,
         art: Arc<GenreArt>,
@@ -285,7 +288,7 @@ impl LiveHome {
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
-                sources,
+                listening,
                 library: HomeLibrary::new(pool.clone()),
                 pool,
                 art,
@@ -309,7 +312,7 @@ impl LiveHome {
     /// The user's home page. `discover`, when given, supplies the discover
     /// teaser from its last built page.
     pub async fn page(&self, user_id: &str, discover: Option<&LiveDiscover>) -> HomeResponse {
-        let music = self.inner.sources.user_music(user_id).await;
+        let music = self.inner.listening.accounts(user_id).await;
         let key = key_for(user_id, &music);
         let now = now_secs();
         let (kept, attempt, mut building) = match self.lock() {
@@ -373,12 +376,12 @@ impl LiveHome {
             inner: self.inner.clone(),
             user_id: user_id.to_owned(),
         };
-        let source = self.inner.sources.source_key();
-        let music = self.inner.sources.user_music(user_id).await;
+        let source = self.inner.listening.namespace();
+        let music = self.inner.listening.accounts(user_id).await;
         let key = key_for(user_id, &music);
         let status = self.inner.integrations.status();
         let page = self.build_full(user_id, &music, status, discover).await;
-        let ok = self.inner.sources.source_key() == source;
+        let ok = self.inner.listening.namespace() == source;
         if !ok {
             tracing::info!("MusicBrainz source changed during a home build; dropping it");
         }
@@ -438,15 +441,17 @@ impl LiveHome {
         status: IntegrationStatus,
         discover: Option<&LiveDiscover>,
     ) -> HomeResponse {
-        let sources = self.inner.sources.as_ref();
-        let lastfm_primary = music.resolved_source() == MusicSource::LastFm;
+        let listening = &self.inner.listening;
+        let ask = Ask::build(droppedneedle_providers::RequestPriority::BackgroundSync);
+        let ask = &ask;
+        let lastfm_primary = listening.policy_for(music).listening() == MusicSource::LastFm;
         let lb_user = music.listenbrainz.as_deref();
         let lfm_user = music.lastfm_username.as_deref().filter(|_| music.lastfm);
         let charts = async {
             if lastfm_primary {
                 let artists = bounded(
                     "last.fm chart",
-                    sources.lastfm_trending_artists(user_id, PROVIDER_ROWS),
+                    listening.lastfm_chart_artists(user_id, PROVIDER_ROWS, ask),
                 )
                 .await;
                 (shelves::trending_artists(&artists, "lastfm"), None)
@@ -454,12 +459,14 @@ impl LiveHome {
                 let (artists, albums) = tokio::join!(
                     bounded(
                         "listenbrainz trending artists",
-                        sources.listenbrainz_trending_artists(PROVIDER_ROWS)
+                        listening.sitewide_artists(StatsRange::ThisWeek, PROVIDER_ROWS, 0, ask)
                     ),
-                    bounded(
-                        "listenbrainz popular albums",
-                        sources.listenbrainz_popular_albums(PROVIDER_ROWS)
-                    ),
+                    bounded("listenbrainz popular albums", async {
+                        listening
+                            .sitewide_albums(StatsRange::ThisWeek, PROVIDER_ROWS, 0, ask)
+                            .await
+                            .map(ranked)
+                    }),
                 );
                 (
                     shelves::trending_artists(&artists, "listenbrainz"),
@@ -471,13 +478,15 @@ impl LiveHome {
             match (lastfm_primary, lb_user, lfm_user) {
                 (false, Some(username), _) => {
                     let (top, loved) = tokio::join!(
-                        bounded(
-                            "listenbrainz top albums",
-                            sources.listenbrainz_user_albums(username, PROVIDER_ROWS)
-                        ),
+                        bounded("listenbrainz top albums", async {
+                            listening
+                                .user_albums(username, StatsRange::ThisMonth, PROVIDER_ROWS, 0, ask)
+                                .await
+                                .map(ranked)
+                        }),
                         bounded(
                             "listenbrainz loved",
-                            sources.listenbrainz_loved(username, PROVIDER_ROWS)
+                            listening.loved(username, PROVIDER_ROWS, ask)
                         ),
                     );
                     (
@@ -489,11 +498,17 @@ impl LiveHome {
                     let (top, loved) = tokio::join!(
                         bounded(
                             "last.fm top albums",
-                            sources.lastfm_user_albums(user_id, username, PROVIDER_ROWS)
+                            listening.lastfm_user_albums(
+                                user_id,
+                                username,
+                                "1month",
+                                PROVIDER_ROWS,
+                                ask
+                            )
                         ),
                         bounded(
                             "last.fm loved",
-                            sources.lastfm_loved(user_id, username, PROVIDER_ROWS)
+                            listening.lastfm_loved(user_id, username, PROVIDER_ROWS, ask)
                         ),
                     );
                     (
@@ -510,7 +525,7 @@ impl LiveHome {
                     let weekly = async {
                         tokio::time::timeout(
                             READ_TIMEOUT,
-                            sources.listenbrainz_weekly(user_id, username),
+                            weekly_exploration(listening, ask, user_id, username),
                         )
                         .await
                         .unwrap_or_else(|_| {
@@ -519,7 +534,7 @@ impl LiveHome {
                         })
                     };
                     tokio::join!(
-                        bounded("listenbrainz genres", sources.listenbrainz_genres(username)),
+                        bounded("listenbrainz genres", listening.genres(username, ask)),
                         weekly,
                     )
                 }
@@ -614,8 +629,8 @@ pub struct HomeWiring {
     pub pool: SqlitePool,
     /// The integration flags, read per build.
     pub integrations: IntegrationSettings,
-    /// The live provider reads the discover page also uses.
-    pub sources: Arc<dyn HomeSources>,
+    /// The listening reads the discover page also uses.
+    pub listening: ListeningData,
     /// What the discover page is built from. Home shows its teaser, and
     /// its warm cycle warms home.
     pub discover: super::page::PageInputs,
@@ -630,7 +645,7 @@ pub fn wire(wiring: HomeWiring) -> (LiveHome, LiveDiscover, Arc<GenreArt>, genre
     let art = Arc::new(GenreArt::new(HomeLibrary::new(wiring.pool.clone())));
     let warm = wiring.discover.warm.clone();
     let home = LiveHome::new(
-        wiring.sources.clone(),
+        wiring.listening.clone(),
         wiring.pool.clone(),
         wiring.integrations,
         art.clone(),
@@ -639,7 +654,7 @@ pub fn wire(wiring: HomeWiring) -> (LiveHome, LiveDiscover, Arc<GenreArt>, genre
     let discover = LiveDiscover::with_home(wiring.discover, Arc::new(home.clone()));
     let pages = Arc::new(genre::GenrePages::new(
         wiring.pool,
-        wiring.sources,
+        wiring.listening,
         art.clone(),
         warm,
     ));

@@ -7,8 +7,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::{Json, Router, extract::Query, http::StatusCode, routing::get};
-use droppedneedle_catalog::reads::discover::charts::{LastFmCharts, LiveCharts};
 use droppedneedle_catalog::reads::discover::models::{ChartRange, ChartSource};
+use droppedneedle_catalog::reads::discover::services::ReadsDeps;
+use droppedneedle_catalog::reads::discover::wiring::{deps_over, live_network};
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_media::playback::listening::{
     ListenBrainzLinkStore as _, MemoryListenBrainzLinkStore,
@@ -237,6 +238,19 @@ async fn failures_answer_the_fixed_body_and_an_outage_names_its_service() {
 // Live charts
 // ---------------------------------------------------------------------------
 
+/// Discover over the live listening reads of `providers`, with the users'
+/// ListenBrainz `links`.
+fn live_deps(
+    auth: &AuthRig,
+    dir: &std::path::Path,
+    providers: Providers,
+    links: MemoryListenBrainzLinkStore,
+) -> ReadsDeps {
+    let inputs = crate::discover_queue::discover_inputs(auth, dir, providers, links);
+    let network = live_network(&inputs, &auth.config);
+    deps_over(inputs, &auth.config, network)
+}
+
 /// Your-top charts read the calling user's own ListenBrainz link.
 #[tokio::test]
 async fn your_top_reads_the_callers_own_link() {
@@ -272,12 +286,8 @@ async fn your_top_reads_the_callers_own_link() {
     let links = MemoryListenBrainzLinkStore::new(auth.deps.crypto.clone());
     links.save("user-8", "lb-eight", "token-8").await.unwrap();
     links.save("user-9", "lb-nine", "token-9").await.unwrap();
-    let charts = LiveCharts::new(
-        providers.listenbrainz.clone(),
-        Arc::new(links),
-        None,
-        auth.platform.db.sqlx().clone(),
-    );
+    let dir = crate::common::ScratchDir::new("your-top");
+    let charts = live_deps(&auth, &dir, providers, links).charts;
 
     let page = charts
         .your_top_albums(
@@ -299,7 +309,8 @@ async fn your_top_reads_the_callers_own_link() {
 }
 
 /// Last.fm charts read the instance key on every call: no key answers
-/// "not configured", a key saved later serves the chart with it.
+/// "not configured", a key saved later serves the chart with it. While
+/// ListenBrainz is down, the ListenBrainz chart falls back to it.
 #[tokio::test]
 async fn lastfm_charts_read_the_instance_key_per_call() {
     use droppedneedle_catalog::reads::discover::ports::ProviderFailure;
@@ -336,18 +347,12 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
         },
     );
     let auth = AuthRig::new("charts").await;
-    let charts = LiveCharts::new(
-        providers.listenbrainz.clone(),
-        Arc::new(MemoryListenBrainzLinkStore::new(auth.deps.crypto.clone())),
-        Some(LastFmCharts::new(
-            providers.lastfm.clone(),
-            auth.deps.clone(),
-        )),
-        sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap(),
-    );
+    let dir = crate::common::ScratchDir::new("charts");
+    let links = MemoryListenBrainzLinkStore::new(auth.deps.crypto.clone());
+    let charts = live_deps(&auth, &dir, providers, links).charts;
 
     let off = charts
-        .trending_artists(ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
+        .trending_artists("user-1", ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
         .await
         .unwrap_err();
     assert!(matches!(off, ProviderFailure::NotConfigured(_)), "{off:?}");
@@ -355,12 +360,27 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
 
     auth.set_lastfm_instance_key("instance-key");
     let page = charts
-        .trending_artists(ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
+        .trending_artists("user-1", ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
         .await
         .unwrap();
     let names: Vec<&str> = page.items.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(names, ["One", "Two"]);
     assert!(page.has_more);
     assert_eq!(page.items[1].mbid, None, "artists without an MBID stay");
-    assert_eq!(*seen.lock().unwrap(), ["instance-key"]);
+
+    // ListenBrainz is not answering: a user who can read Last.fm gets its
+    // chart instead, from the read already kept.
+    let fallback = charts
+        .trending_artists(
+            "user-1",
+            ChartRange::ThisWeek,
+            2,
+            0,
+            ChartSource::Listenbrainz,
+        )
+        .await
+        .unwrap();
+    assert_eq!(fallback.items[0].name, "One");
+    assert_eq!(fallback.items[0].source.as_deref(), Some("lastfm"));
+    assert_eq!(*seen.lock().unwrap(), ["instance-key"], "one Last.fm read");
 }

@@ -803,11 +803,12 @@ pub async fn genre_detail(
 )]
 pub async fn trending_artists(
     State(deps): State<ReadsDeps>,
-    _user: User,
+    User(user): User,
     ValidQuery(query): ValidQuery<ChartQuery>,
 ) -> Result<Json<TrendingArtistsPage>, ApiError> {
     services::trending_artists(
         &deps,
+        user.user_id(),
         query.range.as_deref(),
         query.limit,
         query.offset,
@@ -838,11 +839,12 @@ pub async fn trending_artists(
 )]
 pub async fn popular_albums(
     State(deps): State<ReadsDeps>,
-    _user: User,
+    User(user): User,
     ValidQuery(query): ValidQuery<ChartQuery>,
 ) -> Result<Json<PopularAlbumsPage>, ApiError> {
     services::popular_albums(
         &deps,
+        user.user_id(),
         query.range.as_deref(),
         query.limit,
         query.offset,

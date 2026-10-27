@@ -15,7 +15,7 @@ use crate::reads::discover::charts::LiveCharts;
 use crate::reads::discover::home::library::HomeLibrary;
 use crate::reads::discover::home::mark_owned;
 use crate::reads::discover::home::shelves::{library_album, library_artist};
-use crate::reads::discover::home::sources::HomeSources;
+use crate::reads::discover::listening::{Ask, ListeningData};
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartRange, ChartSource, GenreDetailResponse, GenreLibrarySection,
     GenrePopularSection, PopularAlbumsPage, TrendingArtistsPage,
@@ -34,24 +34,24 @@ const LIBRARY_ROWS: i64 = 50;
 pub struct GenrePages {
     library: HomeLibrary,
     pool: SqlitePool,
-    sources: Arc<dyn HomeSources>,
+    listening: ListeningData,
     art: Arc<GenreArt>,
     warm: Option<CoverWarm>,
 }
 
 impl GenrePages {
     /// Pages over the library in `pool` and the provider reads in
-    /// `sources`; `warm`, when given, warms the popular rows' images.
+    /// `listening`; `warm`, when given, warms the popular rows' images.
     pub fn new(
         pool: SqlitePool,
-        sources: Arc<dyn HomeSources>,
+        listening: ListeningData,
         art: Arc<GenreArt>,
         warm: Option<CoverWarm>,
     ) -> Self {
         Self {
             library: HomeLibrary::new(pool.clone()),
             pool,
-            sources,
+            listening,
             art,
             warm,
         }
@@ -68,13 +68,14 @@ impl GenrePages {
     ) -> GenreDetailResponse {
         let limit_u32 = u32::try_from(limit.clamp(1, MAX_ROWS)).unwrap_or(50);
         let offset = |value: i64| u32::try_from(value.max(0)).unwrap_or(u32::MAX);
+        let ask = Ask::person();
         let (owned_artists, owned_albums, popular_artists, popular_albums, artwork) = tokio::join!(
             self.library.genre_artists(genre, LIBRARY_ROWS),
             self.library.genre_albums(genre, LIBRARY_ROWS),
-            self.sources
-                .musicbrainz_tag_artists(genre, limit_u32, offset(artist_offset)),
-            self.sources
-                .musicbrainz_tag_albums(genre, limit_u32, offset(album_offset)),
+            self.listening
+                .tag_artists(genre, limit_u32, offset(artist_offset), &ask),
+            self.listening
+                .tag_albums(genre, limit_u32, offset(album_offset), &ask),
             self.art.one(genre),
         );
         let owned_artists = owned_artists.unwrap_or_else(|cause| {
@@ -171,26 +172,30 @@ impl WithGenrePages {
         Self { inner, pages }
     }
 
-    /// One trending-artists page.
-    pub fn trending_artists(
-        &self,
+    /// One trending-artists page for the user.
+    pub fn trending_artists<'a>(
+        &'a self,
+        user_id: &'a str,
         range: ChartRange,
         limit: i64,
         offset: i64,
         source: ChartSource,
-    ) -> BoxFuture<'_, Result<TrendingArtistsPage, ProviderFailure>> {
-        self.inner.trending_artists(range, limit, offset, source)
+    ) -> BoxFuture<'a, Result<TrendingArtistsPage, ProviderFailure>> {
+        self.inner
+            .trending_artists(user_id, range, limit, offset, source)
     }
 
-    /// One popular-albums page.
-    pub fn popular_albums(
-        &self,
+    /// One popular-albums page for the user.
+    pub fn popular_albums<'a>(
+        &'a self,
+        user_id: &'a str,
         range: ChartRange,
         limit: i64,
         offset: i64,
         source: ChartSource,
-    ) -> BoxFuture<'_, Result<PopularAlbumsPage, ProviderFailure>> {
-        self.inner.popular_albums(range, limit, offset, source)
+    ) -> BoxFuture<'a, Result<PopularAlbumsPage, ProviderFailure>> {
+        self.inner
+            .popular_albums(user_id, range, limit, offset, source)
     }
 
     /// One your-top-albums page for the user.

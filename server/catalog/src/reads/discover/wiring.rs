@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::catalog::upstream::{LiveCatalogSettings, Upstream};
+use crate::reads::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::reads::discover::services::ReadsDeps;
 use crate::reads::discover::{
     batches, charts, content, home, page, previews, queue, radio, youtube,
@@ -55,53 +56,38 @@ pub struct DiscoverInputs {
     pub remotes: Arc<ConnectionResolver>,
 }
 
-/// The provider reads behind the queue deck, the discover page and radio,
-/// and home. Production reads the live providers for all three.
-pub struct DiscoverSources {
-    /// What the queue deck reads.
-    pub queue: Arc<dyn queue::sources::QueueSources>,
-    /// What the discover page and radio read.
-    pub page: Arc<dyn page::sources::PageSources>,
-    /// What home and the genre pages read.
-    pub home: Arc<dyn home::sources::HomeSources>,
-}
-
-impl DiscoverSources {
-    /// The live provider reads, shared by all three.
-    pub fn live(inputs: &DiscoverInputs, config: &ConfigStore) -> Self {
-        let sources = Arc::new(live_sources(inputs, live_upstream(inputs, config)));
-        Self {
-            queue: sources.clone(),
-            page: sources.clone(),
-            home: sources,
-        }
-    }
+/// The live listening reads production makes.
+pub fn live_network(inputs: &DiscoverInputs, config: &ConfigStore) -> Arc<dyn ListeningNetwork> {
+    Arc::new(LiveNetwork::new(
+        live_upstream(inputs, config),
+        &inputs.providers,
+        inputs.http.clone(),
+        inputs.listenbrainz_links.clone(),
+        inputs.remotes.clone(),
+        ListeningStore::new(
+            inputs.db.clone(),
+            inputs.users.crypto.clone(),
+            inputs.clock.clone(),
+        ),
+    ))
 }
 
 /// Build the production discover deps, each holding live handles from
 /// `config` on the settings it reads.
 pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDeps {
-    let sources = DiscoverSources::live(&inputs, config);
-    deps_over(inputs, config, sources)
+    let network = live_network(&inputs, config);
+    deps_over(inputs, config, network)
 }
 
-/// Build the discover deps over `sources`, each holding live handles from
-/// `config` on the settings it reads.
+/// Build the discover deps over the listening reads of `network`, each
+/// holding live handles from `config` on the settings it reads.
 pub fn deps_over(
     inputs: DiscoverInputs,
     config: &ConfigStore,
-    sources: DiscoverSources,
+    network: Arc<dyn ListeningNetwork>,
 ) -> ReadsDeps {
-    let lastfm_charts = Some(charts::LastFmCharts::new(
-        inputs.providers.lastfm.clone(),
-        inputs.users.clone(),
-    ));
-    let charts = charts::LiveCharts::new(
-        inputs.providers.listenbrainz.clone(),
-        inputs.listenbrainz_links.clone(),
-        lastfm_charts,
-        inputs.db.sqlx().clone(),
-    );
+    let listening = ListeningData::new(network, inputs.providers.cache.clone());
+    let charts = charts::LiveCharts::new(listening.clone(), inputs.db.sqlx().clone());
     let client = match YouTubeClient::new(
         inputs.providers.youtube.clone(),
         inputs.youtube_quota_path.clone(),
@@ -127,14 +113,14 @@ pub fn deps_over(
     ));
     let settings = config.live();
     let queues = Arc::new(queue::LiveQueue::new(
-        sources.queue,
+        listening.clone(),
         queue::store::QueueDb::new(inputs.db.clone()),
         youtube.clone(),
         inputs.providers.cache.clone(),
         settings.clone(),
     ));
     let radio = radio::LiveRadio::new(radio::RadioInputs {
-        sources: sources.page.clone(),
+        listening: listening.clone(),
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
         settings,
         pool: inputs.db.sqlx().clone(),
@@ -153,9 +139,9 @@ pub fn deps_over(
     let (home, page, genre_art, charts) = home::wire(home::HomeWiring {
         pool: inputs.db.sqlx().clone(),
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
-        sources: sources.home,
+        listening: listening.clone(),
         discover: page::PageInputs {
-            sources: sources.page,
+            listening,
             queue_db: queue::store::QueueDb::new(inputs.db.clone()),
             db: page::store::PageDb::new(inputs.db.clone()),
             advanced: config.live(),
@@ -195,21 +181,5 @@ fn live_upstream(inputs: &DiscoverInputs, config: &ConfigStore) -> Upstream {
         inputs.providers.clone(),
         Arc::new(LiveCatalogSettings::new(config)),
         inputs.users.clone(),
-    )
-}
-
-/// The live provider reads the queue, the page and radio share.
-fn live_sources(inputs: &DiscoverInputs, upstream: Upstream) -> queue::live_sources::LiveSources {
-    queue::live_sources::LiveSources::new(
-        upstream,
-        inputs.providers.clone(),
-        inputs.http.clone(),
-        inputs.listenbrainz_links.clone(),
-        inputs.remotes.clone(),
-        ListeningStore::new(
-            inputs.db.clone(),
-            inputs.users.crypto.clone(),
-            inputs.clock.clone(),
-        ),
     )
 }
