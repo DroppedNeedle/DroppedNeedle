@@ -191,12 +191,8 @@ fn library_deps(
 ) -> library::LibraryDeps {
     let provider_lyrics: Arc<dyn library::stores::LyricsPort> = match enrichment {
         Some(pair) => Arc::new(
-            enrichment::ProviderLyrics::new(
-                catalog.clone(),
-                pair.lyrics.clone(),
-                enrichment::SourceBudgets::default(),
-            )
-            .with_settings(pair.lyrics_settings.clone()),
+            enrichment::ProviderLyrics::new(catalog.clone(), pair.lyrics.clone())
+                .with_settings(pair.lyrics_settings.clone()),
         ),
         None => Arc::new(library::file_lyrics::NoOnlineLyrics),
     };

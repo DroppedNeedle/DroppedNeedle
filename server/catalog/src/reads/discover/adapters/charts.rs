@@ -19,8 +19,8 @@
 //! key, else the instance key.
 //!
 //! As in v2, "your top albums" fall back to whichever service the user
-//! has linked, and a user with neither gets an empty page. Genre pages need
-//! the genre index and tag search, not ported yet, and answer "not built".
+//! has linked, and a user with neither gets an empty page. Genre pages are
+//! served by the home genre pages in front of this source.
 
 use std::sync::Arc;
 

@@ -304,9 +304,6 @@ pub struct HomeResponse {
     /// Library albums shelf.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library_albums: Option<ChartSection>,
-    /// Recommended artists for the user.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_artists: Option<ChartSection>,
     /// Trending artists teaser (full pages live on the charts routes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trending_artists: Option<ChartSection>,
@@ -316,15 +313,9 @@ pub struct HomeResponse {
     /// Recently played tracks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recently_played: Option<ChartSection>,
-    /// Top genres.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_genres: Option<ChartSection>,
     /// Full genre list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub genre_list: Option<ChartSection>,
-    /// Fresh releases shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fresh_releases: Option<ChartSection>,
     /// Favorite artists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favorite_artists: Option<ChartSection>,
@@ -348,10 +339,6 @@ pub struct HomeResponse {
     /// Discover teaser shelf.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discover_preview: Option<DiscoverPreview>,
-    /// Services that let the last build down: `unavailable` when every
-    /// read failed, `degraded` while ListenBrainz refuses popularity reads.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_status: Option<std::collections::HashMap<String, String>>,
     /// True while a fuller build runs in the background (the UI polls).
     #[serde(default)]
     pub refreshing: bool,
@@ -370,9 +357,6 @@ pub struct GenreDetailResponse {
     /// Popular rows for the genre.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub popular: Option<GenrePopularSection>,
-    /// Flat artist rows (legacy consumers).
-    #[serde(default)]
-    pub artists: Vec<ChartArtist>,
     /// Total popular rows, when counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_count: Option<i64>,
@@ -778,49 +762,12 @@ pub struct QueueEnrichment {
     pub listen_count: Option<i64>,
 }
 
-/// One queue card with its enrichment attached.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct QueueItemFull {
-    /// MusicBrainz release-group id.
-    pub release_group_mbid: String,
-    /// Album name.
-    pub album_name: String,
-    /// Artist name.
-    pub artist_name: String,
-    /// MusicBrainz artist id.
-    pub artist_mbid: String,
-    /// Human reason behind the pick.
-    pub recommendation_reason: String,
-    /// Cover art URL, when resolved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cover_url: Option<String>,
-    /// True for wildcard (out-of-profile) picks.
-    #[serde(default)]
-    pub is_wildcard: bool,
-    /// True when already owned.
-    #[serde(default)]
-    pub in_library: bool,
-    /// Attached enrichment, when loaded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enrichment: Option<QueueEnrichment>,
-}
-
-/// One queue card, light or enriched.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum QueueItem {
-    /// Card with enrichment attached.
-    Full(QueueItemFull),
-    /// Card without enrichment.
-    Light(QueueItemLight),
-}
-
 /// The queue deck: cards plus the build they came from.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverQueueResponse {
     /// Deck cards in order.
     #[serde(default)]
-    pub items: Vec<QueueItem>,
+    pub items: Vec<QueueItemLight>,
     /// Build id behind the deck.
     pub queue_id: String,
 }
@@ -1356,50 +1303,4 @@ pub struct DiscoveryBatchRemoveResult {
     /// Albums kept (already landed or owned elsewhere).
     #[serde(default)]
     pub kept: i64,
-}
-
-// ---------------------------------------------------------------------------
-// Now playing
-// ---------------------------------------------------------------------------
-
-/// One live listening session. Redacted rows keep identity and progress
-/// but carry empty song fields (the owner chose `track_hidden`).
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct NowPlayingEntry {
-    /// Session key (`user_id:device`).
-    pub id: String,
-    /// Display name of the listener.
-    pub user_name: String,
-    /// Track title (empty when redacted).
-    pub track_name: String,
-    /// Artist name (empty when redacted).
-    pub artist_name: String,
-    /// Album title (none when redacted or unknown).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub album_name: Option<String>,
-    /// Cover art URL (empty when redacted).
-    pub cover_url: String,
-    /// Device label.
-    pub device_name: String,
-    /// True when paused.
-    pub is_paused: bool,
-    /// Playback source (`local`, `youtube`, `jellyfin`, `navidrome`, `plex`).
-    pub source: String,
-    /// Position in milliseconds, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub progress_ms: Option<i64>,
-    /// Track length in milliseconds, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<i64>,
-    /// True when the owner hides the track.
-    #[serde(default)]
-    pub redacted: bool,
-}
-
-/// The live listening snapshot across users.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct NowPlayingSnapshot {
-    /// Live sessions.
-    #[serde(default)]
-    pub sessions: Vec<NowPlayingEntry>,
 }

@@ -12560,7 +12560,7 @@ export interface components {
         /** @description The queue deck: cards plus the build they came from. */
         DiscoverQueueResponse: {
             /** @description Deck cards in order. */
-            items?: components["schemas"]["QueueItem"][];
+            items?: components["schemas"]["QueueItemLight"][];
             /** @description Build id behind the deck. */
             queue_id: string;
         };
@@ -14497,8 +14497,6 @@ export interface components {
         };
         /** @description Owned plus popular rows behind one genre page. */
         GenreDetailResponse: {
-            /** @description Flat artist rows (legacy consumers). */
-            artists?: components["schemas"]["ChartArtist"][];
             /** @description Genre name as requested. */
             genre: string;
             /** @description Mosaic art for the genre. */
@@ -14908,7 +14906,6 @@ export interface components {
         HomeResponse: {
             discover_preview?: null | components["schemas"]["DiscoverPreview"];
             favorite_artists?: null | components["schemas"]["ChartSection"];
-            fresh_releases?: null | components["schemas"]["ChartSection"];
             /** @description Mosaic art keyed by genre name. */
             genre_artwork?: {
                 [key: string]: components["schemas"]["GenreArtwork"];
@@ -14922,19 +14919,10 @@ export interface components {
             popular_albums?: null | components["schemas"]["ChartSection"];
             recently_added?: null | components["schemas"]["ChartSection"];
             recently_played?: null | components["schemas"]["ChartSection"];
-            recommended_artists?: null | components["schemas"]["ChartSection"];
             /** @description True while a fuller build runs in the background (the UI polls). */
             refreshing?: boolean;
             /** @description Connect-a-service cards. */
             service_prompts?: components["schemas"]["ServicePrompt"][];
-            /**
-             * @description Services that let the last build down: `unavailable` when every
-             *     read failed, `degraded` while ListenBrainz refuses popularity reads.
-             */
-            service_status?: {
-                [key: string]: string;
-            } | null;
-            top_genres?: null | components["schemas"]["ChartSection"];
             trending_artists?: null | components["schemas"]["ChartSection"];
             weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
             your_top_albums?: null | components["schemas"]["ChartSection"];
@@ -19579,28 +19567,6 @@ export interface components {
             release_group_mbid: string;
             /** @description Release name for the ignore ledger. */
             release_name: string;
-        };
-        /** @description One queue card, light or enriched. */
-        QueueItem: components["schemas"]["QueueItemFull"] | components["schemas"]["QueueItemLight"];
-        /** @description One queue card with its enrichment attached. */
-        QueueItemFull: {
-            /** @description Album name. */
-            album_name: string;
-            /** @description MusicBrainz artist id. */
-            artist_mbid: string;
-            /** @description Artist name. */
-            artist_name: string;
-            /** @description Cover art URL, when resolved. */
-            cover_url?: string | null;
-            enrichment?: null | components["schemas"]["QueueEnrichment"];
-            /** @description True when already owned. */
-            in_library?: boolean;
-            /** @description True for wildcard (out-of-profile) picks. */
-            is_wildcard?: boolean;
-            /** @description Human reason behind the pick. */
-            recommendation_reason: string;
-            /** @description MusicBrainz release-group id. */
-            release_group_mbid: string;
         };
         /** @description One lightweight queue card: the deck renders these before enrichment. */
         QueueItemLight: {

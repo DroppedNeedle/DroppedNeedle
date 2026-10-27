@@ -27,7 +27,7 @@ use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
 };
 use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
 use droppedneedle_catalog::reads::discover::fakes::{
-    FakeBatches, FakeCharts, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio, FakeYouTube,
+    FakeBatches, FakeCharts, FakePreviews, FakeQueues, FakeRadio, FakeYouTube,
 };
 use droppedneedle_catalog::reads::discover::ports::BoxFuture;
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
@@ -449,7 +449,6 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         previews: Arc::new(FakePreviews),
         youtube: Arc::new(FakeYouTube::unconfigured()),
         radio: Arc::new(FakeRadio),
-        now_playing: Arc::new(FakeNowPlaying),
         clock: Arc::new(SystemClock),
     };
     let router = droppedneedle_catalog::reads::discover::routes()

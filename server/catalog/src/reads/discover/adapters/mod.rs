@@ -1,10 +1,9 @@
 //! Production adapters behind the discover ports.
 //!
-//! Live where the work is ported (ListenBrainz and Last.fm charts,
-//! Deezer/iTunes previews, YouTube search when a key is set, the queue
-//! deck, radio, discovery batches), honest everywhere else: pages with no
-//! shelves instead of invented ones, and a typed "not available" (503)
-//! for actions whose builders are not ported yet.
+//! ListenBrainz and Last.fm charts, Deezer/iTunes previews, YouTube search
+//! when a key is set, the queue deck, radio and discovery batches. A part
+//! that cannot run answers empty or with a typed "not available", never
+//! with invented rows.
 
 pub mod batches;
 pub mod charts;
@@ -157,7 +156,6 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         )),
         youtube,
         radio: Arc::new(radio),
-        now_playing: Arc::new(unbuilt::NoPresence),
         clock: Arc::clone(&inputs.clock),
     }
 }

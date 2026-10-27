@@ -25,15 +25,6 @@ pub struct QueueDb {
     db: Db,
 }
 
-/// A saved deck as stored, plus whether something marked it stale.
-#[derive(Debug, Clone)]
-pub struct SavedDeck {
-    /// The stored JSON.
-    pub payload: Vec<u8>,
-    /// True when an invalidation marked the deck stale.
-    pub stale: bool,
-}
-
 fn deck_key(user_id: &str) -> String {
     format!("{DECK_KEY_PREFIX}{user_id}")
 }
@@ -142,11 +133,11 @@ impl QueueDb {
             .map_err(|error: DbError| format!("ignore prune: {error}"))
     }
 
-    /// The user's saved deck, when it was built against the current
-    /// library catalog revision.
-    pub async fn load_deck(&self, user_id: &str) -> Result<Option<SavedDeck>, String> {
-        let row: Option<(Vec<u8>, i64)> = sqlx::query_as(
-            "SELECT snapshot.payload, snapshot.stale FROM discovery_snapshots snapshot \
+    /// The user's saved deck as stored JSON, when it was built against the
+    /// current library catalog revision.
+    pub async fn load_deck(&self, user_id: &str) -> Result<Option<Vec<u8>>, String> {
+        let row: Option<(Vec<u8>,)> = sqlx::query_as(
+            "SELECT snapshot.payload FROM discovery_snapshots snapshot \
              JOIN library_catalog_revision revision ON revision.singleton = 1 \
              WHERE snapshot.snapshot_key = ?1 AND snapshot.catalog_revision = revision.value",
         )
@@ -154,10 +145,7 @@ impl QueueDb {
         .fetch_optional(self.db.sqlx())
         .await
         .map_err(|error| format!("queue snapshot read: {error}"))?;
-        Ok(row.map(|(payload, stale)| SavedDeck {
-            payload,
-            stale: stale != 0,
-        }))
+        Ok(row.map(|(payload,)| payload))
     }
 
     /// Save the user's deck against the current catalog revision.

@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::reads::discover::models::{
     DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueBuildStatus,
-    QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItem, QueueItemLight,
+    QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
 };
 use crate::reads::discover::ports::{
     BoxFuture, ProviderFailure, QueueDeck, QueueStore, QueueTrigger, YouTubeSource,
@@ -149,7 +149,6 @@ struct UserState {
     source: String,
     phase: QueueBuildStatus,
     deck: Option<SavedQueue>,
-    saved_stale: bool,
     error: Option<String>,
     scheduled: bool,
     run: u64,
@@ -163,7 +162,6 @@ impl UserState {
             source: source.to_owned(),
             phase: QueueBuildStatus::Idle,
             deck: None,
-            saved_stale: false,
             error: None,
             scheduled: false,
             run: 0,
@@ -181,7 +179,7 @@ impl UserState {
     fn is_stale(&self, settings: &QueueSettings, now: f64) -> bool {
         match &self.deck {
             None => true,
-            Some(deck) => self.saved_stale || now - deck.built_at > settings.ttl_secs,
+            Some(deck) => now - deck.built_at > settings.ttl_secs,
         }
     }
 
@@ -217,13 +215,7 @@ fn now_secs() -> f64 {
 fn to_deck(saved: &SavedQueue) -> QueueDeck {
     QueueDeck {
         queue_id: saved.queue.queue_id.clone(),
-        items: saved
-            .queue
-            .items
-            .iter()
-            .cloned()
-            .map(QueueItem::Light)
-            .collect(),
+        items: saved.queue.items.clone(),
     }
 }
 
@@ -330,7 +322,7 @@ impl Inner {
                 return;
             }
         };
-        let deck: SavedQueue = match serde_json::from_slice(&saved.payload) {
+        let deck: SavedQueue = match serde_json::from_slice(&saved) {
             Ok(deck) => deck,
             Err(error) => {
                 tracing::warn!(%error, "ignoring a saved queue deck that does not decode");
@@ -342,7 +334,6 @@ impl Inner {
         }
         if state.deck.is_none() && state.phase != QueueBuildStatus::Building {
             state.deck = Some(deck);
-            state.saved_stale = saved.stale;
             state.phase = QueueBuildStatus::Ready;
         }
     }
@@ -464,7 +455,6 @@ impl Inner {
                         source: Some(source),
                     };
                     state.deck = Some(deck.clone());
-                    state.saved_stale = false;
                     state.phase = QueueBuildStatus::Ready;
                     deck
                 }
@@ -546,7 +536,7 @@ impl Inner {
             .map_err(ProviderFailure::failed)?;
         Ok(QueueDeck {
             queue_id: uuid::Uuid::new_v4().to_string(),
-            items: items.into_iter().map(QueueItem::Light).collect(),
+            items,
         })
     }
 

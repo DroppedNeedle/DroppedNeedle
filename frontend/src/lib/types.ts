@@ -302,13 +302,10 @@ export type HomeResponse = {
 	recently_added: HomeSection | null;
 	library_artists: HomeSection | null;
 	library_albums: HomeSection | null;
-	recommended_artists: HomeSection | null;
 	trending_artists: HomeSection | null;
 	popular_albums: HomeSection | null;
 	recently_played: HomeSection | null;
-	top_genres: HomeSection | null;
 	genre_list: HomeSection | null;
-	fresh_releases: HomeSection | null;
 	favorite_artists: HomeSection | null;
 	your_top_albums: HomeSection | null;
 	weekly_exploration: WeeklyExplorationSection | null;
@@ -431,7 +428,6 @@ export type GenreDetailResponse = {
 	genre_artwork: GenreArtwork;
 	library: GenreLibrarySection | null;
 	popular: GenrePopularSection | null;
-	artists: HomeArtist[];
 	total_count: number | null;
 };
 

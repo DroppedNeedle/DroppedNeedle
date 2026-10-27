@@ -1,24 +1,12 @@
-//! Discover stand-ins for when a live part cannot start: YouTube without
-//! its quota file, and the presence feed on this router (live presence is
-//! served by playback).
-//!
-//! None of them invent rows: they answer empty or "not available".
+//! The discover stand-in for when YouTube cannot start without its quota
+//! file. It invents no rows: it answers empty or "not configured".
 
 use std::collections::HashMap;
 
 use crate::reads::discover::{
-    models::{NowPlayingEntry, YouTubeQuotaResponse},
-    ports::{BoxFuture, NowPlayingStore, ProviderFailure, YouTubeSource},
+    models::YouTubeQuotaResponse,
+    ports::{BoxFuture, ProviderFailure, YouTubeSource},
 };
-
-/// Presence lives in playback; this router's feed is empty.
-pub struct NoPresence;
-
-impl NowPlayingStore for NoPresence {
-    fn snapshot(&self) -> Vec<NowPlayingEntry> {
-        Vec::new()
-    }
-}
 
 /// YouTube when its quota file cannot be read: searches are off.
 pub struct UnavailableYouTube;

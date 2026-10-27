@@ -41721,7 +41721,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/QueueItem"
+              "$ref": "#/components/schemas/QueueItemLight"
             },
             "description": "Deck cards in order."
           },
@@ -45994,13 +45994,6 @@
           "genre_artwork"
         ],
         "properties": {
-          "artists": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChartArtist"
-            },
-            "description": "Flat artist rows (legacy consumers)."
-          },
           "genre": {
             "type": "string",
             "description": "Genre name as requested."
@@ -46926,17 +46919,6 @@
               }
             ]
           },
-          "fresh_releases": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Fresh releases shelf."
-              }
-            ]
-          },
           "genre_artwork": {
             "type": "object",
             "description": "Mosaic art keyed by genre name.",
@@ -47028,17 +47010,6 @@
               }
             ]
           },
-          "recommended_artists": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Recommended artists for the user."
-              }
-            ]
-          },
           "refreshing": {
             "type": "boolean",
             "description": "True while a fuller build runs in the background (the UI polls)."
@@ -47049,30 +47020,6 @@
               "$ref": "#/components/schemas/ServicePrompt"
             },
             "description": "Connect-a-service cards."
-          },
-          "service_status": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "Services that let the last build down: `unavailable` when every\nread failed, `degraded` while ListenBrainz refuses popularity reads.",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "top_genres": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Top genres."
-              }
-            ]
           },
           "trending_artists": {
             "oneOf": [
@@ -57132,78 +57079,6 @@
           "release_name": {
             "type": "string",
             "description": "Release name for the ignore ledger."
-          }
-        }
-      },
-      "QueueItem": {
-        "oneOf": [
-          {
-            "$ref": "#/components/schemas/QueueItemFull",
-            "description": "Card with enrichment attached."
-          },
-          {
-            "$ref": "#/components/schemas/QueueItemLight",
-            "description": "Card without enrichment."
-          }
-        ],
-        "description": "One queue card, light or enriched."
-      },
-      "QueueItemFull": {
-        "type": "object",
-        "description": "One queue card with its enrichment attached.",
-        "required": [
-          "release_group_mbid",
-          "album_name",
-          "artist_name",
-          "artist_mbid",
-          "recommendation_reason"
-        ],
-        "properties": {
-          "album_name": {
-            "type": "string",
-            "description": "Album name."
-          },
-          "artist_mbid": {
-            "type": "string",
-            "description": "MusicBrainz artist id."
-          },
-          "artist_name": {
-            "type": "string",
-            "description": "Artist name."
-          },
-          "cover_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Cover art URL, when resolved."
-          },
-          "enrichment": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/QueueEnrichment",
-                "description": "Attached enrichment, when loaded."
-              }
-            ]
-          },
-          "in_library": {
-            "type": "boolean",
-            "description": "True when already owned."
-          },
-          "is_wildcard": {
-            "type": "boolean",
-            "description": "True for wildcard (out-of-profile) picks."
-          },
-          "recommendation_reason": {
-            "type": "string",
-            "description": "Human reason behind the pick."
-          },
-          "release_group_mbid": {
-            "type": "string",
-            "description": "MusicBrainz release-group id."
           }
         }
       },

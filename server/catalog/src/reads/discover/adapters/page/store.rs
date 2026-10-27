@@ -41,8 +41,6 @@ pub struct SavedPage {
     pub payload: Vec<u8>,
     /// When it was saved (unix seconds).
     pub saved_at: f64,
-    /// True when an invalidation marked it stale.
-    pub stale: bool,
 }
 
 /// One feature a user used recently.
@@ -82,8 +80,8 @@ impl PageDb {
     /// The saved page under `key`, when it was built against the current
     /// library catalog revision.
     pub async fn load(&self, key: &str) -> Result<Option<SavedPage>, String> {
-        let row: Option<(Vec<u8>, f64, i64)> = sqlx::query_as(
-            "SELECT snapshot.payload, snapshot.saved_at, snapshot.stale \
+        let row: Option<(Vec<u8>, f64)> = sqlx::query_as(
+            "SELECT snapshot.payload, snapshot.saved_at \
              FROM discovery_snapshots snapshot \
              JOIN library_catalog_revision revision ON revision.singleton = 1 \
              WHERE snapshot.snapshot_key = ?1 AND snapshot.catalog_revision = revision.value",
@@ -92,11 +90,7 @@ impl PageDb {
         .fetch_optional(self.db.sqlx())
         .await
         .map_err(|error| format!("discover snapshot read: {error}"))?;
-        Ok(row.map(|(payload, saved_at, stale)| SavedPage {
-            payload,
-            saved_at,
-            stale: stale != 0,
-        }))
+        Ok(row.map(|(payload, saved_at)| SavedPage { payload, saved_at }))
     }
 
     /// Save a page under `key` against the current catalog revision.

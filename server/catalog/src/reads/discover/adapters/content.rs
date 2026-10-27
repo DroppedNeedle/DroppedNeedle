@@ -206,13 +206,10 @@ impl DiscoverContent for LiveContent {
                 recently_added: None,
                 library_artists: None,
                 library_albums: None,
-                recommended_artists: None,
                 trending_artists: None,
                 popular_albums: None,
                 recently_played: None,
-                top_genres: None,
                 genre_list: None,
-                fresh_releases: None,
                 favorite_artists: None,
                 your_top_albums: None,
                 weekly_exploration: None,
@@ -221,7 +218,6 @@ impl DiscoverContent for LiveContent {
                 genre_artwork: HashMap::new(),
                 genre_artwork_schema_version: GENRE_ARTWORK_SCHEMA.to_owned(),
                 discover_preview: None,
-                service_status: None,
                 refreshing: false,
             })
         })

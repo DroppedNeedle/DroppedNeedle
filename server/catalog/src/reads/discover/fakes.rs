@@ -15,10 +15,10 @@ use crate::reads::discover::{
         ChartAlbum, ChartArtist, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
         DiscoverQueuePreview, DiscoverQueueStatusResponse, DiscoverResponse, GenreArtwork,
         GenreArtworkAlbum, GenreDetailResponse, GenreLibrarySection, GenrePopularSection,
-        HomeResponse, IgnoredRelease, IntegrationStatus, NowPlayingEntry, PopularAlbumsPage,
-        QueueBuildStatus, QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, SectionItem,
-        ServicePrompt, TopPicksSection, TrackPreviewResponse, TrendingArtistsPage,
-        WeeklyExploration, YouTubeQuotaResponse,
+        HomeResponse, IgnoredRelease, IntegrationStatus, PopularAlbumsPage, QueueBuildStatus,
+        QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, SectionItem, ServicePrompt,
+        TopPicksSection, TrackPreviewResponse, TrendingArtistsPage, WeeklyExploration,
+        YouTubeQuotaResponse,
     },
     models::{
         DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
@@ -28,8 +28,8 @@ use crate::reads::discover::{
     },
     ports::{
         AlbumSamples, BatchFailure, BatchStore, BoxFuture, ChartsSource, DiscoverContent,
-        NowPlayingStore, PreviewSource, ProviderFailure, QueueDeck, QueueStore, QueueTrigger,
-        RadioFailure, RadioPlanner, YouTubeSource,
+        PreviewSource, ProviderFailure, QueueDeck, QueueStore, QueueTrigger, RadioFailure,
+        RadioPlanner, YouTubeSource,
     },
 };
 
@@ -263,13 +263,10 @@ impl DiscoverContent for FakeContent {
                 recently_added: Some(album_section("Recently added", 4)),
                 library_artists: Some(artist_section("Library artists", 4)),
                 library_albums: Some(album_section("Library albums", 4)),
-                recommended_artists: Some(artist_section("Recommended artists", 4)),
                 trending_artists: Some(artist_section("Trending artists", 4)),
                 popular_albums: Some(album_section("Popular albums", 4)),
                 recently_played: None,
-                top_genres: None,
                 genre_list: None,
-                fresh_releases: Some(album_section("Fresh releases", 4)),
                 favorite_artists: None,
                 your_top_albums: Some(album_section("Your top albums", 4)),
                 weekly_exploration: None,
@@ -278,10 +275,6 @@ impl DiscoverContent for FakeContent {
                 genre_artwork: HashMap::new(),
                 genre_artwork_schema_version: "v2".to_owned(),
                 discover_preview: None,
-                service_status: Some(HashMap::from([(
-                    "listenbrainz".to_owned(),
-                    "ok".to_owned(),
-                )])),
                 refreshing: false,
             })
         })
@@ -634,7 +627,6 @@ impl ChartsSource for FakeCharts {
                     has_more_artists: true,
                     has_more_albums: false,
                 }),
-                artists: Vec::new(),
                 total_count: Some(120),
             })
         })
@@ -1008,44 +1000,5 @@ impl RadioPlanner for FakeRadio {
                 },
             })
         })
-    }
-}
-
-/// Scripted presence: one live row plus one redacted row.
-#[derive(Debug, Default)]
-pub struct FakeNowPlaying;
-
-impl NowPlayingStore for FakeNowPlaying {
-    fn snapshot(&self) -> Vec<NowPlayingEntry> {
-        vec![
-            NowPlayingEntry {
-                id: "user-1:web".to_owned(),
-                user_name: "Molly".to_owned(),
-                track_name: "Roads".to_owned(),
-                artist_name: "Portishead".to_owned(),
-                album_name: Some("Dummy".to_owned()),
-                cover_url: "https://art.example.invalid/dummy.jpg".to_owned(),
-                device_name: "Web".to_owned(),
-                is_paused: false,
-                source: "local".to_owned(),
-                progress_ms: Some(61_000),
-                duration_ms: Some(295_000),
-                redacted: false,
-            },
-            NowPlayingEntry {
-                id: "user-2:web".to_owned(),
-                user_name: "Hidden Listener".to_owned(),
-                track_name: String::new(),
-                artist_name: String::new(),
-                album_name: None,
-                cover_url: String::new(),
-                device_name: "Web".to_owned(),
-                is_paused: true,
-                source: "local".to_owned(),
-                progress_ms: Some(10_000),
-                duration_ms: Some(200_000),
-                redacted: true,
-            },
-        ]
     }
 }

@@ -14,8 +14,7 @@ use droppedneedle_auth::Principal;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::discover::fakes::{
-    FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
-    FakeYouTube,
+    FakeBatches, FakeCharts, FakeContent, FakePreviews, FakeQueues, FakeRadio, FakeYouTube,
 };
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::clock::ManualClock;
@@ -58,7 +57,6 @@ fn rig_with_youtube(configured: bool) -> Rig {
         previews: Arc::new(FakePreviews),
         youtube,
         radio: Arc::new(FakeRadio),
-        now_playing: Arc::new(FakeNowPlaying),
         clock: Arc::new(clock.clone()),
     };
     Rig {
@@ -248,31 +246,6 @@ async fn foreign_batch_reads_as_missing() {
 // ---------------------------------------------------------------------------
 // YouTube + previews
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Now playing
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn now_playing_snapshot_keeps_redacted_rows() {
-    // The app mounts GET /now-playing from playback, so this pins the
-    // retired reads handler through its own
-    // router until the dead plumbing is deleted.
-    let rig = rig();
-    let router = Router::new().nest(
-        "/api/v3",
-        droppedneedle_catalog::reads::discover::now_playing_router(rig.deps.clone()),
-    );
-    let router = with_test_principal(router, principal("user-1"));
-    let (status, body, _) = call(router, "GET", "/api/v3/now-playing", None).await;
-    assert_eq!(status, StatusCode::OK);
-    let sessions = body["sessions"].as_array().unwrap();
-    assert_eq!(sessions.len(), 2);
-    assert_eq!(sessions[0]["track_name"], "Roads");
-    assert_eq!(sessions[1]["redacted"], true);
-    assert_eq!(sessions[1]["track_name"], "");
-    assert_eq!(sessions[1]["progress_ms"], 10_000);
-}
 
 // ---------------------------------------------------------------------------
 // Leaks: 5xx bodies are fixed strings plus an error id

@@ -14,17 +14,16 @@ use crate::reads::discover::{
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
         DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchListResponse,
         DiscoveryBatchRemoveResult, GenreDetailResponse, HomeResponse, IgnoredReleasesResponse,
-        IntegrationStatus, NowPlayingSnapshot, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, PopularAlbumsPage, QueueEnrichment, QueueGenerateRequest,
-        QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse,
-        RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse, TrackCacheCheckRequest,
+        IntegrationStatus, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
+        PopularAlbumsPage, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
+        QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
+        RadioPlanResponse, RadioRequest, RefreshResponse, TrackCacheCheckRequest,
         TrackCacheCheckResponse, TrackCacheCheckResponseItem, TrackPreviewResponse,
         TrendingArtistsPage, YouTubeQuotaResponse, YouTubeSearchResponse,
     },
     ports::{
-        BatchFailure, BatchRefusal, BatchStore, ChartsSource, DiscoverContent, NowPlayingStore,
-        PreviewSource, ProviderFailure, QueueStore, QueueTrigger, RadioFailure, RadioPlanner,
-        YouTubeSource,
+        BatchFailure, BatchRefusal, BatchStore, ChartsSource, DiscoverContent, PreviewSource,
+        ProviderFailure, QueueStore, QueueTrigger, RadioFailure, RadioPlanner, YouTubeSource,
     },
 };
 
@@ -118,8 +117,6 @@ pub struct ReadsDeps {
     pub youtube: Arc<dyn YouTubeSource>,
     /// Radio plans and suggestions.
     pub radio: Arc<dyn RadioPlanner>,
-    /// Live presence.
-    pub now_playing: Arc<dyn NowPlayingStore>,
     /// Clock for TTL math.
     pub clock: Arc<dyn Clock>,
 }
@@ -772,13 +769,6 @@ pub async fn remove_batch(
         .remove(caller, batch_id, remove_albums)
         .await
         .map_err(batch_failure)
-}
-
-/// The live now-playing snapshot across users.
-pub fn now_playing(deps: &ReadsDeps) -> NowPlayingSnapshot {
-    NowPlayingSnapshot {
-        sessions: deps.now_playing.snapshot(),
-    }
 }
 
 #[cfg(test)]

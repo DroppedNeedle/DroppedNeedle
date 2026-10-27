@@ -17,8 +17,8 @@ use droppedneedle_providers::ProviderError;
 use crate::reads::discover::models::{
     ChartRange, ChartSection, ChartSource, DiscoverActivityResponse, DiscoverQueuePreview,
     DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse, HomeResponse,
-    IgnoredRelease, IntegrationStatus, NowPlayingEntry, PopularAlbumsPage, PreviewTrackItem,
-    QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItem, TrackPreviewResponse,
+    IgnoredRelease, IntegrationStatus, PopularAlbumsPage, PreviewTrackItem, QueueEnrichment,
+    QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight, TrackPreviewResponse,
     TrendingArtistsPage, YouTubeQuotaResponse,
 };
 use crate::reads::discover::models::{
@@ -130,7 +130,7 @@ pub struct QueueDeck {
     /// Build id.
     pub queue_id: String,
     /// Deck cards in order.
-    pub items: Vec<QueueItem>,
+    pub items: Vec<QueueItemLight>,
 }
 
 /// The queue deck: background builds, the ignore ledger, and the details
@@ -330,12 +330,6 @@ pub trait BatchStore: Send + Sync {
         batch_id: &'a str,
         remove_albums: bool,
     ) -> BoxFuture<'a, Result<DiscoveryBatchRemoveResult, BatchFailure>>;
-}
-
-/// Live now-playing presence, already privacy-projected per owner setting.
-pub trait NowPlayingStore: Send + Sync {
-    /// Current live sessions.
-    fn snapshot(&self) -> Vec<NowPlayingEntry>;
 }
 
 /// Why a radio station or playlist suggestion could not be built.

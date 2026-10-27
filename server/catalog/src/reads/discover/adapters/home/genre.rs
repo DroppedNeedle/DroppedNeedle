@@ -134,6 +134,7 @@ impl GenrePages {
             }
             warm.queue("genre", targets);
         }
+        let total_count = Some(artists.len() as i64);
         GenreDetailResponse {
             genre: genre.to_owned(),
             genre_artwork: artwork,
@@ -144,13 +145,12 @@ impl GenrePages {
                 albums: owned_albums.iter().map(library_album).collect(),
             }),
             popular: Some(GenrePopularSection {
-                artists: artists.clone(),
+                artists,
                 albums,
                 has_more_artists,
                 has_more_albums,
             }),
-            total_count: Some(artists.len() as i64),
-            artists,
+            total_count,
         }
     }
 }

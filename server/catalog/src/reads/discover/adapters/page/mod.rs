@@ -151,8 +151,6 @@ struct State {
     building: HashSet<String>,
     /// When the running or requested rebuild started, per user.
     refresh_started: HashMap<String, f64>,
-    /// Keys whose saved page was marked stale by an invalidation.
-    stale_keys: HashSet<String>,
     /// Users the warm cycle is working on.
     warming: HashSet<String>,
 }
@@ -210,7 +208,6 @@ impl Drop for BuildGuard {
         if let Ok(mut state) = self.inner.state.lock() {
             state.building.remove(&self.user_id);
             state.refresh_started.remove(&self.user_id);
-            state.stale_keys.remove(&self.key);
             state.built_at.insert(self.key.clone(), now_secs());
         }
     }
@@ -300,8 +297,7 @@ impl LiveDiscover {
                 let built_at = attempted_at
                     .or(page.generated_at.map(|at| at as f64))
                     .unwrap_or(0.0);
-                let stale = self.lock().is_some_and(|s| s.stale_keys.contains(&key));
-                if !building && (stale || now - built_at > STALE_SECS) {
+                if !building && now - built_at > STALE_SECS {
                     self.trigger_warm(user_id);
                     building = true;
                 }
@@ -375,9 +371,6 @@ impl LiveDiscover {
         };
         let page = decode(&saved.payload)?;
         let mut state = self.lock()?;
-        if saved.stale {
-            state.stale_keys.insert(key.to_owned());
-        }
         state
             .built_at
             .entry(key.to_owned())

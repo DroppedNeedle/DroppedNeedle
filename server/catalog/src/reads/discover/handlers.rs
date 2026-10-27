@@ -21,10 +21,10 @@ use super::{
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
         DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchListResponse,
         DiscoveryBatchRemoveResult, GenreDetailResponse, HomeResponse, IgnoredReleasesResponse,
-        IntegrationStatus, NowPlayingSnapshot, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, PopularAlbumsPage, QueueEnrichment, QueueGenerateRequest,
-        QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse,
-        RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse, TrackCacheCheckRequest,
+        IntegrationStatus, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
+        PopularAlbumsPage, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
+        QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
+        RadioPlanResponse, RadioRequest, RefreshResponse, TrackCacheCheckRequest,
         TrackCacheCheckResponse, TrackPreviewResponse, TrendingArtistsPage, YouTubeQuotaResponse,
         YouTubeSearchResponse,
     },
@@ -890,34 +890,11 @@ pub async fn your_top_albums(
 }
 
 // ---------------------------------------------------------------------------
-// Now playing
-// ---------------------------------------------------------------------------
-
-/// The now-playing snapshot across users. Presence writes (POST/DELETE)
-/// live in `playback`; this only reads.
-#[utoipa::path(
-    get,
-    tag = "discover",
-    path = "/api/v3/now-playing",
-    responses(
-        (status = 200, description = "Live snapshot", body = NowPlayingSnapshot),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn now_playing(State(deps): State<ReadsDeps>, _user: User) -> Json<NowPlayingSnapshot> {
-    Json(services::now_playing(&deps))
-}
-
-// ---------------------------------------------------------------------------
 // Routers
 // ---------------------------------------------------------------------------
 
 /// Discover and home routes at their full `/api/v3` paths, for any
-/// signed-in user.
-///
-/// `GET /now-playing` is absent on purpose: `playback` serves it from the
-/// live presence registry (same JSON shape), and mounting both would panic
-/// on the duplicate route.
+/// signed-in user. `GET /now-playing` is served by `playback`.
 pub fn routes() -> Routes<ReadsDeps> {
     Routes::new()
         .user(routes!(get_discover))
@@ -948,13 +925,4 @@ pub fn routes() -> Routes<ReadsDeps> {
         .user(routes!(trending_artists))
         .user(routes!(popular_albums))
         .user(routes!(your_top_albums))
-}
-
-/// Now-playing snapshot route. Presence writes live in `playback`.
-pub fn now_playing_router(deps: ReadsDeps) -> axum::Router {
-    use axum::routing::get;
-
-    axum::Router::new()
-        .route("/now-playing", get(now_playing))
-        .with_state(deps)
 }

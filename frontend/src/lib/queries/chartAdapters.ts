@@ -208,13 +208,10 @@ export function toHomeResponse(home: V3Home): HomeResponse {
 		recently_added: maybe(home.recently_added, toHomeSection),
 		library_artists: maybe(home.library_artists, toHomeSection),
 		library_albums: maybe(home.library_albums, toHomeSection),
-		recommended_artists: maybe(home.recommended_artists, toHomeSection),
 		trending_artists: maybe(home.trending_artists, toHomeSection),
 		popular_albums: maybe(home.popular_albums, toHomeSection),
 		recently_played: maybe(home.recently_played, toHomeSection),
-		top_genres: maybe(home.top_genres, toHomeSection),
 		genre_list: maybe(home.genre_list, toHomeSection),
-		fresh_releases: maybe(home.fresh_releases, toHomeSection),
 		favorite_artists: maybe(home.favorite_artists, toHomeSection),
 		your_top_albums: maybe(home.your_top_albums, toHomeSection),
 		weekly_exploration: maybe(home.weekly_exploration, toWeekly),
@@ -242,7 +239,6 @@ export function toGenreDetail(detail: V3GenreDetail): GenreDetailResponse {
 			has_more_artists: popular.has_more_artists,
 			has_more_albums: popular.has_more_albums
 		})),
-		artists: (detail.artists ?? []).map(toArtist),
 		total_count: detail.total_count ?? null
 	};
 }

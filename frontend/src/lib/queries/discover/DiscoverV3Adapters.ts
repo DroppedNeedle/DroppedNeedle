@@ -19,7 +19,7 @@ import {
 type V3Response = components['schemas']['DiscoverResponse'];
 type V3TopPicks = components['schemas']['TopPicksSection'];
 type V3Because = components['schemas']['BecauseYouListenTo'];
-type V3QueueItem = components['schemas']['QueueItemFull'];
+type V3QueueItem = components['schemas']['QueueItemLight'];
 type V3QueueEnrichment = components['schemas']['QueueEnrichment'];
 
 function toTopPicks(section: V3TopPicks): TopPicksSection {
@@ -97,8 +97,6 @@ export function toQueueEnrichment(enrichment: V3QueueEnrichment): DiscoverQueueE
 	};
 }
 
-// Light and enriched cards share every field but `enrichment`, so one
-// adapter reads both.
 export function toQueueItem(item: V3QueueItem): DiscoverQueueItemFull {
 	return {
 		release_group_mbid: item.release_group_mbid,
@@ -108,7 +106,6 @@ export function toQueueItem(item: V3QueueItem): DiscoverQueueItemFull {
 		cover_url: item.cover_url ?? null,
 		recommendation_reason: item.recommendation_reason,
 		is_wildcard: item.is_wildcard ?? false,
-		in_library: item.in_library ?? false,
-		...(item.enrichment ? { enrichment: toQueueEnrichment(item.enrichment) } : {})
+		in_library: item.in_library ?? false
 	};
 }
