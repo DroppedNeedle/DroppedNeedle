@@ -1915,6 +1915,7 @@ async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
         let music = dir.join("music");
         std::fs::create_dir_all(&music).expect("music root");
         library
+            .scans
             .add_root(
                 Some("music".to_owned()),
                 music.to_string_lossy().into_owned(),
@@ -1938,7 +1939,7 @@ async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
         let acquire = acquire_over(
             &db,
             Some(Arc::new(LibraryLanding::new(
-                library.clone(),
+                &library,
                 every_priority(releases),
                 db.pool().clone(),
             ))),

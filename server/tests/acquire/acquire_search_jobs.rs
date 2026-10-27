@@ -500,6 +500,7 @@ async fn kept_rig(copies: &[Copy]) -> KeptRig {
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
+        .scans
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
@@ -590,7 +591,7 @@ async fn kept_rig(copies: &[Copy]) -> KeptRig {
     let landing = Arc::new(LandingService::new(
         journal.clone(),
         Some(Arc::new(LibraryLanding::new(
-            library.clone(),
+            &library,
             every_priority(releases),
             db.pool().clone(),
         ))),
