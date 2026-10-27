@@ -6,7 +6,7 @@
 
 use std::path::{Component, Path};
 
-use super::ids::{IdKind, encode};
+use super::ids::{IdKind, cover_id, encode};
 use super::models::{
     SAlbumID3, SArtist, SArtistID3, SChild, SDiscTitle, SGenre, SItemDate, SItemGenre, SReplayGain,
 };
@@ -204,6 +204,8 @@ pub struct ViewAlbum {
     pub release_types: Option<Vec<String>>,
     /// (disc, title) pairs.
     pub disc_titles: Vec<(i64, String)>,
+    /// The cover version its cover id carries.
+    pub cover_version: Option<String>,
 }
 
 /// Track row seen by the converters.
@@ -279,6 +281,8 @@ pub struct ViewTrack {
     pub replaygain_track_peak: Option<f64>,
     /// Replay gain album peak.
     pub replaygain_album_peak: Option<f64>,
+    /// The cover version of its album's cover id.
+    pub cover_version: Option<String>,
 }
 
 /// Genre row seen by the converters.
@@ -400,14 +404,14 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
         }
     });
     SAlbumID3 {
-        id: alid.clone(),
+        id: alid,
         name: view.title.clone(),
         artist: view.artist_name.clone(),
         artistId: view
             .artist_mbid
             .as_ref()
             .map(|mbid| encode(IdKind::Artist, mbid)),
-        coverArt: Some(alid),
+        coverArt: Some(cover_id(&view.rg_mbid, view.cover_version.as_deref())),
         songCount: view.track_count,
         duration: view.total_duration_seconds.map(|d| d.round() as i64),
         playCount: view.play_count,
@@ -491,7 +495,10 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
         track: (view.track_number != 0).then_some(view.track_number),
         year: view.year,
         genre: view.genre.clone(),
-        coverArt: alid.clone(),
+        coverArt: view
+            .rg_mbid
+            .as_ref()
+            .map(|rg| cover_id(rg, view.cover_version.as_deref())),
         size: (view.file_size_bytes != 0).then_some(view.file_size_bytes),
         contentType: Some(mime_for(view.file_format.as_deref().unwrap_or("")).to_owned()),
         suffix: view.file_format.clone(),
@@ -551,14 +558,14 @@ pub fn to_album_child(view: &ViewAlbum) -> SChild {
         .map(|mbid| encode(IdKind::Artist, mbid));
     let artists = album_artists(view);
     SChild {
-        id: alid.clone(),
+        id: alid,
         isDir: true,
         title: view.title.clone(),
         parent: artist_id.clone(),
         album: Some(view.title.clone()),
         artist: view.artist_name.clone(),
         artistId: artist_id,
-        coverArt: Some(alid),
+        coverArt: Some(cover_id(&view.rg_mbid, view.cover_version.as_deref())),
         year: view.year,
         genre: view.genre.clone(),
         created: iso(view.date_added),

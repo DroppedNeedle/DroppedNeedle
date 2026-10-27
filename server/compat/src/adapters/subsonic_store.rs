@@ -9,12 +9,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::library::{CompatError, CompatLibrary, ImageBytes, whole};
+use super::library::{CompatError, CompatLibrary, ImageBytes, cover_version, whole};
 use super::playback::CompatPlayback;
 use super::queues::CompatQueues;
 use crate::settings::LiveSettings;
 use crate::subsonic::advanced;
-use crate::subsonic::ids::IdKind;
+use crate::subsonic::ids::{IdKind, without_cover_version};
 use crate::subsonic::picture::PictureSigner;
 use crate::subsonic::store::{
     AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricLine, LyricsData, NowPlayingRow,
@@ -76,7 +76,14 @@ fn kind_name(kind: IdKind) -> &'static str {
     }
 }
 
-fn view_track(track: PlayerTrack) -> ViewTrack {
+/// A track as the converters see it. `local_first` is the local-art
+/// setting its cover version is worked out under.
+fn view_track(track: PlayerTrack, local_first: bool) -> ViewTrack {
+    let version = cover_version(
+        track.art_version,
+        track.release_group_mbid.as_deref(),
+        local_first,
+    );
     ViewTrack {
         file_id: track.id,
         title: track.title,
@@ -113,6 +120,7 @@ fn view_track(track: PlayerTrack) -> ViewTrack {
         replaygain_album_gain: track.replaygain_album_gain,
         replaygain_track_peak: track.replaygain_track_peak,
         replaygain_album_peak: track.replaygain_album_peak,
+        cover_version: Some(version),
     }
 }
 
@@ -130,9 +138,16 @@ fn album_musicbrainz_id(ids: Option<&AlbumIds>) -> Option<String> {
     }
 }
 
-fn view_album(album: PlayerAlbum, ids: &PlayerIds) -> ViewAlbum {
+/// An album as the converters see it, its cover version worked out under
+/// the local-art setting `local_first`.
+fn view_album(album: PlayerAlbum, ids: &PlayerIds, local_first: bool) -> ViewAlbum {
     let record = album.record;
     let musicbrainz_album_id = album_musicbrainz_id(ids.albums.get(&record.id));
+    let version = cover_version(
+        record.art_version,
+        record.release_group_mbid.as_deref(),
+        local_first,
+    );
     ViewAlbum {
         rg_mbid: record.id,
         title: record.title,
@@ -156,6 +171,7 @@ fn view_album(album: PlayerAlbum, ids: &PlayerIds) -> ViewAlbum {
         release_date: album.release_date,
         release_types: None,
         disc_titles: Vec::new(),
+        cover_version: Some(version),
     }
 }
 
@@ -244,7 +260,11 @@ impl SubsonicStore {
         &self,
         tracks: Vec<PlayerTrack>,
     ) -> Result<Vec<ViewTrack>, CompatError> {
-        let mut views = tracks.into_iter().map(view_track).collect::<Vec<_>>();
+        let local_first = self.library.local_art_first();
+        let mut views = tracks
+            .into_iter()
+            .map(|track| view_track(track, local_first))
+            .collect::<Vec<_>>();
         if let Some(user_id) = &self.caller {
             let ids = views
                 .iter()
@@ -277,9 +297,10 @@ impl SubsonicStore {
             .map(|album| album.record.id.clone())
             .collect::<Vec<_>>();
         let player_ids = self.library.player_ids(&ids, &[]).await?;
+        let local_first = self.library.local_art_first();
         let mut views = albums
             .into_iter()
-            .map(|album| view_album(album, &player_ids))
+            .map(|album| view_album(album, &player_ids, local_first))
             .collect::<Vec<_>>();
         if let Some(user_id) = &self.caller {
             let starred = self.library.starred(user_id, "album", &ids).await?;
@@ -671,15 +692,38 @@ impl SubsonicStore {
 
     /// The id an album, artist or track has now: `id` itself while it is
     /// live, else the live one a merge or an alias points it at; `None`
-    /// when no live album or artist holds it. A track nothing holds
+    /// when no live album or artist holds it. An album id nothing holds
+    /// is tried again without a cover version. A track nothing holds
     /// answers `id`, and other kinds answer `id` unchanged.
     pub async fn current_id(&self, kind: IdKind, id: &str) -> Result<Option<String>, CompatError> {
         match kind {
             IdKind::Album | IdKind::Artist | IdKind::Track => {
-                Ok(self.library.catalog.current_id(kind_name(kind), id).await?)
+                let name = kind_name(kind);
+                let found = self.library.catalog.current_id(name, id).await?;
+                match (found, kind, without_cover_version(id)) {
+                    (None, IdKind::Album, Some(bare)) => {
+                        Ok(self.library.catalog.current_id(name, bare).await?)
+                    }
+                    (found, _, _) => Ok(found),
+                }
             }
             _ => Ok(Some(id.to_owned())),
         }
+    }
+
+    /// Whether an album, artist or track is in the library under exactly
+    /// `id`, an alias not counted, in one indexed read. Other kinds never
+    /// are.
+    pub async fn exists(&self, kind: IdKind, id: &str) -> Result<bool, CompatError> {
+        if !matches!(kind, IdKind::Album | IdKind::Artist | IdKind::Track) {
+            return Ok(false);
+        }
+        let found = self
+            .library
+            .catalog
+            .existing(kind_name(kind), &[id.to_owned()])
+            .await?;
+        Ok(found.contains(id))
     }
 
     /// Subset of (kind, internal id) targets missing from the library.

@@ -750,10 +750,8 @@ async fn images_serve_anonymously_with_immutable_cache() {
         (library.status, library.header("content-type")),
         (StatusCode::OK, "image/png")
     );
-    assert_eq!(
-        library.header("cache-control"),
-        "public, max-age=31536000, immutable"
-    );
+    // Asked for without a tag, as Finamp asks, a picture is kept a day.
+    assert_eq!(library.header("cache-control"), "public, max-age=86400");
     assert!(library.body.starts_with(b"\x89PNG\r\n\x1a\n"));
 
     // A miss is a 404 with no placeholder (unlike Subsonic), and an album

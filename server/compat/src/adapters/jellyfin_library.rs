@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 
 use super::jellyfin_ids::{IdKind, IdsError, JellyfinIds};
-use super::library::{CompatError, CompatLibrary};
+use super::library::{CompatError, CompatLibrary, cover_version};
 use crate::jellyfin::params::SortKey;
 use crate::jellyfin::seams::{
     AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, ItemSort, ItemView,
@@ -34,9 +34,20 @@ fn to_u32(value: Option<i64>) -> Option<u32> {
     value.and_then(|value| u32::try_from(value).ok())
 }
 
-fn track_view(track: PlayerTrack) -> TrackView {
-    let album_image_tag = (track.cover_available || track.release_group_mbid.is_some())
-        .then(|| tag_for(&format!("album:{}", track.album_id)));
+/// A track as the Jellyfin builders see it. `local_first` is the local-art
+/// setting its album's picture tag is worked out under.
+fn track_view(track: PlayerTrack, local_first: bool) -> TrackView {
+    let album_image_tag =
+        (track.cover_available || track.release_group_mbid.is_some()).then(|| {
+            album_tag(
+                &track.album_id,
+                &cover_version(
+                    track.art_version,
+                    track.release_group_mbid.as_deref(),
+                    local_first,
+                ),
+            )
+        });
     TrackView {
         file_id: track.id,
         title: track.title,
@@ -73,10 +84,20 @@ fn track_view(track: PlayerTrack) -> TrackView {
     }
 }
 
-fn album_view(album: PlayerAlbum) -> AlbumView {
+/// An album as the Jellyfin builders see it, its picture tag worked out
+/// under the local-art setting `local_first`.
+fn album_view(album: PlayerAlbum, local_first: bool) -> AlbumView {
     let record = album.record;
-    let image_tag = (record.cover_available || record.release_group_mbid.is_some())
-        .then(|| tag_for(&format!("album:{}", record.id)));
+    let image_tag = (record.cover_available || record.release_group_mbid.is_some()).then(|| {
+        album_tag(
+            &record.id,
+            &cover_version(
+                record.art_version,
+                record.release_group_mbid.as_deref(),
+                local_first,
+            ),
+        )
+    });
     AlbumView {
         id: record.id,
         release_group_mbid: record.release_group_mbid,
@@ -119,6 +140,13 @@ fn artist_view(artist: ArtistRecord) -> ArtistView {
 /// has album art to draw its picture from (see `overlay_artists`).
 fn artist_tag(id: &str) -> String {
     tag_for(&format!("artist:{id}"))
+}
+
+/// The picture tag of an album: it changes with the album's cover version,
+/// so an app that sends the tag asks for the new picture. The item id
+/// stays the same.
+fn album_tag(id: &str, version: &str) -> String {
+    tag_for(&format!("album:{id}:{version}"))
 }
 
 /// Short stable etag for an image key.
@@ -243,7 +271,11 @@ impl JellyfinLibrary {
         unique.sort();
         unique.dedup();
         let found = self.library.tracks_by_ids(&unique).await?;
-        let views = found.into_iter().map(track_view).collect();
+        let local_first = self.library.local_art_first();
+        let views = found
+            .into_iter()
+            .map(|track| track_view(track, local_first))
+            .collect();
         let views = self.overlay_tracks(user_id, views).await?;
         Ok(in_order(ids, views, |view| view.file_id.as_str()))
     }
@@ -254,13 +286,14 @@ impl JellyfinLibrary {
         user_id: &str,
         ids: &[String],
     ) -> Result<Vec<AlbumView>, CompatError> {
+        let local_first = self.library.local_art_first();
         let found = self
             .library
             .albums_in_order(ids)
             .await?
             .into_iter()
             .filter(|album| album.record.track_count > 0)
-            .map(album_view)
+            .map(|album| album_view(album, local_first))
             .collect();
         self.overlay_albums(user_id, found).await
     }
@@ -401,7 +434,11 @@ impl JellyfinLibrary {
                 to_u64(start),
             )
             .await?;
-        let views = tracks.into_iter().map(track_view).collect();
+        let local_first = self.library.local_art_first();
+        let views = tracks
+            .into_iter()
+            .map(|track| track_view(track, local_first))
+            .collect();
         Ok((self.overlay_tracks(user_id, views).await?, to_usize(total)))
     }
 
@@ -456,7 +493,11 @@ impl JellyfinLibrary {
                 to_u64(start),
             )
             .await?;
-        let views = albums.into_iter().map(album_view).collect();
+        let local_first = self.library.local_art_first();
+        let views = albums
+            .into_iter()
+            .map(|album| album_view(album, local_first))
+            .collect();
         Ok((self.overlay_albums(user_id, views).await?, to_usize(total)))
     }
 

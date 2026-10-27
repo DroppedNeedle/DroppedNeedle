@@ -102,61 +102,93 @@ fn immutable(body: Vec<u8>, content_type: String) -> Outcome {
 }
 
 /// An album's cover or an artist's picture in a size bucket, or the
-/// placeholder when there is none. `None` when the album or artist is not
-/// in the library. `getCoverArt` and the open picture address both serve
-/// these through here.
+/// placeholder, coloured from the id, when there is none. The caller has
+/// checked that the album or artist is in the library. `None` only if the
+/// placeholder could not be drawn. `getCoverArt` and the open picture
+/// address both serve these through here.
 pub async fn library_picture(
     store: &SubsonicStore,
     kind: PictureKind,
     internal: &str,
     bucket: &str,
 ) -> Result<Option<Outcome>, CompatError> {
-    let (art, name) = match kind {
-        PictureKind::Album => {
-            let Some(album) = store.get_album(internal).await? else {
-                return Ok(None);
-            };
-            (
-                store.release_group_cover(internal, bucket).await?,
-                album.title,
-            )
-        }
+    let art = match kind {
+        PictureKind::Album => store.release_group_cover(internal, bucket).await?,
         PictureKind::Artist => {
-            let Some((artist, _)) = store.get_artist_with_albums(internal).await? else {
-                return Ok(None);
-            };
-            (
-                store
-                    .artist_image(internal, bucket.parse::<i64>().ok())
-                    .await?,
-                artist.name,
-            )
+            store
+                .artist_image(internal, bucket.parse::<i64>().ok())
+                .await?
         }
     };
     Ok(match art {
         Some((body, content_type)) => Some(immutable(body, content_type)),
-        None => placeholder(placeholder_seed(Some(internal), &name)),
+        None => placeholder(internal),
     })
+}
+
+/// An album's or artist's picture for `getCoverArt`: the read that
+/// resolves the id is the existence check, so no album or artist is
+/// loaded. `missing` is the answer for an id nothing live holds.
+async fn picture_of(
+    ctx: &Ctx<'_>,
+    kind: PictureKind,
+    internal: &str,
+    bucket: &str,
+    missing: &str,
+) -> Result<Outcome, SubsonicError> {
+    let id_kind = match kind {
+        PictureKind::Album => IdKind::Album,
+        PictureKind::Artist => IdKind::Artist,
+    };
+    let live = ctx
+        .store
+        .current_id(id_kind, internal)
+        .await
+        .map_err(Ctx::store_err)?
+        .ok_or_else(|| SubsonicError::new(NOT_FOUND, missing))?;
+    library_picture(ctx.store, kind, &live, bucket)
+        .await
+        .map_err(Ctx::store_err)?
+        .ok_or_else(|| SubsonicError::new(NOT_FOUND, missing))
 }
 
 /// Cover art: album/track -> release-group art, artist -> artist image,
 /// playlist -> its uploaded cover (Feishin #287) or one made from its
 /// tracks. Misses serve a WebP placeholder coloured from the item;
-/// non-playlist hits carry immutable cache headers; `size` buckets to 250/500/1200. HEAD is
-/// served by the HTTP layer (which strips bodies); only the playlist
-/// branch needs explicit headers.
+/// non-playlist hits carry immutable cache headers whatever cover version
+/// the id carries; `size` buckets to 250/500/1200. An album or artist is
+/// found by the one read that resolves its id (an alias or a merged id
+/// names the live one). HEAD is served by the HTTP layer (which strips
+/// bodies); only the playlist branch needs explicit headers.
 pub async fn cover_art(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let sid = ctx.p("id")?.unwrap_or_default();
-    // Unknown prefix -> 70 -> 404-as-text on the binary path.
+    // Unknown prefix -> 70 -> 404-as-text on the binary path. An album's
+    // cover version is dropped here, so any version opens today's picture.
     let (kind, internal) = decode(&sid)?;
-    let internal = current_id(ctx, kind, internal).await?;
     let bucket = cover_bucket(ctx.pint("size", None, Some(1), Some(2000))?);
     match kind {
-        IdKind::Album => library_picture(ctx.store, PictureKind::Album, &internal, bucket)
+        IdKind::Album => {
+            picture_of(
+                ctx,
+                PictureKind::Album,
+                &internal,
+                bucket,
+                "Album not found",
+            )
             .await
-            .map_err(Ctx::store_err)?
-            .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Album not found")),
+        }
+        IdKind::Artist => {
+            picture_of(
+                ctx,
+                PictureKind::Artist,
+                &internal,
+                bucket,
+                "Artist not found",
+            )
+            .await
+        }
         IdKind::Track => {
+            let internal = current_id(ctx, kind, internal).await?;
             let track = ctx
                 .store
                 .get_track(&internal)
@@ -180,10 +212,6 @@ pub async fn cover_art(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                 .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Song not found")),
             }
         }
-        IdKind::Artist => library_picture(ctx.store, PictureKind::Artist, &internal, bucket)
-            .await
-            .map_err(Ctx::store_err)?
-            .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found")),
         IdKind::Playlist => {
             let user_id = ctx.user()?.user_id().to_owned();
             let art = ctx

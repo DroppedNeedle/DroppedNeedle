@@ -167,6 +167,9 @@ pub struct AlbumRecord {
     pub is_compilation: bool,
     /// True when an artwork row exists.
     pub cover_available: bool,
+    /// The version of the album's own art (a folder image or an embedded
+    /// picture), when it has some. It goes up when the art changes.
+    pub art_version: Option<i64>,
     /// Import time, unix seconds.
     pub date_added: Option<f64>,
     /// The album's open MusicBrainz contribution, if any.

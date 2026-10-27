@@ -92,6 +92,8 @@ pub struct PlayerTrack {
     pub replaygain_album_peak: Option<f64>,
     /// Whether the album has stored artwork.
     pub cover_available: bool,
+    /// The version of the album's own art, when it has some.
+    pub art_version: Option<i64>,
     /// Whether the track's file carries lyrics, as the lyrics sweep found.
     pub has_lyrics: bool,
 }
@@ -958,6 +960,7 @@ fn track_row(row: &Row<'_>) -> rusqlite::Result<PlayerTrack> {
         replaygain_track_peak: row.get("rg_track_peak")?,
         replaygain_album_peak: row.get("rg_album_peak")?,
         cover_available: row.get("cover_available")?,
+        art_version: row.get("art_version")?,
         has_lyrics: row.get("has_lyrics")?,
     })
 }

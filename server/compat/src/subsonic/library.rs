@@ -987,8 +987,8 @@ pub async fn artist_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     } else {
         None
     };
-    let [small, medium, large] =
-        INFO_SIZES.map(|size| ctx.picture_link(PictureKind::Artist, &artist.artist_mbid, size));
+    let [small, medium, large] = INFO_SIZES
+        .map(|size| ctx.picture_link(PictureKind::Artist, &artist.artist_mbid, size, None));
     let key = if ctx.endpoint_name == "getartistinfo2" {
         "artistInfo2"
     } else {
@@ -1020,8 +1020,14 @@ pub async fn album_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .await
         .map_err(Ctx::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Album not found"))?;
-    let [small, medium, large] =
-        INFO_SIZES.map(|size| ctx.picture_link(PictureKind::Album, &album.rg_mbid, size));
+    let [small, medium, large] = INFO_SIZES.map(|size| {
+        ctx.picture_link(
+            PictureKind::Album,
+            &album.rg_mbid,
+            size,
+            album.cover_version.as_deref(),
+        )
+    });
     let music_brainz_id = if album.provider_identity_projected {
         Some(album.musicbrainz_album_id.clone().unwrap_or_default())
     } else {

@@ -346,13 +346,14 @@ impl Ctx<'_> {
     }
 
     /// The open link to an album or artist picture the catalog just
-    /// returned, or `None` when the request named no address: a link is
-    /// absolute or not sent.
+    /// returned, with an album's cover version, or `None` when the request
+    /// named no address: a link is absolute or not sent.
     pub fn picture_link(
         &self,
         kind: picture::PictureKind,
         internal_id: &str,
         size: u32,
+        cover_version: Option<&str>,
     ) -> Option<String> {
         let base = self.picture_base.as_deref()?;
         Some(picture::link(
@@ -361,6 +362,7 @@ impl Ctx<'_> {
             kind,
             internal_id,
             size,
+            cover_version,
         ))
     }
 
@@ -379,6 +381,7 @@ impl Ctx<'_> {
             picture::PictureKind::Artist,
             &artist.artist_mbid,
             picture::ARTIST_IMAGE_SIZE,
+            None,
         )
     }
 

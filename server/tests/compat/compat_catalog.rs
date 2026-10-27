@@ -152,6 +152,185 @@ async fn subsonic_and_jellyfin_read_the_scanned_library() {
     rig.stop().await;
 }
 
+/// The seeded album's folder picture: a square PNG of one colour.
+fn paint_cover(path: &std::path::Path, side: u32, colour: [u8; 3]) {
+    image::RgbImage::from_pixel(side, side, image::Rgb(colour))
+        .save(path)
+        .expect("cover writes");
+}
+
+/// The colour of the top left pixel of a served picture.
+fn colour_of(body: &[u8]) -> [u8; 3] {
+    image::load_from_memory(body)
+        .expect("a picture")
+        .to_rgb8()
+        .get_pixel(0, 0)
+        .0
+}
+
+/// A Subsonic JSON answer's payload under `key`.
+async fn subsonic_json(rig: &CompatApp, endpoint: &str, id: &str, key: &str) -> Value {
+    let body = subsonic(rig, endpoint, &[("id", id)]).await;
+    let parsed: Value = serde_json::from_str(&body).expect("json answer");
+    parsed["subsonic-response"][key].clone()
+}
+
+/// A GET with no credentials: the cache rule and the picture's colour.
+async fn open(rig: &CompatApp, uri: &str) -> (String, [u8; 3]) {
+    let (status, headers, body) =
+        crate::common::through_busy(|| rig.app.raw("GET", uri, &[], None)).await;
+    assert_eq!(status, StatusCode::OK, "{uri}");
+    let cache = headers
+        .get("cache-control")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    (cache, colour_of(&body))
+}
+
+/// Run `sql` as one catalog write through the app's writer, bumping the
+/// catalog revision as a scan does, so the loops that follow the catalog
+/// see it.
+async fn write(rig: &CompatApp, sql: String) {
+    rig.app
+        .state()
+        .library
+        .db
+        .write(Lane::Foreground, "seed", move |tx| {
+            tx.execute_batch(&sql)?;
+            tx.execute_batch(
+                "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 1) \
+                 ON CONFLICT (singleton) DO UPDATE SET value = value + 1;",
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("catalog writes");
+}
+
+/// The seeded album's Jellyfin album item and its track item.
+async fn jellyfin_album_and_track(rig: &CompatApp) -> (Value, Value) {
+    let (albums, _) = jellyfin_items(rig, "IncludeItemTypes=MusicAlbum&Limit=10").await;
+    let (tracks, _) = jellyfin_items(rig, "IncludeItemTypes=Audio&Limit=10").await;
+    (albums[0].clone(), tracks[0].clone())
+}
+
+/// When a scan finds new art for an album, both protocols name its cover
+/// anew, so apps fetch the new picture instead of keeping the old one for
+/// a year. The album's own ids never change, and every cover id and link
+/// an app stored before still opens the album's current picture.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_changed_cover_gets_a_new_cover_id_and_old_ids_still_open() {
+    let rig = CompatApp::unscanned("compat-catalog-cover-version").await;
+    let music = rig.app.config.root_app_dir.join("music");
+    let folder = music.join("dummy");
+    std::fs::create_dir_all(&folder).expect("album folder");
+    let cover = folder.join("cover.png");
+    paint_cover(&cover, 2, [200, 10, 10]);
+    let cover_path = cover.to_str().expect("utf-8 path").to_owned();
+    let track_path = folder.join("01.flac");
+    write(
+        &rig,
+        format!(
+            "{LIBRARY} UPDATE local_tracks SET file_path = '{}' WHERE id = 'trk-1'; \
+             INSERT INTO local_album_artwork (local_album_id, source, source_locator, \
+             content_hash, version, updated_at) VALUES ('alb-1', 'folder', '{cover_path}', \
+             'red', 1, 1); \
+             INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+             VALUES ('my_album', 'alb-1', 'compat_migration', 1);",
+            track_path.to_str().expect("utf-8 path")
+        ),
+    )
+    .await;
+    rig.jellyfin_ids_caught_up().await;
+
+    let album = subsonic_json(&rig, "getAlbum", "al-alb-1", "album").await;
+    let old_cover = album["coverArt"].as_str().expect("cover id").to_owned();
+    let info = subsonic_json(&rig, "getAlbumInfo2", "al-alb-1", "albumInfo").await;
+    let old_link = info["mediumImageUrl"].as_str().expect("link").to_owned();
+    let (jf_album, jf_track) = jellyfin_album_and_track(&rig).await;
+    let old_tag = jf_album["ImageTags"]["Primary"].clone();
+    let old_track_tag = jf_track["AlbumPrimaryImageTag"].clone();
+    assert!(
+        old_tag.is_string() && old_track_tag.is_string(),
+        "{jf_album}"
+    );
+
+    // A rescan finds a different picture in the folder and bumps the row.
+    paint_cover(&cover, 3, [10, 10, 200]);
+    write(
+        &rig,
+        "UPDATE local_album_artwork SET version = 2, content_hash = 'blue' \
+         WHERE local_album_id = 'alb-1';"
+            .to_owned(),
+    )
+    .await;
+    let blue = [10, 10, 200];
+
+    let album = subsonic_json(&rig, "getAlbum", "al-alb-1", "album").await;
+    let new_cover = album["coverArt"].as_str().expect("cover id").to_owned();
+    assert_ne!(new_cover, old_cover, "a new cover id");
+    assert!(new_cover.starts_with("al-alb-1_"), "{new_cover}");
+    assert_eq!(album["id"], "al-alb-1", "the album id stays");
+    let song = &album["song"][0];
+    assert_eq!(song["coverArt"], new_cover.as_str(), "{song}");
+    assert_eq!(
+        (&song["parent"], &song["albumId"]),
+        (&json!("al-alb-1"), &json!("al-alb-1"))
+    );
+    let directory = subsonic_json(&rig, "getMusicDirectory", "al-alb-1", "directory").await;
+    assert_eq!(directory["coverArt"], new_cover.as_str(), "{directory}");
+    // An id v2 handed out for the album, free text with an underscore,
+    // still names it.
+    let legacy = subsonic_json(&rig, "getAlbum", "al-my_album", "album").await;
+    assert_eq!(legacy["id"], "al-alb-1", "{legacy}");
+    let auth = rig.subsonic_auth("catalog");
+    for id in [
+        &new_cover,
+        &old_cover,
+        &"al-alb-1".to_owned(),
+        &"al-my_album".to_owned(),
+    ] {
+        let uri = rest(&format!("getCoverArt?id={id}"), &auth);
+        let (cache, colour) = open(&rig, &uri).await;
+        assert_eq!(colour, blue, "{id} opens the new picture");
+        assert_eq!(cache, "public, max-age=31536000, immutable", "{id}");
+    }
+
+    let info = subsonic_json(&rig, "getAlbumInfo2", "al-alb-1", "albumInfo").await;
+    let new_link = info["mediumImageUrl"].as_str().expect("link").to_owned();
+    assert_ne!(new_link, old_link, "the link changes with the cover");
+    let version = new_cover.rsplit_once('_').expect("a version").1;
+    assert!(new_link.ends_with(&format!("&cv={version}")), "{new_link}");
+    let path = |link: &str| link[link.find("/subsonic/img").expect("picture link")..].to_owned();
+    let unversioned = path(&new_link[..new_link.find("&cv=").expect("version")]);
+    for link in [path(&new_link), path(&old_link), unversioned] {
+        let (cache, colour) = open(&rig, &link).await;
+        assert_eq!(colour, blue, "{link} opens the new picture");
+        assert_eq!(cache, "public, max-age=86400", "{link}");
+    }
+
+    let (jf_album, jf_track) = jellyfin_album_and_track(&rig).await;
+    let new_tag = jf_album["ImageTags"]["Primary"]
+        .as_str()
+        .expect("album tag")
+        .to_owned();
+    assert_ne!(json!(new_tag), old_tag, "the album's tag changes");
+    assert_ne!(jf_track["AlbumPrimaryImageTag"], old_track_tag);
+    assert_eq!(jf_track["AlbumPrimaryImageTag"], new_tag.as_str());
+    let item = jf_album["Id"].as_str().expect("album item id");
+    let untagged = format!("/jellyfin/Items/{item}/Images/Primary?format=jpg&quality=90");
+    let (cache, colour) = open(&rig, &untagged).await;
+    assert_eq!((colour, cache.as_str()), (blue, "public, max-age=86400"));
+    let tagged = format!("/jellyfin/Items/{item}/Images/Primary?tag={new_tag}");
+    let (cache, colour) = open(&rig, &tagged).await;
+    assert_eq!(
+        (colour, cache.as_str()),
+        (blue, "public, max-age=31536000, immutable")
+    );
+    rig.stop().await;
+}
+
 /// One more streamable track on the seeded album, by Portishead.
 fn track_row(id: &str, title: &str, number: i64) -> String {
     track_by(id, title, "Portishead", number)

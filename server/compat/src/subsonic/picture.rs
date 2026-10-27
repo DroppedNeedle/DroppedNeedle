@@ -17,6 +17,12 @@
 //! That is safe because every user sees the whole library; if libraries
 //! ever become per user, this address must change.
 //!
+//! An album's link also carries its cover version as `cv`, outside the
+//! signature, so the link changes when the cover does and an app fetches
+//! the new picture. The server never reads it: a link with an old version,
+//! a made-up one or none opens the album's current picture, so links apps
+//! stored keep working.
+//!
 //! A refused link is an empty 404 and is not a failed sign-in, so stale
 //! links never lock a household out of the API. Signatures are made only
 //! by [`link`], for ids the catalog has just returned.
@@ -113,19 +119,26 @@ impl PictureSigner {
 }
 
 /// The open link to one picture under `base`, the address the app reached
-/// this server at. It never carries a credential.
+/// this server at, with the album's cover version when there is one. It
+/// never carries a credential.
 pub fn link(
     base: &str,
     signer: &PictureSigner,
     kind: PictureKind,
     internal_id: &str,
     size: u32,
+    cover_version: Option<&str>,
 ) -> String {
-    format!(
+    let mut link = format!(
         "{base}{PATH}?id={}&sig={}&size={size}",
         query_escape(&encode(kind.id_kind(), internal_id)),
         signer.sign(kind, internal_id)
-    )
+    );
+    if let Some(version) = cover_version {
+        link.push_str("&cv=");
+        link.push_str(&query_escape(version));
+    }
+    link
 }
 
 /// Percent-encode everything but the unreserved characters.
@@ -164,8 +177,10 @@ fn only<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
 }
 
 /// Answer one request for `raw_query`. The signature is checked before
-/// anything is read; the picture is then the one `getCoverArt` serves a
-/// signed-in user, cached for a day, with `nosniff` and a sandbox policy.
+/// anything is read, then one read says whether the album or artist is in
+/// the library (a link never names an alias); the picture is then the one
+/// `getCoverArt` serves a signed-in user, cached for a day, with `nosniff`
+/// and a sandbox policy.
 pub async fn open(store: &SubsonicStore, settings: &Settings, raw_query: Option<&str>) -> Opened {
     if !settings.enabled {
         return Opened::Closed;
@@ -186,6 +201,14 @@ pub async fn open(store: &SubsonicStore, settings: &Settings, raw_query: Option<
     let size = only(&pairs, "size")
         .and_then(|size| size.parse::<i64>().ok())
         .filter(|size| (1..=2000).contains(size));
+    match store.exists(kind.id_kind(), internal).await {
+        Ok(true) => {}
+        Ok(false) => return Opened::Closed,
+        Err(error) => {
+            tracing::error!(cause = %error, "subsonic picture read failed");
+            return Opened::Failed;
+        }
+    }
     match library_picture(store, kind, internal, cover_bucket(size)).await {
         Ok(Some(Outcome::Binary {
             status,
@@ -193,9 +216,9 @@ pub async fn open(store: &SubsonicStore, settings: &Settings, raw_query: Option<
             mut headers,
             body,
         })) if IMAGE_TYPES.contains(&content_type.as_str()) => {
-            // The link stays the same when the picture changes (a new cover
-            // file, an artist picture fetched later), so it is cached for a
-            // day, never as immutable.
+            // An artist's link stays the same when its picture changes, and
+            // an album's version is not checked, so a picture is cached for
+            // a day, never as immutable.
             headers.retain(|(name, _)| !name.eq_ignore_ascii_case("cache-control"));
             headers.push(("Cache-Control".to_owned(), CACHE_CONTROL.to_owned()));
             headers.push(("X-Content-Type-Options".to_owned(), "nosniff".to_owned()));

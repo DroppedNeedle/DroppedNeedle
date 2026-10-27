@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use super::error::{NOT_FOUND, SubsonicError};
-use super::ids::{IdKind, decode, decode_expect, encode};
+use super::ids::{IdKind, cover_id, decode, decode_expect, encode};
 use super::library::current_id;
 use super::models::{
     Render, SArtistID3, SArtistsID3, SChild, SIndex, SIndexID3, SIndexes, SLicense, SMusicFolder,
@@ -518,10 +518,13 @@ pub async fn music_directory(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             Ok(Outcome::keyed(
                 "directory",
                 obj(vec![
-                    ("id", sid.clone().into_val()),
+                    ("id", sid.into_val()),
                     ("parent", parent),
                     ("name", album.title.into_val()),
-                    ("coverArt", sid.into_val()),
+                    (
+                        "coverArt",
+                        cover_id(&internal, album.cover_version.as_deref()).into_val(),
+                    ),
                     ("songCount", tracks.len().into_val()),
                     ("child", Val::List(children)),
                 ]),

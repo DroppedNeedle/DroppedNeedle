@@ -297,6 +297,12 @@ impl ArtworkService {
         self
     }
 
+    /// Whether an album's own art comes before the Cover Art Archive now,
+    /// as the next cover read will decide it.
+    pub fn prefers_local_art(&self) -> bool {
+        prefers_local(&self.settings)
+    }
+
     /// The disk cache, for the admin stats and clears.
     pub fn cache(&self) -> &ArtworkCache {
         &self.cache

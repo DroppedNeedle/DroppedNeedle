@@ -180,6 +180,7 @@ pub(crate) fn album_row(row: &Row<'_>) -> rusqlite::Result<AlbumRecord> {
         year: row.get("year")?,
         is_compilation: row.get("is_compilation")?,
         cover_available: row.get("cover_available")?,
+        art_version: row.get("art_version")?,
         date_added: row.get("date_added")?,
         contribution_id: row.get("contribution_id")?,
         contribution_state: row.get("contribution_state")?,

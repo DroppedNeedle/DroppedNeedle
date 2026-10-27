@@ -1438,7 +1438,7 @@ async fn covered_album(tag: &str) -> (CompatApp, [String; 3]) {
 
 /// The path and query of an open picture link, after checking it is
 /// absolute at the address the request was sent to and carries nothing
-/// but the id, the signature and the size.
+/// but the id, the signature, the size and an album's cover version.
 fn picture_path(link: &Value) -> String {
     let link = link.as_str().unwrap_or_else(|| panic!("no link: {link}"));
     let path = link
@@ -1451,7 +1451,13 @@ fn picture_path(link: &Value) -> String {
         .split('&')
         .map(|pair| pair.split_once('=').map_or(pair, |(key, _)| key))
         .collect();
-    assert_eq!(keys, ["id", "sig", "size"], "{link}");
+    assert!(
+        matches!(
+            keys.as_slice(),
+            ["id", "sig", "size"] | ["id", "sig", "size", "cv"]
+        ),
+        "{link}"
+    );
     path.to_owned()
 }
 
@@ -1974,7 +1980,8 @@ async fn jellyfin_pictures_open_only_for_ids_the_server_handed_out() {
         );
         assert_eq!(
             header_str(&headers, "cache-control"),
-            "public, max-age=31536000, immutable"
+            "public, max-age=86400",
+            "asked for without a tag, as Finamp asks"
         );
         assert!(!body.is_empty(), "{id}");
     }

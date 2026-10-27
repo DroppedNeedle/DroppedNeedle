@@ -27,6 +27,7 @@ use droppedneedle_catalog::reads::library::store::LocalCatalog;
 use droppedneedle_catalog::reads::library::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LyricDoc, LyricsPort, StoreError,
 };
+use droppedneedle_catalog::reads::platform::artwork::ArtworkService;
 use droppedneedle_catalog::reads::platform::covers::{CoverArt, CoverLookup};
 
 /// A compat read or write failed. Client faults keep their kind so each
@@ -167,6 +168,8 @@ pub struct CompatLibrary {
     pub lyrics: Arc<dyn LyricsPort>,
     /// Cover art by MBID.
     pub covers: Arc<dyn CoverArt>,
+    /// The service behind `covers`, read for the local-art setting.
+    pub artwork: Option<ArtworkService>,
     /// Per-caller seeds for paged random lists, shared by both protocols.
     pub shuffles: Arc<ShuffleSeeds>,
 }
@@ -218,6 +221,26 @@ fn tile_covers(covers: &[ImageBytes]) -> Option<ImageBytes> {
     Some((out, "image/jpeg".to_owned()))
 }
 
+/// The version an album's cover id carries: eight hex digits of what
+/// chooses the picture the cover read serves, so a change to any of them
+/// gives the album a new cover id and apps fetch the picture again. The
+/// inputs are the version of the album's own art (it goes up when a scan
+/// finds new art), the release group the Cover Art Archive is asked for,
+/// and whether local art comes first. Art replaced at the Cover Art
+/// Archive for the same release group is not seen.
+pub fn cover_version(
+    art_version: Option<i64>,
+    release_group: Option<&str>,
+    local_first: bool,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let art = art_version.map_or_else(|| "-".to_owned(), |version| version.to_string());
+    let group = release_group.unwrap_or("-");
+    let order = if local_first { "local" } else { "archive" };
+    let digest = Sha256::digest(format!("{art}\0{group}\0{order}").as_bytes());
+    format!("{digest:x}")[..8].to_owned()
+}
+
 /// Unix seconds as a whole number.
 pub fn whole(seconds: Option<f64>) -> Option<i64> {
     seconds
@@ -234,6 +257,7 @@ impl CompatLibrary {
             collections: reads.collections.clone(),
             lyrics: reads.library.lyrics.clone(),
             covers: reads.platform.covers.covers.clone(),
+            artwork: reads.artwork.clone(),
             shuffles: Arc::new(ShuffleSeeds::default()),
         }
     }
@@ -753,6 +777,15 @@ impl CompatLibrary {
             .await
             .map_err(|error| CompatError::Internal(format!("playlist cover task: {error}")))?;
         Ok(tiled.or(first))
+    }
+
+    /// Whether an album's own art comes before the Cover Art Archive,
+    /// as the cover read decides it. Local art wins without the service,
+    /// as it does when the setting cannot be read.
+    pub fn local_art_first(&self) -> bool {
+        self.artwork
+            .as_ref()
+            .is_none_or(ArtworkService::prefers_local_art)
     }
 
     /// Art for a local album: its own folder or embedded art, or the

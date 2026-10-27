@@ -21,6 +21,27 @@ use super::router::*;
 /// The only types a picture goes out under.
 const IMAGE_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
+/// The cache of a picture asked for with a `tag`: the tag changes with the
+/// picture, so the answer may be kept for a year.
+const TAGGED_CACHE: &str = "public, max-age=31536000, immutable";
+
+/// The cache of a picture asked for without a `tag` (Finamp never sends
+/// one): the address stays the same when the picture changes, so a day.
+const UNTAGGED_CACHE: &str = "public, max-age=86400";
+
+/// The cache rule for a picture request. Jellyfin 10.10.6 checks no tag
+/// and turns on its one-year cache only when a request carries one
+/// (`ImageController.cs`, `GetImageInternal` and `GetImageResult`,
+/// re-read 2026-10-27); without one it sends plain `public`. A day here
+/// lets a changed cover reach an app that sends no tag within a day.
+fn cache_control(q: &CiParams) -> &'static str {
+    if q.get("tag").is_some_and(|tag| !tag.is_empty()) {
+        TAGGED_CACHE
+    } else {
+        UNTAGGED_CACHE
+    }
+}
+
 /// 1x1 opaque PNG for the library view's advertised `ImageTags.Primary`, so
 /// the request resolves instead of 404ing (v2 `_LIBRARY_COVER_PNG`).
 pub(super) const LIBRARY_COVER_PNG_B64: &str =
@@ -108,7 +129,7 @@ pub(super) async fn serve_image(
         Some(cover) if IMAGE_TYPES.contains(&cover.content_type.as_str()) => Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", cover.content_type)
-            .header("Cache-Control", "public, max-age=31536000, immutable")
+            .header("Cache-Control", cache_control(&q))
             .header("X-Content-Type-Options", "nosniff")
             .header("Content-Security-Policy", "sandbox; default-src 'none'")
             .body(Body::from(cover.bytes))
