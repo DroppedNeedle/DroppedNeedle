@@ -157,6 +157,20 @@ impl DownloadStore<'_> {
             .optional()?)
     }
 
+    /// The newest landing of a task that imported files (`imported` or
+    /// `partial`). Its missing positions are what the release still lacked
+    /// after it, earlier landings included.
+    pub fn latest_import(&self, task_id: &str) -> Result<Option<ImportDecisionRow>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                sql::LATEST_IMPORT.text(),
+                params![task_id],
+                ImportDecisionRow::from_row,
+            )
+            .optional()?)
+    }
+
     /// The newest decision one attempt (`None` for a landing with no
     /// attempt) reached on a task, deferrals aside: a landing that waited
     /// never hides what an earlier landing of the attempt imported.

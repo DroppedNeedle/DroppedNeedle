@@ -520,25 +520,18 @@
 	async function acquireTracks(replace: boolean): Promise<void> {
 		const albumGroup = tracksGroup;
 		if (!albumGroup) return;
-		tracks = { pending: true, message: null, taskId: null, error: null, replaceVersions: replace };
+		tracks = { pending: true, message: null, error: null, replaceVersions: replace };
 		try {
 			const answer = await acquire.mutateAsync({
 				mbid: albumGroup,
 				copyId,
 				replaceVersions: replace
 			});
-			tracks = {
-				pending: false,
-				message: answer.message,
-				taskId: answer.task_id ?? null,
-				error: null,
-				replaceVersions: replace
-			};
+			tracks = { pending: false, message: answer.message, error: null, replaceVersions: replace };
 		} catch (error) {
 			tracks = {
 				pending: false,
 				message: null,
-				taskId: null,
 				error: failureSentence(error, "The missing tracks couldn't be requested."),
 				replaceVersions: replace
 			};

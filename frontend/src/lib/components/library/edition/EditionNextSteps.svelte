@@ -156,7 +156,16 @@
 				{@render stepIcon(Download, Boolean(tracks?.pending), false)}
 				<div class="flex min-w-0 flex-col gap-1">
 					<h4 class="text-xs font-semibold tracking-wide text-base-content/60 uppercase">Tracks</h4>
-					<EditionTracks {group} {missing} {versions} {sourceReady} outcome={tracks} {onacquire} />
+					<EditionTracks
+						{group}
+						localId={album.localId}
+						{plan}
+						{missing}
+						{versions}
+						{sourceReady}
+						outcome={tracks}
+						{onacquire}
+					/>
 				</div>
 			</li>
 		{/if}

@@ -19,7 +19,7 @@ use super::error::RequestsError;
 use super::models::{
     ActionResponse, AlbumIntake, BatchCancelBody, BatchCancelResponse, BatchIntake,
     BatchIntakeResponse, ClearHistoryResponse, EditionAcquireQuery, EditionAcquireResponse,
-    IntakeResponse, KindQuery, RequestKind, TrackIntake, TrackIntakeResponse,
+    EditionFetchResponse, IntakeResponse, KindQuery, RequestKind, TrackIntake, TrackIntakeResponse,
 };
 use super::service::RequestsService;
 use super::state::RequestsState;
@@ -245,6 +245,32 @@ pub async fn acquire_edition_handler(
             query.album_id.as_deref(),
             query.replace_versions.unwrap_or(true),
         )
+        .await?;
+    Ok(Json(response))
+}
+
+/// The album's current or last edition fetch: its download, and where each
+/// track it asked for is. `latest` is absent when there is none. Retry is a
+/// new acquire, which asks only for what is still missing; Stop cancels
+/// the download. `GET /api/v3/albums/{album_id}/edition/acquire`. Curator
+/// only.
+#[utoipa::path(
+    get,
+    tag = "requests",
+    path = "/api/v3/albums/{album_id}/edition/acquire",
+    params(("album_id" = String, Path, description = "Release-group MBID")),
+    responses(
+        (status = 200, body = EditionFetchResponse),
+        (status = 400, description = "Not a MusicBrainz id"),
+    )
+)]
+pub async fn edition_fetch_handler(
+    State(state): State<RequestsState>,
+    _curator: Curator,
+    Path(album_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let response = RequestsService::new(&state)
+        .edition_fetch(&album_id)
         .await?;
     Ok(Json(response))
 }

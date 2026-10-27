@@ -297,6 +297,10 @@ droppedneedle_kernel::sql! {
     /// The newest decision of a task (`?1`).
     pub(super) LATEST_DECISION = DECISION_ROW + " WHERE task_id = ?1 \
              ORDER BY decided_at DESC, id DESC LIMIT 1";
+    /// The newest decision of a task (`?1`) that imported files.
+    pub(super) LATEST_IMPORT = DECISION_ROW + " WHERE task_id = ?1 \
+             AND outcome IN ('imported', 'partial') \
+             ORDER BY decided_at DESC, id DESC LIMIT 1";
     /// The newest decision of a task (`?1`) for one attempt (`?2`, NULL for
     /// none) that is not a deferral.
     pub(super) LAST_LANDING_OF_ATTEMPT = DECISION_ROW + " WHERE task_id = ?1 \

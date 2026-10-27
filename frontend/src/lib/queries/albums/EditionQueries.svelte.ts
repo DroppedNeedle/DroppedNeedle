@@ -2,6 +2,7 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
+import { v3 } from '$lib/api/v3/endpoint';
 import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 import { purchaseOptionsKey } from '$lib/queries/albums/GetItQueries.svelte';
@@ -60,7 +61,8 @@ export function acquireEdition() {
 			replaceVersions?: boolean;
 		}) => api.global.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid, copyId, replaceVersions)),
 		// The acquire starts a download task: show it in the queue, the album's
-		// download strip and the album's library status now, not on the next poll.
+		// download strip, its edition fetch and its library status now, not on
+		// the next poll.
 		onSuccess: (_data, { mbid }) => {
 			void invalidateQueriesWithPersister({
 				queryKey: DownloadQueryKeyFactory.tasksPrefix(authStore.user?.id)
@@ -69,6 +71,67 @@ export function acquireEdition() {
 		}
 	}));
 }
+
+// The album's current or last edition fetch, and where each track it asked
+// for is (curators). Kept under the user's download tasks, so starting,
+// cancelling or retrying any download reads it again.
+export type EditionFetch = components['schemas']['EditionFetchView'];
+export type EditionFetchTrackState = components['schemas']['EditionFetchTrackState'];
+
+export const editionFetchKey = (userId: EditionUserId, group: string) =>
+	[...DownloadQueryKeyFactory.tasks(userId ?? undefined), 'edition', group] as const;
+
+const EDITION_FETCH_POLL_MS = 2_500;
+
+export type EditionFetchAnswer = components['schemas']['EditionFetchResponse'];
+
+export function editionFetchLive(edition: EditionFetch | null | undefined): boolean {
+	return edition?.state === 'waiting' || edition?.state === 'fetching';
+}
+
+/** Tracks the fetch has landed so far. */
+function landedCount(edition: EditionFetch | null | undefined): number {
+	return edition?.tracks.filter((track) => track.state === 'landed').length ?? 0;
+}
+
+export const getEditionFetchQuery = (
+	getUserId: Getter<EditionUserId>,
+	getGroup: Getter<string>,
+	getLocalId: Getter<string>,
+	getEnabled: Getter<boolean> = () => true
+) =>
+	createQuery(() => {
+		const userId = getUserId();
+		const group = getGroup();
+		const localId = getLocalId();
+		const queryKey = editionFetchKey(userId, group);
+		return {
+			queryKey,
+			enabled: getEnabled() && !!userId && !!group,
+			staleTime: 0,
+			refetchInterval: (query: { state: { data?: EditionFetchAnswer } }) =>
+				editionFetchLive(query.state.data?.latest) ? EDITION_FETCH_POLL_MS : false,
+			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<EditionFetchAnswer> => {
+				const before = queryClient.getQueryData<EditionFetchAnswer>(queryKey)?.latest;
+				const answer = await api.global.v3.GET(
+					v3('/api/v3/albums/{album_id}/edition/acquire', { path: { album_id: group } }),
+					{ signal }
+				);
+				// A track that landed, or a fetch that ended, changes the album's
+				// files: its edition plan and track rows are stale.
+				const after = answer.latest;
+				if (
+					localId &&
+					before &&
+					(landedCount(after) > landedCount(before) ||
+						(editionFetchLive(before) && !editionFetchLive(after)))
+				) {
+					invalidateEditionScope({ userId, localId, rgMbid: group });
+				}
+				return answer;
+			}
+		};
+	});
 
 // One library album's edition (library-local album id, never an RG MBID).
 // The album identity row is the edition: choosing one goes through the

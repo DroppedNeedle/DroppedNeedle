@@ -53,16 +53,4 @@ impl EditionStore {
             .await
             .map_err(|error| lane_error("editions.set", error))
     }
-
-    /// Clear one mark.
-    pub async fn clear(&self, key: &str) -> Result<(), RequestsError> {
-        let key = key.to_lowercase();
-        self.db
-            .write("editions.clear", move |tx| {
-                tx.execute(sql::CLEAR_EDITION_MARK.text(), params![key])?;
-                Ok(())
-            })
-            .await
-            .map_err(|error| lane_error("editions.clear", error))
-    }
 }

@@ -634,7 +634,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * The album's current or last edition fetch: its download, and where each
+         *     track it asked for is. `latest` is absent when there is none. Retry is a
+         *     new acquire, which asks only for what is still missing; Stop cancels
+         *     the download. `GET /api/v3/albums/{album_id}/edition/acquire`. Curator
+         *     only.
+         */
+        get: operations["edition_fetch_handler"];
         put?: never;
         /**
          * Fill the selected edition's missing tracks and upgrade its below-cutoff
@@ -13573,6 +13580,53 @@ export interface components {
             /** Format: int32 */
             track_count: number;
         };
+        /** @description The album's current or last edition fetch. */
+        EditionFetchResponse: {
+            latest?: null | components["schemas"]["EditionFetchView"];
+        };
+        /**
+         * @description Where an edition fetch is.
+         * @enum {string}
+         */
+        EditionFetchState: "waiting" | "fetching" | "done" | "failed" | "stopped";
+        /** @description One edition position an edition fetch asked for. */
+        EditionFetchTrack: {
+            /** Format: int32 */
+            disc: number;
+            /** Format: int32 */
+            position: number;
+            state: components["schemas"]["EditionFetchTrackState"];
+        };
+        /**
+         * @description Where one asked-for track is.
+         * @enum {string}
+         */
+        EditionFetchTrackState: "waiting" | "fetching" | "landed" | "failed" | "held";
+        /** @description One edition fetch: the download asking for the edition's tracks. */
+        EditionFetchView: {
+            /** @description A new fetch may be started for what is still missing. */
+            can_retry: boolean;
+            /** @description The download can be stopped. */
+            can_stop: boolean;
+            /** @description The edition fetched. */
+            release_mbid?: string | null;
+            /**
+             * @description The fetch also replaces tracks the copy holds in another version;
+             *     a retry asks the same way.
+             */
+            replace_versions: boolean;
+            state: components["schemas"]["EditionFetchState"];
+            /**
+             * @description The download fetching the tracks: the one started for them, or the
+             *     retry the queue started by itself after it.
+             */
+            task_id: string;
+            /**
+             * @description Each position asked for. Empty when the whole album was asked for
+             *     because the edition's plan could not be read.
+             */
+            tracks: components["schemas"]["EditionFetchTrack"][];
+        };
         /**
          * @description What happens to one file when the album takes the edition. Choosing
          *     never deletes a file.
@@ -24953,6 +25007,37 @@ export interface operations {
             };
             /** @description MusicBrainz down and the album is not in the library */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    edition_fetch_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionFetchResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

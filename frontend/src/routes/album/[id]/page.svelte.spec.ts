@@ -32,6 +32,7 @@ type Basic = RouteData<'GET /api/v3/albums/{album_id}/basic'>;
 type Status = RouteData<'GET /api/v3/library/albums/{id}/status'>;
 type Plan = RouteData<'GET /api/v3/library/albums/{album_id}/edition/plan'>;
 type History = RouteData<'GET /api/v3/library/albums/{album_id}/history'>;
+type Fetch = RouteData<'GET /api/v3/albums/{album_id}/edition/acquire'>['latest'];
 type LocalTrack = RouteData<'GET /api/v3/library/albums/{id}/tracks'>['items'][number];
 
 // [disc, position, title, length in ms]
@@ -104,6 +105,7 @@ function removed(id: string): RouteData<'DELETE /api/v3/library/tracks/{id}'> {
 let status: (id: string) => Status;
 let plan: Plan | null;
 let history: History;
+let editionFetch: Fetch;
 let api: FakeApi;
 
 function routes(): FakeApi {
@@ -185,6 +187,7 @@ function routes(): FakeApi {
 		'GET /api/v3/library/albums/{album_id}/edition/plan': () =>
 			plan ?? apiError(404, 'NOT_FOUND', 'No edition chosen'),
 		'GET /api/v3/library/albums/{album_id}/history': () => history,
+		'GET /api/v3/albums/{album_id}/edition/acquire': () => ({ latest: editionFetch }),
 		'GET /api/v3/albums/{album_id}/lastfm': { listeners: 0, playcount: 0, tags: [] },
 		'GET /api/v3/albums/{album_id}/plugin-details': { links: [], tags: [] },
 		'GET /api/v3/albums/{album_id}/purchase-options': {
@@ -232,6 +235,7 @@ beforeEach(() => {
 	status = notHeld;
 	plan = null;
 	history = { items: [] };
+	editionFetch = null;
 	integrationStore.reset();
 	integrationStore.setStatus({ navidrome: true, localfiles: true, library: true });
 	signIn('admin');
@@ -421,6 +425,24 @@ describe('the page agrees with the edition', () => {
 				.toBeVisible();
 		});
 	}
+
+	it('says which missing tracks an edition fetch is getting, and which it failed to get', async () => {
+		chooseRemaster();
+		editionFetch = {
+			task_id: 'task-1',
+			release_mbid: 'release-remaster',
+			state: 'failed',
+			tracks: [{ disc: 1, position: 5, state: 'failed' }],
+			replace_versions: true,
+			can_retry: true,
+			can_stop: false
+		};
+		await renderPage();
+
+		const missing = trackRow('Circumambient');
+		await expect.element(missing.getByText('Failed', { exact: true })).toBeVisible();
+		await expect.element(missing.getByText('Missing', { exact: true })).not.toBeInTheDocument();
+	});
 
 	it("shows a file's note on its row", async () => {
 		chooseRemaster();

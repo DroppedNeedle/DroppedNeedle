@@ -61,16 +61,25 @@ import {
 } from './albumPlaybackHandlers';
 import { getLibraryAlbumStatusQuery } from '$lib/queries/library/LibraryQueries.svelte';
 import {
+	editionFetchLive,
 	getAlbumEditionStatusQuery,
-	getEditionPlanQuery
+	getEditionFetchQuery,
+	getEditionPlanQuery,
+	type EditionFetchTrackState
 } from '$lib/queries/albums/EditionQueries.svelte';
-import { editionTrackRows, unmatchedFiles } from './albumEdition';
+import { editionTrackRows, unmatchedFiles, type EditionTrackRow } from './albumEdition';
 import { getAlbumDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
 import { getHeldEntriesQuery } from '$lib/queries/downloads/HeldQueries.svelte';
 import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
 import { toastStore } from '$lib/stores/toast';
+
+/** An edition track row, with where the edition fetch is with it. */
+export interface FetchedEditionRow extends EditionTrackRow {
+	/** Set while a fetch that asked for the track runs, or after it failed. */
+	fetchState: EditionFetchTrackState | null;
+}
 
 export interface SourceCallbacks {
 	onPlayAll: () => void;
@@ -300,12 +309,34 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const libraryTracksById = $derived(
 		new SvelteMap((libraryStatus?.tracks ?? []).map((track) => [track.id, track]))
 	);
-	// The rows follow the plan only while the page lists the same edition.
-	const editionRows = $derived(
-		editionPlan && editionPlan.release_mbid === tracksInfo?.selected_release_mbid
-			? editionTrackRows(editionPlan, libraryTracksById)
-			: null
+	// The edition's tracks a fetch asked for, while it runs or after it
+	// failed: their rows say fetching, failed or held instead of missing.
+	const editionFetchQuery = getEditionFetchQuery(
+		userId,
+		() => editionPlan?.release_group_mbid ?? '',
+		() => localAlbumId,
+		() => authStore.isTrusted
 	);
+	const fetchStates = $derived.by(() => {
+		const edition = editionFetchQuery.data?.latest;
+		if (!edition || !editionPlan || edition.release_mbid !== editionPlan.release_mbid) return null;
+		if (!editionFetchLive(edition) && edition.state !== 'failed') return null;
+		return new SvelteMap(
+			edition.tracks.map((track) => [
+				getDiscTrackKey({ disc_number: track.disc, position: track.position }),
+				track.state
+			])
+		);
+	});
+	// The rows follow the plan only while the page lists the same edition.
+	const editionRows = $derived.by((): Map<string, FetchedEditionRow> | null => {
+		if (!editionPlan || editionPlan.release_mbid !== tracksInfo?.selected_release_mbid) return null;
+		const rows = new SvelteMap<string, FetchedEditionRow>();
+		for (const [key, row] of editionTrackRows(editionPlan, libraryTracksById)) {
+			rows.set(key, { ...row, fetchState: fetchStates?.get(key) ?? null });
+		}
+		return rows;
+	});
 	const editionCounts = $derived(
 		editionPlan ? { kept: editionPlan.kept_count, total: editionPlan.tracks.length } : null
 	);

@@ -9,7 +9,7 @@
 	import type { RemoteMatch, RemoteTrack } from '$lib/queries/remotes/types';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import type { RenderedTrackSection } from './albumTrackResolvers';
-	import type { EditionTrackRow } from './albumEdition';
+	import type { FetchedEditionRow } from './albumPageState.svelte';
 	import { resolveSourceTrack } from './albumTrackResolvers';
 	import { normalizeDiscNumber, getDiscTrackKey } from '$lib/player/queueHelpers';
 	import { formatBytes, formatDuration } from '$lib/utils/formatting';
@@ -68,7 +68,7 @@
 		heldByPosition?: Map<string, HeldFileInEntry>;
 		trackDownloadTasks?: Map<string, DownloadTask>;
 		/** The current edition's plan by disc and position; it decides which file holds a track. */
-		editionRows?: Map<string, EditionTrackRow> | null;
+		editionRows?: Map<string, FetchedEditionRow> | null;
 		releaseGroupMbid?: string;
 		releaseMbid?: string | null;
 		/** The caller's rating of each local track they rated, by track id. */
@@ -303,7 +303,15 @@
 						</div>
 
 						{#if editionRow?.missing}
-							<span class="badge badge-sm badge-warning badge-outline shrink-0">Missing</span>
+							{#if editionRow.fetchState === 'waiting' || editionRow.fetchState === 'fetching'}
+								<span class="badge badge-sm badge-info badge-outline shrink-0">Fetching</span>
+							{:else if editionRow.fetchState === 'failed'}
+								<span class="badge badge-sm badge-error badge-outline shrink-0">Failed</span>
+							{:else if editionRow.fetchState === 'held'}
+								<span class="badge badge-sm badge-warning badge-outline shrink-0">Held</span>
+							{:else}
+								<span class="badge badge-sm badge-warning badge-outline shrink-0">Missing</span>
+							{/if}
 						{/if}
 						{#if rateTrack && libMeta}
 							<div class="hidden sm:block">

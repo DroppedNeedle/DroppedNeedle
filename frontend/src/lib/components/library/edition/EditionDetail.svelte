@@ -212,6 +212,8 @@
 					{#if isCurrent}
 						<EditionTracks
 							{group}
+							localId={plan.album_id}
+							{plan}
 							{missing}
 							{versions}
 							{sourceReady}

@@ -76,4 +76,5 @@ pub fn routes() -> Routes<RequestsState> {
         .admin(routes!(revoke_mix_handler))
         .user(routes!(refresh_mix_handler))
         .curator(routes!(acquire_edition_handler))
+        .curator(routes!(edition_fetch_handler))
 }

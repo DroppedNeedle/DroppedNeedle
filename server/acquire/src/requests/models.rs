@@ -545,3 +545,72 @@ pub struct EditionAcquireQuery {
     /// With `false` those files stay and their tracks are not fetched.
     pub replace_versions: Option<bool>,
 }
+
+/// The album's current or last edition fetch.
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+pub struct EditionFetchResponse {
+    /// Absent when the album has no edition fetch on record (none was
+    /// started, or its download was cleared from the queue).
+    pub latest: Option<EditionFetchView>,
+}
+
+/// One edition fetch: the download asking for the edition's tracks.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionFetchView {
+    /// The download fetching the tracks: the one started for them, or the
+    /// retry the queue started by itself after it.
+    pub task_id: String,
+    /// The edition fetched.
+    pub release_mbid: Option<String>,
+    pub state: EditionFetchState,
+    /// Each position asked for. Empty when the whole album was asked for
+    /// because the edition's plan could not be read.
+    pub tracks: Vec<EditionFetchTrack>,
+    /// The fetch also replaces tracks the copy holds in another version;
+    /// a retry asks the same way.
+    pub replace_versions: bool,
+    /// A new fetch may be started for what is still missing.
+    pub can_retry: bool,
+    /// The download can be stopped.
+    pub can_stop: bool,
+}
+
+/// Where an edition fetch is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditionFetchState {
+    /// Queued, or waiting for a download source.
+    Waiting,
+    /// Searching, downloading or landing.
+    Fetching,
+    /// Finished with every track it asked for.
+    Done,
+    /// Gave up with tracks still missing.
+    Failed,
+    /// Stopped by a person.
+    Stopped,
+}
+
+/// One edition position an edition fetch asked for.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionFetchTrack {
+    pub disc: u32,
+    pub position: u32,
+    pub state: EditionFetchTrackState,
+}
+
+/// Where one asked-for track is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditionFetchTrackState {
+    /// The download has not started.
+    Waiting,
+    /// The download is working on it.
+    Fetching,
+    /// Its file is in the library.
+    Landed,
+    /// The fetch ended without it.
+    Failed,
+    /// Its file is held for a person's decision.
+    Held,
+}

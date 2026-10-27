@@ -1513,6 +1513,53 @@
       }
     },
     "/api/v3/albums/{album_id}/edition/acquire": {
+      "get": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "The album's current or last edition fetch: its download, and where each\ntrack it asked for is. `latest` is absent when there is none. Retry is a\nnew acquire, which asks only for what is still missing; Stop cancels\nthe download. `GET /api/v3/albums/{album_id}/edition/acquire`. Curator\nonly.",
+        "operationId": "edition_fetch_handler",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionFetchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      },
       "post": {
         "tags": [
           "requests"
@@ -43982,6 +44029,116 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "EditionFetchResponse": {
+        "type": "object",
+        "description": "The album's current or last edition fetch.",
+        "properties": {
+          "latest": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EditionFetchView",
+                "description": "Absent when the album has no edition fetch on record (none was\nstarted, or its download was cleared from the queue)."
+              }
+            ]
+          }
+        }
+      },
+      "EditionFetchState": {
+        "type": "string",
+        "description": "Where an edition fetch is.",
+        "enum": [
+          "waiting",
+          "fetching",
+          "done",
+          "failed",
+          "stopped"
+        ]
+      },
+      "EditionFetchTrack": {
+        "type": "object",
+        "description": "One edition position an edition fetch asked for.",
+        "required": [
+          "disc",
+          "position",
+          "state"
+        ],
+        "properties": {
+          "disc": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/EditionFetchTrackState"
+          }
+        }
+      },
+      "EditionFetchTrackState": {
+        "type": "string",
+        "description": "Where one asked-for track is.",
+        "enum": [
+          "waiting",
+          "fetching",
+          "landed",
+          "failed",
+          "held"
+        ]
+      },
+      "EditionFetchView": {
+        "type": "object",
+        "description": "One edition fetch: the download asking for the edition's tracks.",
+        "required": [
+          "task_id",
+          "state",
+          "tracks",
+          "replace_versions",
+          "can_retry",
+          "can_stop"
+        ],
+        "properties": {
+          "can_retry": {
+            "type": "boolean",
+            "description": "A new fetch may be started for what is still missing."
+          },
+          "can_stop": {
+            "type": "boolean",
+            "description": "The download can be stopped."
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edition fetched."
+          },
+          "replace_versions": {
+            "type": "boolean",
+            "description": "The fetch also replaces tracks the copy holds in another version;\na retry asks the same way."
+          },
+          "state": {
+            "$ref": "#/components/schemas/EditionFetchState"
+          },
+          "task_id": {
+            "type": "string",
+            "description": "The download fetching the tracks: the one started for them, or the\nretry the queue started by itself after it."
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionFetchTrack"
+            },
+            "description": "Each position asked for. Empty when the whole album was asked for\nbecause the edition's plan could not be read."
           }
         }
       },

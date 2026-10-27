@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
 	seal: vi.fn(),
 	leave: vi.fn(),
 	downloads: [] as unknown[],
+	latest: null as Record<string, unknown> | null,
+	cancel: vi.fn(),
 	isTrusted: true,
 	isAdmin: false,
 	url: new URL('http://localhost/album/group-1'),
@@ -91,6 +93,13 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	handBackAlbumEdition: () => mutation(),
 	undoAlbumEdition: () => mutation(),
 	acquireEdition: () => mutation((...args: unknown[]) => h.acquire(...args)),
+	getEditionFetchQuery: () => ({
+		get data() {
+			return { latest: h.latest };
+		}
+	}),
+	editionFetchLive: (edition: { state?: string } | null) =>
+		edition?.state === 'waiting' || edition?.state === 'fetching',
 	previewEditionTags: () => mutation(),
 	getTagWriteQuery: () => ({ data: undefined, refetch: vi.fn() }),
 	tagWriteFinished: vi.fn(),
@@ -114,7 +123,7 @@ vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
-	cancelDownload: () => ({ mutate: vi.fn(), isPending: false }),
+	cancelDownload: () => ({ mutate: h.cancel, isPending: false }),
 	retryDownload: () => ({ mutate: vi.fn(), isPending: false }),
 	stopAutoRetry: () => ({ mutate: vi.fn(), isPending: false }),
 	tryNextSource: () => ({ mutate: vi.fn(), isPending: false })
@@ -316,6 +325,8 @@ beforeEach(async () => {
 	h.seal.mockReset();
 	h.leave.mockReset();
 	h.downloads = [];
+	h.latest = null;
+	h.cancel.mockReset();
 	(integrationStore as unknown as { set: (value: unknown) => void }).set({ download_client: true });
 	h.isTrusted = true;
 	h.isAdmin = false;
@@ -528,24 +539,24 @@ describe('making your copy the chosen edition', () => {
 			.click();
 	}
 
-	it('gets the missing tracks and replaces your versions by itself, with the download live in Next steps', async () => {
+	it('gets the missing tracks and replaces your versions by itself, with each track live in Next steps', async () => {
 		h.acquire.mockResolvedValue({
 			status: 'started',
 			message: "Downloading the 1 missing track of this edition and 1 in this edition's version.",
 			task_id: 'task-1'
 		});
-		h.downloads = [
-			{
-				id: 'task-1',
-				status: 'downloading',
-				progress_percent: 40,
-				downloaded_bytes: 4_000_000,
-				total_size_bytes: 10_000_000,
-				files_completed: 1,
-				files_total: 2,
-				created_at: '2026-10-15T10:00:00Z'
-			}
-		];
+		h.latest = {
+			task_id: 'task-1',
+			release_mbid: 'release-remaster',
+			state: 'fetching',
+			tracks: [
+				{ disc: 1, position: 2, state: 'fetching' },
+				{ disc: 1, position: 5, state: 'waiting' }
+			],
+			replace_versions: true,
+			can_retry: false,
+			can_stop: true
+		};
 		await pickRemaster();
 		await expect
 			.element(sheet().getByRole('checkbox', { name: 'Get the 1 missing track' }))
@@ -558,15 +569,52 @@ describe('making your copy the chosen edition', () => {
 
 		await sheet().getByRole('button', { name: 'Use this edition' }).click();
 
-		await expect
-			.element(sheet().getByText(/Downloading the 1 missing track of this edition and 1/))
-			.toBeVisible();
+		await expect.element(sheet().getByText('Downloading 2 tracks.')).toBeVisible();
+		const fetching = sheet().getByRole('list', { name: 'Tracks being fetched' });
+		await expect.element(fetching.getByRole('listitem').nth(0)).toHaveTextContent(/Fetching/);
+		await expect.element(fetching.getByRole('listitem').nth(1)).toHaveTextContent(/Waiting/);
 		expect(h.acquire).toHaveBeenCalledWith({
 			mbid: 'group-1',
 			copyId: 'local-1',
 			replaceVersions: true
 		});
-		await expect.element(sheet().getByRole('button', { name: 'Cancel download' })).toBeVisible();
+		await sheet().getByRole('button', { name: 'Stop' }).click();
+		expect(h.cancel).toHaveBeenCalledWith('task-1');
+	});
+
+	it("shows a failed fetch's tracks when the sheet opens, and Retry asks the same way again", async () => {
+		h.status = status({ release_mbid: 'release-remaster', state: 'chosen' });
+		h.plans.current = gapPlan();
+		h.latest = {
+			task_id: 'task-1',
+			release_mbid: 'release-remaster',
+			state: 'failed',
+			tracks: [
+				{ disc: 1, position: 2, state: 'landed' },
+				{ disc: 1, position: 5, state: 'failed' }
+			],
+			replace_versions: false,
+			can_retry: true,
+			can_stop: false
+		};
+		h.acquire.mockResolvedValue({ status: 'started', message: 'Downloading.', task_id: 'task-2' });
+		await openSheet();
+
+		await expect.element(sheet().getByText("1 track couldn't be downloaded.")).toBeVisible();
+		const fetched = sheet().getByRole('list', { name: 'Tracks being fetched' });
+		await expect
+			.element(fetched.getByRole('listitem').nth(0))
+			.toHaveTextContent(/Blue Hour.*Added/);
+		await expect
+			.element(fetched.getByRole('listitem').nth(1))
+			.toHaveTextContent(/Harbour Lights.*Failed/);
+		await expect.element(sheet().getByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+		await sheet().getByRole('button', { name: 'Retry' }).click();
+		expect(h.acquire).toHaveBeenCalledWith({
+			mbid: 'group-1',
+			copyId: 'local-1',
+			replaceVersions: false
+		});
 	});
 
 	it('leaves your versions alone with the second toggle off', async () => {

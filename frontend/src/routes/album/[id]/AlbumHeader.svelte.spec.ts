@@ -25,6 +25,8 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 		}
 	}),
 	acquireEdition: () => ({ mutateAsync: h.acquire, isPending: false }),
+	getEditionFetchQuery: () => ({ data: { latest: null } }),
+	editionFetchLive: () => false,
 	getAlbumEditionStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getEditionTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	chooseAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),

@@ -298,9 +298,6 @@ droppedneedle_kernel::sql! {
     /// Set one mark.
     pub(crate) SET_EDITION_MARK = "INSERT OR REPLACE INTO acquire_edition_acquires \
          (release_group_mbid_lower, task_id, started_at) VALUES (?1, ?2, ?3)";
-    /// Clear one mark.
-    pub(crate) CLEAR_EDITION_MARK = "DELETE FROM acquire_edition_acquires \
-         WHERE release_group_mbid_lower = ?1";
 
     // Personal-mix approvals.
 
