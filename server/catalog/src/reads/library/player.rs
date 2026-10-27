@@ -1165,12 +1165,21 @@ impl LocalCatalog {
     ) -> Result<u64, StoreError> {
         if !track_query_is_open(query) {
             let filters = track_filters(query, played)?;
+            let statements = &filters.statements;
+            let text = statements.count();
+            // Plays do not move the catalog revision, so a played filter
+            // is counted every time.
+            if played.is_some() {
+                return self
+                    .counted("player.tracks.count", text, filters.values)
+                    .await;
+            }
+            let key = format!(
+                "player.tracks {:?} {:?} {:?}",
+                statements.shape, statements.key, filters.values
+            );
             return self
-                .counted(
-                    "player.tracks.count",
-                    filters.statements.count(),
-                    filters.values,
-                )
+                .remembered("player.tracks.count", key, text, filters.values)
                 .await;
         }
         // Maintained exact count of indexed tracks (migration 0005).
@@ -1412,14 +1421,29 @@ impl LocalCatalog {
     /// on every page.
     async fn open_album_total(&self) -> Result<u64, StoreError> {
         let filters = album_filters(&AlbumQuery::default(), None)?;
-        let text = sql::player_album_count(filters.shape);
-        let values = filters.values;
+        self.remembered(
+            "player.albums.count",
+            "player.albums.open".to_owned(),
+            sql::player_album_count(filters.shape),
+            filters.values,
+        )
+        .await
+    }
+
+    /// The count `text` answers over `values`, remembered under `key` at
+    /// one catalog revision, so a list's later pages reuse its first
+    /// page's count. The store keeps at most 256 totals per revision.
+    async fn remembered(
+        &self,
+        name: &'static str,
+        key: String,
+        text: String,
+        values: Vec<Value>,
+    ) -> Result<u64, StoreError> {
         let counted = self
-            .totals(
-                "player.albums.open".to_owned(),
-                "player.albums.count",
-                move |conn| Ok(vec![unsigned(scalar(conn, &text, &values)?)]),
-            )
+            .totals(key, name, move |conn| {
+                Ok(vec![unsigned(scalar(conn, &text, &values)?)])
+            })
             .await?;
         Ok(counted.first().copied().unwrap_or(0))
     }
@@ -1454,10 +1478,22 @@ impl LocalCatalog {
             } else {
                 self.open_album_total().await?.saturating_sub(*count)
             }
-        } else {
+        } else if json.is_some() {
+            // Plays do not move the catalog revision, so a played filter
+            // is counted every time.
             let filters = album_filters(query, json)?;
             self.counted(
                 "player.albums.count",
+                sql::player_album_count(filters.shape),
+                filters.values,
+            )
+            .await?
+        } else {
+            let filters = album_filters(query, None)?;
+            let key = format!("player.albums {:?} {:?}", filters.shape, filters.values);
+            self.remembered(
+                "player.albums.count",
+                key,
                 sql::player_album_count(filters.shape),
                 filters.values,
             )

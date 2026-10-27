@@ -442,6 +442,56 @@ async fn album_pages_match_the_fixture() {
     assert_eq!(records, ALBUM_RECORDS);
 }
 
+/// A filtered player total runs its count once per catalog revision: a
+/// change made without moving the revision is not counted again, and the
+/// next revision counts afresh.
+#[tokio::test]
+async fn filtered_player_totals_count_once_per_revision() {
+    use library::player::{AlbumOrder, AlbumQuery, TrackOrder, TrackQuery};
+
+    let fixture = seed_small().await;
+    let tracks = TrackQuery {
+        album_id: Some("al2".to_owned()),
+        ..TrackQuery::default()
+    };
+    let albums = AlbumQuery {
+        artist_id: Some("a1".to_owned()),
+        ..AlbumQuery::default()
+    };
+    let totals = || async {
+        let (_, tracks) = fixture
+            .catalog
+            .tracks(&tracks, TrackOrder::Disc, 10, 0)
+            .await
+            .expect("track page");
+        let (_, albums) = fixture
+            .catalog
+            .albums(&albums, AlbumOrder::Title, 10, 0)
+            .await
+            .expect("album page");
+        (tracks, albums)
+    };
+    assert_eq!(totals().await, (1, 2));
+    write_batch(
+        &fixture,
+        "change tracks without the revision",
+        "UPDATE local_tracks SET availability = 'indexed' WHERE id = 't5'; \
+         UPDATE local_tracks SET availability = 'missing' WHERE id IN ('t1', 't2');"
+            .to_owned(),
+    )
+    .await;
+    assert_eq!(totals().await, (1, 2), "counted again at one revision");
+    write_batch(
+        &fixture,
+        "move the revision",
+        "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 1) \
+         ON CONFLICT (singleton) DO UPDATE SET value = value + 1;"
+            .to_owned(),
+    )
+    .await;
+    assert_eq!(totals().await, (2, 1), "not counted at the next revision");
+}
+
 /// The artist list's id order for each sort and direction over every
 /// credited artist of the small fixture.
 const ARTIST_ORDERS: [(ArtistSort, bool, [&str; 3]); 8] = [

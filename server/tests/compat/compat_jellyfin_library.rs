@@ -577,6 +577,12 @@ async fn browse_query_dialects() {
             "/jellyfin/Items?IncludeItemTypes=MusicAlbum&SortBy=Bogus".to_owned(),
             by_name.clone(),
         ),
+        // StartIndex is the offset with or without SortBy, also when it is
+        // not a multiple of Limit.
+        (
+            "/jellyfin/Items?IncludeItemTypes=MusicAlbum&StartIndex=3&Limit=2".to_owned(),
+            by_name[3..].to_vec(),
+        ),
         // An unknown contributor yields nothing, never the whole catalog;
         // a guest artist resolves to the albums they appear on.
         (
@@ -638,6 +644,18 @@ async fn browse_query_dialects() {
         } else {
             assert_eq!(got, expected, "{uri}");
         }
+    }
+    // Asked for no total, the page's length is sent in its place, as
+    // Jellyfin 10.10.6 does; asked for one, it is every match.
+    for (types, every) in [("MusicAlbum", 5), ("Audio", 6)] {
+        let uri = format!("/jellyfin/Items?IncludeItemTypes={types}&StartIndex=1&Limit=2");
+        let counted = json(&rig, &uri, &auth).await;
+        assert_eq!(counted["TotalRecordCount"], every, "{uri}");
+        let uri = format!("{uri}&EnableTotalRecordCount=false");
+        let uncounted = json(&rig, &uri, &auth).await;
+        assert_eq!(names(&uncounted), names(&counted), "{uri}");
+        assert_eq!(uncounted["TotalRecordCount"], 2, "{uri}");
+        assert_eq!(uncounted["StartIndex"], 1, "{uri}");
     }
     // Latest is a bare array of albums, newest first; under the library it
     // is the same list, and Limit bounds it.

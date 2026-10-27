@@ -402,7 +402,8 @@ fn in_order<T: Clone>(ids: &[String], found: Vec<T>, id_of: impl Fn(&T) -> &str)
 }
 
 impl JellyfinLibrary {
-    /// One page of tracks; `limit` [`ALL`] means every match.
+    /// One page of tracks; `limit` [`ALL`] means every match. The match
+    /// total is counted only when `counted`.
     pub async fn track_page(
         &self,
         user_id: &str,
@@ -410,7 +411,8 @@ impl JellyfinLibrary {
         sort: ItemSort,
         start: usize,
         limit: usize,
-    ) -> Result<(Vec<TrackView>, usize), ReadFailed> {
+        counted: bool,
+    ) -> Result<(Vec<TrackView>, Option<usize>), ReadFailed> {
         let query = TrackQuery {
             q: filter.search.clone(),
             album_id: filter.album.clone(),
@@ -423,23 +425,26 @@ impl JellyfinLibrary {
             played: filter.played,
             ..TrackQuery::default()
         };
-        let (tracks, total) = self
-            .library
-            .tracks(
-                &query,
-                track_order(sort, || {
-                    self.library.track_shuffle(user_id, &query, to_u64(start))
-                }),
-                to_u64(limit),
-                to_u64(start),
-            )
-            .await?;
+        let order = track_order(sort, || {
+            self.library.track_shuffle(user_id, &query, to_u64(start))
+        });
+        let (limit, offset) = (to_u64(limit), to_u64(start));
+        let (tracks, total) = if counted {
+            let (tracks, total) = self.library.tracks(&query, order, limit, offset).await?;
+            (tracks, Some(to_usize(total)))
+        } else {
+            let tracks = self
+                .library
+                .track_page(&query, order, limit, offset)
+                .await?;
+            (tracks, None)
+        };
         let local_first = self.library.local_art_first();
         let views = tracks
             .into_iter()
             .map(|track| track_view(track, local_first))
             .collect();
-        Ok((self.overlay_tracks(user_id, views).await?, to_usize(total)))
+        Ok((self.overlay_tracks(user_id, views).await?, total))
     }
 
     /// Tracks by id in the order asked; unknown ids drop out.
@@ -462,7 +467,8 @@ impl JellyfinLibrary {
             .pop())
     }
 
-    /// One page of albums; `limit` [`ALL`] means every match.
+    /// One page of albums; `limit` [`ALL`] means every match. The match
+    /// total is counted only when `counted`.
     pub async fn album_page(
         &self,
         user_id: &str,
@@ -470,7 +476,8 @@ impl JellyfinLibrary {
         sort: ItemSort,
         start: usize,
         limit: usize,
-    ) -> Result<(Vec<AlbumView>, usize), ReadFailed> {
+        counted: bool,
+    ) -> Result<(Vec<AlbumView>, Option<usize>), ReadFailed> {
         let query = AlbumQuery {
             q: filter.search.clone(),
             album_artist_ids: filter.artists.clone(),
@@ -482,23 +489,26 @@ impl JellyfinLibrary {
             played: filter.played,
             ..AlbumQuery::default()
         };
-        let (albums, total) = self
-            .library
-            .albums(
-                &query,
-                album_order(sort, || {
-                    self.library.album_shuffle(user_id, &query, to_u64(start))
-                }),
-                to_u64(limit),
-                to_u64(start),
-            )
-            .await?;
+        let order = album_order(sort, || {
+            self.library.album_shuffle(user_id, &query, to_u64(start))
+        });
+        let (limit, offset) = (to_u64(limit), to_u64(start));
+        let (albums, total) = if counted {
+            let (albums, total) = self.library.albums(&query, order, limit, offset).await?;
+            (albums, Some(to_usize(total)))
+        } else {
+            let albums = self
+                .library
+                .album_page(&query, order, limit, offset)
+                .await?;
+            (albums, None)
+        };
         let local_first = self.library.local_art_first();
         let views = albums
             .into_iter()
             .map(|album| album_view(album, local_first))
             .collect();
-        Ok((self.overlay_albums(user_id, views).await?, to_usize(total)))
+        Ok((self.overlay_albums(user_id, views).await?, total))
     }
 
     /// Albums by id in the order asked; unknown ids drop out.

@@ -94,13 +94,15 @@ pub(super) async fn fetch_item(
     })
 }
 
-/// One query result over already-built DTOs.
-fn result(items: Vec<BaseItemDto>, total: usize, start: usize) -> Response {
+/// One query result over already-built DTOs. Without a counted `total`
+/// the page's length stands in, as Jellyfin sends it when asked for no
+/// total.
+fn result(items: Vec<BaseItemDto>, total: Option<usize>, start: usize) -> Response {
     json(
         StatusCode::OK,
         &BaseItemDtoQueryResult {
+            total_record_count: total.unwrap_or(items.len()),
             items,
-            total_record_count: total,
             start_index: start,
         },
     )
@@ -153,12 +155,22 @@ async fn fetch_full_item(
 
 /// The empty result (unknown parent, filter that resolved to nothing).
 fn nothing(start: usize) -> Response {
-    result(Vec::new(), 0, start)
+    result(Vec::new(), Some(0), start)
 }
 
 /// `Limit=0` means everything from `start` (v2 `_build_page`).
 fn or_all(limit: usize) -> usize {
     if limit == 0 { ALL } else { limit }
+}
+
+/// One page as a request asks for it: `start` is `StartIndex`, the offset
+/// in every order, `limit` is `Limit` as asked, and `counted` is
+/// `EnableTotalRecordCount`.
+#[derive(Clone, Copy)]
+pub(super) struct Paging {
+    start: usize,
+    limit: usize,
+    counted: bool,
 }
 
 /// The page order for a parsed `SortBy`, else `fallback`.
@@ -226,6 +238,12 @@ pub(super) async fn browse(
     let contributing_ids = params::csv_param(&q, "ContributingArtistIds");
     let (sort_key, sort_desc) = params::browse_sort(&q);
     let played = params::played_filter(&q);
+    let counted = params::wants_total(&q);
+    let paging = Paging {
+        start,
+        limit,
+        counted,
+    };
 
     if !ids.is_empty() {
         let mut built = Vec::new();
@@ -235,7 +253,7 @@ pub(super) async fn browse(
             }
         }
         let (items, total) = page(&built, start, limit);
-        return Ok(result(items, total, start));
+        return Ok(result(items, counted.then_some(total), start));
     }
 
     let mut parent_kind: Option<String> = None;
@@ -251,7 +269,7 @@ pub(super) async fn browse(
     }
 
     if params::wants_favorites(&q) {
-        return favorites_browse(&state, &user_id, &types, played, start, limit).await;
+        return favorites_browse(&state, &user_id, &types, played, paging).await;
     }
 
     if parent_kind.as_deref() == Some("album") {
@@ -262,7 +280,14 @@ pub(super) async fn browse(
         };
         let (tracks, total) = state
             .library
-            .track_page(&user_id, &filter, ItemSort::Disc, start, or_all(limit))
+            .track_page(
+                &user_id,
+                &filter,
+                ItemSort::Disc,
+                start,
+                or_all(limit),
+                counted,
+            )
             .await?;
         return Ok(result(build_tracks(&b, &tracks).await, total, start));
     }
@@ -274,7 +299,8 @@ pub(super) async fn browse(
                 .library
                 .artist_page(&user_id, ArtistScope::All, search.as_deref(), start, size)
                 .await?;
-            Ok(result(build_artists(&b, &artists).await, total, start))
+            let built = build_artists(&b, &artists).await;
+            Ok(result(built, counted.then_some(total), start))
         }
         "MusicGenre" => {
             let genres = state.library.genres().await?;
@@ -283,7 +309,7 @@ pub(super) async fn browse(
             for g in &genres {
                 built.push(b.genre(g).await);
             }
-            Ok(result(built, total, start))
+            Ok(result(built, counted.then_some(total), start))
         }
         "Playlist" => {
             let views = state.library.playlists(&user_id).await?;
@@ -292,7 +318,7 @@ pub(super) async fn browse(
             for v in &views {
                 built.push(b.playlist(v).await);
             }
-            Ok(result(built, total, start))
+            Ok(result(built, counted.then_some(total), start))
         }
         "Audio" => {
             audio_browse(
@@ -304,8 +330,7 @@ pub(super) async fn browse(
                 played,
                 sort_key,
                 sort_desc,
-                start,
-                limit,
+                paging,
             )
             .await
         }
@@ -320,8 +345,7 @@ pub(super) async fn browse(
                 played,
                 sort_key,
                 sort_desc,
-                start,
-                limit,
+                paging,
             )
             .await
         }
@@ -336,9 +360,13 @@ pub(super) async fn favorites_browse(
     user_id: &str,
     types: &[String],
     played: Option<bool>,
-    start: usize,
-    limit: usize,
+    paging: Paging,
 ) -> Result<Response, ApiError> {
+    let Paging {
+        start,
+        limit,
+        counted,
+    } = paging;
     let b = builder(state);
     let kind = match primary_type(types) {
         "MusicArtist" => "artist",
@@ -353,7 +381,11 @@ pub(super) async fn favorites_browse(
                 tracks.retain(|track| track.played == played);
             }
             let (tracks, total) = page(&tracks, start, limit);
-            result(build_tracks(&b, &tracks).await, total, start)
+            result(
+                build_tracks(&b, &tracks).await,
+                counted.then_some(total),
+                start,
+            )
         }
         "album" => {
             let mut albums = state.library.albums_by_ids(user_id, &ids).await?;
@@ -361,7 +393,11 @@ pub(super) async fn favorites_browse(
                 albums.retain(|album| album.played == played);
             }
             let (albums, total) = page(&albums, start, limit);
-            result(build_albums(&b, &albums).await, total, start)
+            result(
+                build_albums(&b, &albums).await,
+                counted.then_some(total),
+                start,
+            )
         }
         _ => {
             let mut artists = Vec::with_capacity(ids.len());
@@ -371,7 +407,11 @@ pub(super) async fn favorites_browse(
                 }
             }
             let (artists, total) = page(&artists, start, limit);
-            result(build_artists(&b, &artists).await, total, start)
+            result(
+                build_artists(&b, &artists).await,
+                counted.then_some(total),
+                start,
+            )
         }
     })
 }
@@ -387,9 +427,13 @@ pub(super) async fn audio_browse(
     played: Option<bool>,
     sort_key: Option<SortKey>,
     sort_desc: bool,
-    start: usize,
-    limit: usize,
+    paging: Paging,
 ) -> Result<Response, ApiError> {
+    let Paging {
+        start,
+        limit,
+        counted,
+    } = paging;
     let b = builder(state);
     let sort = sort_or(sort_key, sort_desc, ItemSort::Catalog);
     let (mut filter, size) = if !album_artist_ids.is_empty() {
@@ -422,7 +466,7 @@ pub(super) async fn audio_browse(
     filter.played = played;
     let (tracks, total) = state
         .library
-        .track_page(user_id, &filter, sort, start, size)
+        .track_page(user_id, &filter, sort, start, size, counted)
         .await?;
     Ok(result(build_tracks(&b, &tracks).await, total, start))
 }
@@ -439,12 +483,15 @@ pub(super) async fn album_browse(
     played: Option<bool>,
     sort_key: Option<SortKey>,
     sort_desc: bool,
-    start: usize,
-    limit: usize,
+    paging: Paging,
 ) -> Result<Response, ApiError> {
+    let Paging {
+        start,
+        limit,
+        counted,
+    } = paging;
     let b = builder(state);
-    let size = if limit == 0 { 100 } else { limit };
-    let (filter, sort, offset, size) = if !contributing_ids.is_empty() {
+    let (filter, sort, size) = if !contributing_ids.is_empty() {
         let appears_on = decode_artists(state, contributing_ids).await?;
         if appears_on.is_empty() {
             // A contributor filter must never fall through to the full catalog.
@@ -455,12 +502,7 @@ pub(super) async fn album_browse(
             ..AlbumFilter::default()
         };
         let newest = ItemSort::By(SortKey::Recent, true);
-        (
-            filter,
-            sort_or(sort_key, sort_desc, newest),
-            start,
-            or_all(limit),
-        )
+        (filter, sort_or(sort_key, sort_desc, newest), or_all(limit))
     } else if !album_artist_ids.is_empty() || !artist_ids.is_empty() {
         let ids = album_artist_ids
             .iter()
@@ -478,7 +520,6 @@ pub(super) async fn album_browse(
         (
             filter,
             sort_or(sort_key, sort_desc, ItemSort::Catalog),
-            start,
             or_all(limit),
         )
     } else {
@@ -486,23 +527,16 @@ pub(super) async fn album_browse(
             search: search.map(str::to_owned),
             ..AlbumFilter::default()
         };
-        // Without SortBy, v2 pages by `page = start // limit + 1`.
-        let offset = match (sort_key, limit) {
-            (Some(_), _) => start,
-            (None, 0) => 0,
-            (None, _) => (start / limit) * size,
-        };
         (
             filter,
             sort_or(sort_key, sort_desc, ItemSort::Catalog),
-            offset,
-            size,
+            if limit == 0 { 100 } else { limit },
         )
     };
     let filter = AlbumFilter { played, ..filter };
     let (albums, total) = state
         .library
-        .album_page(user_id, &filter, sort, offset, size)
+        .album_page(user_id, &filter, sort, start, size, counted)
         .await?;
     Ok(result(build_albums(&b, &albums).await, total, start))
 }
@@ -535,6 +569,7 @@ pub(super) async fn latest(
             ItemSort::By(SortKey::Recent, true),
             0,
             limit as usize,
+            false,
         )
         .await?;
     Ok(json(StatusCode::OK, &build_albums(&b, &albums).await))
@@ -578,7 +613,12 @@ pub(super) async fn artists_scoped(
         )
         .await?;
     let b = builder(&state);
-    Ok(result(build_artists(&b, &artists).await, total, start))
+    let built = build_artists(&b, &artists).await;
+    Ok(result(
+        built,
+        params::wants_total(&q).then_some(total),
+        start,
+    ))
 }
 
 /// Both genre dialects share one handler (v2 `_genres`).
@@ -598,7 +638,11 @@ pub(super) async fn genres(
     for g in &genres {
         built.push(b.genre(g).await);
     }
-    Ok(result(built, total, start))
+    Ok(result(
+        built,
+        params::wants_total(&q).then_some(total),
+        start,
+    ))
 }
 
 /// Manet's boot call: a 404 here can leave the library empty (v2
@@ -700,10 +744,15 @@ pub(super) async fn similar(
     };
     let (tracks, _) = state
         .library
-        .track_page(&ctx.principal.id, &filter, ItemSort::Catalog, 0, limit)
+        .track_page(
+            &ctx.principal.id,
+            &filter,
+            ItemSort::Catalog,
+            0,
+            limit,
+            false,
+        )
         .await?;
     let b = builder(&state);
-    let built = build_tracks(&b, &tracks).await;
-    let total = built.len();
-    Ok(result(built, total, 0))
+    Ok(result(build_tracks(&b, &tracks).await, None, 0))
 }

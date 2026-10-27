@@ -102,6 +102,16 @@ pub fn played_filter(params: &CiParams) -> Option<bool> {
     })
 }
 
+/// `EnableTotalRecordCount`: on unless the request says `false`. When it is
+/// off, Jellyfin 10.10.6 sends the page's length as `TotalRecordCount`:
+/// recorded with `StartIndex=1&Limit=2` over five albums and six tracks,
+/// it answered 2 for both (`jellyfin-10.10.6-paging`).
+pub fn wants_total(params: &CiParams) -> bool {
+    !params
+        .get("EnableTotalRecordCount")
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("false"))
+}
+
 /// Lenient int query: missing/empty/unparseable falls back (v2 `_qint`).
 pub fn qint(params: &CiParams, key: &str, default: i64) -> i64 {
     match params.get(key) {
