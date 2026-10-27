@@ -1,0 +1,94 @@
+{
+  "request": "GET /Items?userId=00000000000000000000000000000001&Recursive=true&IncludeItemTypes=MusicAlbum&StartIndex=3&Limit=2",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [
+      {
+        "Name": "Mezzanine",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000016",
+        "PremiereDate": "1998-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 1998,
+        "IsFolder": true,
+        "Type": "MusicAlbum",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "MusicAlbum-MusicBrainzReleaseGroup-rg-mezzanine-0001",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Massive Attack"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Massive Attack",
+            "Id": "00000000000000000000000000000005"
+          }
+        ],
+        "AlbumArtist": "Massive Attack",
+        "AlbumArtists": [
+          {
+            "Name": "Massive Attack",
+            "Id": "00000000000000000000000000000005"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      },
+      {
+        "Name": "望厚",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000018",
+        "PremiereDate": "2015-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 2015,
+        "IsFolder": true,
+        "Type": "MusicAlbum",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "MusicAlbum-MusicBrainzReleaseGroup-rg-cjk-0001",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "ユキ"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "ユキ",
+            "Id": "00000000000000000000000000000007"
+          }
+        ],
+        "AlbumArtist": "ユキ",
+        "AlbumArtists": [
+          {
+            "Name": "ユキ",
+            "Id": "00000000000000000000000000000007"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      }
+    ],
+    "TotalRecordCount": 5,
+    "StartIndex": 3
+  }
+}

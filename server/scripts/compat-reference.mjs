@@ -6,7 +6,7 @@
 //
 //   plant <reference dir> <tmp dir> [--set lyrics]   copy the fixture tracks into <tmp dir>/music
 //   navidrome <reference dir> --image-id <id> [--port 14533] [--set arpeggi|ratings]
-//   jellyfin <reference dir> --image-id <id> [--port 18096] [--set lyrics|played]
+//   jellyfin <reference dir> --image-id <id> [--port 18096] [--set lyrics|played|paging]
 //   check <reference dir>                verify the checksums and the scrubbing
 //   clean <tmp dir>                      remove the planted tracks
 //
@@ -26,7 +26,7 @@ const SERVERS = {
 	jellyfin: { image: 'jellyfin/jellyfin:10.10.6', version: '10.10.6', port: 18096 }
 };
 // Request sets recorded on their own, each into `<server>-<version>-<set>`.
-const SETS = { navidrome: ['arpeggi', 'ratings'], jellyfin: ['lyrics', 'played'] };
+const SETS = { navidrome: ['arpeggi', 'ratings'], jellyfin: ['lyrics', 'played', 'paging'] };
 // Files a set plants beside the tracks, from the fixtures folder.
 const EXTRA_FILES = {
 	lyrics: [{ fixture: 'lyrics_airbag.lrc', path: 'Radiohead/OK Computer/01 Airbag.lrc' }]
@@ -1072,6 +1072,25 @@ function jellyfinPlayed() {
 	];
 }
 
+// Paging without SortBy: pages that start off a multiple of Limit, with
+// and without the total, for albums and tracks.
+function jellyfinPaging() {
+	const user = ['userId', '{user}'];
+	const recursive = ['Recursive', 'true'];
+	const albums = ['IncludeItemTypes', 'MusicAlbum'];
+	const tracks = ['IncludeItemTypes', 'Audio'];
+	const noTotal = ['EnableTotalRecordCount', 'false'];
+	const page = (start) => [
+		['StartIndex', start],
+		['Limit', '2']
+	];
+	return [
+		jf('items.albums.paged', '/Items', [user, recursive, albums, ...page('3')]),
+		jf('items.albums.paged-no-total', '/Items', [user, recursive, albums, ...page('1'), noTotal]),
+		jf('items.tracks.paged-no-total', '/Items', [user, recursive, tracks, ...page('1'), noTotal])
+	];
+}
+
 async function jellyfin(refDir, args) {
 	const { pinned, library, folders, set, capture, recorder } = prepare('jellyfin', refDir, args);
 	const { scrub, refs } = recorder;
@@ -1197,6 +1216,8 @@ async function jellyfin(refDir, args) {
 		await recorder.recordAll(jellyfinLyrics());
 	} else if (set === 'played') {
 		await recorder.recordAll(jellyfinPlayed());
+	} else if (set === 'paging') {
+		await recorder.recordAll(jellyfinPaging());
 	} else {
 		await recorder.recordAll(jellyfinReads());
 		recorder.into(folders[1]);

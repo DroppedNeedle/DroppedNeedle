@@ -1,0 +1,106 @@
+{
+  "request": "GET /Items?userId=00000000000000000000000000000001&Recursive=true&IncludeItemTypes=Audio&StartIndex=1&Limit=2&EnableTotalRecordCount=false",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [
+      {
+        "Name": "One",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000010",
+        "HasLyrics": false,
+        "Container": "mp3",
+        "PremiereDate": "1991-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3395920,
+        "ProductionYear": 1991,
+        "IndexNumber": 3,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "U2-Achtung Baby-0001-0003One",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "U2"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "U2",
+            "Id": "00000000000000000000000000000004"
+          }
+        ],
+        "Album": "Achtung Baby",
+        "AlbumId": "00000000000000000000000000000015",
+        "AlbumArtist": "U2",
+        "AlbumArtists": [
+          {
+            "Name": "U2",
+            "Id": "00000000000000000000000000000004"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      },
+      {
+        "Name": "Song A",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000012",
+        "HasLyrics": false,
+        "Container": "flac",
+        "PremiereDate": "2001-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 2001,
+        "IndexNumber": 1,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "Various Artists-Now Thats Music-0001-0001Song A",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Artist One"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Artist One",
+            "Id": "00000000000000000000000000000022"
+          }
+        ],
+        "Album": "Now Thats Music",
+        "AlbumId": "00000000000000000000000000000017",
+        "AlbumArtist": "Various Artists",
+        "AlbumArtists": [
+          {
+            "Name": "Various Artists",
+            "Id": "00000000000000000000000000000006"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      }
+    ],
+    "TotalRecordCount": 2,
+    "StartIndex": 1
+  }
+}

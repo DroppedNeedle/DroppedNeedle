@@ -725,6 +725,12 @@ async fn compat_answers_have_the_shape_jellyfin_returns() {
     comparison
         .replay("jellyfin-10.10.6-played", "played/")
         .await;
+    // Paging reads only, so the first app answers it.
+    comparison.rig = &rig;
+    comparison.refs = jellyfin_refs(&rig).await;
+    comparison
+        .replay("jellyfin-10.10.6-paging", "paging/")
+        .await;
     comparison.settle();
     played.stop().await;
     lyrics.stop().await;
@@ -953,7 +959,7 @@ fn compat_reference_recordings_are_unchanged_and_hold_nothing_private() {
             }
         }
     }
-    assert_eq!(folders, 8, "the recorded folders");
+    assert_eq!(folders, 9, "the recorded folders");
     assert!(
         problems.is_empty(),
         "the reference recordings are read-only:\n{}",

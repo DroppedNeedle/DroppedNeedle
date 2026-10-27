@@ -1,0 +1,124 @@
+{
+  "requests": [
+    {
+      "name": "system.info.public",
+      "file": "system.info.public.json",
+      "method": "GET",
+      "path": "/System/Info/Public",
+      "query": [],
+      "auth": "none",
+      "answer": "json"
+    },
+    {
+      "name": "login",
+      "file": "login.json",
+      "method": "POST",
+      "path": "/Users/AuthenticateByName",
+      "query": [],
+      "body": {
+        "Username": "{user_name}",
+        "Pw": "{password}"
+      },
+      "auth": "client",
+      "answer": "json"
+    },
+    {
+      "name": "items.albums.paged",
+      "file": "items.albums.paged.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ],
+        [
+          "StartIndex",
+          "3"
+        ],
+        [
+          "Limit",
+          "2"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.albums.paged-no-total",
+      "file": "items.albums.paged-no-total.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ],
+        [
+          "StartIndex",
+          "1"
+        ],
+        [
+          "Limit",
+          "2"
+        ],
+        [
+          "EnableTotalRecordCount",
+          "false"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.tracks.paged-no-total",
+      "file": "items.tracks.paged-no-total.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "Audio"
+        ],
+        [
+          "StartIndex",
+          "1"
+        ],
+        [
+          "Limit",
+          "2"
+        ],
+        [
+          "EnableTotalRecordCount",
+          "false"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    }
+  ]
+}
