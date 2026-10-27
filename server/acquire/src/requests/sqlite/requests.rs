@@ -576,6 +576,29 @@ impl RequestStore {
             .map_err(|error| lane_error("requests.attach", error))
     }
 
+    /// Switch a live album row to `release` while no download serves it,
+    /// behind the generation CAS. Answers whether the row moved; a row
+    /// whose download has started, or that moved on, keeps its release.
+    pub async fn switch_release(
+        &self,
+        key: &str,
+        release: &str,
+        expected_generation: u64,
+    ) -> Result<bool, RequestsError> {
+        let stored = row_key(RequestKind::Album, key);
+        let release = release.to_owned();
+        self.db
+            .write("requests.switch_release", move |tx| {
+                let changed = tx.execute(
+                    sql::SWITCH_RELEASE.text(),
+                    params![stored, release, to_i64(expected_generation)],
+                )?;
+                Ok(changed > 0)
+            })
+            .await
+            .map_err(|error| lane_error("requests.switch_release", error))
+    }
+
     /// Move one row's status behind the generation CAS (`None` skips the
     /// guard). Answers whether the row moved.
     pub async fn update_status(

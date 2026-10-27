@@ -314,6 +314,9 @@ pub struct RequestItem {
     /// Containing release group for exact-track rows (album context).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_release_group_mbid: Option<String>,
+    /// The edition (release MBID) the request fetches, when one is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_mbid: Option<String>,
     /// Co-requester count beyond the owner.
     pub requester_count: u32,
 }

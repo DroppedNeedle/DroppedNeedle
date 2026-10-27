@@ -88,6 +88,7 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 		isLoading: false,
 		isError: false
 	}),
+	getEditionTracksQuery: () => ({ data: undefined, isPending: true, refetch: vi.fn() }),
 	chooseAlbumEdition: () => mutation((...args: unknown[]) => h.choose(...args)),
 	confirmAlbumEdition: () => mutation((...args: unknown[]) => h.confirm(...args)),
 	handBackAlbumEdition: () => mutation(),

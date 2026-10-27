@@ -420,6 +420,82 @@ async fn duplicate_ask_attaches_a_listener() {
     assert_eq!(all["items"][0]["task_id"], calls[0].id.as_str());
 }
 
+const REL_1: &str = "44444444-4444-4444-8444-444444444444";
+const REL_2: &str = "55555555-5555-4555-8555-555555555555";
+const REL_3: &str = "66666666-6666-4666-8666-666666666666";
+
+/// Ask for album `mbid` in edition `release` as `who`.
+async fn ask_edition(state: &RequestsState, who: Who, mbid: &str, release: &str) -> Value {
+    let body = json!({
+        "musicbrainz_id": mbid, "artist": "Artist", "album": "Album", "release_mbid": release
+    });
+    let uri = "/api/v3/requests/albums";
+    call(state, Method::POST, uri, Some(who), Some(body))
+        .await
+        .1
+}
+
+/// The edition album `mbid`'s live request fetches, as the album page reads it.
+async fn requested_edition(state: &RequestsState, mbid: &str) -> Value {
+    let (_, active) = call(
+        state,
+        Method::GET,
+        "/api/v3/requests/active",
+        Some(ADMIN),
+        None,
+    )
+    .await;
+    let items = active["items"].as_array().expect("active items");
+    let item = items.iter().find(|item| item["musicbrainz_id"] == mbid);
+    item.expect("live request")["release_mbid"].clone()
+}
+
+// An album the library does not hold is fetched in the edition the page
+// asked for, not the catalog's preferred one.
+#[tokio::test]
+async fn a_request_fetches_the_edition_it_asked_for() {
+    let (state, _db, dispatch) = setup().await;
+    assert_eq!(
+        ask_edition(&state, TRUSTED, MBID_A, REL_2).await["status"],
+        "pending"
+    );
+    let calls = dispatch.take_calls().await;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].release_mbid.as_deref(), Some(REL_2));
+    assert_eq!(requested_edition(&state, MBID_A).await, REL_2);
+}
+
+// A curator's other edition switches a live request while no download
+// serves it; a plain user's ask never does, and once the download has
+// started the request keeps its edition.
+#[tokio::test]
+async fn a_request_switches_edition_only_before_its_download_starts() {
+    let (state, _db, dispatch) = setup().await;
+    ask_edition(&state, ADA, MBID_A, REL_1).await;
+    ask_edition(&state, BOB, MBID_A, REL_3).await;
+    assert_eq!(requested_edition(&state, MBID_A).await, REL_1);
+    let answer = ask_edition(&state, TRUSTED, MBID_A, REL_2).await;
+    assert_eq!(answer["status"], "awaiting_approval", "{answer}");
+    assert_eq!(answer["message"], "The request now gets this edition");
+    assert_eq!(requested_edition(&state, MBID_A).await, REL_2);
+
+    let uri = format!("/api/v3/requests/approvals/{MBID_A}/approve");
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let calls = dispatch.take_calls().await;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].release_mbid.as_deref(), Some(REL_2));
+
+    let answer = ask_edition(&state, TRUSTED, MBID_A, REL_3).await;
+    assert_eq!(answer["status"], "downloading", "{answer}");
+    assert_eq!(
+        answer["message"],
+        "Already downloading, so the edition stays as it is"
+    );
+    assert_eq!(requested_edition(&state, MBID_A).await, REL_2);
+    assert!(dispatch.take_calls().await.is_empty());
+}
+
 // A batch skips raw and live duplicates and dispatches the new rows.
 #[tokio::test]
 async fn batch_dedupes_and_dispatches_new_rows() {

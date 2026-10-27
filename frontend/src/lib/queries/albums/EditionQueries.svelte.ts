@@ -7,6 +7,8 @@ import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 import { purchaseOptionsKey } from '$lib/queries/albums/GetItQueries.svelte';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
+import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
+import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
@@ -48,6 +50,54 @@ export const getAlbumEditionsQuery = (
 		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
 		queryFn: ({ signal }) => api.global.v3.GET(CATALOG_ENDPOINTS.editions(mbid()), { signal })
 	}));
+
+export const editionTracksKey = (userId: EditionUserId, release: string) => {
+	const normalizedUserId = userId ?? null;
+	return [
+		'albums',
+		'edition-tracks',
+		normalizedUserId,
+		musicBrainzSourceKey(normalizedUserId),
+		release
+	] as const;
+};
+
+// One edition's tracklist, for an album the library does not hold.
+export const getEditionTracksQuery = (
+	getUserId: Getter<EditionUserId>,
+	group: Getter<string>,
+	release: Getter<string | null>,
+	enabled: Getter<boolean>
+) =>
+	createQuery(() => ({
+		queryKey: editionTracksKey(getUserId(), release() ?? ''),
+		enabled: enabled() && !!getUserId() && !!group() && !!release(),
+		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
+		queryFn: ({ signal }) =>
+			api.global.v3.GET(CATALOG_ENDPOINTS.editionTracks(group(), release() ?? ''), { signal })
+	}));
+
+// Switch a live request to another edition (curators). The answer says
+// whether it switched or the download had already started.
+export function switchRequestedEdition() {
+	return createMutation(() => ({
+		mutationFn: (input: {
+			group: string;
+			release: string;
+			artistName: string | null;
+			albumTitle: string;
+		}) =>
+			api.global.v3.POST(REQUESTS_ENDPOINTS.requestAlbum(), {
+				musicbrainz_id: input.group,
+				artist: input.artistName,
+				album: input.albumTitle,
+				release_mbid: input.release
+			}),
+		onSettled: () => {
+			void invalidateQueriesWithPersister({ queryKey: RequestQueryKeyFactory.all });
+		}
+	}));
+}
 
 export function acquireEdition() {
 	return createMutation(() => ({

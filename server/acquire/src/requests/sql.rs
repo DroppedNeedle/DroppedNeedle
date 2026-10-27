@@ -164,6 +164,12 @@ droppedneedle_kernel::sql! {
     /// Widen row `?1`'s monitoring flags, never narrowing them.
     pub(crate) WIDEN_MONITORING = "UPDATE request_history SET monitor_artist = 1, \
          auto_download_artist = ?2 WHERE musicbrainz_id_lower = ?1 AND monitor_artist = 0";
+    /// Switch row `?1` to release `?2` at generation `?3` while no download
+    /// serves it: it waits for approval or for quota room. A pending row
+    /// with no task is being dispatched, so it keeps the release it has.
+    pub(crate) SWITCH_RELEASE = "UPDATE request_history SET release_mbid = ?2 \
+         WHERE musicbrainz_id_lower = ?1 AND generation = ?3 \
+           AND download_task_id IS NULL AND status IN ('queued', 'awaiting_approval')";
     /// Move row `?1` to status `?2` behind the optional generation guard `?4`.
     pub(crate) UPDATE_STATUS = "UPDATE request_history SET status = ?2, completed_at = ?3, \
          generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \

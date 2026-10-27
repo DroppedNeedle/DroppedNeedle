@@ -184,6 +184,7 @@
 				mbTrackCount={state.tracksInfo?.total_tracks ?? 0}
 				releaseGroupMbid={album.musicbrainz_id}
 				{localCopies}
+				editionPick={state.editionPick}
 				downloadAllowed={state.localMatch?.download_allowed !== false}
 				rating={ratingOf(ratingsQuery.data, 'album', localAlbumId)}
 				onrate={localAlbumId

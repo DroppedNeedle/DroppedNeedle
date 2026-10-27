@@ -20698,6 +20698,8 @@ export interface components {
             protocol?: string | null;
             /** @description Picked candidate quality from the linked task, once picked. */
             quality?: string | null;
+            /** @description The edition (release MBID) the request fetches, when one is set. */
+            release_mbid?: string | null;
             /** @description Whole album or one track. */
             request_kind: components["schemas"]["RequestKind"];
             /**

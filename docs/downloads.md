@@ -18,7 +18,7 @@ What happens between pressing Request and the album landing in your library, and
 
 ## Which edition is fetched
 
-Downloads follow the edition you chose. If the album is already in your library, a request, an "acquire this edition", or an upgrade fetches the album's edition: the one you picked, else the one that best fits your files. For an album you don't have yet, it fetches the edition the album page showed you, which follows your edition preferences (Settings > Editions). Candidates are ranked against that edition's tracklist: first by how many of its tracks a folder holds, then by how close the track lengths are, then by quality, then by speed.
+Downloads follow the edition you chose. If the album is already in your library, a request, an "acquire this edition", or an upgrade fetches the album's edition: the one you picked, else the one that best fits your files. For an album you don't have yet, it fetches the edition the album page showed you, which follows your edition preferences (Settings > Editions). Admins and trusted users can choose another one first: the album page shows the edition it will get, and Change opens the list of editions with each one's tracks. Pick one, then Add to Library. You can switch a request to another edition the same way until its download starts; after that the page shows which edition is downloading. Candidates are ranked against that edition's tracklist: first by how many of its tracks a folder holds, then by how close the track lengths are, then by quality, then by speed.
 
 ## Single tracks
 

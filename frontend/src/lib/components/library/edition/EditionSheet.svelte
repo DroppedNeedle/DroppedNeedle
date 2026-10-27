@@ -3,10 +3,16 @@
 	on the left, the selected one compared with the files on the right, and
 	after a choice what happens next. It closes only when the person closes
 	it. On a phone the list and the detail are two steps of one sheet.
+	With `request`, for an album the library does not hold, it picks the
+	edition a request gets: the same list, and the selected edition's tracks.
 -->
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { ChevronLeft } from 'lucide-svelte';
+	import { ChevronLeft, ExternalLink } from 'lucide-svelte';
+	import { coverPath } from '$lib/api/covers';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
+	import { formatDuration } from '$lib/utils/formatting';
 	import Modal from '$lib/ui/Modal.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -24,6 +30,7 @@
 		getAlbumEditionStatusQuery,
 		getAlbumEditionsQuery,
 		getEditionPlanQuery,
+		getEditionTracksQuery,
 		handBackAlbumEdition,
 		leaveAlbumUnmanaged,
 		matchEditionFile,
@@ -40,11 +47,12 @@
 	import EditionList, { type EditionGroup, type EditionRow } from './EditionList.svelte';
 	import EditionListSkeleton from './EditionListSkeleton.svelte';
 	import EditionDetail from './EditionDetail.svelte';
+	import EditionDetailSkeleton from './EditionDetailSkeleton.svelte';
 	import EditionNextSteps from './EditionNextSteps.svelte';
 	import EditionFind from './EditionFind.svelte';
 	import EditionNoneRight from './EditionNoneRight.svelte';
 	import type { TracksOutcome } from './EditionTracks.svelte';
-	import { editionSheet } from './editionSheetState.svelte';
+	import { editionSheet, type EditionRequestPick } from './editionSheetState.svelte';
 	import {
 		LEFT_UNMANAGED_NOTE,
 		SHEET_DESCRIPTION,
@@ -68,9 +76,11 @@
 		groupMbid: string;
 		/** `movedTo` is the release group a choice moved the album to, if it did. */
 		onclose?: (movedTo: string | null) => void;
+		/** Pick the edition to request instead, for an album with no copies. */
+		request?: EditionRequestPick;
 	}
 
-	let { open = $bindable(false), copies, groupMbid, onclose }: Props = $props();
+	let { open = $bindable(false), copies, groupMbid, onclose, request }: Props = $props();
 
 	const userId = () => authStore.user?.id;
 	const canEdit = $derived(authStore.isTrusted);
@@ -132,6 +142,7 @@
 		actionError = null;
 		noneRight = { done: null, error: null };
 		tracks = null;
+		if (request) selected = request.release;
 	}
 
 	const copy = $derived(copies.find((item) => item.id === copyId) ?? copies[0]);
@@ -254,7 +265,30 @@
 		};
 	}
 
-	const groups = $derived.by((): EditionGroup[] => {
+	// An album the library does not hold: every edition, the one the
+	// request gets first.
+	const requestGroups = $derived.by((): EditionGroup[] => {
+		const pick = request;
+		if (!pick) return [];
+		const rows: EditionRow[] = [...editions]
+			.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
+			.map((item) => {
+				const facts = factsOf(item.release_mbid) ?? {};
+				return {
+					key: item.release_mbid,
+					release: item.release_mbid,
+					name: editionName(facts),
+					facts: editionFactsLine(facts),
+					fit: null,
+					current: item.release_mbid === pick.release,
+					bestGuess: false
+				};
+			});
+		rows.sort((a, b) => Number(b.current) - Number(a.current));
+		return [{ id: 'editions', label: 'Editions of this album', rows }];
+	});
+
+	const libraryGroups = $derived.by((): EditionGroup[] => {
 		if (!status) return [];
 		const current: EditionRow[] = [];
 		if (status.edition_kind === 'custom') {
@@ -348,6 +382,7 @@
 		];
 	});
 
+	const groups = $derived(request ? requestGroups : libraryGroups);
 	const allRows = $derived(groups.flatMap((item) => item.rows));
 	const needle = $derived(filter.trim().toLowerCase());
 	const visibleGroups = $derived(
@@ -600,189 +635,329 @@
 		}))
 	);
 	const tracksGroup = $derived(chosen?.choice.release_group_mbid ?? group);
+
+	const pickTracksQuery = getEditionTracksQuery(
+		userId,
+		() => group,
+		() => (request ? selected : null),
+		() => open && Boolean(request)
+	);
+	const canPick = $derived(
+		Boolean(request && !request.locked && selected && selected !== request.release)
+	);
+
+	async function pickEdition(): Promise<void> {
+		const release = selected;
+		if (!request || !release) return;
+		actionError = null;
+		try {
+			await request.pick(release);
+			finish();
+		} catch (error) {
+			actionError = failureSentence(error, "This edition couldn't be chosen.");
+		}
+	}
 	const pickedName = $derived(currentPlan ? editionName(currentPlan.edition) : null);
 </script>
 
 <Modal
 	bind:open
 	size="sheet"
-	title="Edition of {copy?.title ?? 'this album'}"
-	description={SHEET_DESCRIPTION}
+	title="Edition of {request?.albumTitle ?? copy?.title ?? 'this album'}"
+	description={request ? 'Pick the release to get.' : SHEET_DESCRIPTION}
 	onclose={finish}
 >
-	<div class="flex flex-col md:h-full md:min-h-0">
-		{#if copies.length > 1 || steppedBack || reasonShown}
-			<div class="flex flex-col gap-2 px-4 pt-3 md:px-6">
-				{#if copies.length > 1}
-					<div class="max-w-md">
-						<SelectField label="Which copy?" bind:value={copyId} options={copyOptions} />
-					</div>
-				{/if}
-				{#if steppedBack}
-					<p class="alert alert-warning py-2 text-sm" role="note">{LEFT_UNMANAGED_NOTE}</p>
-				{/if}
-				{#if reasonShown}
-					<p class="text-sm text-base-content/70">{reasonShown}</p>
-				{/if}
-			</div>
-		{/if}
+	{#if request}
+		{@render requestBody(request)}
+	{:else}
+		<div class="flex flex-col md:h-full md:min-h-0">
+			{#if copies.length > 1 || steppedBack || reasonShown}
+				<div class="flex flex-col gap-2 px-4 pt-3 md:px-6">
+					{#if copies.length > 1}
+						<div class="max-w-md">
+							<SelectField label="Which copy?" bind:value={copyId} options={copyOptions} />
+						</div>
+					{/if}
+					{#if steppedBack}
+						<p class="alert alert-warning py-2 text-sm" role="note">{LEFT_UNMANAGED_NOTE}</p>
+					{/if}
+					{#if reasonShown}
+						<p class="text-sm text-base-content/70">{reasonShown}</p>
+					{/if}
+				</div>
+			{/if}
 
-		<div
-			class="grid flex-1 md:min-h-0 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:divide-x md:divide-base-content/10"
-		>
 			<div
-				class="flex-col gap-6 px-4 py-4 md:flex md:overflow-y-auto md:px-6 {step === 'detail'
-					? 'hidden'
-					: 'flex'}"
-				aria-label="Editions"
-				role="region"
+				class="grid flex-1 md:min-h-0 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:divide-x md:divide-base-content/10"
 			>
-				<QueryBoundary query={statusQuery} what="the album's edition">
-					{#snippet loading()}<EditionListSkeleton />{/snippet}
-					<EditionList
-						groups={visibleGroups}
-						{selected}
-						bind:filter
-						showFilter={allRows.length > 6}
-						onselect={select}
-					/>
-					{#if editionsQuery.isLoading}
-						<EditionListSkeleton />
-					{:else if editionsQuery.isError}
+				<div
+					class="flex-col gap-6 px-4 py-4 md:flex md:overflow-y-auto md:px-6 {step === 'detail'
+						? 'hidden'
+						: 'flex'}"
+					aria-label="Editions"
+					role="region"
+				>
+					<QueryBoundary query={statusQuery} what="the album's edition">
+						{#snippet loading()}<EditionListSkeleton />{/snippet}
+						<EditionList
+							groups={visibleGroups}
+							{selected}
+							bind:filter
+							showFilter={allRows.length > 6}
+							onselect={select}
+						/>
+						{#if editionsQuery.isLoading}
+							<EditionListSkeleton />
+						{:else if editionsQuery.isError}
+							<p class="text-sm text-base-content/60">
+								MusicBrainz isn't answering, so the other editions can't be listed. Paste a release
+								link below instead.
+							</p>
+						{/if}
+						{#if searchQuery.isError}
+							<p class="text-sm text-base-content/60" role="alert">
+								{failureSentence(searchQuery.error, "MusicBrainz couldn't be searched.")}
+							</p>
+						{:else if searchArgs && searchQuery.data && searchQuery.data.items.length === 0}
+							<p class="text-sm text-base-content/60">MusicBrainz found no releases for that.</p>
+						{/if}
+					</QueryBoundary>
+					{#if canEdit}
+						<EditionFind
+							bind:title={findTitle}
+							bind:artist={findArtist}
+							searching={searchQuery.isFetching}
+							onpaste={select}
+							onsearch={() => (searchArgs = { title: findTitle.trim(), artist: findArtist.trim() })}
+						/>
+					{/if}
+					{#if isAdmin && status}
+						<EditionNoneRight
+							album={customAlbum}
+							canLeave={hold?.kind !== 'your_choice'}
+							done={noneRight.done}
+							error={noneRight.error}
+							onkeep={keepOwnTrackList}
+							onleave={leaveAlone}
+						/>
+					{/if}
+					<div class="flex flex-wrap gap-2 md:hidden">
+						{@render footerLinks()}
+					</div>
+				</div>
+
+				<div
+					class="flex-col gap-4 px-4 py-4 md:flex md:overflow-y-auto md:px-6 {step === 'list'
+						? 'hidden'
+						: 'flex'}"
+					aria-label="Selected edition"
+					role="region"
+				>
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={ChevronLeft}
+						class="-ml-2 self-start md:hidden"
+						onclick={() => (step = 'list')}>All editions</Button
+					>
+					{#if view === 'next' && chosen}
+						<EditionNextSteps
+							name={chosen.name}
+							{status}
+							plan={currentPlan?.release_mbid === chosen.release ? currentPlan : null}
+							choice={chosen.choice}
+							held={Boolean(hold)}
+							error={actionError}
+							onundo={undoChange}
+							album={{ userId: userId(), localId: copyId, rgMbid: group || undefined }}
+							group={tracksGroup}
+							gaps={chosen.gaps}
+							{sourceReady}
+							{tracks}
+							onacquire={acquireTracks}
+						/>
+					{:else if view === 'handedBack'}
+						<div class="flex flex-col items-start gap-3 text-sm" aria-live="polite">
+							{#if status?.identifying}
+								<p class="flex items-center gap-2">
+									<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+									Looking for the edition that fits your files best...
+								</p>
+							{:else if pickedName}
+								<p>DroppedNeedle picked {pickedName}.</p>
+								<AsyncButton variant="ghost" size="sm" onclick={undoChange}>Undo</AsyncButton>
+							{:else if status}
+								<p>{status.reason.message}</p>
+							{/if}
+							{#if actionError}<p class="text-error" role="alert">{actionError}</p>{/if}
+						</div>
+					{:else if selected}
+						<EditionDetail
+							release={selected}
+							query={{
+								data: selectedPlan,
+								isPending: selectedPlanQuery.isPending,
+								isError: selectedPlanQuery.isError,
+								error: selectedPlanQuery.error,
+								refetch: selectedPlanQuery.refetch
+							}}
+							isCurrent={selectedIsCurrent}
+							{hiddenByFilter}
+							albumHasGroup={Boolean(group)}
+							{canEdit}
+							primary={primaryKind ? primaryAction : undefined}
+							{actionError}
+							putBackCount={lastRemoval?.files ?? null}
+							onremoveextras={moveExtras}
+							onputback={putBack}
+							{sourceReady}
+							bind:getMissing
+							bind:replaceVersions
+							group={tracksGroup}
+							{tracks}
+							onacquire={acquireTracks}
+							editionKind={status?.edition_kind ?? null}
+							appPicked={status?.state === 'confirmed' || status?.state === 'unconfirmed'}
+							onmatch={matchTrack}
+							onunmatch={unmatchTrack}
+						/>
+					{:else if status}
 						<p class="text-sm text-base-content/60">
-							MusicBrainz isn't answering, so the other editions can't be listed. Paste a release
-							link below instead.
+							Pick an edition to compare it with your files.
 						</p>
+						{#if actionError}<p class="text-sm text-error" role="alert">{actionError}</p>{/if}
 					{/if}
-					{#if searchQuery.isError}
-						<p class="text-sm text-base-content/60" role="alert">
-							{failureSentence(searchQuery.error, "MusicBrainz couldn't be searched.")}
-						</p>
-					{:else if searchArgs && searchQuery.data && searchQuery.data.items.length === 0}
-						<p class="text-sm text-base-content/60">MusicBrainz found no releases for that.</p>
-					{/if}
-				</QueryBoundary>
-				{#if canEdit}
-					<EditionFind
-						bind:title={findTitle}
-						bind:artist={findArtist}
-						searching={searchQuery.isFetching}
-						onpaste={select}
-						onsearch={() => (searchArgs = { title: findTitle.trim(), artist: findArtist.trim() })}
-					/>
-				{/if}
-				{#if isAdmin && status}
-					<EditionNoneRight
-						album={customAlbum}
-						canLeave={hold?.kind !== 'your_choice'}
-						done={noneRight.done}
-						error={noneRight.error}
-						onkeep={keepOwnTrackList}
-						onleave={leaveAlone}
-					/>
-				{/if}
-				<div class="flex flex-wrap gap-2 md:hidden">
-					{@render footerLinks()}
 				</div>
 			</div>
-
-			<div
-				class="flex-col gap-4 px-4 py-4 md:flex md:overflow-y-auto md:px-6 {step === 'list'
-					? 'hidden'
-					: 'flex'}"
-				aria-label="Selected edition"
-				role="region"
-			>
-				<Button
-					variant="ghost"
-					size="sm"
-					icon={ChevronLeft}
-					class="-ml-2 self-start md:hidden"
-					onclick={() => (step = 'list')}>All editions</Button
-				>
-				{#if view === 'next' && chosen}
-					<EditionNextSteps
-						name={chosen.name}
-						{status}
-						plan={currentPlan?.release_mbid === chosen.release ? currentPlan : null}
-						choice={chosen.choice}
-						held={Boolean(hold)}
-						error={actionError}
-						onundo={undoChange}
-						album={{ userId: userId(), localId: copyId, rgMbid: group || undefined }}
-						group={tracksGroup}
-						gaps={chosen.gaps}
-						{sourceReady}
-						{tracks}
-						onacquire={acquireTracks}
-					/>
-				{:else if view === 'handedBack'}
-					<div class="flex flex-col items-start gap-3 text-sm" aria-live="polite">
-						{#if status?.identifying}
-							<p class="flex items-center gap-2">
-								<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-								Looking for the edition that fits your files best...
-							</p>
-						{:else if pickedName}
-							<p>DroppedNeedle picked {pickedName}.</p>
-							<AsyncButton variant="ghost" size="sm" onclick={undoChange}>Undo</AsyncButton>
-						{:else if status}
-							<p>{status.reason.message}</p>
-						{/if}
-						{#if actionError}<p class="text-error" role="alert">{actionError}</p>{/if}
-					</div>
-				{:else if selected}
-					<EditionDetail
-						release={selected}
-						query={{
-							data: selectedPlan,
-							isPending: selectedPlanQuery.isPending,
-							isError: selectedPlanQuery.isError,
-							error: selectedPlanQuery.error,
-							refetch: selectedPlanQuery.refetch
-						}}
-						isCurrent={selectedIsCurrent}
-						{hiddenByFilter}
-						albumHasGroup={Boolean(group)}
-						{canEdit}
-						primary={primaryKind ? primaryAction : undefined}
-						{actionError}
-						putBackCount={lastRemoval?.files ?? null}
-						onremoveextras={moveExtras}
-						onputback={putBack}
-						{sourceReady}
-						bind:getMissing
-						bind:replaceVersions
-						group={tracksGroup}
-						{tracks}
-						onacquire={acquireTracks}
-						editionKind={status?.edition_kind ?? null}
-						appPicked={status?.state === 'confirmed' || status?.state === 'unconfirmed'}
-						onmatch={matchTrack}
-						onunmatch={unmatchTrack}
-					/>
-				{:else if status}
-					<p class="text-sm text-base-content/60">Pick an edition to compare it with your files.</p>
-					{#if actionError}<p class="text-sm text-error" role="alert">{actionError}</p>{/if}
-				{/if}
-			</div>
 		</div>
-	</div>
+	{/if}
 
 	{#snippet actions()}
-		<div class="flex items-center gap-2">
-			<div class="hidden flex-1 flex-wrap gap-2 md:flex">
-				{@render footerLinks()}
+		{#if request}
+			<div class="flex items-center gap-2">
+				<div class="flex min-w-0 flex-1 flex-wrap items-center gap-2 md:hidden">
+					{#if step === 'detail' && canPick}
+						{@render pickAction()}
+					{/if}
+				</div>
+				<Button size="sm" class="ml-auto" onclick={finish}>Done</Button>
 			</div>
-			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-2 md:hidden">
-				{#if step === 'detail' && primaryKind}
-					{@render primaryAction()}
-				{/if}
+		{:else}
+			<div class="flex items-center gap-2">
+				<div class="hidden flex-1 flex-wrap gap-2 md:flex">
+					{@render footerLinks()}
+				</div>
+				<div class="flex min-w-0 flex-1 flex-wrap items-center gap-2 md:hidden">
+					{#if step === 'detail' && primaryKind}
+						{@render primaryAction()}
+					{/if}
+				</div>
+				<Button size="sm" onclick={finish}>Done</Button>
 			</div>
-			<Button size="sm" onclick={finish}>Done</Button>
-		</div>
+		{/if}
 	{/snippet}
 </Modal>
+
+{#snippet requestBody(pick: EditionRequestPick)}
+	<div
+		class="grid flex-1 md:h-full md:min-h-0 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:divide-x md:divide-base-content/10"
+	>
+		<div
+			class="flex-col gap-4 px-4 py-4 md:flex md:overflow-y-auto md:px-6 {step === 'detail'
+				? 'hidden'
+				: 'flex'}"
+			aria-label="Editions"
+			role="region"
+		>
+			<QueryBoundary query={editionsQuery} what="this album's editions">
+				{#snippet loading()}<EditionListSkeleton />{/snippet}
+				<EditionList
+					groups={visibleGroups}
+					{selected}
+					bind:filter
+					showFilter={allRows.length > 6}
+					onselect={select}
+					currentLabel={pick.requested ? 'Requested' : 'Getting'}
+				/>
+			</QueryBoundary>
+		</div>
+
+		<div
+			class="flex-col gap-4 px-4 py-4 md:flex md:overflow-y-auto md:px-6 {step === 'list'
+				? 'hidden'
+				: 'flex'}"
+			aria-label="Selected edition"
+			role="region"
+		>
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ChevronLeft}
+				class="-ml-2 self-start md:hidden"
+				onclick={() => (step = 'list')}>All editions</Button
+			>
+			{#if selected}
+				{@const facts = factsOf(selected)}
+				{@const link = outsideLink(`https://musicbrainz.org/release/${selected}`)}
+				<header class="flex items-start gap-4">
+					<AlbumImage
+						customUrl={coverPath('release', selected, 250)}
+						alt=""
+						size="full"
+						className="h-20 w-20 shrink-0 rounded-box"
+						retryOnError={false}
+					/>
+					<div class="min-w-0">
+						<h3 class="text-lg font-bold">{editionName(facts ?? {})}</h3>
+						{#if facts}
+							<p class="text-sm text-base-content/70">{editionFactsLine(facts)}</p>
+						{/if}
+						{#if link}
+							<a
+								class="link inline-flex items-center gap-1 text-xs text-base-content/55"
+								href={link}
+								target="_blank"
+								rel="noreferrer"
+								>Open in MusicBrainz <ExternalLink class="h-3 w-3" aria-hidden="true" /></a
+							>
+						{/if}
+					</div>
+				</header>
+				<QueryBoundary query={pickTracksQuery} what="this edition's tracks">
+					{#snippet loading()}<EditionDetailSkeleton />{/snippet}
+					{#snippet children(info)}
+						{@const discs = new Set(info.tracks.map((track) => track.disc_number)).size}
+						<ol class="flex flex-col text-sm" aria-label="Tracks">
+							{#each info.tracks as track (`${track.disc_number}-${track.position}`)}
+								<li class="flex items-baseline gap-3 border-b border-base-content/5 py-1.5">
+									<span class="w-8 shrink-0 text-right text-base-content/50 tabular-nums"
+										>{discs > 1 ? `${track.disc_number}-${track.position}` : track.position}</span
+									>
+									<span class="min-w-0 flex-1 truncate">{track.title}</span>
+									<span class="shrink-0 text-base-content/50 tabular-nums"
+										>{formatDuration(track.length)}</span
+									>
+								</li>
+							{/each}
+						</ol>
+					{/snippet}
+				</QueryBoundary>
+				{#if canPick}
+					<div class="hidden flex-wrap items-center gap-3 md:flex">
+						{@render pickAction()}
+					</div>
+				{/if}
+				{#if actionError}<p class="text-sm text-error" role="alert">{actionError}</p>{/if}
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
+{#snippet pickAction()}
+	<AsyncButton variant="primary" size="sm" onclick={pickEdition}
+		>{request?.requested ? 'Switch to this edition' : 'Choose this edition'}</AsyncButton
+	>
+{/snippet}
 
 {#snippet primaryAction()}
 	{#if primaryKind === 'keep'}

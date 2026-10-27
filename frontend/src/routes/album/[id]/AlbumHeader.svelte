@@ -29,7 +29,10 @@
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
 	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
-	import { editionSheet } from '$lib/components/library/edition/editionSheetState.svelte';
+	import {
+		editionSheet,
+		type EditionRequestPick
+	} from '$lib/components/library/edition/editionSheetState.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -55,6 +58,8 @@
 		editionCounts?: { kept: number; total: number } | null;
 		releaseGroupMbid?: string;
 		localCopies?: LibraryAlbumSummary[];
+		/** The edition a request gets, for a curator on an album the library does not hold. */
+		editionPick?: EditionRequestPick | null;
 		downloadAllowed?: boolean;
 		/** The caller's rating of the local album, 0 when not rated. */
 		rating?: number;
@@ -84,6 +89,7 @@
 		editionCounts = null,
 		releaseGroupMbid = '',
 		localCopies = [],
+		editionPick = null,
 		downloadAllowed = true,
 		rating = 0,
 		onrate,
@@ -170,7 +176,7 @@
 
 	// The edition plate stays while its sheet is open, even when a choice
 	// moved the copy off this page.
-	const showPlate = $derived(localCopies.length > 0 || editionSheet.open);
+	const showPlate = $derived(localCopies.length > 0 || editionSheet.open || !!editionPick);
 
 	let backdropUrl = $derived(
 		album.musicbrainz_id
@@ -274,7 +280,11 @@
 			{/if}
 
 			{#if showPlate}
-				<EditionPlate copies={localCopies} groupMbid={releaseGroupMbid || album.musicbrainz_id} />
+				<EditionPlate
+					copies={localCopies}
+					groupMbid={releaseGroupMbid || album.musicbrainz_id}
+					request={editionPick ?? undefined}
+				/>
 			{/if}
 
 			{#if libraryInLibrary}

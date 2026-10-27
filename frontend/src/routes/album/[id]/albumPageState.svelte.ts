@@ -74,6 +74,9 @@ import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
 import { toastStore } from '$lib/stores/toast';
+import { getActiveRequestsQuery } from '$lib/queries/requests/RequestQueries.svelte';
+import { switchRequestedEdition } from '$lib/queries/albums/EditionQueries.svelte';
+import type { EditionRequestPick } from '$lib/components/library/edition/editionSheetState.svelte';
 
 /** An edition track row, with where the edition fetch is with it. */
 export interface FetchedEditionRow extends EditionTrackRow {
@@ -345,6 +348,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	);
 
 	function resetState() {
+		pickedRelease = null;
 		if (abortController) {
 			abortController.abort();
 			abortController = null;
@@ -764,11 +768,53 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		};
 	});
 
+	// The edition a request gets on an album the library does not hold
+	// (curators): their pick, else the catalog's; once requested, the live
+	// request's, which a pick switches until its download starts.
+	let pickedRelease = $state<string | null>(null);
+	const activeRequestsQuery = getActiveRequestsQuery(() => isRequested && authStore.isTrusted);
+	const liveRequest = $derived(
+		activeRequestsQuery.data?.items.find(
+			(item) =>
+				item.request_kind === 'album' && item.musicbrainz_id === album?.musicbrainz_id.toLowerCase()
+		) ?? null
+	);
+	const switchEdition = switchRequestedEdition();
+	const editionPick = $derived.by((): EditionRequestPick | null => {
+		if (!album || inLibrary || libraryInLibrary || !authStore.isTrusted) return null;
+		if (isRequested && !liveRequest) return null;
+		const current = album;
+		return {
+			release: liveRequest
+				? (liveRequest.release_mbid ?? null)
+				: (pickedRelease ?? tracksInfo?.selected_release_mbid ?? null),
+			requested: isRequested,
+			locked: Boolean(liveRequest?.task_id),
+			albumTitle: current.title,
+			pick: async (release) => {
+				if (!isRequested) {
+					pickedRelease = release;
+					return;
+				}
+				const answer = await switchEdition.mutateAsync({
+					group: current.musicbrainz_id,
+					release,
+					artistName: current.artist_name ?? null,
+					albumTitle: current.title
+				});
+				toastStore.show({
+					message: answer.message,
+					type: answer.status === 'downloading' ? 'info' : 'success'
+				});
+			}
+		};
+	});
+
 	const eventHandlers = createEventHandlers({
 		getAlbum: () => album,
 		setAlbum: (a) => (album = a),
 		getAlbumId: albumIdGetter,
-		getSelectedRelease: () => tracksInfo?.selected_release_mbid ?? null,
+		getSelectedRelease: () => pickedRelease ?? tracksInfo?.selected_release_mbid ?? null,
 		albumBasicCacheSet: (data, key) => albumBasicCache.set(data, key),
 		setTrackLinks: (tl) => (trackLinks = tl),
 		getTrackLinks: () => trackLinks,
@@ -1116,6 +1162,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		},
 		get isRequested() {
 			return isRequested;
+		},
+		get editionPick() {
+			return editionPick;
 		},
 		get libraryStatus() {
 			return libraryStatus;

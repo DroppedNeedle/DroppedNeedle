@@ -414,17 +414,6 @@ impl RequestsService {
             Some(artist_name.clone()),
             body.auto_download_artist,
         );
-        if let Some(existing) = self.store.get(RequestKind::Album, &mbid).await?
-            && (existing.status.is_active() || existing.status == RequestStatus::Cancelling)
-        {
-            return self.attach_album(principal, &existing, follow).await;
-        }
-
-        let gate = self.quota.request_gate(principal.user_id(), role, 1)?;
-        self.quota
-            .check_storage_admission(principal.user_id(), role, DispatchOrigin::User)
-            .await?;
-
         // The library's chosen edition wins for an album it holds; the
         // edition the page showed fills in for one it does not.
         let asked = body
@@ -433,7 +422,20 @@ impl RequestsService {
             .map(validate_mbid)
             .transpose()?
             .map(|release| release.to_lowercase());
-        let release_mbid = self.chosen_release(&mbid).await.or(asked);
+        if let Some(existing) = self.store.get(RequestKind::Album, &mbid).await?
+            && (existing.status.is_active() || existing.status == RequestStatus::Cancelling)
+        {
+            return self
+                .attach_album(principal, &existing, follow, asked.as_deref())
+                .await;
+        }
+
+        let gate = self.quota.request_gate(principal.user_id(), role, 1)?;
+        self.quota
+            .check_storage_admission(principal.user_id(), role, DispatchOrigin::User)
+            .await?;
+
+        let release_mbid = self.chosen_release(&mbid).await.or(asked.clone());
         let needs_approval = !granted && !auto_approves(role);
         let record = self.new_album_record(
             principal,
@@ -451,11 +453,11 @@ impl RequestsService {
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
-            BeginOutcome::Existing(winner) if winner.status.is_active() => {
-                self.attach_album(principal, &winner, follow).await
-            }
-            BeginOutcome::Existing(winner) if winner.status == RequestStatus::Cancelling => {
-                self.attach_album(principal, &winner, follow).await
+            BeginOutcome::Existing(winner)
+                if winner.status.is_active() || winner.status == RequestStatus::Cancelling =>
+            {
+                self.attach_album(principal, &winner, follow, asked.as_deref())
+                    .await
             }
             BeginOutcome::Existing(_) => Ok(IntakeResponse {
                 success: false,
@@ -1803,12 +1805,15 @@ impl RequestsService {
 
     /// Attach a duplicate album ask to its live row, with the follow it
     /// names, and report the row's own status (v2: the duplicate reply
-    /// mirrors the winner, including the awaiting-approval message).
+    /// mirrors the winner, including the awaiting-approval message). A
+    /// curator asking for another edition switches the row to it while no
+    /// download serves it; once one does, the row keeps its edition.
     async fn attach_album(
         &self,
         principal: &Principal,
         existing: &RequestRecord,
         follow: Option<FollowAsk>,
+        asked: Option<&str>,
     ) -> Result<IntakeResponse, RequestsError> {
         self.store
             .attach_following(
@@ -1819,6 +1824,21 @@ impl RequestsService {
                 follow,
             )
             .await?;
+        let switch = self.edition_switch(principal, existing, asked).await;
+        if let Some(release) = switch
+            && !self
+                .store
+                .switch_release(&existing.key, release, existing.generation)
+                .await?
+        {
+            return Ok(IntakeResponse {
+                success: true,
+                message: "Already downloading, so the edition stays as it is".to_owned(),
+                musicbrainz_id: existing.key.clone(),
+                status: RequestStatus::Downloading.as_str().to_owned(),
+                task_id: existing.task_id.clone(),
+            });
+        }
         // A row waiting for its owner's quota starts on the ask of someone
         // who needs no approval and has room of their own.
         if existing.waits_for_quota()
@@ -1835,7 +1855,9 @@ impl RequestsService {
                 task_id: Some(task_id),
             });
         }
-        let message = if existing.status == RequestStatus::AwaitingApproval {
+        let message = if switch.is_some() {
+            "The request now gets this edition"
+        } else if existing.status == RequestStatus::AwaitingApproval {
             "Request is awaiting admin approval"
         } else if existing.status == RequestStatus::Cancelling {
             "Request is being cancelled"
@@ -1849,6 +1871,29 @@ impl RequestsService {
             status: existing.status.as_str().to_owned(),
             task_id: existing.task_id.clone(),
         })
+    }
+
+    /// The edition a curator's ask would switch a live row to: the asked
+    /// one, when it differs from the row's and the library has not chosen
+    /// one of its own (that edition always wins).
+    async fn edition_switch<'a>(
+        &self,
+        principal: &Principal,
+        existing: &RequestRecord,
+        asked: Option<&'a str>,
+    ) -> Option<&'a str> {
+        let release = asked?;
+        if !principal.role().is_curator()
+            || existing.kind != RequestKind::Album
+            || existing.status == RequestStatus::Cancelling
+            || existing.release_mbid.as_deref() == Some(release)
+        {
+            return None;
+        }
+        match self.chosen_release(&existing.key).await {
+            Some(_) => None,
+            None => Some(release),
+        }
     }
 
     /// The edition the library has chosen for one album, when it holds
@@ -2512,6 +2557,7 @@ impl From<&RequestRecord> for RequestItem {
             track_title: record.track_title.clone(),
             duration_seconds: record.duration_seconds,
             track_release_group_mbid: record.track_release_group_mbid.clone(),
+            release_mbid: record.release_mbid.clone(),
             requester_count: record.requesters.len() as u32,
         }
     }

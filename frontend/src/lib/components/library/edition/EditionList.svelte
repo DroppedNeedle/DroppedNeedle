@@ -30,9 +30,18 @@
 		filter: string;
 		showFilter: boolean;
 		onselect: (release: string) => void;
+		/** The badge on the current row. */
+		currentLabel?: string;
 	}
 
-	let { groups, selected, filter = $bindable(''), showFilter, onselect }: Props = $props();
+	let {
+		groups,
+		selected,
+		filter = $bindable(''),
+		showFilter,
+		onselect,
+		currentLabel = 'Yours now'
+	}: Props = $props();
 </script>
 
 <div class="flex flex-col gap-4">
@@ -102,7 +111,7 @@
 	<span class="min-w-0 flex-1">
 		<span class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
 			<span class="font-medium">{row.name}</span>
-			{#if row.current}<span class="badge badge-primary badge-xs">Yours now</span>{/if}
+			{#if row.current}<span class="badge badge-primary badge-xs">{currentLabel}</span>{/if}
 			{#if row.bestGuess}<span class="badge badge-warning badge-xs">Best guess</span>{/if}
 		</span>
 		{#if row.facts}<span class="block text-xs text-base-content/60">{row.facts}</span>{/if}

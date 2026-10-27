@@ -59856,6 +59856,13 @@
             ],
             "description": "Picked candidate quality from the linked task, once picked."
           },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edition (release MBID) the request fetches, when one is set."
+          },
           "request_kind": {
             "$ref": "#/components/schemas/RequestKind",
             "description": "Whole album or one track."

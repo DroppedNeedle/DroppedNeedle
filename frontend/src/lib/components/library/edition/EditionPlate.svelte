@@ -2,7 +2,9 @@
 	The edition plate on a library album's page: which edition the copy is,
 	who picked it, how many of its tracks the files hold and whether its
 	folder keeps its own tags. For curators it opens the edition sheet, as
-	`?edition=choose` in the address does.
+	`?edition=choose` in the address does. With `request` and no copies it
+	names the edition a request gets, and opens the sheet to pick another
+	until the download starts.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -13,21 +15,25 @@
 	import type { LibraryAlbumSummary } from '$lib/types';
 	import {
 		getAlbumEditionStatusQuery,
+		getAlbumEditionsQuery,
 		getEditionPlanQuery
 	} from '$lib/queries/albums/EditionQueries.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import EditionDisc from './EditionDisc.svelte';
 	import EditionSheet from './EditionSheet.svelte';
-	import { moreCopies, plateCopy } from './editionCopy';
+	import { editionFactsLine, editionName, moreCopies, plateCopy } from './editionCopy';
+	import type { EditionRequestPick } from './editionSheetState.svelte';
 
 	interface Props {
 		/** The album's library copies; the plate shows the first. */
 		copies: LibraryAlbumSummary[];
 		/** The release group the page shows, empty on a local album's page. */
 		groupMbid?: string;
+		/** The edition a request gets, on the page of an album with no copies. */
+		request?: EditionRequestPick;
 	}
 
-	let { copies, groupMbid = '' }: Props = $props();
+	let { copies, groupMbid = '', request }: Props = $props();
 
 	const userId = () => authStore.user?.id;
 	const copy = $derived(copies[0]);
@@ -46,6 +52,41 @@
 	);
 	const lines = $derived(status ? plateCopy(status, plan, copy?.track_count ?? 0) : null);
 	const canEdit = $derived(authStore.isTrusted);
+
+	// No copies: the edition a request gets, named from the album's editions.
+	const wanted = $derived(!copy && request ? request : null);
+	const editionsQuery = getAlbumEditionsQuery(
+		userId,
+		() => groupMbid,
+		() => Boolean(wanted)
+	);
+	const wantedEdition = $derived(
+		wanted?.release
+			? (editionsQuery.data?.items.find((item) => item.release_mbid === wanted.release) ?? null)
+			: null
+	);
+	const wantedLines = $derived.by(() => {
+		if (!wanted) return null;
+		const facts = wantedEdition
+			? {
+					title: wantedEdition.title,
+					disambiguation: wantedEdition.disambiguation,
+					date: wantedEdition.date,
+					country: wantedEdition.country,
+					formats: wantedEdition.media_formats,
+					track_count: wantedEdition.track_count
+				}
+			: null;
+		const name = facts ? editionName(facts) : 'Edition';
+		const state = wanted.locked ? 'Downloading' : wanted.requested ? 'Requested' : 'To get';
+		return {
+			name,
+			state,
+			facts: facts ? editionFactsLine(facts) : '',
+			canChange: canEdit && !wanted.locked,
+			label: `${state}: ${name}.${canEdit && !wanted.locked ? ' Change edition' : ''}`
+		};
+	});
 
 	let sheetOpen = $state(false);
 	let sheetMounted = $state(false);
@@ -78,7 +119,37 @@
 	}
 </script>
 
-{#if !copy}
+{#if wanted && wantedLines}
+	{#if editionsQuery.isPending && wanted.release}
+		<div
+			class="flex w-full max-w-xl items-center gap-3 rounded-box border border-base-content/10 p-3"
+			aria-hidden="true"
+		>
+			<div class="skeleton h-10 w-10 shrink-0 rounded-full"></div>
+			<div class="flex-1 space-y-1.5">
+				<div class="skeleton h-4 w-1/2"></div>
+				<div class="skeleton h-3 w-3/4"></div>
+			</div>
+		</div>
+	{:else if wantedLines.canChange}
+		<button
+			type="button"
+			class="flex w-full max-w-xl items-center gap-3 rounded-box border border-base-content/10 bg-base-100/40 p-3 text-left backdrop-blur-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none"
+			aria-label={wantedLines.label}
+			onclick={openSheet}
+		>
+			{@render wantedBody(wantedLines)}
+		</button>
+	{:else}
+		<div
+			class="flex w-full max-w-xl items-center gap-3 rounded-box border border-base-content/10 bg-base-100/40 p-3 backdrop-blur-sm"
+			role="group"
+			aria-label={wantedLines.label}
+		>
+			{@render wantedBody(wantedLines)}
+		</div>
+	{/if}
+{:else if !copy}
 	<!-- The copy left this page; only the sheet stays until it closes. -->
 {:else if statusQuery.isPending && !status}
 	<div
@@ -117,6 +188,24 @@
 	{/if}
 {/if}
 
+{#snippet wantedBody(wantedCopy: NonNullable<typeof wantedLines>)}
+	<EditionDisc fill={0} tone={wanted?.locked ? 'busy' : 'none'} spinning={false} />
+	<span class="min-w-0 flex-1">
+		<span class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+			<span class="font-semibold">{wantedCopy.name}</span>
+			<span class="text-xs font-medium text-base-content/70">{wantedCopy.state}</span>
+		</span>
+		{#if wantedCopy.facts}
+			<span class="block text-xs text-base-content/65">{wantedCopy.facts}</span>
+		{/if}
+	</span>
+	{#if wantedCopy.canChange}
+		<span class="flex shrink-0 items-center gap-0.5 self-end text-sm font-medium text-primary">
+			Change<ChevronRight class="h-4 w-4" aria-hidden="true" />
+		</span>
+	{/if}
+{/snippet}
+
 {#snippet body(copyLines: NonNullable<typeof lines>)}
 	<EditionDisc {...copyLines.disc} />
 	<span class="min-w-0 flex-1">
@@ -152,6 +241,8 @@
 	{/if}
 {/snippet}
 
-{#if sheetMounted && sheetCopies.length}
+{#if sheetMounted && wanted}
+	<EditionSheet bind:open={sheetOpen} copies={[]} {groupMbid} request={wanted} />
+{:else if sheetMounted && sheetCopies.length}
 	<EditionSheet bind:open={sheetOpen} copies={sheetCopies} {groupMbid} onclose={closed} />
 {/if}
