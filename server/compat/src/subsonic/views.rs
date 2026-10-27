@@ -9,6 +9,7 @@ use std::path::{Component, Path};
 use super::ids::{IdKind, cover_id, encode};
 use super::models::{
     SAlbumID3, SArtist, SArtistID3, SChild, SDiscTitle, SGenre, SItemDate, SItemGenre, SReplayGain,
+    UnreadAlbumTags, UnreadTags,
 };
 
 /// MIME per extension, from the stream routes' table (unknown ->
@@ -444,6 +445,7 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
             .collect(),
         userRating: ViewRating::own(view.rating.as_ref()).unwrap_or(0),
         averageRating: ViewRating::average(view.rating.as_ref()),
+        unreadTags: UnreadAlbumTags::default(),
         song: None,
     }
 }
@@ -543,7 +545,7 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
         }),
         name: None,
         songCount: None,
-        unreadTags: true,
+        unreadTags: Some(UnreadTags::default()),
     }
 }
 
@@ -589,7 +591,7 @@ pub fn to_album_child(view: &ViewAlbum) -> SChild {
         replayGain: Some(SReplayGain::default()),
         name: Some(view.title.clone()),
         songCount: view.track_count,
-        unreadTags: true,
+        unreadTags: Some(UnreadTags::default()),
         ..SChild::default()
     }
 }

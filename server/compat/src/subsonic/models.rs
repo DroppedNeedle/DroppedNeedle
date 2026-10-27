@@ -1,122 +1,115 @@
 //! Subsonic response objects, ported from v2's Subsonic models.
 //!
-//! Field names are exact Subsonic/OpenSubsonic camelCase and render in
+//! Field names are exact Subsonic/OpenSubsonic camelCase and serialize in
 //! declaration order (v2 `msgspec.to_builtins` struct order). Optional
-//! fields render as null and are stripped from the wire.
+//! fields that hold nothing are left off the wire.
 
 #![allow(non_snake_case)]
 
-use super::value::{IntoVal, Val, obj};
+use serde::Serialize;
+use serde::ser::{SerializeMap, Serializer};
 
-/// Render into an ordered value.
-pub trait Render {
-    /// Convert to a wire value.
-    fn render(&self) -> Val;
+/// True when there is no `averageRating` to send.
+fn no_rating(average: &Option<f64>) -> bool {
+    !matches!(average, Some(mean) if mean.is_finite())
 }
 
 /// `averageRating`, rounded to two places. A whole mean is sent as an
 /// integer, as Navidrome 0.62.0 sends it (recorded
 /// `navidrome-0.62.0-ratings`). The rounding is ours: that recording
 /// holds whole means only.
-fn average_rating(average: Option<f64>) -> Val {
+fn average_rating<S: Serializer>(average: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error> {
     match average {
-        Some(mean) if mean.is_finite() => {
+        Some(mean) => {
             let mean = (mean * 100.0).round() / 100.0;
             if mean.fract() == 0.0 {
-                Val::Int(mean as i64)
+                serializer.serialize_i64(mean as i64)
             } else {
-                Val::Float(mean)
+                serializer.serialize_f64(mean)
             }
         }
-        _ => Val::Null,
+        None => serializer.serialize_none(),
+    }
+}
+
+/// A release date, or an empty object when it is unknown.
+fn date_or_empty<S: Serializer>(
+    date: &Option<SItemDate>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match date {
+        Some(date) => date.serialize(serializer),
+        None => serializer.serialize_map(Some(0))?.end(),
+    }
+}
+
+/// An object with one key, around a list or a value: `{"<key>": ...}`.
+#[derive(Debug, Clone)]
+pub struct Wrap<T>(pub &'static str, pub T);
+
+impl<T: Serialize> Serialize for Wrap<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry(self.0, &self.1)?;
+        map.end()
     }
 }
 
 /// ID3 artist (detail contexts).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SArtistID3 {
     /// Prefixed artist id.
     pub id: String,
     /// Display name.
     pub name: String,
     /// Cover art id (same as id).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub coverArt: Option<String>,
     /// Album count.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub albumCount: Option<i64>,
     /// The caller's rating, sent only when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub userRating: Option<i64>,
     /// Every user's mean rating, sent only when anyone rated.
+    #[serde(skip_serializing_if = "no_rating", serialize_with = "average_rating")]
     pub averageRating: Option<f64>,
     /// Open picture link (artist lists and details only).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artistImageUrl: Option<String>,
     /// Starred timestamp ISO, if starred.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub starred: Option<String>,
     /// MusicBrainz artist id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub musicBrainzId: Option<String>,
     /// Sort name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sortName: Option<String>,
     /// Credit roles (artist lists and details only).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub roles: Option<Vec<String>>,
     /// Populated by getArtist only.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub album: Option<Vec<SAlbumID3>>,
 }
 
-impl Render for SArtistID3 {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("id", self.id.as_str().into_val()),
-            ("name", self.name.as_str().into_val()),
-            ("coverArt", self.coverArt.clone().into_val()),
-            ("albumCount", self.albumCount.into_val()),
-            ("userRating", self.userRating.into_val()),
-            ("averageRating", average_rating(self.averageRating)),
-            ("artistImageUrl", self.artistImageUrl.clone().into_val()),
-            ("starred", self.starred.clone().into_val()),
-            ("musicBrainzId", self.musicBrainzId.clone().into_val()),
-            ("sortName", self.sortName.clone().into_val()),
-            (
-                "roles",
-                self.roles
-                    .as_ref()
-                    .map(|roles| Val::List(roles.iter().map(|r| r.as_str().into_val()).collect()))
-                    .into_val(),
-            ),
-            (
-                "album",
-                self.album
-                    .as_ref()
-                    .map(|albums| Val::List(albums.iter().map(Render::render).collect()))
-                    .into_val(),
-            ),
-        ])
-    }
-}
-
 /// File-structure artist (getIndexes / search2 / getStarred).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SArtist {
     /// Prefixed artist id.
     pub id: String,
     /// Display name.
     pub name: String,
     /// Starred timestamp ISO, if starred.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub starred: Option<String>,
     /// Cover art id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub coverArt: Option<String>,
     /// Open picture link.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artistImageUrl: Option<String>,
-}
-
-impl Render for SArtist {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("id", self.id.as_str().into_val()),
-            ("name", self.name.as_str().into_val()),
-            ("starred", self.starred.clone().into_val()),
-            ("coverArt", self.coverArt.clone().into_val()),
-            ("artistImageUrl", self.artistImageUrl.clone().into_val()),
-        ])
-    }
 }
 
 /// ID3 album.
@@ -127,214 +120,148 @@ impl Render for SArtist {
 /// Each carries what Navidrome sends for "none" (checked against its
 /// recorded `getAlbum` answer). `userRating` is sent on every album, 0
 /// when the caller has not rated it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SAlbumID3 {
     /// Prefixed album id.
     pub id: String,
     /// Album title.
     pub name: String,
     /// Album artist name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artist: Option<String>,
     /// Prefixed album-artist id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artistId: Option<String>,
     /// Cover art id (same as id).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub coverArt: Option<String>,
     /// Track count.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub songCount: Option<i64>,
     /// Total duration seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<i64>,
     /// Play count.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub playCount: Option<i64>,
     /// Created timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     /// Starred timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub starred: Option<String>,
     /// Release year.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub year: Option<i64>,
     /// Genre name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub genre: Option<String>,
     /// Compilation flag.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub isCompilation: Option<bool>,
     /// MusicBrainz release-group id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub musicBrainzId: Option<String>,
     /// Last-played timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub played: Option<String>,
     /// Genre list, empty when the album has no genre.
     pub genres: Vec<SItemGenre>,
     /// Contributing artists.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artists: Option<Vec<SArtistID3>>,
     /// Display artist.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub displayArtist: Option<String>,
     /// Release types.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub releaseTypes: Option<Vec<String>>,
     /// Sort name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sortName: Option<String>,
     /// Original release date, an empty object when unknown.
+    #[serde(serialize_with = "date_or_empty")]
     pub originalReleaseDate: Option<SItemDate>,
-    /// This edition's release date, an empty object when unknown.
-    pub releaseDate: Option<SItemDate>,
     /// Per-disc titles, empty when no disc has one.
     pub discTitles: Vec<SDiscTitle>,
     /// The caller's rating, 0 when none.
     pub userRating: i64,
     /// Every user's mean rating, sent only when anyone rated.
+    #[serde(skip_serializing_if = "no_rating", serialize_with = "average_rating")]
     pub averageRating: Option<f64>,
+    /// This edition's release date, an empty object when unknown.
+    #[serde(serialize_with = "date_or_empty")]
+    pub releaseDate: Option<SItemDate>,
+    /// The keys for album tags the app does not read.
+    #[serde(flatten)]
+    pub unreadTags: UnreadAlbumTags,
     /// Populated by getAlbum only.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub song: Option<Vec<SChild>>,
 }
 
-impl Render for SAlbumID3 {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("id", self.id.as_str().into_val()),
-            ("name", self.name.as_str().into_val()),
-            ("artist", self.artist.clone().into_val()),
-            ("artistId", self.artistId.clone().into_val()),
-            ("coverArt", self.coverArt.clone().into_val()),
-            ("songCount", self.songCount.into_val()),
-            ("duration", self.duration.into_val()),
-            ("playCount", self.playCount.into_val()),
-            ("created", self.created.clone().into_val()),
-            ("starred", self.starred.clone().into_val()),
-            ("year", self.year.into_val()),
-            ("genre", self.genre.clone().into_val()),
-            ("isCompilation", self.isCompilation.into_val()),
-            ("musicBrainzId", self.musicBrainzId.clone().into_val()),
-            ("played", self.played.clone().into_val()),
-            (
-                "genres",
-                Val::List(self.genres.iter().map(Render::render).collect()),
-            ),
-            (
-                "artists",
-                self.artists
-                    .as_ref()
-                    .map(|artists| Val::List(artists.iter().map(Render::render).collect()))
-                    .into_val(),
-            ),
-            ("displayArtist", self.displayArtist.clone().into_val()),
-            (
-                "releaseTypes",
-                self.releaseTypes
-                    .as_ref()
-                    .map(|types| Val::List(types.iter().map(|t| t.as_str().into_val()).collect()))
-                    .into_val(),
-            ),
-            ("sortName", self.sortName.clone().into_val()),
-            (
-                "originalReleaseDate",
-                self.originalReleaseDate
-                    .as_ref()
-                    .map_or_else(|| obj(Vec::new()), Render::render),
-            ),
-            (
-                "discTitles",
-                Val::List(self.discTitles.iter().map(Render::render).collect()),
-            ),
-            ("userRating", Val::Int(self.userRating)),
-            ("averageRating", average_rating(self.averageRating)),
-            (
-                "releaseDate",
-                self.releaseDate
-                    .as_ref()
-                    .map_or_else(|| obj(Vec::new()), Render::render),
-            ),
-            ("recordLabels", Val::List(Vec::new())),
-            ("moods", Val::List(Vec::new())),
-            ("explicitStatus", "".into_val()),
-            ("version", "".into_val()),
-            (
-                "song",
-                self.song
-                    .as_ref()
-                    .map(|songs| Val::List(songs.iter().map(Render::render).collect()))
-                    .into_val(),
-            ),
-        ])
-    }
+/// Keys Navidrome 0.62.0 sends on every album for tags the app does not
+/// read: label, mood, explicit flag and version, each with what Navidrome
+/// sends for "none".
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UnreadAlbumTags {
+    recordLabels: [String; 0],
+    moods: [String; 0],
+    explicitStatus: &'static str,
+    version: &'static str,
 }
 
 /// Genre item.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SItemGenre {
     /// Genre name.
     pub name: String,
 }
 
-impl Render for SItemGenre {
-    fn render(&self) -> Val {
-        obj(vec![("name", self.name.as_str().into_val())])
-    }
-}
-
 /// Partial release date.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SItemDate {
     /// Year (required).
     pub year: i64,
     /// Month 1-12.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub month: Option<i64>,
     /// Day 1-31.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub day: Option<i64>,
 }
 
-impl Render for SItemDate {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("year", self.year.into_val()),
-            ("month", self.month.into_val()),
-            ("day", self.day.into_val()),
-        ])
-    }
-}
-
 /// Per-disc title.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SDiscTitle {
     /// Disc number.
     pub disc: i64,
     /// Disc title.
     pub title: String,
     /// Cover art id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub coverArt: Option<String>,
 }
 
-impl Render for SDiscTitle {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("disc", self.disc.into_val()),
-            ("title", self.title.as_str().into_val()),
-            ("coverArt", self.coverArt.clone().into_val()),
-        ])
-    }
-}
-
 /// Replay gain block (always present on songs, fields nullable).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SReplayGain {
     /// Track gain dB.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trackGain: Option<f64>,
     /// Album gain dB.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub albumGain: Option<f64>,
     /// Track peak.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trackPeak: Option<f64>,
     /// Album peak.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub albumPeak: Option<f64>,
 }
 
-impl Render for SReplayGain {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("trackGain", self.trackGain.into_val()),
-            ("albumGain", self.albumGain.into_val()),
-            ("trackPeak", self.trackPeak.into_val()),
-            ("albumPeak", self.albumPeak.into_val()),
-        ])
-    }
-}
-
 /// Song (or file-structure directory) entry.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SChild {
     /// Prefixed id.
     pub id: String,
@@ -343,86 +270,125 @@ pub struct SChild {
     /// Title.
     pub title: String,
     /// Parent id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     /// Album title.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub album: Option<String>,
     /// Artist name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artist: Option<String>,
     /// Track number.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub track: Option<i64>,
     /// Year.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub year: Option<i64>,
     /// Genre name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub genre: Option<String>,
     /// Cover art id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub coverArt: Option<String>,
     /// File size bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<i64>,
     /// MIME type.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contentType: Option<String>,
     /// File suffix.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub suffix: Option<String>,
     /// Transcode hint MIME (present iff transcoding on + ffmpeg).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transcodedContentType: Option<String>,
     /// Transcode hint suffix.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transcodedSuffix: Option<String>,
     /// Duration seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<i64>,
     /// Bitrate kbps.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bitRate: Option<i64>,
     /// The file's path under its library folder, never the host's path.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// Disc number.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub discNumber: Option<i64>,
     /// Created timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     /// Starred timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub starred: Option<String>,
     /// Prefixed album id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub albumId: Option<String>,
     /// Prefixed artist id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artistId: Option<String>,
     /// Always "music" on songs.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub type_: Option<String>,
     /// The caller's rating, sent only when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub userRating: Option<i64>,
     /// Every user's mean rating, sent only when anyone rated.
+    #[serde(skip_serializing_if = "no_rating", serialize_with = "average_rating")]
     pub averageRating: Option<f64>,
     /// Play count.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub playCount: Option<i64>,
     /// Always "song" on songs.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mediaType: Option<String>,
     /// Bit depth.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bitDepth: Option<i64>,
     /// Sample rate Hz.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub samplingRate: Option<i64>,
     /// Channel count (v2 defaults to 2 when unknown).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub channelCount: Option<i64>,
     /// MusicBrainz recording id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub musicBrainzId: Option<String>,
     /// Last-played timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub played: Option<String>,
     /// Sort name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sortName: Option<String>,
     /// Genre list (split on ";").
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub genres: Option<Vec<SItemGenre>>,
     /// Track artists.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artists: Option<Vec<SArtistID3>>,
     /// Display artist.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub displayArtist: Option<String>,
     /// Album artists.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub albumArtists: Option<Vec<SArtistID3>>,
     /// Display album artist.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub displayAlbumArtist: Option<String>,
     /// Replay gain (always present on songs).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub replayGain: Option<SReplayGain>,
     /// Album title again, on an album's folder entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Track count, on an album's folder entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub songCount: Option<i64>,
-    /// True on songs and albums: send the keys for tags the app does not
-    /// read (see [`unread_tags`]).
-    pub unreadTags: bool,
+    /// Set on songs and albums: the keys for tags the app does not read.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub unreadTags: Option<UnreadTags>,
 }
 
 /// Keys Navidrome 0.62.0 sends on every song and album entry for tags the
@@ -430,103 +396,23 @@ pub struct SChild {
 /// artists, composer, explicit flag and grouping. Each carries what
 /// Navidrome sends for "none" (checked against its recorded `getSong` and
 /// `getAlbumList` answers).
-fn unread_tags() -> Vec<(&'static str, Val)> {
-    vec![
-        ("bpm", Val::Int(0)),
-        ("comment", "".into_val()),
-        ("isrc", Val::List(Vec::new())),
-        ("moods", Val::List(Vec::new())),
-        ("contributors", Val::List(Vec::new())),
-        ("displayComposer", "".into_val()),
-        ("explicitStatus", "".into_val()),
-        ("groupings", Val::List(Vec::new())),
-    ]
-}
-
-impl Render for SChild {
-    fn render(&self) -> Val {
-        let mut entries = vec![
-            ("id", self.id.as_str().into_val()),
-            ("isDir", self.isDir.into_val()),
-            ("title", self.title.as_str().into_val()),
-            ("parent", self.parent.clone().into_val()),
-            ("album", self.album.clone().into_val()),
-            ("artist", self.artist.clone().into_val()),
-            ("track", self.track.into_val()),
-            ("year", self.year.into_val()),
-            ("genre", self.genre.clone().into_val()),
-            ("coverArt", self.coverArt.clone().into_val()),
-            ("size", self.size.into_val()),
-            ("contentType", self.contentType.clone().into_val()),
-            ("suffix", self.suffix.clone().into_val()),
-            (
-                "transcodedContentType",
-                self.transcodedContentType.clone().into_val(),
-            ),
-            ("transcodedSuffix", self.transcodedSuffix.clone().into_val()),
-            ("duration", self.duration.into_val()),
-            ("bitRate", self.bitRate.into_val()),
-            ("path", self.path.clone().into_val()),
-            ("discNumber", self.discNumber.into_val()),
-            ("created", self.created.clone().into_val()),
-            ("starred", self.starred.clone().into_val()),
-            ("albumId", self.albumId.clone().into_val()),
-            ("artistId", self.artistId.clone().into_val()),
-            ("type", self.type_.clone().into_val()),
-            ("userRating", self.userRating.into_val()),
-            ("averageRating", average_rating(self.averageRating)),
-            ("playCount", self.playCount.into_val()),
-            ("mediaType", self.mediaType.clone().into_val()),
-            ("bitDepth", self.bitDepth.into_val()),
-            ("samplingRate", self.samplingRate.into_val()),
-            ("channelCount", self.channelCount.into_val()),
-            ("musicBrainzId", self.musicBrainzId.clone().into_val()),
-            ("played", self.played.clone().into_val()),
-            ("sortName", self.sortName.clone().into_val()),
-            (
-                "genres",
-                self.genres
-                    .as_ref()
-                    .map(|genres| Val::List(genres.iter().map(Render::render).collect()))
-                    .into_val(),
-            ),
-            (
-                "artists",
-                self.artists
-                    .as_ref()
-                    .map(|artists| Val::List(artists.iter().map(Render::render).collect()))
-                    .into_val(),
-            ),
-            ("displayArtist", self.displayArtist.clone().into_val()),
-            (
-                "albumArtists",
-                self.albumArtists
-                    .as_ref()
-                    .map(|artists| Val::List(artists.iter().map(Render::render).collect()))
-                    .into_val(),
-            ),
-            (
-                "displayAlbumArtist",
-                self.displayAlbumArtist.clone().into_val(),
-            ),
-            (
-                "replayGain",
-                self.replayGain.as_ref().map(Render::render).into_val(),
-            ),
-            ("name", self.name.clone().into_val()),
-            ("songCount", self.songCount.into_val()),
-        ];
-        if self.unreadTags {
-            entries.extend(unread_tags());
-        }
-        obj(entries)
-    }
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UnreadTags {
+    bpm: i64,
+    comment: &'static str,
+    isrc: [String; 0],
+    moods: [String; 0],
+    contributors: [String; 0],
+    displayComposer: &'static str,
+    explicitStatus: &'static str,
+    groupings: [String; 0],
 }
 
 /// getNowPlaying entry: a song child plus session attribution.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SNowPlayingEntry {
     /// The song child fields.
+    #[serde(flatten)]
     pub child: SChild,
     /// Listener username.
     pub username: String,
@@ -535,27 +421,12 @@ pub struct SNowPlayingEntry {
     /// Player index.
     pub playerId: i64,
     /// Player name.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub playerName: Option<String>,
 }
 
-impl Render for SNowPlayingEntry {
-    fn render(&self) -> Val {
-        // Children always render as objects; a non-object starts from an
-        // empty object rather than panicking (panics are denied here).
-        let mut entries = match self.child.render() {
-            Val::Obj(entries) => entries,
-            _ => Vec::new(),
-        };
-        entries.push(("username".to_owned(), self.username.as_str().into_val()));
-        entries.push(("minutesAgo".to_owned(), self.minutesAgo.into_val()));
-        entries.push(("playerId".to_owned(), self.playerId.into_val()));
-        entries.push(("playerName".to_owned(), self.playerName.clone().into_val()));
-        Val::Obj(entries)
-    }
-}
-
 /// Genre with counts (counts are ints on the wire, never bools).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SGenre {
     /// Genre name (XML text).
     pub value: String,
@@ -565,72 +436,45 @@ pub struct SGenre {
     pub albumCount: i64,
 }
 
-impl Render for SGenre {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("value", self.value.as_str().into_val()),
-            ("songCount", self.songCount.into_val()),
-            ("albumCount", self.albumCount.into_val()),
-        ])
-    }
-}
-
 /// Playlist (entry list only on getPlaylist/createPlaylist detail).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SPlaylist {
     /// Prefixed playlist id.
     pub id: String,
     /// Playlist name.
     pub name: String,
     /// Comment.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
     /// Owner username.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     /// Public flag.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub public: Option<bool>,
     /// True when the caller may not change the playlist (OpenSubsonic).
     pub readonly: bool,
     /// Streamable-entry count (#181: matches served entries).
     pub songCount: i64,
     /// Total duration seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<i64>,
     /// Created timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     /// Changed timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub changed: Option<String>,
     /// Cover art id: the playlist's own id, on every playlist.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub coverArt: Option<String>,
     /// Entries (detail only).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub entry: Option<Vec<SChild>>,
 }
 
-impl Render for SPlaylist {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("id", self.id.as_str().into_val()),
-            ("name", self.name.as_str().into_val()),
-            ("comment", self.comment.clone().into_val()),
-            ("owner", self.owner.clone().into_val()),
-            ("public", self.public.into_val()),
-            ("readonly", self.readonly.into_val()),
-            ("songCount", self.songCount.into_val()),
-            ("duration", self.duration.into_val()),
-            ("created", self.created.clone().into_val()),
-            ("changed", self.changed.clone().into_val()),
-            ("coverArt", self.coverArt.clone().into_val()),
-            (
-                "entry",
-                self.entry
-                    .as_ref()
-                    .map(|entries| Val::List(entries.iter().map(Render::render).collect()))
-                    .into_val(),
-            ),
-        ])
-    }
-}
-
 /// One A-Z bucket of ID3 artists.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SIndexID3 {
     /// Bucket letter.
     pub name: String,
@@ -638,20 +482,8 @@ pub struct SIndexID3 {
     pub artist: Vec<SArtistID3>,
 }
 
-impl Render for SIndexID3 {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("name", self.name.as_str().into_val()),
-            (
-                "artist",
-                Val::List(self.artist.iter().map(Render::render).collect()),
-            ),
-        ])
-    }
-}
-
 /// getArtists payload.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SArtistsID3 {
     /// Library revision, as getIndexes sends it: a counter, not a time.
     pub lastModified: i64,
@@ -661,21 +493,8 @@ pub struct SArtistsID3 {
     pub index: Vec<SIndexID3>,
 }
 
-impl Render for SArtistsID3 {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("lastModified", self.lastModified.into_val()),
-            ("ignoredArticles", self.ignoredArticles.as_str().into_val()),
-            (
-                "index",
-                Val::List(self.index.iter().map(Render::render).collect()),
-            ),
-        ])
-    }
-}
-
 /// One A-Z bucket of file-structure artists.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SIndex {
     /// Bucket letter.
     pub name: String,
@@ -683,20 +502,8 @@ pub struct SIndex {
     pub artist: Vec<SArtist>,
 }
 
-impl Render for SIndex {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("name", self.name.as_str().into_val()),
-            (
-                "artist",
-                Val::List(self.artist.iter().map(Render::render).collect()),
-            ),
-        ])
-    }
-}
-
 /// getIndexes payload.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SIndexes {
     /// Library revision.
     pub lastModified: i64,
@@ -706,21 +513,8 @@ pub struct SIndexes {
     pub index: Vec<SIndex>,
 }
 
-impl Render for SIndexes {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("lastModified", self.lastModified.into_val()),
-            ("ignoredArticles", self.ignoredArticles.as_str().into_val()),
-            (
-                "index",
-                Val::List(self.index.iter().map(Render::render).collect()),
-            ),
-        ])
-    }
-}
-
 /// Music folder (exactly one: id 1).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SMusicFolder {
     /// Folder id (always 1).
     pub id: i64,
@@ -728,30 +522,15 @@ pub struct SMusicFolder {
     pub name: String,
 }
 
-impl Render for SMusicFolder {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("id", self.id.into_val()),
-            ("name", self.name.as_str().into_val()),
-        ])
-    }
-}
-
 /// getLicense payload (static valid:true).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SLicense {
     /// Always true.
     pub valid: bool,
 }
 
-impl Render for SLicense {
-    fn render(&self) -> Val {
-        obj(vec![("valid", self.valid.into_val())])
-    }
-}
-
 /// One advertised OpenSubsonic extension.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SOpenSubsonicExtension {
     /// Extension name.
     pub name: String,
@@ -759,20 +538,8 @@ pub struct SOpenSubsonicExtension {
     pub versions: Vec<i64>,
 }
 
-impl Render for SOpenSubsonicExtension {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("name", self.name.as_str().into_val()),
-            (
-                "versions",
-                Val::List(self.versions.iter().map(|v| v.into_val()).collect()),
-            ),
-        ])
-    }
-}
-
 /// getPlayQueue payload (current is a song id).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SPlayQueue {
     /// Owner username.
     pub username: String,
@@ -781,31 +548,17 @@ pub struct SPlayQueue {
     /// Client that last changed it.
     pub changedBy: String,
     /// Current song id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub current: Option<String>,
     /// Position ms.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
     /// Entries.
     pub entry: Vec<SChild>,
 }
 
-impl Render for SPlayQueue {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("username", self.username.as_str().into_val()),
-            ("changed", self.changed.as_str().into_val()),
-            ("changedBy", self.changedBy.as_str().into_val()),
-            ("current", self.current.clone().into_val()),
-            ("position", self.position.into_val()),
-            (
-                "entry",
-                Val::List(self.entry.iter().map(Render::render).collect()),
-            ),
-        ])
-    }
-}
-
 /// getPlayQueueByIndex payload (extension indexBasedQueue:1).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SPlayQueueByIndex {
     /// Owner username.
     pub username: String,
@@ -814,31 +567,17 @@ pub struct SPlayQueueByIndex {
     /// Client that last changed it.
     pub changedBy: String,
     /// Current index.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub currentIndex: Option<i64>,
     /// Position ms.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
     /// Entries.
     pub entry: Vec<SChild>,
 }
 
-impl Render for SPlayQueueByIndex {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("username", self.username.as_str().into_val()),
-            ("changed", self.changed.as_str().into_val()),
-            ("changedBy", self.changedBy.as_str().into_val()),
-            ("currentIndex", self.currentIndex.into_val()),
-            ("position", self.position.into_val()),
-            (
-                "entry",
-                Val::List(self.entry.iter().map(Render::render).collect()),
-            ),
-        ])
-    }
-}
-
 /// Bookmark (pinned required: position, username, created, changed, entry).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SBookmark {
     /// Position ms.
     pub position: i64,
@@ -851,24 +590,12 @@ pub struct SBookmark {
     /// The bookmarked song.
     pub entry: SChild,
     /// Comment.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
 }
 
-impl Render for SBookmark {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("position", self.position.into_val()),
-            ("username", self.username.as_str().into_val()),
-            ("created", self.created.as_str().into_val()),
-            ("changed", self.changed.as_str().into_val()),
-            ("entry", self.entry.render()),
-            ("comment", self.comment.clone().into_val()),
-        ])
-    }
-}
-
 /// Legacy flat lyrics.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SLyrics {
     /// Artist name.
     pub artist: String,
@@ -878,36 +605,18 @@ pub struct SLyrics {
     pub value: String,
 }
 
-impl Render for SLyrics {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("artist", self.artist.as_str().into_val()),
-            ("title", self.title.as_str().into_val()),
-            ("value", self.value.as_str().into_val()),
-        ])
-    }
-}
-
 /// One structured lyric line (pinned required: value on every line).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SLyricsLine {
     /// Line text.
     pub value: String,
     /// Start ms (synced only).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<i64>,
 }
 
-impl Render for SLyricsLine {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("value", self.value.as_str().into_val()),
-            ("start", self.start.into_val()),
-        ])
-    }
-}
-
 /// Structured lyrics (extension songLyrics:1; pinned: lang, synced, line).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SStructuredLyrics {
     /// Language code.
     pub lang: String,
@@ -916,129 +625,90 @@ pub struct SStructuredLyrics {
     /// Lines.
     pub line: Vec<SLyricsLine>,
     /// Display artist.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub displayArtist: Option<String>,
     /// Display title.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub displayTitle: Option<String>,
     /// Offset seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<f64>,
 }
 
-impl Render for SStructuredLyrics {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("lang", self.lang.as_str().into_val()),
-            ("synced", self.synced.into_val()),
-            (
-                "line",
-                Val::List(self.line.iter().map(Render::render).collect()),
-            ),
-            ("displayArtist", self.displayArtist.clone().into_val()),
-            ("displayTitle", self.displayTitle.clone().into_val()),
-            ("offset", self.offset.into_val()),
-        ])
-    }
-}
-
 /// Artist info (MBIDs projected only; cover URLs credential-free).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SArtistInfo {
     /// Biography.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub biography: Option<String>,
     /// MusicBrainz id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub musicBrainzId: Option<String>,
     /// Last.fm URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lastFmUrl: Option<String>,
     /// Small cover URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub smallImageUrl: Option<String>,
     /// Medium cover URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mediumImageUrl: Option<String>,
     /// Large cover URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub largeImageUrl: Option<String>,
     /// Similar artists.
     pub similarArtist: Vec<SArtistID3>,
 }
 
-impl Render for SArtistInfo {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("biography", self.biography.clone().into_val()),
-            ("musicBrainzId", self.musicBrainzId.clone().into_val()),
-            ("lastFmUrl", self.lastFmUrl.clone().into_val()),
-            ("smallImageUrl", self.smallImageUrl.clone().into_val()),
-            ("mediumImageUrl", self.mediumImageUrl.clone().into_val()),
-            ("largeImageUrl", self.largeImageUrl.clone().into_val()),
-            (
-                "similarArtist",
-                Val::List(self.similarArtist.iter().map(Render::render).collect()),
-            ),
-        ])
-    }
-}
-
 /// Album info.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SAlbumInfo {
     /// Notes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     /// MusicBrainz id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub musicBrainzId: Option<String>,
     /// Last.fm URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lastFmUrl: Option<String>,
     /// Small cover URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub smallImageUrl: Option<String>,
     /// Medium cover URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mediumImageUrl: Option<String>,
     /// Large cover URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub largeImageUrl: Option<String>,
 }
 
-impl Render for SAlbumInfo {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("notes", self.notes.clone().into_val()),
-            ("musicBrainzId", self.musicBrainzId.clone().into_val()),
-            ("lastFmUrl", self.lastFmUrl.clone().into_val()),
-            ("smallImageUrl", self.smallImageUrl.clone().into_val()),
-            ("mediumImageUrl", self.mediumImageUrl.clone().into_val()),
-            ("largeImageUrl", self.largeImageUrl.clone().into_val()),
-        ])
-    }
-}
-
 /// Scan status (pinned required: scanning).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SScanStatus {
     /// Whether a scan is running.
     pub scanning: bool,
     /// Files looked at so far during a scan; playable tracks at rest.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<i64>,
     /// Folders holding at least one playable track.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub folderCount: Option<i64>,
     /// End of the last finished scan, ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lastScan: Option<String>,
     /// Kind of the last finished scan.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scanType: Option<String>,
     /// Length of the last finished scan in nanoseconds: Navidrome 0.62.0
     /// sends `int64(status.ElapsedTime)`, a Go `time.Duration`
     /// (`server/subsonic/library_scanning.go`, read 2026-10-14).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub elapsedTime: Option<i64>,
 }
 
-impl Render for SScanStatus {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("scanning", self.scanning.into_val()),
-            ("count", self.count.into_val()),
-            ("folderCount", self.folderCount.into_val()),
-            ("lastScan", self.lastScan.clone().into_val()),
-            ("scanType", self.scanType.clone().into_val()),
-            ("elapsedTime", self.elapsedTime.into_val()),
-        ])
-    }
-}
-
 /// Stream details inside a transcode decision.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SStreamDetails {
     /// Protocol.
     pub protocol: String,
@@ -1047,34 +717,24 @@ pub struct SStreamDetails {
     /// Codec.
     pub codec: String,
     /// Audio channels.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audioChannels: Option<i64>,
     /// Audio bitrate.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audioBitrate: Option<i64>,
     /// Audio profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audioProfile: Option<String>,
     /// Sample rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audioSamplerate: Option<i64>,
     /// Bit depth.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audioBitdepth: Option<i64>,
 }
 
-impl Render for SStreamDetails {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("protocol", self.protocol.as_str().into_val()),
-            ("container", self.container.as_str().into_val()),
-            ("codec", self.codec.as_str().into_val()),
-            ("audioChannels", self.audioChannels.into_val()),
-            ("audioBitrate", self.audioBitrate.into_val()),
-            ("audioProfile", self.audioProfile.clone().into_val()),
-            ("audioSamplerate", self.audioSamplerate.into_val()),
-            ("audioBitdepth", self.audioBitdepth.into_val()),
-        ])
-    }
-}
-
 /// getTranscodeDecision payload (signed transcodeParams inside).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct STranscodeDecision {
     /// Direct play possible.
     pub canDirectPlay: bool,
@@ -1083,47 +743,23 @@ pub struct STranscodeDecision {
     /// Why a transcode is needed.
     pub transcodeReason: Vec<String>,
     /// Why nothing is possible.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub errorReason: Option<String>,
     /// Signed params for getTranscodeStream.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transcodeParams: Option<String>,
     /// Source stream facts.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sourceStream: Option<SStreamDetails>,
     /// Target stream facts.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transcodeStream: Option<SStreamDetails>,
-}
-
-impl Render for STranscodeDecision {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("canDirectPlay", self.canDirectPlay.into_val()),
-            ("canTranscode", self.canTranscode.into_val()),
-            (
-                "transcodeReason",
-                Val::List(
-                    self.transcodeReason
-                        .iter()
-                        .map(|r| r.as_str().into_val())
-                        .collect(),
-                ),
-            ),
-            ("errorReason", self.errorReason.clone().into_val()),
-            ("transcodeParams", self.transcodeParams.clone().into_val()),
-            (
-                "sourceStream",
-                self.sourceStream.as_ref().map(Render::render).into_val(),
-            ),
-            (
-                "transcodeStream",
-                self.transcodeStream.as_ref().map(Render::render).into_val(),
-            ),
-        ])
-    }
 }
 
 /// getUser payload (always the caller; the username param is ignored).
 /// Roles: admin implies admin+settings; everyone gets playlist, cover and
 /// stream roles; download follows the admin's download setting.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SUser {
     /// Caller username.
     pub username: String,
@@ -1154,6 +790,7 @@ pub struct SUser {
     /// Always false.
     pub videoConversionRole: bool,
     /// Max bitrate kbps from settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub maxBitRate: Option<i64>,
     /// Visible folders (always [1]).
     pub folder: Vec<i64>,
@@ -1183,28 +820,38 @@ impl SUser {
     }
 }
 
-impl Render for SUser {
-    fn render(&self) -> Val {
-        obj(vec![
-            ("username", self.username.as_str().into_val()),
-            ("scrobblingEnabled", self.scrobblingEnabled.into_val()),
-            ("adminRole", self.adminRole.into_val()),
-            ("settingsRole", self.settingsRole.into_val()),
-            ("downloadRole", self.downloadRole.into_val()),
-            ("uploadRole", self.uploadRole.into_val()),
-            ("playlistRole", self.playlistRole.into_val()),
-            ("coverArtRole", self.coverArtRole.into_val()),
-            ("commentRole", self.commentRole.into_val()),
-            ("podcastRole", self.podcastRole.into_val()),
-            ("streamRole", self.streamRole.into_val()),
-            ("jukeboxRole", self.jukeboxRole.into_val()),
-            ("shareRole", self.shareRole.into_val()),
-            ("videoConversionRole", self.videoConversionRole.into_val()),
-            ("maxBitRate", self.maxBitRate.into_val()),
-            (
-                "folder",
-                Val::List(self.folder.iter().map(|f| f.into_val()).collect()),
-            ),
-        ])
-    }
+/// Search and starred payload: ID3 (`SArtistID3`, `SAlbumID3`) or
+/// file-structure (`SArtist`, album `SChild`) artists and albums, then
+/// songs.
+#[derive(Debug, Clone, Serialize)]
+pub struct SSearchResult<A, B> {
+    /// Artists.
+    pub artist: Vec<A>,
+    /// Albums.
+    pub album: Vec<B>,
+    /// Songs.
+    pub song: Vec<SChild>,
+}
+
+/// getMusicDirectory payload: the root folder, an artist or an album.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SDirectory {
+    /// Prefixed id (`1` for the root).
+    pub id: String,
+    /// The album's artist id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// Folder name.
+    pub name: String,
+    /// The album's cover art id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverArt: Option<String>,
+    /// The artist's album count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub albumCount: Option<usize>,
+    /// The album's track count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub songCount: Option<usize>,
+    /// Entries.
+    pub child: Vec<SChild>,
 }

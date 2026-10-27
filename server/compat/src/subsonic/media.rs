@@ -4,7 +4,7 @@
 use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect};
 use super::library::current_id;
-use super::models::{Render, SStreamDetails, STranscodeDecision};
+use super::models::{SStreamDetails, STranscodeDecision};
 use super::picture::PictureKind;
 use super::store::ClientInfo;
 use super::stream::{
@@ -493,7 +493,7 @@ pub async fn transcode_decision(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError>
             audioBitdepth: s.audio_bitdepth,
         })
     };
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "transcodeDecision",
         STranscodeDecision {
             canDirectPlay: decision.can_direct_play,
@@ -503,9 +503,8 @@ pub async fn transcode_decision(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError>
             transcodeParams: decision.transcode_params,
             sourceStream: details(decision.source_stream),
             transcodeStream: details(decision.transcode_stream),
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Transcode stream: validates the signed parameters. Direct parameters

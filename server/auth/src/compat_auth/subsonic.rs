@@ -1,17 +1,12 @@
-//! Subsonic auth contract: three exclusive schemes, exact error codes,
-//! and the binary-vs-envelope split.
+//! Subsonic auth contract: three exclusive schemes and exact error codes.
 //!
 //! Schemes (mutually exclusive): `u+t+s` token (`t=md5(secret+s)`),
 //! `u+p` password (hex-or-plain app password), lone `apiKey`. Conflicts
 //! and duplicated keys fail with 10; bad credentials with 40; bad apiKey
 //! with 44; `apiKey` plus `u` with 43. Only
 //! `getOpenSubsonicExtensions` is public; every other endpoint (binary
-//! stream/download/cover included) needs auth.
-//!
-//! The dispatch split: binary endpoints render dispatch-path errors with
-//! codes outside `_AUTH_CODES` as `text/plain` (70 as 404, anything else
-//! as 404); code 50 stays enveloped in the dispatch path, and the only
-//! 403-as-text is getAvatar's direct call for a non-self username.
+//! stream/download/cover included) needs auth. Which methods are public
+//! or answer bytes is compat's endpoint table.
 
 use sha2::{Digest, Sha256};
 
@@ -50,22 +45,6 @@ pub const MAX_TOKEN_LENGTH: usize = 128;
 /// v2 length caps, kept verbatim.
 pub const MAX_CLIENT_NAME_LENGTH: usize = 256;
 
-/// Binary endpoints (normalized names): stream, download, getCoverArt,
-/// getAvatar, getTranscodeStream.
-pub const BINARY_ENDPOINTS: &[&str] = &[
-    "stream",
-    "download",
-    "getcoverart",
-    "getavatar",
-    "gettranscodestream",
-];
-
-/// Codes that stay enveloped on the binary dispatch path.
-pub const AUTH_CODES: &[u8] = &[10, 40, 41, 42, 43, 44, 50];
-
-/// The one public endpoint (normalized name).
-pub const PUBLIC_ENDPOINT: &str = "getopensubsonicextensions";
-
 /// getAvatar refusal for a non-self username, v2 message verbatim.
 pub const AVATAR_FORBIDDEN_MESSAGE: &str = "Avatar access is limited to the authenticated user";
 
@@ -86,24 +65,6 @@ pub fn default_message(code: u8) -> &'static str {
 pub fn normalize_endpoint(raw: &str) -> String {
     let folded = raw.to_lowercase();
     folded.strip_suffix(".view").unwrap_or(&folded).to_owned()
-}
-
-/// True for the five binary endpoints (takes a normalized name).
-pub fn is_binary_endpoint(normalized: &str) -> bool {
-    BINARY_ENDPOINTS.contains(&normalized)
-}
-
-/// True only for `getOpenSubsonicExtensions` (takes a normalized name).
-pub fn is_public_endpoint(normalized: &str) -> bool {
-    normalized == PUBLIC_ENDPOINT
-}
-
-/// Dispatch rule: binary endpoints render codes outside [`AUTH_CODES`]
-/// as `text/plain`; everything else (and every code on non-binary
-/// endpoints) renders as an envelope. Note code 50 in the dispatch path
-/// stays enveloped; the getAvatar 403-as-text is a direct call.
-pub fn dispatch_uses_envelope(code: u8, normalized_endpoint: &str) -> bool {
-    !is_binary_endpoint(normalized_endpoint) || AUTH_CODES.contains(&code)
 }
 
 /// Response format from the `f` param (default XML). Anything else is

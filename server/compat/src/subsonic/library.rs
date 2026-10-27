@@ -6,13 +6,12 @@ use super::browse::validate_music_folder;
 use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect, encode};
 use super::models::{
-    Render, SAlbumInfo, SArtistInfo, SBookmark, SLyrics, SLyricsLine, SPlayQueue,
-    SPlayQueueByIndex, SPlaylist, SScanStatus, SStructuredLyrics, SUser,
+    SAlbumInfo, SArtistInfo, SBookmark, SLyrics, SLyricsLine, SPlayQueue, SPlayQueueByIndex,
+    SPlaylist, SScanStatus, SSearchResult, SStructuredLyrics, SUser, Wrap,
 };
 use super::params::SubsonicParameters;
 use super::picture::{INFO_SIZES, PictureKind};
 use super::store::{PlaylistDetail, PlaylistRecord};
-use super::value::{Val, obj};
 use super::views::{ViewTrack, iso};
 use super::{Ctx, Outcome};
 use crate::adapters::library::CompatError;
@@ -113,28 +112,22 @@ pub async fn playlists(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             view.owner_name.clone()
         };
         let (song_count, duration) = streamable.get(&record.id).copied().unwrap_or((0, 0));
-        out.push(
-            SPlaylist {
-                id: encode(IdKind::Playlist, &record.id),
-                name: record.name.clone(),
-                comment: None,
-                owner: Some(owner),
-                public: Some(record.is_public),
-                readonly: !view.is_owner,
-                songCount: song_count,
-                duration: Some(duration),
-                created: record.created_at.clone(),
-                changed: record.changed_at.clone(),
-                coverArt: Some(encode(IdKind::Playlist, &record.id)),
-                entry: None,
-            }
-            .render(),
-        );
+        out.push(SPlaylist {
+            id: encode(IdKind::Playlist, &record.id),
+            name: record.name.clone(),
+            comment: None,
+            owner: Some(owner),
+            public: Some(record.is_public),
+            readonly: !view.is_owner,
+            songCount: song_count,
+            duration: Some(duration),
+            created: record.created_at.clone(),
+            changed: record.changed_at.clone(),
+            coverArt: Some(encode(IdKind::Playlist, &record.id)),
+            entry: None,
+        });
     }
-    Ok(Outcome::keyed(
-        "playlists",
-        obj(vec![("playlist", Val::List(out))]),
-    ))
+    Outcome::keyed("playlists", Wrap("playlist", out))
 }
 
 /// Playlist detail.
@@ -147,10 +140,7 @@ pub async fn playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .await
         .map_err(Ctx::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Playlist not found"))?;
-    Ok(Outcome::keyed(
-        "playlist",
-        playlist_detail(ctx, &detail).await?.render(),
-    ))
+    Outcome::keyed("playlist", playlist_detail(ctx, &detail).await?)
 }
 
 /// Create a playlist, or replace its contents when `playlistId` is given.
@@ -192,10 +182,10 @@ pub async fn create_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         }
     };
     let owner = ctx.user()?.username().to_owned();
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "playlist",
-        playlist_view(ctx, &record, &tracks, owner, true).render(),
-    ))
+        playlist_view(ctx, &record, &tracks, owner, true),
+    )
 }
 
 /// Update a playlist: rename, visibility, remove-by-index, append. Every
@@ -434,76 +424,34 @@ pub async fn starred_lists(
 pub async fn starred2(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     validate_music_folder(&ctx.params)?;
     let (artists, albums, songs) = starred_lists(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "starred2",
-        obj(vec![
-            (
-                "artist",
-                Val::List(
-                    artists
-                        .iter()
-                        .map(|artist| ctx.artist_id3(artist).render())
-                        .collect(),
-                ),
-            ),
-            (
-                "album",
-                Val::List(
-                    albums
-                        .iter()
-                        .map(|album| super::views::to_album_id3(album).render())
-                        .collect(),
-                ),
-            ),
-            (
-                "song",
-                Val::List(
-                    songs
-                        .iter()
-                        .map(|track| ctx.child(track).render())
-                        .collect(),
-                ),
-            ),
-        ]),
-    ))
+        SSearchResult {
+            artist: artists
+                .iter()
+                .map(|artist| ctx.artist_id3(artist))
+                .collect(),
+            album: albums.iter().map(super::views::to_album_id3).collect(),
+            song: songs.iter().map(|track| ctx.child(track)).collect(),
+        },
+    )
 }
 
 /// File-structure starred.
 pub async fn starred(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     validate_music_folder(&ctx.params)?;
     let (artists, albums, songs) = starred_lists(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "starred",
-        obj(vec![
-            (
-                "artist",
-                Val::List(
-                    artists
-                        .iter()
-                        .map(|artist| ctx.artist_file(artist).render())
-                        .collect(),
-                ),
-            ),
-            (
-                "album",
-                Val::List(
-                    albums
-                        .iter()
-                        .map(|album| super::views::to_album_child(album).render())
-                        .collect(),
-                ),
-            ),
-            (
-                "song",
-                Val::List(
-                    songs
-                        .iter()
-                        .map(|track| ctx.child(track).render())
-                        .collect(),
-                ),
-            ),
-        ]),
-    ))
+        SSearchResult {
+            artist: artists
+                .iter()
+                .map(|artist| ctx.artist_file(artist))
+                .collect(),
+            album: albums.iter().map(super::views::to_album_child).collect(),
+            song: songs.iter().map(|track| ctx.child(track)).collect(),
+        },
+    )
 }
 
 /// Set the caller's rating of an artist, album or track at its current
@@ -610,21 +558,15 @@ pub async fn now_playing(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         else {
             continue;
         };
-        entries.push(
-            super::models::SNowPlayingEntry {
-                child: ctx.child(&track),
-                username: row.user_name.clone(),
-                minutesAgo: ((now - row.updated_at) / 60.0).max(0.0) as i64,
-                playerId: index as i64,
-                playerName: row.source.clone().or_else(|| row.device_name.clone()),
-            }
-            .render(),
-        );
+        entries.push(super::models::SNowPlayingEntry {
+            child: ctx.child(&track),
+            username: row.user_name.clone(),
+            minutesAgo: ((now - row.updated_at) / 60.0).max(0.0) as i64,
+            playerId: index as i64,
+            playerName: row.source.clone().or_else(|| row.device_name.clone()),
+        });
     }
-    Ok(Outcome::keyed(
-        "nowPlaying",
-        obj(vec![("entry", Val::List(entries))]),
-    ))
+    Outcome::keyed("nowPlaying", Wrap("entry", entries))
 }
 
 /// Playback report (extension playbackReport:1): GET, form, or JSON
@@ -749,7 +691,7 @@ pub async fn get_play_queue(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let current = current_index
         .and_then(|index| tracks.get(index))
         .map(|child| child.id.clone());
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "playQueue",
         SPlayQueue {
             username: effective_username(ctx.user()?),
@@ -759,9 +701,8 @@ pub async fn get_play_queue(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             current,
             position: current_index.map(|_| queue.position_ms),
             entry: tracks,
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Save the queue: `current` must reference a queued song for
@@ -812,7 +753,7 @@ pub async fn save_play_queue(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
 /// Saved queue by index (extension indexBasedQueue:1).
 pub async fn get_play_queue_by_index(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let (queue, tracks, current_index) = queue_entries(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "playQueueByIndex",
         SPlayQueueByIndex {
             username: effective_username(ctx.user()?),
@@ -822,9 +763,8 @@ pub async fn get_play_queue_by_index(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicE
             currentIndex: current_index.map(|index| index as i64),
             position: current_index.map(|_| queue.position_ms),
             entry: tracks,
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Save the queue by index.
@@ -888,24 +828,18 @@ pub async fn get_bookmarks(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         let Some(track) = mapped.get(&bookmark.file_id) else {
             continue;
         };
-        bookmarks.push(
-            SBookmark {
-                position: bookmark.position_ms,
-                username: effective_username(ctx.user()?),
-                created: super::views::iso(Some(bookmark.created_at))
-                    .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned()),
-                changed: super::views::iso(Some(bookmark.changed_at))
-                    .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned()),
-                entry: ctx.child(track),
-                comment: (!bookmark.comment.is_empty()).then(|| bookmark.comment.clone()),
-            }
-            .render(),
-        );
+        bookmarks.push(SBookmark {
+            position: bookmark.position_ms,
+            username: effective_username(ctx.user()?),
+            created: super::views::iso(Some(bookmark.created_at))
+                .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned()),
+            changed: super::views::iso(Some(bookmark.changed_at))
+                .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned()),
+            entry: ctx.child(track),
+            comment: (!bookmark.comment.is_empty()).then(|| bookmark.comment.clone()),
+        });
     }
-    Ok(Outcome::keyed(
-        "bookmarks",
-        obj(vec![("bookmark", Val::List(bookmarks))]),
-    ))
+    Outcome::keyed("bookmarks", Wrap("bookmark", bookmarks))
 }
 
 /// Create or update a bookmark.
@@ -994,7 +928,7 @@ pub async fn artist_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     } else {
         "artistInfo"
     };
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         key,
         SArtistInfo {
             biography: None,
@@ -1004,9 +938,8 @@ pub async fn artist_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             mediumImageUrl: medium,
             largeImageUrl: large,
             similarArtist: Vec::new(),
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Album info: projected MBID or an empty string (else the raw rg mbid)
@@ -1033,7 +966,7 @@ pub async fn album_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     } else {
         Some(album.rg_mbid.clone())
     };
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "albumInfo",
         SAlbumInfo {
             notes: None,
@@ -1042,9 +975,8 @@ pub async fn album_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             smallImageUrl: small,
             mediumImageUrl: medium,
             largeImageUrl: large,
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Structured lyrics (extension songLyrics:1); no lyrics -> empty list.
@@ -1064,29 +996,23 @@ pub async fn lyrics_by_song_id(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> 
         .map_err(Ctx::store_err)?;
     let mut values = Vec::new();
     if let Some(lyrics) = lyrics {
-        values.push(
-            SStructuredLyrics {
-                lang: lyrics.language,
-                synced: lyrics.synced,
-                line: lyrics
-                    .lines
-                    .into_iter()
-                    .map(|line| SLyricsLine {
-                        value: line.value,
-                        start: line.start_ms,
-                    })
-                    .collect(),
-                displayArtist: (!track.artist_name.is_empty()).then(|| track.artist_name.clone()),
-                displayTitle: (!track.title.is_empty()).then(|| track.title.clone()),
-                offset: None,
-            }
-            .render(),
-        );
+        values.push(SStructuredLyrics {
+            lang: lyrics.language,
+            synced: lyrics.synced,
+            line: lyrics
+                .lines
+                .into_iter()
+                .map(|line| SLyricsLine {
+                    value: line.value,
+                    start: line.start_ms,
+                })
+                .collect(),
+            displayArtist: (!track.artist_name.is_empty()).then(|| track.artist_name.clone()),
+            displayTitle: (!track.title.is_empty()).then(|| track.title.clone()),
+            offset: None,
+        });
     }
-    Ok(Outcome::keyed(
-        "lyricsList",
-        obj(vec![("structuredLyrics", Val::List(values))]),
-    ))
+    Outcome::keyed("lyricsList", Wrap("structuredLyrics", values))
 }
 
 /// Legacy flat lyrics: exact title (+artist) match, deterministic by
@@ -1110,15 +1036,14 @@ pub async fn lyrics(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         candidates.retain(|track| track.artist_name.to_lowercase() == artist.to_lowercase());
     }
     if candidates.is_empty() {
-        return Ok(Outcome::keyed(
+        return Outcome::keyed(
             "lyrics",
             SLyrics {
                 artist: artist.unwrap_or_default(),
                 title,
                 value: String::new(),
-            }
-            .render(),
-        ));
+            },
+        );
     }
     candidates.sort_by(|a, b| a.file_id.cmp(&b.file_id));
     let track = &candidates[0];
@@ -1137,32 +1062,29 @@ pub async fn lyrics(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                 .join("\n")
         })
         .unwrap_or_default();
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "lyrics",
         SLyrics {
             artist: track.artist_name.clone(),
             title: track.title.clone(),
             value,
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Genre list.
 pub async fn genres(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let genres = ctx.store.get_genres().await.map_err(Ctx::store_err)?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "genres",
-        obj(vec![(
+        Wrap(
             "genre",
-            Val::List(
-                genres
-                    .iter()
-                    .map(|genre| super::views::to_genre(genre).render())
-                    .collect(),
-            ),
-        )]),
-    ))
+            genres
+                .iter()
+                .map(super::views::to_genre)
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
 
 /// Songs of a genre page.
@@ -1185,18 +1107,16 @@ pub async fn songs_by_genre(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .get_songs_by_genre(&genre, count, offset)
         .await
         .map_err(Ctx::store_err)?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "songsByGenre",
-        obj(vec![(
+        Wrap(
             "song",
-            Val::List(
-                tracks
-                    .iter()
-                    .map(|track| ctx.child(track).render())
-                    .collect(),
-            ),
-        )]),
-    ))
+            tracks
+                .iter()
+                .map(|track| ctx.child(track))
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
 
 /// Caller user object; the `username` param is required but ignored.
@@ -1205,16 +1125,15 @@ pub async fn user(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         return Err(SubsonicError::missing("username"));
     }
     let caller = ctx.user()?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "user",
         SUser::caller(
             effective_username(caller),
             caller.is_admin(),
             ctx.settings.download_access.admits(caller.role()),
             ctx.settings.transcode_max_bitrate_kbps,
-        )
-        .render(),
-    ))
+        ),
+    )
 }
 
 /// Scan status. Before the first finished scan the three keys about the
@@ -1224,7 +1143,7 @@ pub async fn user(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
 pub async fn scan_status(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let status = ctx.store.scan_status().await.map_err(Ctx::store_err)?;
     let last = status.last.as_ref();
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "scanStatus",
         SScanStatus {
             scanning: status.scanning,
@@ -1233,9 +1152,8 @@ pub async fn scan_status(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             lastScan: last.and_then(|last| iso(Some(last.finished_at))),
             scanType: last.map(|last| last.kind.clone()),
             elapsedTime: last.and_then(|last| last.elapsed_nanos),
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Start a scan (admin-only -> 50).
@@ -1247,15 +1165,14 @@ pub async fn start_scan(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         ));
     }
     ctx.store.start_scan().await.map_err(Ctx::store_err)?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "scanStatus",
         SScanStatus {
             scanning: true,
             count: Some(0),
             ..SScanStatus::default()
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Top songs: the artist name must match exactly (case-insensitive),
@@ -1286,18 +1203,16 @@ pub async fn top_songs(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .get_top_songs(&artist, &user_id, count)
         .await
         .map_err(Ctx::store_err)?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "topSongs",
-        obj(vec![(
+        Wrap(
             "song",
-            Val::List(
-                tracks
-                    .iter()
-                    .map(|track| ctx.child(track).render())
-                    .collect(),
-            ),
-        )]),
-    ))
+            tracks
+                .iter()
+                .map(|track| ctx.child(track))
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
 
 /// Similar songs for an artist id (shared by both spellings).
@@ -1329,33 +1244,29 @@ pub async fn similar_songs_query(
 /// Similar songs (ID3 key).
 pub async fn similar_songs2(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let tracks = similar_songs_query(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "similarSongs2",
-        obj(vec![(
+        Wrap(
             "song",
-            Val::List(
-                tracks
-                    .iter()
-                    .map(|track| ctx.child(track).render())
-                    .collect(),
-            ),
-        )]),
-    ))
+            tracks
+                .iter()
+                .map(|track| ctx.child(track))
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
 
 /// Similar songs (file key).
 pub async fn similar_songs(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let tracks = similar_songs_query(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "similarSongs",
-        obj(vec![(
+        Wrap(
             "song",
-            Val::List(
-                tracks
-                    .iter()
-                    .map(|track| ctx.child(track).render())
-                    .collect(),
-            ),
-        )]),
-    ))
+            tracks
+                .iter()
+                .map(|track| ctx.child(track))
+                .collect::<Vec<_>>(),
+        ),
+    )
 }

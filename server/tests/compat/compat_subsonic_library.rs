@@ -1713,7 +1713,7 @@ fn request_limits_and_xml_escaping() {
     use droppedneedle_compat::subsonic::params::{
         MAX_REQUEST_PARAMETER_BYTES, check_limits, decode_pairs,
     };
-    use droppedneedle_compat::subsonic::value::{Val, obj};
+    use droppedneedle_compat::subsonic::value::{SubsonicFormat, render_error};
 
     assert_eq!(MAX_REQUEST_PARAMETER_BYTES, 64 * 1024);
     assert_eq!(
@@ -1744,14 +1744,11 @@ fn request_limits_and_xml_escaping() {
     let many = vec![("a".to_owned(), "b".to_owned()); 2000];
     assert_eq!(check_limits(&many).expect_err("too many").code, 10);
 
-    let value = obj(vec![("a", Val::Str("x\x07\x1b&<>\"".to_owned()))]);
-    let xml = Val::Obj(vec![("root".to_owned(), value)]).to_xml("t");
+    let xml = render_error(0, "x\x07\x1b&<>\"", SubsonicFormat::Xml, None, "s", "v").body_text();
     assert!(
-        xml.contains("x&amp;&lt;&gt;&quot;") && !xml.contains('\x07'),
+        xml.contains("message=\"x&amp;&lt;&gt;&quot;\"") && !xml.contains('\x07'),
         "{xml}"
     );
-    let stripped = obj(vec![("gone", Val::Null), ("empty", Val::List(vec![]))]).stripped();
-    assert_eq!(stripped.to_json(), "{\"empty\":[]}");
 }
 
 /// A read that finds the database busy answers 503 with `Retry-After` in

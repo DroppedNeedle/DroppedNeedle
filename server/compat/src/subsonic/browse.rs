@@ -7,11 +7,10 @@ use super::error::{NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, cover_id, decode, decode_expect, encode};
 use super::library::current_id;
 use super::models::{
-    Render, SArtistID3, SArtistsID3, SChild, SIndex, SIndexID3, SIndexes, SLicense, SMusicFolder,
-    SOpenSubsonicExtension,
+    SArtistID3, SArtistsID3, SChild, SDirectory, SIndex, SIndexID3, SIndexes, SLicense,
+    SMusicFolder, SOpenSubsonicExtension, SSearchResult, Wrap,
 };
 use super::store::AlbumSort;
-use super::value::{IntoVal, Val, obj};
 use super::{Ctx, Outcome};
 
 /// Articles stripped for A-Z bucketing (v2 `_IGNORED_ARTICLES`).
@@ -83,32 +82,27 @@ pub async fn ping(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
 
 /// Static license.
 pub async fn license(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
-    Ok(Outcome::keyed("license", SLicense { valid: true }.render()))
+    Outcome::keyed("license", SLicense { valid: true })
 }
 
 /// Advertised OpenSubsonic extensions, all v1. Public (no auth).
 /// The set is owned by `compat::shared::extensions`: every served
 /// extension.
 pub async fn extensions(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "openSubsonicExtensions",
-        Val::List(
-            crate::shared::extensions::ADVERTISED
-                .iter()
-                .map(|ext| {
-                    SOpenSubsonicExtension {
-                        name: ext.name.to_string(),
-                        versions: ext
-                            .versions
-                            .iter()
-                            .map(|version| i64::from(*version))
-                            .collect(),
-                    }
-                    .render()
-                })
-                .collect(),
-        ),
-    ))
+        crate::shared::extensions::ADVERTISED
+            .iter()
+            .map(|ext| SOpenSubsonicExtension {
+                name: ext.name.to_string(),
+                versions: ext
+                    .versions
+                    .iter()
+                    .map(|version| i64::from(*version))
+                    .collect(),
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Single music folder (id 1, named for the server).
@@ -117,10 +111,7 @@ pub async fn music_folders(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         id: 1,
         name: ctx.settings.server_name.clone(),
     };
-    Ok(Outcome::keyed(
-        "musicFolders",
-        obj(vec![("musicFolder", Val::List(vec![folder.render()]))]),
-    ))
+    Outcome::keyed("musicFolders", Wrap("musicFolder", vec![folder]))
 }
 
 /// ID3 artists in A-Z buckets.
@@ -150,15 +141,14 @@ pub async fn artists(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             artist,
         })
         .collect();
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "artists",
         SArtistsID3 {
             lastModified: revision,
             ignoredArticles: IGNORED_ARTICLES.to_owned(),
             index,
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// File-structure artist indexes, with freshness short-circuit.
@@ -173,15 +163,14 @@ pub async fn indexes(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     // lastModified is a change counter, not a time: only its echo means
     // unchanged. A client's clock time (milliseconds) gets the full index.
     if since == Some(revision) {
-        return Ok(Outcome::keyed(
+        return Outcome::keyed(
             "indexes",
             SIndexes {
                 lastModified: revision,
                 ignoredArticles: IGNORED_ARTICLES.to_owned(),
                 index: vec![],
-            }
-            .render(),
-        ));
+            },
+        );
     }
     let artists = ctx
         .store
@@ -202,15 +191,14 @@ pub async fn indexes(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             artist,
         })
         .collect();
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "indexes",
         SIndexes {
             lastModified: revision,
             ignoredArticles: IGNORED_ARTICLES.to_owned(),
             index,
-        }
-        .render(),
-    ))
+        },
+    )
 }
 
 /// Artist detail (embeds albums).
@@ -225,7 +213,7 @@ pub async fn artist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found"))?;
     let mut rendered = ctx.artist_id3(&artist);
     rendered.album = Some(albums.iter().map(super::views::to_album_id3).collect());
-    Ok(Outcome::keyed("artist", rendered.render()))
+    Outcome::keyed("artist", rendered)
 }
 
 /// Album detail (embeds songs).
@@ -245,7 +233,7 @@ pub async fn album(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .map_err(Ctx::store_err)?;
     let mut rendered = super::views::to_album_id3(&album);
     rendered.song = Some(tracks.iter().map(|track| ctx.child(track)).collect());
-    Ok(Outcome::keyed("album", rendered.render()))
+    Outcome::keyed("album", rendered)
 }
 
 /// Song detail.
@@ -258,7 +246,7 @@ pub async fn song(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .await
         .map_err(Ctx::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Song not found"))?;
-    Ok(Outcome::keyed("song", ctx.child(&track).render()))
+    Outcome::keyed("song", ctx.child(&track))
 }
 
 /// Shared album-list query (v2 `_album_list`).
@@ -373,35 +361,31 @@ pub async fn album_list_query(
 /// ID3 album list.
 pub async fn album_list2(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let albums = album_list_query(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "albumList2",
-        obj(vec![(
+        Wrap(
             "album",
-            Val::List(
-                albums
-                    .iter()
-                    .map(|album| super::views::to_album_id3(album).render())
-                    .collect(),
-            ),
-        )]),
-    ))
+            albums
+                .iter()
+                .map(super::views::to_album_id3)
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
 
 /// File-structure album list.
 pub async fn album_list(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let albums = album_list_query(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "albumList",
-        obj(vec![(
+        Wrap(
             "album",
-            Val::List(
-                albums
-                    .iter()
-                    .map(|album| super::views::to_album_child(album).render())
-                    .collect(),
-            ),
-        )]),
-    ))
+            albums
+                .iter()
+                .map(super::views::to_album_child)
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
 
 /// Random songs with filters.
@@ -421,18 +405,16 @@ pub async fn random_songs(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         )
         .await
         .map_err(Ctx::store_err)?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "randomSongs",
-        obj(vec![(
+        Wrap(
             "song",
-            Val::List(
-                tracks
-                    .iter()
-                    .map(|track| ctx.child(track).render())
-                    .collect(),
-            ),
-        )]),
-    ))
+            tracks
+                .iter()
+                .map(|track| ctx.child(track))
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
 
 /// File-structure directory: id 1 -> artists, artist -> albums, album
@@ -457,17 +439,17 @@ pub async fn music_directory(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                     coverArt: Some(aid),
                     ..SChild::default()
                 }
-                .render()
             })
             .collect();
-        return Ok(Outcome::keyed(
+        return Outcome::keyed(
             "directory",
-            obj(vec![
-                ("id", "1".into_val()),
-                ("name", ctx.settings.server_name.as_str().into_val()),
-                ("child", Val::List(children)),
-            ]),
-        ));
+            SDirectory {
+                id: "1".to_owned(),
+                name: ctx.settings.server_name.clone(),
+                child: children,
+                ..SDirectory::default()
+            },
+        );
     }
     let (kind, internal) = decode(&sid)?;
     let internal = current_id(ctx, kind, internal).await?;
@@ -480,19 +462,17 @@ pub async fn music_directory(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                 .await
                 .map_err(Ctx::store_err)?
                 .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found"))?;
-            let children = albums
-                .iter()
-                .map(|album| super::views::to_album_child(album).render())
-                .collect();
-            Ok(Outcome::keyed(
+            let children = albums.iter().map(super::views::to_album_child).collect();
+            Outcome::keyed(
                 "directory",
-                obj(vec![
-                    ("id", sid.into_val()),
-                    ("name", artist.name.into_val()),
-                    ("albumCount", albums.len().into_val()),
-                    ("child", Val::List(children)),
-                ]),
-            ))
+                SDirectory {
+                    id: sid,
+                    name: artist.name,
+                    albumCount: Some(albums.len()),
+                    child: children,
+                    ..SDirectory::default()
+                },
+            )
         }
         IdKind::Album => {
             let album = ctx
@@ -506,29 +486,22 @@ pub async fn music_directory(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                 .get_album_tracks(&internal)
                 .await
                 .map_err(Ctx::store_err)?;
-            let children = tracks
-                .iter()
-                .map(|track| ctx.child(track).render())
-                .collect();
-            let parent = album
-                .artist_mbid
-                .as_ref()
-                .map(|mbid| encode(IdKind::Artist, mbid))
-                .into_val();
-            Ok(Outcome::keyed(
+            let children = tracks.iter().map(|track| ctx.child(track)).collect();
+            Outcome::keyed(
                 "directory",
-                obj(vec![
-                    ("id", sid.into_val()),
-                    ("parent", parent),
-                    ("name", album.title.into_val()),
-                    (
-                        "coverArt",
-                        cover_id(&internal, album.cover_version.as_deref()).into_val(),
-                    ),
-                    ("songCount", tracks.len().into_val()),
-                    ("child", Val::List(children)),
-                ]),
-            ))
+                SDirectory {
+                    id: sid,
+                    parent: album
+                        .artist_mbid
+                        .as_ref()
+                        .map(|mbid| encode(IdKind::Artist, mbid)),
+                    name: album.title,
+                    coverArt: Some(cover_id(&internal, album.cover_version.as_deref())),
+                    albumCount: None,
+                    songCount: Some(tracks.len()),
+                    child: children,
+                },
+            )
         }
         _ => Err(SubsonicError::new(NOT_FOUND, "Not a directory")),
     }
@@ -615,73 +588,31 @@ pub async fn search_query(
 /// ID3 search.
 pub async fn search3(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let (artists, albums, songs) = search_query(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "searchResult3",
-        obj(vec![
-            (
-                "artist",
-                Val::List(
-                    artists
-                        .iter()
-                        .map(|artist| ctx.artist_id3(artist).render())
-                        .collect(),
-                ),
-            ),
-            (
-                "album",
-                Val::List(
-                    albums
-                        .iter()
-                        .map(|album| super::views::to_album_id3(album).render())
-                        .collect(),
-                ),
-            ),
-            (
-                "song",
-                Val::List(
-                    songs
-                        .iter()
-                        .map(|track| ctx.child(track).render())
-                        .collect(),
-                ),
-            ),
-        ]),
-    ))
+        SSearchResult {
+            artist: artists
+                .iter()
+                .map(|artist| ctx.artist_id3(artist))
+                .collect(),
+            album: albums.iter().map(super::views::to_album_id3).collect(),
+            song: songs.iter().map(|track| ctx.child(track)).collect(),
+        },
+    )
 }
 
 /// File-structure search.
 pub async fn search2(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let (artists, albums, songs) = search_query(ctx).await?;
-    Ok(Outcome::keyed(
+    Outcome::keyed(
         "searchResult2",
-        obj(vec![
-            (
-                "artist",
-                Val::List(
-                    artists
-                        .iter()
-                        .map(|artist| ctx.artist_file(artist).render())
-                        .collect(),
-                ),
-            ),
-            (
-                "album",
-                Val::List(
-                    albums
-                        .iter()
-                        .map(|album| super::views::to_album_child(album).render())
-                        .collect(),
-                ),
-            ),
-            (
-                "song",
-                Val::List(
-                    songs
-                        .iter()
-                        .map(|track| ctx.child(track).render())
-                        .collect(),
-                ),
-            ),
-        ]),
-    ))
+        SSearchResult {
+            artist: artists
+                .iter()
+                .map(|artist| ctx.artist_file(artist))
+                .collect(),
+            album: albums.iter().map(super::views::to_album_child).collect(),
+            song: songs.iter().map(|track| ctx.child(track)).collect(),
+        },
+    )
 }

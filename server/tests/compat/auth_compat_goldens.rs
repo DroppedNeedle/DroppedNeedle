@@ -9,14 +9,14 @@ use droppedneedle_auth::compat_auth::jellyfin::{
 };
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{
-    API_VERSION, AUTH_CODES, AVATAR_FORBIDDEN_MESSAGE, BINARY_ENDPOINTS, CONFLICTING_AUTH, GENERIC,
-    INVALID_APIKEY, MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH, NAMESPACE, NOT_AUTHORIZED,
-    NOT_FOUND, PARAM_MISSING, PUBLIC_ENDPOINT, SubsonicDenied, SubsonicFormat, SubsonicParams,
-    WRONG_CREDENTIALS, authenticate, avatar_is_self, callback_is_safe, decode_subsonic_password,
-    default_message, dispatch_uses_envelope, hex_encode, is_binary_endpoint, is_public_endpoint,
+    API_VERSION, AVATAR_FORBIDDEN_MESSAGE, CONFLICTING_AUTH, GENERIC, INVALID_APIKEY,
+    MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH, NAMESPACE, NOT_AUTHORIZED, NOT_FOUND,
+    PARAM_MISSING, SubsonicDenied, SubsonicFormat, SubsonicParams, WRONG_CREDENTIALS, authenticate,
+    avatar_is_self, callback_is_safe, decode_subsonic_password, default_message, hex_encode,
     md5_hex, normalize_endpoint, parse_format, render_binary_error, render_error, sha256_hex,
 };
 use droppedneedle_auth::users::roles::Role;
+use droppedneedle_compat::subsonic::{AUTH_CODES, ENDPOINTS, dispatch_uses_envelope, endpoint};
 
 use crate::common::auth::{AuthRig, PASSWORD};
 
@@ -37,8 +37,13 @@ async fn passwords(tag: &str) -> (AuthRig, ProdCompatPasswords) {
 fn protocol_constants_match_v2() {
     assert_eq!(API_VERSION, "1.16.1");
     assert_eq!(NAMESPACE, "http://subsonic.org/restapi");
-    assert_eq!(PUBLIC_ENDPOINT, "getopensubsonicextensions");
-    assert_eq!(BINARY_ENDPOINTS.len(), 5);
+    let public: Vec<&str> = ENDPOINTS
+        .iter()
+        .filter(|e| e.public)
+        .map(|e| e.name)
+        .collect();
+    assert_eq!(public, ["getopensubsonicextensions"]);
+    assert_eq!(ENDPOINTS.iter().filter(|e| e.binary).count(), 5);
     assert_eq!(AUTH_CODES, &[10, 40, 41, 42, 43, 44, 50]);
     assert_eq!(MAX_ENCODED_PASSWORD_LENGTH, 2052);
     assert_eq!(MAX_AUTH_VALUE_LENGTH, 1024);
@@ -160,18 +165,21 @@ fn endpoint_normalization_and_sets_match_v2() {
     assert_eq!(normalize_endpoint("getArtists.view"), "getartists");
     assert_eq!(normalize_endpoint("STREAM.VIEW"), "stream");
     assert_eq!(normalize_endpoint("ping.view.view"), "ping.view");
-    assert!(is_binary_endpoint("stream"));
-    assert!(is_binary_endpoint("getavatar"));
-    assert!(!is_binary_endpoint("ping"));
-    assert!(is_public_endpoint("getopensubsonicextensions"));
-    assert!(!is_public_endpoint("ping"));
+    let binary = |name: &str| endpoint(name).is_some_and(|e| e.binary);
+    let public = |name: &str| endpoint(name).is_some_and(|e| e.public);
+    assert!(binary("stream"));
+    assert!(binary("getavatar"));
+    assert!(!binary("ping"));
+    assert!(public("getopensubsonicextensions"));
+    assert!(!public("ping"));
 }
 
 #[test]
 fn dispatch_split_keeps_50_enveloped_and_sends_the_rest_to_text() {
     assert!(dispatch_uses_envelope(WRONG_CREDENTIALS, "stream"));
     assert!(dispatch_uses_envelope(NOT_AUTHORIZED, "stream"));
-    assert!(!dispatch_uses_envelope(NOT_FOUND, "stream"));
+    assert!(dispatch_uses_envelope(NOT_FOUND, "stream"));
+    assert!(!dispatch_uses_envelope(NOT_FOUND, "download"));
     assert!(!dispatch_uses_envelope(GENERIC, "download"));
     assert!(dispatch_uses_envelope(NOT_FOUND, "getartists"));
     assert!(dispatch_uses_envelope(NOT_AUTHORIZED, "getartists"));

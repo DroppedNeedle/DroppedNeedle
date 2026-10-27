@@ -5,14 +5,13 @@
 //! outermost first: CORS (`*`, creds off), and rate limits (media and
 //! artwork exempt, a public-IP bucket for unauthenticated routes,
 //! principal buckets for signed-in callers, auth-failure backoff). Auth itself lives inside the
-//! protocol paths (Subsonic `dispatch`, the Jellyfin sign-in layer), never
+//! protocol paths (the Subsonic handler, the Jellyfin sign-in layer), never
 //! in the `/api` session middleware: compat mounts outside it.
 //!
 //! Rejects match v2 exactly: Subsonic answers a failed envelope code 0
 //! ("Rate limit exceeded") over HTTP 200 plus `Retry-After`; Jellyfin
 //! answers an empty 429 plus `Retry-After`.
 
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -34,10 +33,10 @@ use crate::shared::{auth, cors, path_case, ratelimit, redact};
 use crate::subsonic::error::SubsonicError;
 use crate::subsonic::params::{MAX_REQUEST_PARAMETER_BYTES, SubsonicParameters};
 use crate::subsonic::picture;
-use crate::subsonic::value::{Rendered, SubsonicFormat, parse_format, render_error};
-use crate::subsonic::{
-    Request as SubsonicRequest, Settings, classify, dispatch_with, normalize_endpoint,
+use crate::subsonic::value::{
+    Rendered, SubsonicFormat, parse_format, render_error, render_unknown_method, sniff_format,
 };
+use crate::subsonic::{Ctx, Settings, classify, endpoint, failure, normalize_endpoint};
 use droppedneedle_auth::compat_auth::jellyfin::extract_token;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::session::client_ip::ClientIp;
@@ -187,12 +186,10 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
-/// Sniff the envelope format from raw params the way `dispatch` does: a
-/// unique valid `f` value only (limit rejects render before strict
-/// decoding, so they must not fail on a malformed `f`).
-fn sniff_format(raw_query: Option<&str>) -> (SubsonicFormat, Option<String>) {
-    let mut format = SubsonicFormat::Xml;
-    let mut callback = None;
+/// The envelope format and callback from the raw query, for answers made
+/// before the parameters decode (limit rejects and malformed requests
+/// must not fail on a malformed `f`).
+fn sniff_query(raw_query: Option<&str>) -> (SubsonicFormat, Option<String>) {
     let pairs = raw_query.unwrap_or("").split('&').collect::<Vec<_>>();
     let values = |key: &str| {
         pairs
@@ -203,17 +200,7 @@ fn sniff_format(raw_query: Option<&str>) -> (SubsonicFormat, Option<String>) {
             })
             .collect::<Vec<_>>()
     };
-    if let [sniffed] = values("f").as_slice()
-        && let Ok(parsed) = parse_format(Some(sniffed))
-    {
-        format = parsed;
-    }
-    if let [sniffed] = values("callback").as_slice()
-        && sniffed.len() <= 128
-    {
-        callback = Some(sniffed.to_string());
-    }
-    (format, callback)
+    sniff_format(&values("f"), &values("callback"))
 }
 
 /// Protocol-shaped limit reject with `Retry-After`. The open picture
@@ -227,7 +214,7 @@ fn limit_reject(
 ) -> Response {
     let low = path.to_lowercase();
     let mut response = if low.starts_with("/subsonic") && low != picture::PATH {
-        let (format, callback) = sniff_format(raw_query);
+        let (format, callback) = sniff_query(raw_query);
         let rendered = render_error(
             0,
             "Rate limit exceeded",
@@ -265,7 +252,7 @@ pub fn server_error_response(
 ) -> Response {
     let low = path.to_lowercase();
     let mut response = if low.starts_with("/subsonic") && low != picture::PATH {
-        let (format, callback) = sniff_format(raw_query);
+        let (format, callback) = sniff_query(raw_query);
         let rendered = render_error(
             crate::subsonic::error::GENERIC,
             droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE,
@@ -484,7 +471,7 @@ async fn subsonic_method_not_allowed(
     State(state): State<SubsonicState>,
     request: Request,
 ) -> Response {
-    let (format, callback) = sniff_format(request.uri().query());
+    let (format, callback) = sniff_query(request.uri().query());
     let settings = state.settings.subsonic();
     rendered_response(
         &render_error(
@@ -544,19 +531,64 @@ fn flatten_json_object(body: &[u8]) -> Vec<(String, String)> {
     out
 }
 
-/// One Subsonic request: decode params, gate enablement, enforce limits,
-/// verify (recording failures), dispatch, and render.
+/// Decode the query, a form body, and a JSON body for reportPlayback into
+/// one parameter list. A body over the cap, bad percent-encoding or a
+/// parameter over its limits is code 10.
+async fn decode_params(
+    body: Body,
+    raw_query: Option<&str>,
+    content_type: &str,
+    name: &str,
+) -> Result<(SubsonicParameters, Vec<u8>), SubsonicError> {
+    let refused = || SubsonicError::code_only(10);
+    let body = axum::body::to_bytes(body, MAX_REQUEST_PARAMETER_BYTES + 1)
+        .await
+        .map_err(|_| refused())?;
+    if body.len() > MAX_REQUEST_PARAMETER_BYTES {
+        return Err(refused());
+    }
+    let bad_encoding = |_| SubsonicError::new(10, "Invalid request parameter encoding");
+    let mut pairs = crate::subsonic::params::decode_pairs(raw_query.unwrap_or("").as_bytes())
+        .map_err(bad_encoding)?;
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    if mime == "application/x-www-form-urlencoded" && !body.is_empty() {
+        pairs.append(&mut crate::subsonic::params::decode_pairs(&body).map_err(bad_encoding)?);
+    } else if mime == "application/json" && name == "reportplayback" && !body.is_empty() {
+        pairs.extend(flatten_json_object(&body));
+    }
+    crate::subsonic::params::check_limits(&pairs).map_err(|_| refused())?;
+    Ok((SubsonicParameters::new(pairs), body.to_vec()))
+}
+
+/// One Subsonic request: decode params, read the format once, gate
+/// enablement, verify (enforcing principal limits and recording
+/// failures), then run the method from the endpoint table and render.
 async fn subsonic_dispatch(
     State(state): State<SubsonicState>,
-    Path(endpoint): Path<String>,
+    Path(endpoint_name): Path<String>,
     RawQuery(raw_query): RawQuery,
     request: Request,
 ) -> Response {
     let picture_base = base_address(&request, &state.listener, &state.settings);
     let (parts, body) = request.into_parts();
     let method = parts.method.to_string();
-    let (format, callback) = sniff_format(raw_query.as_deref());
+    let head_only = method == "HEAD";
     let settings = &state.settings.subsonic();
+    let name = normalize_endpoint(&endpoint_name);
+    let content_type = header(&parts.headers, "content-type").unwrap_or("");
+    let decoded = decode_params(body, raw_query.as_deref(), content_type, &name).await;
+    // The format every answer below is written in: a unique valid `f`
+    // among the decoded parameters, or in the raw query when they did not
+    // decode.
+    let (format, callback) = match &decoded {
+        Ok((params, _)) => sniff_format(&params.all("f"), &params.all("callback")),
+        Err(_) => sniff_query(raw_query.as_deref()),
+    };
     let envelope = |code: u8, message: &str| {
         rendered_response(
             &render_error(
@@ -567,103 +599,63 @@ async fn subsonic_dispatch(
                 &settings.server_name,
                 &settings.server_version,
             ),
-            method == "HEAD",
+            head_only,
         )
+    };
+    let fail = |err: SubsonicError| {
+        let (rendered, fault) = failure(err, &name, format, callback.as_deref(), settings);
+        let mut response = rendered_response(&rendered, head_only);
+        if let Some(fault) = fault {
+            response.extensions_mut().insert(fault);
+        }
+        response
     };
     // Enablement first: a disabled API leaks no method existence.
     if !settings.enabled {
         return envelope(0, "The Subsonic API is disabled on this server.");
     }
-    let name = normalize_endpoint(&endpoint);
-    let body_bytes = match axum::body::to_bytes(body, MAX_REQUEST_PARAMETER_BYTES + 1).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return envelope(10, "Required parameter is missing.");
-        }
+    let (params, body) = match decoded {
+        Ok(decoded) => decoded,
+        Err(err) => return envelope(err.code, &err.message),
     };
-    if body_bytes.len() > MAX_REQUEST_PARAMETER_BYTES {
-        return envelope(10, "Required parameter is missing.");
-    }
-    let mut pairs = match crate::subsonic::params::decode_pairs(
-        raw_query.as_deref().unwrap_or("").as_bytes(),
-    ) {
-        Ok(pairs) => pairs,
-        Err(_) => return envelope(10, "Invalid request parameter encoding"),
-    };
-    let content_type = header(&parts.headers, "content-type").unwrap_or("");
-    let mime = content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_lowercase();
-    if mime == "application/x-www-form-urlencoded" && !body_bytes.is_empty() {
-        match crate::subsonic::params::decode_pairs(&body_bytes) {
-            Ok(mut form) => pairs.append(&mut form),
-            Err(_) => return envelope(10, "Invalid request parameter encoding"),
-        }
-    } else if mime == "application/json" && name == "reportplayback" && !body_bytes.is_empty() {
-        pairs.extend(flatten_json_object(&body_bytes));
-    }
-    if crate::subsonic::params::check_limits(&pairs).is_err() {
-        return envelope(10, "Required parameter is missing.");
-    }
-    let params = SubsonicParameters::new(pairs);
+    let method_entry = endpoint(&name);
     let ip = parts
         .extensions
         .get::<ClientIp>()
         .map(|client| client.0.to_string())
         .unwrap_or_else(|| "unknown".to_owned());
     let now = state.now();
+    let record_denial = || {
+        let _ = auth::record_auth_denial(
+            &mut state
+                .limits
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            &ip,
+            now,
+        );
+    };
     // Principal buckets + backoff run here (post-verify); the lockout
     // pre-check and, for the public endpoint, the public bucket ran in the
     // limits layer.
-    let principal = if name == crate::subsonic::PUBLIC_ENDPOINT {
+    let principal = if method_entry.is_some_and(|entry| entry.public) {
         None
     } else {
         let credentials = match classify(&params) {
             Ok(Some(credentials)) => credentials,
             Ok(None) => {
-                let _ = auth::record_auth_denial(
-                    &mut state
-                        .limits
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                    &ip,
-                    now,
-                );
-                return render_denied(
-                    &SubsonicError::code_only(10),
-                    &name,
-                    format,
-                    callback.as_deref(),
-                    settings,
-                    method == "HEAD",
-                );
+                record_denial();
+                return fail(SubsonicError::code_only(10));
             }
             Err(denied) => {
-                let _ = auth::record_auth_denial(
-                    &mut state
-                        .limits
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                    &ip,
-                    now,
-                );
-                return render_denied(
-                    &denied,
-                    &name,
-                    format,
-                    callback.as_deref(),
-                    settings,
-                    method == "HEAD",
-                );
+                record_denial();
+                return fail(denied);
             }
         };
         match state.verifier.verify(&credentials).await {
             Ok(principal) => {
                 let label = auth::principal_label(Some(principal.user_id()), &ip);
-                let path = format!("/subsonic/rest/{endpoint}");
+                let path = format!("/subsonic/rest/{endpoint_name}");
                 let exempt =
                     ratelimit::is_media_request(&path) || ratelimit::is_artwork_request(&path);
                 let mutation = ratelimit::is_mutation_request(&method, &path);
@@ -692,81 +684,50 @@ async fn subsonic_dispatch(
                 // broke), not a wrong guess: it must not count toward the
                 // caller's lockout.
                 if denied.code != droppedneedle_auth::compat_auth::subsonic::GENERIC {
-                    let _ = auth::record_auth_denial(
-                        &mut state
-                            .limits
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                        &ip,
-                        now,
-                    );
+                    record_denial();
                 }
-                return render_denied(
-                    &denied,
-                    &name,
-                    format,
-                    callback.as_deref(),
-                    settings,
-                    method == "HEAD",
-                );
+                return fail(denied);
             }
         }
     };
-    let mut headers = HashMap::new();
-    if let Some(range) = header(&parts.headers, "range") {
-        headers.insert("Range".to_owned(), range.to_owned());
+    // Strict decoding of `f` and `callback`: a repeat or a bad value is
+    // code 10 (v2 reads a unique valid value only).
+    let strict = params
+        .string_max("f", Some("xml"), 16)
+        .and_then(|requested| parse_format(requested.as_deref()))
+        .and_then(|_| params.string_max("callback", None, 128));
+    if let Err(err) = strict {
+        return fail(err);
     }
-    if let Some(content) = header(&parts.headers, "content-type") {
-        headers.insert("Content-Type".to_owned(), content.to_owned());
-    }
-    let subsonic_request = SubsonicRequest {
-        method: method.clone(),
-        endpoint,
+    let Some(method_entry) = method_entry else {
+        return rendered_response(&render_unknown_method(), head_only);
+    };
+    let scoped_store = principal
+        .as_ref()
+        .map(|principal| state.store.for_caller(principal.user_id()));
+    let scoped_audio = principal
+        .as_ref()
+        .map(|principal| state.audio.for_caller(principal.user_id()));
+    let ctx = Ctx {
+        endpoint_name: name.clone(),
         params,
-        headers,
-        body: body_bytes.to_vec(),
+        principal,
+        store: scoped_store.as_ref().unwrap_or(&state.store),
+        audio: scoped_audio.as_ref().unwrap_or(&state.audio),
+        settings,
+        format,
+        callback: callback.clone(),
+        method: method.clone(),
+        range: header(&parts.headers, "range").map(str::to_owned),
         content_type: Some(content_type.to_owned()).filter(|mime| !mime.is_empty()),
+        body,
         now_unix: state.clock.now_ms() as f64 / 1000.0,
         picture_base,
     };
-    let (rendered, fault) = dispatch_with(
-        &state.verifier,
-        &state.store,
-        &state.audio,
-        settings,
-        &subsonic_request,
-        principal,
-    )
-    .await;
-    let mut response = rendered_response(&rendered, method == "HEAD");
-    if let Some(fault) = fault {
-        response.extensions_mut().insert(fault);
+    match crate::subsonic::run(method_entry, &ctx).await {
+        Ok(rendered) => rendered_response(&rendered, head_only),
+        Err(err) => fail(err),
     }
-    response
-}
-
-/// Render a pre-dispatch auth denial through the binary-vs-envelope split.
-fn render_denied(
-    denied: &SubsonicError,
-    normalized_endpoint: &str,
-    format: SubsonicFormat,
-    callback: Option<&str>,
-    settings: &Settings,
-    head_only: bool,
-) -> Response {
-    let rendered = if crate::subsonic::dispatch_uses_envelope(denied.code, normalized_endpoint) {
-        render_error(
-            denied.code,
-            &denied.message,
-            format,
-            callback,
-            &settings.server_name,
-            &settings.server_version,
-        )
-    } else {
-        crate::subsonic::value::render_binary_error(denied.code, &denied.message)
-    };
-    rendered_response(&rendered, head_only)
 }
 
 /// Redact a compat request target for access logs. Every persisted
