@@ -82,8 +82,12 @@
 		if (!connectionsUsable) return [];
 
 		const services = connectionsQuery.data?.connections ?? [];
+		// A Last.fm row without an account name is a saved key pair, not a link.
 		return (['listenbrainz', 'lastfm'] as const).filter((source) =>
-			services.some((connection) => connection.service === source)
+			services.some(
+				(connection) =>
+					connection.service === source && (source !== 'lastfm' || Boolean(connection.username))
+			)
 		);
 	});
 	const resolvedSource = $derived.by<MusicSource>(() => {
