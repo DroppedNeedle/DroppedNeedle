@@ -63417,6 +63417,7 @@
         "enum": [
           "listenbrainz",
           "lastfm",
+          "lastfm_and_listenbrainz",
           "jellyfin",
           "musicbrainz",
           "library",

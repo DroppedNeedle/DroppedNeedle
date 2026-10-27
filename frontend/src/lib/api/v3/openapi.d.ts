@@ -22283,7 +22283,7 @@ export interface components {
          * @description Where a shelf's rows came from.
          * @enum {string}
          */
-        ShelfSource: "listenbrainz" | "lastfm" | "jellyfin" | "musicbrainz" | "library" | "local";
+        ShelfSource: "listenbrainz" | "lastfm" | "lastfm_and_listenbrainz" | "jellyfin" | "musicbrainz" | "library" | "local";
         /** @description `GET /albums/{album_id}/similar`. */
         SimilarAlbumsResponse: {
             /** @description Albums by similar artists. */

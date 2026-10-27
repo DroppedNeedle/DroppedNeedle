@@ -382,7 +382,7 @@ async fn a_page_in_an_old_shape_is_dropped() {
 /// A user with both services linked is seeded from the primary one alone,
 /// until the services are blended: then the Last.fm top artist gets a
 /// Because shelf next to the ListenBrainz one, an artist only Last.fm finds
-/// similar shows up on the page.
+/// similar shows up on the page, and the shelves grown from both name both.
 #[tokio::test]
 async fn blended_services_seed_the_page_from_both() {
     use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
@@ -449,12 +449,22 @@ async fn blended_services_seed_the_page_from_both() {
             .filter_map(|entry| entry["seed_artist"].as_str())
             .collect();
         let shown = page.to_string().contains("Last.fm Pick");
+        let because_source = &because[0]["section"]["source"];
         if blend {
             assert_eq!(seeds, ["Seed", "Scrobbled Seed"], "both services seed");
             assert!(shown, "Last.fm's similar artist is on the page");
+            assert_eq!(
+                because_source, "lastfm_and_listenbrainz",
+                "the shelf names both"
+            );
+            assert_eq!(
+                content(&page, "top_picks")["picks"]["source"],
+                "lastfm_and_listenbrainz"
+            );
         } else {
             assert_eq!(seeds, ["Seed"], "the primary service alone");
             assert!(!shown, "Last.fm is not asked for similar artists");
+            assert_eq!(because_source, "listenbrainz", "the primary service alone");
         }
     }
 }

@@ -384,6 +384,16 @@ impl Builder<'_> {
             }
         }
 
+        if self.settings.queue.blend_services
+            && ctx.user.lastfm
+            && ctx.user.lastfm_username.is_some()
+            && ctx.user.listenbrainz.is_some()
+        {
+            for (key, content) in &mut built {
+                name_both_services(*key, content);
+            }
+        }
+
         let mut page = super::empty_page();
         page.sections = wanted
             .iter()
@@ -1893,6 +1903,38 @@ fn lastfm_top_genres(tags: &[(&ArtistRow, Vec<String>)]) -> Vec<String> {
         }
     }
     genres
+}
+
+/// Name both services on the sections that grow from the seed artists and
+/// their similar artists, which a blended build reads from both: Because
+/// You Listen To, Artists You Might Like, Top Picks and the radio shelves.
+/// The rest keeps the service it was read from.
+fn name_both_services(key: SectionKey, content: &mut SectionContent) {
+    if !matches!(
+        key,
+        SectionKey::BecauseYouListenTo
+            | SectionKey::ArtistsYouMightLike
+            | SectionKey::TopPicks
+            | SectionKey::RadioSections
+    ) {
+        return;
+    }
+    let both = Some(ShelfSource::LastfmAndListenbrainz);
+    match content {
+        SectionContent::Shelf { shelf } => shelf.source = both,
+        SectionContent::Shelves { shelves } => {
+            for shelf in shelves {
+                shelf.source = both;
+            }
+        }
+        SectionContent::Because { entries } => {
+            for entry in entries {
+                entry.section.source = both;
+            }
+        }
+        SectionContent::Picks { picks } => picks.source = both,
+        SectionContent::Weekly { .. } => {}
+    }
 }
 
 /// Merge two services' similar artists. Each list's scores are scaled to
