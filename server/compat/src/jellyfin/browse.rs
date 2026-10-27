@@ -22,7 +22,7 @@ use super::seams::{
 /// The single "Music" view, both dialects (v2 `_views`).
 pub(super) async fn views<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
-    request: Request<Body>,
+    authed: Authed,
 ) -> Response
 where
     L: LibraryRead,
@@ -30,14 +30,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let query = request.uri().query().map(str::to_owned);
-    let headers = request.headers().clone();
-    let Ok(authed) = authed(&state.passwords, &headers, query.as_deref()).await else {
-        return error(StatusCode::UNAUTHORIZED);
-    };
     let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
     let (_, album_artists) = state
         .library
@@ -234,6 +226,7 @@ async fn build_artists<I: IdMap>(b: &Builder<'_, I>, artists: &[ArtistView]) -> 
 /// Main browse, both dialects (v2 `_browse`, same branch order).
 pub(super) async fn browse<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -242,15 +235,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     let raw_query = request.uri().query().map(str::to_owned);
-    let headers = request.headers().clone();
-    let authed = match authed(&state.passwords, &headers, raw_query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
     let user_id = authed.principal.id.clone();
     let q = CiParams::parse(raw_query.as_deref());
     let b = builder(&state);
@@ -567,6 +552,7 @@ where
 /// `_latest`). `ParentId`, when given, must be the music library.
 pub(super) async fn latest<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -575,15 +561,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     let raw_query = request.uri().query().map(str::to_owned);
-    let headers = request.headers().clone();
-    let authed = match authed(&state.passwords, &headers, raw_query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
     let q = CiParams::parse(raw_query.as_deref());
     if let Some(parent) = q.get("ParentId") {
         match state.ids.from_jf(parent).await {
@@ -611,6 +589,7 @@ where
 
 pub(super) async fn artists<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -619,11 +598,12 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    artists_scoped(State(state), request, ArtistScope::All).await
+    artists_scoped(State(state), authed, request, ArtistScope::All).await
 }
 
 pub(super) async fn album_artists<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -632,11 +612,12 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    artists_scoped(State(state), request, ArtistScope::Album).await
+    artists_scoped(State(state), authed, request, ArtistScope::Album).await
 }
 
 pub(super) async fn artists_scoped<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    authed: Authed,
     request: Request<Body>,
     scope: ArtistScope,
 ) -> Response
@@ -646,15 +627,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     let raw_query = request.uri().query().map(str::to_owned);
-    let headers = request.headers().clone();
-    let authed = match authed(&state.passwords, &headers, raw_query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
     let q = CiParams::parse(raw_query.as_deref());
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
     let limit = params::qint(&q, "Limit", 100).max(0) as usize;
@@ -676,6 +649,7 @@ where
 /// Both genre dialects share one handler (v2 `_genres`).
 pub(super) async fn genres<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    _caller: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -684,16 +658,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     let raw_query = request.uri().query().map(str::to_owned);
-    let headers = request.headers().clone();
-    let authed = match authed(&state.passwords, &headers, raw_query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
-    let _ = &authed;
     let q = CiParams::parse(raw_query.as_deref());
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
     let limit = params::qint(&q, "Limit", 100).max(0) as usize;
@@ -712,7 +677,7 @@ where
 /// key name `OfficialRatings` is v2-verbatim.
 pub(super) async fn filters<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
-    request: Request<Body>,
+    _caller: Authed,
 ) -> Response
 where
     L: LibraryRead,
@@ -720,17 +685,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let raw_query = request.uri().query().map(str::to_owned);
-    let headers = request.headers().clone();
-    if authed(&state.passwords, &headers, raw_query.as_deref())
-        .await
-        .is_err()
-    {
-        return error(StatusCode::UNAUTHORIZED);
-    }
     let genres = state.library.genres().await;
     let years = state.library.years().await;
     json(
@@ -747,6 +701,7 @@ where
 pub(super) async fn single_item<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -755,15 +710,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let raw_query = request.uri().query().map(str::to_owned);
-    let headers = request.headers().clone();
-    let authed = match authed(&state.passwords, &headers, raw_query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
     let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
         return not_found_item(&request);
     };
@@ -779,6 +725,7 @@ where
 pub(super) async fn single_item_legacy<L, E, P, I>(
     state: State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -787,7 +734,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    single_item(state, Path(item_id), request).await
+    single_item(state, Path(item_id), authed, request).await
 }
 
 // ===== Discovery (owned-only) =====
@@ -799,6 +746,7 @@ where
 pub(super) async fn similar<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -807,50 +755,48 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let raw_query = request.uri().query().map(str::to_owned);
-        let q = CiParams::parse(raw_query.as_deref());
-        let mut limit = params::qint(&q, "Limit", 50);
-        if limit == 0 {
-            limit = 50;
-        }
-        let limit = limit.max(1) as usize;
-        let empty = BaseItemDtoQueryResult {
-            items: Vec::new(),
-            total_record_count: 0,
-            start_index: 0,
-        };
-        let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
-            return json(StatusCode::OK, &empty);
-        };
-        let artist_id = match kind.as_str() {
-            "artist" => Some(internal),
-            "track" => state
-                .library
-                .track(&ctx.principal.id, &internal)
-                .await
-                .and_then(|t| t.artist_id),
-            "album" => state
-                .library
-                .album(&ctx.principal.id, &internal)
-                .await
-                .and_then(|a| a.artist_id),
-            _ => None,
-        };
-        let Some(artist_id) = artist_id else {
-            return json(StatusCode::OK, &empty);
-        };
-        let filter = TrackFilter {
-            artists: vec![artist_id],
-            ..TrackFilter::default()
-        };
-        let (tracks, _) = state
+    let raw_query = request.uri().query().map(str::to_owned);
+    let q = CiParams::parse(raw_query.as_deref());
+    let mut limit = params::qint(&q, "Limit", 50);
+    if limit == 0 {
+        limit = 50;
+    }
+    let limit = limit.max(1) as usize;
+    let empty = BaseItemDtoQueryResult {
+        items: Vec::new(),
+        total_record_count: 0,
+        start_index: 0,
+    };
+    let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
+        return json(StatusCode::OK, &empty);
+    };
+    let artist_id = match kind.as_str() {
+        "artist" => Some(internal),
+        "track" => state
             .library
-            .track_page(&ctx.principal.id, &filter, ItemSort::Catalog, 0, limit)
-            .await;
-        let b = builder(&state);
-        let built = build_tracks(&b, &tracks).await;
-        let total = built.len();
-        result(built, total, 0)
-    })
+            .track(&ctx.principal.id, &internal)
+            .await
+            .and_then(|t| t.artist_id),
+        "album" => state
+            .library
+            .album(&ctx.principal.id, &internal)
+            .await
+            .and_then(|a| a.artist_id),
+        _ => None,
+    };
+    let Some(artist_id) = artist_id else {
+        return json(StatusCode::OK, &empty);
+    };
+    let filter = TrackFilter {
+        artists: vec![artist_id],
+        ..TrackFilter::default()
+    };
+    let (tracks, _) = state
+        .library
+        .track_page(&ctx.principal.id, &filter, ItemSort::Catalog, 0, limit)
+        .await;
+    let b = builder(&state);
+    let built = build_tracks(&b, &tracks).await;
+    let total = built.len();
+    result(built, total, 0)
 }

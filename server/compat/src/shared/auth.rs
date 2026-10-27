@@ -31,23 +31,11 @@ pub fn subsonic_is_public(raw_endpoint: &str) -> bool {
     normalize_subsonic_endpoint(raw_endpoint) == SUBSONIC_PUBLIC_ENDPOINT
 }
 
-/// Jellyfin routes that skip token auth (v2 `auth=False` call sites):
-/// public system info, QuickConnect flag, logout, login, and item images.
-/// Audio is not among them: it needs the token, in a header or as
-/// `api_key` in the query (the URLs PlaybackInfo returns carry it).
-/// Case-insensitive on the canonical path; `{id}` segments match any
-/// single segment.
-pub fn jellyfin_is_anonymous(method: &str, path: &str) -> bool {
-    let low = path.to_lowercase();
-    match method.to_ascii_uppercase().as_str() {
-        "GET" => {
-            low == "/jellyfin/system/info/public"
-                || low == "/jellyfin/quickconnect/enabled"
-                || is_image_route(&low)
-        }
-        "POST" => low == "/jellyfin/sessions/logout" || low == "/jellyfin/users/authenticatebyname",
-        _ => false,
-    }
+/// Whether `method` on the Jellyfin route axum matched as `template` skips
+/// token auth. Read from the route table, so it can never disagree with the
+/// routes themselves.
+pub fn jellyfin_is_anonymous(method: &str, template: &str) -> bool {
+    crate::jellyfin::is_public(method, template)
 }
 
 /// `GET /Items/{id}/Images/{type}[/{index}]` (v2 `_image`, anon).

@@ -23,6 +23,7 @@ use droppedneedle_media::stream::transcode::{
 use serde_json::{Value, json};
 
 use crate::common::compat::{CompatApp, PLAYER, named};
+use droppedneedle_compat::jellyfin::{Access, ROUTES, Verb};
 
 struct Reply {
     status: StatusCode,
@@ -381,8 +382,16 @@ async fn gates_and_system_routes() {
         (quick.status, quick.body.as_slice()),
         (StatusCode::OK, &b"false"[..])
     );
-    let logout = send(&rig, "POST", "/jellyfin/Sessions/Logout", None, None).await;
+    // Signing out needs sign-in, as on a real server, and ends nothing: the
+    // token is the app password, which keeps working.
+    let anonymous = refused(&rig, "POST", "/jellyfin/Sessions/Logout", None, None).await;
+    assert_eq!(anonymous.bare(), (401, 0));
+    let logout = send(&rig, "POST", "/jellyfin/Sessions/Logout", Some(&auth), None).await;
     assert_eq!(logout.bare(), (204, 0));
+    assert_eq!(
+        get(&rig, "/jellyfin/Users/Me", Some(&auth)).await.status,
+        StatusCode::OK
+    );
 
     // Turned off in Settings: every route 404s with an empty body, signed
     // in or not.
@@ -1593,4 +1602,171 @@ async fn json_anonymous(rig: &CompatApp, uri: &str) -> Value {
     let reply = get(rig, uri, None).await;
     assert_eq!(reply.status, StatusCode::OK, "{uri}");
     reply.json()
+}
+
+/// The routes anyone may call while the API is on. Written out here, never
+/// read from the table, so a row that turns public fails below.
+const PUBLIC: [(&str, &str); 6] = [
+    ("GET", "/jellyfin/System/Info/Public"),
+    ("GET", "/jellyfin/QuickConnect/Enabled"),
+    ("POST", "/jellyfin/Users/AuthenticateByName"),
+    ("GET", "/jellyfin/Users/Public"),
+    ("GET", "/jellyfin/Items/{item_id}/Images/{image_type}"),
+    (
+        "GET",
+        "/jellyfin/Items/{item_id}/Images/{image_type}/{index}",
+    ),
+];
+
+/// Every request of the walk comes from an address of its own, so no
+/// refusal turns a later answer into a 429.
+fn walker_address() -> String {
+    static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    format!("10.77.{}.{}", n / 250, n % 250 + 1)
+}
+
+/// Each method of every row of the route table, each path parameter filled
+/// with a dummy segment. A `GET` row also answers `HEAD` where the table
+/// lists none.
+fn walk() -> Vec<(&'static str, String, Access, &'static str)> {
+    let mut requests = Vec::new();
+    for row in ROUTES {
+        let path = row
+            .template
+            .split('/')
+            .map(|segment| {
+                if segment.starts_with('{') {
+                    "dummy"
+                } else {
+                    segment
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        let mut verbs = vec![row.verb.as_str()];
+        let has_head = ROUTES
+            .iter()
+            .any(|other| other.template == row.template && other.verb == Verb::Head);
+        if row.verb == Verb::Get && !has_head {
+            verbs.push("HEAD");
+        }
+        for verb in verbs {
+            requests.push((verb, path.clone(), row.access, row.template));
+        }
+    }
+    requests
+}
+
+/// Who may call a route is the table's access column and nothing else:
+/// with no token, every signed-in route answers an empty 401 and no public
+/// one does. With the API off, every route is the empty 404.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_route_is_public_or_signed_in_by_the_table() {
+    let mut public: Vec<(&str, &str)> = ROUTES
+        .iter()
+        .filter(|row| row.access == Access::Public)
+        .map(|row| (row.verb.as_str(), row.template))
+        .collect();
+    public.sort_unstable();
+    let mut expected = PUBLIC.to_vec();
+    expected.sort_unstable();
+    assert_eq!(public, expected, "the public rows of the route table");
+
+    let rig = CompatApp::start("jf-route-walk").await;
+    for (verb, path, access, template) in walk() {
+        let from = walker_address();
+        let headers = vec![("x-forwarded-for", from.as_str())];
+        let reply = raw(&rig, verb, &path, headers, None, None).await;
+        let what = format!("{verb} {path}");
+        match access {
+            Access::SignedIn => assert_eq!(reply.bare(), (401, 0), "{what}"),
+            Access::Public => {
+                let expected = match (verb, template) {
+                    ("POST", "/jellyfin/Users/AuthenticateByName") => StatusCode::BAD_REQUEST,
+                    (_, template) if template.contains("/Images/") => StatusCode::NOT_FOUND,
+                    _ => StatusCode::OK,
+                };
+                assert_eq!(reply.status, expected, "{what}");
+            }
+        }
+    }
+    for path in ["/jellyfin/Users/Public", "/jellyfin/users/public"] {
+        let reply = get(&rig, path, None).await;
+        assert_eq!(reply.status, StatusCode::OK, "{path}");
+        assert_eq!(reply.json(), json!([]), "{path}");
+    }
+
+    set_jellyfin(&rig, false).await;
+    for (verb, path, _, _) in walk() {
+        let from = walker_address();
+        let headers = vec![("x-forwarded-for", from.as_str())];
+        let reply = raw(&rig, verb, &path, headers, None, None).await;
+        assert_eq!(reply.bare(), (404, 0), "{verb} {path} with the API off");
+    }
+    rig.stop().await;
+}
+
+/// Wrong app passwords at sign-in still lock the address out; asking who
+/// may sign in never does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_sign_ins_lock_out_and_public_routes_do_not() {
+    let rig = CompatApp::start("jf-sign-in-lockout").await;
+    let login = "/jellyfin/Users/AuthenticateByName";
+    let guesser = vec![("x-forwarded-for", "10.78.0.1")];
+    for _ in 0..5 {
+        let body = json!({"Username": PLAYER, "Pw": "nope"});
+        let reply = raw(&rig, "POST", login, guesser.clone(), None, Some(body)).await;
+        assert_eq!(reply.bare(), (401, 0));
+    }
+    let locked = raw(&rig, "GET", "/jellyfin/Users/Public", guesser, None, None).await;
+    assert_eq!(locked.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(!locked.header("retry-after").is_empty(), "Retry-After");
+
+    let asker = vec![("x-forwarded-for", "10.78.0.2")];
+    for _ in 0..6 {
+        let reply = raw(
+            &rig,
+            "GET",
+            "/jellyfin/Users/Public",
+            asker.clone(),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(reply.status, StatusCode::OK);
+    }
+    rig.stop().await;
+}
+
+/// The sign-in layer hands each handler its own caller: a private
+/// playlist answers its owner, is not found for another user, and needs a
+/// token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_private_playlist_answers_only_its_owner() {
+    let rig = CompatApp::start("jf-private-playlist").await;
+    let auth = finamp(&rig.secret);
+    let created = send(
+        &rig,
+        "POST",
+        "/jellyfin/Playlists",
+        Some(&auth),
+        Some(json!({"Name": "Mine"})),
+    )
+    .await;
+    let pid = created.json()["Id"]
+        .as_str()
+        .expect("playlist id")
+        .to_owned();
+    let uri = format!("/jellyfin/Playlists/{pid}");
+    let carol = rig.app.login_user("carol").await;
+    let carol = finamp(&rig.app_password(&carol.authorization).await);
+
+    assert_eq!(
+        refused(&rig, "GET", &uri, None, None).await.bare(),
+        (401, 0)
+    );
+    assert_eq!(get(&rig, &uri, Some(&carol)).await.bare(), (404, 0));
+    assert_eq!(json(&rig, &uri, &auth).await["Name"], "Mine");
+    rig.stop().await;
 }

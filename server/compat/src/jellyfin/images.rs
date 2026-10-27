@@ -104,9 +104,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(state) {
-        return denied;
-    }
     if !image_type.eq_ignore_ascii_case("primary") {
         return error(StatusCode::NOT_FOUND);
     }

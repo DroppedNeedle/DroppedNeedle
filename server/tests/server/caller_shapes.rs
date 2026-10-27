@@ -39,6 +39,11 @@ const EXTRACTORS: &[(&str, &str, &str)] = &[
         "WrappedKey",
         "a Wrapped share link's own key, not a session",
     ),
+    (
+        "compat/src/jellyfin/router.rs",
+        "Authed",
+        "a Jellyfin app password, outside the session gate",
+    ),
 ];
 
 /// Reads of the user store's row outside auth and compat. Each reads

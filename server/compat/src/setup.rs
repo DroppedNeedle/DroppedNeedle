@@ -111,14 +111,8 @@ impl CompatDeps {
 /// Everything `create_app` needs to mount the compat routers.
 #[derive(Clone)]
 pub struct CompatSetup {
-    verifier: SubsonicVerifier,
-    store: SubsonicStore,
-    audio: CompatAudio,
-    jellyfin: CompatJellyfinState,
     ids: JellyfinIds,
     settings: LiveSettings,
-    limits: CompatLimits,
-    listener: ListenerConfig,
     router: Router,
     templates: Arc<[&'static str]>,
 }
@@ -165,14 +159,8 @@ impl CompatSetup {
             &deps.listener,
         );
         Self {
-            verifier,
-            store,
-            audio,
-            jellyfin,
             ids,
             settings: deps.settings,
-            limits,
-            listener: deps.listener,
             router,
             templates,
         }
@@ -187,28 +175,6 @@ impl CompatSetup {
     /// The stored Jellyfin ids, for a caller that waits for the fill.
     pub fn jellyfin_ids(&self) -> &JellyfinIds {
         &self.ids
-    }
-
-    /// Enable one or both protocols with fixed settings (wiring tests;
-    /// production reads the config per request).
-    pub fn with_enabled(mut self, subsonic: bool, jellyfin: bool) -> Self {
-        let mut subsonic_settings = self.settings.subsonic();
-        subsonic_settings.enabled = subsonic;
-        let mut jellyfin_settings = self.settings.jellyfin();
-        jellyfin_settings.enabled = jellyfin;
-        self.settings = LiveSettings::fixed(subsonic_settings, jellyfin_settings);
-        self.jellyfin.settings = self.settings.clone();
-        self.limits.settings = self.settings.clone();
-        (self.router, self.templates) = Self::assemble(
-            &self.verifier,
-            &self.store,
-            &self.audio,
-            &self.settings,
-            &self.jellyfin,
-            &self.limits,
-            &self.listener,
-        );
-        self
     }
 
     /// The mounted compat routers with the shared layers, ready to merge

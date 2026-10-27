@@ -28,9 +28,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     let settings = state.settings.jellyfin();
     json(
         StatusCode::OK,
@@ -48,6 +45,7 @@ where
 
 pub(super) async fn system_info<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    _caller: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -56,16 +54,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let query = request.uri().query().map(str::to_owned);
-    if authed(&state.passwords, request.headers(), query.as_deref())
-        .await
-        .is_err()
-    {
-        return error(StatusCode::UNAUTHORIZED);
-    }
     let settings = state.settings.jellyfin();
     json(
         StatusCode::OK,
@@ -131,34 +119,21 @@ fn system_architecture() -> &'static str {
 }
 
 /// QuickConnect is unsupported: the literal `false` (v2 `_handle` lambda).
-pub(super) async fn quick_connect<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
+pub(super) async fn quick_connect() -> Response {
     raw_json(StatusCode::OK, "false")
 }
 
-pub(super) async fn sessions_logout<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
+/// Signed in only, as on a real server. Nothing to end: the token is the
+/// app password itself, so signing out one device never revokes it for the
+/// others.
+pub(super) async fn sessions_logout(_caller: Authed) -> Response {
     no_content()
+}
+
+/// The users a sign-in screen may list: none, as every user here is hidden
+/// (`IsHidden`).
+pub(super) async fn users_public() -> Response {
+    raw_json(StatusCode::OK, "[]")
 }
 
 // ===== Auth / user =====
@@ -176,9 +151,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     let (parts, body) = request.into_parts();
     let bytes = match axum::body::to_bytes(body, 64 * 1024).await {
         Ok(bytes) => bytes,
@@ -247,7 +219,7 @@ fn unix_now<L, E, P, I>(state: &JellyfinState<L, E, P, I>) -> f64 {
 
 pub(super) async fn users_me<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
-    request: Request<Body>,
+    authed: Authed,
 ) -> Response
 where
     L: LibraryRead,
@@ -255,33 +227,25 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let query = request.uri().query().map(str::to_owned);
-    let headers = request.headers().clone();
-    match authed(&state.passwords, &headers, query.as_deref()).await {
-        Ok(authed) => json(
-            StatusCode::OK,
-            &authed.principal.user_dto(
-                &server_id(),
-                unix_now(&state),
-                state
-                    .settings
-                    .jellyfin()
-                    .policy_facts(&authed.principal.role),
-            ),
+    json(
+        StatusCode::OK,
+        &authed.principal.user_dto(
+            &server_id(),
+            unix_now(&state),
+            state
+                .settings
+                .jellyfin()
+                .policy_facts(&authed.principal.role),
         ),
-        Err(denied) => denied,
-    }
+    )
 }
 
 /// The `{user_id}` path id is ignored; the caller is always returned (v2
 /// `_user_dto(u)` parity).
 pub(super) async fn user_by_id<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+    state: State<JellyfinState<L, E, P, I>>,
     Path(_user_id): Path<String>,
-    request: Request<Body>,
+    authed: Authed,
 ) -> Response
 where
     L: LibraryRead,
@@ -289,5 +253,5 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    users_me(State(state), request).await
+    users_me(state, authed).await
 }

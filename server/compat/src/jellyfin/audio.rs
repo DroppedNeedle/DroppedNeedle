@@ -11,7 +11,8 @@ use super::models::{PlaybackInfoBody, PlaybackInfoResponse};
 use super::params::{self, CiParams};
 use super::router::*;
 use super::seams::{
-    ByteOutcome, IdMap, LibraryRead, PlaybackSessions, StreamEngine, StreamParams, TICKS_PER_SECOND,
+    ByteOutcome, IdMap, LibraryRead, PlaybackSessions, Principal, StreamEngine, StreamParams,
+    TICKS_PER_SECOND,
 };
 use crate::subsonic::stream::download_filename;
 use droppedneedle_media::stream::transcode::{HLS_SEGMENT_FORMAT, TrackInfo, decide};
@@ -96,6 +97,7 @@ fn ceiling_kbps(bits_per_second: i64) -> Option<i64> {
 pub(super) async fn audio<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path((item_id, tail)): Path<(String, String)>,
+    caller: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -104,17 +106,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     // Owned inputs only past this point: `&Request<Body>` is not `Send`, so
     // holding it across an await would break the `Handler` impl.
     let headers = request.headers().clone();
     let query = request.uri().query().map(str::to_owned);
-    let caller = match authed(&state.passwords, &headers, query.as_deref()).await {
-        Ok(caller) => caller,
-        Err(denied) => return denied,
-    };
     // Leases count against the caller, like the native stream routes.
     let mut state = state;
     state.engine = state.engine.for_caller(&caller.principal.id);
@@ -235,6 +230,7 @@ where
 pub(super) async fn item_file<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    caller: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -243,11 +239,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    let (headers, query) = auth_inputs(&request);
     original_file(
         &state,
-        &headers,
-        query.as_deref(),
+        caller.principal,
+        request.headers(),
         &item_id,
         Original::Play,
         false,
@@ -259,6 +254,7 @@ where
 pub(super) async fn item_file_head<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    caller: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -267,11 +263,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    let (headers, query) = auth_inputs(&request);
     original_file(
         &state,
-        &headers,
-        query.as_deref(),
+        caller.principal,
+        request.headers(),
         &item_id,
         Original::Play,
         true,
@@ -294,6 +289,7 @@ where
 pub(super) async fn item_download<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    caller: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -302,11 +298,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    let (headers, query) = auth_inputs(&request);
     original_file(
         &state,
-        &headers,
-        query.as_deref(),
+        caller.principal,
+        request.headers(),
         &item_id,
         Original::Download,
         false,
@@ -319,6 +314,7 @@ where
 pub(super) async fn item_download_head<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    caller: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -327,24 +323,15 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    let (headers, query) = auth_inputs(&request);
     original_file(
         &state,
-        &headers,
-        query.as_deref(),
+        caller.principal,
+        request.headers(),
         &item_id,
         Original::Download,
         true,
     )
     .await
-}
-
-/// What sign-in reads from a request: its headers and its query.
-fn auth_inputs(request: &Request<Body>) -> (HeaderMap, Option<String>) {
-    (
-        request.headers().clone(),
-        request.uri().query().map(str::to_owned),
-    )
 }
 
 /// Why the original file is asked for.
@@ -360,8 +347,8 @@ enum Original {
 /// `/Items/{id}/Download`. The download setting is read on every request.
 async fn original_file<L, E, P, I>(
     state: &JellyfinState<L, E, P, I>,
+    caller: Principal,
     headers: &HeaderMap,
-    query: Option<&str>,
     item_id: &str,
     purpose: Original,
     head: bool,
@@ -372,13 +359,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(state) {
-        return denied;
-    }
-    let caller = match authed(&state.passwords, headers, query).await {
-        Ok(caller) => caller.principal,
-        Err(denied) => return denied,
-    };
     let download = purpose == Original::Download;
     if download
         && !state
@@ -452,6 +432,7 @@ fn head_outcome_response(outcome: &ByteOutcome) -> Response {
 pub(super) async fn audio_head<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path((item_id, tail)): Path<(String, String)>,
+    caller: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -460,9 +441,6 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     // Unknown tails 404 exactly like GET (no `universal`/`stream` probe
     // that answers 200 for a route GET would refuse). The playlist answers
     // like GET with the body dropped; the HLS segment is a live transcode,
@@ -473,10 +451,6 @@ where
     }
     let headers = request.headers().clone();
     let query = request.uri().query().map(str::to_owned);
-    let caller = match authed(&state.passwords, &headers, query.as_deref()).await {
-        Ok(caller) => caller,
-        Err(denied) => return denied,
-    };
     let mut state = state;
     state.engine = state.engine.for_caller(&caller.principal.id);
     if tail == HLS_PLAYLIST {
@@ -588,6 +562,7 @@ where
 pub(super) async fn playback_info<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -596,17 +571,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
     let raw_query = request.uri().query().map(str::to_owned);
     let is_post = request.method() == axum::http::Method::POST;
     let advertised = local_address(&state, &request);
-    let (parts, body) = request.into_parts();
-    let authed = match authed(&state.passwords, &parts.headers, raw_query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
+    let body = request.into_body();
     let internal = match decode_track(&state, &item_id).await {
         Ok(internal) => internal,
         Err(denied) => return denied,

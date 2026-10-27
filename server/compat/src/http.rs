@@ -5,8 +5,8 @@
 //! outermost first: CORS (`*`, creds off), and rate limits (media and
 //! artwork exempt, a public-IP bucket for unauthenticated routes,
 //! principal buckets for signed-in callers, auth-failure backoff). Auth itself lives inside the
-//! protocol paths (Subsonic `dispatch`, Jellyfin handlers), never in the
-//! `/api` session middleware: compat mounts outside it.
+//! protocol paths (Subsonic `dispatch`, the Jellyfin sign-in layer), never
+//! in the `/api` session middleware: compat mounts outside it.
 //!
 //! Rejects match v2 exactly: Subsonic answers a failed envelope code 0
 //! ("Rate limit exceeded") over HTTP 200 plus `Retry-After`; Jellyfin
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::body::Body;
-use axum::extract::{ConnectInfo, Path, RawQuery, Request, State};
+use axum::extract::{ConnectInfo, MatchedPath, Path, RawQuery, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -306,7 +306,7 @@ pub fn server_error_response(
 /// pre-check (else `stream`/`download` would be a brute-force bypass around
 /// backoff). Media and artwork then skip the token buckets. The public-IP
 /// bucket applies only to unauthenticated routes: the Subsonic public
-/// endpoint and the anonymous Jellyfin routes (login, public info). Signed-in
+/// endpoint and the public rows of the Jellyfin route table. Signed-in
 /// Jellyfin callers take their principal bucket here (labeled by a token
 /// lookup with no use stamp); Subsonic principal buckets run post-verify in
 /// the adapter. Jellyfin 401s feed backoff on the way out (every Jellyfin
@@ -341,7 +341,12 @@ pub async fn limits_layer(
     let is_jellyfin = path.to_lowercase().starts_with("/jellyfin");
     if !exempt {
         let anonymous = if is_jellyfin {
-            auth::jellyfin_is_anonymous(&method, &path)
+            // The template axum matched, so the route table and the router
+            // never disagree on which route this is.
+            request
+                .extensions()
+                .get::<MatchedPath>()
+                .is_some_and(|matched| auth::jellyfin_is_anonymous(&method, matched.as_str()))
         } else {
             auth::subsonic_is_public(path.rsplit('/').next().unwrap_or(""))
         };
@@ -373,7 +378,7 @@ pub async fn limits_layer(
 /// Extract a Jellyfin request token for limit labeling. Synchronous: the
 /// request borrow never crosses an await (`Request<Body>` is not `Sync`).
 fn label_token(request: &Request) -> Option<String> {
-    // A malformed query token has no label: the handler answers it 401.
+    // A malformed query token has no label: sign-in answers it 401.
     let query = QueryTokens::read(request.uri().query()).ok()?;
     extract_token(&query.request(request.headers()))
 }

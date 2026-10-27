@@ -2,7 +2,7 @@
 
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, Request, StatusCode};
+use axum::http::{Request, StatusCode};
 use axum::response::Response;
 
 use super::builders::{self};
@@ -141,6 +141,7 @@ where
 pub(super) async fn favorite_add_legacy<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -149,15 +150,14 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let missing = not_found_item(&request);
-        set_favorite(&state, &ctx.principal.id, &item_id, true, missing).await
-    })
+    let missing = not_found_item(&request);
+    set_favorite(&state, &ctx.principal.id, &item_id, true, missing).await
 }
 
 pub(super) async fn favorite_add_modern<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -166,15 +166,14 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let missing = not_found_item(&request);
-        set_favorite(&state, &ctx.principal.id, &item_id, true, missing).await
-    })
+    let missing = not_found_item(&request);
+    set_favorite(&state, &ctx.principal.id, &item_id, true, missing).await
 }
 
 pub(super) async fn favorite_remove_legacy<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -183,15 +182,14 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let missing = not_found_item(&request);
-        set_favorite(&state, &ctx.principal.id, &item_id, false, missing).await
-    })
+    let missing = not_found_item(&request);
+    set_favorite(&state, &ctx.principal.id, &item_id, false, missing).await
 }
 
 pub(super) async fn favorite_remove_modern<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -200,15 +198,14 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let missing = not_found_item(&request);
-        set_favorite(&state, &ctx.principal.id, &item_id, false, missing).await
-    })
+    let missing = not_found_item(&request);
+    set_favorite(&state, &ctx.principal.id, &item_id, false, missing).await
 }
 
 pub(super) async fn played_add_legacy<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -217,15 +214,14 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let missing = not_found_item(&request);
-        set_played(&state, &ctx.principal.id, &item_id, true, missing).await
-    })
+    let missing = not_found_item(&request);
+    set_played(&state, &ctx.principal.id, &item_id, true, missing).await
 }
 
 pub(super) async fn played_add_modern<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -234,15 +230,14 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let missing = not_found_item(&request);
-        set_played(&state, &ctx.principal.id, &item_id, true, missing).await
-    })
+    let missing = not_found_item(&request);
+    set_played(&state, &ctx.principal.id, &item_id, true, missing).await
 }
 
 pub(super) async fn played_remove_legacy<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -251,15 +246,14 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let missing = not_found_item(&request);
-        set_played(&state, &ctx.principal.id, &item_id, false, missing).await
-    })
+    let missing = not_found_item(&request);
+    set_played(&state, &ctx.principal.id, &item_id, false, missing).await
 }
 
 pub(super) async fn played_remove_modern<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
+    ctx: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -268,10 +262,8 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |ctx| {
-        let missing = not_found_item(&request);
-        set_played(&state, &ctx.principal.id, &item_id, false, missing).await
-    })
+    let missing = not_found_item(&request);
+    set_played(&state, &ctx.principal.id, &item_id, false, missing).await
 }
 
 // ===== Playback reporting / scrobbling (all 204, lenient bodies) =====
@@ -294,7 +286,7 @@ where
 
 pub(super) async fn read_body_lenient<T: serde::de::DeserializeOwned>(
     request: Request<Body>,
-) -> (HeaderMap, Option<String>, Option<T>) {
+) -> (Option<String>, Option<T>) {
     let (parts, body) = request.into_parts();
     let query = parts.uri.query().map(str::to_owned);
     let parsed = axum::body::to_bytes(body, 64 * 1024)
@@ -302,12 +294,13 @@ pub(super) async fn read_body_lenient<T: serde::de::DeserializeOwned>(
         .ok()
         .filter(|bytes| !bytes.is_empty())
         .and_then(|bytes| serde_json::from_slice::<T>(&bytes).ok());
-    (parts.headers, query, parsed)
+    (query, parsed)
 }
 
 /// Start → presence + now-playing (v2 `_playing_start`).
 pub(super) async fn playing<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -316,14 +309,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let (headers, query, body) = read_body_lenient::<PlaybackStartInfo>(request).await;
-    let authed = match authed(&state.passwords, &headers, query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
+    let (_, body) = read_body_lenient::<PlaybackStartInfo>(request).await;
     let Some(body) = body else {
         return no_content();
     };
@@ -347,6 +333,7 @@ where
 /// `_playing_progress`).
 pub(super) async fn playing_progress<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -355,14 +342,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let (headers, query, body) = read_body_lenient::<PlaybackProgressInfo>(request).await;
-    let authed = match authed(&state.passwords, &headers, query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
+    let (_, body) = read_body_lenient::<PlaybackProgressInfo>(request).await;
     let Some(body) = body else {
         return no_content();
     };
@@ -383,6 +363,7 @@ where
 /// `_playing_stopped`). `Failed` stops skip the scrobble.
 pub(super) async fn playing_stopped<L, E, P, I>(
     State(state): State<JellyfinState<L, E, P, I>>,
+    authed: Authed,
     request: Request<Body>,
 ) -> Response
 where
@@ -391,14 +372,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let (headers, query, body) = read_body_lenient::<PlaybackStopInfo>(request).await;
-    let authed = match authed(&state.passwords, &headers, query.as_deref()).await {
-        Ok(authed) => authed,
-        Err(denied) => return denied,
-    };
+    let (_, body) = read_body_lenient::<PlaybackStopInfo>(request).await;
     // Drop presence even when the play never reaches the threshold below,
     // or it lingers until TTL.
     state
@@ -439,30 +413,12 @@ where
     no_content()
 }
 
-pub(super) async fn sessions_ping<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
-    request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
-    authed_handler!(state, request, |_ctx| no_content())
+pub(super) async fn sessions_ping(_caller: Authed) -> Response {
+    no_content()
 }
 
 /// No session registry stores reported capabilities; accept and 204 to
 /// avoid a 404 (v2 `_handle` lambda).
-pub(super) async fn sessions_capabilities<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
-    request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
-    authed_handler!(state, request, |_ctx| no_content())
+pub(super) async fn sessions_capabilities(_caller: Authed) -> Response {
+    no_content()
 }
