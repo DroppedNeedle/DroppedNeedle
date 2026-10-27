@@ -743,6 +743,30 @@ impl Section for DownloadPolicy {
             1,
             100,
         )?;
+        check_range(
+            key,
+            "preflight_score_auto_accept",
+            self.preflight_score_auto_accept,
+            0.0,
+            1.0,
+        )?;
+        check_range(
+            key,
+            "preflight_score_manual_min",
+            self.preflight_score_manual_min,
+            0.0,
+            1.0,
+        )?;
+        if self.preflight_score_manual_min > self.preflight_score_auto_accept {
+            return Err(validation(
+                key,
+                "preflight_score_manual_min",
+                format!(
+                    "manual-review score must not be above the auto-accept score ({}), got {}",
+                    self.preflight_score_auto_accept, self.preflight_score_manual_min
+                ),
+            ));
+        }
         if tier_rank(&self.quality_min).is_none() {
             return Err(validation(
                 key,

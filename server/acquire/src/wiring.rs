@@ -296,6 +296,8 @@ impl LiveClients {
             usenet: usenet_policy_from(policy),
             ignored_terms: policy.ignored_terms.clone(),
             required_terms: policy.required_terms.clone(),
+            auto_accept: policy.preflight_score_auto_accept,
+            manual_min: policy.preflight_score_manual_min,
         };
         let mut sources: Vec<Arc<dyn DownloadSource>> = built.iter().cloned().collect();
         for key in keys {

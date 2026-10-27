@@ -633,6 +633,8 @@ fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDo
             usenet: UsenetPolicy::v2_defaults(),
             ignored_terms: Vec::new(),
             required_terms: Vec::new(),
+            auto_accept: 0.70,
+            manual_min: 0.50,
         },
     )
 }

@@ -11,9 +11,10 @@
 //! "You rank your source; the app enforces policy": the plugin's own score
 //! (clamped to 0..1) is the match confidence, and the same gates as the
 //! built-in sources apply on top: quarantine, ignored and required terms,
-//! the size cap and the quality band. Scores of 0.70 and up download
-//! automatically; 0.50 to 0.70 would need a person to pick them; anything
-//! lower is dropped. Port of v2's `PluginReleaseScorer`.
+//! the size cap and the quality band. Scores at or above
+//! `preflight_score_auto_accept` (0.70 by default) download automatically;
+//! from `preflight_score_manual_min` (0.50 by default) up to that, a person
+//! picks them; anything lower is dropped. Port of v2's `PluginReleaseScorer`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,17 +40,13 @@ use droppedneedle_plugins::protocol::Fault;
 use droppedneedle_plugins::runtime::CallError;
 use futures_util::future::BoxFuture;
 
-/// Score at or above which a release downloads without a person.
-pub const AUTO_ACCEPT: f64 = 0.70;
-/// Score at or above which a release is offered for a manual pick.
-pub const MANUAL_ACCEPT: f64 = 0.50;
 /// Releases kept after ranking.
 const RANKED_MAX: usize = 50;
 
 /// How sure the scorer is about one release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Band {
-    /// Below [`MANUAL_ACCEPT`]: never offered.
+    /// Below the manual minimum: never offered.
     Rejected,
     /// Offered for a manual pick only.
     Manual,
@@ -79,6 +76,10 @@ pub struct ReleasePolicy {
     pub ignored_terms: Vec<String>,
     /// A release must contain all of these.
     pub required_terms: Vec<String>,
+    /// Score at or above which a release downloads without a person.
+    pub auto_accept: f64,
+    /// Score at or above which a release is offered for a manual pick.
+    pub manual_min: f64,
 }
 
 /// Quarantine identity for one plugin result: its payload, or the
@@ -135,9 +136,9 @@ pub fn rank_plugin_releases(
             } else {
                 0.0
             };
-            let band = if score >= AUTO_ACCEPT {
+            let band = if score >= policy.auto_accept {
                 Band::Auto
-            } else if score >= MANUAL_ACCEPT {
+            } else if score >= policy.manual_min {
                 Band::Manual
             } else {
                 Band::Rejected
@@ -601,6 +602,8 @@ mod tests {
             usenet,
             ignored_terms: vec!["Live".to_owned()],
             required_terms: Vec::new(),
+            auto_accept: 0.70,
+            manual_min: 0.50,
         };
         let mut quarantined = release("Artist - Album [quarantined]", 1.0, "lossless");
         quarantined.payload = "bad-one".to_owned();
