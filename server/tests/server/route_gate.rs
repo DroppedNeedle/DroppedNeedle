@@ -56,11 +56,6 @@ const ALLOWED: &[Allowed] = &[
         calls: 1,
         why: "test-support only: playlist sync over fakes, for its slice tests",
     },
-    Allowed {
-        path: "catalog/src/reads/discover/handlers.rs",
-        calls: 1,
-        why: "`now_playing_router`: only the discover slice tests call it; playback serves the path",
-    },
 ];
 
 #[test]

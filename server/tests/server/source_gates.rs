@@ -472,7 +472,6 @@ const DISCOVER_BUILD: &str = "a discover or home build a visit starts; it logs i
 const SESSION_TOUCH: &str = "a session's last-seen touch, queued off the request path, one per session; it logs its own failure";
 const WARM_ENQUEUE: &str =
     "a page's image warm, queued off the request path; it logs its own failure";
-const FAN_OUT: &str = "enrichment calls fanned out and joined by their caller";
 const BENCHMARKS: &str = "the read benchmarks, a test-only module";
 const IMAGE_WORK: &str = "image work off the async workers, awaited by the request";
 const COVER_FLIGHT: &str =
@@ -539,7 +538,6 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
         1,
         DISCOVER_BUILD,
     ),
-    ("catalog/src/reads/enrichment/mod.rs", 1, FAN_OUT),
     ("catalog/src/reads/library/file_lyrics.rs", 1, REQUEST),
     ("catalog/src/reads/library/perf_tests.rs", 1, BENCHMARKS),
     ("catalog/src/reads/library/tags.rs", 1, REQUEST),
